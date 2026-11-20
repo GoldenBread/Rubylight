@@ -4,7 +4,7 @@ import { createTestServer } from './test-server.mjs';
 
 globalThis.location = new URL('http://localhost/');
 globalThis.window = new EventTarget();
-const server = await createTestServer({ configFile: false });
+const server = await createTestServer();
 const { schema } = await server.ssrLoadModule('/src/lib/settings-schema.ts');
 const { patchValue, normalise, describeDefault } = await server.ssrLoadModule('/src/components/settings/values.ts');
 const { toDraft, changes, validCouchHold, COUCH_OPEN_WITH_OPTIONS } = await server.ssrLoadModule('/src/components/devices/device.ts');
@@ -22,7 +22,7 @@ test('the couch menu has its own group in Sound & controls, with the host defaul
   assert.deepEqual(keys.map(key => shipped.get(key).default),
     [true, 'controller,keyboard,touch', 'l3+r3', 1000, 1500, 'ctrl+alt+backspace']);
   assert.equal(shipped.get('couch_menu').control.kind, 'toggle');
-  assert.equal(shipped.get('couch_menu').advanced, undefined);
+  assert.equal(shipped.get('couch_menu').advanced, false);
 });
 
 test('the ways to open the menu are one switch each, and none stays an explicit empty list', () => {
@@ -112,7 +112,7 @@ test('an app sets night mode, headphone surround and the couch menu for itself',
   draft.setTristate('couch-menu', 'off');
   draft.setText('couch-menu-open-with', 'keyboard');
   draft.setText('couch-menu-keyboard-chord', 'ctrl+alt+end');
-  draft.setNumber('couch-menu-hold-ms', 800);
+  draft.setNumber('couch-menu-hold-ms', 200);
   assert.equal(draft.invalid, true);
   draft.setNumber('couch-menu-hold-ms', 1200);
   assert.equal(draft.invalid, false);

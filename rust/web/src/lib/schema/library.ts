@@ -100,17 +100,6 @@ const playniteSettings: Setting[] = [
     advanced: true,
   },
   {
-    key: 'playnite_autosync_remove_uninstalled',
-    label: 'Remove uninstalled games',
-    description: 'Removes an added app when its game is uninstalled.',
-    category: 'library',
-    group: 'Playnite',
-    control: { kind: 'toggle' },
-    default: true,
-    inactiveHint: "Turn on Playnite and Sync automatically to use this setting.",
-    visibleWhen: playniteSync,
-  },
-  {
     key: 'playnite_autosync_delete_after_days',
     label: 'Remove unplayed after',
     description: 'Removes an added app not played within this many days of being added. 0 keeps it.',
@@ -318,9 +307,9 @@ export const settings: Setting[] = [
     key: 'library_auto_sync',
     label: 'Sync automatically',
     description:
-      'Checks every launcher every few minutes (Steam every 30 seconds) and updates the library when games are installed, removed or played. Off, the list changes only when you press Sync now on the Games page.',
+      'Checks every launcher every few minutes and updates the library when games change. Off, the list changes only when you press Sync now.',
     details:
-      'Applies to every launcher and to the game folders. While Playnite is on with Sync automatically and its Rubylight plugin installed, the games come through Playnite and the launchers’ own syncs stand aside, so no game is added twice.',
+      'Steam is checked every 30 seconds. Applies to every launcher and to the game folders. While Playnite is on with Sync automatically and its Rubylight plugin installed, the games come through Playnite and the launchers’ own syncs stand aside, so no game is added twice.',
     category: 'library',
     group: 'Library sync',
     control: { kind: 'toggle' },
@@ -330,7 +319,9 @@ export const settings: Setting[] = [
     key: 'library_autosync_remove_uninstalled',
     label: 'Remove uninstalled games',
     description:
-      'Removes a game’s app when the game is uninstalled; off, it stays in the list. With recent games only, apps that fall out of the list are always removed. Games you added by hand always stay.',
+      'Removes a game’s app when the game is uninstalled. Off, it stays in the list.',
+    details:
+      'With recent games only, apps that fall out of the list are always removed. Games you added by hand always stay.',
     category: 'library',
     group: 'Library sync',
     control: { kind: 'toggle' },
@@ -340,7 +331,9 @@ export const settings: Setting[] = [
     key: 'library_sync_all_installed',
     label: 'Every installed game',
     description:
-      'Adds every installed game, as every launcher does. Turn it off for a shorter list: only the most recently played games are added, and others the sync added are removed. Applies to Steam, Battle.net and Playnite.',
+      'Adds every installed game. Turn it off for a shorter list of the most recently played games.',
+    details:
+      'Games the sync added that fall out of the list are removed. Applies to Steam, Battle.net and Playnite.',
     category: 'library',
     group: 'Library sync',
     control: { kind: 'toggle' },

@@ -414,7 +414,7 @@ export const settings: Setting[] = [
     key: 'remove_remote_monitor',
     label: 'Remove remote monitor',
     description:
-      'When a device used as a remote monitor (an extra screen for this PC) loses it: never, when its stream ends, or as soon as the device disconnects. Leave it on Never so the device can resume where it was.',
+      'When a remote monitor (an extra screen for this PC) is removed: never, when its stream ends, or when the device disconnects. Never lets the device resume where it was.',
     details:
       'When its stream ends removes the remote monitor from Windows when the stream finishes, so the device can still resume but the display does not stay behind. As soon as the device disconnects removes it even while it was kept for resuming. Never keeps it until the next stream ends, so a dropped device leaves its display behind.',
     category: 'display',

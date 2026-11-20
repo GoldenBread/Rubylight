@@ -111,9 +111,9 @@ const general: Setting[] = [
     key: 'updates',
     label: 'Updates',
     description:
-      'What Rubylight does about new releases. Tell me checks and lets you know, and you install when you choose; Install automatically also installs a new release once nothing is streaming. Off stops the checks, so only Check now finds updates.',
+      'Tell me checks for new releases and lets you know. Install automatically also installs one when nothing is streaming.',
     details:
-      'Installing automatically requires the Windows service. Only verified releases are downloaded. They install after one minute without streams, pending connections or running apps. Check now under Updates works at any time, even with checks off.',
+      'Off stops the checks, so only Check now finds updates. Installing automatically requires the Windows service. Only verified releases are downloaded. They install after one minute without streams, pending connections or running apps. Check now under Updates works at any time, even with checks off.',
     category: 'general',
     group: 'Updates',
     control: {
@@ -813,7 +813,9 @@ const audio: Setting[] = [
     key: 'audio_headphone_surround',
     label: 'Headphone surround',
     description:
-      "For a device that plays stereo, takes the PC's surround channels and renders them for headphones, so sound keeps its direction. Leave it off for speakers. A device or app can set its own, and the couch menu switches it during a stream.",
+      "For a device that plays stereo, renders the PC's surround channels for headphones so sound keeps its direction. Leave it off for speakers.",
+    details:
+      'A device or app can set its own, and the couch menu switches it during a stream.',
     category: 'audio',
     group: 'Sound',
     control: { kind: 'toggle' },
@@ -1389,7 +1391,9 @@ const input: Setting[] = [
     key: 'couch_menu',
     label: 'Couch menu',
     description:
-      'A menu the PC draws over the stream, so any device can change sound and other options without leaving the game. It opens on L3 + R3 held on a controller, a corner hold or a keyboard chord, and a game that uses one of those never sees it. Turn it off if a game needs them.',
+      'A menu the PC draws over the stream, so any device can change sound and other options without leaving the game. Turn it off if a game needs its chords.',
+    details:
+      'It opens on L3 + R3 held on a controller, a corner hold or a keyboard chord, and a game that uses one of those never sees it. A device or app can turn it off or on for itself.',
     category: 'input',
     group: 'Couch menu',
     control: { kind: 'toggle' },

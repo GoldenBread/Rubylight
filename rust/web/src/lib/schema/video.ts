@@ -379,7 +379,7 @@ const video: Setting[] = [
     key: 'pyrowave_encode_overlap',
     label: 'Overlap PyroWave frames',
     description:
-      'For troubleshooting; leave it off. Prepares the next PyroWave frame while the GPU still encodes the current one, keeping two copies of the picture on the GPU. Try it only if an encode takes longer than a frame.',
+      'For troubleshooting; leave it off. Prepares the next PyroWave frame while the GPU encodes the current one, only worth trying if an encode takes longer than a frame.',
     details:
       'Two frames are on the GPU at once, each with its own copy of the picture. Off encodes one frame at a time. Applies to the next stream. At 4K and 120 fps on an RX 7900 XT the encode never held the next frame up, so the overlap measured no lower latency.',
     category: 'video',
@@ -609,9 +609,9 @@ const video: Setting[] = [
     key: 'packet_pacing',
     label: 'Packet pacing',
     description:
-      'How fast video packets go out. Automatic starts adaptively for a device that reports a Wi-Fi or cellular route and paces the rest to the route; a fixed rate suits a known link that drops bursts.',
+      'How fast video packets go out. A fixed rate suits a known link that drops bursts.',
     details:
-      'Automatic (the default) gives a device that reports a Wi-Fi or cellular route, such as Nightjar, adaptive pacing on H.264, HEVC and AV1: it starts at twice the encoder bitrate, probes up in small steps while the link stays clean, up to the route limit, and backs off on loss. Always gives every stream, PyroWave included, that controller from the first frame; it adds delay when a stream starts, and probing can still lose packets. Off keeps the route policy for every stream, and Slow down after video loss still applies. A fixed rate in Kbps (120000 means 120 Mbps) takes over pacing and turns the adaptive pacing and Slow down after video loss off; PyroWave treats it as a hard limit, while conventional codecs keep a 1.1-times-bitrate floor and 80% of a known Ethernet link. Reconnect after saving.',
+      'Automatic starts adaptively for a device that reports a Wi-Fi or cellular route and paces the rest to the route. Automatic (the default) gives a device that reports a Wi-Fi or cellular route, such as Nightjar, adaptive pacing on H.264, HEVC and AV1: it starts at twice the encoder bitrate, probes up in small steps while the link stays clean, up to the route limit, and backs off on loss. Always gives every stream, PyroWave included, that controller from the first frame; it adds delay when a stream starts, and probing can still lose packets. Off keeps the route policy for every stream, and Slow down after video loss still applies. A fixed rate in Kbps (120000 means 120 Mbps) takes over pacing and turns the adaptive pacing and Slow down after video loss off; PyroWave treats it as a hard limit, while conventional codecs keep a 1.1-times-bitrate floor and 80% of a known Ethernet link. Reconnect after saving.',
     category: 'video',
     group: 'Bitrate and network',
     control: {
@@ -649,9 +649,9 @@ const video: Setting[] = [
     key: 'bitrate_adaptation',
     label: 'Adaptive bitrate',
     description:
-      'Lowers the picture bitrate when the network cannot carry it, then raises it again; does nothing on a healthy link. Off keeps the bitrate you set, so a weak link freezes or breaks up the picture instead.',
+      'Lowers the picture bitrate when the network cannot carry it, then raises it again. Does nothing on a healthy link.',
     details:
-      'On acts on three unrecoverable frames in two seconds, 5% of packets reported missing for two half-second windows, three frames lost on send, or three network keyframe requests from a client that sends no error-correction status. Each cut aims at 85% of what the link delivered, then this PC probes back up in small steps and returns to the requested bitrate after ten clean seconds. Reports for frames sent before a cut took effect are ignored. On PyroWave, client-loss cuts stop at its test-scene detail level. Send losses on this PC can cut a stream below that level, down to half its bitrate ceiling (at least 1 Mbps). On, and react to network delay also lowers the bitrate before packets are lost, for a device that reports when each video packet arrived, such as Nightjar: when packets take longer and longer to arrive, a queue is building on the way, so this PC lowers the bitrate to just under what arrived and paces video at the rate of the slowest link, then climbs back to the requested bitrate when the delay settles. The lower of both cuts applies. Reconnect after choosing it. A device that sets its own bitrate takes over bitrate control.',
+      'Off keeps the bitrate you set, so a weak link freezes or breaks up the picture instead. On acts on three unrecoverable frames in two seconds, 5% of packets reported missing for two half-second windows, three frames lost on send, or three network keyframe requests from a client that sends no error-correction status. Each cut aims at 85% of what the link delivered, then this PC probes back up in small steps and returns to the requested bitrate after ten clean seconds. Reports for frames sent before a cut took effect are ignored. On PyroWave, client-loss cuts stop at its test-scene detail level. Send losses on this PC can cut a stream below that level, down to half its bitrate ceiling (at least 1 Mbps). On, and react to network delay also lowers the bitrate before packets are lost, for a device that reports when each video packet arrived, such as Nightjar: when packets take longer and longer to arrive, a queue is building on the way, so this PC lowers the bitrate to just under what arrived and paces video at the rate of the slowest link, then climbs back to the requested bitrate when the delay settles. The lower of both cuts applies. Reconnect after choosing it. A device that sets its own bitrate takes over bitrate control.',
     category: 'video',
     group: 'Bitrate and network',
     control: {
@@ -1415,7 +1415,9 @@ const nvidia: Setting[] = [
     key: 'nvenc_min_qp_h264',
     label: 'Minimum QP for H.264',
     description:
-      'Caps the best picture quality for H.264: the encoder stops spending bits on easy scenes beyond this quantization parameter (QP), from 0 to 51, leaving headroom for hard ones. 0 is off; higher values cap quality sooner.',
+      'Caps the best H.264 picture quality, from 0 to 51. 0 is off; higher values cap quality sooner.',
+    details:
+      'The encoder stops spending bits on easy scenes beyond this quantization parameter (QP), leaving headroom for hard ones.',
     category: 'encoders',
     group: 'NVIDIA NVENC',
     control: { kind: 'number', min: 0, max: 51, step: 1 },
@@ -1428,7 +1430,9 @@ const nvidia: Setting[] = [
     key: 'nvenc_min_qp_hevc',
     label: 'Minimum QP for HEVC',
     description:
-      'Caps the best picture quality for HEVC: the encoder stops spending bits on easy scenes beyond this quantization parameter (QP), from 0 to 51, leaving headroom for hard ones. 0 is off; higher values cap quality sooner.',
+      'Caps the best HEVC picture quality, from 0 to 51. 0 is off; higher values cap quality sooner.',
+    details:
+      'The encoder stops spending bits on easy scenes beyond this quantization parameter (QP), leaving headroom for hard ones.',
     category: 'encoders',
     group: 'NVIDIA NVENC',
     control: { kind: 'number', min: 0, max: 51, step: 1 },
@@ -1441,7 +1445,9 @@ const nvidia: Setting[] = [
     key: 'nvenc_min_qp_av1',
     label: 'Minimum QP for AV1',
     description:
-      'Caps the best picture quality for AV1: the encoder stops spending bits on easy scenes beyond this quantization parameter (QP), from 0 to 255, leaving headroom for hard ones. 0 is off; higher values cap quality sooner.',
+      'Caps the best AV1 picture quality, from 0 to 255. 0 is off; higher values cap quality sooner.',
+    details:
+      'The encoder stops spending bits on easy scenes beyond this quantization parameter (QP), leaving headroom for hard ones.',
     category: 'encoders',
     group: 'NVIDIA NVENC',
     control: { kind: 'number', min: 0, max: 255, step: 1 },

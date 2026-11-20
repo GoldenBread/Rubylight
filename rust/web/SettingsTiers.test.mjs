@@ -121,8 +121,8 @@ test('the Games tab lists the launchers as one row to the Games page unless aske
   const opened = layoutOf('games', { revealed: new Set(['Steam options']) });
   assert.deepEqual(opened.groups.find((group) => group.name === 'Steam options').settings.length, byKeyCount('Steam options'));
   assert.equal(opened.gameSources, true);
-  const changed = layoutOf('games', { changed: (setting) => setting.key === 'epic_auto_sync' });
-  assert.deepEqual(changed.groups.find((group) => group.name === 'Epic Games options').settings.map((setting) => setting.key), ['epic_auto_sync']);
+  const changed = layoutOf('games', { changed: (setting) => setting.key === 'epic_exclude_games' });
+  assert.deepEqual(changed.groups.find((group) => group.name === 'Epic Games options').settings.map((setting) => setting.key), ['epic_exclude_games']);
 });
 
 function byKeyCount(group) {
@@ -195,8 +195,8 @@ test('a JSON setting stored as empty JSON is at its default', () => {
 });
 
 test('a changed launcher option shows in the Games tab', () => {
-  const layout = layoutOf('games', { changed: (setting) => setting.key === 'epic_auto_sync' });
-  assert.ok(keysOf(layout.groups).includes('epic_auto_sync'));
+  const layout = layoutOf('games', { changed: (setting) => setting.key === 'epic_exclude_games' });
+  assert.ok(keysOf(layout.groups).includes('epic_exclude_games'));
 });
 
 test('turning off QR pairing shows it beside Allow pairing; HDR dynamic metadata and the NVENC power choice are everyday', () => {

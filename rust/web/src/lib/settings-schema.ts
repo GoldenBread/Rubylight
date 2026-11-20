@@ -58,6 +58,7 @@ const basicKeys = new Set([
   'controller',
   'gamepad',
   'forward_rumble',
+  'couch_menu',
   'terminate_on_pause',
   'enable_discovery',
   'internet_play',
@@ -147,10 +148,10 @@ const GROUP_ORDER: Record<TabId, readonly string[]> = {
   ],
   sound: [
     'Sound', 'Audio devices', 'Virtual speakers', 'Microphone', 'Input devices', 'Keyboard',
-    'Mouse, pen and touch', 'Controllers', 'Steam Deck and back grips', 'USB devices',
+    'Mouse, pen and touch', 'Controllers', 'Couch menu', 'Steam Deck and back grips', 'USB devices',
   ],
   games: [
-    'App behavior', 'Game sources', 'Steam options', 'Epic Games options', 'Battle.net options', 'Microsoft Store and Xbox options',
+    'App behavior', 'Game sources', 'Library sync', 'Steam options', 'Epic Games options', 'Battle.net options', 'Microsoft Store and Xbox options',
     'EA app options', 'Ubisoft Connect options', 'GOG options', 'Playnite', 'Playnite launch focus', 'Game folders',
     'Covers', 'Play together', 'Lossless Scaling', 'Commands around every app', 'Commands from devices',
   ],
