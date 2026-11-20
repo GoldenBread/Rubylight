@@ -22,8 +22,6 @@
     <string name="pad_edit_hide">Hide</string>
     <string name="pad_edit_show">Show</string>
     <string name="pad_edit_reset">Reset</string>
-    <string name="pad_edit_add_wasd">Add WASD stick</string>
-    <string name="pad_edit_add_touchpad">Add touchpad</string>
     <string name="pad_edit_preset">Preset</string>
     <string name="pad_edit_glyphs">Button glyphs</string>
     <string name="pad_pointer_touchpad">Pointer touchpad</string>

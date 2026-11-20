@@ -21,10 +21,8 @@
     <string name="pad_edit_hide">Hide</string>
     <string name="pad_edit_show">Show</string>
     <string name="pad_edit_reset">Reset</string>
-    <string name="pad_edit_add_wasd">WASD 스틱 추가</string>
     <string name="title_osc_auto_hide">컨트롤러가 연결되어 있으면 화면 컨트롤 숨기기</string>
     <string name="summary_osc_auto_hide">게임패드를 들면 화면 공간을 넓히고, 연결이 끊기면 컨트롤을 다시 표시합니다. 터치 컨트롤과 컨트롤러를 동시에 사용하는 경우가 아니면 켜 두세요.</string>
-    <string name="pad_edit_add_touchpad">터치패드 추가</string>
     <string name="pad_edit_preset">프리셋</string>
     <string name="pad_edit_glyphs">버튼 글리프</string>
     <string name="pad_pointer_touchpad">포인터 터치패드</string>
