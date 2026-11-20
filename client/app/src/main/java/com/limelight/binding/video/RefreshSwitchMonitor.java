@@ -72,7 +72,8 @@ public final class RefreshSwitchMonitor {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? mode.getAlternativeRefreshRates() : null);
     }
 
-    static RefreshSwitchDiagnosis.Conditions conditions(Context context) {
+    /** What may hold the screen below a vote: battery saver, critical heat, the user's peak refresh setting. */
+    public static RefreshSwitchDiagnosis.Conditions conditions(Context context) {
         boolean batterySaver = false;
         boolean thermalCritical = false;
         PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);

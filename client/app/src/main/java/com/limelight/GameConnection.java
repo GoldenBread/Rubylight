@@ -15,6 +15,7 @@ import com.limelight.binding.video.DiscardingDecoderRenderer;
 import com.limelight.binding.video.DisplayCapsReporter;
 import com.limelight.binding.video.FramePacingPolicy;
 import com.limelight.binding.video.HdrPolicy;
+import com.limelight.binding.video.RefreshSwitchMonitor;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.binding.video.MediaCodecHelper;
 import com.limelight.binding.video.PerformanceOverlay;
@@ -506,12 +507,14 @@ final class GameConnection {
 
         // If the user requested frame pacing using a capped FPS, we will need to change our
         // desired FPS setting here in accordance with the active display refresh rate, judged
-        // against the mode the stream asks for as well (FramePacingPolicy.limitedFrameRate).
+        // against the mode the stream asks for as well, unless the screen may stay below it
+        // (FramePacingPolicy.limitRefreshHz, limitedFrameRate).
         int roundedRefreshRate = Math.round(displayRefreshRate);
         int chosenFrameRate = game.prefConfig.fps;
         if (game.prefConfig.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS) {
-            int limited = FramePacingPolicy.limitedFrameRate(game.prefConfig.fps, displayRefreshRate,
-                    game.desiredRefreshRate);
+            float limitHz = FramePacingPolicy.limitRefreshHz(game.desiredRefreshRate, displayRefreshRate,
+                    RefreshSwitchMonitor.conditions(game));
+            int limited = FramePacingPolicy.limitedFrameRate(game.prefConfig.fps, displayRefreshRate, limitHz);
             if (limited == FramePacingPolicy.LIMIT_ABOVE_SCREEN) {
                 // Use frame drops when rendering above the screen frame rate
                 game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;

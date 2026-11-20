@@ -85,6 +85,20 @@ public final class FramePacingPolicy {
         return 1_000_000_000_000L / fpsMilliHz;
     }
 
+    /**
+     * The refresh Balanced with FPS limit judges its cap by: the rate of the mode the stream asks for
+     * (askedHz), unless the screen may stay below it. Under battery saver or critical heat Android may
+     * refuse the switch, so the rate the screen shows when the stream starts counts (startHz, as
+     * GameVideoOutput.prepareDisplayForRendering gives it), and the user's peak refresh setting caps it
+     * (RefreshSwitchMonitor.conditions; unknown is 0).
+     */
+    public static float limitRefreshHz(float askedHz, float startHz, RefreshSwitchDiagnosis.Conditions conditions) {
+        float hz = askedHz;
+        if (conditions.batterySaver || conditions.thermalCritical) hz = Math.min(hz, startHz);
+        if (conditions.peakSettingHz > 0) hz = Math.min(hz, conditions.peakSettingHz);
+        return hz;
+    }
+
     /** limitedFrameRate: the stream is over 3 fps faster than the screen, so Balanced drops the surplus. */
     public static final int LIMIT_ABOVE_SCREEN = -1;
     /** limitedFrameRate: a refresh of 49 Hz or less is taken as bogus, and Balanced shows the stream. */
@@ -94,12 +108,12 @@ public final class FramePacingPolicy {
      * The frame rate Balanced with FPS limit asks the PC for, or LIMIT_ABOVE_SCREEN or LIMIT_BOGUS_SCREEN
      * where Balanced takes over. Like Smoothest video it shows every frame in turn, so a stream as fast
      * as the screen would fill the display's queue: it is capped one below the refresh (59 fps at 60 Hz).
-     * screenHz is the lower of the screen's rate when the stream starts and askedHz, the rate of the mode
-     * the stream asks for (GameVideoOutput.prepareDisplayForRendering). A stream at the screen's rate
-     * that asks for a whole multiple of it is not capped: 60 fps toward 120 Hz from a screen still at 60
-     * would otherwise run 59 fps on 120 Hz, which shows two frames a second for three refreshes. A screen
-     * held at 60 Hz (battery saver, the user's own limit) then shows the stream uncapped, as Smoothest
-     * video does. From Moonlight Android's Game.onCreate (GPL-3.0, Cameron Gutman and contributors).
+     * screenHz is the lower of the screen's rate when the stream starts and the rate of the mode the
+     * stream asks for (GameVideoOutput.prepareDisplayForRendering); askedHz is that mode's rate where the
+     * screen can reach it (limitRefreshHz). A stream at the screen's rate that asks for a whole multiple
+     * of it is not capped: 60 fps toward 120 Hz from a screen still at 60 would otherwise run 59 fps on
+     * 120 Hz, which shows two frames a second for three refreshes. From Moonlight Android's Game.onCreate
+     * (GPL-3.0, Cameron Gutman and contributors).
      */
     public static int limitedFrameRate(int fps, float screenHz, float askedHz) {
         int screen = Math.round(screenHz);

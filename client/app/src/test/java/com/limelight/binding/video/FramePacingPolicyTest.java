@@ -233,6 +233,25 @@ public class FramePacingPolicyTest {
         assertEquals(FramePacingPolicy.LIMIT_BOGUS_SCREEN, FramePacingPolicy.limitedFrameRate(48, 48f, 96f));
     }
 
+    @Test public void theFpsLimitJudgesTheAskedRefreshUnlessTheScreenMayStayBelowIt() {
+        RefreshSwitchDiagnosis.Conditions none = RefreshSwitchDiagnosis.Conditions.NONE;
+        assertEquals(120f, FramePacingPolicy.limitRefreshHz(120f, 60f, none), 0f);
+        // Battery saver or critical heat may refuse the switch: the rate the screen starts at.
+        RefreshSwitchDiagnosis.Conditions saver = new RefreshSwitchDiagnosis.Conditions(true, false, 0f);
+        RefreshSwitchDiagnosis.Conditions hot = new RefreshSwitchDiagnosis.Conditions(false, true, 0f);
+        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 60f, saver), 0f);
+        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 60f, hot), 0f);
+        assertEquals("never above the asked rate", 60f, FramePacingPolicy.limitRefreshHz(60f, 120f, saver), 0f);
+        // The user's peak refresh setting caps it; unknown (0) or unlimited does not.
+        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 120f, new RefreshSwitchDiagnosis.Conditions(false, false, 60f)), 0f);
+        assertEquals(90f, FramePacingPolicy.limitRefreshHz(120f, 60f, new RefreshSwitchDiagnosis.Conditions(false, false, 90f)), 0f);
+        assertEquals(120f, FramePacingPolicy.limitRefreshHz(120f, 60f,
+                new RefreshSwitchDiagnosis.Conditions(false, false, Float.POSITIVE_INFINITY)), 0f);
+        // So the limit is back at 59 fps on a screen held at 60 Hz.
+        assertEquals(59, FramePacingPolicy.limitedFrameRate(60, 60f, FramePacingPolicy.limitRefreshHz(120f, 60f, saver)));
+        assertEquals(60, FramePacingPolicy.limitedFrameRate(60, 60f, FramePacingPolicy.limitRefreshHz(120f, 60f, none)));
+    }
+
     @Test public void balancedKeepsTheVsyncQueueWithoutPhaseLockOrWithLateFramesKept() {
         long hz60 = 1_000_000_000L / 60;
         assertTrue("another Moonlight host keeps its queue",
