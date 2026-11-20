@@ -1115,6 +1115,42 @@ fn a_window_crop_copies_only_the_client_area() -> Result<()> {
 }
 
 #[test]
+#[ignore = "requires native D3D11 texture copies and readback"]
+fn a_source_description_is_read_once_and_keeps_working_across_sizes() -> Result<()> {
+    let _com = ComGuard::new()?;
+    let gpu = Device::new("")?;
+    let upload = |width: u32, height: u32| {
+        GpuImage::upload(
+            &gpu,
+            &Image {
+                width,
+                height,
+                stride: width * 4,
+                bytes: vec![0u8; (width * height * 4) as usize],
+                captured: Instant::now(),
+                pixel: Pixel::Bgra8,
+            },
+        )
+    };
+    let small = upload(4, 4)?;
+    let large = upload(8, 8)?;
+    let mut pool = GpuPool::default();
+    // The same source texture is described once and then copied from the
+    // remembered description.
+    let first = pool.copy(&gpu, &small.texture, None)?.unwrap();
+    assert_eq!((first.width, first.height), (4, 4));
+    let second = pool.copy(&gpu, &small.texture, None)?.unwrap();
+    assert_eq!((second.width, second.height), (4, 4));
+    // A different source size still replaces the pool's textures.
+    let resized = pool.copy(&gpu, &large.texture, None)?.unwrap();
+    assert_eq!((resized.width, resized.height), (8, 8));
+    // And the first source, described before the resize, still copies.
+    let again = pool.copy(&gpu, &small.texture, None)?.unwrap();
+    assert_eq!((again.width, again.height), (4, 4));
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires a moving desktop, WGC and native AMD D3D12 sharing"]
 fn wgc_compute_snapshots_match_d3d11_during_motion() -> Result<()> {
     enable_dpi_awareness();

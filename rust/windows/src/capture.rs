@@ -1302,7 +1302,17 @@ pub(crate) struct GpuPool {
     /// Copies on a compute queue instead of the D3D11 graphics queue,
     /// where they wait behind a game's rendering.
     pub(crate) compute: Option<crate::compute::Handoff>,
+    /// Sources this pool copied from, with their descriptions: a texture's
+    /// description never changes, and holding a reference pins each source,
+    /// so its address cannot be reused by another texture while the entry
+    /// lives. Each copy reads its description from here instead of calling
+    /// GetDesc on the source every frame.
+    sources: Vec<(ID3D11Texture2D, D3D11_TEXTURE2D_DESC)>,
 }
+/// How many source descriptions a pool remembers, one entry per texture a
+/// backend copies from: a few frame-pool buffers, ring slots or duplicated
+/// surfaces. The oldest is forgotten when more arrive.
+const SOURCE_CACHE: usize = 8;
 const GPU_SNAPSHOT_CAPACITY: usize = 8;
 
 fn snapshot_capacity<T>(textures: &[std::sync::Arc<T>]) -> bool {
@@ -1360,8 +1370,22 @@ impl GpuPool {
         // SAFETY: `source` and the pool's textures are live on `gpu.device` with matching size and
         // format, and that device's context is multithread-protected.
         unsafe {
-            let mut desc = D3D11_TEXTURE2D_DESC::default();
-            source.GetDesc(&mut desc);
+            let mut desc = match self
+                .sources
+                .iter()
+                .find(|(texture, _)| texture.as_raw() == source.as_raw())
+            {
+                Some((_, cached)) => *cached,
+                None => {
+                    let mut desc = D3D11_TEXTURE2D_DESC::default();
+                    source.GetDesc(&mut desc);
+                    if self.sources.len() >= SOURCE_CACHE {
+                        self.sources.remove(0);
+                    }
+                    self.sources.push((source.clone(), desc));
+                    desc
+                }
+            };
             let pixel = match desc.Format {
                 DXGI_FORMAT_B8G8R8A8_UNORM => Pixel::Bgra8,
                 DXGI_FORMAT_R16G16B16A16_FLOAT => Pixel::RgbaF16,
