@@ -1085,14 +1085,14 @@ fn cmsg_int(control: &[u8], level: i32, kind: i32) -> Option<usize> {
 
 /// `SOL_SOCKET` and `SO_TIMESTAMPNS` (which also names its control message, `SCM_TIMESTAMPNS`),
 /// as Linux and Android define them on every architecture Nightjar builds for.
-#[cfg(any(target_os = "linux", target_os = "android", test))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const SOL_SOCKET: i32 = 1;
-#[cfg(any(target_os = "linux", target_os = "android", test))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const SO_TIMESTAMPNS: i32 = 35;
 
 /// The kernel's receive time of a datagram, in nanoseconds on `CLOCK_REALTIME`, from its
 /// `SCM_TIMESTAMPNS` control message (a `timespec`). None without one, or before the epoch.
-#[cfg(any(target_os = "linux", target_os = "android", test))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn cmsg_timestamp_ns(control: &[u8]) -> Option<u64> {
     const SEC: usize = std::mem::size_of::<std::os::raw::c_long>();
     let data = cmsg_data(control, SOL_SOCKET, SO_TIMESTAMPNS)?;
