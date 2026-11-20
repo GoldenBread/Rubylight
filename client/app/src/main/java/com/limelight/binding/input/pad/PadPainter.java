@@ -251,9 +251,9 @@ final class PadPainter {
             case DPAD: drawDpad(canvas, left, top, width, height, state); break;
             case FACE: drawFace(canvas, left, top, width, height, state); break;
             case PILL: drawPill(canvas, control, left, top, width, height, state); break;
-            case PAD: drawPad(canvas, left, top, width, height, state, .2f,
+            case PAD: drawPad(canvas, left, top, width, height, state, PAD_CORNER,
                     control == PadLayout.Control.LEFT_PAD ? "L" : "R", null); break;
-            case TOUCHPAD: drawPad(canvas, left, top, width, height, state, .18f, null, state.label); break;
+            case TOUCHPAD: drawPad(canvas, left, top, width, height, state, TOUCHPAD_CORNER, null, state.label); break;
             case FACE_BUTTON: drawFaceButton(canvas, control, left, top, width, height, state); break;
             case DPAD_ARM: drawDpadArm(canvas, control, left, top, width, height, state); break;
             default: drawRound(canvas, control, left, top, width, height, state); break;
@@ -261,6 +261,8 @@ final class PadPainter {
     }
 
     /** How far outside a control's box the editor draws its outline and, at the outline's corners, its handles. */
+    /** A Steam trackpad's and the pointer touchpad's corner radius, as a share of their shorter side. */
+    private static final float PAD_CORNER = .2f, TOUCHPAD_CORNER = .18f;
     static final float OUTLINE_DP = 3;
     /** The radius of the editor's round corner handles. */
     static final float HANDLE_DP = 6;
@@ -292,9 +294,10 @@ final class PadPainter {
     /**
      * The press cue past a control's edge, drawn under the controls by {@link PadControlView.HaloLayer}: an amber halo
      * around every held part that fades as it eases back, and a ring that runs out from it the moment it went down, so a
-     * thumb covering a small button still shows it answered. Face buttons, D-pad arms, pills and round buttons have one;
-     * sticks and touchpads show their own motion. {@code alpha} is the control's own, and 0 draws nothing. Returns
-     * whether a ring is still running, so the layer draws the next frame.
+     * thumb covering a small button still shows it answered. Every part a player presses has one: face buttons, the
+     * D-pad's arms, pills, round buttons, a stick's click, each held key of the WASD stick on its side of the ring and a
+     * finger on a touchpad; pushing an analog stick shows in its arc instead. {@code alpha} is the control's own, and 0
+     * draws nothing. Returns whether a ring is still running, so the layer draws the next frame.
      */
     boolean drawHalo(Canvas canvas, PadLayout.Control control, float left, float top, float width, float height,
                      State state, float alpha, long now) {
@@ -364,6 +367,36 @@ final class PadPainter {
                     running |= haloRound(canvas, rect, r, state, i, alpha, now);
                     canvas.restoreToCount(saved);
                 }
+                break;
+            }
+            case STICK: {
+                stickGeometry(Math.min(width, height));
+                float base = stickBase, cx = left + width / 2, cy = top + height / 2;
+                if (control != PadLayout.Control.WASD) {
+                    running = haloOval(canvas, cx, cy, base, base, state, 0, alpha, now);
+                    break;
+                }
+                // Each held key on its own side of the ring, as the D-pad's arms: up, down, left, right.
+                float reach = base + (HALO_DP + RIPPLE_DP) * density, side = base * .5f;
+                for (int i = 0; i < PARTS; i++) {
+                    if (state.press[i] <= 0 && !rippling(state, i, now)) continue;
+                    int saved = canvas.save();
+                    switch (i) {
+                        case 0: canvas.clipRect(cx - reach, cy - reach, cx + reach, cy - side); break;
+                        case 1: canvas.clipRect(cx - reach, cy + side, cx + reach, cy + reach); break;
+                        case 2: canvas.clipRect(cx - reach, cy - reach, cx - side, cy + reach); break;
+                        default: canvas.clipRect(cx + side, cy - reach, cx + reach, cy + reach); break;
+                    }
+                    running |= haloOval(canvas, cx, cy, base, base, state, i, alpha, now);
+                    canvas.restoreToCount(saved);
+                }
+                break;
+            }
+            case PAD:
+            case TOUCHPAD: {
+                rect.set(left + edge, top + edge, left + width - edge, top + height - edge);
+                float corner = control.shape == PadLayout.Shape.PAD ? PAD_CORNER : TOUCHPAD_CORNER;
+                running = haloRound(canvas, rect, Math.min(rect.width(), rect.height()) * corner, state, 0, alpha, now);
                 break;
             }
             default:

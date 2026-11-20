@@ -1429,6 +1429,94 @@ public class ModernControllerTest {
         controller.destroy();
     }
 
+    /**
+     * Every control a player presses answers past its edge, where a thumb on it leaves the halo in view: each control of
+     * the layout with the Steam Controller's added, the WASD stick's keys, a stick's click and a finger on the pointer
+     * touchpad. Once let go and the ring has run out, nothing stays lit.
+     */
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    public void everyPressableControlShowsAHaloPastItsEdge() {
+        prefs.oscSteamControls = true;
+        ModernController controller = controller(GAME);
+        PadLayout shown = controller.layout().copy();
+        shown.spec(PadLayout.Control.WASD).hidden = false;
+        shown.spec(PadLayout.Control.POINTER_PAD).hidden = false;
+        for (PadLayout.Control control : PadLayout.Control.values()) {
+            if (control.steam) shown.spec(control).hidden = false;
+        }
+        controller.save(shown, false);
+        controller.refreshLayout();
+        layout();
+        java.util.Set<PadLayout.Shape> shapes = java.util.EnumSet.noneOf(PadLayout.Shape.class);
+        for (PadLayout.Control control : PadLayout.Control.values()) {
+            PadControlView view = controller.view(control);
+            if (view == null || view.getVisibility() != View.VISIBLE) continue;
+            press(view);
+            assertTrue(control + " lights past its box", litOutside(haloPixels(), view) > 0);
+            view.up(0, 400);
+            if (PadInput.latches(control)) {
+                // A grip holds from one tap to the next.
+                assertTrue(control + " still held", litOutside(haloPixels(), view) > 0);
+                view.down(0, view.getWidth() / 2f, view.getHeight() / 2f, 500);
+                view.up(0, 600);
+            }
+            ShadowLooper.idleMainLooper(PadPainter.RELEASE_MS + PadPainter.RIPPLE_MS + 40,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+            assertEquals(control + " leaves nothing once let go", 0, litOutside(haloPixels(), null));
+            shapes.add(control.shape);
+        }
+        // The split members' shapes are covered by the preview's split captures and drawHalo's own cases.
+        for (PadLayout.Shape shape : new PadLayout.Shape[] {PadLayout.Shape.FACE, PadLayout.Shape.DPAD,
+                PadLayout.Shape.STICK, PadLayout.Shape.PILL, PadLayout.Shape.ROUND, PadLayout.Shape.PAD,
+                PadLayout.Shape.TOUCHPAD}) {
+            assertTrue(shape + " was pressed", shapes.contains(shape));
+        }
+        controller.destroy();
+    }
+
+    /** Presses {@code view} the way a player does: a face button, a D-pad arm, a WASD key, a stick's click or the middle. */
+    private static void press(PadControlView view) {
+        float w = view.getWidth(), h = view.getHeight();
+        switch (view.control.shape) {
+            case FACE:
+                view.down(0, PadInput.FACE_CENTERS[0][0] * w, PadInput.FACE_CENTERS[0][1] * h, 100);
+                break;
+            case DPAD:
+                view.down(0, w / 2, h * .15f, 100);
+                break;
+            case STICK:
+                if (view.control == PadLayout.Control.WASD) {
+                    view.down(0, w / 2, h / 2, 100);
+                    view.move(0, w / 2, h * .1f);
+                } else {
+                    // A double tap clicks a stick.
+                    view.down(0, w / 2, h / 2, 100);
+                    view.up(0, 150);
+                    view.down(0, w / 2, h / 2, 200);
+                }
+                break;
+            default:
+                view.down(0, w / 2, h / 2, 100);
+                break;
+        }
+    }
+
+    /** How many pixels are lit outside {@code view}'s box, or anywhere when it is null. */
+    private static int litOutside(Bitmap pixels, View view) {
+        int width = pixels.getWidth(), height = pixels.getHeight();
+        int[] argb = new int[width * height];
+        pixels.getPixels(argb, 0, width, 0, 0, width, height);
+        int lit = 0;
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (view != null && x >= view.getLeft() && x < view.getRight() && y >= view.getTop()
+                        && y < view.getBottom()) continue;
+                if (Color.alpha(argb[y * width + x]) > 0) lit++;
+            }
+        }
+        return lit;
+    }
+
     /** At opacity 0 a press neither rings nor leaves a halo, and letting go drops it at once: nothing is drawn. */
     @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
     public void atOpacityZeroAPressHasNoHaloAndNoEasing() {
