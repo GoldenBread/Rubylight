@@ -59,12 +59,12 @@ jobs:
           workspaces: 'client/protocol -> target'
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # The media libraries macos-deps.sh builds (SDL, Opus, dav1d, FFmpeg), per architecture.
-      # Its prefix is named after the script's own hash and is reused once complete.
+      # Its prefix is named after the hash of the script and its FFmpeg patches and is reused once complete.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: media-cache
         with:
           path: client/protocol/target/macos-native/*/prefix
-          key: macos-media-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-deps.sh') }}
+          key: macos-media-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-deps.sh', 'client/protocol/desktop/ffmpeg-patches/macos/*.patch') }}
       - name: Build the application and verify a relocated copy
         run: |
           python3 desktop/package-macos.py --debug
@@ -153,7 +153,7 @@ jobs:
         id: media-cache
         with:
           path: client/protocol/target/macos-native/*/prefix
-          key: macos-media-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-deps.sh') }}
+          key: macos-media-${{ runner.arch }}-${{ hashFiles('client/protocol/desktop/macos-deps.sh', 'client/protocol/desktop/ffmpeg-patches/macos/*.patch') }}
       # As release.yml's arm64 leg packages it: a release build, zipped, then unpacked and checked.
       - name: Package the release Nightjar.app with KosmicKrisp and the PyroWave SDK
         run: |

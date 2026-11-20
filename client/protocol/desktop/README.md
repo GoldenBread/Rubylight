@@ -7,7 +7,8 @@ The first half of this page covers installing and using the client; the second h
 ## macOS
 
 The Mac port shares the Rust launcher, pairing, library, audio and input code with the other desktop clients. FFmpeg
-VideoToolbox decodes standard video. SDL Metal imports NV12 and P010 Core Video surfaces, with a
+VideoToolbox decodes standard video into Metal-compatible buffers (`ffmpeg-patches/macos/`; stock FFmpeg asks for
+OpenGL-compatible ones). SDL Metal imports NV12 and P010 Core Video surfaces, with a
 mapped-plane fallback. The client probes HEVC and AV1 with fixtures before offering those formats.
 
 ![Nightjar's offline demo library rendered on macOS with Metal](../../docs/assets/shots/macos-home.webp)

@@ -127,7 +127,12 @@ def main():
                                 env=env, stdout=stream, stderr=subprocess.STDOUT)
     if result.returncode:
         raise SystemExit(f"{log}\n" + "\n".join(log.read_text().splitlines()[-20:]))
-    prefix = Path(log.read_text().splitlines()[-1])
+    lines = log.read_text().splitlines()
+    # The patches applied to the media sources are worth seeing in a build log; the rest stays in the file.
+    for line in lines:
+        if line.startswith("macos-deps: "):
+            print(line)
+    prefix = Path(lines[-1])
     pkgconfig = str(prefix / "lib/pkgconfig")
     env.update(NIGHTJAR_FFMPEG_DIR=str(prefix), PKG_CONFIG_PATH=pkgconfig, PKG_CONFIG_LIBDIR=pkgconfig)
     if arch != host:

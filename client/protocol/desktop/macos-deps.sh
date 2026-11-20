@@ -10,7 +10,11 @@ case "$arch" in
   x86_64) cpu=x86_64 ;;
   *) echo "Unsupported macOS architecture: $arch" >&2; exit 1 ;;
 esac
-stamp=$(shasum -a 256 "$0" | cut -c1-12)
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Nightjar's changes to FFmpeg on macOS (VideoToolbox into Metal-compatible buffers, Nightjar issue
+# 141); a changed patch selects a new prefix, as a changed script does.
+ffmpeg_patches=("$here"/ffmpeg-patches/macos/*.patch)
+stamp=$(cat "$0" "${ffmpeg_patches[@]}" | shasum -a 256 | cut -c1-12)
 dav1d_asm=()
 ffmpeg_asm=()
 if [[ "$arch" == x86_64 ]] && ! command -v nasm >/dev/null; then
@@ -44,6 +48,11 @@ fetch() {
 }
 fetch SDL https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20.tar.gz f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f
 fetch ffmpeg https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+# fetch extracts a fresh copy, but a patch already applied is still recognised and skipped.
+for change in "${ffmpeg_patches[@]}"; do
+  patch -d "$work/ffmpeg" -p1 -R --dry-run -f <"$change" >/dev/null 2>&1 || patch -d "$work/ffmpeg" -p1 -f <"$change" >&2
+  echo "macos-deps: FFmpeg patch applied: ${change##*/}" >&2
+done
 fetch opus https://ftp.osuosl.org/pub/xiph/releases/opus/opus-1.6.1.tar.gz 6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
 fetch dav1d https://code.videolan.org/videolan/dav1d/-/archive/1.5.4/dav1d-1.5.4.tar.bz2 2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011
 
@@ -111,6 +120,8 @@ mkdir -p "$work/ffmpeg-build"
 mkdir -p "$prefix/licenses"/{SDL,FFmpeg,Opus,dav1d}
 cp "$work/SDL/LICENSE.txt" "$prefix/licenses/SDL/"
 cp "$work/ffmpeg/COPYING.LGPLv2.1" "$work/ffmpeg/LICENSE.md" "$prefix/licenses/FFmpeg/"
+# The LGPL asks for the changes with the libraries: the patches ship next to FFmpeg's licence.
+cp "${ffmpeg_patches[@]}" "$prefix/licenses/FFmpeg/"
 cp "$work/opus/COPYING" "$prefix/licenses/Opus/"
 cp "$work/dav1d/COPYING" "$prefix/licenses/dav1d/"
 touch "$prefix/.complete"
