@@ -187,6 +187,16 @@ fn hardware_adapter(desc: &DXGI_ADAPTER_DESC1) -> bool {
     desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0
         && (desc.VendorId, desc.DeviceId) != (0x1414, 0x8c)
 }
+/// Which of `candidates` (hardware adapters, in DXGI order) the probe opens
+/// when no display gives one: [`encoder_gpu::headless`] over their vendors
+/// and dedicated video memory, as the stream pins with no GPU chosen.
+fn headless_candidate(candidates: &[DXGI_ADAPTER_DESC1]) -> usize {
+    let adapters: Vec<(u32, u64)> = candidates
+        .iter()
+        .map(|desc| (desc.VendorId, desc.DedicatedVideoMemory as u64))
+        .collect();
+    encoder_gpu::headless(&adapters)
+}
 fn adapter_pnp_id(luid: windows::Win32::Foundation::LUID) -> Option<String> {
     use windows::Win32::Devices::Display::*;
     let mut info = DISPLAYCONFIG_ADAPTER_NAME::default();
@@ -586,6 +596,11 @@ impl Device {
             .as_ref()
             .map_or(Ok(None), |color| color.read().0.map_err(anyhow::Error::msg))
     }
+    /// [`Self::new_adapter`] with no GPU chosen. With no display, or one on an
+    /// Intel or software adapter, that is the GPU a stream would encode on,
+    /// which on a PC with AMD and NVIDIA cards is the one with the most video
+    /// memory: the AMF tests and examples that open `Device::new("")` then get
+    /// an NVIDIA device there and fail in AMF.
     pub fn new(name: &str) -> Result<Self> {
         Self::new_adapter(name, "", "")
     }
@@ -712,12 +727,7 @@ impl Device {
                 {
                     continue;
                 }
-                candidates.push((
-                    index,
-                    adapter,
-                    (desc.VendorId, desc.DedicatedVideoMemory as u64),
-                    description,
-                ));
+                candidates.push((index, adapter, desc, description));
             }
             if candidates.is_empty() {
                 if !adapter_name.is_empty() || !pnp_id.is_empty() {
@@ -729,9 +739,8 @@ impl Device {
             // mixes vendors the AMD or NVIDIA one with the most video memory),
             // else AMD first, then NVIDIA. Neither leaves the first one, which
             // the encoder refuses.
-            let adapters: Vec<(u32, u64)> = candidates.iter().map(|c| c.2).collect();
-            let (index, adapter, _, description) =
-                candidates.remove(encoder_gpu::headless(&adapters));
+            let descs: Vec<DXGI_ADAPTER_DESC1> = candidates.iter().map(|c| c.2).collect();
+            let (index, adapter, _, description) = candidates.remove(headless_candidate(&descs));
             let display = Display {
                 device_id: String::new(),
                 display_name: String::new(),

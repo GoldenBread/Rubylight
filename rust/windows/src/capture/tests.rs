@@ -184,6 +184,14 @@ fn hardware_adapter_selection_keeps_other_devices_and_rejects_software() {
 fn headless_hardware_device_encodes_without_a_display_output() -> Result<()> {
     let _com = ComGuard::new()?;
     let gpu = Device::without_display("", "")?;
+    // A PC whose bigger card is NVIDIA's encodes there, not with AMF.
+    if !encoder_gpu::is_amd(gpu.vendor) {
+        eprintln!(
+            "skipped: without a display this PC encodes on {}, not an AMD GPU",
+            gpu.display.adapter
+        );
+        return Ok(());
+    }
     assert!(gpu.output.is_none());
     assert!(gpu.display.display_name.is_empty());
     let image = Image {
@@ -762,6 +770,24 @@ fn the_probe_without_a_display_opens_the_gpu_the_stream_pins() {
     assert_eq!(probed.name, "NVIDIA GeForce RTX 5090");
     assert_eq!(pinned_choice(&gpus, None, "", "").0, probed.name);
     assert_eq!(headless_gpu(&gpus).unwrap().name, probed.name);
+    // The adapter descriptions `Device::without_display` chooses among: the
+    // iGPU's shared memory, larger than the card's, must not count.
+    let desc = |vendor, dedicated: u64, shared: u64| DXGI_ADAPTER_DESC1 {
+        VendorId: vendor,
+        DedicatedVideoMemory: dedicated as usize,
+        SharedSystemMemory: shared as usize,
+        ..Default::default()
+    };
+    let descs = [
+        desc(0x1002, 512 << 20, 48 << 30),
+        desc(0x10de, 32 << 30, 16 << 30),
+    ];
+    assert_eq!(headless_candidate(&descs), 1);
+    // One vendor's adapters alone pin nothing: the first, as before.
+    assert_eq!(
+        headless_candidate(&[desc(0x1002, 1 << 30, 0), desc(0x1002, 12 << 30, 0)]),
+        0
+    );
 }
 #[test]
 fn a_stream_pins_to_the_biggest_radeon_and_leaves_a_display_already_on_one() {
