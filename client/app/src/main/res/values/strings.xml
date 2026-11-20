@@ -516,8 +516,7 @@
     <string name="upscaling_bilinear">Smooth</string>
     <string name="upscaling_fsr1">Sharp (FSR)</string>
     <string name="upscaling_sgsr1">Sharp, Snapdragon (SGSR)</string>
-    <string name="upscaling_sgsr2">Temporal, Snapdragon (SGSR 2)</string>
-    <string name="summary_upscaling">How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.</string>
+    <string name="summary_upscaling">How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery. HDR streams are enlarged without them.</string>
     <string name="title_upscaling_sharpness">Upscaling sharpness</string>
     <string name="summary_upscaling_sharpness" formatted="false">How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>

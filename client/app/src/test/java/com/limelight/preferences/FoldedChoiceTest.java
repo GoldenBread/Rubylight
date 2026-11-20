@@ -102,4 +102,15 @@ public class FoldedChoiceTest {
         assertEquals("strong", config.rumbleFeel);
         assertFalse(FoldedChoice.migrate(prefs()));
     }
+
+    @Test
+    public void aStoredTemporalUpscalingBecomesSgsr() {
+        prefs().edit().putString("upscaling_mode", "sgsr2").commit();
+        assertEquals(com.limelight.binding.video.UpscalingPolicy.Mode.SGSR1,
+                PreferenceConfiguration.readPreferences(app()).upscalingMode);
+        assertEquals("sgsr1", prefs().getString("upscaling_mode", null));
+        prefs().edit().putString("upscaling_mode", "fsr1").commit();
+        PreferenceConfiguration.readPreferences(app());
+        assertEquals("fsr1", prefs().getString("upscaling_mode", null));
+    }
 }

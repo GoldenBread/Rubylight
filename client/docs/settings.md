@@ -381,7 +381,7 @@ Implementation: [HostStreamSettings.java](../app/src/main/java/com/limelight/pre
 | Frame rate | Same as all PCs, or 1–1000 FPS with up to two decimal places | Request fractional rates such as 59.94 or 119.88 Hz. **Use this screen** fills in maximum display refresh; VRR uses the panel maximum. |
 | Bitrate | Same as all PCs, or 0.5–2000 Mbps with up to three decimal places | Set this PC's bandwidth budget. The host applies its own ceiling; Nightjar follows the bitrate it reports. |
 | Video codec | Same as all PCs, Automatic, Prefer AV1, Prefer HEVC, H.264, PyroWave | Compare codecs on this PC and device. PyroWave is listed only for PCs that can stream it, and says why when this device can't decode it. |
-| Upscaling | Same as all PCs, Off, Smooth, Sharp (FSR), Sharp, Snapdragon (SGSR), Temporal, Snapdragon (SGSR 2) | Choose a scaler for this PC's lower-resolution SDR stream. |
+| Upscaling | Same as all PCs, Off, Smooth, Sharp (FSR), Sharp, Snapdragon (SGSR) | Choose a scaler for this PC's lower-resolution SDR stream. |
 | Upscaling sharpness | Same as all PCs, or 0–100% | Sharpening strength for the sharp scalers. |
 | HDR / Variable refresh rate | Same as all PCs, On, Off | Enable for a compatible host and screen. |
 | Frame pacing | Same as all PCs, Lowest latency, Balanced, Balanced with FPS limit, Smoothest video (more delay) | Pick this PC's trade-off between latency and smoothness. Variable refresh rate replaces it with Lowest latency. |

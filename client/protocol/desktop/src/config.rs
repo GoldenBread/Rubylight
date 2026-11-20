@@ -316,18 +316,45 @@ pub enum QualityMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "StoredUpscaling")]
 pub enum Upscaling {
     #[default]
     Bilinear,
     Fsr1,
     Sgsr1,
-    /// Temporal upscaling (`stream::temporal`), SGSR 1 where the GPU refuses it.
+    /// Temporal upscaling (`stream::temporal`), SGSR 1 where the GPU refuses it. Not offered any more:
+    /// a stored value reads as SGSR 1 (`StoredUpscaling`), so nothing selects this.
+    #[allow(dead_code)]
     Sgsr2,
     /// The GPU vendor's video super resolution and, on NVIDIA, RTX Video HDR (`stream::enhance`);
     /// offered only where the probe finds them (Direct3D 11).
     Ai,
     /// macOS 13+ MetalFX spatial scaler, offered after a device probe.
     MetalFx,
+}
+
+/// How a stored upscaling reads: the removed Temporal (SGSR 2) choice, in the settings file and in every
+/// PC, game and profile layer, becomes SGSR 1.
+#[derive(Deserialize)]
+enum StoredUpscaling {
+    Bilinear,
+    Fsr1,
+    Sgsr1,
+    Sgsr2,
+    Ai,
+    MetalFx,
+}
+
+impl From<StoredUpscaling> for Upscaling {
+    fn from(stored: StoredUpscaling) -> Self {
+        match stored {
+            StoredUpscaling::Bilinear => Self::Bilinear,
+            StoredUpscaling::Fsr1 => Self::Fsr1,
+            StoredUpscaling::Sgsr1 | StoredUpscaling::Sgsr2 => Self::Sgsr1,
+            StoredUpscaling::Ai => Self::Ai,
+            StoredUpscaling::MetalFx => Self::MetalFx,
+        }
+    }
 }
 
 impl Upscaling {

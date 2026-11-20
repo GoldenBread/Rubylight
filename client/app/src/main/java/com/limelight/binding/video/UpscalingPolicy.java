@@ -15,11 +15,18 @@ public final class UpscalingPolicy {
             this.value = value;
         }
 
+        /** The stored value of the Upscaling setting. The removed Temporal choice ("sgsr2") reads as SGSR. */
         public static Mode fromPreference(String value) {
+            if (SGSR2.value.equals(value)) return SGSR1;
             for (Mode mode : values()) {
                 if (mode.value.equals(value)) return mode;
             }
             return OFF;
+        }
+
+        /** A mode saved by name in a PC's, game's or profile's settings; the removed Temporal choice reads as SGSR. */
+        public static Mode fromStoredName(String name) {
+            return SGSR2.name().equals(name) ? SGSR1 : valueOf(name);
         }
     }
 

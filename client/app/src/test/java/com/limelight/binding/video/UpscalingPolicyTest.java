@@ -24,9 +24,10 @@ public class UpscalingPolicyTest {
         assertEquals(OFF, UpscalingPolicy.Mode.fromPreference(null));
         assertEquals(FSR1, UpscalingPolicy.Mode.fromPreference("fsr1"));
         assertEquals(SGSR1, UpscalingPolicy.Mode.fromPreference("sgsr1"));
-        assertEquals(SGSR2, UpscalingPolicy.Mode.fromPreference("sgsr2"));
-        // R.array.upscaling_names is indexed by ordinal: Temporal was appended last
-        assertEquals(4, SGSR2.ordinal());
+        // The removed Temporal choice reads as SGSR, stored in the setting or by name in a PC's profile.
+        assertEquals(SGSR1, UpscalingPolicy.Mode.fromPreference("sgsr2"));
+        assertEquals(SGSR1, UpscalingPolicy.Mode.fromStoredName("SGSR2"));
+        assertEquals(FSR1, UpscalingPolicy.Mode.fromStoredName("FSR1"));
     }
 
     @Test

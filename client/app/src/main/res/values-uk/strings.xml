@@ -412,9 +412,8 @@
     <string name="upscaling_bilinear">Згладжене</string>
     <string name="upscaling_fsr1">Чітке (FSR)</string>
     <string name="upscaling_sgsr1">Чітке, Snapdragon (SGSR)</string>
-    <string name="upscaling_sgsr2">Часове, Snapdragon (SGSR 2)</string>
     <string name="upscaling_temporal_unavailable">%1$s; часове масштабування недоступне</string>
-    <string name="summary_upscaling">Як збільшується трансляція, менша за екран. FSR і SGSR роблять краї чіткішими ціною навантаження на GPU й витрати заряду; «Часове» використовує попередні кадри, щоб відновити деталі, але в наших тестах картинка була м’якшою, ніж із SGSR, за навантаження на GPU у три–чотири рази більшого, тож залиште SGSR, якщо не хочете порівняти. HDR-трансляції збільшуються без них.</string>
+    <string name="summary_upscaling">Як збільшується потік, менший за екран. FSR і SGSR підвищують різкість країв коштом трохи часу GPU і батареї. HDR-потоки збільшуються без них.</string>
     <string name="title_upscaling_sharpness">Різкість масштабування</string>
     <string name="summary_upscaling_sharpness" formatted="false">Скільки різкості додають FSR або SGSR. Збільште, якщо краї розмиті; зменште, якщо навколо країв видно ореоли.</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>

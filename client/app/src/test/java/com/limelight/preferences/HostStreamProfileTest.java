@@ -85,8 +85,9 @@ public class HostStreamProfileTest {
         HostStreamProfile.deserialize("v2;upscaling=SGSR1:30").applyTo(config);
         assertEquals(UpscalingPolicy.Mode.SGSR1, config.upscalingMode);
         assertEquals(30, config.upscalingSharpness);
+        // The removed Temporal choice reads as SGSR.
         HostStreamProfile.deserialize("v2;upscaling=SGSR2:40").applyTo(config);
-        assertEquals(UpscalingPolicy.Mode.SGSR2, config.upscalingMode);
+        assertEquals(UpscalingPolicy.Mode.SGSR1, config.upscalingMode);
         assertEquals(40, config.upscalingSharpness);
     }
 

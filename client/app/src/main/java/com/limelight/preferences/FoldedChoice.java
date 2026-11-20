@@ -101,6 +101,11 @@ final class FoldedChoice {
         for (FoldedChoice folded : ALL) {
             changed |= folded.migrateOne(prefs, editor);
         }
+        // The removed Temporal (SGSR 2) upscaling reads as SGSR.
+        if ("sgsr2".equals(prefs.getString(PreferenceConfiguration.UPSCALING_PREF_STRING, null))) {
+            editor.putString(PreferenceConfiguration.UPSCALING_PREF_STRING, "sgsr1");
+            changed = true;
+        }
         if (changed) editor.apply();
         return changed;
     }

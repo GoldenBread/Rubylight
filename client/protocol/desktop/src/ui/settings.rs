@@ -1392,7 +1392,7 @@ impl Launcher {
             });
             rows.always();
             rows.group(en("Image"));
-            setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", if cfg!(target_os = "macos") { en("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare; MetalFX also adds a few milliseconds of delay. HDR streams are enlarged without them.") } else { en("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.") }, |ui, s| {
+            setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", &if cfg!(target_os = "macos") { format!("{} {}", tr("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery. HDR streams are enlarged without them."), tr("MetalFX sharpens too and adds a few milliseconds of delay.")) } else { tr("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery. HDR streams are enlarged without them.").to_owned() }, |ui, s| {
                 Combo::from_id_salt("upscaling").selected_text(tr(s.upscaling.label())).show_ui(ui, |ui| {
                     // AI enhancement is offered only where the GPU's probe finds the vendor's super
                     // resolution or RTX Video HDR. It loads the AMF runtime, so it runs once per
@@ -1400,7 +1400,7 @@ impl Launcher {
                     let probe = crate::stream::enhance::settings_probe(probe_device);
                     if probe.is_none() { ui.ctx().request_repaint_after(std::time::Duration::from_millis(200)); }
                     let ai_offered = probe.flatten().is_some();
-                    for mode in [crate::config::Upscaling::Bilinear, crate::config::Upscaling::Fsr1, crate::config::Upscaling::Sgsr1, crate::config::Upscaling::Sgsr2, crate::config::Upscaling::Ai, crate::config::Upscaling::MetalFx] {
+                    for mode in [crate::config::Upscaling::Bilinear, crate::config::Upscaling::Fsr1, crate::config::Upscaling::Sgsr1, crate::config::Upscaling::Ai, crate::config::Upscaling::MetalFx] {
                         if mode == crate::config::Upscaling::Ai && !ai_offered && s.upscaling != mode { continue; }
                         if mode == crate::config::Upscaling::MetalFx && !crate::stream::metalfx_supported() && s.upscaling != mode { continue; }
                         ui.selectable_value(&mut s.upscaling, mode, tr(mode.label()));

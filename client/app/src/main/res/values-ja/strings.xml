@@ -412,9 +412,8 @@
     <string name="upscaling_bilinear">スムーズ</string>
     <string name="upscaling_fsr1">シャープ（FSR）</string>
     <string name="upscaling_sgsr1">シャープ、Snapdragon（SGSR）</string>
-    <string name="upscaling_sgsr2">テンポラル、Snapdragon（SGSR 2）</string>
     <string name="upscaling_temporal_unavailable">%1$s。テンポラルアップスケーリングは利用できません</string>
-    <string name="summary_upscaling">画面より小さいストリームを拡大する方法です。FSR と SGSR は輪郭をくっきりさせますが、GPU の処理時間とバッテリーを少し使います。テンポラルは以前のフレームを再利用して細部を復元しますが、私たちのテストでは SGSR より柔らかい画になり、GPU の負荷は 3～4 倍でした。比較したいとき以外は SGSR のままにしてください。HDR ストリームはこれらを使わずに拡大されます。</string>
+    <string name="summary_upscaling">画面より小さいストリームの拡大方法です。FSRとSGSRはエッジをシャープにしますが、GPU時間とバッテリーを少し使います。HDRストリームはこれらを使わずに拡大されます。</string>
     <string name="title_upscaling_sharpness">アップスケーリングのシャープネス</string>
     <string name="summary_upscaling_sharpness" formatted="false">FSR または SGSR が加えるシャープ化の強さです。輪郭がぼやける場合は上げ、輪郭に縁取り（ハロー）が出る場合は下げてください。</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>

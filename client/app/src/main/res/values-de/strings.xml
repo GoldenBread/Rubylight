@@ -412,9 +412,8 @@
     <string name="upscaling_bilinear">Weich</string>
     <string name="upscaling_fsr1">Scharf (FSR)</string>
     <string name="upscaling_sgsr1">Scharf, Snapdragon (SGSR)</string>
-    <string name="upscaling_sgsr2">Temporal, Snapdragon (SGSR 2)</string>
     <string name="upscaling_temporal_unavailable">%1$s; temporales Hochskalieren nicht verfügbar</string>
-    <string name="summary_upscaling">Wie ein Stream, der kleiner als der Bildschirm ist, vergrößert wird. FSR und SGSR schärfen Kanten und kosten etwas GPU-Zeit und Akku; Temporal nutzt frühere Bilder, um Details wiederherzustellen, wirkte in unseren Tests aber weicher als SGSR bei drei- bis vierfacher GPU-Last, also lass SGSR an, außer du willst vergleichen. HDR-Streams werden ohne sie vergrößert.</string>
+    <string name="summary_upscaling">Wie ein Stream, der kleiner als der Bildschirm ist, vergrößert wird. FSR und SGSR schärfen Kanten, kosten dafür etwas GPU-Zeit und Akku. HDR-Streams werden ohne sie vergrößert.</string>
     <string name="title_upscaling_sharpness">Schärfe der Hochskalierung</string>
     <string name="summary_upscaling_sharpness" formatted="false">Wie stark FSR oder SGSR nachschärft. Erhöhe den Wert bei weichen Kanten; senke ihn, wenn Kanten Halos zeigen.</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>

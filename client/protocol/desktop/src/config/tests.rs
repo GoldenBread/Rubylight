@@ -711,15 +711,19 @@ fn the_gpu_need_names_hdr_only_when_nothing_else_needs_the_renderer() {
 }
 
 #[test]
-fn temporal_upscaling_is_stored_as_sgsr2_and_takes_the_sharpness() {
-    let saved = serde_json::to_string(&Settings { upscaling: Upscaling::Sgsr2, ..Settings::default() }).unwrap();
-    assert!(saved.contains("\"upscaling\":\"Sgsr2\""), "{saved}");
-    let back: Settings = serde_json::from_str(&saved).unwrap();
-    assert_eq!(back.upscaling, Upscaling::Sgsr2);
-    assert!(Upscaling::Sgsr2.is_shader(), "the sharpness row and the shader path");
-    assert_eq!(Upscaling::Sgsr2.label(), "Temporal (SGSR 2)");
-    assert_ne!(Upscaling::default(), Upscaling::Sgsr2, "never the default");
-    assert_eq!(Settings { upscaling: Upscaling::Sgsr2, ..Settings::default() }.gpu_need(), Some("upscaling"));
+fn a_stored_temporal_upscaling_reads_as_sgsr1_everywhere() {
+    // The Temporal (SGSR 2) choice is gone: the settings file and every PC, game and profile layer read it as SGSR 1.
+    let old: Settings = serde_json::from_str(r#"{"upscaling": "Sgsr2"}"#).unwrap();
+    assert_eq!(old.upscaling, Upscaling::Sgsr1);
+    assert!(old.upscaling.is_shader(), "the sharpness row and the shader path");
+    for kept in ["Bilinear", "Fsr1", "Sgsr1", "Ai", "MetalFx"] {
+        let s: Settings = serde_json::from_str(&format!(r#"{{"upscaling": "{kept}"}}"#)).unwrap();
+        assert_eq!(serde_json::to_string(&s.upscaling).unwrap(), format!("\"{kept}\""));
+    }
+    let layer: Overrides = serde_json::from_str(r#"{"upscaling": "Sgsr2"}"#).unwrap();
+    assert_eq!(layer.apply(&Settings::default()).upscaling, Upscaling::Sgsr1);
+    let saved = serde_json::to_string(&old).unwrap();
+    assert!(saved.contains("\"upscaling\":\"Sgsr1\""), "{saved}");
 }
 
 #[test]

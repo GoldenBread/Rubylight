@@ -68,6 +68,5 @@
         <item>@string/upscaling_bilinear</item>
         <item>@string/upscaling_fsr1</item>
         <item>@string/upscaling_sgsr1</item>
-        <item>@string/upscaling_sgsr2</item>
     </string-array>
 </resources>

@@ -360,7 +360,7 @@ public final class HostStreamProfile {
                 case "upscaling": {
                     String[] parts = field.split(":", -1);
                     if (parts.length > 2) throw new IllegalArgumentException("Invalid upscaling");
-                    profile.upscalingMode = UpscalingPolicy.Mode.valueOf(parts[0]);
+                    profile.upscalingMode = UpscalingPolicy.Mode.fromStoredName(parts[0]);
                     // Older v2 profiles stored both values in the same field.
                     if (parts.length == 2) profile.upscalingSharpness = requireRange(Integer.parseInt(parts[1]), 0, 100);
                     break;
@@ -417,7 +417,7 @@ public final class HostStreamProfile {
                 Boolean.parseBoolean(fields[6]), Boolean.parseBoolean(fields[7]),
                 Boolean.parseBoolean(fields[8]), Boolean.parseBoolean(fields[9]),
                 fields.length >= 11 && !fields[10].isEmpty() ? Boolean.parseBoolean(fields[10]) : null,
-                fields.length == 13 ? UpscalingPolicy.Mode.valueOf(fields[11]) : null,
+                fields.length == 13 ? UpscalingPolicy.Mode.fromStoredName(fields[11]) : null,
                 fields.length == 13 ? Integer.parseInt(fields[12]) : null, nativeResolution);
     }
 
