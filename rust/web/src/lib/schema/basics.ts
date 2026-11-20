@@ -1191,7 +1191,7 @@ const input: Setting[] = [
     description:
       'With Controller type on Automatic, a touchpad makes the controller a DualSense, so games get the touchpad. Turn it off for games that see only Xbox controllers, which have none.',
     details:
-      'Nintendo devices stay Switch Pro. With this off, motion sensors still select DualSense while PlayStation controller for motion controls is on.',
+      'Nintendo devices stay Switch Pro. Player 1\'s controller gets no DualSense from its touchpad while it carries Nightjar\'s on-screen Steam Controller controls, as a DualSense has none of their back buttons. With this off, motion sensors still select DualSense while PlayStation controller for motion controls is on.',
     category: 'input',
     group: 'Controllers',
     control: { kind: 'toggle' },
