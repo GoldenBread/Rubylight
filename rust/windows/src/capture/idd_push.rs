@@ -1172,12 +1172,12 @@ impl Session {
     }
 
     pub(super) fn next_frame(&mut self) -> Result<Option<Image>> {
-        self.next_gpu()?
+        self.next_gpu(0)?
             .map(|image| image.readback(&mut self.staging))
             .transpose()
     }
 
-    pub(super) fn next_gpu(&mut self) -> Result<Option<GpuImage>> {
+    pub(super) fn next_gpu(&mut self, origin: u64) -> Result<Option<std::sync::Arc<GpuImage>>> {
         let now = Instant::now();
         if now >= self.next_check {
             self.next_check = now + Duration::from_millis(100);
@@ -1197,6 +1197,8 @@ impl Session {
         };
         (image.captured, image.wgc_stamp) =
             qpc_timestamps(frame.presented().min(i64::MAX as u64) as i64);
+        image.published = Instant::now();
+        image.origin = origin;
         // This exact, immutable host timestamp also appears in the stream's claim
         // trace, joining driver identity to the selected image without changing
         // frame ownership or carrying diagnostic metadata through every backend.
@@ -1209,7 +1211,9 @@ impl Session {
             host_acquired = ?image.acquired,
             "image"
         );
-        Ok(Some(image))
+        // The picture leaves the capture wrapped: the stream threads own it
+        // through the same reference, without a clone of it.
+        Ok(Some(std::sync::Arc::new(image)))
     }
 
     /// Record `meta`'s frame as consumed (taken from the ring at QPC `taken`).

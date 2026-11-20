@@ -3573,7 +3573,7 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     let (mut staging, mut best) = (None, 0.0f64);
     let deadline = Instant::now() + Duration::from_secs(60);
     let image = loop {
-        if let Some(frame) = capture.next_gpu()? {
+        if let Some(frame) = capture.next_gpu(0)? {
             let image = frame.readback(&mut staging)?;
             let share = lit(&image)?;
             best = best.max(share);

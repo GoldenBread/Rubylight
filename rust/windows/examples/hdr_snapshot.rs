@@ -127,7 +127,7 @@ fn main() -> anyhow::Result<()> {
     );
     let limit = Instant::now() + Duration::from_secs(10);
     let image = loop {
-        if let Some(image) = capture.next_gpu()? {
+        if let Some(image) = capture.next_gpu(0)? {
             break image;
         }
         ensure!(Instant::now() < limit, "no WGC image within ten seconds");

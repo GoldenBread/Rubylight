@@ -634,7 +634,7 @@ mod probe {
                         if let Some(signal) = capture.frame_signal() {
                             signal.reset()?;
                         }
-                        if let Some(image) = capture.next_gpu()? {
+                        if let Some(image) = capture.next_gpu(0)? {
                             any = true;
                             seen.push(reader.sample(&image, &clock)?);
                         }

@@ -884,7 +884,10 @@ pub struct Duplication {
     duplicate: IDXGIOutputDuplication,
     staging: Option<ID3D11Texture2D>,
     owned: GpuPool,
-    last_desktop: Option<GpuImage>,
+    /// The newest desktop publication, shared with the capture worker: a
+    /// pointer-only update re-publishes it with fresh stamps instead of
+    /// copying the desktop again.
+    last_desktop: Option<std::sync::Arc<GpuImage>>,
     cursor: crate::cursor::State,
     frame_owned: bool,
 }
@@ -997,7 +1000,7 @@ impl Duplication {
         }
         result.map(Some)
     }
-    pub fn next_gpu(&mut self) -> Result<Option<GpuImage>> {
+    pub fn next_gpu(&mut self, origin: u64) -> Result<Option<std::sync::Arc<GpuImage>>> {
         // Keep acquisition nonblocking. A waiting acquisition holds the device's
         // lock, so another thread's D3D11 call took up to 42 ms meanwhile, and
         // beside a game it delivered fewer pictures, later, than polling
@@ -1026,6 +1029,7 @@ impl Duplication {
             return Ok(None);
         };
         let shown = self.cursor.shown();
+        let desktop_updated = info.LastPresentTime != 0;
         let result = (|| {
             self.cursor.update(&self.gpu, &self.duplicate, &info)?;
             // A pointer-only update while the pointer stays hidden (mouse-look
@@ -1044,20 +1048,31 @@ impl Duplication {
                 &self.gpu,
                 &texture,
                 &mut self.last_desktop,
-                info.LastPresentTime != 0,
+                desktop_updated,
             )?;
             if let Some(image) = image.as_mut() {
                 image.captured =
                     qpc_timestamps(info.LastPresentTime.max(info.LastMouseUpdateTime)).0;
                 image.acquired = Instant::now();
                 image.cursor = self.cursor.snapshot();
+                image.published = Instant::now();
+                image.origin = origin;
             }
             Ok(image)
         })();
         if result.is_err() {
             let _ = self.release_frame();
         }
-        result
+        // An updated desktop is wrapped once and shared: the publication and
+        // the cache a later pointer-only update re-publishes are the same
+        // picture, not a clone of it made each frame.
+        Ok(result?.map(|image| {
+            let image = std::sync::Arc::new(image);
+            if desktop_updated {
+                self.last_desktop = Some(image.clone());
+            }
+            image
+        }))
     }
     fn release_frame(&mut self) -> Result<()> {
         if std::mem::replace(&mut self.frame_owned, false) {
@@ -1321,20 +1336,18 @@ impl GpuPool {
         &mut self,
         gpu: &Device,
         source: &ID3D11Texture2D,
-        cached: &mut Option<GpuImage>,
+        cached: &mut Option<std::sync::Arc<GpuImage>>,
         desktop_updated: bool,
     ) -> Result<Option<GpuImage>> {
         // DXGI supplies a zero LastPresentTime for pointer-only updates. The
         // owned bitmap is still valid; only the detached cursor snapshot changes.
         if !desktop_updated && let Some(image) = cached.as_ref() {
-            return Ok(Some(image.clone()));
+            return Ok(Some((**image).clone()));
         }
         // A missed desktop copy must invalidate the cache. Otherwise a later
         // pointer-only frame could publish pixels from before the missed update.
         *cached = None;
-        let image = self.copy(gpu, source, None)?;
-        *cached = image.clone();
-        Ok(image)
+        self.copy(gpu, source, None)
     }
     /// Copy `source` into a pool texture, cropped to `crop` when given: the
     /// picture keeps only that rectangle, and the image reports its size.
@@ -2000,13 +2013,19 @@ impl Capture {
             Self::Closed => bail!("capture is closed"),
         }
     }
-    pub fn next_gpu(&mut self) -> Result<Option<GpuImage>> {
+    /// The newest picture, wrapped for the stream threads. `origin` is the
+    /// publication identity the caller stamps into it when the capture
+    /// publishes repeats (`capture = wgcc`), which a repeat keeps; 0 when the
+    /// capture does not repeat. The picture's `published` is the moment the
+    /// capture handed it over, and the pool's textures stay alive through the
+    /// returned reference for as long as an encoder reads them.
+    pub fn next_gpu(&mut self, origin: u64) -> Result<Option<std::sync::Arc<GpuImage>>> {
         let result = match self {
-            Self::Wgc(w) => w.next_gpu(),
-            Self::WgcWorker(w) => w.next_gpu(),
-            Self::Dxgi(d) => d.next_gpu(),
-            Self::IddPush(s) => s.next_gpu(),
-            Self::AmdDirect(s) => s.next_gpu(),
+            Self::Wgc(w) => w.next_gpu(origin),
+            Self::WgcWorker(w) => w.next_gpu(origin),
+            Self::Dxgi(d) => d.next_gpu(origin),
+            Self::IddPush(s) => s.next_gpu(origin),
+            Self::AmdDirect(s) => s.next_gpu(origin),
             Self::Closed => bail!("capture is closed"),
         };
         result.map_err(|error| match self.device_removed() {

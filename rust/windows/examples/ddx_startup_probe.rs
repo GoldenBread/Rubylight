@@ -150,8 +150,8 @@ mod probe {
                     }
                     Ok(Some(value))
                 },
-                Self::Plain(capture) => describe(capture.next_gpu()?, detail),
-                Self::Configured(capture) => describe(capture.next_gpu()?, detail),
+                Self::Plain(capture) => describe(capture.next_gpu(0)?, detail),
+                Self::Configured(capture) => describe(capture.next_gpu(0)?, detail),
             }
         }
     }
@@ -186,7 +186,10 @@ mod probe {
         [low, high]
     }
 
-    fn describe(image: Option<GpuImage>, detail: bool) -> Result<Option<serde_json::Value>> {
+    fn describe(
+        image: Option<std::sync::Arc<GpuImage>>,
+        detail: bool,
+    ) -> Result<Option<serde_json::Value>> {
         let Some(image) = image else { return Ok(None) };
         let mut value =
             json!({"width":image.width,"height":image.height,"pixel":format!("{:?}",image.pixel)});

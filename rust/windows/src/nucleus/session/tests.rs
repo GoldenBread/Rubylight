@@ -2523,7 +2523,7 @@ fn a_session_on_this_pc() -> Result<()> {
         )?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let image = loop {
-            if let Some(image) = capture.next_gpu()? {
+            if let Some(image) = capture.next_gpu(0)? {
                 break image;
             }
             ensure!(

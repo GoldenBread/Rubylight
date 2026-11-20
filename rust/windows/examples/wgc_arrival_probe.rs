@@ -69,7 +69,7 @@ fn main() -> anyhow::Result<()> {
     let end = start + Duration::from_secs(seconds);
     let cpu_start = cpu()?;
     while Instant::now() < end {
-        if let Some(image) = capture.next_gpu()? {
+        if let Some(image) = capture.next_gpu(0)? {
             actual_display.get_or_insert_with(|| image.gpu.display.display_name.clone());
             // Leave startup out: WGC can deliver an old initial desktop.
             if start.elapsed() >= Duration::from_secs(1) {

@@ -2139,7 +2139,7 @@ fn native_reference_recovery_decodes_after_dropping_the_invalidated_packets() ->
     let mut capture = crate::capture::Capture::new_format("", "wgc", false)?;
     let deadline = Instant::now() + Duration::from_secs(5);
     let image = loop {
-        if let Some(image) = capture.next_gpu()? {
+        if let Some(image) = capture.next_gpu(0)? {
             break image;
         }
         if Instant::now() > deadline {

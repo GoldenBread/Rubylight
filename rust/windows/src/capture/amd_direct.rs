@@ -242,7 +242,7 @@ impl Session {
     }
     /// The newest presented picture, copied into a texture the stream owns,
     /// or `None` when nothing was presented since the last call.
-    pub fn next_gpu(&mut self) -> Result<Option<GpuImage>> {
+    pub fn next_gpu(&mut self, origin: u64) -> Result<Option<std::sync::Arc<GpuImage>>> {
         if !self.owned.has_capacity() {
             return Ok(None);
         }
@@ -303,13 +303,15 @@ impl Session {
             let image = self.owned.copy(&self.gpu, texture, None)?;
             Ok(image.map(|mut image| {
                 image.captured = Instant::now();
-                image
+                image.published = Instant::now();
+                image.origin = origin;
+                std::sync::Arc::new(image)
             }))
         }
     }
     /// The newest presented picture in CPU memory.
     pub fn next_frame(&mut self) -> Result<Option<Image>> {
-        let Some(image) = self.next_gpu()? else {
+        let Some(image) = self.next_gpu(0)? else {
             return Ok(None);
         };
         let mut read = read_texture(&self.gpu, &image.texture, &mut self.staging)?;

@@ -37,7 +37,7 @@ impl Target {
             self.dup = Duplication::new_format(&name, false).ok();
         }
         if let Some(dup) = self.dup.as_mut() {
-            match dup.next_gpu() {
+            match dup.next_gpu(0) {
                 Ok(Some(_)) => self.frames += 1,
                 Ok(None) => {}
                 Err(_) => {

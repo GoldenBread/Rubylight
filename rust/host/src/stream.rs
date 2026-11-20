@@ -996,24 +996,30 @@ impl Media {
                             signal.reset()?;
                         }
                         progress.mark(crate::stall_watch::Phase::Capture);
+                        // The publication identity this picture carries when the
+                        // capture repeats (`capture = wgcc`): the worker's
+                        // counter, which a repeat keeps. 0 when the capture
+                        // does not repeat; a picture the capture did not return
+                        // must not spend one.
+                        let publication = constant
+                            .as_ref()
+                            .map(|_| origin.wrapping_add(1).max(1))
+                            .unwrap_or(0);
                         let captured = (|| {
                             #[cfg(debug_assertions)]
                             crate::soak_fault::check("DXGI_ERROR_ACCESS_LOST")?;
-                            capture.next_gpu()
+                            capture.next_gpu(publication)
                         })();
                         match captured {
-                            Ok(Some(mut image)) => {
+                            Ok(Some(image)) => {
                                 last_frame = Instant::now();
                                 capture_warnings.clear("capture_recovery");
                                 let (captured, focus) = (image.captured, image.focus);
-                                let published = Instant::now();
-                                image.published = published;
                                 if let Some(rate) = &mut constant {
-                                    origin = origin.wrapping_add(1).max(1);
-                                    image.origin = origin;
-                                    rate.published(published);
+                                    origin = publication;
+                                    rate.published(image.published);
                                 }
-                                worker.publish_focus(Arc::new(image), captured, focus)?;
+                                worker.publish_focus(image, captured, focus)?;
                             }
                             Ok(None) => {
                                 // Windows Graphics Capture reads the compositor's output. An

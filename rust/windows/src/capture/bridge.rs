@@ -573,11 +573,11 @@ impl Session {
         self.held.as_ref().map(|(_, deadline)| *deadline)
     }
     pub(super) fn next_frame(&mut self) -> Result<Option<Image>> {
-        self.next_gpu()?
+        self.next_gpu(0)?
             .map(|image| image.readback(&mut self.staging))
             .transpose()
     }
-    pub(super) fn next_gpu(&mut self) -> Result<Option<GpuImage>> {
+    pub(super) fn next_gpu(&mut self, origin: u64) -> Result<Option<std::sync::Arc<GpuImage>>> {
         let now = Instant::now();
         if now >= self.desktop_check {
             self.desktop_check = now + Duration::from_millis(100);
@@ -709,7 +709,9 @@ impl Session {
             self.last_publish = now;
             return Ok(self.held.take().map(|(mut image, _)| {
                 image.focus = self.focus.take();
-                image
+                image.published = Instant::now();
+                image.origin = origin;
+                std::sync::Arc::new(image)
             }));
         }
         Ok(None)

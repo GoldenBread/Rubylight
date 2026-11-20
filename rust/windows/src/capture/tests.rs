@@ -919,7 +919,7 @@ fn ddx_snapshots_survive_reacquisition_and_duplication_teardown() -> Result<()> 
         let mut capture = Duplication::new("")?;
         let deadline = Instant::now() + Duration::from_secs(3);
         let image = loop {
-            if let Some(image) = capture.next_gpu()? {
+            if let Some(image) = capture.next_gpu(0)? {
                 break image;
             }
             anyhow::ensure!(
@@ -933,7 +933,7 @@ fn ddx_snapshots_survive_reacquisition_and_duplication_teardown() -> Result<()> 
         // CPU/GPU transition. Nothing is written to disk or the display.
         capture.next(Duration::ZERO)?;
         for _ in 0..24 {
-            capture.next_gpu()?;
+            capture.next_gpu(0)?;
             timer.until(Instant::now() + Duration::from_millis(1));
         }
         drop(capture);
@@ -1191,7 +1191,7 @@ fn wgc_reconnect_and_com_teardown_keep_the_runtime_loaded() -> Result<()> {
             let timer = crate::timing::Timer::new()?;
             let until = Instant::now() + Duration::from_secs(5);
             loop {
-                if let Some(frame) = capture.next_gpu()? {
+                if let Some(frame) = capture.next_gpu(0)? {
                     assert!(frame.width > 0 && frame.height > 0);
                     break;
                 }
@@ -1203,7 +1203,7 @@ fn wgc_reconnect_and_com_teardown_keep_the_runtime_loaded() -> Result<()> {
             }
             capture.close();
             assert!(
-                capture.next_gpu().is_err(),
+                capture.next_gpu(0).is_err(),
                 "a closed pool must trigger GPU capture recovery"
             );
             assert!(
@@ -1363,11 +1363,11 @@ fn wgc_window_capture_follows_resize_and_fails_on_minimise_and_close() -> Result
     let next = |capture: &mut Capture,
                 what: &str,
                 until: &dyn Fn(&GpuImage) -> bool|
-     -> Result<GpuImage> {
+     -> Result<std::sync::Arc<GpuImage>> {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             window.pump();
-            if let Some(image) = capture.next_gpu()?
+            if let Some(image) = capture.next_gpu(0)?
                 && until(&image)
             {
                 return Ok(image);
@@ -1421,7 +1421,7 @@ fn wgc_window_capture_follows_resize_and_fails_on_minimise_and_close() -> Result
     drop(window);
     let deadline = Instant::now() + Duration::from_secs(5);
     let error = loop {
-        match capture.next_gpu() {
+        match capture.next_gpu(0) {
             Err(error) => break format!("{error:#}"),
             Ok(_) => {
                 ensure!(

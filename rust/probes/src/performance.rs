@@ -164,9 +164,9 @@ Repeat-frame throughput excludes capture, network, decoding and display latency.
     let capture_backend = capture.as_ref().map_or("synthetic", |c| c.backend());
     let timeout = Instant::now() + Duration::from_secs(10);
     let image = match capture.as_mut() {
-        None => synthetic[0].clone(),
+        None => std::sync::Arc::new(synthetic[0].clone()),
         Some(capture) => loop {
-            if let Some(image) = capture.next_gpu()? {
+            if let Some(image) = capture.next_gpu(0)? {
                 break image;
             }
             if Instant::now() >= timeout {
@@ -190,7 +190,7 @@ Repeat-frame throughput excludes capture, network, decoding and display latency.
             let _priority = Priority::new();
             let timer = Timer::new()?;
             while !stop.load(std::sync::atomic::Ordering::Acquire) {
-                if let Some(image) = capture.next_gpu()? {
+                if let Some(image) = capture.next_gpu(0)? {
                     *latest.lock().unwrap() = image;
                 } else {
                     timer.until(Instant::now() + Duration::from_millis(1));

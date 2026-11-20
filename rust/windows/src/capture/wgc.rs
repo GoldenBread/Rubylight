@@ -446,7 +446,7 @@ impl Wgc {
         frame.Close()?;
         result.map(Some)
     }
-    pub fn next_gpu(&mut self) -> Result<Option<GpuImage>> {
+    pub fn next_gpu(&mut self, origin: u64) -> Result<Option<std::sync::Arc<GpuImage>>> {
         self.check_color_space()?;
         let now = Instant::now();
         if let Some(frame) = self.next_native_frame()? {
@@ -501,12 +501,16 @@ impl Wgc {
                 image.captured = captured;
                 image.wgc_stamp = stamp;
                 image.focus = self.take_focus();
+                image.published = Instant::now();
+                image.origin = origin;
             }
             Ok(image)
         })();
         frame.Close()?;
         self.last_publish = now;
-        result
+        // The picture leaves the capture wrapped: the stream threads own it
+        // through the same reference, without a clone of it.
+        Ok(result?.map(std::sync::Arc::new))
     }
     pub(super) fn next_native_frame(&mut self) -> Result<Option<Direct3D11CaptureFrame>> {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
