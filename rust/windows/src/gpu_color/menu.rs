@@ -10,6 +10,10 @@ pub(super) struct Menu {
     overlay: Option<Overlay>,
     /// Made on the first open, by entry.
     pixel: Vec<(&'static [u8], ID3D11PixelShader)>,
+    /// The pixel shaders of the last conversion, kept assembled while the
+    /// menu is open: each conversion asks for the same entries, and only a
+    /// change of them rebuilds the set.
+    assembled: Option<(Vec<&'static [u8]>, std::sync::Arc<[ID3D11PixelShader]>)>,
     compute: Vec<(&'static [u8], ID3D11ComputeShader)>,
     /// `cbuffer Menu` and the values it holds.
     constants: Option<(ID3D11Buffer, [u32; 12])>,
@@ -28,7 +32,8 @@ pub(super) struct Pass {
     write_constants: Option<[u32; 12]>,
     /// A new panel image and its row pitch.
     write_image: Option<(Arc<[u8]>, u32)>,
-    pub(super) pixel: Vec<ID3D11PixelShader>,
+    /// The pixel shaders of the asked-for entries, one per plane's draw.
+    pub(super) pixel: Arc<[ID3D11PixelShader]>,
     compute: Option<ID3D11ComputeShader>,
     groups: [u32; 2],
 }
@@ -59,23 +64,39 @@ impl Menu {
         // SAFETY: `gpu.device` is a live D3D11 device, `compile` gets NUL-terminated names, and
         // every descriptor outlives the call that reads it.
         unsafe {
-            let mut shaders = Vec::with_capacity(pixel.len());
-            for &entry in pixel {
-                if let Some((_, shader)) = self.pixel.iter().find(|(e, _)| *e == entry) {
-                    shaders.push(shader.clone());
-                    continue;
+            // The assembled set is kept: while the menu is open each
+            // conversion asks for the same entries, and only a change of
+            // them rebuilds it.
+            let cached = self
+                .assembled
+                .as_ref()
+                .filter(|(entries, _)| entries.as_slice() == pixel)
+                .map(|(_, shaders)| shaders.clone());
+            let shaders = match cached {
+                Some(shaders) => shaders,
+                None => {
+                    let mut shaders = Vec::with_capacity(pixel.len());
+                    for &entry in pixel {
+                        if let Some((_, shader)) = self.pixel.iter().find(|(e, _)| *e == entry) {
+                            shaders.push(shader.clone());
+                            continue;
+                        }
+                        let mut shader = None;
+                        gpu.device.CreatePixelShader(
+                            &compile(entry, b"ps_5_0\0")?,
+                            None,
+                            Some(&mut shader),
+                        )?;
+                        let shader = shader.context("no couch menu pixel shader")?;
+                        self.pixel.push((entry, shader.clone()));
+                        shaders.push(shader);
+                        made = true;
+                    }
+                    let shaders: Arc<[ID3D11PixelShader]> = shaders.into();
+                    self.assembled = Some((pixel.to_vec(), shaders.clone()));
+                    shaders
                 }
-                let mut shader = None;
-                gpu.device.CreatePixelShader(
-                    &compile(entry, b"ps_5_0\0")?,
-                    None,
-                    Some(&mut shader),
-                )?;
-                let shader = shader.context("no couch menu pixel shader")?;
-                self.pixel.push((entry, shader.clone()));
-                shaders.push(shader);
-                made = true;
-            }
+            };
             let compute = match compute {
                 Some(entry) => Some(match self.compute.iter().find(|(e, _)| *e == entry) {
                     Some((_, shader)) => shader.clone(),
