@@ -21,9 +21,7 @@ pub use folders::{SharedFolderConfig, valid_folder_id, valid_folder_root};
 pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
-    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation,
-    fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE,
-    PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES,
+    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE, PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, fold_remove_remote_monitor, folded_remove_remote_monitor, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR,
     RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting,
     SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app,
     migrate_overrides, removed, replace_retired, replacement, retired_name, retired_warning,
@@ -61,6 +59,17 @@ pub enum PacketPacing {
     Off,
     /// A fixed send rate in kbps that takes over pacing.
     Fixed(i64),
+}
+
+/// When a remote monitor is removed from Windows ([`Config::remove_remote_monitor`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoveRemoteMonitor {
+    /// Kept after its stream ends, for the device to resume where it was.
+    Never,
+    /// Removed when its stream ends.
+    StreamEnd,
+    /// Removed as soon as the device's connection drops, even while kept for resuming.
+    Disconnect,
 }
 
 pub const HARDWARE_METRICS: &[&str] = &[
@@ -242,6 +251,17 @@ impl Config {
         {
             self.values.insert(PACKET_PACING.to_owned(), folded);
         }
+        // The remote monitor's two switches fold into Remove remote monitor;
+        // a value already saved under it wins.
+        let stream_end = self.values.remove(REMOTE_STREAM_END);
+        let client_disconnect = self.values.remove(REMOTE_CLIENT_DISCONNECT);
+        if let Some(folded) =
+            folded_remove_remote_monitor(stream_end.as_deref(), client_disconnect.as_deref())
+            && !self.values.contains_key(REMOVE_REMOTE_MONITOR)
+        {
+            self.values
+                .insert(REMOVE_REMOTE_MONITOR.to_owned(), folded.to_owned());
+        }
     }
     pub fn load(path: &Path) -> Result<Self> {
         Ok(Self::load_retiring(path)?.0)
@@ -335,6 +355,28 @@ impl Config {
     /// A fixed packet pacing rate in kbps, `None` without one. Packet pacing
     /// `always` keeps the adaptive controller on all codecs, `auto` for
     /// wireless clients on H.264, HEVC and AV1, as the earlier switches did.
+    /// When a remote monitor is removed from Windows: `never` (the default,
+    /// kept for the device to resume where it was), `stream_end` or
+    /// `disconnect`. An unknown value is reported and reads as `never`.
+    pub fn remove_remote_monitor(&self) -> RemoveRemoteMonitor {
+        let value = self.get(REMOVE_REMOTE_MONITOR, "never");
+        match unquote(value.trim()).to_ascii_lowercase().as_str() {
+            "never" => RemoveRemoteMonitor::Never,
+            "stream_end" => RemoveRemoteMonitor::StreamEnd,
+            "disconnect" => RemoveRemoteMonitor::Disconnect,
+            _ => {
+                invalid(REMOVE_REMOTE_MONITOR, value);
+                RemoveRemoteMonitor::Never
+            }
+        }
+    }
+    /// Experimental packet-rate adaptation is explicitly enabled per stream.
+    /// Manual pacing owns its own limit;
+    /// Both conventional and PyroWave streams use the loss controller when
+    /// `host_adaptive_pacing` is set. A client that reports a Wi-Fi or cellular
+    /// route (`client_wireless`) gets it by default on H.264, HEVC and AV1
+    /// (codec 0-2), unless `wireless_adaptive_pacing` is off; PyroWave keeps its
+    /// calibrated-pace policy.
     pub fn adaptive_packet_pacing(&self, codec: u8, client_wireless: bool) -> bool {
         match self.packet_pacing() {
             PacketPacing::Always => codec <= 3,
@@ -840,6 +882,10 @@ impl Config {
         // The pacing rate and the two adaptive pacing switches fold into
         // Packet pacing unless that is sent too.
         fold_packet_pacing(&mut object);
+        // The remote monitor's two switches, as an earlier console or an API
+        // caller sends them, fold into Remove remote monitor unless that is
+        // sent too.
+        fold_remove_remote_monitor(&mut object);
         object.retain(|key, _| !removed(key));
         let object = &object;
         let mut next = self.clone();

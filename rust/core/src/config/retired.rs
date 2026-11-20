@@ -203,6 +203,60 @@ pub const FOLDED_KEYS: &[&str] = &[
     HOST_PACING,
     WIRELESS_PACING,
 ];
+/// [`BITRATE_ADAPTATION`], [`REMOVE_REMOTE_MONITOR`]).
+pub const FOLDED_KEYS: &[&str] = &[HDR_REQUEST, LINK_RATE, CONGESTION, REMOTE_STREAM_END, REMOTE_CLIENT_DISCONNECT];
+
+/// When a remote monitor is removed from Windows (`never`, `stream_end`,
+/// `disconnect`), which holds what the two switches held before: Remove
+/// when its stream ends and Remove when the device disconnects (both off by
+/// default).
+pub const REMOVE_REMOTE_MONITOR: &str = "remove_remote_monitor";
+/// The two switches folded into [`REMOVE_REMOTE_MONITOR`].
+pub const REMOTE_STREAM_END: &str = "remote_monitor_disconnect_on_stream_end";
+pub const REMOTE_CLIENT_DISCONNECT: &str = "remote_monitor_disconnect_on_client_disconnect";
+/// Removing a remote monitor for the two switches saved in one layer, each
+/// `None` when that layer does not hold it (its earlier default then
+/// counts): disconnect on the client's disconnect is `disconnect`; else
+/// removing at the stream's end is `stream_end`; else `never`. `None` when
+/// the layer holds neither. An unreadable value counts as its default, as
+/// the host read it.
+pub fn folded_remove_remote_monitor(
+    stream_end: Option<&str>,
+    client_disconnect: Option<&str>,
+) -> Option<&'static str> {
+    if stream_end.is_none() && client_disconnect.is_none() {
+        return None;
+    }
+    let read = |value: Option<&str>| value.and_then(super::parse_boolean).unwrap_or(false);
+    Some(if read(client_disconnect) {
+        "disconnect"
+    } else if read(stream_end) {
+        "stream_end"
+    } else {
+        "never"
+    })
+}
+/// [`folded_remove_remote_monitor`] over a JSON layer: removes both switches
+/// and, unless the layer already holds Remove remote monitor, sets it.
+/// Returns whether anything changed.
+pub fn fold_remove_remote_monitor(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    let text = |value: serde_json::Value| match value {
+        serde_json::Value::String(text) => Some(text),
+        serde_json::Value::Null => None,
+        other => Some(other.to_string()),
+    };
+    let stream_end = layer.remove(REMOTE_STREAM_END);
+    let client_disconnect = layer.remove(REMOTE_CLIENT_DISCONNECT);
+    let changed = stream_end.is_some() || client_disconnect.is_some();
+    let (stream_end, client_disconnect) = (stream_end.and_then(text), client_disconnect.and_then(text));
+    if let Some(folded) =
+        folded_remove_remote_monitor(stream_end.as_deref(), client_disconnect.as_deref())
+        && !layer.contains_key(REMOVE_REMOTE_MONITOR)
+    {
+        layer.insert(REMOVE_REMOTE_MONITOR.to_owned(), folded.into());
+    }
+    changed
+}
 /// Adaptive bitrate for the two switches saved in one layer, each `None`
 /// when that layer does not hold it (its earlier default then counts):
 /// congestion control on is `delay`, as it ran together with link-rate
@@ -367,6 +421,8 @@ pub fn folded_in_layer(option: &str, request: &str) -> Option<&'static str> {
 /// layer's own Display HDR ([`HDR_REQUEST`] says when it stays), the two
 /// bitrate switches fold into its Adaptive bitrate, the pacing rate and
 /// adaptive pacing switches fold into its Packet pacing and retired
+/// bitrate switches fold into its Adaptive bitrate, the remote monitor's two
+/// switches fold into its Remove remote monitor and retired
 /// values take their replacements. Returns whether anything changed.
 pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Value>) -> bool {
     let mut changed = false;
@@ -395,6 +451,7 @@ pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Val
     changed |= fold_bitrate_adaptation(overrides);
     changed |= fold_packet_pacing(overrides);
     changed |= fold_pyrowave_fec(overrides);
+    changed |= fold_remove_remote_monitor(overrides);
     let before = overrides.len();
     overrides.retain(|key, _| !removed(key));
     changed |= overrides.len() != before;

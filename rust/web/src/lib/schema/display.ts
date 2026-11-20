@@ -401,24 +401,23 @@ export const settings: Setting[] = [
     default: false,
   },
   {
-    key: 'remote_monitor_disconnect_on_stream_end',
-    label: 'Remove when its stream ends',
+    key: 'remove_remote_monitor',
+    label: 'Remove remote monitor',
     description:
-      'Removes a device’s remote monitor from Windows when its stream ends. Leave it off so the device can resume where it was; turn it on if the leftover display gets in the way.',
+      'When a device used as a remote monitor (an extra screen for this PC) loses it: never, when its stream ends, or as soon as the device disconnects. Leave it on Never so the device can resume where it was.',
+    details:
+      'When its stream ends removes the remote monitor from Windows when the stream finishes, so the device can still resume but the display does not stay behind. As soon as the device disconnects removes it even while it was kept for resuming. Never keeps it until the next stream ends, so a dropped device leaves its display behind.',
     category: 'display',
     group: 'Remote monitors',
-    control: { kind: 'toggle' },
-    default: false,
-  },
-  {
-    key: 'remote_monitor_disconnect_on_client_disconnect',
-    label: 'Remove when the device disconnects',
-    description:
-      'Removes the remote monitor as soon as the device’s connection drops, even if it was kept for resuming. Leave it off unless a dropped device should not leave its display behind.',
-    category: 'display',
-    group: 'Remote monitors',
-    control: { kind: 'toggle' },
-    default: false,
+    control: {
+      kind: 'select',
+      options: [
+        { value: 'never', label: 'Never' },
+        { value: 'stream_end', label: 'When its stream ends' },
+        { value: 'disconnect', label: 'As soon as the device disconnects' },
+      ],
+    },
+    default: 'never',
   },
   {
     key: 'remote_monitor_terminate_on_first_request',

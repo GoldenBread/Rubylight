@@ -327,10 +327,6 @@
   "config": {
     "remote_monitor_mute_audio": "Mute audio on Remote Monitor",
     "remote_monitor_mute_audio_desc": "Send picture and input without sending game or desktop audio to the Remote Monitor client.",
-    "remote_monitor_disconnect_on_stream_end": "Remove Remote Monitor when its stream ends",
-    "remote_monitor_disconnect_on_stream_end_desc": "Release the client's private monitor when its RTSP stream finishes. Leave this off to retain it for Resume.",
-    "remote_monitor_disconnect_on_client_disconnect": "Remove Remote Monitor when its client disconnects",
-    "remote_monitor_disconnect_on_client_disconnect_desc": "Release the private monitor when the paired client explicitly disconnects, even if it was retained for Resume.",
     "remote_monitor_terminate_on_first_request": "Terminate on the first request",
     "remote_monitor_terminate_on_first_request_desc": "Allow an additional paired client to terminate the active game with its first Terminate request.",
     "rtss_allow_virtual_display_override": "Allow RTSS modes other than front edge sync on virtual displays",

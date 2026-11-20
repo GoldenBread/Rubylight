@@ -2232,3 +2232,42 @@ fn an_app_record_is_brought_to_the_current_names() {
         assert_eq!(app, after, "{before}");
     }
 }
+
+#[test]
+fn the_remote_monitor_switches_fold_into_remove_remote_monitor() {
+    use super::{Config, RemoveRemoteMonitor as R, folded_remove_remote_monitor as fold};
+    assert_eq!(fold(None, None), None);
+    for (end, disconnect, folded) in [
+        (Some("true"), None, "stream_end"),
+        (Some("false"), None, "never"),
+        (None, Some("true"), "disconnect"),
+        (Some("true"), Some("true"), "disconnect"),
+        (Some("true"), Some("false"), "stream_end"),
+        (Some("invalid"), None, "never"),
+        (Some("\"true\""), Some("\"no\""), "stream_end"),
+    ] {
+        assert_eq!(fold(end, disconnect), Some(folded), "{end:?} {disconnect:?}");
+    }
+    for (text, expected) in [
+        ("", R::Never),
+        ("remote_monitor_disconnect_on_stream_end=true", R::StreamEnd),
+        ("remote_monitor_disconnect_on_client_disconnect=true", R::Disconnect),
+        (
+            "remote_monitor_disconnect_on_stream_end=true
+remote_monitor_disconnect_on_client_disconnect=true",
+            R::Disconnect,
+        ),
+        ("remove_remote_monitor=stream_end
+remote_monitor_disconnect_on_client_disconnect=true", R::StreamEnd),
+    ] {
+        let config = Config::parse(text).unwrap();
+        assert_eq!(config.remove_remote_monitor(), expected, "{text}");
+        assert!(!config.text().contains("remote_monitor_disconnect_on"), "{text}");
+    }
+    let mut config = Config::default();
+    let sent = serde_json::json!({"remote_monitor_disconnect_on_stream_end": true});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.remove_remote_monitor(), R::StreamEnd);
+    assert!(super::retired_name("remote_monitor_disconnect_on_stream_end"));
+    assert!(super::retired_name("remote_monitor_disconnect_on_client_disconnect"));
+}

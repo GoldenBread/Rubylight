@@ -204,8 +204,7 @@ pub const GLOBAL: &[Setting] = settings! {
     ]
     "Remote monitors" => [
         "remote_monitor_mute_audio", "Mute remote monitor audio", Bool;
-        "remote_monitor_disconnect_on_stream_end", "Remove remote monitor when its stream ends", Bool;
-        "remote_monitor_disconnect_on_client_disconnect", "Remove remote monitor on device disconnect", Bool;
+        "remove_remote_monitor", "Remove remote monitor (never: keep it for resuming; stream_end: when its stream ends; disconnect: as soon as the device disconnects)", Choice(&["never","stream_end","disconnect"]);
         "remote_monitor_terminate_on_first_request", "Replace the current game on the first monitor request", Bool;
         "remote_monitor_confirm_app_replacement", "Require confirmation to replace a game with a monitor", Bool;
     ]
@@ -454,6 +453,9 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             "shared" => "One shared by all devices",
                             "game-provided" => "Provided by the game",
                             "delay" if setting.key == "bitrate_adaptation" => "On, and react to network delay",
+                            "never" if setting.key == "remove_remote_monitor" => "Never",
+                            "stream_end" if setting.key == "remove_remote_monitor" => "When its stream ends",
+                            "disconnect" if setting.key == "remove_remote_monitor" => "As soon as the device disconnects",
                             _ if setting.key == "locale" => i18n::language_name(choice),
                             _ => choice,
                         },
