@@ -75,7 +75,8 @@ impl SessionThread<'_> {
                 .with_static_period(rates.static_period)
                 .with_prediction(predictive)
                 .with_prediction_floor(if vrr { Duration::from_millis(2) } else { Duration::ZERO })
-                // Source phase follows the opened backend, set per image below.
+                // Source phase follows the opened backend, read again after
+                // a capture recovery.
                 .with_source_phase(false)
                 .with_spacing(if vrr { 0.5 } else { 0.75 })
         };
@@ -124,6 +125,19 @@ impl SessionThread<'_> {
         let mut vpe_gave_way = false;
         let mut base_config = c.clone();
         let mut runtime_config = c.clone();
+        // The runtime configuration's revision, raised whenever it is
+        // replaced: the enhancement choice below is parsed again only then,
+        // not for every picture.
+        let mut runtime_revision = 0_u64;
+        // The capture backend, read once and again only after a recovery:
+        // every backend change goes through a capture reset, and the worker
+        // writes the backend it opened before the capture's first new
+        // picture. Whether claims wait for the capture's learned phase
+        // follows the backend, and its setting is the session's.
+        let mut backend = latest.backend();
+        let mut backend_due = false;
+        let mut source_phase = source_phase_eligible
+            && butterpollo_core::stream_policy::source_phase(&c, backend);
         s.phase_sync.lock().unwrap().set_hold_at_rate(c.boolean(PHASE_LOCK_HOLD_AT_RATE, false));
         let mut calibration_due = s.launch.client.extra.get("hdr_profile")
             .and_then(serde_json::Value::as_str).filter(|profile| !profile.is_empty())
@@ -809,6 +823,7 @@ impl SessionThread<'_> {
                         }
                         config_version = version;
                         runtime_config = base_config.clone();
+                        runtime_revision = runtime_revision.wrapping_add(1);
                         s.phase_sync.lock().unwrap().set_hold_at_rate(base_config.boolean(PHASE_LOCK_HOLD_AT_RATE, false));
                         if let Some(due) = &mut calibration_due {
                             *due = Instant::now() + Duration::from_secs(30);
@@ -1200,8 +1215,19 @@ impl SessionThread<'_> {
                     enhancer.reset();
                     pacer.reset_source_phase();
                     latest.release_generation(&capture_wake);
+                    // The reopened capture may run on another backend: read
+                    // it again once this recovery ends with a new picture.
+                    backend_due = true;
                     continue;
                 };
+                if backend_due {
+                    // The capture reopened: the worker has named the
+                    // backend it opened before this, its first new picture.
+                    backend = latest.backend();
+                    backend_due = false;
+                    source_phase = source_phase_eligible
+                        && butterpollo_core::stream_policy::source_phase(&c, backend);
+                }
                 // Whether this capture only extends the focus window's
                 // picture, read before an enhancement replaces the image and
                 // a later capture can take its place (`None` then).
@@ -1211,8 +1237,9 @@ impl SessionThread<'_> {
                 // made for that picture.
                 if let Some(tuned) = enhancer.tune(&h, &image, &base_config) {
                     runtime_config = tuned;
+                    runtime_revision = runtime_revision.wrapping_add(1);
                 }
-                let (enhanced, enhancement_changed) = enhancer.apply(&s, &runtime_config, image);
+                let (enhanced, enhancement_changed) = enhancer.apply(&s, &runtime_config, runtime_revision, image);
                 image = enhanced;
                 rebuild_encoder |= enhancement_changed;
                 let checks_started = Instant::now();
@@ -1236,8 +1263,9 @@ impl SessionThread<'_> {
                     pacer.reset_source_phase();
                 }
                 // A reopen can change the backend, e.g. to WGC after the
-                // driver's frame push failed.
-                pacer.set_source_phase(source_phase_eligible && butterpollo_core::stream_policy::source_phase(&c, latest.backend()));
+                // driver's frame push failed; the cached value is read again
+                // once the capture recovers.
+                pacer.set_source_phase(source_phase);
                 // One read of the capture's pacing fields for every decision
                 // this frame makes from them.
                 let pacing = latest.pacing_snapshot();
@@ -1513,7 +1541,7 @@ impl SessionThread<'_> {
                     // replaces the image, and a capture that only extends
                     // the focus window's picture teaches no phase.
                     let extends_capture = latest.extends_capture(&current);
-                    let (current, enhancement_changed) = enhancer.apply(&s, &runtime_config, current);
+                    let (current, enhancement_changed) = enhancer.apply(&s, &runtime_config, runtime_revision, current);
                     if enhancement_changed || !encoder.as_ref().unwrap().accepts_gpu_device(&current) {
                         continue;
                     }
@@ -1530,7 +1558,7 @@ impl SessionThread<'_> {
                     .as_mut()
                     .expect("a missing encoder is rebuilt above");
                 // RTX HDR's picture is scaled to its SDR white and peak.
-                if let Some((white, scale)) = enhancer.luminance(&runtime_config) {
+                if let Some((white, scale)) = enhancer.luminance() {
                     active.set_luminance(white, scale);
                 }
                 if menu.dirty || (rebuilt && menu.has_overlay()) {
@@ -1691,7 +1719,7 @@ impl SessionThread<'_> {
                 // it apart, so with any other capture it stays in the video and the
                 // device is told to hide its own.
                 let leave_pointer_out = s.client_cursor.active() && {
-                    let ddx = latest.backend() == "ddx";
+                    let ddx = backend == "ddx";
                     let pointer = image.pointer().filter(|_| ddx).map(|p| butterpollo_core::client_cursor::Pointer {
                         width: p.width,
                         height: p.height,
@@ -1703,7 +1731,7 @@ impl SessionThread<'_> {
                         let _ = m.control_wake.send(&[1]);
                     }
                     if !ddx && !std::mem::replace(&mut pointer_warned, true) {
-                        tracing::warn!(capture = latest.backend(), "the device-drawn cursor needs Desktop Duplication capture; the pointer stays in the video");
+                        tracing::warn!(capture = backend, "the device-drawn cursor needs Desktop Duplication capture; the pointer stays in the video");
                     }
                     ddx
                 };

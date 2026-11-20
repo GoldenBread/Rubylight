@@ -183,6 +183,57 @@ fn for_capture<'a>(
     (0, Some(nvidia_enhance::Elsewhere { gpu, display_bound }))
 }
 
+/// The enhancement choice for the current runtime configuration, parsed once
+/// for the revision, capture device and picture format it was read at: every
+/// picture re-uses it, and the first picture after a change parses again.
+/// The warning is part of it, so its text is built once per change and not
+/// rebuilt for the comparison on every picture.
+#[derive(Clone, Debug)]
+struct Parsed {
+    revision: u64,
+    device: usize,
+    pixel: Pixel,
+    wanted: Enhancement,
+    warning: Option<String>,
+    /// RTX HDR's NGX values, compared against the filter's on every picture.
+    parameters: [u32; 4],
+    /// The encoder's SDR white and linear scale while RTX HDR converts.
+    luminance: (f32, f32),
+}
+
+impl Parsed {
+    /// Whether this choice answers for the picture `revision`, `device` and
+    /// `pixel` describe.
+    fn matches(&self, revision: u64, device: usize, pixel: Pixel) -> bool {
+        self.revision == revision && self.device == device && self.pixel == pixel
+    }
+}
+
+/// What runs for a picture, with the warning when what the stream asked for
+/// cannot, from the configuration the run loop holds for it.
+fn parse(
+    revision: u64,
+    device: usize,
+    vendor: u32,
+    adapter: &str,
+    pixel: Pixel,
+    stream_hdr: bool,
+    config: &Config,
+) -> Parsed {
+    let source = source(pixel);
+    let offered = nvidia_enhance::offered(config);
+    let (runs, elsewhere) = for_capture(config, offered, vendor, adapter);
+    Parsed {
+        revision,
+        device,
+        pixel,
+        wanted: nvidia_enhance::select(config, runs, stream_hdr, source),
+        warning: nvidia_enhance::unavailable(config, offered, stream_hdr, source, elsewhere),
+        parameters: nvidia_enhance::rtx_parameters(config),
+        luminance: nvidia_enhance::rtx_luminance(config),
+    }
+}
+
 /// A stream's enhancement: chooses it for each picture, keeps its NGX
 /// filter, and reports when the encoder must be rebuilt because the picture
 /// it receives changed kind (format, or an unshared filter output instead of
@@ -194,36 +245,60 @@ pub(crate) struct Enhancer {
 
 impl Enhancer {
     /// The picture to encode for `image`, and whether the encoder must be
-    /// rebuilt for it. A failing enhancement is turned off for this capture
-    /// with a session warning, and the original picture is encoded. A capture
-    /// on a GPU that is not NVIDIA's (the display's AMD iGPU beside an NVIDIA
-    /// card, issue #103) runs neither, and the warning names that GPU.
+    /// rebuilt for it. The choice and its warning are parsed only when the
+    /// runtime configuration's `revision`, the capture device or the
+    /// picture's format changed; the run loop raises the revision whenever
+    /// it replaces the configuration. A failing enhancement is turned off
+    /// for this capture with a session warning, and the original picture is
+    /// encoded. A capture on a GPU that is not NVIDIA's (the display's AMD
+    /// iGPU beside an NVIDIA card, issue #103) runs neither, and the warning
+    /// names that GPU.
     pub(crate) fn apply(
         &mut self,
         s: &Session,
         config: &Config,
+        revision: u64,
         image: Arc<GpuImage>,
     ) -> (Arc<GpuImage>, bool) {
-        let source = source(image.pixel);
-        let offered = nvidia_enhance::offered(config);
-        let (runs, elsewhere) = for_capture(
-            config,
-            offered,
-            image.gpu.vendor,
-            &image.gpu.display.adapter,
-        );
-        match nvidia_enhance::unavailable(config, offered, s.config.hdr, source, elsewhere) {
-            Some(reason) => s.launch.warnings.set(WARNING, reason),
-            None => s.launch.warnings.clear(WARNING),
+        let device = image.gpu.key();
+        if !self
+            .inner
+            .parsed
+            .as_ref()
+            .is_some_and(|parsed| parsed.matches(revision, device, image.pixel))
+        {
+            let parsed = parse(
+                revision,
+                device,
+                image.gpu.vendor,
+                &image.gpu.display.adapter,
+                image.pixel,
+                s.config.hdr,
+                config,
+            );
+            // Told once per change: with the same text the warning is already
+            // current, and with none there is nothing to clear.
+            match &parsed.warning {
+                Some(reason) => s.launch.warnings.set(WARNING, reason),
+                None => s.launch.warnings.clear(WARNING),
+            }
+            self.inner.parsed = Some(parsed);
         }
-        let wanted = nvidia_enhance::select(config, runs, s.config.hdr, source);
+        let wanted = self
+            .inner
+            .parsed
+            .as_ref()
+            .map_or(Enhancement::None, |parsed| parsed.wanted);
         self.inner.apply(s, config, wanted, image)
     }
 
     /// The encoder's SDR white and linear scale while RTX HDR converts the
-    /// picture; `None` leaves the encoder's own values.
-    pub(crate) fn luminance(&self, config: &Config) -> Option<(f32, f32)> {
-        (self.inner.selected == Enhancement::RtxHdr).then(|| nvidia_enhance::rtx_luminance(config))
+    /// picture, as parsed with the choice; `None` leaves the encoder's own
+    /// values.
+    pub(crate) fn luminance(&self) -> Option<(f32, f32)> {
+        (self.inner.selected == Enhancement::RtxHdr)
+            .then(|| self.inner.parsed.as_ref().map(|parsed| parsed.luminance))
+            .flatten()
     }
 
     /// The peak of the HDR signal RTX HDR generates, when it runs: the stream
@@ -264,6 +339,10 @@ mod active {
         failed: Option<Enhancement>,
         /// The capture device the filters were made on.
         device: usize,
+        /// The choice and warning parsed for the runtime configuration's
+        /// revision, this device and the picture's format: re-parsed only
+        /// when one of them changed.
+        pub(super) parsed: Option<super::Parsed>,
         /// The last source picture, the content identity it carried, and its
         /// enhanced copy: a repeated picture is encoded again without a second
         /// conversion, and the stream's freshness check sees the same picture.
@@ -289,6 +368,7 @@ mod active {
                     selected: self.selected,
                     profiles: self.profiles.take(),
                     foreground: self.foreground.take(),
+                    parsed: self.parsed.clone(),
                     device,
                     ..Self::default()
                 };
@@ -315,10 +395,13 @@ mod active {
             }
             // RTX HDR's contrast, saturation, middle gray or peak changed while a still picture
             // repeats: the cached copy was made with the old values, so it is made again rather
-            // than shown until the next picture is captured.
+            // than shown until the next picture is captured. The values were parsed with the
+            // choice, whose revision covers every settings change.
             if wanted == Enhancement::RtxHdr
-                && self.rtx_hdr.as_ref().is_some_and(|filter| {
-                    filter.parameters() != nvidia_enhance::rtx_parameters(config)
+                && self.parsed.as_ref().is_some_and(|parsed| {
+                    self.rtx_hdr
+                        .as_ref()
+                        .is_some_and(|filter| filter.parameters() != parsed.parameters)
                 })
             {
                 self.last = None;
@@ -517,6 +600,124 @@ capture = {method}
         assert_eq!(enhancer.hdr_peak(&config), None);
         enhancer.inner.selected = Enhancement::RtxHdr;
         assert_eq!(enhancer.hdr_peak(&config), Some(900));
+    }
+
+    #[test]
+    fn the_choice_is_parsed_again_only_when_its_inputs_change() {
+        // RTX HDR asked for and offered, an SDR picture for an HDR stream.
+        let mut config = Config::parse("rtx_hdr = true\n").unwrap();
+        config
+            .values
+            .insert(nvidia_enhance::marker("rtx_hdr"), "true".into());
+        config
+            .values
+            .insert(nvidia_enhance::OFFERED_KEY.into(), RTX_HDR.to_string());
+        let parsed = parse(
+            1,
+            0,
+            0x10de,
+            "NVIDIA GeForce RTX 5060 Ti",
+            Pixel::Bgra8,
+            true,
+            &config,
+        );
+        assert_eq!(parsed.wanted, Enhancement::RtxHdr);
+        assert_eq!(parsed.warning, None);
+        // The same revision, capture device and format re-use it.
+        assert!(parsed.matches(1, 0, Pixel::Bgra8));
+        // A replaced configuration, a new capture device or another format
+        // parses again.
+        assert!(!parsed.matches(2, 0, Pixel::Bgra8));
+        assert!(!parsed.matches(1, 1, Pixel::Bgra8));
+        assert!(!parsed.matches(1, 0, Pixel::RgbaF16));
+        // What a new revision parses follows the new values, warning
+        // included: here RTX HDR is asked for but nothing offers it.
+        let unoffered = Config::parse("rtx_hdr = true\n").unwrap();
+        unoffered
+            .values
+            .insert(nvidia_enhance::marker("rtx_hdr"), "true".into());
+        let reparsed = parse(
+            2,
+            0,
+            0x10de,
+            "NVIDIA GeForce RTX 5060 Ti",
+            Pixel::Bgra8,
+            true,
+            &unoffered,
+        );
+        assert_eq!(reparsed.wanted, Enhancement::None);
+        assert!(reparsed.warning.is_some());
+    }
+
+    #[test]
+    fn the_parsed_choice_answers_what_the_per_picture_reads_answered() {
+        // What `Enhancer::apply` read for every picture before: the same
+        // helpers over the same values.
+        let mut config = Config::parse("rtx_video = true\nrtx_hdr = true\n").unwrap();
+        config
+            .values
+            .insert(nvidia_enhance::marker("rtx_hdr"), "true".into());
+        config.values.insert(
+            nvidia_enhance::OFFERED_KEY.into(),
+            (RTX_HDR | RTX_VIDEO).to_string(),
+        );
+        let vendor = 0x10de;
+        let adapter = "NVIDIA GeForce RTX 5060 Ti";
+        let parsed = parse(7, 3, vendor, adapter, Pixel::Bgra8, true, &config);
+        let source = Source::Sdr;
+        let offered = nvidia_enhance::offered(&config);
+        let (runs, elsewhere) = for_capture(&config, offered, vendor, adapter);
+        assert_eq!(
+            parsed.wanted,
+            nvidia_enhance::select(&config, runs, true, source)
+        );
+        assert_eq!(
+            parsed.warning,
+            nvidia_enhance::unavailable(&config, offered, true, source, elsewhere)
+        );
+        assert_eq!(parsed.luminance, nvidia_enhance::rtx_luminance(&config));
+        assert_eq!(parsed.parameters, nvidia_enhance::rtx_parameters(&config));
+    }
+
+    #[test]
+    fn rtx_hdrs_luminance_is_parsed_with_the_choice_and_follows_the_revision() {
+        let mut config = Config::parse("rtx_hdr = true\nrtx_hdr_sdr_brightness = 20\n").unwrap();
+        config
+            .values
+            .insert(nvidia_enhance::marker("rtx_hdr"), "true".into());
+        config
+            .values
+            .insert(nvidia_enhance::OFFERED_KEY.into(), RTX_HDR.to_string());
+        let mut enhancer = Enhancer::default();
+        enhancer.inner.selected = Enhancement::RtxHdr;
+        // Nothing parsed yet, so nothing answers.
+        assert_eq!(enhancer.luminance(), None);
+        // The choice is parsed for revision 1: its luminance answers while
+        // it is current, with the values that revision's configuration had.
+        enhancer.inner.parsed = Some(parse(
+            1,
+            0,
+            0x10de,
+            "NVIDIA GeForce RTX 5060 Ti",
+            Pixel::Bgra8,
+            true,
+            &config,
+        ));
+        assert_eq!(enhancer.luminance(), Some((120., 1.)));
+        // A later revision changed the SDR white; the next parse carries it.
+        config
+            .values
+            .insert("rtx_hdr_sdr_brightness".into(), "40".into());
+        enhancer.inner.parsed = Some(parse(
+            2,
+            0,
+            0x10de,
+            "NVIDIA GeForce RTX 5060 Ti",
+            Pixel::Bgra8,
+            true,
+            &config,
+        ));
+        assert_eq!(enhancer.luminance(), Some((140., 1.)));
     }
 
     /// RTX HDR converts an SDR picture for an HDR stream. The stream then
