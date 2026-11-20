@@ -33,11 +33,27 @@ pub struct Pool(
 pub fn key(launch: &Launch) -> String {
     format!("{}:{:?}", launch.client.uuid, launch.role)
 }
+/// `launch`'s controllers with its settings `config` ([`Pool::acquire`]), told whether its app
+/// starts through Steam ([`crate::stream::launched_through_steam`]). Every path that gives a
+/// launch or a stream its controllers takes them here, so none leaves the answer out.
+pub fn acquire_for(h: &Shared, launch: &Launch, config: &Config) -> Result<Arc<GamepadThread>> {
+    let steam_app = crate::stream::launched_through_steam(h, launch);
+    h.controller_sessions.acquire(launch, config, steam_app)
+}
 impl Pool {
-    pub fn acquire(&self, launch: &Launch, config: &Config) -> Result<Arc<GamepadThread>> {
+    /// `launch`'s controllers with its settings `config`; `steam_app`: whether its app starts
+    /// through Steam ([`crate::stream::launched_through_steam`]). Parked ones are handed back
+    /// while both, and so the policy, are unchanged.
+    pub fn acquire(
+        &self,
+        launch: &Launch,
+        config: &Config,
+        steam_app: bool,
+    ) -> Result<Arc<GamepadThread>> {
         let key = key(launch);
         let profile = gamepad_profile(config.get("gamepad", "auto"));
-        let policy = Policy::resolve(config)?;
+        let mut policy = Policy::resolve(config)?;
+        policy.steam_app = steam_app;
         let mut entries = self.0.lock().unwrap();
         // Parked controllers wait for their own client's reconnect. Another
         // client's stay plugged beside this client's while a game runs, and
@@ -113,6 +129,15 @@ impl Pool {
             .unwrap()
             .values()
             .any(|entry| Arc::strong_count(&entry.pads) > 1)
+    }
+    /// The policy `key`'s controllers were made with.
+    #[cfg(test)]
+    pub fn policy(&self, key: &str) -> Option<Policy> {
+        self.0
+            .lock()
+            .unwrap()
+            .get(key)
+            .map(|entry| entry.policy.clone())
     }
     /// Whether [`Self::release_parked`] has anything to unplug: a parked
     /// controller session no stream holds and no key in `kept`, or one whose
@@ -251,7 +276,7 @@ pub fn prepare(h: &Shared, launch: &Launch, value: &str) -> Result<()> {
     if !Policy::resolve(&config)?.controller {
         bail!("controllers are disabled on the host");
     }
-    let pads = h.controller_sessions.acquire(launch, &config)?;
+    let pads = acquire_for(h, launch, &config)?;
     pads.activate();
     let mut mask = 0;
     for event in events {
@@ -310,20 +335,93 @@ mod tests {
         let pool = Pool::default();
         let keys = |pool: &Pool| pool.0.lock().unwrap().keys().cloned().collect::<Vec<_>>();
         // The phone's stream ends while its game keeps running: its controllers park.
-        let parked = pool.acquire(&phone, &config).unwrap();
+        let parked = pool.acquire(&phone, &config, false).unwrap();
         drop(parked);
         // The TV's controllers are still in use when the laptop connects.
-        let tv_pads = pool.acquire(&tv, &config).unwrap();
+        let tv_pads = pool.acquire(&tv, &config, false).unwrap();
         assert_eq!(keys(&pool), ["tv:Stream"]);
-        let laptop_pads = pool.acquire(&laptop, &config).unwrap();
+        let laptop_pads = pool.acquire(&laptop, &config, false).unwrap();
         assert_eq!(keys(&pool), ["laptop:Stream", "tv:Stream"]);
         // A client reconnecting still gets its own parked controllers back.
         let retained = Arc::as_ptr(&laptop_pads);
         drop(laptop_pads);
-        let again = pool.acquire(&laptop, &config).unwrap();
+        let again = pool.acquire(&laptop, &config, false).unwrap();
         assert_eq!(Arc::as_ptr(&again), retained);
         assert_eq!(keys(&pool), ["laptop:Stream", "tv:Stream"]);
         drop((tv_pads, again));
+    }
+
+    /// A launch's controllers know whether its app starts through Steam: the default
+    /// library's Steam Big Picture entry and a game the Steam import added do; the Desktop, an
+    /// app that starts its own .exe and a Nucleus Co-op launch of the Steam game do not. The
+    /// answer reaches the pool through [`acquire_for`], and the client's parked controllers are
+    /// not handed to a launch with the other answer.
+    #[test]
+    fn controllers_know_whether_the_launch_starts_through_steam() {
+        use butterpollo_core::{session::Seat, state::App, steam};
+        let f = crate::state::test_support::Fixture::new();
+        let game = steam::Game {
+            appid: 570,
+            name: "Dota 2".into(),
+            app_type: "game".into(),
+            installed: true,
+            ..Default::default()
+        };
+        let mut imported = Vec::new();
+        let settings = steam::Settings::from_config(&Config::default());
+        assert!(steam::reconcile(
+            &mut imported,
+            &[&game],
+            &settings,
+            &Default::default(),
+            &[]
+        ));
+        let own = serde_json::json!({"name": "Own game", "cmd": "C:\\Games\\Own\\game.exe"});
+        f.host.apps.write().unwrap().extend(
+            imported
+                .into_iter()
+                .chain([own])
+                .map(|app| serde_json::from_value::<App>(app).unwrap()),
+        );
+        let launch_of = |name: &str| {
+            let mut launch = f.launch(f.client(0), Role::Stream);
+            launch.app_id = f
+                .host
+                .apps
+                .read()
+                .unwrap()
+                .iter()
+                .find(|app| app.name == name)
+                .unwrap_or_else(|| panic!("the library has {name}"))
+                .id();
+            launch
+        };
+        let through_steam =
+            |launch: &Launch| crate::stream::launched_through_steam(&f.host, launch);
+        let desktop = launch_of("Desktop");
+        let big_picture = launch_of("Steam Big Picture");
+        assert!(through_steam(&big_picture));
+        assert!(through_steam(&launch_of("Dota 2")));
+        assert!(!through_steam(&desktop));
+        assert!(!through_steam(&launch_of("Own game")));
+        let mut coop = launch_of("Dota 2");
+        coop.nucleus = Some(Seat {
+            session: 1,
+            slot: 0,
+        });
+        assert!(
+            !through_steam(&coop),
+            "Nucleus Co-op starts the game itself"
+        );
+        let config = Config::default();
+        let steam_app = |launch: &Launch| {
+            let policy = f.host.controller_sessions.policy(&key(launch));
+            policy.expect("the launch has controllers").steam_app
+        };
+        drop(acquire_for(&f.host, &big_picture, &config).unwrap());
+        assert!(steam_app(&big_picture));
+        drop(acquire_for(&f.host, &desktop, &config).unwrap());
+        assert!(!steam_app(&desktop), "new controllers, without it");
     }
 
     /// #56: a desktop stream's parked controller held XInput slot 0, and the
@@ -343,8 +441,8 @@ mod tests {
         let none = BTreeSet::new();
         // The TV streams on; the phone's desktop stream ended and parked its
         // controller.
-        let tv = pool.acquire(&launch("tv"), &config).unwrap();
-        drop(pool.acquire(&launch("phone"), &config).unwrap());
+        let tv = pool.acquire(&launch("tv"), &config, false).unwrap();
+        drop(pool.acquire(&launch("phone"), &config, false).unwrap());
         assert_eq!(keys(&pool), ["phone:Stream", "tv:Stream"]);
         assert!(pool.parked(&none));
         // No driver in the test: their threads never plugged a pad.
@@ -359,7 +457,7 @@ mod tests {
         // A pending launch's prepared controllers wait for its stream; they
         // stay. The TV's go once its stream ended.
         let laptop = launch("laptop");
-        drop(pool.acquire(&laptop, &config).unwrap());
+        drop(pool.acquire(&laptop, &config, false).unwrap());
         let pending = BTreeSet::from([key(&laptop)]);
         assert!(!pool.parked(&pending));
         drop(tv);

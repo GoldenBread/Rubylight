@@ -1556,9 +1556,7 @@ impl Media {
                         let output = s.output.read().unwrap().clone();
                         // Keys, clicks and moves need no controller: while the controllers
                         // cannot be had, the injector works without them and they follow.
-                        let pads = h
-                            .controller_sessions
-                            .acquire(&s.launch, &c)
+                        let pads = crate::controller_sessions::acquire_for(&h, &s.launch, &c)
                             .inspect_err(|error| controllers_wait(&s, error))
                             .ok();
                         match Injector::new_options_reported(
@@ -1590,8 +1588,9 @@ impl Media {
                     // The controllers' retry, on its own interval rather than every pass.
                     if let Some(i) = &mut p.injector
                         && let Some(held) = p.pads_wait.retry(Instant::now(), || {
-                            let pads = effective_config(&h, &s.launch)
-                                .and_then(|c| h.controller_sessions.acquire(&s.launch, &c))?;
+                            let pads = effective_config(&h, &s.launch).and_then(|c| {
+                                crate::controller_sessions::acquire_for(&h, &s.launch, &c)
+                            })?;
                             attach_pads(i, pads, &p.controller_audio);
                             Ok(())
                         })

@@ -536,9 +536,7 @@ impl NativeSink {
         })?;
         let output = s.output.read().unwrap().clone();
         // Keys, clicks and moves need no controller.
-        let pads = h
-            .controller_sessions
-            .acquire(&s.launch, &c)
+        let pads = crate::controller_sessions::acquire_for(h, &s.launch, &c)
             .inspect_err(|error| controllers_wait(s, error))
             .ok();
         let mut injector = Injector::new_options_reported(
@@ -597,7 +595,7 @@ impl Sink for NativeSink {
         let Self { injector, h, pads } = self;
         let Some(held) = pads.retry(now, || {
             let acquired = effective_config(h, &session.launch)
-                .and_then(|c| h.controller_sessions.acquire(&session.launch, &c))?;
+                .and_then(|c| crate::controller_sessions::acquire_for(h, &session.launch, &c))?;
             attach_pads(injector, acquired, &[0; 16]);
             Ok(())
         }) else {

@@ -1154,6 +1154,29 @@ fn command_app_id(command: &str) -> Option<u32> {
         .unwrap_or(rest.len());
     rest[..digits].parse().ok()
 }
+/// Whether an app entry starts through Steam, so the games it runs read controllers through
+/// Steam Input: a Steam game by any of its marks ([`game_of`]: an imported entry's UUID or app
+/// ID, or a `steam://rungameid/` command), or a command or detached command that is a
+/// `steam://` link or runs Steam's own program (`steam.exe -applaunch 570`, `-gamepadui`,
+/// `-bigpicture`), as the Steam Big Picture entry opens `steam://open/bigpicture`. The Desktop,
+/// an entry that starts a game's own .exe and a Playnite entry (Playnite starts its game, its
+/// own way) do not.
+pub fn launched_through_steam(app: &Value) -> bool {
+    use crate::launcher_prompt::{launcher_of, split_program};
+    let starts_steam = |command: &str| {
+        command.to_ascii_lowercase().contains("steam://")
+            || launcher_of(split_program(command).0) == Some("steam")
+    };
+    game_of(app).is_some()
+        || app
+            .get("cmd")
+            .and_then(Value::as_str)
+            .is_some_and(starts_steam)
+        || app
+            .get("detached")
+            .and_then(Value::as_array)
+            .is_some_and(|commands| commands.iter().filter_map(Value::as_str).any(starts_steam))
+}
 fn id_of(app: &Value) -> String {
     app_id_of(app).map_or_else(
         || {

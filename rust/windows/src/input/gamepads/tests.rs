@@ -874,8 +874,17 @@ fn only_a_plugged_vhf_driver_pad_raises_the_driver_host_and_only_when_asked() {
     assert_eq!(HELD.load(Ordering::SeqCst), 0);
     pads.active.clear();
 }
+/// Held by the tests that check a slot stays stranded, and by those whose driver unplugs any
+/// slot: their `ensure` reclaims every stranded slot, another test's too.
+static STRANDED_SLOTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn stranded_slots() -> std::sync::MutexGuard<'static, ()> {
+    STRANDED_SLOTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 #[test]
 fn a_pad_that_will_not_unplug_at_session_end_keeps_its_slot_until_it_does() {
+    let _stranded = stranded_slots();
     let slot = Slot::reserve().unwrap();
     let global = slot.id();
     // The pad owns the slot now, as `ensure` leaves it.
@@ -1051,6 +1060,181 @@ fn a_nintendo_controller_without_the_switch_profile_is_warned_about() {
     );
     let plain = switch_fallback(0, 3, 0, VHF_XBOX_SERIES).unwrap();
     assert!(plain.contains("an Xbox controller."), "{plain}");
+}
+/// Automatic pads with Steam's driver profile, and the arrival of a controller carrying
+/// on-screen Steam Controller controls (or not).
+fn steam_controls_pads(steam_app: bool, running: fn() -> bool) -> Gamepads {
+    let mut pads = scripted_pads();
+    pads.profile = 0;
+    pads.available |= 1 << (butterpollo_core::input_policy::VHF_STEAM_CONTROLLER - 1);
+    pads.policy.steam_app = steam_app;
+    pads.steam_running = running;
+    pads
+}
+fn steam_controls_arrival(id: u8, capabilities: u16) -> Event {
+    Event::Arrival {
+        id,
+        kind: 1,
+        capabilities,
+        buttons: 0x0f_0000,
+    }
+}
+/// On-screen Steam Controller controls under Automatic in an app started through Steam:
+/// without Steam running an Xbox pad and the warning; whether Steam runs is asked once per
+/// connection, so Steam starting mid-stream never swaps the pad. Arriving again asks again (a
+/// Steam Controller now), leaving forgets the answer, and pads without the controls never ask.
+#[test]
+fn steam_controls_keep_the_pad_steam_gave_them_until_they_arrive_again() {
+    use butterpollo_core::input_policy::{VHF_STEAM_CONTROLLER, VHF_XBOX_SERIES};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    static ASKED: AtomicUsize = AtomicUsize::new(0);
+    fn running() -> bool {
+        ASKED.fetch_add(1, Ordering::SeqCst);
+        RUNNING.load(Ordering::SeqCst)
+    }
+    // Its pads plug through `ensure`, whose reclaim would free another test's stranded slot.
+    let _stranded = stranded_slots();
+    let mut pads = steam_controls_pads(true, running);
+    let arrival = steam_controls_arrival;
+    pads.apply(&arrival(0, 0x600)).unwrap();
+    assert_eq!(pads.profiles[&0], VHF_XBOX_SERIES);
+    assert_eq!(ASKED.load(Ordering::SeqCst), 1);
+    let warnings = pads.warnings.snapshot();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].code, "input_steam_controls");
+    assert!(
+        warnings[0].message.contains("Steam was not running"),
+        "{}",
+        warnings[0].message
+    );
+    // Steam starts mid-stream: the pad stays in its slot, and its states ask nothing.
+    let slot = pads.active[&0];
+    RUNNING.store(true, Ordering::SeqCst);
+    for _ in 0..3 {
+        pads.apply(&state(0, 1)).unwrap();
+    }
+    assert_eq!(pads.profiles[&0], VHF_XBOX_SERIES);
+    assert_eq!(pads.active[&0], slot);
+    assert_eq!(ASKED.load(Ordering::SeqCst), 1);
+    let unplugged = format!("unplug {slot}");
+    assert!(
+        !script(&mut pads).calls.contains(&unplugged),
+        "{:?}",
+        script(&mut pads).calls
+    );
+    // Arriving again, as a reconnect does, asks again: a Steam Controller, the warning gone.
+    pads.apply(&arrival(0, 0x600)).unwrap();
+    assert_eq!(pads.profiles[&0], VHF_STEAM_CONTROLLER);
+    assert_eq!(pads.steam_pads(), 1);
+    assert_eq!(ASKED.load(Ordering::SeqCst), 2);
+    assert!(pads.warnings.snapshot().is_empty());
+    // Leaving forgets the answer.
+    pads.apply(&state(0, 0)).unwrap();
+    assert!(pads.steam_at_arrival.is_empty());
+    assert_eq!(pads.steam_pads(), 0);
+    // A touchpad without the controls, and a type chosen by name, never ask.
+    pads.apply(&arrival(1, 8)).unwrap();
+    pads.profile = VHF_XBOX_SERIES;
+    pads.apply(&arrival(2, 0x600)).unwrap();
+    assert_eq!(ASKED.load(Ordering::SeqCst), 2);
+    assert!(pads.steam_at_arrival.is_empty());
+}
+/// The Desktop or an app that starts a program itself: Steam would give such a program its
+/// desktop layout, so the controls keep an Xbox-type pad, though Steam runs, and nobody is
+/// warned or asks whether Steam runs.
+#[test]
+fn steam_controls_outside_a_steam_app_keep_an_xbox_pad() {
+    use butterpollo_core::input_policy::VHF_XBOX_SERIES;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static ASKED: AtomicUsize = AtomicUsize::new(0);
+    fn running() -> bool {
+        ASKED.fetch_add(1, Ordering::SeqCst);
+        true
+    }
+    let _stranded = stranded_slots();
+    let mut pads = steam_controls_pads(false, running);
+    pads.apply(&steam_controls_arrival(0, 0x600)).unwrap();
+    pads.apply(&steam_controls_arrival(1, 0x608)).unwrap();
+    assert_eq!(pads.profiles[&0], VHF_XBOX_SERIES);
+    assert_eq!(pads.profiles[&1], VHF_XBOX_SERIES);
+    assert_eq!(ASKED.load(Ordering::SeqCst), 0);
+    assert!(pads.warnings.snapshot().is_empty());
+}
+/// The warning lasts while any controller's controls lack their Steam Controller: one leaving
+/// keeps it for the other, an arrival without the controls clears it though its pad stays,
+/// and the last one leaving clears it too.
+#[test]
+fn the_steam_controls_warning_lasts_while_a_controller_has_it() {
+    let _stranded = stranded_slots();
+    let mut pads = steam_controls_pads(true, || false);
+    let warned = |pads: &Gamepads| {
+        pads.warnings
+            .snapshot()
+            .iter()
+            .any(|warning| warning.code == "input_steam_controls")
+    };
+    pads.apply(&steam_controls_arrival(0, 0x600)).unwrap();
+    pads.apply(&steam_controls_arrival(1, 0x600)).unwrap();
+    assert!(warned(&pads));
+    let xbox = butterpollo_core::input_policy::VHF_XBOX_SERIES;
+    assert_eq!((pads.profiles[&0], pads.profiles[&1]), (xbox, xbox));
+    pads.apply(&state(0, 0b01)).unwrap();
+    assert!(warned(&pads), "controller 0 still lacks it");
+    let slot = pads.active[&0];
+    pads.apply(&steam_controls_arrival(0, 0)).unwrap();
+    assert_eq!(pads.active[&0], slot, "the same Xbox pad");
+    assert!(!warned(&pads), "no controls, no warning");
+    pads.apply(&steam_controls_arrival(0, 0x600)).unwrap();
+    assert!(warned(&pads));
+    pads.apply(&state(0, 0)).unwrap();
+    assert!(!warned(&pads), "the last one left");
+    assert!(pads.steam_fallbacks.is_empty());
+}
+#[test]
+fn steam_controls_say_why_they_got_no_steam_controller() {
+    use butterpollo_core::input_policy::{
+        CTYPE_STEAM, VHF_DUALSENSE, VHF_STEAM_CONTROLLER, VHF_XBOX_SERIES,
+    };
+    let driver = (1 << (VHF_XBOX_SERIES - 1)) | (1 << (VHF_DUALSENSE - 1));
+    let with_steam = driver | (1 << (VHF_STEAM_CONTROLLER - 1));
+    // The Desktop or a program started directly: an Xbox pad, as meant, without a warning.
+    assert_eq!(
+        steam_controls_fallback(0, 1, 0x600, false, with_steam, VHF_XBOX_SERIES),
+        None
+    );
+    let no_steam = steam_controls_fallback(0, 1, 0x600, true, with_steam, VHF_XBOX_SERIES).unwrap();
+    assert!(no_steam.contains("Steam was not running"), "{no_steam}");
+    assert!(no_steam.contains("an Xbox controller"), "{no_steam}");
+    assert!(
+        no_steam.contains("Start Steam, then reconnect."),
+        "{no_steam}"
+    );
+    let old_driver = steam_controls_fallback(0, 0, 0x608, true, driver, VHF_XBOX_SERIES).unwrap();
+    assert!(
+        old_driver.contains("no Steam Controller profile"),
+        "{old_driver}"
+    );
+    assert!(
+        old_driver.contains("Run Rubylight setup again"),
+        "{old_driver}"
+    );
+    // Motion kept a DualSense: the warning names the pad it got.
+    let gyro = steam_controls_fallback(0, 1, 0x630, true, with_steam, VHF_DUALSENSE).unwrap();
+    assert!(gyro.contains("a DualSense"), "{gyro}");
+    // A Steam Controller, a type chosen by name, other kinds and other pads say nothing.
+    for (configured, kind, caps, profile) in [
+        (0, 1, 0x600, VHF_STEAM_CONTROLLER),
+        (VHF_XBOX_SERIES, 1, 0x600, VHF_XBOX_SERIES),
+        (0, CTYPE_STEAM, 0x608, VHF_DUALSENSE),
+        (0, 2, 0x608, VHF_DUALSENSE),
+        (0, 1, 8, VHF_DUALSENSE),
+    ] {
+        assert_eq!(
+            steam_controls_fallback(configured, kind, caps, true, with_steam, profile),
+            None
+        );
+    }
 }
 #[test]
 fn a_failed_plug_reports_the_drivers_error_not_full_slots() {

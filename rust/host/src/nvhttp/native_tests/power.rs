@@ -520,7 +520,7 @@ async fn a_guest_or_controller_session_during_the_delivery_wait_stops_it_and_say
             controller = Some(
                 s.host()
                     .controller_sessions
-                    .acquire(&launch, &Default::default())
+                    .acquire(&launch, &Default::default(), false)
                     .unwrap(),
             );
         },

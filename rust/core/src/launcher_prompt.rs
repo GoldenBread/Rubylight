@@ -32,6 +32,23 @@ pub struct Window {
     pub foreground: bool,
 }
 
+/// A command line's program and what follows it. A quoted program ends at its closing quote;
+/// an unquoted path may hold spaces ("C:\Program Files (x86)\Steam\steam.exe -silent"), so it
+/// ends at the first ".exe", or else at the first space.
+pub fn split_program(command: &str) -> (&str, &str) {
+    let command = command.trim();
+    match command.strip_prefix('"') {
+        Some(quoted) => quoted.split_once('"').unwrap_or((quoted, "")),
+        // ASCII lower case keeps every byte where it was.
+        None => match command.to_ascii_lowercase().find(".exe") {
+            Some(end) => command.split_at(end + ".exe".len()),
+            None => command
+                .split_once(char::is_whitespace)
+                .unwrap_or((command, "")),
+        },
+    }
+}
+
 /// A launcher's id for a program, or none for any other program.
 pub fn launcher_of(process: &str) -> Option<&'static str> {
     let name = process.rsplit(['/', '\\']).next().unwrap_or(process);
@@ -52,17 +69,7 @@ pub fn launcher_of(process: &str) -> Option<&'static str> {
 /// the app: a prompt on screen is what the client asked for, not a game held up by one.
 pub fn opens_launcher_itself(command: &str) -> bool {
     let command = command.trim().to_ascii_lowercase();
-    let (target, rest) = match command.strip_prefix('"') {
-        Some(quoted) => quoted.split_once('"').unwrap_or((quoted, "")),
-        // An unquoted path may hold spaces ("C:\Program Files (x86)\Steam\steam.exe -silent"):
-        // the program ends at the first ".exe".
-        None => match command.find(".exe") {
-            Some(end) => command.split_at(end + ".exe".len()),
-            None => command
-                .split_once(char::is_whitespace)
-                .unwrap_or((command.as_str(), "")),
-        },
-    };
+    let (target, rest) = split_program(&command);
     // A command that names a game to start is waited for, wherever it is written.
     let starts_a_game = |text: &str| {
         ["applaunch", "rungameid", "launch", "steam://run/"]
@@ -252,6 +259,24 @@ mod tests {
         ] {
             assert!(!opens_launcher_itself(command), "{command}");
         }
+    }
+
+    #[test]
+    fn a_commands_program_ends_at_its_closing_quote_or_its_exe() {
+        assert_eq!(
+            split_program(r#" "C:\Program Files\Steam\steam.exe" -gamepadui"#),
+            (r"C:\Program Files\Steam\steam.exe", " -gamepadui")
+        );
+        // The case stays as written.
+        assert_eq!(
+            split_program(r"C:\Program Files (x86)\Steam\Steam.EXE -bigpicture"),
+            (r"C:\Program Files (x86)\Steam\Steam.EXE", " -bigpicture")
+        );
+        assert_eq!(
+            split_program("steam://open/bigpicture now"),
+            ("steam://open/bigpicture", "now")
+        );
+        assert_eq!(split_program(""), ("", ""));
     }
 
     #[test]

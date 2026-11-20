@@ -184,6 +184,10 @@ impl Pads for SteamFake {
     fn steam_haptics(&mut self) -> Vec<SteamHaptic> {
         std::mem::take(&mut self.reports.lock().unwrap())
     }
+    /// Controller 0's pad, once plugged, is the Steam Controller.
+    fn steam_pads(&self) -> u16 {
+        u16::from(self.plugged)
+    }
     fn motion_supported(&self, _: u16) -> bool {
         false
     }
@@ -836,6 +840,37 @@ fn an_unmapped_back_grip_press_shows_a_hint_and_still_reaches_the_pads() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].code, "input_back_grips");
     gate.wait_until(|| log.lock().unwrap().len() == 2);
+}
+
+/// A Steam Controller that Automatic chose (on-screen Steam Controller controls while Steam
+/// runs) has every back grip: an unmapped press says nothing, unlike on another controller's pad.
+#[test]
+fn an_automatic_steam_controller_keeps_its_back_grips_without_a_hint() {
+    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let mut pads = GamepadThread::spawn_reported(
+        || {
+            Ok(SteamFake {
+                reports: Arc::default(),
+                plugged: false,
+            })
+        },
+        warnings.clone(),
+    )
+    .unwrap();
+    pads.unmapped_grips = 0x0f_0000;
+    pads.send(Event::Arrival {
+        id: 0,
+        kind: 1,
+        capabilities: 0x600,
+        buttons: 0x0f_0000,
+    });
+    assert!(pads.wait_ready(1, Duration::from_secs(10)));
+    pads.send(state(0, 1, 0x01_0000, 0));
+    assert!(warnings.snapshot().is_empty());
+    pads.send(state(1, 0b11, 0x01_0000, 0));
+    let entries = warnings.snapshot();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].code, "input_back_grips");
 }
 
 #[test]

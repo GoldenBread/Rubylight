@@ -99,6 +99,10 @@ pub(super) trait Pads {
     fn audio_ready(&self) -> u16 {
         0
     }
+    /// Controllers whose pad is a Steam Controller, a bit each: its back grips are its own.
+    fn steam_pads(&self) -> u16 {
+        0
+    }
     fn motion_supported(&self, id: u16) -> bool;
     /// Whether any pad is plugged in, and so feedback needs polling.
     fn plugged(&self) -> bool;
@@ -147,6 +151,9 @@ impl Pads for Gamepads {
     fn audio_ready(&self) -> u16 {
         Gamepads::audio_ready(self)
     }
+    fn steam_pads(&self) -> u16 {
+        Gamepads::steam_pads(self)
+    }
     fn motion_supported(&self, id: u16) -> bool {
         Gamepads::motion_supported(self, id)
     }
@@ -179,6 +186,8 @@ struct Shared {
     haptics_on: AtomicBool,
     ready: AtomicU16,
     audio_ready: AtomicU16,
+    /// [`Pads::steam_pads`] as the thread last saw it, for the back grip hint.
+    steam_pads: AtomicU16,
 }
 impl Shared {
     /// Wake the gamepad thread and anyone waiting for its pads.
@@ -388,6 +397,7 @@ impl GamepadThread {
             haptics_on: AtomicBool::new(true),
             ready: AtomicU16::new(0),
             audio_ready: AtomicU16::new(0),
+            steam_pads: AtomicU16::new(0),
         });
         let (sender, reports) = mpsc::channel();
         let thread = std::thread::Builder::new().name("gamepads".into()).spawn({
@@ -403,6 +413,20 @@ impl GamepadThread {
             profile: 0,
             identities: Mutex::default(),
         })
+    }
+    /// The back grips controller `id`'s pad has itself: every one on a Steam Controller,
+    /// whether `gamepad` or Automatic chose it.
+    fn pad_back_grips(&self, id: u16) -> u32 {
+        use butterpollo_core::input_policy::{VHF_STEAM_CONTROLLER, pad_back_grips};
+        let steam = id < 16 && self.shared.steam_pads.load(Ordering::Acquire) & (1 << id) != 0;
+        pad_back_grips(
+            if steam {
+                VHF_STEAM_CONTROLLER
+            } else {
+                self.profile
+            },
+            self.identities.lock().unwrap().get(&id).copied(),
+        )
     }
     /// Queue an event for the pads; never waits for the driver.
     pub fn set_warnings(&self, warnings: Arc<butterpollo_core::session::Warnings>) {
@@ -422,13 +446,7 @@ impl GamepadThread {
         }
         if let Event::Controller { id, buttons, .. } = &event
             && buttons & self.unmapped_grips != 0
-            && buttons
-                & self.unmapped_grips
-                & !butterpollo_core::input_policy::pad_back_grips(
-                    self.profile,
-                    self.identities.lock().unwrap().get(id).copied(),
-                )
-                != 0
+            && buttons & self.unmapped_grips & !self.pad_back_grips(*id) != 0
         {
             self.shared.warnings.lock().unwrap().event(
                 "input_back_grips",
@@ -866,6 +884,9 @@ fn run<P: Pads>(
             shared
                 .audio_ready
                 .store(pads.audio_ready(), Ordering::Release);
+            shared
+                .steam_pads
+                .store(pads.steam_pads(), Ordering::Release);
             match applied {
                 Err(error) => shared.warnings.lock().unwrap().event("input_gamepad_injection", format!("Controller input failed ({error:#}); some controls may not work. Check the selected gamepad profile and virtual driver."), butterpollo_core::session::EVENT_PERIOD),
                 Ok(()) => {
@@ -927,6 +948,9 @@ fn run<P: Pads>(
             shared
                 .audio_ready
                 .store(pads.audio_ready(), Ordering::Release);
+            shared
+                .steam_pads
+                .store(pads.steam_pads(), Ordering::Release);
             let feedback = pads.feedback();
             let drained = pads.feedback_drained();
             if !feedback.is_empty() || drained > 0 {

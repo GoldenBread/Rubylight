@@ -252,8 +252,12 @@ async fn allow_lets_in_at_once_and_guest_input_follows_the_permission() {
     let pool = &s.host().controller_sessions;
     let none = std::collections::BTreeSet::new();
     drop(
-        pool.acquire(&stream.launch, &butterpollo_core::config::Config::default())
-            .unwrap(),
+        pool.acquire(
+            &stream.launch,
+            &butterpollo_core::config::Config::default(),
+            false,
+        )
+        .unwrap(),
     );
     assert!(pool.parked(&none));
     assert!(guests.gamepads_allowed(&stream.launch));

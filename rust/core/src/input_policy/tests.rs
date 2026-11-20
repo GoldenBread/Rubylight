@@ -9,7 +9,7 @@ fn vigem_x360_is_chosen_by_name_only_and_never_replaced() {
     for kind in 0..=4 {
         for caps in [0, 8, 0x30, 0x38] {
             assert_eq!(
-                policy.controller_profile(VIGEM_X360, kind, caps, VIGEM_PROFILES),
+                policy.controller_profile(VIGEM_X360, kind, caps, VIGEM_PROFILES, false),
                 Some(VIGEM_X360)
             );
         }
@@ -35,12 +35,12 @@ fn vigem_ds4_is_chosen_by_name_only_and_never_replaced() {
     for kind in 0..=4 {
         for caps in [0, 8, 0x30, 0x38] {
             assert_eq!(
-                policy.controller_profile(VIGEM_DS4, kind, caps, VIGEM_PROFILES),
+                policy.controller_profile(VIGEM_DS4, kind, caps, VIGEM_PROFILES, false),
                 Some(VIGEM_DS4)
             );
             // Automatic never picks a ViGEmBus pad.
             assert!(!matches!(
-                policy.controller_profile(0, kind, caps, VIGEM_PROFILES),
+                policy.controller_profile(0, kind, caps, VIGEM_PROFILES, false),
                 Some(VIGEM_X360 | VIGEM_DS4)
             ));
         }
@@ -82,18 +82,18 @@ fn retired_vigem_choices_select_the_vhf_pad_of_their_family() {
     for kind in 0..=4 {
         for caps in [0, 8, 0x30, 0x38] {
             assert_eq!(
-                policy.controller_profile(gamepad_profile("x360"), kind, caps, vhf),
+                policy.controller_profile(gamepad_profile("x360"), kind, caps, vhf, false),
                 Some(VHF_XBOX_ONE)
             );
             assert_eq!(
-                policy.controller_profile(gamepad_profile("ds4"), kind, caps, vhf),
+                policy.controller_profile(gamepad_profile("ds4"), kind, caps, vhf, false),
                 Some(VHF_DS4)
             );
         }
     }
     // A driver without the Xbox One profile still gives an Xbox pad.
     assert_eq!(
-        policy.controller_profile(gamepad_profile("x360"), 1, 0, 1 << 3),
+        policy.controller_profile(gamepad_profile("x360"), 1, 0, 1 << 3, false),
         Some(VHF_XBOX_SERIES)
     );
 }
@@ -101,45 +101,51 @@ fn retired_vigem_choices_select_the_vhf_pad_of_their_family() {
 fn independent_controllers_match_client_type_and_available_driver_profiles() {
     let policy = Policy::resolve(&Config::default()).unwrap();
     let all = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6);
-    assert_eq!(policy.controller_profile(0, 1, 0x4, all), Some(4));
-    assert_eq!(policy.controller_profile(0, 2, 0, all), Some(6));
-    assert_eq!(policy.controller_profile(0, 3, 0x30, all), Some(7));
-    assert_eq!(policy.controller_profile(0, 0, 8, all), Some(6));
-    assert_eq!(policy.controller_profile(5, 3, 0, all), Some(5));
-    assert_eq!(policy.controller_profile(0, 2, 0, 1 << 3), Some(4));
+    assert_eq!(policy.controller_profile(0, 1, 0x4, all, false), Some(4));
+    assert_eq!(policy.controller_profile(0, 2, 0, all, false), Some(6));
+    assert_eq!(policy.controller_profile(0, 3, 0x30, all, false), Some(7));
+    assert_eq!(policy.controller_profile(0, 0, 8, all, false), Some(6));
+    assert_eq!(policy.controller_profile(5, 3, 0, all, false), Some(5));
+    assert_eq!(policy.controller_profile(0, 2, 0, 1 << 3, false), Some(4));
     // An Xbox-type controller with motion or a touchpad (a Steam Deck), as
     // in Vibepollo; without either it stays an Xbox pad.
-    assert_eq!(policy.controller_profile(0, 1, 0x30 | 8, all), Some(6));
-    assert_eq!(policy.controller_profile(0, 1, 0x30, all), Some(6));
+    assert_eq!(
+        policy.controller_profile(0, 1, 0x30 | 8, all, false),
+        Some(6)
+    );
+    assert_eq!(policy.controller_profile(0, 1, 0x30, all, false), Some(6));
     let plain =
         Policy::resolve(&Config::parse("motion_as_ds4=false\ntouchpad_as_ds4=false\n").unwrap())
             .unwrap();
-    assert_eq!(plain.controller_profile(0, 1, 0x30 | 8, all), Some(4));
+    assert_eq!(
+        plain.controller_profile(0, 1, 0x30 | 8, all, false),
+        Some(4)
+    );
 }
 #[test]
 fn a_nintendo_controller_keeps_its_gyro_on_a_driver_without_the_switch_profile() {
     let policy = Policy::resolve(&Config::default()).unwrap();
     let no_switch = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5);
     assert_eq!(
-        policy.controller_profile(0, 3, 0x30, no_switch),
+        policy.controller_profile(0, 3, 0x30, no_switch, false),
         Some(VHF_DUALSENSE)
     );
     assert_eq!(
-        policy.controller_profile(0, 3, 0x30, (1 << 3) | (1 << 4)),
+        policy.controller_profile(0, 3, 0x30, (1 << 3) | (1 << 4), false),
         Some(VHF_DS4)
     );
     // Without motion sensors, or with only Xbox pads, it is an Xbox pad.
     assert_eq!(
-        policy.controller_profile(0, 3, 0, no_switch),
+        policy.controller_profile(0, 3, 0, no_switch, false),
         Some(VHF_XBOX_SERIES)
     );
     assert_eq!(
-        policy.controller_profile(0, 3, 0x30, 1 << 3),
+        policy.controller_profile(0, 3, 0x30, 1 << 3, false),
         Some(VHF_XBOX_SERIES)
     );
     // A PlayStation controller whose DualSense is missing keeps motion on a DS4.
     assert_eq!(
-        policy.controller_profile(0, 2, 0x30, (1 << 3) | (1 << 4)),
+        policy.controller_profile(0, 2, 0x30, (1 << 3) | (1 << 4), false),
         Some(VHF_DS4)
     );
 }
@@ -151,21 +157,24 @@ fn a_steam_deck_with_its_sensors_gets_a_dualsense_and_without_them_an_xbox_pad()
     // accelerometer, and with SDL 3 both trackpads.
     for caps in [0x30, 0x38, 0x138] {
         assert_eq!(
-            policy.controller_profile(0, CTYPE_STEAM, caps, vhf),
+            policy.controller_profile(0, CTYPE_STEAM, caps, vhf, false),
             Some(VHF_DUALSENSE)
         );
     }
-    assert_eq!(policy.controller_profile(0, CTYPE_STEAM, 0, vhf), Some(4));
+    assert_eq!(
+        policy.controller_profile(0, CTYPE_STEAM, 0, vhf, false),
+        Some(4)
+    );
     let plain =
         Policy::resolve(&Config::parse("motion_as_ds4=false\ntouchpad_as_ds4=false\n").unwrap())
             .unwrap();
     assert_eq!(
-        plain.controller_profile(0, CTYPE_STEAM, 0x138, vhf),
+        plain.controller_profile(0, CTYPE_STEAM, 0x138, vhf, false),
         Some(4)
     );
     // An explicit profile is kept.
     assert_eq!(
-        policy.controller_profile(VHF_DS4, CTYPE_STEAM, 0x138, vhf),
+        policy.controller_profile(VHF_DS4, CTYPE_STEAM, 0x138, vhf, false),
         Some(VHF_DS4)
     );
 }
@@ -179,7 +188,7 @@ fn on_screen_steam_controls_never_pick_a_dualsense_by_their_touchpad() {
     for kind in [0, 1] {
         for caps in [0x608, 0x600, 0x208, 0x408, 0x200, 0x400] {
             assert_eq!(
-                policy.controller_profile(0, kind, caps, vhf),
+                policy.controller_profile(0, kind, caps, vhf, false),
                 Some(VHF_XBOX_SERIES),
                 "kind {kind}, capabilities {caps:#x}"
             );
@@ -188,28 +197,28 @@ fn on_screen_steam_controls_never_pick_a_dualsense_by_their_touchpad() {
         // Motion still selects a DualSense: a pad sharing player 1 keeps its gyro.
         for caps in [0x630, 0x638] {
             assert_eq!(
-                policy.controller_profile(0, kind, caps, vhf),
+                policy.controller_profile(0, kind, caps, vhf, false),
                 Some(VHF_DUALSENSE)
             );
         }
         // A touchpad without them is a DualSense, as before.
         assert_eq!(
-            policy.controller_profile(0, kind, 8, vhf),
+            policy.controller_profile(0, kind, 8, vhf, false),
             Some(VHF_DUALSENSE)
         );
         assert!(!steam_controls(kind, 0x138));
     }
     // PlayStation, Nintendo and Steam controllers keep their pads.
     assert_eq!(
-        policy.controller_profile(0, 2, 0x608, vhf),
+        policy.controller_profile(0, 2, 0x608, vhf, false),
         Some(VHF_DUALSENSE)
     );
     assert_eq!(
-        policy.controller_profile(0, 3, 0x608, vhf),
+        policy.controller_profile(0, 3, 0x608, vhf, false),
         Some(VHF_SWITCH)
     );
     assert_eq!(
-        policy.controller_profile(0, CTYPE_STEAM, 0x608, vhf),
+        policy.controller_profile(0, CTYPE_STEAM, 0x608, vhf, false),
         Some(VHF_DUALSENSE)
     );
     for kind in [2, 3, CTYPE_STEAM] {
@@ -217,8 +226,102 @@ fn on_screen_steam_controls_never_pick_a_dualsense_by_their_touchpad() {
     }
     // A type chosen by name is kept.
     for named in [VHF_DUALSENSE, VHF_DS4, VHF_STEAM_CONTROLLER] {
-        assert_eq!(policy.controller_profile(named, 1, 0x608, vhf), Some(named));
+        assert_eq!(
+            policy.controller_profile(named, 1, 0x608, vhf, false),
+            Some(named)
+        );
     }
+}
+/// Under Automatic, on-screen Steam Controller controls get a Steam Controller when the
+/// stream's app starts through Steam, Steam was running as the controller connected and the
+/// driver has one. Otherwise, the Desktop and a program started directly included, they get
+/// the pad they would get without Steam, never a DualSense for their touchpad.
+#[test]
+fn on_screen_steam_controls_get_a_steam_controller_in_a_steam_app_while_steam_runs() {
+    let desktop = Policy::resolve(&Config::default()).unwrap();
+    assert!(!desktop.steam_app, "only the host sets it, from the launch");
+    let mut policy = desktop.clone();
+    policy.steam_app = true;
+    let vhf = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6);
+    let with_steam = vhf | (1 << (VHF_STEAM_CONTROLLER - 1));
+    for kind in [0, 1] {
+        // An older Nightjar's 0x608, the new 0x600, either touch alone, and with motion.
+        for caps in [0x608, 0x600, 0x208, 0x408, 0x630] {
+            assert_eq!(
+                policy.controller_profile(0, kind, caps, with_steam, true),
+                Some(VHF_STEAM_CONTROLLER),
+                "kind {kind}, capabilities {caps:#x}"
+            );
+            let otherwise = if caps & 0x30 != 0 {
+                VHF_DUALSENSE
+            } else {
+                VHF_XBOX_SERIES
+            };
+            // Steam was not running, or the driver has no Steam Controller.
+            assert_eq!(
+                policy.controller_profile(0, kind, caps, with_steam, false),
+                Some(otherwise),
+                "kind {kind}, capabilities {caps:#x}"
+            );
+            assert_eq!(
+                policy.controller_profile(0, kind, caps, vhf, true),
+                Some(otherwise),
+                "kind {kind}, capabilities {caps:#x}"
+            );
+            // The Desktop or a program started directly, though Steam runs.
+            assert_eq!(
+                desktop.controller_profile(0, kind, caps, with_steam, true),
+                Some(otherwise),
+                "kind {kind}, capabilities {caps:#x}"
+            );
+        }
+    }
+    // Without motion selecting a DualSense, a driver lacking the profile gives an Xbox pad.
+    let mut plain = Policy::resolve(&Config::parse("motion_as_ds4=false\n").unwrap()).unwrap();
+    plain.steam_app = true;
+    assert_eq!(
+        plain.controller_profile(0, 1, 0x630, vhf, true),
+        Some(VHF_XBOX_SERIES)
+    );
+    assert_eq!(
+        plain.controller_profile(0, 1, 0x630, with_steam, true),
+        Some(VHF_STEAM_CONTROLLER)
+    );
+    // Types chosen by name, PlayStation, Nintendo and Steam controllers, and pads without the
+    // controls get what they got before, Steam or not.
+    for named in [VHF_XBOX_SERIES, VHF_DS4, VHF_DUALSENSE] {
+        assert_eq!(
+            policy.controller_profile(named, 1, 0x600, with_steam, true),
+            Some(named)
+        );
+    }
+    assert_eq!(
+        policy.controller_profile(0, 2, 0x608, with_steam, true),
+        Some(VHF_DUALSENSE)
+    );
+    assert_eq!(
+        policy.controller_profile(0, 3, 0x608, with_steam, true),
+        Some(VHF_SWITCH)
+    );
+    // A Steam Deck, and a real Steam Controller with its haptics, settings and clicks.
+    for caps in [0x608, 0x7e08] {
+        assert_eq!(
+            policy.controller_profile(0, CTYPE_STEAM, caps, with_steam, true),
+            Some(VHF_DUALSENSE)
+        );
+    }
+    assert_eq!(
+        policy.controller_profile(0, CTYPE_STEAM, 0, with_steam, true),
+        Some(VHF_XBOX_SERIES)
+    );
+    assert_eq!(
+        policy.controller_profile(0, 1, 8, with_steam, true),
+        Some(VHF_DUALSENSE)
+    );
+    assert_eq!(
+        policy.controller_profile(0, 1, 0, with_steam, true),
+        Some(VHF_XBOX_SERIES)
+    );
 }
 #[test]
 fn the_steam_controller_and_a_switch2_pro_carry_their_back_grips() {

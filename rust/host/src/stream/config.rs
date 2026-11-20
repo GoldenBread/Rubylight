@@ -69,6 +69,17 @@ pub(crate) fn launch_app(h: &Shared, launch: &Launch) -> Option<butterpollo_core
         })
 }
 
+/// Whether `launch`'s app starts through Steam ([`butterpollo_core::steam::launched_through_steam`]),
+/// for its controllers' [`butterpollo_core::input_policy::Policy::steam_app`]. A Nucleus Co-op
+/// launch (a co-op entry or a background stream) never does, whatever its app: Nucleus Co-op
+/// starts the game's .exe itself, a Steam game's too.
+pub(crate) fn launched_through_steam(h: &Shared, launch: &Launch) -> bool {
+    launch.nucleus.is_none()
+        && launch_app(h, launch)
+            .and_then(|app| serde_json::to_value(app).ok())
+            .is_some_and(|app| butterpollo_core::steam::launched_through_steam(&app))
+}
+
 /// The stream's settings: host, then device, then app, then the app's block for the device.
 pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
     let mut config = h.config.read().unwrap().clone();

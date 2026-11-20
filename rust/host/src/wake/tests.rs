@@ -183,7 +183,11 @@ fn what_sleep_pc_counts_as_busy_blocks_it_too() {
     let controller = f
         .host
         .controller_sessions
-        .acquire(&f.launch(f.client(0), Role::Stream), &Default::default())
+        .acquire(
+            &f.launch(f.client(0), Role::Stream),
+            &Default::default(),
+            false,
+        )
         .unwrap();
     tick_at(&f.host, start + 11 * MINUTE);
     assert_eq!(fake.sleeps(), 0, "a controller session");

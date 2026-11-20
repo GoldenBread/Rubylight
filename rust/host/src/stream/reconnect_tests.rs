@@ -2348,6 +2348,47 @@ fn parked_launch(h: &Harness, index: usize, uuid: &str) -> Launch {
     crate::state::test_support::Fixture::new().launch(client, Role::Stream)
 }
 
+/// A stream's controllers carry whether its app starts through Steam, which Automatic needs
+/// before it gives Nightjar's on-screen Steam Controller controls a Steam Controller. Every
+/// path that gives a stream or a launch its controllers (the control loop and its retry, a
+/// WebRTC stream and its retry, the launch's preparation) takes them through
+/// `controller_sessions::acquire_for` with the stream's own launch and settings, as here: its
+/// app with a Steam game's mark says yes, the Desktop no. The harness's control loop takes
+/// none itself: it makes no injector before input comes (`ControlPeer::injector_tried`), and
+/// input would reach this PC's desktop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_streams_controllers_know_whether_its_app_starts_through_steam() -> Result<()> {
+    use crate::controller_sessions::{acquire_for, key};
+    let h = Harness::new(10_000, 1).await?;
+    let pool = &h.h.controller_sessions;
+    // The harness's app, already running, with or without a Steam game's mark: its launch
+    // neither switches apps nor starts anything.
+    let mark = |marked: bool| {
+        let mut apps = h.h.apps.write().unwrap();
+        if marked {
+            apps[0].extra.insert("steam-id".into(), "570".into());
+        } else {
+            apps[0].extra.remove("steam-id");
+        }
+    };
+    let steam_app = |session: &Session| -> Result<Option<bool>> {
+        let config = effective_config(&h.h, &session.launch)?;
+        drop(acquire_for(&h.h, &session.launch, &config)?);
+        Ok(pool
+            .policy(&key(&session.launch))
+            .map(|policy| policy.steam_app))
+    };
+    for marked in [true, false] {
+        mark(marked);
+        let launch = h.launch(0, false).await?;
+        let (session, client) = h.play(&launch).await?;
+        assert_eq!(steam_app(&session)?, Some(marked), "marked: {marked}");
+        h.end(&session, client).await?;
+    }
+    pool.release_parked(WAIT, &Default::default())?;
+    h.finish().await
+}
+
 /// #56: a desktop stream that ended parks its controller, which keeps the
 /// first XInput slot, and the background game started next read that pad
 /// instead of the player's. A new background session releases parked
@@ -2381,7 +2422,7 @@ async fn a_new_background_stream_releases_parked_controllers_first() -> Result<(
     // Parked together: a client's acquire evicts the others' parked ones.
     let held: Vec<_> = [&streaming, &gap, &prepared]
         .into_iter()
-        .map(|launch| pool.acquire(launch, &config))
+        .map(|launch| pool.acquire(launch, &config, false))
         .collect::<Result<_>>()?;
     drop(held);
     h.h.sessions
@@ -2435,10 +2476,11 @@ async fn a_new_co_op_session_releases_parked_controllers_first() -> Result<()> {
     let (h, _pc, id) = coop_harness().await?;
     let none = std::collections::BTreeSet::new();
     let gap = parked_launch(&h, 0, "gap");
-    drop(
-        h.h.controller_sessions
-            .acquire(&gap, &butterpollo_core::config::Config::default())?,
-    );
+    drop(h.h.controller_sessions.acquire(
+        &gap,
+        &butterpollo_core::config::Config::default(),
+        false,
+    )?);
     assert!(h.h.controller_sessions.parked(&none));
     let started = launch_app(&h, 1, id).await?;
     assert!(started.contains("status_code=\"200\""), "{started}");

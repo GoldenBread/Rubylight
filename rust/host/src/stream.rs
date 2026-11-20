@@ -30,7 +30,7 @@ use butterpollo_core::audio_passthrough::Codec;
 #[cfg(test)]
 use config::{apply_overrides, sets_peak};
 pub(crate) use config::{
-    cap_stream_resolution, device_config, effective_config, launch_app,
+    cap_stream_resolution, device_config, effective_config, launch_app, launched_through_steam,
     report_stream_resolution_cap,
 };
 #[cfg(test)]

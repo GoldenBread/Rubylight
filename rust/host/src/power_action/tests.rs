@@ -582,7 +582,7 @@ async fn a_guest_or_controller_session_during_the_delivery_wait_stops_the_suspen
     let controller = f
         .host
         .controller_sessions
-        .acquire(&f.launch(client, Role::Stream), &Default::default())
+        .acquire(&f.launch(client, Role::Stream), &Default::default(), false)
         .unwrap();
     end.finish(true);
     wait_for_gate(&f);
@@ -626,7 +626,7 @@ async fn every_busy_reason_refuses_sleep() {
     let controller = f
         .host
         .controller_sessions
-        .acquire(&f.launch(client, Role::Stream), &Default::default())
+        .acquire(&f.launch(client, Role::Stream), &Default::default(), false)
         .unwrap();
     assert_eq!(sleep(&f, &token).await.message(), busy);
     drop(controller);

@@ -91,6 +91,16 @@ pub struct Gamepads {
     /// Controllers a Steam Deck could not be attached for; they keep their
     /// VHF pad until they arrive again.
     deck_failed: BTreeSet<u16>,
+    /// Whether Steam was running when each controller carrying on-screen Steam Controller
+    /// controls arrived under Automatic. Asked once per connection: `ensure` plugs a pad again
+    /// when its profile changes, and Steam starting later must not swap it. Forgotten when the
+    /// controller arrives again or leaves.
+    steam_at_arrival: BTreeMap<u16, bool>,
+    /// How Steam is looked for; tests answer instead.
+    steam_running: fn() -> bool,
+    /// Controllers whose on-screen Steam Controller controls got another pad in an app started
+    /// through Steam: the session's warning stays while any does.
+    steam_fallbacks: BTreeSet<u16>,
     pub(super) dualsenses: BTreeMap<u16, dualsense_pad::DualSensePad>,
     dualsense_failed: BTreeSet<u16>,
     /// Controllers attached as Switch 2 Pro Controllers over usbip-win2.
@@ -242,6 +252,9 @@ impl Gamepads {
             driver_host_acquire: driver_host::acquire,
             decks: BTreeMap::new(),
             deck_failed: BTreeSet::new(),
+            steam_at_arrival: BTreeMap::new(),
+            steam_running: steam_deck_pad::steam_running,
+            steam_fallbacks: BTreeSet::new(),
             dualsenses: BTreeMap::new(),
             dualsense_failed: BTreeSet::new(),
             switch2s: BTreeMap::new(),
@@ -396,6 +409,74 @@ impl Gamepads {
         self.switch2s.insert(id, pad);
         Ok(true)
     }
+    /// Whether Steam was running when controller `id` connected, for the policy's choice of
+    /// pad. Asked once per connection, and only for on-screen Steam Controller controls under
+    /// Automatic, in an app started through Steam, on a driver that has the Steam Controller,
+    /// so the host's processes are not listed for every pad.
+    fn steam_at_arrival(&mut self, id: u16, kind: u8, capabilities: u16) -> bool {
+        if self.profile != 0
+            || !self.policy.steam_app
+            || self.available & (1 << (VHF_STEAM_CONTROLLER - 1)) == 0
+            || !butterpollo_core::input_policy::steam_controls(kind, capabilities)
+        {
+            return false;
+        }
+        let running = self.steam_running;
+        *self.steam_at_arrival.entry(id).or_insert_with(running)
+    }
+    /// Once controller `id`'s arrival has its pad (`profile`; a USB/IP DualSense counts as the
+    /// DualSense): warns when its on-screen Steam Controller controls got another pad than the
+    /// Steam Controller in an app started through Steam, and clears the warning once no
+    /// controller is left so. Logs why, once per arrival.
+    fn note_steam_controls(&mut self, id: u16, kind: u8, capabilities: u16, profile: u16) {
+        let fallback = steam_controls_fallback(
+            self.profile,
+            kind,
+            capabilities,
+            self.policy.steam_app,
+            self.available,
+            profile,
+        );
+        if let Some(warning) = fallback {
+            tracing::info!(
+                controller = id,
+                driver_has_steam_controller =
+                    self.available & (1 << (VHF_STEAM_CONTROLLER - 1)) != 0,
+                // Asked only when the driver has the Steam Controller.
+                steam_running = ?self.steam_at_arrival.get(&id),
+                profile = profile_name(profile),
+                "on-screen Steam Controller controls got no Steam Controller"
+            );
+            self.steam_fallbacks.insert(id);
+            self.warnings.set("input_steam_controls", warning);
+            return;
+        }
+        if self.profile == 0
+            && !self.policy.steam_app
+            && butterpollo_core::input_policy::steam_controls(kind, capabilities)
+        {
+            tracing::info!(
+                controller = id,
+                profile = profile_name(profile),
+                "on-screen Steam Controller controls get no Steam Controller: the stream's app does not start through Steam"
+            );
+        }
+        self.forget_steam_fallback(id);
+    }
+    /// Controller `id` no longer has on-screen Steam Controller controls without their pad.
+    fn forget_steam_fallback(&mut self, id: u16) {
+        if self.steam_fallbacks.remove(&id) && self.steam_fallbacks.is_empty() {
+            self.warnings.clear("input_steam_controls");
+        }
+    }
+    /// The controllers whose pad is a Steam Controller, a bit each: their back grips are the
+    /// pad's own, whether `gamepad` or Automatic chose it.
+    pub(super) fn steam_pads(&self) -> u16 {
+        self.profiles
+            .iter()
+            .filter(|(_, profile)| **profile == VHF_STEAM_CONTROLLER)
+            .fold(0, |mask, (id, _)| mask | (1 << id))
+    }
     fn ensure(&mut self, id: u16) -> Result<()> {
         if id >= 16 {
             bail!("controller ID out of range");
@@ -404,9 +485,10 @@ impl Gamepads {
             return Ok(());
         }
         let (kind, capabilities) = self.arrivals.get(&id).copied().unwrap_or_default();
+        let steam = self.steam_at_arrival(id, kind, capabilities);
         let profile = self
             .policy
-            .controller_profile(self.profile, kind, capabilities, self.available)
+            .controller_profile(self.profile, kind, capabilities, self.available, steam)
             .ok_or_else(|| anyhow::anyhow!("gamepad driver has no supported controller profile"))?;
         if let Some(global) = self.active.get(&id).copied() {
             if self.profiles.get(&id) == Some(&profile) {
@@ -530,9 +612,10 @@ impl Gamepads {
             return Ok(false);
         }
         let (kind, caps) = self.arrivals.get(&id).copied().unwrap_or_default();
-        let selected = self
-            .policy
-            .controller_profile(self.profile, kind, caps, self.available);
+        let steam = self.steam_at_arrival(id, kind, caps);
+        let selected =
+            self.policy
+                .controller_profile(self.profile, kind, caps, self.available, steam);
         if !forced && (caps & haptics::CAPABILITY == 0 || selected != Some(VHF_DUALSENSE)) {
             return Ok(false);
         }
@@ -595,6 +678,14 @@ impl Gamepads {
                 self.switch2s.retain(|i, _| active & (1 << *i) != 0);
                 self.switch2_failed.retain(|i| active & (1 << *i) != 0);
                 self.arrivals.retain(|i, _| active & (1 << *i) != 0);
+                self.steam_at_arrival.retain(|i, _| active & (1 << *i) != 0);
+                // A USB/IP pad that leaves is never forgotten through `forget_pad`.
+                if self.steam_fallbacks.iter().any(|i| active & (1 << *i) == 0) {
+                    self.steam_fallbacks.retain(|i| active & (1 << *i) != 0);
+                    if self.steam_fallbacks.is_empty() {
+                        self.warnings.clear("input_steam_controls");
+                    }
+                }
                 self.steam_attributes.retain(|i, _| active & (1 << *i) != 0);
                 self.dualsense_failed.retain(|i| active & (1 << *i) != 0);
                 self.states.retain(|i, _| active & (1 << *i) != 0);
@@ -695,14 +786,26 @@ impl Gamepads {
                     pad.capabilities(*capabilities);
                 }
                 // A controller that arrives again may try a Steam Deck or a
-                // Switch 2 Pro Controller again.
+                // Switch 2 Pro Controller again, and asks again whether Steam runs.
                 self.deck_failed.remove(&id);
                 self.switch2_failed.remove(&id);
+                self.steam_at_arrival.remove(&id);
                 // The client says this controller is here, whatever a
                 // removal whose unplug failed left behind.
                 self.dropped.remove(&id);
                 if !self.ensure_switch2(id)? && !self.ensure_deck(id)? {
                     self.ensure(id)?;
+                }
+                // Whichever branch gave it its pad (a USB/IP DualSense returns from `ensure`
+                // early), and also when the pad stayed as it was.
+                let pad = if self.dualsenses.contains_key(&id) {
+                    Some(butterpollo_core::input_policy::VHF_DUALSENSE)
+                } else {
+                    self.profiles.get(&id).copied()
+                };
+                match pad {
+                    Some(profile) => self.note_steam_controls(id, *kind, *capabilities, profile),
+                    None => self.forget_steam_fallback(id),
                 }
             }
             Event::Motion { id, kind, xyz } => {
@@ -1105,6 +1208,8 @@ impl Gamepads {
         self.active.remove(&id);
         self.profiles.remove(&id);
         self.arrivals.remove(&id);
+        self.steam_at_arrival.remove(&id);
+        self.forget_steam_fallback(id);
         self.states.remove(&id);
         self.last_feedback.remove(&id);
         self.feedback_failures.remove(&id);
@@ -1410,6 +1515,41 @@ fn switch_fallback(configured: u16, kind: u8, capabilities: u16, profile: u16) -
     Some(format!(
         "The gamepad driver has no Switch Pro profile, so the Nintendo controller plays as {pad}{gyro}. Run Rubylight setup again to update the gamepad driver, then reconnect."
     ))
+}
+/// The session warning for a controller carrying on-screen Steam Controller controls that
+/// automatic selection gave another pad (`profile`) although the stream's app starts through
+/// Steam (`steam_app`): the driver has no Steam Controller, or Steam was not running when the
+/// controller connected. Any other app keeps its Xbox-type pad without a word.
+fn steam_controls_fallback(
+    configured: u16,
+    kind: u8,
+    capabilities: u16,
+    steam_app: bool,
+    available: u32,
+    profile: u16,
+) -> Option<String> {
+    use butterpollo_core::input_policy::{VHF_DS4, VHF_DUALSENSE, steam_controls};
+    if configured != 0
+        || !steam_app
+        || profile == VHF_STEAM_CONTROLLER
+        || !steam_controls(kind, capabilities)
+    {
+        return None;
+    }
+    let pad = match profile {
+        VHF_DUALSENSE => "a DualSense, which has a touchpad but no back buttons or grips",
+        VHF_DS4 => "a DualShock 4, which has a touchpad but no back buttons or grips",
+        _ => "an Xbox controller, on which the trackpads, back buttons and grip touch do nothing",
+    };
+    Some(if available & (1 << (VHF_STEAM_CONTROLLER - 1)) == 0 {
+        format!(
+            "Steam Controller unavailable: the gamepad driver has no Steam Controller profile, so the controller with the on-screen Steam Controller controls plays as {pad}. Run Rubylight setup again to update the gamepad driver, then reconnect."
+        )
+    } else {
+        format!(
+            "Steam Controller unavailable: Steam was not running when the controller with the on-screen Steam Controller controls connected, so it plays as {pad}. Start Steam, then reconnect."
+        )
+    })
 }
 // The driver has one touch surface and two contact slots. Keep this mapping
 // independent of device IO so unsupported surfaces cannot change slot state.

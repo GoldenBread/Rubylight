@@ -697,6 +697,38 @@ fn every_installed_game_is_the_default_and_an_explicit_false_keeps_recent() {
     assert!(!recent.sync_all_installed);
     assert_eq!(recent.source(), "recent");
 }
+/// The apps whose games read controllers through Steam Input: the Steam Big Picture entry,
+/// `steam://` commands, commands that run Steam's own program and the Steam library's entries;
+/// not the Desktop, a game's own .exe started directly, another store's link or a Playnite
+/// entry, which Playnite starts its own way.
+#[test]
+fn apps_launched_through_steam_are_told_apart() {
+    for app in [
+        json!({"name": "Steam Big Picture", "detached": ["steam://open/bigpicture"]}),
+        json!({"name": "Dota 2", "cmd": "cmd /c start \"\" steam://rungameid/570"}),
+        json!({"name": "Hades", "uuid": canonical_uuid(1145360)}),
+        json!({"name": "Portal", "steam-id": "400"}),
+        json!({"name": "Imported", "launcher-source": "steam", "launcher-id": "620"}),
+        json!({"name": "Gamepad UI", "cmd": "STEAM://open/gamepadui"}),
+        json!({"name": "Dota 2 by Steam", "cmd": "steam.exe -applaunch 570"}),
+        json!({"name": "Steam UI", "cmd": r#""C:\Program Files (x86)\Steam\steam.exe" -gamepadui"#}),
+        json!({"name": "Big Picture", "detached": [r"C:\Program Files (x86)\Steam\Steam.exe -bigpicture"]}),
+    ] {
+        assert!(launched_through_steam(&app), "{app}");
+    }
+    for app in [
+        json!({"name": "Desktop"}),
+        json!({"name": "Game", "cmd": "C:\\Games\\game.exe"}),
+        json!({"name": "Epic", "cmd": "com.epicgames.launcher://apps/x?action=launch"}),
+        json!({"name": "Emulator", "detached": ["C:\\Emulators\\emu.exe"]}),
+        json!({"name": "Other uuid", "uuid": "0b3d5a8e-6f39-4c7e-9a15-2f4f6c1d7e90"}),
+        json!({"name": "Dota 2 directly", "cmd": r"C:\Program Files (x86)\Steam\steamapps\common\dota 2 beta\game\bin\win64\dota2.exe"}),
+        json!({"name": "Server", "cmd": r"C:\Tools\steamcmd.exe +login anonymous"}),
+        json!({"name": "Dota 2", "playnite-id": "aa", "playnite-plugin-id": "cb91dfc9-b977-43bf-8e70-55f46e410fab"}),
+    ] {
+        assert!(!launched_through_steam(&app), "{app}");
+    }
+}
 #[test]
 fn selection_and_identity_follow_vibepollo() {
     assert_eq!(canonical_uuid(570), "53544541-4d00-5000-8000-00000000023a");

@@ -18,8 +18,10 @@ pub const VHF_DS4: u16 = 5;
 /// The VHF driver's DualSense, the only virtual pad with adaptive triggers.
 pub const VHF_DUALSENSE: u16 = 6;
 pub const VHF_SWITCH: u16 = 7;
-/// The VHF driver's Steam Controller (2026), only when `gamepad = vhf_steam`
-/// chooses it: libvirtualgamepad 0.1.0-beta.10 and later offer it.
+/// The VHF driver's Steam Controller (2026): every controller's when `gamepad =
+/// vhf_steam` chooses it, and under Automatic the one on-screen Steam Controller
+/// controls get in an app started through Steam while Steam runs.
+/// libvirtualgamepad 0.1.0-beta.10 and later offer it.
 pub const VHF_STEAM_CONTROLLER: u16 = 9;
 /// An Xbox 360 pad on ViGEmBus, separately installed (`gamepad = vigem_x360`):
 /// an emulated USB device for tools that don't see a VHF pad (#74).
@@ -237,6 +239,10 @@ pub struct Policy {
     /// that needs the USB pad still sees one.
     pub session_pad: u16,
     pub keybindings: BTreeMap<u16, u16>,
+    /// Whether the stream's app starts through Steam ([`crate::steam::launched_through_steam`]),
+    /// whose games read a virtual Steam Controller through Steam Input. The host sets it from
+    /// the launch; [`Policy::resolve`] leaves it off.
+    pub steam_app: bool,
 }
 impl Policy {
     pub fn resolve(config: &Config) -> Result<Self> {
@@ -317,6 +323,7 @@ impl Policy {
                 _ => VHF_XBOX_SERIES,
             },
             keybindings,
+            steam_app: false,
         })
     }
     /// Presses what each mapped back grip is set to press, in place of the
@@ -360,23 +367,38 @@ impl Policy {
     pub fn key(&self, key: u16) -> u16 {
         self.keybindings.get(&key).copied().unwrap_or(key)
     }
+    /// The pad controller `kind` with `capabilities` gets from the driver's `available`
+    /// profiles, `configured` naming one or 0 for Automatic. `steam_running`: whether Steam was
+    /// running when the controller connected, which only on-screen Steam Controller controls
+    /// ([`steam_controls`]) under Automatic in a Steam app ([`Policy::steam_app`]) ask.
     pub fn controller_profile(
         &self,
         configured: u16,
         kind: u8,
         capabilities: u16,
         available: u32,
+        steam_running: bool,
     ) -> Option<u16> {
+        let carries_steam_controls = steam_controls(kind, capabilities);
         let desired = if configured != 0 {
             configured
         } else if kind == 2 {
             VHF_DUALSENSE
         } else if kind == 3 {
             VHF_SWITCH
+        } else if carries_steam_controls
+            && self.steam_app
+            && steam_running
+            && available & (1 << (VHF_STEAM_CONTROLLER - 1)) != 0
+        {
+            // On-screen Steam Controller controls become one when the stream's app starts
+            // through Steam and Steam ran as the controller connected. A virtual Steam
+            // Controller has no Xbox path of its own: games see it only through Steam Input,
+            // which Steam applies to the games it starts, and any other program gets Steam's
+            // desktop layout and no pad. Its motion keeps a pad's gyro too.
+            VHF_STEAM_CONTROLLER
         } else if (self.motion_as_ds4 && capabilities & 0x30 != 0)
-            || (self.touchpad_as_ds4
-                && capabilities & 8 != 0
-                && !steam_controls(kind, capabilities))
+            || (self.touchpad_as_ds4 && capabilities & 8 != 0 && !carries_steam_controls)
         {
             // As in Vibepollo, a controller of any other type with motion
             // sensors or a touchpad becomes a DualSense, an Xbox-type one too
