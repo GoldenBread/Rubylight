@@ -354,17 +354,42 @@ impl<D: Device> Export<D> {
     pub fn with<R>(&self, f: impl FnOnce(&mut D) -> R) -> R {
         f(&mut self.shared.device.lock().unwrap())
     }
+    /// Runs `f` on the device and reports the new state without waiting for the
+    /// period, taking the device lock once: `changed` reads nothing else from
+    /// the device.
+    pub fn with_changed<R>(&self, f: impl FnOnce(&mut D) -> R) -> R {
+        let (result, retry) = {
+            let mut device = self.shared.device.lock().unwrap();
+            let result = f(&mut device);
+            (result, device.retries_held())
+        };
+        self.report_change(retry);
+        result
+    }
     /// Reports the device's new state without waiting for the period.
     pub fn changed(&self) {
         let retry = self.shared.device.lock().unwrap().retries_held();
+        self.report_change(retry);
+    }
+    /// Flags the device as changed and wakes the report thread. The device lock is
+    /// released before the link lock is taken, as everywhere: the report thread
+    /// holds the link lock while it takes the device's.
+    fn report_change(&self, retry: bool) {
         let mut link = self.shared.link.lock().unwrap();
         link.changed = true;
         link.idle = false;
         if retry {
             link.retry_held();
         }
+        // The report thread can serve a change only while an interrupt transfer waits
+        // to be served, or it NAKed every one it has; with none pending it sleeps
+        // until a transfer arrives, and the arrival wakes it, so a notify here
+        // would only be a spurious wake.
+        let waiting = !link.pending.is_empty();
         drop(link);
-        self.shared.wake.notify_all();
+        if waiting {
+            self.shared.wake.notify_all();
+        }
     }
 }
 impl<D: Device> Drop for Export<D> {

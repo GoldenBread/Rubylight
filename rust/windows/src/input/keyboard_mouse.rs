@@ -227,9 +227,15 @@ impl Injector {
         first.map_or(Ok(()), Err)
     }
     /// Modifiers in a key-down packet that neither this client nor another
-    /// holds as keys (Moonlight reports Shift/Ctrl/Alt both ways).
-    pub(super) fn synthetic_modifiers(&self, key: u32, reported: u8) -> u8 {
-        unheld_modifiers(key, reported, &self.keys, &HELD.lock().unwrap())
+    /// holds as keys (Moonlight reports Shift/Ctrl/Alt both ways), read under
+    /// the HELD lock the caller already holds.
+    pub(super) fn synthetic_modifiers(
+        &self,
+        key: u32,
+        reported: u8,
+        held: &BTreeMap<(bool, u32), usize>,
+    ) -> u8 {
+        unheld_modifiers(key, reported, &self.keys, held)
     }
     /// The key's input surrounded by temporary presses of `modifiers`.
     pub(super) fn with_modifiers(

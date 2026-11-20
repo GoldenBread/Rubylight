@@ -804,6 +804,9 @@ pub struct PrecisionTouchpad {
     epoch: Instant,
     last_scan: Option<u16>,
     serial: String,
+    /// Fingers the packet being applied lifts, reused across packets: the report
+    /// lists each once.
+    lifted: Vec<(usize, Finger, bool)>,
     /// Contacts that came before Windows switched the device to touchpad input.
     pub early_contacts: u64,
 }
@@ -822,6 +825,7 @@ impl PrecisionTouchpad {
             epoch,
             last_scan: None,
             serial: serial.chars().take(32).collect(),
+            lifted: Vec::new(),
             early_contacts: 0,
         }
     }
@@ -841,8 +845,8 @@ impl PrecisionTouchpad {
     /// buttons (bit 0 the click) at `now`, and queues the report Windows reads. Contacts the
     /// packet does not name stay where they were. Returns whether a report was queued.
     pub fn apply(&mut self, contacts: &[Contact], buttons: u8, now: Instant) -> bool {
-        // Slots in this report: (slot, finger, tip, confidence).
-        let mut lifted: Vec<(usize, Finger, bool)> = Vec::new();
+        // Slots in this report: (slot, finger, tip, confidence), emptied per packet.
+        self.lifted.clear();
         for contact in contacts.iter().take(MAX_CONTACTS) {
             let slot = self
                 .slots
@@ -870,13 +874,13 @@ impl PrecisionTouchpad {
                             finger.x = scale(contact.x, self.extent.0);
                             finger.y = scale(contact.y, self.extent.1);
                         }
-                        lifted.push((slot, finger, contact.event == 2));
+                        self.lifted.push((slot, finger, contact.event == 2));
                     }
                 }
                 7 => {
                     for slot in 0..MAX_CONTACTS {
                         if let Some(finger) = self.slots[slot].take() {
-                            lifted.push((slot, finger, false));
+                            self.lifted.push((slot, finger, false));
                         }
                     }
                 }
@@ -900,7 +904,8 @@ impl PrecisionTouchpad {
         if self.surface {
             let down = (0..MAX_CONTACTS)
                 .filter_map(|slot| self.slots[slot].map(|f| (slot, f, true, true)));
-            let up = lifted
+            let up = self
+                .lifted
                 .iter()
                 .map(|&(slot, finger, confident)| (slot, finger, false, confident));
             for (slot, finger, tip, confident) in up.chain(down).take(MAX_CONTACTS) {

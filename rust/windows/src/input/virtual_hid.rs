@@ -169,7 +169,7 @@ impl<D: Device> Slot<D> {
         Availability::Plugging
     }
     /// Runs `f` on the plugged-in device and tells the USB/IP server it changed; None when it
-    /// is not plugged in.
+    /// is not plugged in. The device lock is taken once for the change and the update.
     pub fn with<R>(&self, f: impl FnOnce(&mut D) -> R) -> Option<R> {
         let inner = self.inner.lock().unwrap();
         let State::Plugged(pad) = &inner.state else {
@@ -179,9 +179,7 @@ impl<D: Device> Slot<D> {
         if !export.imported() {
             return None;
         }
-        let result = export.with(f);
-        export.changed();
-        Some(result)
+        Some(export.with_changed(f))
     }
 }
 
@@ -195,12 +193,22 @@ pub enum Op {
     Scroll(i16, bool),
 }
 
-/// The virtual mouse's steps for a SendInput mouse input, or None for one it cannot carry: an
-/// absolute move while the desktop spans more than one display (Windows maps an absolute
-/// USB mouse onto the primary display only).
-pub fn hid_ops(mi: &MOUSEINPUT, single_display: bool) -> Option<Vec<Op>> {
+/// The most steps one mouse `INPUT` can become: a move, each of the three buttons
+/// pressed and released, both extended buttons pressed and released, a wheel turn and
+/// a horizontal pan.
+pub const MAX_OPS: usize = 13;
+
+/// The virtual mouse's steps for a SendInput mouse input, written into `ops` and
+/// returned as their count, or None for one it cannot carry: an absolute move while
+/// the desktop spans more than one display (Windows maps an absolute USB mouse onto
+/// the primary display only).
+pub fn hid_ops(mi: &MOUSEINPUT, single_display: bool, ops: &mut [Op; MAX_OPS]) -> Option<usize> {
     let flags = mi.dwFlags;
-    let mut ops = Vec::new();
+    let mut at = 0;
+    let mut push = |op: Op| {
+        ops[at] = op;
+        at += 1;
+    };
     if flags.contains(MOUSEEVENTF_MOVE) {
         if flags.contains(MOUSEEVENTF_ABSOLUTE) {
             if !single_display {
@@ -215,9 +223,9 @@ pub fn hid_ops(mi: &MOUSEINPUT, single_display: bool) -> Option<Vec<Op>> {
                     / 65535) as u16)
                     .max(1)
             };
-            ops.push(Op::Absolute(scale(mi.dx), scale(mi.dy)));
+            push(Op::Absolute(scale(mi.dx), scale(mi.dy)));
         } else {
-            ops.push(Op::Motion(mi.dx, mi.dy));
+            push(Op::Motion(mi.dx, mi.dy));
         }
     }
     for (down, up, bit) in [
@@ -238,10 +246,10 @@ pub fn hid_ops(mi: &MOUSEINPUT, single_display: bool) -> Option<Vec<Op>> {
         ),
     ] {
         if flags.contains(down) {
-            ops.push(Op::Button(bit, true));
+            push(Op::Button(bit, true));
         }
         if flags.contains(up) {
-            ops.push(Op::Button(bit, false));
+            push(Op::Button(bit, false));
         }
     }
     let x = |data: u32| {
@@ -254,19 +262,23 @@ pub fn hid_ops(mi: &MOUSEINPUT, single_display: bool) -> Option<Vec<Op>> {
         .map(|(_, bit)| bit)
     };
     if flags.contains(MOUSEEVENTF_XDOWN) {
-        ops.extend(x(mi.mouseData).map(|bit| Op::Button(bit, true)));
+        for bit in x(mi.mouseData) {
+            push(Op::Button(bit, true));
+        }
     }
     if flags.contains(MOUSEEVENTF_XUP) {
-        ops.extend(x(mi.mouseData).map(|bit| Op::Button(bit, false)));
+        for bit in x(mi.mouseData) {
+            push(Op::Button(bit, false));
+        }
     }
     let amount = (mi.mouseData as i32).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
     if flags.contains(MOUSEEVENTF_WHEEL) {
-        ops.push(Op::Scroll(amount, false));
+        push(Op::Scroll(amount, false));
     }
     if flags.contains(MOUSEEVENTF_HWHEEL) {
-        ops.push(Op::Scroll(amount, true));
+        push(Op::Scroll(amount, true));
     }
-    Some(ops)
+    Some(at)
 }
 
 /// Applies `ops` to the virtual mouse; false when it is not plugged in.
@@ -327,30 +339,36 @@ mod tests {
         }
     }
 
+    /// The steps `hid_ops` writes for `mi`, as a slice.
+    fn ops(mi: &MOUSEINPUT, single_display: bool) -> Option<Vec<Op>> {
+        let mut steps = [Op::Motion(0, 0); MAX_OPS];
+        hid_ops(mi, single_display, &mut steps).map(|len| steps[..len].to_vec())
+    }
+
     #[test]
     fn injected_mouse_inputs_become_virtual_mouse_steps() {
         assert_eq!(
-            hid_ops(&input(MOUSEEVENTF_MOVE, -3, 4, 0), false),
+            ops(&input(MOUSEEVENTF_MOVE, -3, 4, 0), false),
             Some(vec![Op::Motion(-3, 4)])
         );
         assert_eq!(
-            hid_ops(&input(MOUSEEVENTF_LEFTDOWN, 0, 0, 0), false),
+            ops(&input(MOUSEEVENTF_LEFTDOWN, 0, 0, 0), false),
             Some(vec![Op::Button(virtual_hid::button::LEFT, true)])
         );
         assert_eq!(
-            hid_ops(&input(MOUSEEVENTF_RIGHTUP, 0, 0, 0), false),
+            ops(&input(MOUSEEVENTF_RIGHTUP, 0, 0, 0), false),
             Some(vec![Op::Button(virtual_hid::button::RIGHT, false)])
         );
         assert_eq!(
-            hid_ops(&input(MOUSEEVENTF_XDOWN, 0, 0, XBUTTON2 as u32), false),
+            ops(&input(MOUSEEVENTF_XDOWN, 0, 0, XBUTTON2 as u32), false),
             Some(vec![Op::Button(virtual_hid::button::FORWARD, true)])
         );
         assert_eq!(
-            hid_ops(&input(MOUSEEVENTF_WHEEL, 0, 0, (-120i32) as u32), false),
+            ops(&input(MOUSEEVENTF_WHEEL, 0, 0, (-120i32) as u32), false),
             Some(vec![Op::Scroll(-120, false)])
         );
         assert_eq!(
-            hid_ops(&input(MOUSEEVENTF_HWHEEL, 0, 0, 30), false),
+            ops(&input(MOUSEEVENTF_HWHEEL, 0, 0, 30), false),
             Some(vec![Op::Scroll(30, true)])
         );
     }
@@ -358,19 +376,57 @@ mod tests {
     #[test]
     fn absolute_moves_take_the_virtual_mouse_only_on_a_single_display() {
         let absolute = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-        assert_eq!(hid_ops(&input(absolute, 65535, 0, 0), false), None);
+        assert_eq!(ops(&input(absolute, 65535, 0, 0), false), None);
         assert_eq!(
-            hid_ops(&input(absolute, 65535, 32768, 0), true),
+            ops(&input(absolute, 65535, 32768, 0), true),
             Some(vec![Op::Absolute(32767, 16384)])
         );
         // The top left corner is 1, not the 0 Windows ignores; the right edge stays the last.
         assert_eq!(
-            hid_ops(&input(absolute, 0, 0, 0), true),
+            ops(&input(absolute, 0, 0, 0), true),
             Some(vec![Op::Absolute(1, 1)])
         );
         assert_eq!(
-            hid_ops(&input(absolute, -5, 70000, 0), true),
+            ops(&input(absolute, -5, 70000, 0), true),
             Some(vec![Op::Absolute(1, 32767)])
+        );
+    }
+
+    #[test]
+    fn every_step_at_once_fits_the_fixed_buffer_in_send_order() {
+        // A move and every button down and up, both extended buttons and both wheels in
+        // one INPUT: the most steps there are, in the order SendInput would carry them.
+        let flags = MOUSEEVENTF_MOVE
+            | MOUSEEVENTF_LEFTDOWN
+            | MOUSEEVENTF_LEFTUP
+            | MOUSEEVENTF_RIGHTDOWN
+            | MOUSEEVENTF_RIGHTUP
+            | MOUSEEVENTF_MIDDLEDOWN
+            | MOUSEEVENTF_MIDDLEUP
+            | MOUSEEVENTF_XDOWN
+            | MOUSEEVENTF_XUP
+            | MOUSEEVENTF_WHEEL
+            | MOUSEEVENTF_HWHEEL;
+        assert_eq!(
+            ops(
+                &input(flags, 2, 1, XBUTTON1 as u32 | XBUTTON2 as u32),
+                false
+            ),
+            Some(vec![
+                Op::Motion(2, 1),
+                Op::Button(virtual_hid::button::LEFT, true),
+                Op::Button(virtual_hid::button::LEFT, false),
+                Op::Button(virtual_hid::button::RIGHT, true),
+                Op::Button(virtual_hid::button::RIGHT, false),
+                Op::Button(virtual_hid::button::MIDDLE, true),
+                Op::Button(virtual_hid::button::MIDDLE, false),
+                Op::Button(virtual_hid::button::BACK, true),
+                Op::Button(virtual_hid::button::FORWARD, true),
+                Op::Button(virtual_hid::button::BACK, false),
+                Op::Button(virtual_hid::button::FORWARD, false),
+                Op::Scroll(3, false),
+                Op::Scroll(3, true),
+            ])
         );
     }
 

@@ -447,6 +447,8 @@ impl Injector {
             return sent;
         }
         let single_display = virtual_hid::single_display();
+        // One mouse input's steps, on the stack and reused across the pass.
+        let mut ops = [virtual_hid::Op::Motion(0, 0); virtual_hid::MAX_OPS];
         let mut sent = 0;
         let mut start = 0;
         for (i, input) in inputs.iter().enumerate() {
@@ -455,7 +457,7 @@ impl Injector {
             }
             // SAFETY: a mouse INPUT holds its MOUSEINPUT in the union.
             let mi = unsafe { input.Anonymous.mi };
-            let Some(ops) = virtual_hid::hid_ops(&mi, single_display) else {
+            let Some(len) = virtual_hid::hid_ops(&mi, single_display, &mut ops) else {
                 continue;
             };
             // Keys before it go first, in order.
@@ -466,7 +468,7 @@ impl Injector {
                     return sent;
                 }
             }
-            if virtual_hid::apply(&ops) || (self.inject)(std::slice::from_ref(input)) == 1 {
+            if virtual_hid::apply(&ops[..len]) || (self.inject)(std::slice::from_ref(input)) == 1 {
                 sent += 1;
             } else {
                 return sent;
@@ -1056,30 +1058,26 @@ impl Injector {
                 } else {
                     self.key_flags.get(&key).copied().unwrap_or(*flags)
                 };
+                let input = self.key_scan(key, *down, flags);
+                let always_send_scancodes = self.policy.always_send_scancodes;
+                // HELD is taken once for the whole event: the modifiers to press
+                // around the key are decided under it, and the press or release
+                // updates it.
+                let mut held = HELD.lock().unwrap();
                 let modifiers = if *down && !owned {
-                    self.synthetic_modifiers(key, *modifiers)
+                    self.synthetic_modifiers(key, *modifiers, &held)
                 } else {
                     0
                 };
-                let input = self.key_scan(key, *down, flags);
-                let always_send_scancodes = self.policy.always_send_scancodes;
                 let inputs = &mut self.pending.inputs;
                 if modifiers == 0 {
-                    Self::update_held(
-                        &mut HELD.lock().unwrap(),
-                        (true, key),
-                        *down,
-                        owned,
-                        input,
-                        |input| {
-                            inputs.extend_from_slice(input);
-                            Ok(())
-                        },
-                    )?;
+                    Self::update_held(&mut held, (true, key), *down, owned, input, |input| {
+                        inputs.extend_from_slice(input);
+                        Ok(())
+                    })?;
                 } else {
                     // The client reported a modifier it never pressed as a
                     // key: press it around this key only, as Vibepollo does.
-                    let mut held = HELD.lock().unwrap();
                     let count = held.get(&(true, key)).copied().unwrap_or(0);
                     if count == 0 {
                         inputs.extend(Self::with_modifiers(
@@ -1149,8 +1147,14 @@ impl Injector {
                 width_mm,
                 height_mm,
                 contacts,
+                contacts_len,
                 ..
-            } => self.touchpad_packet(*buttons, *width_mm, *height_mm, contacts),
+            } => self.touchpad_packet(
+                *buttons,
+                *width_mm,
+                *height_mm,
+                &contacts[..usize::from(*contacts_len)],
+            ),
             // Only the VHF Steam Controller profile takes them.
             Controller { .. }
             | SteamAttributes(_)

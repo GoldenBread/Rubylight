@@ -383,6 +383,30 @@ fn two_fingers_go_down_move_and_lift_on_their_own_slots() {
 }
 
 #[test]
+fn a_lift_is_reported_once_and_the_lift_list_leaves_no_finger_behind() {
+    // The lift list is reused across packets: a finger lifted by one packet
+    // must never be reported as lifted again by the packets that follow.
+    let (mut pad, epoch) = active(100, 50);
+    let t = |ms: u64| epoch + Duration::from_millis(ms);
+    pad.apply(&[contact(1, 40, 0.1, 0.2)], 0, t(1));
+    pad.interrupt(ENDPOINT);
+    pad.apply(&[contact(2, 40, 0.1, 0.2)], 0, t(2));
+    let lifted = pad.interrupt(ENDPOINT).unwrap();
+    assert_eq!(count(&lifted), 1);
+    assert!(!finger(&lifted, 0).1);
+    // The next packet reports only the finger that went down.
+    pad.apply(&[contact(1, 41, 0.3, 0.3)], 0, t(3));
+    let down = pad.interrupt(ENDPOINT).unwrap();
+    assert_eq!(count(&down), 1);
+    assert!(finger(&down, 0).1);
+    // A move of the same finger keeps reporting it as down.
+    pad.apply(&[contact(3, 41, 0.4, 0.4)], 0, t(4));
+    let moved = pad.interrupt(ENDPOINT).unwrap();
+    assert_eq!(count(&moved), 1);
+    assert!(finger(&moved, 0).1);
+}
+
+#[test]
 fn a_cancel_is_not_a_touch_and_cancel_all_lifts_everything() {
     let (mut pad, epoch) = active(100, 50);
     pad.apply(

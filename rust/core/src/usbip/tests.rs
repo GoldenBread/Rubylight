@@ -457,3 +457,34 @@ fn an_event_driven_endpoint_is_naked_until_its_next_change() {
         .unwrap();
     assert_eq!(reply(&mut client), (RET_SUBMIT, 2, 0, vec![4]));
 }
+
+/// `with_changed` is `with` followed by `changed`, with the device lock taken
+/// once; a change no transfer waits for is not lost either, because the
+/// transfer that arrives for it wakes the report thread itself.
+#[test]
+fn a_change_reaches_the_report_thread_with_and_without_a_waiting_transfer() {
+    let export = Export::listen(Quiet { report: None }, Duration::from_millis(1)).unwrap();
+    let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, export.port())).unwrap();
+    let mut request = op_reply(OP_REQ_IMPORT, 0);
+    let mut busid = [0u8; 32];
+    busid[..3].copy_from_slice(b"1-1");
+    request.extend_from_slice(&busid);
+    client.write_all(&request).unwrap();
+    let mut imported = [0u8; 8 + 312];
+    client.read_exact(&mut imported).unwrap();
+    assert_eq!(&imported[..8], &op_reply(0x0003, 0)[..]);
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+
+    // A waiting transfer is served at once.
+    submit(&mut client, 1, 1, true, 8, [0; 8], &[]);
+    export.with_changed(|quiet| quiet.report = Some(vec![1, 2, 3]));
+    assert_eq!(reply(&mut client), (RET_SUBMIT, 1, 0, vec![1, 2, 3]));
+
+    // No transfer waits for this change; the next transfer still gets its
+    // report without waiting for a period.
+    export.with_changed(|quiet| quiet.report = Some(vec![9]));
+    submit(&mut client, 2, 1, true, 8, [0; 8], &[]);
+    assert_eq!(reply(&mut client), (RET_SUBMIT, 2, 0, vec![9]));
+}

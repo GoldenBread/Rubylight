@@ -597,7 +597,13 @@ fn touchpad_packets_need_the_mouse_and_native_touchpad() {
         buttons: 0,
         width_mm: 0,
         height_mm: 0,
-        contacts: vec![],
+        contacts: [crate::virtual_hid::Contact {
+            event: 0,
+            id: 0,
+            x: 0.,
+            y: 0.,
+        }],
+        contacts_len: 0,
     };
     assert!(
         Policy::resolve(&Config::default())

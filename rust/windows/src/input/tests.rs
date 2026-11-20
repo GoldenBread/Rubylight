@@ -687,6 +687,93 @@ fn a_press_and_its_release_in_one_pass_both_go_out_in_order() {
     assert!(injector.repeat.is_none());
 }
 
+/// A burst of mouse and keyboard events through one pass: the press splits it,
+/// and every event reaches Windows exactly once, in the order it arrived.
+#[test]
+fn a_burst_of_mixed_mouse_and_keys_keeps_every_event_in_order() {
+    let mut injector = recording();
+    let events = [
+        Event::Relative { x: 1, y: 2 },
+        key(0x5c, true),
+        Event::Relative { x: 3, y: 1 },
+        click(9, true),
+        Event::Scroll {
+            amount: 120,
+            horizontal: false,
+        },
+        key(0x5c, false),
+        click(9, false),
+        Event::Relative { x: 5, y: 0 },
+    ];
+    assert!(injector.apply_all(&events).is_empty());
+    assert_eq!(
+        calls(),
+        [
+            described(&[
+                Injector::mouse(1, 2, 0, MOUSEEVENTF_MOVE),
+                injector.key_scan(0x5c, true, 0),
+                Injector::mouse(3, 1, 0, MOUSEEVENTF_MOVE),
+                Injector::button(9, true),
+                Injector::mouse(0, 0, 120, MOUSEEVENTF_WHEEL),
+            ]),
+            described(&[
+                injector.key_scan(0x5c, false, 0),
+                Injector::button(9, false),
+                Injector::mouse(5, 0, 0, MOUSEEVENTF_MOVE),
+            ])
+        ]
+    );
+    assert!(injector.keys.is_empty() && injector.buttons.is_empty());
+    let held = HELD.lock().unwrap();
+    assert!(!held.contains_key(&(true, 0x5c)) && !held.contains_key(&(false, 9)));
+}
+
+/// A key Moonlight reports with a modifier no one holds is pressed inside that
+/// modifier only; the disconnect release frees it exactly like a plain key's.
+#[test]
+fn keys_pressed_inside_reported_modifiers_release_on_disconnect_like_plain_ones() {
+    let mut injector = recording();
+    let with_ctrl = Event::Keyboard {
+        key: 0x5e,
+        modifiers: 0x02,
+        flags: 0,
+        down: true,
+    };
+    injector.apply(&with_ctrl).unwrap();
+    injector.apply(&key(0x5f, true)).unwrap();
+    assert_eq!(
+        calls(),
+        [
+            described(&Injector::with_modifiers(
+                injector.key_scan(0x5e, true, 0),
+                0x02,
+                injector.policy.always_send_scancodes,
+            )),
+            described(&[injector.key_scan(0x5f, true, 0)]),
+        ]
+    );
+    {
+        let held = HELD.lock().unwrap();
+        assert_eq!(held.get(&(true, 0x5e)), Some(&1));
+        assert_eq!(held.get(&(true, 0x5f)), Some(&1));
+        // The synthetic Ctrl was never held as a key.
+        assert!(!held.contains_key(&(true, 0x11)));
+    }
+    // Disconnect: both keys release, and nothing stays held.
+    injector.release_all();
+    assert_eq!(
+        calls(),
+        [
+            described(&[injector.key_scan(0x5e, false, 0)]),
+            described(&[injector.key_scan(0x5f, false, 0)]),
+        ]
+    );
+    assert!(injector.keys.is_empty() && injector.key_sources.is_empty());
+    let held = HELD.lock().unwrap();
+    assert!(!held.contains_key(&(true, 0x5e)));
+    assert!(!held.contains_key(&(true, 0x5f)));
+}
+
 #[test]
 fn control_silence_releases_keys_and_allows_them_to_be_pressed_again() {
     let mut injector = recording();

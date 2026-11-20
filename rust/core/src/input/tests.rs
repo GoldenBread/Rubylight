@@ -60,11 +60,12 @@ fn touchpad_packets_decode_as_v_plus_sends_them() {
         width_mm: 105,
         height_mm: 70,
         contacts,
+        contacts_len: 2,
     } = decode(&frame).unwrap()
     else {
         panic!("a touchpad frame");
     };
-    assert_eq!(contacts.len(), 2);
+    let contacts = &contacts[..2];
     assert_eq!(
         contacts[0],
         Contact {
@@ -93,6 +94,13 @@ fn touchpad_packets_decode_as_v_plus_sends_them() {
     for v in [0.25f32, 0.5, 1.0, 0.0, 0.0] {
         single.extend_from_slice(&v.to_le_bytes());
     }
+    let mut contacts = [unused_contact(); crate::virtual_hid::MAX_CONTACTS];
+    contacts[0] = Contact {
+        event: 3,
+        id: 0x0102_0304,
+        x: 0.25,
+        y: 0.5,
+    };
     assert_eq!(
         decode(&single).unwrap(),
         Input::Touchpad {
@@ -100,12 +108,8 @@ fn touchpad_packets_decode_as_v_plus_sends_them() {
             buttons: 1,
             width_mm: 105,
             height_mm: 70,
-            contacts: vec![Contact {
-                event: 3,
-                id: 0x0102_0304,
-                x: 0.25,
-                y: 0.5
-            }],
+            contacts,
+            contacts_len: 1,
         }
     );
     assert_eq!(decode(&single).unwrap().required_permission(), 1 << 11);

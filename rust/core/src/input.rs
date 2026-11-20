@@ -93,13 +93,16 @@ pub enum Input {
     /// A tablet's physical touchpad: one finger (0x55000009, `frame` false) or every finger
     /// of a hardware frame (0x5500000A), Moonlight V+'s and Foundation Sunshine's touchpad
     /// packets. `buttons` bit 0 is the click; the size is the client's surface in millimetres,
-    /// 0 when unknown. The host replays it on the virtual Precision Touchpad.
+    /// 0 when unknown. The host replays it on the virtual Precision Touchpad. The contacts
+    /// sit inline, the first `contacts_len` of them; a frame's count is at most
+    /// [`crate::virtual_hid::MAX_CONTACTS`].
     Touchpad {
         frame: bool,
         buttons: u8,
         width_mm: u16,
         height_mm: u16,
-        contacts: Vec<crate::virtual_hid::Contact>,
+        contacts: [crate::virtual_hid::Contact; crate::virtual_hid::MAX_CONTACTS],
+        contacts_len: u8,
     },
     /// The real Steam Controller's firmware attributes (0x55000008), sent
     /// after its arrival, for the VHF Steam Controller profile.
@@ -376,39 +379,56 @@ pub fn decode(b: &[u8]) -> Result<Input> {
         },
         // SS_TOUCHPAD_PACKET: event, buttons, rotation, pointer id, size, then x, y,
         // pressure and contact area as floats.
-        TOUCHPAD_MAGIC => Input::Touchpad {
-            frame: false,
-            buttons: b[9],
-            width_mm: le16(b, 16),
-            height_mm: le16(b, 18),
-            contacts: vec![crate::virtual_hid::Contact {
+        TOUCHPAD_MAGIC => {
+            let mut contacts = [unused_contact(); crate::virtual_hid::MAX_CONTACTS];
+            contacts[0] = crate::virtual_hid::Contact {
                 event: b[8],
                 id: le32(b, 12),
                 x: float(b, 20)?,
                 y: float(b, 24)?,
-            }],
-        },
+            };
+            Input::Touchpad {
+                frame: false,
+                buttons: b[9],
+                width_mm: le16(b, 16),
+                height_mm: le16(b, 18),
+                contacts,
+                contacts_len: 1,
+            }
+        }
         // SS_TOUCHPAD_FRAME_PACKET: count, buttons, rotation, size, then five contacts of
         // event, reserved, pressure, pointer id, x and y (normalized u16s).
-        TOUCHPAD_FRAME_MAGIC => Input::Touchpad {
-            frame: true,
-            buttons: b[9],
-            width_mm: le16(b, 12),
-            height_mm: le16(b, 14),
-            contacts: (0..usize::from(b[8]))
-                .map(|n| {
-                    let at = 16 + n * 12;
-                    crate::virtual_hid::Contact {
-                        event: b[at],
-                        id: le32(b, at + 4),
-                        x: f32::from(le16(b, at + 8)) / 65535.0,
-                        y: f32::from(le16(b, at + 10)) / 65535.0,
-                    }
-                })
-                .collect(),
-        },
+        TOUCHPAD_FRAME_MAGIC => {
+            let mut contacts = [unused_contact(); crate::virtual_hid::MAX_CONTACTS];
+            for n in 0..usize::from(b[8]) {
+                let at = 16 + n * 12;
+                contacts[n] = crate::virtual_hid::Contact {
+                    event: b[at],
+                    id: le32(b, at + 4),
+                    x: f32::from(le16(b, at + 8)) / 65535.0,
+                    y: f32::from(le16(b, at + 10)) / 65535.0,
+                };
+            }
+            Input::Touchpad {
+                frame: true,
+                buttons: b[9],
+                width_mm: le16(b, 12),
+                height_mm: le16(b, 14),
+                contacts,
+                contacts_len: b[8],
+            }
+        }
         _ => unreachable!(),
     })
+}
+/// A contacts slot no packet names; never read, only there to fill the fixed array.
+fn unused_contact() -> crate::virtual_hid::Contact {
+    crate::virtual_hid::Contact {
+        event: 0,
+        id: 0,
+        x: 0.,
+        y: 0.,
+    }
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Batch {
@@ -595,26 +615,28 @@ impl Input {
                         frame,
                         buttons,
                         contacts,
+                        contacts_len,
                         ..
                     },
                     Touchpad {
                         frame: nf,
                         buttons: nb,
                         contacts: nc,
+                        contacts_len: nlen,
                         ..
                     },
                 ) = (&*s, n)
                 {
+                    let (contacts, nc) = (
+                        &contacts[..usize::from(*contacts_len)],
+                        &nc[..usize::from(*nlen)],
+                    );
                     // Only moves of the same fingers with the click unchanged coalesce, as in
                     // Foundation Sunshine; a finger going down or up never does.
                     let moves = |c: &[crate::virtual_hid::Contact]| {
                         !c.is_empty() && c.iter().all(|c| c.event == 3)
                     };
-                    if frame != nf
-                        || buttons != nb
-                        || !moves(contacts.as_slice())
-                        || !moves(nc.as_slice())
-                    {
+                    if *frame != *nf || *buttons != *nb || !moves(contacts) || !moves(nc) {
                         return Batch::Stop;
                     }
                     if contacts.len() != nc.len()
