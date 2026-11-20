@@ -85,7 +85,6 @@ public class GameModernControlsTouchTest {
         Context context = RuntimeEnvironment.getApplication();
         PreferenceManager.getDefaultSharedPreferences(context).edit()
                 .putBoolean("checkbox_show_onscreen_controls", true)
-                .putString("list_osc_style", "modern")
                 .putBoolean("checkbox_osc_steam_controls", steamControls)
                 .commit();
         if (touchLayout) TouchLayout.setEnabled(context, TouchLayout.profileKey(PC, null, APP), true);
