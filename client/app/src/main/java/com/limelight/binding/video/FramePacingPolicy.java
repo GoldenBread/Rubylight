@@ -86,17 +86,23 @@ public final class FramePacingPolicy {
     }
 
     /**
-     * The refresh Balanced with FPS limit judges its cap by: the rate of the mode the stream asks for
-     * (askedHz), unless the screen may stay below it. Under battery saver or critical heat Android may
-     * refuse the switch, so the rate the screen shows when the stream starts counts (startHz, as
-     * GameVideoOutput.prepareDisplayForRendering gives it), and the user's peak refresh setting caps it
-     * (RefreshSwitchMonitor.conditions; unknown is 0).
+     * The refresh Balanced with FPS limit judges its cap by. As in Moonlight that is the rate the screen
+     * shows when the stream starts, or the asked mode's where that is lower (startHz, as
+     * GameVideoOutput.prepareDisplayForRendering gives it). One case takes the rate of the mode the stream
+     * asks for (askedHz) instead: an adaptive screen resting at the stream's own rate (60 Hz for 60 fps)
+     * asked for 2 to 4 times it (120 Hz), where 59 fps would run at 120 Hz and show two frames a second
+     * for three refreshes. Not where the screen may stay at rest: battery saver, critical heat, or a peak
+     * refresh setting below the asked rate (RefreshSwitchMonitor.conditions; unknown is 0). Other reasons
+     * it stays (milder heat, a maker's mode, a refused switch) can't be seen, so any other stream keeps
+     * Moonlight's rule: 120 fps on a screen resting at 60 Hz goes to Balanced rather than running 119 fps
+     * into a queue that fills if the screen stays at 60.
      */
-    public static float limitRefreshHz(float askedHz, float startHz, RefreshSwitchDiagnosis.Conditions conditions) {
-        float hz = askedHz;
-        if (conditions.batterySaver || conditions.thermalCritical) hz = Math.min(hz, startHz);
-        if (conditions.peakSettingHz > 0) hz = Math.min(hz, conditions.peakSettingHz);
-        return hz;
+    public static float limitRefreshHz(float askedHz, float startHz, int fps,
+                                       RefreshSwitchDiagnosis.Conditions conditions) {
+        boolean resting = Math.round(startHz) == fps && refreshesPerFrame(askedHz, startHz, false, true) > 1;
+        boolean held = conditions.batterySaver || conditions.thermalCritical ||
+                (conditions.peakSettingHz > 0 && askedHz > conditions.peakSettingHz + 0.5f);
+        return resting && !held ? askedHz : startHz;
     }
 
     /** limitedFrameRate: the stream is over 3 fps faster than the screen, so Balanced drops the surplus. */
@@ -108,10 +114,7 @@ public final class FramePacingPolicy {
      * The frame rate Balanced with FPS limit asks the PC for, or LIMIT_ABOVE_SCREEN or LIMIT_BOGUS_SCREEN
      * where Balanced takes over. Like Smoothest video it shows every frame in turn, so a stream as fast
      * as the screen would fill the display's queue: it is capped one below the refresh (59 fps at 60 Hz).
-     * refreshHz is the rate of the mode the stream asks for where the screen can reach it
-     * (limitRefreshHz), not the rate an adaptive screen rests at when the stream starts: judged at 60 Hz,
-     * 60 fps bound for 120 Hz would run 59 fps there, which shows two frames a second for three
-     * refreshes, and 120 fps would go to Balanced. From Moonlight Android's Game.onCreate (GPL-3.0,
+     * refreshHz is the refresh limitRefreshHz judges by. From Moonlight Android's Game.onCreate (GPL-3.0,
      * Cameron Gutman and contributors).
      */
     public static int limitedFrameRate(int fps, float refreshHz) {

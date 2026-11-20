@@ -729,14 +729,14 @@ final class GameConnection {
     /**
      * The frame rate the stream asks the PC for. If the user requested frame pacing using a capped
      * FPS, it follows the display refresh rate: displayRefreshRate is what prepareDisplayForRendering
-     * gave, the mode it asked for is game.desiredRefreshRate, and the cap is judged at that mode's rate
-     * unless the screen may stay below it (FramePacingPolicy.limitRefreshHz, limitedFrameRate). The
-     * limit can hand the stream to Balanced; other pacings keep the chosen rate.
+     * gave, the mode it asked for is game.desiredRefreshRate, and the cap is judged at the first, or at
+     * the mode's rate for a screen resting at the stream's rate (FramePacingPolicy.limitRefreshHz,
+     * limitedFrameRate). The limit can hand the stream to Balanced; other pacings keep the chosen rate.
      */
     int streamFrameRate(float displayRefreshRate) {
         int fps = game.prefConfig.fps;
         if (game.prefConfig.framePacing != PreferenceConfiguration.FRAME_PACING_CAP_FPS) return fps;
-        float limitHz = FramePacingPolicy.limitRefreshHz(game.desiredRefreshRate, displayRefreshRate,
+        float limitHz = FramePacingPolicy.limitRefreshHz(game.desiredRefreshRate, displayRefreshRate, fps,
                 RefreshSwitchMonitor.conditions(game));
         int limited = FramePacingPolicy.limitedFrameRate(fps, limitHz);
         if (limited == FramePacingPolicy.LIMIT_ABOVE_SCREEN) {

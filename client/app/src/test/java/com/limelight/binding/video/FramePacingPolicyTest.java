@@ -227,35 +227,47 @@ public class FramePacingPolicyTest {
         assertEquals("up to 3 fps above the screen", 59, FramePacingPolicy.limitedFrameRate(62, 60f));
         assertEquals(FramePacingPolicy.LIMIT_ABOVE_SCREEN, FramePacingPolicy.limitedFrameRate(64, 60f));
         assertEquals(FramePacingPolicy.LIMIT_BOGUS_SCREEN, FramePacingPolicy.limitedFrameRate(48, 48f));
-        // An adaptive screen resting at 60 Hz when the stream starts, asked for 120: judged at 120, so
-        // 60 fps keeps its rate, 61 to 63 fps too, and 120 fps is capped at 119 instead of going to Balanced.
-        float asked = FramePacingPolicy.limitRefreshHz(120f, 60f, none);
-        assertEquals(60, FramePacingPolicy.limitedFrameRate(60, asked));
-        assertEquals(62, FramePacingPolicy.limitedFrameRate(62, asked));
-        assertEquals(119, FramePacingPolicy.limitedFrameRate(120, asked));
-        assertEquals(60, FramePacingPolicy.limitedFrameRate(60, FramePacingPolicy.limitRefreshHz(119.88f, 60.00001f, none)));
+        // An adaptive screen resting at the stream's rate when the stream starts (60 Hz for 60 fps), asked
+        // for 120: judged at 120, so 60 fps keeps its rate.
+        assertEquals(60, FramePacingPolicy.limitedFrameRate(60, FramePacingPolicy.limitRefreshHz(120f, 60f, 60, none)));
+        assertEquals(60, FramePacingPolicy.limitedFrameRate(60,
+                FramePacingPolicy.limitRefreshHz(119.88f, 60.00001f, 60, none)));
+        // Any other stream there keeps Moonlight's rule at the rate the screen rests at: 62 fps is capped
+        // at 59, and 120 fps goes to Balanced instead of running 119 fps into a screen that may stay at 60.
+        assertEquals(59, FramePacingPolicy.limitedFrameRate(62, FramePacingPolicy.limitRefreshHz(120f, 60f, 62, none)));
+        assertEquals(FramePacingPolicy.LIMIT_ABOVE_SCREEN,
+                FramePacingPolicy.limitedFrameRate(120, FramePacingPolicy.limitRefreshHz(120f, 60f, 120, none)));
     }
 
-    @Test public void theFpsLimitJudgesTheAskedRefreshUnlessTheScreenMayStayBelowIt() {
+    @Test public void theFpsLimitTakesTheAskedRefreshOnlyForAScreenRestingAtTheStreamsRate() {
         RefreshSwitchDiagnosis.Conditions none = RefreshSwitchDiagnosis.Conditions.NONE;
-        assertEquals(120f, FramePacingPolicy.limitRefreshHz(120f, 60f, none), 0f);
-        // Battery saver or critical heat may refuse the switch: the rate the screen starts at.
+        // Resting at the stream's rate, asked for 2 to 4 times it: the asked rate.
+        assertEquals(120f, FramePacingPolicy.limitRefreshHz(120f, 60f, 60, none), 0f);
+        assertEquals(120f, FramePacingPolicy.limitRefreshHz(120f, 40f, 40, none), 0f);
+        assertEquals(144f, FramePacingPolicy.limitRefreshHz(144f, 72f, 72, none), 0f);
+        // Else the rate the screen starts at, or the asked one where that is lower: Moonlight's rule.
+        assertEquals("a stream faster than the rest rate", 60f, FramePacingPolicy.limitRefreshHz(120f, 60f, 120, none), 0f);
+        assertEquals("a stream slower than it", 60f, FramePacingPolicy.limitRefreshHz(120f, 60f, 30, none), 0f);
+        assertEquals("no whole multiple", 60f, FramePacingPolicy.limitRefreshHz(90f, 60f, 60, none), 0f);
+        assertEquals("a screen at the asked rate already", 120f, FramePacingPolicy.limitRefreshHz(120f, 120f, 60, none), 0f);
+        // Battery saver, critical heat or a peak refresh setting below the asked rate may keep it at rest.
         RefreshSwitchDiagnosis.Conditions saver = new RefreshSwitchDiagnosis.Conditions(true, false, 0f);
         RefreshSwitchDiagnosis.Conditions hot = new RefreshSwitchDiagnosis.Conditions(false, true, 0f);
-        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 60f, saver), 0f);
-        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 60f, hot), 0f);
-        assertEquals("never above the asked rate", 60f, FramePacingPolicy.limitRefreshHz(60f, 120f, saver), 0f);
-        // The user's peak refresh setting caps it; unknown (0) or unlimited does not.
-        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 120f, new RefreshSwitchDiagnosis.Conditions(false, false, 60f)), 0f);
-        assertEquals(90f, FramePacingPolicy.limitRefreshHz(120f, 60f, new RefreshSwitchDiagnosis.Conditions(false, false, 90f)), 0f);
-        assertEquals(120f, FramePacingPolicy.limitRefreshHz(120f, 60f,
+        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 60f, 60, saver), 0f);
+        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 60f, 60, hot), 0f);
+        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 60f, 60,
+                new RefreshSwitchDiagnosis.Conditions(false, false, 60f)), 0f);
+        assertEquals(60f, FramePacingPolicy.limitRefreshHz(120f, 60f, 60,
+                new RefreshSwitchDiagnosis.Conditions(false, false, 90f)), 0f);
+        // A peak setting at the asked rate or above, unlimited or unknown (0) does not.
+        assertEquals(120f, FramePacingPolicy.limitRefreshHz(120f, 60f, 60,
+                new RefreshSwitchDiagnosis.Conditions(false, false, 120f)), 0f);
+        assertEquals(120.00001f, FramePacingPolicy.limitRefreshHz(120.00001f, 60f, 60,
+                new RefreshSwitchDiagnosis.Conditions(false, false, 120f)), 0f);
+        assertEquals(120f, FramePacingPolicy.limitRefreshHz(120f, 60f, 60,
                 new RefreshSwitchDiagnosis.Conditions(false, false, Float.POSITIVE_INFINITY)), 0f);
-        // So the limit is back at 59 fps on a screen held at 60 Hz, and 120 fps goes to Balanced there.
-        assertEquals(59, FramePacingPolicy.limitedFrameRate(60, FramePacingPolicy.limitRefreshHz(120f, 60f, saver)));
-        assertEquals(59, FramePacingPolicy.limitedFrameRate(60,
-                FramePacingPolicy.limitRefreshHz(120f, 120f, new RefreshSwitchDiagnosis.Conditions(false, false, 60f))));
-        assertEquals(FramePacingPolicy.LIMIT_ABOVE_SCREEN,
-                FramePacingPolicy.limitedFrameRate(120, FramePacingPolicy.limitRefreshHz(120f, 60f, saver)));
+        // So the limit is 59 fps on a screen held at 60 Hz.
+        assertEquals(59, FramePacingPolicy.limitedFrameRate(60, FramePacingPolicy.limitRefreshHz(120f, 60f, 60, saver)));
     }
 
     @Test public void balancedKeepsTheVsyncQueueWithoutPhaseLockOrWithLateFramesKept() {

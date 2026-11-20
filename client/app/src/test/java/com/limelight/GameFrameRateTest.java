@@ -361,22 +361,24 @@ public class GameFrameRateTest {
     }
 
     /**
-     * Balanced with FPS limit is judged where the screen can go (GameConnection.streamFrameRate): a
-     * 60/120 Hz screen resting at 60 when the stream starts is asked for 120, so 60 fps stays uncapped
-     * and 120 fps is capped at 119. Battery saver or a 60 Hz peak setting may hold the screen at 60,
-     * where 60 fps is capped at 59 and 120 fps goes to Balanced.
+     * Balanced with FPS limit takes the refresh the stream asks for only on a screen resting at the
+     * stream's rate (GameConnection.streamFrameRate): a 60/120 Hz screen resting at 60 when the stream
+     * starts is asked for 120, so 60 fps stays uncapped. 120 fps keeps Moonlight's rule there and goes to
+     * Balanced, as the screen may stay at 60 for reasons the app can't see. Battery saver or a 60 Hz peak
+     * setting may hold the screen at 60, where 60 fps is capped at 59.
      */
     @Test
     @Config(sdk = 34, shadows = {FrameRateSurface.class, RefreshSwitchMonitorTest.FakePanel.class})
-    public void theFpsLimitIsJudgedWhereTheScreenCanGo() {
+    public void theFpsLimitTakesTheAskedRefreshOnlyWhereTheScreenRestsAtTheStreamsRate() {
         int limit = PreferenceConfiguration.FRAME_PACING_CAP_FPS;
         Application context = RuntimeEnvironment.getApplication();
         PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         try {
             assertEquals(60, startStream(limit, false, 60, 60f, 60f, 120f).fps);
             StreamStart fast = startStream(limit, false, 120, 60f, 60f, 120f);
-            assertEquals(119, fast.fps);
-            assertEquals(limit, fast.pacing);
+            assertEquals(120, fast.fps);
+            assertEquals(PreferenceConfiguration.FRAME_PACING_BALANCED, fast.pacing);
+            assertEquals("at a screen already at 120", 119, startStream(limit, false, 120, 120f, 60f, 120f).fps);
 
             Shadows.shadowOf(power).setIsPowerSaveMode(true);
             assertEquals(59, startStream(limit, false, 60, 60f, 60f, 120f).fps);
