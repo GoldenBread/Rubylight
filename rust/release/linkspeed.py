@@ -135,7 +135,7 @@ class Host:
                  'dd_refresh_rate_option = disabled', 'dd_hdr_option = disabled', 'dd_always_restore_from_golden = false',
                  'dd_config_revert_on_disconnect = false', 'frame_limiter_enable = false', 'stream_audio = false',
                  'upnp = false', 'enable_discovery = false', 'vulkan_hdr_layer = false', 'system_tray = false',
-                 'update_check_interval = 0', 'pyrowave = false', 'minimum_fps_target = 60'] + self.config_extra
+                 'updates = off', 'pyrowave = false', 'minimum_fps_target = 60'] + self.config_extra
         (PROFILE / 'sunshine.conf').write_text('\n'.join(lines) + '\n')
         (PROFILE / 'apps.json').write_text(json.dumps({'apps': [{'name': 'Desktop', 'cmd': '', 'virtual-display': False}]}))
         salt = os.urandom(8).hex()

@@ -116,7 +116,7 @@ def prepare(args, case, port=48523, rust_log='info'):
         'frame_limiter_enable = false', 'install_steam_audio_drivers = false', 'stream_audio = true',
         'audio_sink_capture_only = true', 'auto_capture_sink = false', f"audio_sink = {sink['id']}",
         'keep_sink_default = false', 'upnp = false', 'enable_discovery = false', 'vulkan_hdr_layer = false',
-        'system_tray = false', 'update_check_interval = 0', f'pyrowave = {str(args.codec.startswith("pyrowave")).lower()}']
+        'system_tray = false', 'updates = off', f'pyrowave = {str(args.codec.startswith("pyrowave")).lower()}']
     if args.codec.startswith('pyrowave'):
         defaults.append('lan_encryption_mode = 2')
     # A --config line replaces the default line of the same key.

@@ -108,50 +108,59 @@ const general: Setting[] = [
     restart: true,
   },
   {
-    key: 'update_check_interval',
-    label: 'Check for updates',
+    key: 'updates',
+    label: 'Updates',
     description:
-      'How often Rubylight looks for a new release, or daily at a set time; Daily suits almost everyone. Off stops checks and automatic installs, so only Check now finds updates.',
+      'What Rubylight does about new releases. Tell me checks and lets you know, and you install when you choose; Install automatically also installs a new release once nothing is streaming. Off stops the checks, so only Check now finds updates.',
     details:
-      "Daily at a set time checks at that time on this PC's clock, its time zone and daylight saving time included; if the PC is off, asleep or streaming then, the check runs as soon as it can. With Install updates automatically on, a new release installs after that check, once nothing is streaming. A custom interval is in seconds, at least 3600 (one hour). Check now under Updates works at any time, even with checks off.",
+      'Installing automatically requires the Windows service. Only verified releases are downloaded. They install after one minute without streams, pending connections or running apps. Check now under Updates works at any time, even with checks off.',
+    category: 'general',
+    group: 'Updates',
+    control: {
+      kind: 'select',
+      options: [
+        { value: 'off', label: 'Off' },
+        { value: 'tell_me', label: 'Tell me' },
+        { value: 'install', label: 'Install automatically' },
+      ],
+    },
+    default: 'tell_me',
+  },
+  {
+    key: 'update_check_interval',
+    label: 'Check how often',
+    description:
+      'How often Rubylight looks for a new release, or daily at a set time; Daily suits almost everyone.',
+    details:
+      "Daily at a set time checks at that time on this PC's clock, its time zone and daylight saving time included; if the PC is off, asleep or streaming then, the check runs as soon as it can. With Updates on Install automatically, a new release installs after that check, once nothing is streaming. A custom interval is in seconds, at least 3600 (one hour).",
     category: 'general',
     group: 'Updates',
     control: {
       kind: 'number',
-      min: 0,
+      min: 3600,
       step: 1,
       unit: 's',
       presets: [
         { value: 21600, label: 'Every 6 hours' },
         { value: 86400, label: 'Daily' },
         { value: 604800, label: 'Weekly' },
-        { value: 0, label: 'Off' },
       ],
       daily: { key: 'update_check_time', label: 'Daily at a set time' },
     },
     default: 86400,
+    inactiveHint: 'Choose Tell me or Install automatically under Updates to use this setting.',
+    visibleWhen: (values) => text(values, 'updates', 'tell_me') !== 'off',
   },
   {
     key: 'update_check_time',
     label: 'Daily check time',
-    description: "The time of the daily update check on this PC's clock. Choose Daily at a set time under Check for updates to set it.",
+    description: "The time of the daily update check on this PC's clock. Choose Daily at a set time under Check how often to set it.",
     category: 'general',
     group: 'Updates',
     control: { kind: 'text', time: true },
     default: '',
-    // Edited in the Check for updates row, so the interval never silently loses to it.
+    // Edited in the Check how often row, so the interval never silently loses to it.
     partOf: 'update_check_interval',
-  },
-  {
-    key: 'auto_update',
-    label: 'Install updates automatically',
-    description:
-      'Download and install new releases on their own, only while nothing is streaming or running. Off, the console tells you about an update and you install it when you choose.',
-    details: 'Requires the Windows service, and Check for updates on. Only verified releases are downloaded. They install after one minute without streams, pending connections or running apps. Off by default.',
-    category: 'general',
-    group: 'Updates',
-    control: { kind: 'toggle' },
-    default: false,
   },
   {
     key: 'notify_pre_releases',

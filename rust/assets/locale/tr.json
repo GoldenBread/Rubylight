@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "CABAC yerine daha basit CAVLC entropi kodlamasını kullanır. Aynı kalite için yaklaşık %10 daha fazla bit hızı gerekir.",
     "nvenc_insert_filler_data": "Dolgu verisi ekle",
     "nvenc_insert_filler_data_desc": "Görüntü basitken bile yayının sabit bit hızını koruması için kareleri doldurur; bu daha fazla bant genişliği kullanır.",
-    "nvenc_enable_min_qp": "En düşük niceleyici",
-    "nvenc_enable_min_qp_desc": "Kodlayıcının kolay sahnelerde belirlenen kalite düzeyinin ötesinde bit harcamasını önler ve zor sahneler için pay bırakır.",
     "nvenc_min_qp_h264": "H.264 için en düşük QP",
     "nvenc_min_qp_hevc": "HEVC için en düşük QP",
     "nvenc_min_qp_av1": "AV1 için en düşük QP",

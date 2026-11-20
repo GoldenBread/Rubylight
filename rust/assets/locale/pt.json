@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "Usa a codificação de entropia CAVLC, mais simples, em vez de CABAC. Precisa de cerca de 10% mais taxa de bits para a mesma qualidade.",
     "nvenc_insert_filler_data": "Inserir dados de preenchimento",
     "nvenc_insert_filler_data_desc": "Preenche os fotogramas para que a transmissão mantenha uma taxa de bits constante mesmo com imagens simples, o que usa mais largura de banda.",
-    "nvenc_enable_min_qp": "Quantizador mínimo",
-    "nvenc_enable_min_qp_desc": "Impede o codificador de gastar bits acima de um nível de qualidade definido em cenas fáceis, deixando margem para as difíceis.",
     "nvenc_min_qp_h264": "QP mínimo para H.264",
     "nvenc_min_qp_hevc": "QP mínimo para HEVC",
     "nvenc_min_qp_av1": "QP mínimo para AV1",

@@ -2397,3 +2397,177 @@ fn the_restore_setting_folds_into_the_disconnect_behavior_in_every_layer() {
     assert!(super::override_allowed("dd_disconnect_behavior"));
     assert!(super::override_allowed("dd_hold_layout_while_paused"));
 }
+
+/// Updates holds what Install updates automatically and an interval of 0
+/// held: 0 is `off`, `auto_update` on is `install`, nothing saved is
+/// `tell_me`; a value saved under Updates wins; the interval stays for any
+/// other value.
+#[test]
+fn the_update_switches_fold_into_updates() {
+    use super::{Config, UpdatesMode as U, folded_updates as fold};
+    assert_eq!(fold(None, None), None);
+    for (interval, auto, folded) in [
+        (Some("0"), None, Some("off")),
+        (Some("-1"), None, Some("off")),
+        (Some("0"), Some("true"), Some("off")),
+        (Some("86400"), Some("true"), Some("install")),
+        (None, Some("true"), Some("install")),
+        (None, Some("false"), None),
+        (Some("3600"), Some("false"), None),
+        (Some("soon"), None, None),
+    ] {
+        assert_eq!(fold(interval, auto), folded, "{interval:?} {auto:?}");
+    }
+    for (text, expected) in [
+        ("", U::TellMe),
+        ("auto_update=false", U::TellMe),
+        ("auto_update=true", U::Install),
+        ("update_check_interval=0", U::Off),
+        ("update_check_interval=0\nauto_update=true", U::Off),
+        ("update_check_interval=7200\nauto_update=true", U::Install),
+        ("updates=off\nauto_update=true", U::Off),
+        ("updates=tell_me\nupdate_check_interval=0", U::TellMe),
+    ] {
+        let config = Config::parse(text).unwrap();
+        assert_eq!(config.updates(), expected, "{text}");
+        assert!(!config.text().contains("auto_update"), "{text}");
+    }
+    // An interval other than 0 stays; Off makes it 0 for the schedule.
+    let config = Config::parse("update_check_interval=7200").unwrap();
+    assert_eq!(config.update_check_interval(), 7200);
+    assert_eq!(config.updates(), U::TellMe);
+    let config = Config::parse("update_check_interval=0\nauto_update=true").unwrap();
+    assert_eq!(config.update_check_interval(), 0);
+    assert!(!config.text().contains("update_check_interval"));
+    assert_eq!(
+        Config::parse("updates=off\nupdate_check_interval=7200")
+            .unwrap()
+            .update_check_interval(),
+        0
+    );
+    // A save sent with the earlier names.
+    let mut config = Config::default();
+    let sent = serde_json::json!({"auto_update": true});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.updates(), U::Install);
+    let sent = serde_json::json!({"auto_update": false});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.updates(), U::TellMe);
+    let sent = serde_json::json!({"update_check_interval": 0});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.updates(), U::Off);
+    assert!(!config.text().contains("update_check_interval"));
+    let sent = serde_json::json!({"update_check_interval": 86400});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.updates(), U::TellMe);
+    let sent = serde_json::json!({"auto_update": true, "updates": "off"});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(config.updates(), U::Off);
+    assert!(super::retired_name("auto_update"));
+    assert!(!super::retired_name("update_check_interval"));
+}
+
+/// The Minimum quantizer switch folds into the minimum QPs: a switch that
+/// was on keeps each saved value (the old default where none was saved), one
+/// that was off leaves them out, so nothing turns on that was not on.
+#[test]
+fn the_minimum_quantizer_switch_folds_into_the_minimum_qps() {
+    use super::Config;
+    let qp = |config: &Config, key: &str| config.integer(key, 0);
+    for (text, h264, hevc, av1) in [
+        ("", 0, 0, 0),
+        ("nvenc_enable_min_qp=false", 0, 0, 0),
+        (
+            "nvenc_enable_min_qp=false\nnvenc_min_qp_h264=30\nnvenc_min_qp_av1=40",
+            0,
+            0,
+            0,
+        ),
+        ("nvenc_enable_min_qp=true", 19, 23, 23),
+        ("nvenc_enable_min_qp=true\nnvenc_min_qp_hevc=30", 19, 30, 23),
+        (
+            "nvenc_enable_min_qp=true\nnvenc_min_qp_h264=0\nnvenc_min_qp_av1=51",
+            0,
+            23,
+            51,
+        ),
+        ("nvenc_min_qp_h264=25", 25, 0, 0),
+    ] {
+        let config = Config::parse(text).unwrap();
+        assert_eq!(
+            [
+                qp(&config, "nvenc_min_qp_h264"),
+                qp(&config, "nvenc_min_qp_hevc"),
+                qp(&config, "nvenc_min_qp_av1")
+            ],
+            [h264, hevc, av1],
+            "{text}"
+        );
+        assert!(!config.text().contains("nvenc_enable_min_qp"), "{text}");
+    }
+    // A save sent with the switch.
+    let mut config = Config::parse("nvenc_min_qp_hevc=30").unwrap();
+    let sent = serde_json::json!({"nvenc_enable_min_qp": false});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(qp(&config, "nvenc_min_qp_hevc"), 0);
+    let sent = serde_json::json!({"nvenc_enable_min_qp": true});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert_eq!(qp(&config, "nvenc_min_qp_hevc"), 23);
+    // An app's or device's overrides.
+    for (layer, expected) in [
+        (
+            serde_json::json!({"nvenc_enable_min_qp": false, "nvenc_min_qp_h264": 30}),
+            serde_json::json!({}),
+        ),
+        (
+            serde_json::json!({"nvenc_enable_min_qp": "true", "nvenc_min_qp_h264": 30}),
+            serde_json::json!({"nvenc_min_qp_h264": 30, "nvenc_min_qp_hevc": 23, "nvenc_min_qp_av1": 23}),
+        ),
+        (
+            serde_json::json!({"nvenc_min_qp_hevc": 30}),
+            serde_json::json!({"nvenc_min_qp_hevc": 30}),
+        ),
+    ] {
+        let mut layer = layer.as_object().unwrap().clone();
+        super::migrate_overrides(&mut layer);
+        assert_eq!(serde_json::Value::Object(layer), expected);
+    }
+    assert!(super::retired_name("nvenc_enable_min_qp"));
+}
+
+/// The retired compute-queue, AMF queue and AMF low-latency settings are
+/// dropped from every layer, and AMF no longer forces either.
+#[test]
+fn the_retired_driver_switches_are_dropped_and_no_longer_reach_the_amf_encoder() {
+    for key in [
+        "compute_queue_realtime",
+        "amd_input_queue_size",
+        "amd_lowlatency_mode",
+    ] {
+        assert!(super::removed(key), "{key}");
+        assert!(!super::override_allowed(key), "{key}");
+        let mut layer = serde_json::json!({ key: "1", "fec_percentage": 20 })
+            .as_object()
+            .unwrap()
+            .clone();
+        assert!(super::migrate_overrides(&mut layer));
+        assert!(!layer.contains_key(key));
+    }
+    let config = super::Config::parse(
+        "amd_input_queue_size=1\namd_lowlatency_mode=enabled\ncompute_queue_realtime=true\n",
+    )
+    .unwrap();
+    for codec in 0..=2 {
+        let stream = crate::rtsp::Negotiated {
+            codec,
+            ..Default::default()
+        };
+        let properties = crate::encoder_policy::amf(&config, &stream).unwrap();
+        assert!(
+            properties.iter().all(|property| {
+                !property.name.ends_with("InputQueueSize") && property.name != "LowLatencyInternal"
+            }),
+            "codec {codec}"
+        );
+    }
+}

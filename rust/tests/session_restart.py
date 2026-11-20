@@ -20,7 +20,7 @@ assert directory.resolve().parent == root
     'virtual_display_mode=disabled\ndd_configuration_option=disabled\n'
     'dd_resolution_option=disabled\ndd_refresh_rate_option=disabled\ndd_hdr_option=disabled\n'
     'stream_audio=false\ninstall_steam_audio_drivers=false\nupnp=false\n'
-    'enable_discovery=false\nvulkan_hdr_layer=false\nupdate_check_interval=0\n' % args.port)
+    'enable_discovery=false\nvulkan_hdr_layer=false\nupdates=off\n' % args.port)
 base = 'https://127.0.0.1:%d' % (args.port + 1)
 process = None
 outputs = []

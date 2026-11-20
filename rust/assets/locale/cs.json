@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "Použije jednodušší entropické kódování CAVLC místo CABAC. Pro stejnou kvalitu potřebuje asi o 10 % vyšší datový tok.",
     "nvenc_insert_filler_data": "Vkládat výplňová data",
     "nvenc_insert_filler_data_desc": "Doplňuje snímky, aby stream držel konstantní datový tok i u jednoduchého obrazu, což spotřebuje více šířky pásma.",
-    "nvenc_enable_min_qp": "Minimální kvantizér",
-    "nvenc_enable_min_qp_desc": "Zabrání kodéru utrácet bity nad nastavenou úroveň kvality v jednoduchých scénách a ponechá rezervu pro náročné.",
     "nvenc_min_qp_h264": "Minimální QP pro H.264",
     "nvenc_min_qp_hevc": "Minimální QP pro HEVC",
     "nvenc_min_qp_av1": "Minimální QP pro AV1",

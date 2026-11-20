@@ -749,14 +749,9 @@ impl Encoder {
         // Drop destroys.
         unsafe {
             // The encode queue runs ahead of the game's work, as the D3D12 copy and
-            // conversion queue does: high priority, realtime only when
-            // compute_queue_realtime asks for it. A driver that refuses the
-            // priority gets the default one.
-            let wanted = if crate::compute::realtime() {
-                p::VkQueueGlobalPriority_VK_QUEUE_GLOBAL_PRIORITY_REALTIME
-            } else {
-                p::VkQueueGlobalPriority_VK_QUEUE_GLOBAL_PRIORITY_HIGH
-            };
+            // conversion queue does: high priority, never real-time. A driver
+            // that refuses the priority gets the default one.
+            let wanted = p::VkQueueGlobalPriority_VK_QUEUE_GLOBAL_PRIORITY_HIGH;
             let mut result = p::pyrowave_result_PYROWAVE_ERROR_GENERIC;
             for priority in [
                 wanted,

@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "Dùng mã hóa entropy CAVLC đơn giản hơn thay cho CABAC. Cần thêm khoảng 10% tốc độ bit cho cùng chất lượng.",
     "nvenc_insert_filler_data": "Chèn dữ liệu đệm",
     "nvenc_insert_filler_data_desc": "Đệm khung hình để luồng giữ tốc độ bit cố định ngay cả khi hình ảnh đơn giản, dùng nhiều băng thông hơn.",
-    "nvenc_enable_min_qp": "Bộ lượng tử tối thiểu",
-    "nvenc_enable_min_qp_desc": "Ngăn bộ mã hóa dùng bit vượt mức chất lượng đã đặt ở cảnh dễ, chừa dư địa cho cảnh khó.",
     "nvenc_min_qp_h264": "QP tối thiểu cho H.264",
     "nvenc_min_qp_hevc": "QP tối thiểu cho HEVC",
     "nvenc_min_qp_av1": "QP tối thiểu cho AV1",

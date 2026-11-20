@@ -14,6 +14,7 @@
     DISPLAY_OVERRIDE_OPTIONS,
     GAMEPAD_OPTIONS,
     LTR_FRAME_OPTIONS,
+    validReleaseDelay,
     PERMISSION_GROUPS,
     learnedLayoutLabel,
     savingEndsStream,
@@ -207,6 +208,11 @@
   let controllerOpen = $state(untrack(() => gamepadUnknown));
   const ltrUnknown = $derived(draft.ltr_frames !== '' && !LTR_FRAME_OPTIONS.some((option) => option.value === draft.ltr_frames));
   let encoderOpen = $state(untrack(() => ltrUnknown));
+  const delayInvalid = $derived(!validReleaseDelay(draft.release_delay));
+  let touchOpen = $state(untrack(() => delayInvalid));
+  $effect(() => {
+    if (delayInvalid) touchOpen = true;
+  });
   $effect(() => {
     if (modeInvalid) displayOpen = true;
   });
@@ -226,7 +232,7 @@
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
-    if (!changed || nameMissing || modeInvalid || saving || disabled) return;
+    if (!changed || nameMissing || modeInvalid || delayInvalid || saving || disabled) return;
     saving = true;
     // Edits made while the request is out stay unsaved.
     const submitted = $state.snapshot(draft);
@@ -547,6 +553,29 @@
   </section>
   </details>
 
+  <details class="override" bind:open={touchOpen}><summary>Touch and pen</summary>
+  <section>
+    <div class="form-grid">
+      <Field
+        label="Touch and pen click delay"
+        id="{uid}-release-delay"
+        hint="How long a tap on this device's touch screen or pen holds its left-button release back, in milliseconds: 0 to 1000. Raise it if a game misses taps or reads them as a drag; leave it empty to use the host's 10."
+        error={delayInvalid ? 'Enter a whole number from 0 to 1000, or leave it empty.' : undefined}
+      >
+        <input
+          id="{uid}-release-delay"
+          class="input num"
+          type="text"
+          inputmode="numeric"
+          placeholder="10"
+          aria-invalid={delayInvalid ? 'true' : undefined}
+          bind:value={draft.release_delay}
+        />
+      </Field>
+    </div>
+  </section>
+  </details>
+
   <details class="override" bind:open={presetOpen}><summary>Stream preset</summary>
   <section>
     <div class="form-grid">
@@ -642,7 +671,7 @@
   </details>
 
   <footer>
-    <Button type="submit" variant="primary" busy={saving} disabled={!changed || nameMissing || modeInvalid || disabled}>Save</Button>
+    <Button type="submit" variant="primary" busy={saving} disabled={!changed || nameMissing || modeInvalid || delayInvalid || disabled}>Save</Button>
     <Button disabled={!changed || saving} onclick={discard}>Discard</Button>
     <span class="status muted">
       {#if savingEndsStream(client.connected, saved, draft)}

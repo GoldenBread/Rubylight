@@ -36,7 +36,7 @@ def check(name, ok, detail=''):
 
 (profile / 'sunshine.conf').write_text(f'''port = {port}
 system_tray = false
-update_check_interval = 0
+updates = off
 upnp = false
 enable_discovery = false
 stream_audio = false

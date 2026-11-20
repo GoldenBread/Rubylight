@@ -1367,43 +1367,6 @@ fn settings_log_queries_screen_content_and_high_motion_tools() {
 }
 
 #[test]
-fn smart_access_video_excludes_only_forced_low_latency() -> Result<()> {
-    use butterpollo_core::{config::Config, encoder_policy, rtsp::Negotiated};
-    for codec in 0..=2 {
-        for low_latency in ["auto", "enabled", "disabled"] {
-            for sav in ["auto", "enabled", "disabled"] {
-                let config = Config::parse(&format!(
-                    "amd_lowlatency_mode={low_latency}\namd_smart_access_video={sav}\n"
-                ))?;
-                let stream = Negotiated {
-                    codec,
-                    ..Default::default()
-                };
-                let original = encoder_policy::amf(&config, &stream)?;
-                let mut guarded = encoder_policy::amf(&config, &stream)?;
-                guard_smart_access_video(&mut guarded);
-                assert_eq!(original.len(), guarded.len());
-                for (before, after) in original.iter().zip(&guarded) {
-                    assert_eq!(before.name, after.name);
-                    if codec < 2
-                        && low_latency == "enabled"
-                        && sav == "enabled"
-                        && before.name.ends_with("EnableEncoderSmartAccessVideo")
-                    {
-                        assert_eq!(after.value, encoder_policy::Value::Boolean(false));
-                        assert!(after.required);
-                    } else {
-                        assert_eq!(before.value, after.value, "{}", before.name);
-                        assert_eq!(before.required, after.required, "{}", before.name);
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-#[test]
 #[ignore = "requires AMD AMF and an independent FFprobe"]
 fn hdr10_metadata_and_range_reach_the_bitstream() -> Result<()> {
     use crate::capture::{ComGuard, Pixel};
@@ -1437,7 +1400,7 @@ fn hdr10_metadata_and_range_reach_the_bitstream() -> Result<()> {
     metadata.max_cll = 1000;
     metadata.max_fall = 400;
     let options = butterpollo_core::config::Config::parse(
-        "amd_usage=ultralowlatency\namd_quality=speed\namd_smart_access_video=disabled\namd_lowlatency_mode=enabled\namd_input_queue_size=4\namd_ltr_frames=4\n",
+        "amd_usage=ultralowlatency\namd_quality=speed\namd_smart_access_video=disabled\namd_ltr_frames=4\n",
     )?;
     let defaults = butterpollo_core::config::Config::default();
     for codec in [1u8, 2] {
@@ -1983,7 +1946,7 @@ fn native_h264_one_reference_budget_decodes_without_ltr_corruption() -> Result<(
         ..Default::default()
     };
     let options = butterpollo_core::config::Config::parse(
-        "amd_ltr_frames=4\namd_usage=ultralowlatency\namd_quality=speed\namd_lowlatency_mode=enabled\n",
+        "amd_ltr_frames=4\namd_usage=ultralowlatency\namd_quality=speed\n",
     )?;
     // Synthetic input avoids capturing or changing any user's desktop/window.
     let source = GpuImage::upload(

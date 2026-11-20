@@ -561,28 +561,12 @@ pub fn amf(config: &Config, stream: &Negotiated) -> Result<Vec<Property>> {
             false,
         );
     }
-    // Only on request, as the original backend does: forcing a queue
-    // of one for every VRR client exposed an RDNA4 driver freeze
-    // (AlkaidLab/foundation-sunshine#666), video stalling while audio plays.
-    let queue = config.integer("amd_input_queue_size", 0).clamp(0, 32);
-    if queue > 0 {
-        add(
-            format!("{prefix}InputQueueSize"),
-            Value::Integer(queue),
-            true,
-        );
-    }
     if let Some(on) = tristate(config, "amd_smart_access_video", None) {
         add(
             format!("{prefix}EnableEncoderSmartAccessVideo"),
             Value::Boolean(on),
             on,
         );
-    }
-    if codec < 2
-        && let Some(on) = tristate(config, "amd_lowlatency_mode", None)
-    {
-        add("LowLatencyInternal".into(), Value::Boolean(on), true);
     }
     if let Some(on) = tristate(config, "amd_high_motion_quality_boost", None) {
         add(

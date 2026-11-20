@@ -150,18 +150,11 @@ fn capture_config(config: &Config) -> Config {
         // What part of a window is captured (`capture_window_frame`).
         butterpollo_core::app_window::FRAME,
     ];
-    // The helper runs the copy and conversion queues itself, so it applies
-    // `compute_queue_realtime` too (`gpu_priority::configure`). Passed only
-    // when on: with it off the helper starts with the settings it always had.
-    const REALTIME: &str = "compute_queue_realtime";
-    let realtime = config.boolean(REALTIME, false);
     Config {
         values: config
             .values
             .iter()
-            .filter(|(key, _)| {
-                KEYS.contains(&key.as_str()) || (realtime && key.as_str() == REALTIME)
-            })
+            .filter(|(key, _)| KEYS.contains(&key.as_str()))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
     }

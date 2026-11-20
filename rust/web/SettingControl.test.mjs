@@ -102,9 +102,9 @@ test('values the fallback console saves select the option the host reads them as
 });
 
 for (const [key, valid, invalid] of [
-  ['update_check_interval', [0, 3600, 86400], [-1, 1, 3599]],
+  ['update_check_interval', [3600, 86400], [0, -1, 1, 3599]],
 ]) {
-  test(`${key} accepts zero and its supported range`, () => {
+  test(`${key} accepts its supported range only`, () => {
     const setting = schema.settings.find((setting) => setting.key === key);
     for (const value of [...valid, ...invalid]) {
       const html = render(SettingControl, { props: { setting, id: key, value, onchange: () => {} } }).body;
@@ -115,7 +115,7 @@ for (const [key, valid, invalid] of [
 
 test('the update check time is a time field beside the interval that takes only a time of day', () => {
   const settings = schema.settings.filter((setting) => setting.group === 'Updates').map((setting) => setting.key);
-  assert.deepEqual(settings.slice(0, 2), ['update_check_interval', 'update_check_time']);
+  assert.deepEqual(settings.slice(0, 3), ['updates', 'update_check_interval', 'update_check_time']);
   const setting = schema.settings.find((setting) => setting.key === 'update_check_time');
   assert.equal(setting.category, 'general');
   assert.equal(setting.advanced, schema.settings.find((item) => item.key === 'update_check_interval').advanced);
@@ -196,10 +196,10 @@ test('a settings row shows its caution under the control', async () => {
   assert.doesNotMatch(render(SettingRow, { props }).body, /data-caution/);
 });
 
-test('the update schedule is one row: a daily time is a choice of Check for updates', () => {
+test('the update schedule is one row: a daily time is a choice of Check how often', () => {
   const interval = schema.settings.find((setting) => setting.key === 'update_check_interval');
   const time = schema.settings.find((setting) => setting.key === 'update_check_time');
-  // Both keys stay: scripts set the interval to 0, and the time is HH:MM text.
+  // Both keys stay: the interval is in seconds, and the time is HH:MM text.
   assert.equal(time.partOf, 'update_check_interval');
   assert.equal(interval.control.daily.key, 'update_check_time');
   const row = (value, daily) =>
@@ -213,8 +213,6 @@ test('the update schedule is one row: a daily time is a choice of Check for upda
   const timed = row(86400, daily('3:00'));
   assert.match(timed, /<option value="\u0000daily"[^>]*selected/);
   assert.match(timed, /<input[^>]*id="update_check_interval-daily"[^>]*type="time"[^>]*value="03:00"/);
-  // Off wins over a saved time: the host makes no automatic checks at 0.
-  assert.doesNotMatch(row(0, daily('03:00')), /type="time"/);
   // Without the time part the control has no daily choice at all.
   assert.doesNotMatch(row(86400, undefined), /Daily at a set time/);
 });

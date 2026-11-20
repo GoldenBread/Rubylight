@@ -57,7 +57,7 @@ The Rubylight service runs as SYSTEM from the install folder, so setup only upda
 
 Under **Settings → Updates**, read the current phase and any error; the panel names the stream an update waits for, and **Install now** installs without waiting. Installation needs the installed Windows service and one minute without streams, pending connections, remote monitors or host apps. Quit a retained desktop or game session as well as disconnecting its video. A new connection defers the update.
 
-**Install updates automatically** (**Settings → Updates**) is opt-in. **Include pre-releases** (**All settings → This PC → Updates**) controls whether release candidates are offered, and an update-check interval of `0` disables automatic checks and installation. Manual checks remain available. Portable builds update through the release page.
+**Install automatically** under **Updates** (**Settings → Updates**) is opt-in. **Include pre-releases** (**All settings → This PC → Updates**) controls whether release candidates are offered, and an update-check interval of `0` disables automatic checks and installation. Manual checks remain available. Portable builds update through the release page.
 
 ## A driver is missing or out of date
 
@@ -186,7 +186,7 @@ If the problem starts when the GPU is fully occupied, compare with a lower game 
 
 **Try AV1 first** when the client decodes it in hardware, then HEVC.
 
-On a Radeon, start from the default encoder settings: `amd_usage=ultralowlatency`, `amd_lowlatency_mode=auto`, `amd_input_queue_size=0`, `amd_preanalysis=false`, `amd_split_frame=auto` and `compute_queue_realtime=false`. Use `amd_smart_access_video=disabled` while diagnosing a freeze. Install AMD's current Recommended driver for your card from [AMD's driver page](https://www.amd.com/en/support/download/drivers.html).
+On a Radeon, start from the default encoder settings: `amd_usage=ultralowlatency`, `amd_preanalysis=false` and `amd_split_frame=auto`. Use `amd_smart_access_video=disabled` while diagnosing a freeze. Install AMD's current Recommended driver for your card from [AMD's driver page](https://www.amd.com/en/support/download/drivers.html).
 
 If the freeze returns, change one setting per reconnect (WGC against Desktop Duplication, then `gpu_compute_conversion` on against off) and note which one changes the result.
 

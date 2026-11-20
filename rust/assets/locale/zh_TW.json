@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "使用較簡單的 CAVLC 熵編碼取代 CABAC。相同畫質約需多 10% 的位元率。",
     "nvenc_insert_filler_data": "插入填充資料",
     "nvenc_insert_filler_data_desc": "填充畫面，讓串流在畫面簡單時也維持固定位元率，會使用更多頻寬。",
-    "nvenc_enable_min_qp": "最小量化",
-    "nvenc_enable_min_qp_desc": "防止編碼器在簡單場景中超出設定品質等級使用位元，為複雜場景保留餘裕。",
     "nvenc_min_qp_h264": "H.264 最小 QP",
     "nvenc_min_qp_hevc": "HEVC 最小 QP",
     "nvenc_min_qp_av1": "AV1 最小 QP",

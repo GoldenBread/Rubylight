@@ -258,8 +258,8 @@ test('pages call the library by its navigation name, Games', async () => {
   }
 });
 
-test('capture timing diagnostics sit in Debug switches with their own text, and stay off the home', () => {
-  assert.deepEqual([...DIAGNOSTICS].sort(), ['capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish']);
+test('capture timing, send batch and PyroWave overlap diagnostics sit in Debug switches with their own text, and stay off the home', () => {
+  assert.deepEqual([...DIAGNOSTICS].sort(), ['capture_poll_interval_us', 'capture_predictive_poll', 'pyrowave_encode_overlap', 'video_max_batch_size_kb', 'wgc_slot_aligned_publish']);
   for (const key of DIAGNOSTICS) {
     const setting = settings.get(key);
     assert.equal(setting.group, DEBUG_GROUP, key);

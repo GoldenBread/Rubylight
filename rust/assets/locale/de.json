@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "Verwendet die einfachere CAVLC-Entropiecodierung statt CABAC. Sie braucht für die gleiche Qualität etwa 10 % mehr Bitrate.",
     "nvenc_insert_filler_data": "Fülldaten einfügen",
     "nvenc_insert_filler_data_desc": "Füllt Bilder auf, damit der Stream auch bei einfachen Bildern eine konstante Bitrate hält; das braucht mehr Bandbreite.",
-    "nvenc_enable_min_qp": "Minimaler Quantisierer",
-    "nvenc_enable_min_qp_desc": "Verhindert, dass der Encoder bei einfachen Szenen Bits über eine festgelegte Qualitätsstufe hinaus ausgibt, und lässt Reserven für schwierige.",
     "nvenc_min_qp_h264": "Minimaler QP für H.264",
     "nvenc_min_qp_hevc": "Minimaler QP für HEVC",
     "nvenc_min_qp_av1": "Minimaler QP für AV1",

@@ -154,13 +154,15 @@ fn supported(h: &Shared) -> bool {
 pub fn status(h: &Shared) -> Value {
     let mut state = h.updates.lock().unwrap().clone();
     state["install_supported"] = json!(supported(h));
-    state["auto_update"] = json!(h.config.read().unwrap().boolean("auto_update", false));
-    state["update_check_interval"] = json!(
-        h.config
-            .read()
-            .unwrap()
-            .integer("update_check_interval", 86400)
-    );
+    state["updates"] = json!(match h.config.read().unwrap().updates() {
+        butterpollo_core::config::UpdatesMode::Off => "off",
+        butterpollo_core::config::UpdatesMode::TellMe => "tell_me",
+        butterpollo_core::config::UpdatesMode::Install => "install",
+    });
+    state["auto_update"] =
+        json!(h.config.read().unwrap().updates() == butterpollo_core::config::UpdatesMode::Install);
+    // 0 when automatic checks are off.
+    state["update_check_interval"] = json!(h.config.read().unwrap().update_check_interval());
     // "HH:MM" when the check runs once a day at that time; null when the
     // interval decides.
     state["update_check_time"] = json!(
@@ -226,7 +228,7 @@ fn next_check(h: &Shared) -> Option<u64> {
     let schedule = {
         let config = h.config.read().unwrap();
         schedule::Schedule {
-            interval: config.integer("update_check_interval", 86400),
+            interval: config.update_check_interval(),
             time: config.update_check_time(),
         }
     };
@@ -622,8 +624,8 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
         return;
     }
     let config = h.config.read().unwrap();
-    let auto_enabled =
-        config.boolean("auto_update", false) && config.integer("update_check_interval", 86400) > 0;
+    let auto_enabled = config.updates() == butterpollo_core::config::UpdatesMode::Install
+        && config.update_check_interval() > 0;
     let prereleases = config.boolean("notify_pre_releases", false);
     drop(config);
     let mut state = h.updates.lock().unwrap();

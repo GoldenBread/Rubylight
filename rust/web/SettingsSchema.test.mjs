@@ -114,7 +114,7 @@ test('search finds words that moved behind More, and configuration keys', () => 
   assert.equal(find('fec percentage', 'fec_percentage'), true);
   assert.equal(find('amd quality', 'amd_quality'), true);
   assert.equal(find('nvenc preset', 'nvenc_preset'), true);
-  assert.equal(find('amd quality', 'nvenc_enable_min_qp'), false);
+  assert.equal(find('amd quality', 'nvenc_min_qp_h264'), false);
 });
 
 test('the default is shown only when the saved value would differ from it', () => {
@@ -141,7 +141,6 @@ test('spellings the host reads as an option show as that option', () => {
     ['amd_vbaq', 'false', 'disabled'],
     ['amd_vbaq', ' ON ', 'enabled'],
     ['amd_vbaq', 0, 'disabled'],
-    ['amd_lowlatency_mode', 'true', 'enabled'],
     ['amd_high_motion_quality_boost', false, 'disabled'],
     ['amd_smart_access_video', 'off', 'disabled'],
     ['amd_split_frame', 'Yes', 'enabled'],
@@ -294,8 +293,8 @@ test('each encoder group shows for its encoder, and Automatic shows the one for 
   assert.equal(settings.get('nvenc_target_quality').visibleWhen({ ...nv, nvenc_rate_control: 'vbr' }), true);
   assert.equal(settings.get('nvenc_target_quality').visibleWhen(nv), false);
   assert.equal(settings.get('nvenc_target_quality').visibleWhen({ encoder: 'amf', nvenc_rate_control: 'vbr' }), false);
-  assert.equal(settings.get('nvenc_min_qp_hevc').visibleWhen({ ...nv, nvenc_enable_min_qp: 'true' }), true);
-  assert.equal(settings.get('nvenc_min_qp_hevc').visibleWhen(nv), false);
+  assert.equal(settings.get('nvenc_min_qp_hevc').visibleWhen(nv), true);
+  assert.equal(settings.get('nvenc_min_qp_hevc').visibleWhen({ encoder: 'amf' }), false);
   // amf_vpe.rs: off unless asked for, and only where AMF encodes.
   assert.equal(settings.get('amd_vpe').default, false);
   assert.equal(settings.get('amd_vpe').visibleWhen({ encoder: 'amf' }), true);
@@ -352,7 +351,7 @@ test('the NVENC group holds exactly the settings the NVENC encoder reads, with i
     ['nvenc_spatial_aq', true], ['nvenc_temporal_aq', false], ['nvenc_split_encode', 'auto'], ['nvenc_frame_budget_guard', true],
     ['nvenc_realtime_hags', true], ['nvenc_latency_over_power', true],
     ['nvenc_vbv_increase', 0], ['nvenc_weighted_prediction', false], ['nvenc_h264_cavlc', false], ['nvenc_insert_filler_data', false],
-    ['nvenc_enable_min_qp', false], ['nvenc_min_qp_h264', 19], ['nvenc_min_qp_hevc', 23], ['nvenc_min_qp_av1', 23],
+    ['nvenc_min_qp_h264', 0], ['nvenc_min_qp_hevc', 0], ['nvenc_min_qp_av1', 0],
   ]) {
     assert.equal(settings.get(key).default, value, key);
   }
@@ -883,7 +882,6 @@ test('AMF values that cost the stream say so; the defaults and costless choices 
     [{ amd_quality: 'quality' }, 'amd_quality', /12 ms on AV1/],
     [{ amd_rc: 'qvbr' }, 'amd_rc', /pre-analysis/],
     [{ amd_preanalysis: true }, 'amd_preanalysis', /20 ms per 4K frame/],
-    [{ amd_lowlatency_mode: 'false' }, 'amd_lowlatency_mode', /0\.4 ms/],
     [{ amd_av1_latency_mode: 'none' }, 'amd_av1_latency_mode', /1\.3 ms per AV1 frame/],
   ]) {
     assert.deepEqual(costs(config), [key], JSON.stringify(config));
@@ -891,7 +889,7 @@ test('AMF values that cost the stream say so; the defaults and costless choices 
   }
   for (const config of [
     { amd_usage: 'ultralowlatency' }, { amd_usage: 'not-a-usage' }, { amd_usage: 'webcam' }, { amd_quality: 'balanced' },
-    { amd_rc: 'cbr' }, { amd_max_frame_size: 2 }, { amd_lowlatency_mode: 'enabled' },
+    { amd_rc: 'cbr' }, { amd_max_frame_size: 2 },
     { amd_av1_latency_mode: 'lowest' }, { amd_enforce_hrd: 'enabled' },
   ]) assert.deepEqual(costs(config), [], JSON.stringify(config));
 });
@@ -910,14 +908,13 @@ test('a value that exposes the PC, loses progress or adds delay says so; the def
     [{ exit_timeout: 0 }, 'exit_timeout', /by force at once/],
     [{ guest_join: 'allow' }, 'guest_join', /nobody is asked/],
     [{ frame_pacing: 'grid' }, 'frame_pacing', /Adds delay/],
-    [{ amd_input_queue_size: 1 }, 'amd_input_queue_size', /driver freeze on RDNA4/],
   ]) {
     assert.deepEqual(risks(config), [key], JSON.stringify(config));
     assert.match(caution(settings.get(key), currentValues(schema.settings, {}, config)), text, key);
   }
   for (const config of [
     { wan_encryption_mode: 2 }, { origin_web_ui_allowed: 'pc' }, { dd_configuration_option: 'ensure_primary' },
-    { exit_timeout: 30 }, { guest_join: 'ask' }, { amd_input_queue_size: 4 },
+    { exit_timeout: 30 }, { guest_join: 'ask' },
   ]) assert.deepEqual(risks(config), [], JSON.stringify(config));
 });
 
@@ -1112,7 +1109,7 @@ test('"Applies after a restart" marks exactly the settings the host answers a sa
   assert.deepEqual(restartKeys.filter(key => !settings.has(key)).sort(),
     ['cert', 'credentials_file', 'file_apps', 'file_state', 'pkey', 'vibeshine_file_state']);
   // Settings read where they are used save without the restart notice.
-  for (const key of ['auto_update', 'locale', 'packed_444', 'stream_audio', 'min_log_level']) assert.equal(restartKeys.includes(key), false, key);
+  for (const key of ['updates', 'locale', 'packed_444', 'stream_audio', 'min_log_level']) assert.equal(restartKeys.includes(key), false, key);
   assert(restartKeys.includes('port'));
 });
 
@@ -1192,5 +1189,31 @@ test('a select with a fixed choice reveals its value inside its own row', () => 
     assert(select.control.options.some(option => option.value === 'manual'), key);
     // The value keeps its own key and rules, but has no row of its own.
     assert.equal(settings.get(fixed).partOf, key, fixed);
+  }
+});
+
+test('Updates is one choice with the check interval as a detail of the choices that check', () => {
+  const updates = settings.get('updates');
+  assert.deepEqual(updates.control.options.map(option => option.value), ['off', 'tell_me', 'install']);
+  assert.equal(updates.default, 'tell_me');
+  assert.deepEqual([updates.category, updates.group], ['general', 'Updates']);
+  // The two retired switches are gone; the interval and the time stay.
+  assert.equal(settings.has('auto_update'), false);
+  const interval = settings.get('update_check_interval');
+  assert.equal(interval.visibleWhen({}), true);
+  assert.equal(interval.visibleWhen({ updates: 'install' }), true);
+  assert.equal(interval.visibleWhen({ updates: 'off' }), false);
+  assert.equal(interval.control.presets.some(preset => preset.value === 0), false);
+  // Check now and Install now read pre-releases with checks off.
+  assert.equal(settings.get('notify_pre_releases').visibleWhen, undefined);
+});
+
+test('the retired switches have no row, and the minimum QPs are off by default', () => {
+  for (const key of ['compute_queue_realtime', 'amd_input_queue_size', 'amd_lowlatency_mode', 'nvenc_enable_min_qp']) {
+    assert.equal(settings.has(key), false, key);
+  }
+  for (const key of ['nvenc_min_qp_h264', 'nvenc_min_qp_hevc', 'nvenc_min_qp_av1']) {
+    assert.equal(settings.get(key).default, 0, key);
+    assert.match(settings.get(key).description, /0 is off/, key);
   }
 });

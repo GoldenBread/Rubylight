@@ -130,6 +130,10 @@ export interface Draft {
   ltr_frames: string;
   /** Those frames exactly as stored, sent back while their choice is untouched. */
   stored_ltr_frames?: unknown;
+  /** The device's touch and pen click delay in milliseconds (`absolute_left_release_delay`) as the field shows it; empty follows the host. */
+  release_delay: string;
+  /** That delay exactly as stored, sent back while the field is untouched. */
+  stored_release_delay?: unknown;
   /** The device's other config overrides, kept and sent back untouched. */
   other_overrides: Record<string, unknown>;
   /** Lets the device change Radeon settings and close games; off unless granted here. */
@@ -242,6 +246,18 @@ export const LTR_FRAME_OPTIONS = Array.from({ length: ltrMax - ltrMin + 1 }, (_,
   return { value: String(frames), label: frames === 0 ? 'Off' : String(frames) };
 });
 
+/** Whether a click delay is empty (the host's) or a whole number of milliseconds from 0 to 1000, as the host reads it. */
+export function validReleaseDelay(value: string): boolean {
+  if (value.trim() === '') return true;
+  return /^\d{1,4}$/.test(value.trim()) && Number(value) <= 1000;
+}
+
+/** A stored click delay as the field shows it: anything but a number as written, so the editor flags it. */
+function shownReleaseDelay(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  return typeof value === 'string' ? value.trim() : String(value);
+}
+
 /** Stored frames as the select shows them: anything but a choice as written, so the editor flags it. */
 function shownLtrFrames(value: unknown): string {
   if (value === undefined) return '';
@@ -266,6 +282,8 @@ export function toDraft(client: Client): Draft {
   // A null is no value: sent back, it would delete the host's own for this device's streams.
   const storedLtrFrames = other.amd_ltr_frames ?? undefined;
   delete other.amd_ltr_frames;
+  const storedReleaseDelay = other.absolute_left_release_delay ?? undefined;
+  delete other.absolute_left_release_delay;
   return {
     name: client.name,
     enabled: flag(client.enabled) !== false,
@@ -295,6 +313,8 @@ export function toDraft(client: Client): Draft {
     stored_gamepad: storedGamepad,
     ltr_frames: shownLtrFrames(storedLtrFrames),
     stored_ltr_frames: storedLtrFrames,
+    release_delay: shownReleaseDelay(storedReleaseDelay),
+    stored_release_delay: storedReleaseDelay,
     other_overrides: other,
     // As the host reads it: only true and "true" are on, so 1 and "yes" stay off.
     host_control: client.host_control === true || client.host_control === 'true',
@@ -341,7 +361,7 @@ function commands(rows: CommandRow[]): Command[] {
 }
 
 /**
- * The device's overrides: its other overrides plus its display overrides, controller type, long-term reference frames and preset; null when
+ * The device's overrides: its other overrides plus its display overrides, controller type, long-term reference frames, touch and pen click delay and preset; null when
  * there are none. A preset or display override the user did not touch goes back as it was stored,
  * so a value this console cannot show (another type, an unknown name) is not rewritten or lost by
  * saving something else.
@@ -363,7 +383,14 @@ function overrides(draft: Draft): Record<string, unknown> | null {
   const gamepad = gamepadUntouched ? { gamepad: draft.stored_gamepad } : draft.gamepad ? { gamepad: draft.gamepad } : {};
   const ltrUntouched = draft.stored_ltr_frames !== undefined && shownLtrFrames(draft.stored_ltr_frames) === draft.ltr_frames;
   const ltr = ltrUntouched ? { amd_ltr_frames: draft.stored_ltr_frames } : draft.ltr_frames ? { amd_ltr_frames: Number(draft.ltr_frames) } : {};
-  const next = { ...draft.other_overrides, ...display, ...gamepad, ...ltr, ...preset };
+  const delayUntouched =
+    draft.stored_release_delay !== undefined && shownReleaseDelay(draft.stored_release_delay) === draft.release_delay;
+  const delay = delayUntouched
+    ? { absolute_left_release_delay: draft.stored_release_delay }
+    : draft.release_delay.trim() && validReleaseDelay(draft.release_delay)
+      ? { absolute_left_release_delay: Number(draft.release_delay) }
+      : {};
+  const next = { ...draft.other_overrides, ...display, ...gamepad, ...ltr, ...delay, ...preset };
   return Object.keys(next).length > 0 ? next : null;
 }
 

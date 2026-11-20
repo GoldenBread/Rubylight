@@ -157,8 +157,8 @@ fn only_a_save_with_a_restart_bound_setting_asks_for_a_restart() {
     assert!(restart(json!({"packed_444": false, "av1_mode": "1"})));
     assert!(restart(json!({"sunshine_name": "Renamed host"})));
     // Read where they are used: the updater's next check, the console's language.
-    assert!(!restart(json!({"auto_update": "true"})));
-    assert!(!restart(json!({"locale": "de", "auto_update": "false"})));
+    assert!(!restart(json!({"updates": "install"})));
+    assert!(!restart(json!({"locale": "de", "updates": "off"})));
     // The listeners bind their ports once.
     assert!(restart(json!({"port": "48100", "locale": "en"})));
 }

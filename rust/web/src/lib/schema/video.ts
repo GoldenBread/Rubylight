@@ -379,7 +379,7 @@ const video: Setting[] = [
     key: 'pyrowave_encode_overlap',
     label: 'Overlap PyroWave frames',
     description:
-      'Prepares the next PyroWave frame while the GPU still encodes the current one, keeping two copies of the picture on the GPU. Leave it off unless an encode takes longer than a frame.',
+      'For troubleshooting; leave it off. Prepares the next PyroWave frame while the GPU still encodes the current one, keeping two copies of the picture on the GPU. Try it only if an encode takes longer than a frame.',
     details:
       'Two frames are on the GPU at once, each with its own copy of the picture. Off encodes one frame at a time. Applies to the next stream. At 4K and 120 fps on an RX 7900 XT the encode never held the next frame up, so the overlap measured no lower latency.',
     category: 'video',
@@ -590,7 +590,7 @@ const video: Setting[] = [
     key: 'video_max_batch_size_kb',
     label: 'Send batch size',
     description:
-      'Largest burst of video packets sent at once. Leave it at 64 KiB unless a device drops bursts; smaller batches can help it, and need more send calls on this PC.',
+      'For troubleshooting; leave it at 64 KiB. The largest burst of video packets sent at once: smaller batches can help a device that drops bursts, and need more send calls on this PC.',
     details:
       'Smaller batches require more send calls. Conventional codecs also limit each batch to about one millisecond of traffic at the pacing rate. PyroWave uses its own batching policy.',
     category: 'video',
@@ -1013,24 +1013,6 @@ const amd: Setting[] = [
     visibleWhen: amf,
   },
   {
-    key: 'amd_input_queue_size',
-    label: 'Input queue size',
-    description:
-      'How many frames may wait for the encoder. Leave it at 0, the driver default: forcing a queue of one exposed a driver freeze on RDNA4 cards, with video stalling while audio plays.',
-    details:
-      'Rubylight sets a queue size only when you choose one, VRR streams included: forcing a queue of one for every VRR stream exposed an RDNA4 driver freeze, with video stalling while audio plays.',
-    category: 'encoders',
-    group: 'AMD AMF',
-    control: { kind: 'number', min: 0, max: 32, step: 1, unit: 'frames' },
-    default: 0,
-    cautionWhen: (values) =>
-      read(values, 'amd_input_queue_size', '0') === '1'
-        ? 'A forced queue of one exposed a driver freeze on RDNA4 cards: video stalls while audio plays.'
-        : undefined,
-    inactiveHint: amfHint,
-    visibleWhen: amf,
-  },
-  {
     key: 'amd_ltr_frames',
     label: 'Long-term reference frames',
     description:
@@ -1043,26 +1025,6 @@ const amd: Setting[] = [
     default: 4,
     inactiveHint: amfHint,
     visibleWhen: amf,
-  },
-  {
-    key: 'amd_lowlatency_mode',
-    label: 'Low-latency mode',
-    description:
-      "Leave it on Driver default: forcing the encoder's low-latency mode froze HEVC video on RX 9000 cards (Adrenalin 26.5). The default Usage already has it on for H.264 and HEVC.",
-    details:
-      'The driver already turns its internal low-latency mode on for the Ultra low latency usage (the default) and Low latency, high quality; On changes only the other usages. On RX 9000 cards with Adrenalin 26.5, writing the mode explicitly froze HEVC encoding, with video stalling while audio plays. While it is forced On, Rubylight turns SmartAccess Video off with a warning, because the two together can reset the GPU.',
-    category: 'encoders',
-    group: 'AMD AMF',
-    control: { kind: 'select', options: tristate },
-    aliases: switchWords,
-    default: 'auto',
-    inactiveHint: amfHint,
-    visibleWhen: amf,
-    // PERFORMANCE.md, October 7: AMF low-latency mode and AV1 latency mode.
-    cautionWhen: (values) =>
-      read(values, 'amd_lowlatency_mode', 'auto') === 'disabled'
-        ? 'Off adds about 0.4 ms per HEVC frame at 1440p120 against On (RX 7900 XT).'
-        : undefined,
   },
   {
     key: 'amd_high_motion_quality_boost',
@@ -1450,55 +1412,42 @@ const nvidia: Setting[] = [
     advanced: true,
   },
   {
-    key: 'nvenc_enable_min_qp',
-    label: 'Minimum quantizer',
-    description:
-      'Stops the encoder from spending bits beyond a set quality level on easy scenes, leaving headroom for hard ones. It caps the best picture quality; leave it off unless you tune this.',
-    category: 'encoders',
-    group: 'NVIDIA NVENC',
-    control: { kind: 'toggle' },
-    default: false,
-    inactiveHint: nvencHint,
-    visibleWhen: nvenc,
-    advanced: true,
-  },
-  {
     key: 'nvenc_min_qp_h264',
     label: 'Minimum QP for H.264',
     description:
-      'The lowest quantization parameter (QP), which controls compression, for H.264 frames. Higher values cap quality sooner; leave it at 19 unless you tune this.',
+      'Caps the best picture quality for H.264: the encoder stops spending bits on easy scenes beyond this quantization parameter (QP), from 0 to 51, leaving headroom for hard ones. 0 is off; higher values cap quality sooner.',
     category: 'encoders',
     group: 'NVIDIA NVENC',
     control: { kind: 'number', min: 0, max: 51, step: 1 },
-    default: 19,
-    inactiveHint: 'Applies to NVIDIA NVENC with Minimum quantizer on.',
-    visibleWhen: (values) => nvenc(values) && flag(values, 'nvenc_enable_min_qp', false),
+    default: 0,
+    inactiveHint: nvencHint,
+    visibleWhen: nvenc,
     advanced: true,
   },
   {
     key: 'nvenc_min_qp_hevc',
     label: 'Minimum QP for HEVC',
     description:
-      'The lowest quantization parameter (QP), which controls compression, for HEVC frames. Higher values cap quality sooner; leave it at 23 unless you tune this.',
+      'Caps the best picture quality for HEVC: the encoder stops spending bits on easy scenes beyond this quantization parameter (QP), from 0 to 51, leaving headroom for hard ones. 0 is off; higher values cap quality sooner.',
     category: 'encoders',
     group: 'NVIDIA NVENC',
     control: { kind: 'number', min: 0, max: 51, step: 1 },
-    default: 23,
-    inactiveHint: 'Applies to NVIDIA NVENC with Minimum quantizer on.',
-    visibleWhen: (values) => nvenc(values) && flag(values, 'nvenc_enable_min_qp', false),
+    default: 0,
+    inactiveHint: nvencHint,
+    visibleWhen: nvenc,
     advanced: true,
   },
   {
     key: 'nvenc_min_qp_av1',
     label: 'Minimum QP for AV1',
     description:
-      'The lowest quantization parameter (QP), which controls compression, for AV1 frames, from 0 to 255. Higher values cap quality sooner; leave it at 23 unless you tune this.',
+      'Caps the best picture quality for AV1: the encoder stops spending bits on easy scenes beyond this quantization parameter (QP), from 0 to 255, leaving headroom for hard ones. 0 is off; higher values cap quality sooner.',
     category: 'encoders',
     group: 'NVIDIA NVENC',
     control: { kind: 'number', min: 0, max: 255, step: 1 },
-    default: 23,
-    inactiveHint: 'Applies to NVIDIA NVENC with Minimum quantizer on.',
-    visibleWhen: (values) => nvenc(values) && flag(values, 'nvenc_enable_min_qp', false),
+    default: 0,
+    inactiveHint: nvencHint,
+    visibleWhen: nvenc,
     advanced: true,
   },
 ];

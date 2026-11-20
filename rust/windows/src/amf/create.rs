@@ -74,28 +74,6 @@ impl OutputRange {
         }
     }
 }
-pub(super) fn guard_smart_access_video(
-    properties: &mut [butterpollo_core::encoder_policy::Property],
-) {
-    use butterpollo_core::encoder_policy::Value;
-    // The C++ backend also excluded this combination after HEVC HDR runs
-    // wedged AMF and reset the GPU (src/amf/amf_lifecycle.h at tag 2.0.0-rc.23).
-    if properties.iter().any(|property| {
-        property.name == "LowLatencyInternal" && property.value == Value::Boolean(true)
-    }) && let Some(property) = properties.iter_mut().find(|property| {
-        matches!(
-            property.name.as_str(),
-            "EnableEncoderSmartAccessVideo" | "HevcEnableEncoderSmartAccessVideo"
-        ) && property.value == Value::Boolean(true)
-    }) {
-        property.value = Value::Boolean(false);
-        // Do not proceed with both paths enabled if the driver refuses this.
-        property.required = true;
-        tracing::warn!(
-            "AMF SmartAccess Video disabled because forced low latency can reset the GPU. Disable forced low latency to request SmartAccess Video safely"
-        );
-    }
-}
 impl Encoder {
     pub fn new(config: &butterpollo_core::rtsp::Negotiated, display: &str) -> Result<Self> {
         Self::new_device(config, Device::new(display)?)
@@ -417,7 +395,6 @@ impl Encoder {
             e.validate_size()?;
             let mut properties = butterpollo_core::encoder_policy::amf(options, config)?;
             properties.extend(intra_refresh::av1_forced_properties(config));
-            guard_smart_access_video(&mut properties);
             for property in properties {
                 if let Err(error) = e.apply(&property) {
                     if property.required {

@@ -75,7 +75,7 @@ Log "display $display motion $Motion idle $([math]::Round($away)) s (Windows: $(
   'dd_configuration_option = disabled', 'dd_resolution_option = disabled',
   'dd_refresh_rate_option = disabled', 'dd_hdr_option = disabled', 'dd_always_restore_from_golden = false',
   'frame_limiter_enable = false', 'stream_audio = false', 'audio_sink_capture_only = true', 'upnp = false',
-  'enable_discovery = false', 'vulkan_hdr_layer = false', 'system_tray = false', 'update_check_interval = 0',
+  'enable_discovery = false', 'vulkan_hdr_layer = false', 'system_tray = false', 'updates = off',
   'pyrowave = true', 'lan_encryption_mode = 2') | Set-Content "$prof\sunshine.conf"
 '{"apps": [{"name": "Desktop", "cmd": "", "virtual-display": false}]}' | Set-Content "$prof\apps.json"
 if (-not (Test-Path "$prof\sunshine_state.json")) {

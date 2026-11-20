@@ -90,6 +90,9 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
             ("gamepad", "gamepad"),
             ("dd-configuration-option", "dd_configuration_option"),
             ("prefer-10bit-sdr", "prefer_sdr_10bit"),
+            // How long a touch or pen tap holds its left-button release back
+            // (the host's `absolute_left_release_delay`).
+            ("absolute-left-release-delay", "absolute_left_release_delay"),
             // Saved by Vibepollo and earlier Rubylight apps for RTX HDR;
             // the peak is still what a virtual display reports.
             ("rtx-hdr-peak-brightness", "hdr_peak_brightness"),

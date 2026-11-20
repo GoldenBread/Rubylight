@@ -24,8 +24,8 @@ export const MAIN_SECTIONS: readonly MainSection[] = [
     id: 'pc',
     title: 'This PC',
     description: 'Its name, waking it from a device, and updates.',
-    // Install updates automatically shows in the Updates panel, above the release status.
-    keys: ['sunshine_name', 'auto_update'],
+    // Updates shows in the Updates panel, above the release status.
+    keys: ['sunshine_name', 'updates'],
   },
   {
     id: 'picture',
@@ -48,7 +48,7 @@ export const MAIN_SECTIONS: readonly MainSection[] = [
 ];
 
 /** The main keys the home shows in its Updates panel rather than among its section's rows. */
-export const UPDATE_KEYS: readonly string[] = ['auto_update'];
+export const UPDATE_KEYS: readonly string[] = ['updates'];
 
 export const MAIN_KEYS: readonly string[] = MAIN_SECTIONS.flatMap((section) => section.keys);
 export const MAIN_BUDGET = 12;
@@ -77,7 +77,7 @@ export const ALWAYS_ON: readonly string[] = [
  * makes: shown only in All settings, Advanced, Debug switches, with their own
  * descriptions (and in their topic tab once changed).
  */
-export const DIAGNOSTICS: readonly string[] = ['capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish'];
+export const DIAGNOSTICS: readonly string[] = ['capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish', 'video_max_batch_size_kb', 'pyrowave_encode_overlap'];
 export const DEBUG_GROUP = 'Debug switches';
 /** Where a Debug switch shows once turned off, when that is not the category it is filed under: QR pairing sits beside Allow pairing. */
 const ORIGIN_CATEGORY: Readonly<Record<string, Setting['category']>> = { qr_pairing: 'network' };

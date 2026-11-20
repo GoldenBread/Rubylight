@@ -122,7 +122,8 @@ pub fn trigger_update(h: &Shared, tell: bool) {
                     if !announce(&h, &latest) && tell {
                         notify_update(&latest);
                     }
-                    let automatic = h.config.read().unwrap().boolean("auto_update", false);
+                    let automatic = h.config.read().unwrap().updates()
+                        == butterpollo_core::config::UpdatesMode::Install;
                     if automatic && let Err(error) = crate::updater::queue(&h, true, false, None) {
                         tracing::warn!(error = %format!("{error:#}"), "automatic update could not be queued");
                     }
@@ -565,7 +566,10 @@ mod tests {
                 &Config::default()
             ));
         }
-        assert!(!Config::default().boolean("auto_update", false));
+        assert_eq!(
+            Config::default().updates(),
+            butterpollo_core::config::UpdatesMode::TellMe
+        );
     }
     #[test]
     fn support_bundle_contains_logs_and_redacts_configuration_secrets() {

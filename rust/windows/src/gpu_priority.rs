@@ -167,7 +167,6 @@ pub fn configure(
     gpu: &crate::capture::Device,
     config: &butterpollo_core::config::Config,
 ) -> Result<()> {
-    crate::compute::set_realtime(config.boolean("compute_queue_realtime", false));
     // SAFETY: the symbol types and repr(C) structs match the D3DKMT exports (the test checks their
     // layout), every pointer passed is a live local, and `library` outlives each symbol.
     unsafe {

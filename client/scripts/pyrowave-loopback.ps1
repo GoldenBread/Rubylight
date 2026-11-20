@@ -155,7 +155,7 @@ try {
       'dd_configuration_option = disabled', 'dd_resolution_option = disabled',
       'dd_refresh_rate_option = disabled', 'dd_hdr_option = disabled', 'dd_always_restore_from_golden = false',
       'frame_limiter_enable = false', 'stream_audio = false', 'upnp = false', 'enable_discovery = false',
-      'vulkan_hdr_layer = false', 'system_tray = false', 'update_check_interval = 0', 'pyrowave = true',
+      'vulkan_hdr_layer = false', 'system_tray = false', 'updates = off', 'pyrowave = true',
       'lan_encryption_mode = 2') + $(if ($captureTarget) { @("output_name = $captureTarget") } else { @() }) |
         Set-Content "$HostProfile\sunshine.conf"
     '{"apps": [{"name": "Desktop", "cmd": "", "virtual-display": false}]}' | Set-Content "$HostProfile\apps.json"

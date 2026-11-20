@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "CABAC の代わりに、より単純な CAVLC エントロピー符号化を使います。同じ画質に約 10% 多いビットレートが必要です。",
     "nvenc_insert_filler_data": "フィラー データを挿入",
     "nvenc_insert_filler_data_desc": "画面が単純なときもストリームが一定のビットレートを保つようにフレームを埋めます。帯域幅を多く使います。",
-    "nvenc_enable_min_qp": "最小量子化",
-    "nvenc_enable_min_qp_desc": "簡単な場面で設定した品質レベルを超えてビットを使わないようにし、難しい場面に余裕を残します。",
     "nvenc_min_qp_h264": "H.264 の最小 QP",
     "nvenc_min_qp_hevc": "HEVC の最小 QP",
     "nvenc_min_qp_av1": "AV1 の最小 QP",

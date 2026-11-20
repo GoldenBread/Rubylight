@@ -21,13 +21,24 @@ pub use folders::{SharedFolderConfig, valid_folder_id, valid_folder_root};
 pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
-    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE, PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, fold_remove_remote_monitor, folded_remove_remote_monitor, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR, DD_DISCONNECT_BEHAVIOR, DD_HOLD_LAYOUT, DD_REVERT_ON_DISCONNECT, fold_disconnect_behavior, folded_disconnect_behavior, RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting, SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app, migrate_overrides, removed, replace_retired, replacement, retired_name, retired_warning,
+    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE, PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, fold_remove_remote_monitor, folded_remove_remote_monitor, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR, DD_DISCONNECT_BEHAVIOR, DD_HOLD_LAYOUT, DD_REVERT_ON_DISCONNECT, fold_disconnect_behavior, folded_disconnect_behavior, RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting, SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app, migrate_overrides, removed, replace_retired, replacement, retired_name, retired_warning, AUTO_UPDATE, MIN_QP, MIN_QP_SWITCH, UPDATE_CHECK_INTERVAL, UPDATES, fold_min_qp, fold_updates, folded_updates, min_qp_switch_on,
 };
 use text::{bracket_depth, decode, strip_comment};
 pub use values::{
     fallback, invalid, number_text, parse_boolean, parse_integer, parse_time_of_day, refused,
 };
 use values::{first_report, unquote};
+
+/// Updates ([`Config::updates`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdatesMode {
+    /// No automatic check; Check now still works.
+    Off,
+    /// Checks and tells the user about a new release.
+    TellMe,
+    /// As `TellMe`, and installs the release when nothing is streaming.
+    Install,
+}
 
 /// Adaptive bitrate ([`Config::bitrate_adaptation`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -267,6 +278,32 @@ impl Config {
         {
             self.values
                 .insert(DD_DISCONNECT_BEHAVIOR.to_owned(), folded.to_owned());
+        }
+        // Install updates automatically and an interval of 0 fold into
+        // Updates; a value already saved under it wins.
+        let auto_update = self.values.remove(AUTO_UPDATE);
+        let interval = self.values.get(UPDATE_CHECK_INTERVAL).cloned();
+        if let Some(folded) = folded_updates(interval.as_deref(), auto_update.as_deref()) {
+            if folded == "off" {
+                self.values.remove(UPDATE_CHECK_INTERVAL);
+            }
+            self.values
+                .entry(UPDATES.to_owned())
+                .or_insert_with(|| folded.to_owned());
+        }
+        // The Minimum quantizer switch folds into the minimum QPs: on keeps
+        // them (the old defaults where none is saved), off clears them.
+        if let Some(switch) = self.values.remove(MIN_QP_SWITCH) {
+            let on = min_qp_switch_on(&switch);
+            for &(key, default) in MIN_QP {
+                if on {
+                    self.values
+                        .entry(key.to_owned())
+                        .or_insert_with(|| default.to_string());
+                } else {
+                    self.values.remove(key);
+                }
+            }
         }
     }
     pub fn load(path: &Path) -> Result<Self> {
@@ -589,6 +626,30 @@ impl Config {
     pub fn keyboard_follows_focus(&self) -> bool {
         self.boolean("keyboard_follows_focus", true)
     }
+    /// Updates: `off`, `tell_me` (the default: check and tell the user about a
+    /// new release) or `install` (also install it when nothing is streaming).
+    /// An unknown value is reported and reads as `tell_me`.
+    pub fn updates(&self) -> UpdatesMode {
+        let value = self.get(UPDATES, "tell_me");
+        match unquote(value.trim()).to_ascii_lowercase().as_str() {
+            "off" => UpdatesMode::Off,
+            "tell_me" => UpdatesMode::TellMe,
+            "install" => UpdatesMode::Install,
+            _ => {
+                invalid(UPDATES, value);
+                UpdatesMode::TellMe
+            }
+        }
+    }
+    /// Seconds between automatic update checks (`update_check_interval`, a day
+    /// unless set); 0 or less is no check, as is Updates `off`.
+    pub fn update_check_interval(&self) -> i64 {
+        if self.updates() == UpdatesMode::Off {
+            0
+        } else {
+            self.integer(UPDATE_CHECK_INTERVAL, 86400)
+        }
+    }
     /// `update_check_time`: the time of day (`HH:MM` on this PC's clock) of
     /// the daily automatic update check, as seconds after midnight. `None`
     /// when it is unset, and for text that is not a time (reported once):
@@ -901,6 +962,8 @@ impl Config {
         fold_remove_remote_monitor(&mut object);
         // Likewise the two disconnect settings fold into the disconnect behavior.
         fold_disconnect_behavior(&mut object);
+        fold_min_qp(&mut object, |key| self.values.contains_key(key), true);
+        fold_updates(&mut object, self.get(UPDATES, "tell_me"));
         object.retain(|key, _| !removed(key));
         let object = &object;
         let mut next = self.clone();

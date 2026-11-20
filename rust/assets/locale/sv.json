@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "Använder den enklare entropikodningen CAVLC i stället för CABAC. Den behöver cirka 10 % högre bithastighet för samma kvalitet.",
     "nvenc_insert_filler_data": "Infoga utfyllnadsdata",
     "nvenc_insert_filler_data_desc": "Fyller ut bildrutor så att strömmen håller en konstant bithastighet även när bilden är enkel, vilket använder mer bandbredd.",
-    "nvenc_enable_min_qp": "Minsta kvantiserare",
-    "nvenc_enable_min_qp_desc": "Hindrar kodaren från att lägga bitar över en angiven kvalitetsnivå på enkla scener, så att det finns marginal för svåra.",
     "nvenc_min_qp_h264": "Minsta QP för H.264",
     "nvenc_min_qp_hevc": "Minsta QP för HEVC",
     "nvenc_min_qp_av1": "Minsta QP för AV1",

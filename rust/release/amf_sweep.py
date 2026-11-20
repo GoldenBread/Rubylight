@@ -29,9 +29,9 @@ def settings(codec):
     ]
     if codec == 'av1':
         rows += [(5, 'amd_av1_tiles', ['1', '2', '4']), (5, 'amd_av1_screen_content', ['disabled', 'enabled'])]
-    rows += [(6, 'amd_input_queue_size', ['4', '2', '1']), (6, 'QueryTimeout', ['0']),
+    rows += [(6, 'QueryTimeout', ['0']),
              (7, 'amd_quality', ['balanced', 'quality']), (7, 'amd_high_motion_quality_boost', ['enabled', 'disabled'])]
-    rows += [(8, 'amd_av1_latency_mode', ['lowest', 'realtime'])] if codec == 'av1' else [(8, 'amd_lowlatency_mode', ['enabled'])]
+    rows += [(8, 'amd_av1_latency_mode', ['lowest', 'realtime'])] if codec == 'av1' else []
     if codec != 'h264':
         rows += [(8, 'amd_split_frame', ['disabled', 'enabled'])]
     return [(rank, key, value) for rank, key, values in rows for value in values]
@@ -238,7 +238,7 @@ def motion(work, binaries, profile, codec, selected, arm):
     # The older motion fixture contains explicit tuning. Reset it to today's defaults before applying B.
     defaults = dict(capture='wgc', minimum_fps_target='20',
         virtual_display_layout='extended', amd_usage='ultralowlatency', amd_quality='speed', amd_rc='vbr_latency',
-        amd_input_queue_size='0', amd_lowlatency_mode='auto', amd_av1_latency_mode='auto',
+        amd_av1_latency_mode='auto',
         amd_vbaq='disabled' if codec == 'h264' else 'enabled', amd_smart_access_video='auto', amd_split_frame='auto',
         amd_enforce_hrd='false', amd_ltr_frames='0', amd_preanalysis='false', amd_max_frame_size='0',
         amd_peak_bitrate_ratio='0', amd_vbv_buffer_frames='0', amd_av1_tiles='0', amd_av1_screen_content='auto',

@@ -42,7 +42,7 @@ monitor = next(m for m in diag['monitors'] if m['primary'])
     'virtual_display_mode = disabled', 'dd_configuration_option = disabled', 'dd_resolution_option = disabled',
     'dd_refresh_rate_option = disabled', 'dd_hdr_option = disabled', 'dd_always_restore_from_golden = false',
     'frame_limiter_enable = false', 'stream_audio = false', 'upnp = false', 'enable_discovery = false',
-    'vulkan_hdr_layer = false', 'system_tray = false', 'update_check_interval = 0', 'pyrowave = false', '']))
+    'vulkan_hdr_layer = false', 'system_tray = false', 'updates = off', 'pyrowave = false', '']))
 (profile / 'apps.json').write_text(json.dumps({'apps': [{'name': 'Desktop', 'cmd': '', 'virtual-display': False}]}))
 # The test fixture's account (rust/tests/interop.py), in the previous host's format.
 salt = os.urandom(8).hex()

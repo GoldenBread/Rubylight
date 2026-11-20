@@ -1,6 +1,7 @@
 <script lang="ts">
   import Field from '../Field.svelte';
   import Toggle from '../Toggle.svelte';
+  import NumberField from './NumberField.svelte';
   import ChoiceField, { type Choice } from './ChoiceField.svelte';
   import type { AppDraft } from './draft.svelte';
 
@@ -65,6 +66,14 @@
       label="Controller type"
       hint="Automatic matches each device’s controller: DualSense for PlayStation or for motion and touchpad input, Switch Pro for Nintendo, Xbox Series otherwise. A choice here uses that controller for this app. If a game drifts the camera or cursor with no input, it may read the controller’s name: choose DualSense with waveform haptics (USB/IP) or Xbox Series for this app."
       options={GAMEPADS}
+    />
+    <NumberField
+      {draft}
+      key="absolute-left-release-delay"
+      label="Touch and pen click delay"
+      hint="How long a tap on a touch screen or a pen holds its left-button release back, in milliseconds: 0 to 1000. Raise it if a game misses taps or reads them as a drag; leave it empty to use the host's 10."
+      placeholder="10"
+      unit="ms"
     />
   </div>
 

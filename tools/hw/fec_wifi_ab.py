@@ -82,7 +82,7 @@ def write_profile(host_uuid, client_pem):
             'install_steam_audio_drivers = false', 'stream_audio = true', 'audio_sink_capture_only = true',
             'auto_capture_sink = false', f'audio_sink = {virtual_sink()}', 'keep_sink_default = false',
             'upnp = false', 'enable_discovery = false',
-            'vulkan_hdr_layer = false', 'system_tray = false', 'update_check_interval = 0', 'pyrowave = false',
+            'vulkan_hdr_layer = false', 'system_tray = false', 'updates = off', 'pyrowave = false',
             'sunshine_name = njrf']
     (PROFILE / 'sunshine.conf').write_text('\n'.join(conf) + '\n')
     (PROFILE / 'apps.json').write_text(json.dumps({'apps': [

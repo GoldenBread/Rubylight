@@ -79,6 +79,6 @@ Each needs a permission you give the device on **Devices**:
 
 ## Updates and backups
 
-Rubylight checks for a new release once a day and tells you; it installs only when you choose. **Settings → This PC → Updates** has **Check now**, **Install when idle** and **Install now**. **Install now** ends the running stream while Rubylight restarts; **Install when idle** waits for a quiet minute. **Install updates automatically** is off by default; turn it on if you would rather never think about updates and accept an update at a time you are not watching ([Updates](configuration.md#updates)).
+Rubylight checks for a new release once a day and tells you; it installs only when you choose. **Settings → This PC → Updates** has **Check now**, **Install when idle** and **Install now**. **Install now** ends the running stream while Rubylight restarts; **Install when idle** waits for a quiet minute. Updates is **Tell me** by default; choose **Install automatically** if you would rather never think about updates and accept an update at a time you are not watching ([Updates](configuration.md#updates)).
 
 **Settings backup** puts the settings, apps, covers, device settings, game settings files and webhooks in one file, from the console or the tray; the pairing identity and sign-in go in only when you choose. A restore shows what changes, saves the current settings first and restarts the host ([Settings backup and restore](configuration.md#settings-backup-and-restore)).

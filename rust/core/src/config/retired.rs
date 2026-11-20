@@ -155,6 +155,13 @@ pub const REMOVED_KEYS: &[&str] = &[
     // 8 to 11 ms on a Shield TV, so the phase lock always stands aside for a
     // source at the stream rate or slower.
     "phase_lock_hold_at_stream_rate",
+    // The compute queue always runs at high priority: real-time could hang
+    // the graphics driver and measured no gain.
+    "compute_queue_realtime",
+    // AMF always takes the driver's own input queue and low-latency choice:
+    // forcing either froze video on Radeon cards.
+    "amd_input_queue_size",
+    "amd_lowlatency_mode",
 ];
 /// The settings of the removed Quick Sync and software encoders.
 pub const REMOVED_PREFIXES: &[&str] = &["qsv_", "sw_"];
@@ -265,6 +272,14 @@ pub fn fold_remove_remote_monitor(layer: &mut serde_json::Map<String, serde_json
     }
     changed
 }
+/// [`BITRATE_ADAPTATION`]).
+pub const FOLDED_KEYS: &[&str] = &[
+    HDR_REQUEST,
+    LINK_RATE,
+    CONGESTION,
+    MIN_QP_SWITCH,
+    AUTO_UPDATE,
+];
 /// Adaptive bitrate for the two switches saved in one layer, each `None`
 /// when that layer does not hold it (its earlier default then counts):
 /// congestion control on is `delay`, as it ran together with link-rate
@@ -433,6 +448,114 @@ pub fn fold_disconnect_behavior(layer: &mut serde_json::Map<String, serde_json::
     }
     true
 }
+/// The Minimum quantizer switch of NVIDIA NVENC, which earlier releases kept
+/// beside a minimum QP for each codec (H.264, HEVC, AV1) and which no longer
+/// exists: each QP now counts on its own, 0 (the default) being off.
+pub const MIN_QP_SWITCH: &str = "nvenc_enable_min_qp";
+/// The minimum QP of each codec and the value it had when the switch was on
+/// and none was saved.
+pub const MIN_QP: &[(&str, i64)] = &[
+    ("nvenc_min_qp_h264", 19),
+    ("nvenc_min_qp_hevc", 23),
+    ("nvenc_min_qp_av1", 23),
+];
+/// Whether a saved Minimum quantizer switch was on (an unreadable value
+/// counts as off, its default, as the host read it).
+pub fn min_qp_switch_on(value: &str) -> bool {
+    super::parse_boolean(value).unwrap_or(false)
+}
+/// The minimum QPs of a layer holding the retired Minimum quantizer switch.
+/// On keeps each saved QP and writes the old default where the layer (or
+/// `held`, what the configuration already holds) has none; off leaves each QP
+/// out, or with `reset` sets it to null to clear a stored one. A layer
+/// without the switch stays as saved. Returns whether anything changed.
+pub fn fold_min_qp(
+    layer: &mut serde_json::Map<String, serde_json::Value>,
+    held: impl Fn(&str) -> bool,
+    reset: bool,
+) -> bool {
+    let Some(switch) = layer.remove(MIN_QP_SWITCH) else {
+        return false;
+    };
+    let on = match &switch {
+        serde_json::Value::String(text) => min_qp_switch_on(text),
+        serde_json::Value::Null => false,
+        other => min_qp_switch_on(&other.to_string()),
+    };
+    for &(key, default) in MIN_QP {
+        if on {
+            if !layer.contains_key(key) && !held(key) {
+                layer.insert(key.to_owned(), default.into());
+            }
+        } else if reset {
+            layer.insert(key.to_owned(), serde_json::Value::Null);
+        } else {
+            layer.remove(key);
+        }
+    }
+    true
+}
+/// Updates (`off`, `tell_me`, `install`), which holds what Install updates
+/// automatically (`auto_update`) and an update check interval of 0 held
+/// before.
+pub const UPDATES: &str = "updates";
+pub const AUTO_UPDATE: &str = "auto_update";
+/// How often to check, in seconds. It stays a setting; a value of 0 (checks
+/// off) became Updates `off`.
+pub const UPDATE_CHECK_INTERVAL: &str = "update_check_interval";
+/// Updates for what one layer saved, each `None` when it holds neither: an
+/// interval of 0 or less was checks off, so `off`; Install updates
+/// automatically on was `install`; anything else saved changes nothing (the
+/// default is `tell_me`).
+pub fn folded_updates(interval: Option<&str>, auto_update: Option<&str>) -> Option<&'static str> {
+    if interval
+        .and_then(super::parse_integer)
+        .is_some_and(|seconds| seconds <= 0)
+    {
+        Some("off")
+    } else if auto_update.and_then(super::parse_boolean) == Some(true) {
+        Some("install")
+    } else {
+        None
+    }
+}
+/// [`folded_updates`] over a JSON patch of the configuration (what an earlier
+/// console or an API caller sends): removes `auto_update`, clears an interval
+/// of 0 and sets Updates unless the patch sets it too. `held` is Updates as
+/// the configuration holds it now, so that switching Install updates
+/// automatically off, or a check interval on again, ends what the other
+/// state held. Returns whether anything changed.
+pub fn fold_updates(layer: &mut serde_json::Map<String, serde_json::Value>, held: &str) -> bool {
+    let text = |value: &serde_json::Value| match value {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Null => None,
+        other => Some(other.to_string()),
+    };
+    let auto_update = layer.remove(AUTO_UPDATE);
+    let auto = auto_update.as_ref().and_then(text);
+    let interval = layer.get(UPDATE_CHECK_INTERVAL).and_then(text);
+    let seconds = interval.as_deref().and_then(super::parse_integer);
+    let changed = auto_update.is_some() || seconds.is_some_and(|seconds| seconds <= 0);
+    let mut folded = folded_updates(interval.as_deref(), auto.as_deref());
+    if folded.is_none() {
+        let held = unquote(held.trim());
+        let auto_off = auto.as_deref().and_then(super::parse_boolean) == Some(false);
+        if (auto_off && held == "install")
+            || (seconds.is_some_and(|seconds| seconds > 0) && held == "off")
+        {
+            folded = Some("tell_me");
+        }
+    }
+    if seconds.is_some_and(|seconds| seconds <= 0) {
+        layer.insert(UPDATE_CHECK_INTERVAL.to_owned(), serde_json::Value::Null);
+    }
+    if let Some(folded) = folded
+        && !layer.contains_key(UPDATES)
+    {
+        layer.insert(UPDATES.to_owned(), folded.into());
+    }
+    changed
+}
 /// Whether `key` is a name the host no longer reads: a removed setting, or
 /// one folded into another. Neither name is used again.
 pub fn retired_name(key: &str) -> bool {
@@ -472,6 +595,8 @@ pub fn folded_in_layer(option: &str, request: &str) -> Option<&'static str> {
 /// adaptive pacing switches fold into its Packet pacing and retired
 /// bitrate switches fold into its Adaptive bitrate, the remote monitor's two
 /// switches fold into its Remove remote monitor and retired
+/// bitrate switches fold into its Adaptive bitrate, the Minimum quantizer
+/// switch into its minimum QPs and retired
 /// values take their replacements. Returns whether anything changed.
 pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Value>) -> bool {
     let mut changed = false;
@@ -502,6 +627,7 @@ pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Val
     changed |= fold_pyrowave_fec(overrides);
     changed |= fold_remove_remote_monitor(overrides);
     changed |= fold_disconnect_behavior(overrides);
+    changed |= fold_min_qp(overrides, |_| false, false);
     let before = overrides.len();
     overrides.retain(|key, _| !removed(key));
     changed |= overrides.len() != before;

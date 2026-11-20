@@ -86,6 +86,27 @@ fn tuning(text: &str, codec: u8) -> Tuning {
     };
     Tuning::new(&Config::parse(text).unwrap(), &stream).unwrap()
 }
+/// Each codec's minimum QP counts on its own: 0, the default, leaves the
+/// encoder's minimum alone, and a value is clamped to the codec's range.
+#[test]
+fn a_minimum_qp_applies_to_its_own_codec_and_zero_is_off() {
+    let text = "nvenc_min_qp_h264 = 20\nnvenc_min_qp_hevc = 99\nnvenc_min_qp_av1 = 300\n";
+    assert_eq!(tuning(text, 0).min_qp, Some(20));
+    assert_eq!(tuning(text, 1).min_qp, Some(51));
+    assert_eq!(tuning(text, 2).min_qp, Some(255));
+    let off = "nvenc_min_qp_h264 = 0\nnvenc_min_qp_hevc = 0\n";
+    for codec in 0..=2 {
+        assert_eq!(tuning(off, codec).min_qp, None, "codec {codec}");
+        assert_eq!(tuning("", codec).min_qp, None, "codec {codec}");
+    }
+    // The retired switch off keeps nothing on; on keeps the old defaults.
+    assert_eq!(
+        tuning("nvenc_enable_min_qp = false\nnvenc_min_qp_hevc = 30\n", 1).min_qp,
+        None
+    );
+    assert_eq!(tuning("nvenc_enable_min_qp = true\n", 0).min_qp, Some(19));
+    assert_eq!(tuning("nvenc_enable_min_qp = true\n", 1).min_qp, Some(23));
+}
 #[test]
 fn defaults_stay_latency_first_with_spatial_aq_and_the_budget_guard_on() {
     let default = tuning("", 1);

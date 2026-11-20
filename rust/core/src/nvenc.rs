@@ -408,16 +408,18 @@ impl Tuning {
                 RateControl::Cbr
             }
         };
-        let min_qp = config.boolean("nvenc_enable_min_qp", false).then(|| {
-            let (key, default) = match stream.codec {
-                0 => ("nvenc_min_qp_h264", 19),
-                1 => ("nvenc_min_qp_hevc", 23),
-                _ => ("nvenc_min_qp_av1", 23),
+        // Each codec's own value; 0 (the default) leaves the encoder's minimum alone.
+        let min_qp = {
+            let key = match stream.codec {
+                0 => "nvenc_min_qp_h264",
+                1 => "nvenc_min_qp_hevc",
+                _ => "nvenc_min_qp_av1",
             };
-            config
-                .integer(key, default)
-                .clamp(0, if stream.codec == 2 { 255 } else { 51 }) as u32
-        });
+            let qp = config
+                .integer(key, 0)
+                .clamp(0, if stream.codec == 2 { 255 } else { 51 }) as u32;
+            (qp > 0).then_some(qp)
+        };
         Ok(Self {
             preset: config.integer("nvenc_preset", 1).clamp(1, 7) as usize,
             multipass,

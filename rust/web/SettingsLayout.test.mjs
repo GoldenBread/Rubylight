@@ -133,7 +133,7 @@ test('presets are valid values with their own names, and a default that is one s
   assert.equal(describeDefault(settings.get('update_check_interval')).text, 'Daily');
   assert.equal(describeDefault(settings.get('sleep_after_idle_minutes')).text, 'Never');
   assert.deepEqual(settings.get('update_check_interval').control.presets.map((preset) => [preset.label, preset.value]),
-    [['Every 6 hours', 21600], ['Daily', 86400], ['Weekly', 604800], ['Off', 0]]);
+    [['Every 6 hours', 21600], ['Daily', 86400], ['Weekly', 604800]]);
 });
 
 test('a preset value shows as its name; any other value as Custom with its own field', () => {
@@ -146,7 +146,7 @@ test('a preset value shows as its name; any other value as Custom with its own f
   assert.match(custom, /<option[^>]*selected[^>]*>Custom/);
   assert.match(custom, /type="number"/);
   assert.match(custom, /value="7200"/);
-  assert.match(custom, /aria-label="Check for updates, custom value"/);
+  assert.match(custom, /aria-label="Check how often, custom value"/);
   // A text preset works the same way.
   const resolution = settings.get('dd_manual_resolution');
   const text = render(SettingControl, { props: { setting: resolution, id: resolution.key, value: '2560x1440', onchange: () => {} } }).body;

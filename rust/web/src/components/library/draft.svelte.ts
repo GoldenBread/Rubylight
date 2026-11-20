@@ -61,6 +61,7 @@ export type TristateKey =
 /** Whole numbers and the range the host accepts. A missing key uses the host's value. */
 export const NUMBERS: Record<string, { min: number; max?: number }> = {
   'exit-timeout': { min: 0, max: 300 },
+  'absolute-left-release-delay': { min: 0, max: 1000 },
   'scale-factor': { min: 1 },
   'lossless-scaling-target-fps': { min: 1, max: 480 },
   'lossless-scaling-rtss-limit': { min: 1, max: 480 },
@@ -73,6 +74,7 @@ export const NUMBERS: Record<string, { min: number; max?: number }> = {
 };
 export type NumberKey =
   | 'exit-timeout'
+  | 'absolute-left-release-delay'
   | 'scale-factor'
   | 'lossless-scaling-target-fps'
   | 'lossless-scaling-rtss-limit'

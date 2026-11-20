@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "Używa prostszego kodowania entropijnego CAVLC zamiast CABAC. Wymaga około 10% większej przepływności dla tej samej jakości.",
     "nvenc_insert_filler_data": "Wstawiaj dane wypełniające",
     "nvenc_insert_filler_data_desc": "Uzupełnia klatki, aby strumień utrzymywał stałą przepływność nawet przy prostym obrazie, co zużywa więcej pasma.",
-    "nvenc_enable_min_qp": "Minimalny kwantyzator",
-    "nvenc_enable_min_qp_desc": "Nie pozwala koderowi wydawać bitów ponad ustalony poziom jakości w łatwych scenach, zostawiając zapas na trudne.",
     "nvenc_min_qp_h264": "Minimalny QP dla H.264",
     "nvenc_min_qp_hevc": "Minimalny QP dla HEVC",
     "nvenc_min_qp_av1": "Minimalny QP dla AV1",

@@ -123,7 +123,7 @@ function prepare(options = {}, {config = {}} = {}) {
     dd_always_restore_from_golden: false, dd_config_revert_on_disconnect: false, frame_limiter_enable: false,
     install_steam_audio_drivers: false, stream_audio: true, audio_sink_capture_only: true, auto_capture_sink: false,
     keep_sink_default: false, upnp: false, enable_discovery: false, vulkan_hdr_layer: false, system_tray: false,
-    update_check_interval: 0, pyrowave: false,
+    updates: 'off', pyrowave: false,
     webrtc_server: true, webrtc_port: o.webrtcPort, webrtc_media_port: o.mediaPort,
     audio_sink: o.sink, ...config,
   };

@@ -33,7 +33,7 @@ const basicKeys = new Set([
   'hide_tray_controls',
   'update_check_interval',
   'update_check_time',
-  'auto_update',
+  'updates',
   'notify_pre_releases',
   'sleep_after_idle_minutes',
   'stream_preset',

@@ -28,7 +28,7 @@ use anyhow::{Context, Result, bail};
 use butterpollo_core::encoder_backlog::{self, AMF_SURFACE_LIMIT, AmfBacklog, QUERY_TIMEOUT};
 use butterpollo_core::encoder_policy::KeyframeCapScale;
 #[cfg(test)]
-use create::{OutputRange, guard_smart_access_video, transfer_characteristic};
+use create::{OutputRange, transfer_characteristic};
 #[cfg(test)]
 use output::{Unreturned, output_is_idr, unreturned_notice};
 use std::{

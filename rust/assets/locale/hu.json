@@ -407,8 +407,6 @@
     "nvenc_h264_cavlc_desc": "Az egyszerűbb CAVLC entrópiakódolást használja CABAC helyett. Azonos minőséghez körülbelül 10%-kal nagyobb bitrátát igényel.",
     "nvenc_insert_filler_data": "Kitöltő adatok beszúrása",
     "nvenc_insert_filler_data_desc": "Kitölti a képkockákat, hogy a stream egyszerű képnél is állandó bitrátát tartson, ami több sávszélességet használ.",
-    "nvenc_enable_min_qp": "Minimális kvantáló",
-    "nvenc_enable_min_qp_desc": "Megakadályozza, hogy a kódoló könnyű jeleneteknél egy beállított minőségi szint fölött költsön biteket, így tartalék marad a nehezekre.",
     "nvenc_min_qp_h264": "Minimális QP (H.264)",
     "nvenc_min_qp_hevc": "Minimális QP (HEVC)",
     "nvenc_min_qp_av1": "Minimális QP (AV1)",

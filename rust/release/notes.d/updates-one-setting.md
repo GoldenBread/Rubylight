@@ -1,0 +1,2 @@
+# Updates
+- **Updates is one choice.** Off, Tell me (the default) or Install automatically. Tell me checks for a new release and lets you know; Install automatically also installs it when nothing is streaming. Your saved choices carry over: automatic installation on becomes Install automatically, and checks turned off become Off. How often it checks, and the daily check time, show when Updates is not Off.

@@ -266,7 +266,7 @@ function answer(scene) {
     if (p === '/api/logs/tail') return { offset: 0, text: '', reset: false };
     if (p === '/api/updates') {
       return { status: true, checking: false, check_failed: false, checked_at: now - 600, releases: [],
-        update_available: false, latest_version: '', install_supported: true, auto_update: false,
+        update_available: false, latest_version: '', install_supported: true, auto_update: false, updates: "tell_me",
         update_check_interval: 6, phase: 'idle' };
     }
     if (p === '/api/auth/sessions') return { status: true, sessions: [] };

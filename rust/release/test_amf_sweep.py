@@ -154,7 +154,6 @@ class AmfSweepMeasurements(unittest.TestCase):
         hevc, av1, h264 = (settings(c) for c in ('hevc', 'av1', 'h264'))
         self.assertEqual(sorted(set(r for r, _, _ in av1)), list(range(1, 9)))
         self.assertIn((6, 'QueryTimeout', '0'), hevc)
-        self.assertIn((6, 'amd_input_queue_size', '1'), hevc)
         self.assertIn((2, 'amd_ltr_frames', '2'), h264)
         self.assertIn((5, 'amd_av1_tiles', '4'), av1)
         self.assertNotIn((8, 'amd_split_frame', 'enabled'), h264)

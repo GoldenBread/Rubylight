@@ -108,7 +108,6 @@ pub const GLOBAL: &[Setting] = settings! {
         "wgc_direct_encoder_input", "Pass GPU capture directly to the encoder", Bool;
         "gpu_compute_conversion", "Copy and convert captures on a compute queue", Bool;
         "idd_push_fence_ring", "GPU fence transport for direct driver push (on by default; turn off to use the keyed-mutex ring)", Bool;
-        "compute_queue_realtime", "Can hang the GPU driver: run that compute queue, and PyroWave's encode queue, at real-time GPU priority (an HDR stream on an RX 7900 XT ended in an AMD engine timeout; leave it off)", Bool;
         "wgc_slot_aligned_publish", "Align capture publication to frame slots", Bool;
         "fec_percentage", "Forward error correction (%; every codec, PyroWave included)", Number;
         "pyrowave", "Enable PyroWave for compatible devices", Bool;
@@ -128,10 +127,8 @@ pub const GLOBAL: &[Setting] = settings! {
         "amd_enforce_hrd", "Enforce decoder buffer limits", Bool;
         "amd_coder", "H.264 entropy coder", Choice(&["auto","cabac","cavlc"]);
         "amd_high_motion_quality_boost", "High motion quality boost", Bool;
-        "amd_lowlatency_mode", "Low-latency mode (H.264 and HEVC)", Bool;
         "amd_av1_latency_mode", "AV1 latency mode", Choice(&["none","power_saving","realtime","lowest"]);
         "amd_split_frame", "Split-frame encoding (HEVC and AV1)", Choice(&["auto","enabled","disabled"]);
-        "amd_input_queue_size", "AMF input queue size", Number;
         "amd_ltr_frames", "Long-term reference frames", Number;
     ]
     "NVIDIA encoding" => [
@@ -150,10 +147,9 @@ pub const GLOBAL: &[Setting] = settings! {
         "nvenc_weighted_prediction", "Weighted prediction", Bool;
         "nvenc_h264_cavlc", "Use CAVLC for H.264", Bool;
         "nvenc_insert_filler_data", "Insert filler data", Bool;
-        "nvenc_enable_min_qp", "Minimum quantizer", Bool;
-        "nvenc_min_qp_h264", "Minimum QP for H.264", Number;
-        "nvenc_min_qp_hevc", "Minimum QP for HEVC", Number;
-        "nvenc_min_qp_av1", "Minimum QP for AV1", Number;
+        "nvenc_min_qp_h264", "Minimum QP for H.264 (0 is off)", Number;
+        "nvenc_min_qp_hevc", "Minimum QP for HEVC (0 is off)", Number;
+        "nvenc_min_qp_av1", "Minimum QP for AV1 (0 is off)", Number;
     ]
     "Input" => [
         "keyboard", "Keyboard input", Bool;
@@ -241,9 +237,9 @@ pub const GLOBAL: &[Setting] = settings! {
         "hide_tray_controls", "Hide tray shutdown controls", Bool;
         "min_log_level", "Log level (0 verbose, 1 debug, 2 info, 3 warning, 4 error, 6 off)", Number;
         "log_path", "Log file path", Text;
-        "auto_update", "Install updates automatically when idle", Bool;
+        "updates", "Updates (tell me checks and lets you know; install automatically also installs a new release when idle; off stops the checks)", Choice(&["off","tell_me","install"]);
         "notify_pre_releases", "Include prerelease updates", Bool;
-        "update_check_interval", "Check for updates every (seconds; 0 turns automatic checks off, with or without a daily time)", Number;
+        "update_check_interval", "Check for updates every (seconds, at least 3600; a daily time replaces it while set)", Number;
         "update_check_time", "Check for updates daily at (HH:MM, 24-hour clock; replaces the interval while set; empty uses the interval)", Text;
         "legacy_ordering", "Use legacy app ordering", Bool;
         "envvar_compatibility_mode", "Whole-number frame rate in SUNSHINE_CLIENT_FPS for commands", Bool;
@@ -285,6 +281,7 @@ pub const APP: &[Setting] = settings! {
         "capture-window-closed", "When the window closes", Choice(&["display","end"]);
         "capture-window-frame", "Window's frame", Choice(&["full","client"]);
         "prefer-10bit-sdr", "Prefer 10-bit SDR", Bool;
+        "absolute-left-release-delay", "Touch and pen click delay (milliseconds, 0 to 1000; empty uses the host's 10)", Number;
         "frame-generation-mode", "Frame generation", Choice(&["none","game-provided"]);
         "gen1-framegen-fix", "Legacy frame generation capture fix (only while Frame generation is Use default)", Bool;
     ]
@@ -357,6 +354,9 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             "off" if setting.key == "encoder_focus" => "Off",
                             "off" if setting.key == "bitrate_adaptation" => "Off",
                             "on" if setting.key == "bitrate_adaptation" => "On",
+                            "off" if setting.key == "updates" => "Off",
+                            "tell_me" if setting.key == "updates" => "Tell me",
+                            "install" if setting.key == "updates" => "Install automatically",
                             "static" if setting.key == "encoder_focus" => "Still areas",
                             "centre" if setting.key == "encoder_focus" => "Still areas and centre",
                             "true" | "enabled" => "On",
@@ -465,6 +465,9 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             }
                             "disconnect" if setting.key == "remove_remote_monitor" => {
                                 "As soon as the device disconnects"
+                            }
+                            "delay" if setting.key == "bitrate_adaptation" => {
+                                "On, and react to network delay"
                             }
                             _ if setting.key == "locale" => i18n::language_name(choice),
                             _ => choice,

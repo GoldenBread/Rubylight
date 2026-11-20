@@ -306,29 +306,16 @@ fn wait_fence(fence: &ID3D12Fence, value: u64) -> Result<()> {
         }
     })
 }
-/// Whether the copy and conversion queues ask for global realtime priority
-/// (`compute_queue_realtime`). Off by default: a realtime queue pre-empts the
-/// desktop compositor that every captured frame comes from, and an HDR stream
-/// on an RX 7900 XT with it ended in an AMD engine timeout the driver could
-/// not reset. High priority still runs ahead of a game's normal work.
-static REALTIME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub fn set_realtime(enabled: bool) {
-    REALTIME.store(enabled, std::sync::atomic::Ordering::Relaxed);
-}
-pub fn realtime() -> bool {
-    REALTIME.load(std::sync::atomic::Ordering::Relaxed)
-}
-/// A compute queue at the highest allowed priority Windows grants this process.
+/// A compute queue at high priority, or the normal one when Windows refuses
+/// it. Never real-time: a real-time queue pre-empts the desktop compositor
+/// that every captured frame comes from, and an HDR stream on an RX 7900 XT
+/// with it ended in an AMD engine timeout the driver could not reset. High
+/// priority still runs ahead of a game's normal work.
 fn compute_queue(device: &ID3D12Device) -> Result<(ID3D12CommandQueue, i32)> {
-    let realtime = REALTIME.load(std::sync::atomic::Ordering::Relaxed);
     for priority in [
-        D3D12_COMMAND_QUEUE_PRIORITY_GLOBAL_REALTIME.0,
         D3D12_COMMAND_QUEUE_PRIORITY_HIGH.0,
         D3D12_COMMAND_QUEUE_PRIORITY_NORMAL.0,
-    ]
-    .into_iter()
-    .filter(|priority| realtime || *priority != D3D12_COMMAND_QUEUE_PRIORITY_GLOBAL_REALTIME.0)
-    {
+    ] {
         // SAFETY: `device` is a live D3D12 device and the queue description outlives the call.
         if let Ok(queue) = unsafe {
             device.CreateCommandQueue::<ID3D12CommandQueue>(&D3D12_COMMAND_QUEUE_DESC {
