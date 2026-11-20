@@ -1504,12 +1504,16 @@ impl SessionThread<'_> {
                     }
                     // Encoder creation can outlast several source frames.
                     let Some(current) = latest.current()? else { continue };
+                    // As in the loop above: read before the enhancement
+                    // replaces the image, and a capture that only extends
+                    // the focus window's picture teaches no phase.
+                    let extends_capture = latest.extends_capture(&current);
                     let (current, enhancement_changed) = enhancer.apply(&s, &runtime_config, current);
                     if enhancement_changed || !encoder.as_ref().unwrap().accepts_gpu_device(&current) {
                         continue;
                     }
                     image = current;
-                    if arrival_pacing {
+                    if arrival_pacing && extends_capture == Some(false) {
                         pacer.observe_source(image.captured);
                     }
                     metadata_due = Instant::now();
