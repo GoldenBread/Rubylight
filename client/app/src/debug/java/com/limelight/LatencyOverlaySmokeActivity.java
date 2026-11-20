@@ -24,7 +24,7 @@ import java.util.Map;
  */
 public class LatencyOverlaySmokeActivity extends Activity {
     private String mode;
-    private com.limelight.binding.input.virtual_controller.VirtualController controls;
+    private com.limelight.binding.input.pad.ModernController controls;
     private final HardwareMetrics hardwareMetrics = previewHardwareMetrics();
     private com.limelight.utils.WifiFacts wifi;
     private android.app.Dialog healthDialog;
@@ -77,7 +77,13 @@ public class LatencyOverlaySmokeActivity extends Activity {
         });
         android.widget.FrameLayout container = (android.widget.FrameLayout) stream.getParent();
         if (getIntent().getBooleanExtra("controls", false)) {
-            controls = new com.limelight.binding.input.virtual_controller.VirtualController(null, container, this);
+            controls = new com.limelight.binding.input.pad.ModernController(this, container,
+                    new com.limelight.binding.input.HeldInputState.Sink() {
+                        @Override public void key(int key, boolean down) { }
+                        @Override public void mouse(int button, boolean down) { }
+                        @Override public void gamepad(int buttons, short leftX, short leftY, short rightX, short rightY,
+                                                      byte leftTrigger, byte rightTrigger) { }
+                    }, com.limelight.preferences.PreferenceConfiguration.readPreferences(this), null);
             controls.refreshLayout();
             controls.show();
         }

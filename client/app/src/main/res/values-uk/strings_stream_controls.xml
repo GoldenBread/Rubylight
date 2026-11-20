@@ -5,9 +5,6 @@
     <string name="stream_controls_show">Показати екранні елементи керування</string>
     <string name="stream_controls_hide">Сховати екранні елементи керування</string>
     <string name="stream_controls_layout">Змінити розкладку контролера</string>
-    <string name="stream_controls_move_help">Перетягуйте, щоб переміщати елементи; змінюйте розмір або зберігайте через меню.</string>
-    <string name="stream_controls_resize_help">Перетягуйте, щоб змінювати розмір елементів; зберігайте через меню.</string>
-    <string name="stream_controls_saved">Розкладку контролера збережено</string>
     <string name="stream_reconnect">Перепідключити трансляцію</string>
     <string name="stream_reconnecting">Повторне підключення до запущеного застосунку…</string>
     <string name="stream_native_touch_help">Дотики керують ПК напряму.\nКлавіатура — у меню трансляції.</string>
@@ -19,10 +16,5 @@
         <item>Локальний курсор</item>
         <item>Сенсор вимкнено</item>
         <item>Трекпад (жести тачпада)</item>
-    </string-array>
-    <string-array name="stream_control_layout_actions">
-        <item>Перемістити елементи</item>
-        <item>Змінити розмір елементів</item>
-        <item>Зберегти розкладку і грати</item>
     </string-array>
 </resources>

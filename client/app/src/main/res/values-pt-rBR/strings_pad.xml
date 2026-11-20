@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_osc_style">Controller style</string>
-    <string name="summary_list_osc_style">Modern tem analógicos que seguem seu polegar e botões frontais que você pode apertar dois ao mesmo tempo. Classic mantém o layout original; os dois enviam o mesmo gamepad ao PC.</string>
-    <string name="osc_style_classic">Classic</string>
-    <string name="osc_style_modern">Modern</string>
     <string name="title_list_osc_stick_mode">Modern controller sticks</string>
     <string name="summary_list_osc_stick_mode">Floating centraliza o analógico onde seu polegar toca, então você não precisa acertá-lo em cheio. Escolha Fixed se preferir mirar no analógico desenhado.</string>
     <string name="osc_stick_floating">Floating</string>

@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_osc_style">Controller style</string>
-    <string name="summary_list_osc_style">‘Modern’은 엄지를 따라가는 스틱과 두 개를 동시에 누를 수 있는 A/B/X/Y 버튼을 갖추고 있습니다. ‘Classic’은 원래 레이아웃을 유지합니다. 둘 다 PC에는 같은 게임패드로 전달됩니다.</string>
-    <string name="osc_style_classic">Classic</string>
-    <string name="osc_style_modern">Modern</string>
     <string name="title_list_osc_stick_mode">Modern controller sticks</string>
     <string name="summary_list_osc_stick_mode">‘Floating’은 엄지가 닿은 곳을 스틱 중심으로 삼아 정확히 맞춰 누를 필요가 없습니다. 화면에 그려진 스틱을 직접 누르는 편이 좋다면 ‘Fixed’를 선택하세요.</string>
     <string name="osc_stick_floating">Floating</string>

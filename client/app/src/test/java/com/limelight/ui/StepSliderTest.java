@@ -10,7 +10,6 @@ import android.app.Dialog;
 import android.content.Context;
 import android.os.Looper;
 import android.view.KeyEvent;
-import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -84,23 +83,21 @@ public class StepSliderTest {
     }
 
     @Test
-    public void itLooksLikeTheClassicControlsOpacitySlider() {
+    public void itHasTheThickAmberMaterialLook() {
         Context context = new ContextThemeWrapper(RuntimeEnvironment.getApplication(), R.style.StreamTheme);
-        Slider reference = LayoutInflater.from(context).inflate(R.layout.osc_opacity_panel, null)
-                .findViewById(R.id.osc_opacity_slider);
+        // A plain Material slider in the same theme: the look keeps its track and thumb sizes.
+        Slider reference = new Slider(context);
         StepSlider slider = new StepSlider(context);
         assertTrue(slider instanceof Slider);
         assertEquals(LabelFormatter.LABEL_FLOATING, slider.getLabelBehavior());
-        assertEquals(reference.getLabelBehavior(), slider.getLabelBehavior());
-        assertEquals(reference.isTickVisible(), slider.isTickVisible());
+        assertFalse(slider.isTickVisible());
         assertEquals(reference.getTrackHeight(), slider.getTrackHeight());
         assertEquals(reference.getThumbWidth(), slider.getThumbWidth());
         assertEquals(reference.getThumbHeight(), slider.getThumbHeight());
-        assertEquals(reference.getThumbTintList().getDefaultColor(), slider.getThumbTintList().getDefaultColor());
-        assertEquals(reference.getTrackActiveTintList().getDefaultColor(),
-                slider.getTrackActiveTintList().getDefaultColor());
-        assertEquals(reference.getTrackInactiveTintList().getDefaultColor(),
-                slider.getTrackInactiveTintList().getDefaultColor());
+        int primary = context.getColor(R.color.night_primary);
+        assertEquals(primary, slider.getThumbTintList().getDefaultColor());
+        assertEquals(primary, slider.getTrackActiveTintList().getDefaultColor());
+        assertEquals(context.getColor(R.color.night_outline_variant), slider.getTrackInactiveTintList().getDefaultColor());
         assertNotEquals("a focused slider shows where it is", 0, slider.getHaloTintList().getDefaultColor() >>> 24);
     }
 
@@ -158,7 +155,7 @@ public class StepSliderTest {
                 assertTrue("a code-built slider gets its value text: " + file.getPath(), source.contains("StepSlider.showValue("));
             }
         }
-        assertTrue("the opacity panels and the code-built sliders were found", sliders >= 4);
+        assertTrue("the layout editor's opacity slider and the code-built sliders were found", sliders >= 3);
     }
 
     @Test

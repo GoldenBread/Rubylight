@@ -1,15 +1,131 @@
 package com.limelight.binding.input.pad;
 
+import android.app.Application;
+import android.content.Context;
+import android.content.SharedPreferences;
+
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
+import org.robolectric.annotation.Config;
 
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.Assert.*;
 
-/** The classic controller's saved boxes become a modern layout once, on the first switch of style. */
+/**
+ * The classic controller's saved boxes become this controller's layout once per install, when it is first built
+ * after the update that removed the classic controller.
+ */
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 30, application = Application.class, qualifiers = "w800dp-h360dp-land-xhdpi")
 public class ClassicLayoutMigrationTest {
     private static final float WIDTH = 1600, HEIGHT = 720, DENSITY = 2;
+    /** The classic right stick, at (1300, 500) on this 1600x720 screen. */
+    private static final String RIGHT_STICK = "{\"LEFT\":1200,\"TOP\":400,\"WIDTH\":200,\"HEIGHT\":200}";
+    private Context context;
+    private SharedPreferences store, classic;
+
+    @Before
+    public void setUp() {
+        context = RuntimeEnvironment.getApplication();
+        store = context.getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE);
+        classic = context.getSharedPreferences(ClassicLayoutMigration.CLASSIC_PREFS, Context.MODE_PRIVATE);
+        store.edit().clear().commit();
+        classic.edit().clear().commit();
+    }
+
+    private PadLayout shared() {
+        return PadLayout.parse(store.getString(PadLayoutKeys.legacyKey(null), null));
+    }
+
+    @Test public void theClassicLayoutBecomesTheLayoutForAllGamesOnce() {
+        classic.edit().putString("13", RIGHT_STICK).putString("16", "{\"LEFT\":760,\"TOP\":100,\"WIDTH\":80,\"HEIGHT\":80}")
+                .commit();
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
+        // The older shared key is what both orientations fall back to, for every game without its own layout.
+        PadLayout.Spec stick = shared().spec(PadLayout.Control.RIGHT_STICK);
+        assertTrue(stick.placed());
+        assertEquals(1300f / WIDTH, stick.cx, .01f);
+        assertEquals(500f / HEIGHT, stick.cy, .01f);
+        assertFalse(shared().spec(PadLayout.Control.HOME).hidden);
+
+        // Exactly once: a later run carries nothing over, whatever the classic preferences hold by then.
+        String carried = store.getString(PadLayoutKeys.legacyKey(null), null);
+        classic.edit().putString("13", "{\"LEFT\":0,\"TOP\":0,\"WIDTH\":200,\"HEIGHT\":200}").commit();
+        store.edit().remove(PadLayoutKeys.legacyKey(null)).commit();
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        assertNotNull(carried);
+    }
+
+    @Test public void withNothingClassicSavedItIsDoneAndWritesNothing() {
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        // A classic layout that appears later is never read.
+        classic.edit().putString("13", RIGHT_STICK).commit();
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+    }
+
+    @Test public void aLayoutForAllGamesArrangedInThisControllerWins() {
+        classic.edit().putString("13", RIGHT_STICK).commit();
+        String mine = "v1|FACE,0.7083,0.5556,1.300,100,0";
+        store.edit().putString(PadLayoutKeys.legacyKey(null), mine).commit();
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertEquals(mine, store.getString(PadLayoutKeys.legacyKey(null), null));
+        assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
+
+        // Both orientations with a layout of their own leave nothing for the classic one to fill.
+        store.edit().clear().putString(PadLayoutKeys.key(true, null), mine).putString(PadLayoutKeys.key(false, null), mine)
+                .commit();
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        assertEquals(mine, store.getString(PadLayoutKeys.key(true, null), null));
+        assertEquals(mine, store.getString(PadLayoutKeys.key(false, null), null));
+    }
+
+    @Test public void theClassicLayoutFillsOnlyWhatHasNoLayoutOfItsOwn() {
+        classic.edit().putString("13", RIGHT_STICK).commit();
+        String landscape = "v1|FACE,0.7083,0.5556,1.300,100,0", game = "v1|DPAD,0.2,0.6,1.000,100,0";
+        store.edit().putString(PadLayoutKeys.key(true, null), landscape)
+                .putString(PadLayoutKeys.key(true, "pc-1/app-7"), game).commit();
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        // Portrait had no layout for all games; landscape and the game keep theirs, and they win where they exist.
+        assertTrue(shared().spec(PadLayout.Control.RIGHT_STICK).placed());
+        assertEquals(landscape, store.getString(PadLayoutKeys.key(true, null), null));
+        assertEquals(game, store.getString(PadLayoutKeys.key(true, "pc-1/app-7"), null));
+    }
+
+    @Test public void aPlayerWhoPickedThisControllerOrResetTheLayoutGetsNothingClassic() {
+        classic.edit().putString("13", RIGHT_STICK).commit();
+        ClassicLayoutMigration.skip(context);
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+
+        // Reset sets the same flag, so the defaults stay defaults.
+        store.edit().clear().commit();
+        ModernController.clearLayouts(context);
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
+    }
+
+    @Test public void aCorruptClassicControlIsLeftOut() {
+        classic.edit().putString("12", "not json").putString("1", "{\"LEFT\":5}").putInt("14", 3)
+                .putString("13", RIGHT_STICK).commit();
+        Map<Integer, float[]> boxes = ClassicLayoutMigration.boxes(classic);
+        assertEquals(1, boxes.size());
+        assertArrayEquals(new float[] {1200, 400, 200, 200}, boxes.get(13), 0);
+        ClassicLayoutMigration.carryOverOnce(context, store);
+        assertFalse(shared().spec(PadLayout.Control.LEFT_STICK).placed());
+        assertTrue(shared().spec(PadLayout.Control.RIGHT_STICK).placed());
+    }
 
     private static Map<Integer, float[]> boxes() {
         Map<Integer, float[]> boxes = new HashMap<>();

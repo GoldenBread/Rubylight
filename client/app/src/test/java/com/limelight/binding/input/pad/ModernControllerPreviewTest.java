@@ -100,7 +100,6 @@ public class ModernControllerPreviewTest {
                 new int[] {0xFF10161F, 0xFF3B4F63, 0xFFB9C9D6}));
         screen.setContentView(frame, new FrameLayout.LayoutParams(width, height));
         PreferenceConfiguration prefs = new PreferenceConfiguration();
-        prefs.oscStyle = PreferenceConfiguration.OSC_STYLE_MODERN;
         prefs.oscOpacity = 90;
         prefs.showGuideButton = true;
         prefs.showTouchpadButton = true;

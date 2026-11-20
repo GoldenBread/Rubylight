@@ -610,13 +610,6 @@
     </PreferenceCategory>
     <PreferenceCategory android:key="category_onscreen_controls" android:title="@string/category_on_screen_controls_settings">
         <com.limelight.preferences.MaterialListPreference
-            android:key="list_osc_style"
-            android:title="@string/title_list_osc_style"
-            android:dialogMessage="@string/summary_list_osc_style"
-            android:entries="@array/osc_style_names"
-            android:entryValues="@array/osc_style_values"
-            android:defaultValue="classic" />
-        <com.limelight.preferences.MaterialListPreference
             android:key="list_osc_stick_mode"
             android:title="@string/title_list_osc_stick_mode"
             android:dialogMessage="@string/summary_list_osc_stick_mode"

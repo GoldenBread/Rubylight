@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">Quanto scivola il puntatore.</string>
     <string name="hint_pc_keyboard_size">Quanta altezza dello schermo occupa la tastiera PC sullo schermo. Più grande dà tasti più grandi; più piccola lascia visibile una parte maggiore dello stream.</string>
     <string name="hint_pc_keyboard_opacity">Quanto è trasparente la tastiera PC sullo schermo. Un valore più basso lascia vedere di più lo stream dietro.</string>
-    <string name="hint_vibrate_osc">Vibra quando premi i controlli a schermo (non i pulsanti del controller Classic), se il feedback tattile del sistema è attivo, e per la vibrazione di un gioco quando nessun controller fisico la riceve.</string>
+    <string name="hint_vibrate_osc">Vibra quando premi i controlli a schermo, se il feedback tattile del sistema è attivo, e per la vibrazione di un gioco quando nessun controller fisico la riceve.</string>
     <string name="hint_show_guide_button">Aggiunge un pulsante Guide (Home o PS) ai controlli a schermo.</string>
     <string name="hint_host_audio">Mantiene l’audio anche sugli altoparlanti del PC durante lo streaming.</string>
     <string name="hint_overlay_position">L’angolo in cui si trova l’overlay prestazioni.</string>

@@ -63,7 +63,6 @@ public class MicAndControllerSettingsPreviewTest {
         shadowOf(app).grantPermissions(Manifest.permission.RECORD_AUDIO);
         android.preference.PreferenceManager.getDefaultSharedPreferences(app).edit()
                 .putBoolean("checkbox_show_onscreen_controls", true)
-                .putString(PreferenceConfiguration.OSC_STYLE_PREF_STRING, PreferenceConfiguration.OSC_STYLE_MODERN)
                 .putBoolean("checkbox_enable_mic", true)
                 .putBoolean(PreferenceConfiguration.MIC_AUTO_GAIN_PREF_STRING, true)
                 .commit();
@@ -72,7 +71,7 @@ public class MicAndControllerSettingsPreviewTest {
         int height = Math.round(screen.getResources().getConfiguration().screenHeightDp * screen.getResources().getDisplayMetrics().density);
 
         StreamSettings.SettingsFragment input = SettingsStructureTest.open(screen, "input");
-        scrollTo(screen, input, PreferenceConfiguration.OSC_STYLE_PREF_STRING, width, height);
+        scrollTo(screen, input, PreferenceConfiguration.OSC_STICK_MODE_PREF_STRING, width, height);
         write(screen.getWindow().getDecorView(), width, height, new File(directory, name + "-1-input.png"));
 
         StreamSettings.SettingsFragment audio = SettingsStructureTest.open(screen, "audio");

@@ -16,8 +16,8 @@ import com.limelight.R;
 import java.util.function.IntFunction;
 
 /**
- * The app's slider over whole positions from 0 to a maximum, in the thick Material look of the classic
- * controls' opacity slider ({@code osc_opacity_panel}, nightjar#61). It replaces the platform SeekBar in
+ * The app's slider over whole positions from 0 to a maximum, in a thick Material look: a floating value
+ * label, no ticks, and an amber thumb and track (nightjar#61). It replaces the platform SeekBar in
  * the settings, the stream menu's bitrate dialogs and the desktop controls, and keys step it like that
  * SeekBar did: Left and Right (and minus and plus) move it by {@link #getKeyStep()}, a twentieth of the
  * range unless set, and at an end they leave the key to the window, which moves the focus on. While a

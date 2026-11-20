@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">Quanto o ponteiro desliza.</string>
     <string name="hint_pc_keyboard_size">Quanto da altura da tela o teclado de PC na tela ocupa. Maior dá teclas maiores; menor deixa mais da transmissão visível.</string>
     <string name="hint_pc_keyboard_opacity">O quanto o teclado de PC na tela é transparente. Um valor menor mostra mais da transmissão atrás dele.</string>
-    <string name="hint_vibrate_osc">Vibra quando você pressiona os controles na tela (não os botões do controle Classic), se a resposta ao toque do sistema estiver ativada, e com a vibração de um jogo quando nenhum controle físico a recebe.</string>
+    <string name="hint_vibrate_osc">Vibra quando você pressiona os controles na tela, se a resposta ao toque do sistema estiver ativada, e com a vibração de um jogo quando nenhum controle físico a recebe.</string>
     <string name="hint_show_guide_button">Adiciona um botão Guide (Home ou PS) aos controles na tela.</string>
     <string name="hint_host_audio">Mantém o som nos alto-falantes do PC durante a transmissão.</string>
     <string name="hint_overlay_position">O canto em que fica a sobreposição de desempenho.</string>

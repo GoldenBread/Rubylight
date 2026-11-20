@@ -1,4 +1,4 @@
-package com.limelight.binding.input.virtual_controller;
+package com.limelight.binding.input;
 
 import com.limelight.nvstream.input.ControllerPacket;
 

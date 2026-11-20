@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_osc_style">Controller style</string>
-    <string name="summary_list_osc_style">Modern ha levette che seguono il pollice e pulsanti frontali che puoi premere due alla volta. Classic mantiene il layout originale; entrambi inviano al PC lo stesso gamepad.</string>
-    <string name="osc_style_classic">Classic</string>
-    <string name="osc_style_modern">Modern</string>
     <string name="title_list_osc_stick_mode">Modern controller sticks</string>
     <string name="summary_list_osc_stick_mode">Floating centra la levetta dove si posa il pollice, così non devi colpirla con precisione. Scegli Fixed se preferisci puntare alla levetta disegnata.</string>
     <string name="osc_stick_floating">Floating</string>

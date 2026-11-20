@@ -14,7 +14,7 @@ import com.limelight.binding.input.LayoutStick;
 import com.limelight.binding.input.MouseDeltaAccumulator;
 import com.limelight.binding.input.TouchLayout;
 import com.limelight.binding.input.touch.PointerAcceleration;
-import com.limelight.binding.input.virtual_controller.SteamControls;
+import com.limelight.binding.input.SteamControls;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.ui.Haptics;

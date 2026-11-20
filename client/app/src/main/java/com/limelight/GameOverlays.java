@@ -202,7 +202,6 @@ final class GameOverlays {
     // The on-screen gamepad, its layout button, per-game buttons and the key toolbar stay uncovered.
     private void collectOverlayObstacles(java.util.List<Rect> out) {
         View parent = (View) game.performanceOverlayScroll.getParent();
-        if (game.virtualController != null && game.prefConfig.onscreenController) game.virtualController.collectVisibleBounds(out);
         if (game.modernController != null && game.prefConfig.onscreenController) game.modernController.collectVisibleBounds(out);
         if (game.micButton != null) com.limelight.ui.OverlayPlacement.addVisible(game.micButton, parent, out);
         if (game.menuButton != null) com.limelight.ui.OverlayPlacement.addVisible(game.menuButton, parent, out);

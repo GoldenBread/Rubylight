@@ -5,9 +5,6 @@
     <string name="stream_controls_show">Show on-screen controls</string>
     <string name="stream_controls_hide">Hide on-screen controls</string>
     <string name="stream_controls_layout">Edit controller layout</string>
-    <string name="stream_controls_move_help">Drag to move controls; use the menu to resize or save.</string>
-    <string name="stream_controls_resize_help">Drag to resize controls; use the menu to save.</string>
-    <string name="stream_controls_saved">Controller layout saved</string>
     <string name="stream_reconnect">Reconnect stream</string>
     <string name="stream_reconnecting">Reconnecting to the running app…</string>
     <string name="stream_native_touch_help">Touch controls the PC directly.\nOpen the stream menu for the keyboard.</string>
@@ -19,10 +16,5 @@
         <item>Local cursor</item>
         <item>Touch off</item>
         <item>Trackpad (touchpad gestures)</item>
-    </string-array>
-    <string-array name="stream_control_layout_actions">
-        <item>Move controls</item>
-        <item>Resize controls</item>
-        <item>Save layout and play</item>
     </string-array>
 </resources>

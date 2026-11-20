@@ -8,7 +8,6 @@ import com.limelight.binding.input.touch.TrackpadPointer;
 import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.binding.input.evdev.EvdevListener;
 import com.limelight.binding.input.pad.PointerMove;
-import com.limelight.binding.input.virtual_controller.VirtualController;
 import com.limelight.binding.video.DecoderSetupFailure;
 import com.limelight.binding.video.DisplayCapsReporter;
 import com.limelight.binding.video.HdrFormatPolicy;
@@ -122,8 +121,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     };
     boolean desktopWindowFocused = true;
     boolean dispatchingDesktopTouch;
-    VirtualController virtualController;
-    // The modern on-screen controller, used instead of the classic one when the settings ask for it.
+    // The on-screen controller, built the first time the controls are shown or their layout is edited.
     com.limelight.binding.input.pad.ModernController modernController;
     // An external gamepad is connected; with Hide while a controller is connected the on-screen controls leave.
     volatile boolean physicalControllerConnected;
@@ -660,12 +658,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         videoOutput.scheduleReconfigureCheck(StreamOrientation.settleMs(streamOrientation, hostShapesStream, turned,
                 StreamReconfigureRequester.SETTLE_MS));
 
-        if (virtualController != null && prefConfig.onscreenController) {
-            // Refresh layout of OSC for possible new screen size
-            virtualController.refreshLayout();
-            if (!onscreenControlsShown()) virtualController.hide();
-        }
-        // The modern controller follows its frame's size by itself, but portrait and landscape have their own layouts.
+        // The on-screen controller follows its frame's size by itself, but portrait and landscape have their own layouts.
         if (modernController != null && prefConfig.onscreenController) {
             modernController.onOrientationChanged();
         }
@@ -681,9 +674,6 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
                 isHidingOverlays = true;
                 if (gameTouchControls != null) gameTouchControls.hideForPip(true);
 
-                if (virtualController != null) {
-                    virtualController.hide();
-                }
                 if (modernController != null) {
                     modernController.finishEditing(false);
                     modernController.hide();
@@ -823,9 +813,6 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
             touchInput.cancelTouchInput();
             keyboardInput.releaseKeyboardInput();
             touchInput.releaseMouseButtons();
-            if (virtualController != null) {
-                virtualController.releaseInput();
-            }
             if (modernController != null) {
                 modernController.releaseInput();
             }
@@ -1080,9 +1067,6 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         SpinnerDialog.closeDialogs(this);
         Dialog.closeDialogs(Game.this);
 
-        if (virtualController != null) {
-            virtualController.hide();
-        }
         if (modernController != null) {
             modernController.finishEditing(false);
             modernController.hide();
@@ -1266,8 +1250,6 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         if (isFinishing()) return;
         // An open editor is the player's work; it stays until Done or Cancel, even with a controller in hand.
         if (connected && modernController != null && modernController.isEditing()) return;
-        if (connected && virtualController != null &&
-                virtualController.getControllerMode() != VirtualController.ControllerMode.Active) return;
         // The settings decide, not a pad's arrival: Only L3/R3, the on-screen controls as their own player, and
         // Controllers Off all keep touch with a pad, and this is where their controls used to disappear.
         if (!onscreenControlsShown()) {
@@ -1293,13 +1275,6 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     }
 
     void hideOnscreenControllers() {
-        if (virtualController != null) {
-            if (virtualController.getControllerMode() != VirtualController.ControllerMode.Active) {
-                // Leaving the editor saves the moved controls, so a controller arriving does not discard them.
-                virtualController.setControllerMode(VirtualController.ControllerMode.Active);
-            }
-            virtualController.hide();
-        }
         if (modernController != null) {
             // Moving the game buttons puts the controls aside only for a while: an open editor of theirs is the
             // player's work and keeps its draft.
@@ -1311,31 +1286,23 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         if (performanceOverlayScroll != null) performanceOverlayScroll.requestLayout();
     }
 
-    // Creates the on-screen controller the settings ask for, or brings the existing one back.
+    // Creates the on-screen controller, or brings the existing one back.
     void showOnscreenController() {
         if (!onscreenControlsShown()) {
             hideOnscreenControllers();
             return;
         }
-        if (prefConfig.modernOnscreenController()) {
-            ensureModernController();
-            // The stream may have turned while a pad kept the controls off the screen, so the switch brings this
-            // orientation's layout back with the controls, as onConfigurationChanged would have.
-            modernController.onOrientationChanged();
-            modernController.show();
-        } else {
-            if (virtualController == null) {
-                virtualController = new VirtualController(controllerHandler, (FrameLayout) streamView.getParent(), this);
-            }
-            virtualController.refreshLayout();
-            virtualController.show();
-        }
+        ensureModernController();
+        // The stream may have turned while a pad kept the controls off the screen, so the switch brings this
+        // orientation's layout back with the controls, as onConfigurationChanged would have.
+        modernController.onOrientationChanged();
+        modernController.show();
         // The controls came back: the microphone and menu buttons follow the top row again, as after hiding.
         touchInput.updateMicButton();
         touchInput.updateMenuButton();
     }
 
-    /** Builds the modern controller without showing it, so its layout can be edited while a gamepad hides it. */
+    /** Builds the on-screen controller without showing it, so its layout can be edited while a gamepad hides it. */
     private void ensureModernController() {
         if (modernController != null) return;
         String game = com.limelight.binding.input.TouchLayout.profileKey(getIntent().getStringExtra(EXTRA_PC_UUID),
@@ -1347,12 +1314,12 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
                     @Override public void mouse(int button, boolean down) { }
                     @Override public void gamepad(int buttons, short leftX, short leftY, short rightX, short rightY,
                                                   byte leftTrigger, byte rightTrigger) {
-                        // The same on-screen gamepad report as the classic controller.
+                        // The on-screen gamepad's report.
                         if (controllerHandler != null) controllerHandler.reportOscState(buttons,
                                 leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
                     }
                 }, prefConfig, game);
-        // The Steam Controller trackpads, as the classic controller sends them.
+        // The Steam Controller trackpads, on touchpad 0 of the on-screen gamepad.
         modernController.setTouchSink((type, pointer, x, y, pressure) -> {
             if (controllerHandler != null) controllerHandler.reportOscTouch(type, pointer, x, y, pressure);
         });
@@ -1396,16 +1363,10 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         if (!onscreenControlsShown()) modernController.hide();
     }
 
-    /** The controls of the chosen style exist, whether or not a gamepad is keeping them off the screen. */
+    /** The on-screen controls exist, whether or not a gamepad is keeping them off the screen. */
     void ensureOnscreenControllers() {
         if (prefConfig == null) return;
-        if (prefConfig.modernOnscreenController()) {
-            ensureModernController();
-        } else if (virtualController == null) {
-            virtualController = new VirtualController(controllerHandler, (FrameLayout) streamView.getParent(), this);
-            virtualController.refreshLayout();
-            if (!onscreenControlsShown()) virtualController.hide();
-        }
+        ensureModernController();
     }
 
     interface RouteProbe { String problem(String host, int port); }

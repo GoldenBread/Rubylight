@@ -75,7 +75,7 @@ with MediaCodec into the same `activity_game` / `StreamView` surface container. 
 sample frame per sixtieth of a second of display refreshes, counted on Choreographer, so an
 emulator whose refreshes drift against the media clock does not repeat and skip frames on
 camera. The production `PerfOverlayListener`, `PerformanceOverlay` formatters, Material
-ActionSheet and `VirtualController` render its UI. Supported AV1/HEVC samples
+ActionSheet and `ModernController` render its UI. Supported AV1/HEVC samples
 are preferred, with H.264 fallback. PiP is Android's actual floating video window
 (Android 8+ with PiP support), not a composited image.
 

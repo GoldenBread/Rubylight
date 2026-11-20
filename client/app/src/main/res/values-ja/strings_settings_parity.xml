@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">ポインタが慣性で進む距離です。</string>
     <string name="hint_pc_keyboard_size">画面上のPCキーボードが画面の高さに占める割合です。大きくするとキーが大きくなり、小さくするとストリームが広く見えます。</string>
     <string name="hint_pc_keyboard_opacity">画面上のPCキーボードの透け具合です。下げるほど、後ろのストリームがよく見えます。</string>
-    <string name="hint_vibrate_osc">システムのタッチフィードバックがオンの場合、オンスクリーンコントロール（「Classic」コントローラのボタンを除く）を押すと振動します。また、振動を受ける物理コントローラがないときは、ゲームの振動をこのデバイスで再現します。</string>
+    <string name="hint_vibrate_osc">システムのタッチフィードバックがオンの場合、オンスクリーンコントロールを押すと振動します。また、振動を受ける物理コントローラがないときは、ゲームの振動をこのデバイスで再現します。</string>
     <string name="hint_show_guide_button">オンスクリーンコントロールに Guide ボタン（Home または PS）を追加します。</string>
     <string name="hint_host_audio">ストリーミング中も PC のスピーカーから音声を出します。</string>
     <string name="hint_overlay_position">パフォーマンス オーバーレイを表示する画面の隅です。</string>

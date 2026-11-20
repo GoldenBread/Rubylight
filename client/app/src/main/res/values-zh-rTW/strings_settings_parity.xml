@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">指標滑行的距離。</string>
     <string name="hint_pc_keyboard_size">螢幕上 PC 鍵盤佔螢幕高度的比例。越大，按鍵越大；越小，能看到的串流畫面越多。</string>
     <string name="hint_pc_keyboard_opacity">螢幕上 PC 鍵盤的透明程度。數值越低，越能看到它後方的串流畫面。</string>
-    <string name="hint_vibrate_osc">按下螢幕控制按鈕時震動（「Classic」控制器的按鈕除外），前提是系統的觸控回饋已開啟；沒有實體控制器接收遊戲的震動時，也由此裝置震動。</string>
+    <string name="hint_vibrate_osc">按下螢幕控制按鈕時震動，前提是系統的觸控回饋已開啟；沒有實體控制器接收遊戲的震動時，也由此裝置震動。</string>
     <string name="hint_show_guide_button">在螢幕控制按鈕中加入 Guide 按鈕（Home 或 PS）。</string>
     <string name="hint_host_audio">串流時電腦的喇叭仍會播放聲音。</string>
     <string name="hint_overlay_position">效能覆蓋層所在的角落。</string>

@@ -13,14 +13,9 @@ import android.widget.FrameLayout;
 import com.limelight.binding.input.HeldInputState;
 import com.limelight.binding.input.LayoutGamepad;
 import com.limelight.binding.input.touch.PointerAcceleration;
-import com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader;
 import com.limelight.preferences.PreferenceConfiguration;
 
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -37,11 +32,6 @@ import java.util.Map;
 public final class ModernController {
     static final String PREFS = "osc_modern";
     static final String GLOBAL_KEY = PadLayoutKeys.ROOT;
-    /** The classic controller's saved layout, read once to carry it over. */
-    static final String CLASSIC_PREFS = VirtualControllerConfigurationLoader.OSC_PREFERENCE;
-    /** The classic controller's element ids, for the one-time carry-over. */
-    private static final int[] CLASSIC_BOXES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-            18, 19, 20, 21, 22, 23, 24, 25};
     /** The classic controller's resends: some hosts drop a report that follows another closely. */
     private static final long[] RESEND_MS = {25, 50, 75};
 
@@ -101,6 +91,7 @@ public final class ModernController {
         resize = (v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) place();
         };
+        ClassicLayoutMigration.carryOverOnce(context, store);
         load();
     }
 
@@ -120,41 +111,7 @@ public final class ModernController {
         if (text == null) text = store.getString(PadLayoutKeys.key(landscape, null), null);
         if (text == null) text = store.getString(PadLayoutKeys.legacyKey(null), null);
         layout = PadLayout.parse(text);
-        if (text == null) layout.copyFrom(migrateClassic());
         painter.setGlyph(layout.glyph());
-    }
-
-    /**
-     * The first time the modern controller is shown with nothing saved, a classic layout the player arranged is
-     * carried over once, so switching styles keeps the controls where their thumbs know them.
-     */
-    private PadLayout migrateClassic() {
-        if (store.getBoolean("classic-migrated", false)) return new PadLayout();
-        SharedPreferences classic = context.getSharedPreferences(CLASSIC_PREFS, Context.MODE_PRIVATE);
-        Map<Integer, float[]> boxes = new HashMap<>();
-        for (int id : CLASSIC_BOXES) {
-            String json = classic.getString(String.valueOf(id), null);
-            if (json == null) continue;
-            try {
-                JSONObject config = new JSONObject(json);
-                boxes.put(id, new float[] {config.getInt("LEFT"), config.getInt("TOP"),
-                        config.getInt("WIDTH"), config.getInt("HEIGHT")});
-            } catch (JSONException ignored) {
-                // A corrupt classic control is simply not carried over.
-            }
-        }
-        if (boxes.isEmpty()) return new PadLayout();
-        android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
-        // The classic layout is arranged in landscape pixels; a first modern start in portrait must map it with the
-        // same dimensions, because the shared key it is stored under is used in both orientations.
-        float width = Math.max(metrics.widthPixels, metrics.heightPixels);
-        float height = Math.min(metrics.widthPixels, metrics.heightPixels);
-        PadLayout migrated = ClassicLayoutMigration.migrate(boxes, width, height, metrics.density);
-        if (!migrated.isDefault()) {
-            store.edit().putString(PadLayoutKeys.legacyKey(null), migrated.serialize())
-                    .putBoolean("classic-migrated", true).apply();
-        }
-        return migrated;
     }
 
     /** Sends the Steam Controller trackpads' touches here; without a sink they send nothing. */

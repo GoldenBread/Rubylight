@@ -1,7 +1,7 @@
 package com.limelight.binding.input.pad;
 
 import com.limelight.binding.input.LayoutStick;
-import com.limelight.binding.input.virtual_controller.SteamControls;
+import com.limelight.binding.input.SteamControls;
 import com.limelight.nvstream.input.ControllerPacket;
 
 /** Where a finger on a modern control lands, as gamepad input. Plain math, no allocation. */

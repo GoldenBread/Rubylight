@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">포인터가 미끄러지는 거리입니다.</string>
     <string name="hint_pc_keyboard_size">화면 PC 키보드가 화면 높이에서 차지하는 비율입니다. 크게 하면 키가 커지고, 작게 하면 스트림이 더 많이 보입니다.</string>
     <string name="hint_pc_keyboard_opacity">화면 PC 키보드가 비쳐 보이는 정도입니다. 낮출수록 뒤의 스트림이 더 잘 보입니다.</string>
-    <string name="hint_vibrate_osc">시스템의 터치 피드백이 켜져 있으면 화면 컨트롤(‘Classic’ 컨트롤러의 버튼 제외)을 누를 때 진동합니다. 또한 진동을 받을 실제 컨트롤러가 없으면 게임의 진동에 맞춰 이 기기가 진동합니다.</string>
+    <string name="hint_vibrate_osc">시스템의 터치 피드백이 켜져 있으면 화면 컨트롤을 누를 때 진동합니다. 또한 진동을 받을 실제 컨트롤러가 없으면 게임의 진동에 맞춰 이 기기가 진동합니다.</string>
     <string name="hint_show_guide_button">화면 컨트롤에 Guide 버튼(Home 또는 PS)을 추가합니다.</string>
     <string name="hint_host_audio">스트리밍 중에도 PC 스피커에서 소리가 나옵니다.</string>
     <string name="hint_overlay_position">성능 오버레이가 놓이는 모서리입니다.</string>

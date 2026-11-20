@@ -6,7 +6,7 @@ import android.view.View;
 import android.widget.FrameLayout;
 
 import com.limelight.binding.input.HeldInputState;
-import com.limelight.binding.input.virtual_controller.SteamControls;
+import com.limelight.binding.input.SteamControls;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.ui.UiNavigationTest;
@@ -53,7 +53,6 @@ public class ModernSteamControlsTest {
         frame = new FrameLayout(screen);
         screen.setContentView(frame, new FrameLayout.LayoutParams(1600, 720));
         prefs = new PreferenceConfiguration();
-        prefs.oscStyle = PreferenceConfiguration.OSC_STYLE_MODERN;
         prefs.oscSteamControls = true;
         // The controls take their sizes from the frame's.
         layout();

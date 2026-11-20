@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">Jak daleko ślizga się wskaźnik.</string>
     <string name="hint_pc_keyboard_size">Jaką część wysokości ekranu zajmuje ekranowa klawiatura PC. Większa daje większe klawisze; mniejsza zostawia widoczną większą część strumienia.</string>
     <string name="hint_pc_keyboard_opacity">Jak przezroczysta jest ekranowa klawiatura PC. Niższa wartość odsłania więcej strumienia pod nią.</string>
-    <string name="hint_vibrate_osc">Wibruje, gdy naciskasz sterowanie ekranowe (poza przyciskami kontrolera „Classic”), o ile w systemie włączone są wibracje przy dotyku, oraz przy wibracjach z gry, gdy nie odbiera ich żaden fizyczny kontroler.</string>
+    <string name="hint_vibrate_osc">Wibruje, gdy naciskasz sterowanie ekranowe, o ile w systemie włączone są wibracje przy dotyku, oraz przy wibracjach z gry, gdy nie odbiera ich żaden fizyczny kontroler.</string>
     <string name="hint_show_guide_button">Dodaje przycisk Guide (Home lub PS) do sterowania ekranowego.</string>
     <string name="hint_host_audio">Dźwięk podczas strumieniowania zostaje też w głośnikach komputera.</string>
     <string name="hint_overlay_position">Róg, w którym znajduje się nakładka wydajności.</string>

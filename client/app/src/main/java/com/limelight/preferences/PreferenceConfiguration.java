@@ -80,11 +80,11 @@ public class PreferenceConfiguration {
     static final String MIC_GAIN_PREF_STRING = "seekbar_mic_gain";
     public static final String MIC_BUTTON_PREF_STRING = "checkbox_mic_button";
     public static final String FLOATING_MENU_BUTTON_PREF_STRING = "checkbox_floating_menu_button";
-    public static final String OSC_STYLE_PREF_STRING = "list_osc_style";
+    // Retired with the classic on-screen controller ("Controller style"): only read by retireOscStyle, never reused.
+    static final String RETIRED_OSC_STYLE_PREF_STRING = "list_osc_style";
     public static final String OSC_STICK_MODE_PREF_STRING = "list_osc_stick_mode";
     public static final String OSC_STICK_DEADZONE_PREF_STRING = "seekbar_osc_stick_deadzone";
     public static final String OSC_AUTO_HIDE_PREF_STRING = "checkbox_osc_auto_hide";
-    public static final String OSC_STYLE_CLASSIC = "classic", OSC_STYLE_MODERN = "modern";
     public static final String OSC_STICK_FLOATING = "floating", OSC_STICK_FIXED = "fixed";
     public static final int DEFAULT_OSC_STICK_DEADZONE = 8, MAX_OSC_STICK_DEADZONE = 30;
     private static final String DEADZONE_PREF_STRING = "seekbar_deadzone";
@@ -352,8 +352,7 @@ public class PreferenceConfiguration {
     public boolean micButton = true;
     // The floating button over the stream that opens the stream menu; off until the user turns it on.
     public boolean floatingMenuButton;
-    // Which on-screen controller draws (OSC_STYLE_*), and how the modern one's sticks follow a thumb.
-    public String oscStyle = OSC_STYLE_CLASSIC;
+    // How the on-screen controller's sticks follow a thumb.
     public boolean oscFloatingSticks = true;
     public int oscStickDeadzone = DEFAULT_OSC_STICK_DEADZONE;
     public String language;
@@ -370,7 +369,7 @@ public class PreferenceConfiguration {
     public boolean showGuideButton;
     /** The on-screen controller's Touchpad button: a PlayStation pad's touchpad click. */
     public boolean showTouchpadButton;
-    /** The classic on-screen controls add a Steam Controller's trackpads, back buttons and grip touch. */
+    /** The on-screen controls add a Steam Controller's trackpads, back buttons and grip touch. */
     public boolean oscSteamControls;
     public boolean enableHdr;
     /** Ask for 10-bit SDR when HDR is not streamed (see Sdr10Policy). Global only: not part of a PC's profile. */
@@ -1044,12 +1043,6 @@ public class PreferenceConfiguration {
                 MicProcessing.EchoEngine.of(micEchoEngine));
     }
 
-    /** Whether the modern on-screen controller draws instead of the classic one. */
-    public boolean modernOnscreenController() {
-        return OSC_STYLE_MODERN.equals(oscStyle);
-    }
-
-    /** The stored controller style; anything but "modern" is the classic controller. */
     /** The stored Hold Guide to open the stream menu time in ms; the default for anything else. */
     public static int guideMenuHoldMs(String stored) {
         if (stored == null) return DEFAULT_GUIDE_MENU_HOLD_MS;
@@ -1057,10 +1050,6 @@ public class PreferenceConfiguration {
             case "0": case "500": case "1000": case "1500": case "2000": return Integer.parseInt(stored);
             default: return DEFAULT_GUIDE_MENU_HOLD_MS;
         }
-    }
-
-    public static String oscStyle(String stored) {
-        return OSC_STYLE_MODERN.equals(stored) ? OSC_STYLE_MODERN : OSC_STYLE_CLASSIC;
     }
 
     /**
@@ -1568,6 +1557,19 @@ public class PreferenceConfiguration {
         return switchOn;
     }
 
+    /**
+     * "Controller style" is gone with the classic on-screen controller: there is one controller now. A player who had
+     * picked Modern keeps the layouts they have; for everyone else the controller carries the classic layout over
+     * once, when it is first built (ClassicLayoutMigration). The stored choice is dropped either way.
+     */
+    static void retireOscStyle(Context context, SharedPreferences prefs) {
+        if (!prefs.contains(RETIRED_OSC_STYLE_PREF_STRING)) return;
+        if ("modern".equals(prefs.getAll().get(RETIRED_OSC_STYLE_PREF_STRING))) {
+            com.limelight.binding.input.pad.ClassicLayoutMigration.skip(context);
+        }
+        prefs.edit().remove(RETIRED_OSC_STYLE_PREF_STRING).apply();
+    }
+
     // Settings stored under a name that is gone: {old, new}. Retired names never come back (SettingsKeysTest).
     static final String[][] RENAMED_PREFS = {
             // Lower bitrate when the network is busy, named as on desktop; it read as Automatic bitrate.
@@ -1629,6 +1631,7 @@ public class PreferenceConfiguration {
         if (migrateRetiredGlRender(prefs, Build.VERSION.SDK_INT)) {
             com.limelight.LimeLog.info("\"Render through OpenGL\" was on; it is now \"Render through Vulkan\"");
         }
+        retireOscStyle(context, prefs);
         if (migrateRustEngineDefault(prefs)) {
             com.limelight.LimeLog.info("New streaming engine switched to its new default: on");
         }
@@ -1800,7 +1803,6 @@ public class PreferenceConfiguration {
         config.micGainPercent = MicGain.clampPercent(prefs.getInt(MIC_GAIN_PREF_STRING, MicGain.DEFAULT_PERCENT));
         config.micButton = prefs.getBoolean(MIC_BUTTON_PREF_STRING, true);
         config.floatingMenuButton = prefs.getBoolean(FLOATING_MENU_BUTTON_PREF_STRING, false);
-        config.oscStyle = oscStyle(prefs.getString(OSC_STYLE_PREF_STRING, null));
         config.oscFloatingSticks = !OSC_STICK_FIXED.equals(prefs.getString(OSC_STICK_MODE_PREF_STRING, null));
         config.oscStickDeadzone = Math.max(0, Math.min(MAX_OSC_STICK_DEADZONE,
                 prefs.getInt(OSC_STICK_DEADZONE_PREF_STRING, DEFAULT_OSC_STICK_DEADZONE)));

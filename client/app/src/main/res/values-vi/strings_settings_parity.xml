@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">Quãng đường con trỏ trượt tiếp.</string>
     <string name="hint_pc_keyboard_size">Bàn phím PC trên màn hình chiếm bao nhiêu chiều cao màn hình. Lớn hơn thì phím to hơn; nhỏ hơn thì thấy stream nhiều hơn.</string>
     <string name="hint_pc_keyboard_opacity">Bàn phím PC trên màn hình trong suốt đến mức nào. Thấp hơn thì thấy rõ stream phía sau hơn.</string>
-    <string name="hint_vibrate_osc">Rung khi bạn nhấn điều khiển trên màn hình (trừ các nút của tay cầm “Classic”), nếu phản hồi chạm của hệ thống đang bật, và rung theo trò chơi khi không có tay cầm vật lý nào nhận.</string>
+    <string name="hint_vibrate_osc">Rung khi bạn nhấn điều khiển trên màn hình, nếu phản hồi chạm của hệ thống đang bật, và rung theo trò chơi khi không có tay cầm vật lý nào nhận.</string>
     <string name="hint_show_guide_button">Thêm nút Guide (Home hoặc PS) vào điều khiển trên màn hình.</string>
     <string name="hint_host_audio">Vẫn phát âm thanh trên loa của PC khi stream.</string>
     <string name="hint_overlay_position">Góc đặt lớp phủ hiệu năng.</string>

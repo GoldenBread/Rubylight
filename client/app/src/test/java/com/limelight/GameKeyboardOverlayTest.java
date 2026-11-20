@@ -476,7 +476,6 @@ public class GameKeyboardOverlayTest {
         Game game = pcKeyboardGame(connection);
         // The on-screen controls' switch is off by default; this test is about the WASD stick they carry.
         game.prefConfig.onscreenController = true;
-        game.prefConfig.oscStyle = PreferenceConfiguration.OSC_STYLE_MODERN;
         ReflectionHelpers.setField(game, "app", new com.limelight.nvstream.http.NvApp("Game", 7, false));
         game.showOnscreenController();
         assertNotNull(game.modernController);

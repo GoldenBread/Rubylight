@@ -1479,9 +1479,6 @@ final class GameConnection {
                 game.touchInput.updateHostCursorShapes();
                 if (!game.conn.canSendInput()) {
                     if (game.gameTouchControls != null) game.gameTouchControls.hideForPip(true);
-                    if (game.virtualController != null) {
-                        game.virtualController.hide();
-                    }
                     if (game.modernController != null) game.modernController.hide();
                     if (game.micButton != null) game.micButton.setSuppressed(true);
                     game.controllerHandler.stop();

@@ -12,8 +12,6 @@ import android.widget.Toast;
 import com.limelight.R;
 import com.limelight.utils.UiHelper;
 
-import static com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader.OSC_PREFERENCE;
-
 public class ConfirmDeleteOscPreference extends DialogPreference {
     public ConfirmDeleteOscPreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
         super(context, attrs, defStyleAttr, defStyleRes);
@@ -42,8 +40,10 @@ public class ConfirmDeleteOscPreference extends DialogPreference {
 
     public void onClick(DialogInterface dialog, int which) {
         if (which == DialogInterface.BUTTON_POSITIVE) {
-            getContext().getSharedPreferences(OSC_PREFERENCE, Context.MODE_PRIVATE).edit().clear().apply();
-            // The modern controller's layouts, for all games and each game, reset with the classic one.
+            // The controller's layouts, for all games and each game; the classic controller's old layout goes too, so
+            // nothing of it is carried over later.
+            getContext().getSharedPreferences(com.limelight.binding.input.pad.ClassicLayoutMigration.CLASSIC_PREFS,
+                    Context.MODE_PRIVATE).edit().clear().apply();
             com.limelight.binding.input.pad.ModernController.clearLayouts(getContext());
             Toast.makeText(getContext(), R.string.toast_reset_osc_success, Toast.LENGTH_SHORT).show();
         }

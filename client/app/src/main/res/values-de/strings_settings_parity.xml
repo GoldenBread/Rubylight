@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">Wie weit der Zeiger nachgleitet.</string>
     <string name="hint_pc_keyboard_size">Wie viel der Bildschirmhöhe die PC-Tastatur auf dem Bildschirm einnimmt. Größer bedeutet größere Tasten; kleiner lässt mehr vom Stream frei.</string>
     <string name="hint_pc_keyboard_opacity">Wie durchsichtig die PC-Tastatur auf dem Bildschirm ist. Ein niedrigerer Wert zeigt mehr vom Stream dahinter.</string>
-    <string name="hint_vibrate_osc">Vibriert, wenn du Bildschirmtasten drückst (nicht bei den Tasten des Controllers „Klassisch“), sofern das Touch-Feedback des Systems an ist, und bei der Vibration eines Spiels, wenn kein physischer Controller sie übernimmt.</string>
+    <string name="hint_vibrate_osc">Vibriert, wenn du Bildschirmtasten drückst, sofern das Touch-Feedback des Systems an ist, und bei der Vibration eines Spiels, wenn kein physischer Controller sie übernimmt.</string>
     <string name="hint_show_guide_button">Fügt den Bildschirmtasten eine Guide-Taste (Home oder PS) hinzu.</string>
     <string name="hint_host_audio">Der Ton bleibt beim Streamen auf den Lautsprechern des PCs.</string>
     <string name="hint_overlay_position">Die Ecke, in der die Leistungsanzeige erscheint.</string>

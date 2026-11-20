@@ -14,9 +14,7 @@ import com.limelight.binding.input.touch.TrackpadArea;
 import com.limelight.binding.input.touch.TrackpadContext;
 import com.limelight.binding.input.touch.TrackpadPointer;
 import com.limelight.binding.input.evdev.EvdevListener;
-import com.limelight.binding.input.pad.ClassicEditor;
 import com.limelight.binding.input.touch.TouchContext;
-import com.limelight.binding.input.virtual_controller.VirtualController;
 import com.limelight.computers.HostNotices;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
@@ -390,16 +388,12 @@ final class GameTouchInput {
         if (enabled) {
             game.showOnscreenController();
         } else {
-            if (game.virtualController != null) {
-                game.virtualController.setControllerMode(VirtualController.ControllerMode.Active);
-                game.virtualController.hide();
-            }
             if (game.modernController != null) {
                 game.modernController.finishEditing(false);
                 game.modernController.hide();
             }
         }
-        // The microphone button's default place follows the modern controller's top row.
+        // The microphone button's default place follows the on-screen controller's top row.
         if (game.micButton != null) game.micButton.place();
         if (game.menuButton != null) game.menuButton.place();
         DualScreen.saveSettings(game, editor -> editor.putBoolean("checkbox_show_onscreen_controls", enabled));
@@ -439,29 +433,8 @@ final class GameTouchInput {
     void showControllerLayoutDialog() {
         // A connected gamepad may have kept the controls off the screen; their layout is still editable.
         game.ensureOnscreenControllers();
-        if (game.modernController != null) {
-            // The modern controller edits in place: drag, pinch and the panel instead of modes.
-            game.modernController.startEditing();
-            return;
-        }
-        // The classic editor moves the controls themselves, so they appear only while their switch is on, and
-        // a gamepad that hides them takes them away again once the edit ends.
-        ClassicEditor.Controls controls = new ClassicEditor.Controls() {
-            @Override public boolean switchOn() { return game.prefConfig.onscreenController; }
-            @Override public boolean belongOnScreen() { return game.onscreenControlsShown(); }
-            @Override public void show() { game.virtualController.show(); }
-            @Override public void hide() { game.hideOnscreenControllers(); }
-        };
-        ClassicEditor.open(controls);
-        game.menuActions.showStreamDialog(new NavigationDialogBuilder(game).setTitle(R.string.stream_controls_layout)
-                .setItems(R.array.stream_control_layout_actions, (dialog, which) -> {
-                    VirtualController.ControllerMode[] modes = {
-                            VirtualController.ControllerMode.MoveButtons,
-                            VirtualController.ControllerMode.ResizeButtons,
-                            VirtualController.ControllerMode.Active};
-                    ClassicEditor.choose(controls, which == 2);
-                    if (controls.switchOn()) game.virtualController.setControllerMode(modes[which]);
-                }).setNegativeButton(android.R.string.cancel, (dialog, which) -> ClassicEditor.cancel(controls)).create());
+        // The controller edits in place: drag, pinch and the panel.
+        if (game.modernController != null) game.modernController.startEditing();
     }
 
     void setInputGrabState(boolean grab) {
@@ -484,9 +457,6 @@ final class GameTouchInput {
             cancelTouchInput();
             game.keyboardInput.releaseKeyboardInput();
             releaseMouseButtons();
-            if (game.virtualController != null) {
-                game.virtualController.releaseInput();
-            }
             if (game.modernController != null) {
                 game.modernController.releaseInput();
             }
@@ -1144,11 +1114,8 @@ final class GameTouchInput {
                     return handleTouchpadTouch(event);
                 }
 
-                if ((game.virtualController != null &&
-                        (game.virtualController.getControllerMode() == VirtualController.ControllerMode.MoveButtons ||
-                         game.virtualController.getControllerMode() == VirtualController.ControllerMode.ResizeButtons)) ||
-                        (game.modernController != null && game.modernController.isEditing())) {
-                    // Ignore presses when the virtual controller is being configured
+                if (game.modernController != null && game.modernController.isEditing()) {
+                    // Ignore presses while the on-screen controller's layout is being edited
                     return true;
                 }
 

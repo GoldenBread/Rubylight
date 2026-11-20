@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_osc_style">Controller style</string>
-    <string name="summary_list_osc_style">「Modern」的搖桿會跟隨拇指，ABXY 按鈕可以兩個同時按下。「Classic」保留原本的配置；兩者向電腦傳送的是同一種控制器。</string>
-    <string name="osc_style_classic">Classic</string>
-    <string name="osc_style_modern">Modern</string>
     <string name="title_list_osc_stick_mode">Modern controller sticks</string>
     <string name="summary_list_osc_stick_mode">「Floating」以拇指落點作為搖桿中心，不必準確按到搖桿。如果比較喜歡對準畫出來的搖桿去按，請選「Fixed」。</string>
     <string name="osc_stick_floating">Floating</string>

@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_osc_style">Controller style</string>
-    <string name="summary_list_osc_style">“Modern” có cần analog đi theo ngón cái và các nút A/B/X/Y có thể nhấn hai nút cùng lúc. “Classic” giữ bố cục gốc; cả hai gửi cùng một tay cầm đến PC.</string>
-    <string name="osc_style_classic">Classic</string>
-    <string name="osc_style_modern">Modern</string>
     <string name="title_list_osc_stick_mode">Modern controller sticks</string>
     <string name="summary_list_osc_stick_mode">“Floating” đặt tâm cần analog tại nơi ngón cái chạm xuống, nên bạn không phải chạm thật trúng. Chọn “Fixed” nếu bạn thích nhắm vào cần analog vẽ sẵn trên màn hình.</string>
     <string name="osc_stick_floating">Floating</string>

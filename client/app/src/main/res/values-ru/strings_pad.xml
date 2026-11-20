@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_osc_style">Controller style</string>
-    <string name="summary_list_osc_style">В «Modern» стики следуют за пальцем, а кнопки A, B, X и Y можно нажимать по две сразу. «Classic» сохраняет исходную раскладку; оба передают на ПК один и тот же геймпад.</string>
-    <string name="osc_style_classic">Classic</string>
-    <string name="osc_style_modern">Modern</string>
     <string name="title_list_osc_stick_mode">Modern controller sticks</string>
     <string name="summary_list_osc_stick_mode">«Floating» центрирует стик там, где коснулся палец, так что попадать точно в него не нужно. Выберите «Fixed», если предпочитаете целиться в нарисованный стик.</string>
     <string name="osc_stick_floating">Floating</string>

@@ -62,7 +62,6 @@ public class GameOscControlsTest {
     private static PreferenceConfiguration oscPrefs() {
         PreferenceConfiguration prefs = new PreferenceConfiguration();
         prefs.onscreenController = true;
-        prefs.oscStyle = PreferenceConfiguration.OSC_STYLE_MODERN;
         return prefs;
     }
 

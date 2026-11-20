@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">Jusqu’où le pointeur continue de glisser.</string>
     <string name="hint_pc_keyboard_size">La part de la hauteur de l’écran qu’occupe le clavier PC à l’écran. Plus grand, les touches sont plus grosses ; plus petit, le stream reste plus visible.</string>
     <string name="hint_pc_keyboard_opacity">La transparence du clavier PC à l’écran. Une valeur plus basse laisse mieux voir le stream derrière.</string>
-    <string name="hint_vibrate_osc">Vibre quand vous appuyez sur les commandes à l’écran (sauf les boutons de la manette « Classic »), si le retour tactile du système est activé, et pour les vibrations d’un jeu quand aucune manette physique ne les prend.</string>
+    <string name="hint_vibrate_osc">Vibre quand vous appuyez sur les commandes à l’écran, si le retour tactile du système est activé, et pour les vibrations d’un jeu quand aucune manette physique ne les prend.</string>
     <string name="hint_show_guide_button">Ajoute un bouton Guide (Home ou PS) aux commandes à l’écran.</string>
     <string name="hint_host_audio">Le son reste aussi sur les haut-parleurs du PC pendant le streaming.</string>
     <string name="hint_overlay_position">Le coin où se place la superposition des performances.</string>

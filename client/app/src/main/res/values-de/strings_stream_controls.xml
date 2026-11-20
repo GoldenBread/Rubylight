@@ -5,9 +5,6 @@
     <string name="stream_controls_show">Bildschirmtasten einblenden</string>
     <string name="stream_controls_hide">Bildschirmtasten ausblenden</string>
     <string name="stream_controls_layout">Tastenlayout bearbeiten</string>
-    <string name="stream_controls_move_help">Ziehe die Tasten; Größe und Speichern findest du im Menü.</string>
-    <string name="stream_controls_resize_help">Ziehe die Tasten größer oder kleiner; speichere im Menü.</string>
-    <string name="stream_controls_saved">Tastenlayout gespeichert</string>
     <string name="stream_reconnect">Stream neu verbinden</string>
     <string name="stream_reconnecting">Verbinde erneut mit der laufenden App…</string>
     <string name="stream_native_touch_help">Touch steuert den PC direkt.\nDie Tastatur findest du im Stream-Menü.</string>
@@ -19,10 +16,5 @@
         <item>Lokaler Mauszeiger</item>
         <item>Touch aus</item>
         <item>Trackpad (Touchpad-Gesten)</item>
-    </string-array>
-    <string-array name="stream_control_layout_actions">
-        <item>Tasten verschieben</item>
-        <item>Tastengröße ändern</item>
-        <item>Speichern und spielen</item>
     </string-array>
 </resources>

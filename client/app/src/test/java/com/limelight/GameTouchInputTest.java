@@ -885,7 +885,6 @@ public class GameTouchInputTest {
         RecordingConnection connection = new RecordingConnection();
         Game game = game(connection);
         game.prefConfig.onscreenController = true;
-        game.prefConfig.oscStyle = PreferenceConfiguration.OSC_STYLE_MODERN;
         game.prefConfig.width = 1920;
         game.prefConfig.height = 1080;
         game.prefConfig.trackpadSpeed = 100;

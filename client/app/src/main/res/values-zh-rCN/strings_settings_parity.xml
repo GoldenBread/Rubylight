@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">指针滑行的距离。</string>
     <string name="hint_pc_keyboard_size">屏幕上 PC 键盘占屏幕高度的比例。越大，按键越大；越小，能看到的串流画面越多。</string>
     <string name="hint_pc_keyboard_opacity">屏幕上 PC 键盘的透明程度。数值越低，越能看到它后面的串流画面。</string>
-    <string name="hint_vibrate_osc">按下屏幕控制按钮时振动（“Classic”手柄的按键除外），前提是系统的触摸反馈已开启；没有实体手柄接收游戏的震动时，也由此设备振动。</string>
+    <string name="hint_vibrate_osc">按下屏幕控制按钮时振动，前提是系统的触摸反馈已开启；没有实体手柄接收游戏的震动时，也由此设备振动。</string>
     <string name="hint_show_guide_button">在屏幕控制按钮中添加 Guide 按钮（Home 或 PS）。</string>
     <string name="hint_host_audio">串流时电脑的扬声器仍会发出声音。</string>
     <string name="hint_overlay_position">性能叠加层所在的角落。</string>

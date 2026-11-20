@@ -46,7 +46,6 @@ import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.binding.input.keyboard.KeyboardFocus;
 import com.limelight.binding.input.keyboard.PcKeyboardController;
 import com.limelight.nvstream.NvConnection;
-import com.limelight.binding.input.virtual_controller.SteamControls;
 import com.limelight.nvstream.input.ControllerPacket;
 import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.nvstream.jni.MoonBridge;

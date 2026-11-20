@@ -5,9 +5,6 @@
     <string name="stream_controls_show">显示屏幕控制按钮</string>
     <string name="stream_controls_hide">隐藏屏幕控制按钮</string>
     <string name="stream_controls_layout">编辑手柄布局</string>
-    <string name="stream_controls_move_help">拖动可移动控制按钮；使用菜单可调整大小或保存。</string>
-    <string name="stream_controls_resize_help">拖动可调整控制按钮大小；使用菜单可保存。</string>
-    <string name="stream_controls_saved">手柄布局已保存</string>
     <string name="stream_reconnect">重新连接串流</string>
     <string name="stream_reconnecting">正在重新连接到正在运行的应用…</string>
     <string name="stream_native_touch_help">触控直接控制电脑。\n打开串流菜单可使用键盘。</string>
@@ -19,10 +16,5 @@
         <item>本地光标</item>
         <item>关闭触控</item>
         <item>触控板（实体触控板手势）</item>
-    </string-array>
-    <string-array name="stream_control_layout_actions">
-        <item>移动控制按钮</item>
-        <item>调整控制按钮大小</item>
-        <item>保存布局并开始玩</item>
     </string-array>
 </resources>

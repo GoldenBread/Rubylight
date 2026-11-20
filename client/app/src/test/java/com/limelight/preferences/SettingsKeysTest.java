@@ -185,7 +185,8 @@ public class SettingsKeysTest {
             "checkbox_gl_render", // "Render through OpenGL", replaced by Render through Vulkan
             "checkbox_auto_bitrate", // renamed adaptive_bitrate (PreferenceConfiguration.RENAMED_PREFS)
             "checkbox_trackpad_acceleration", // moved to _v2 with the new on default (see the migration)
-            "checkbox_always_dark", "checkbox_oled_black")); // the theme's switches, one value now (AppTheme.THEME)
+            "checkbox_always_dark", "checkbox_oled_black", // the theme's switches, one value now (AppTheme.THEME)
+            "list_osc_style")); // "Controller style", gone with the classic on-screen controller (retireOscStyle)
 
     @Test
     public void everyKeyInPreferencesXmlIsUniqueAndNoRetiredKeyIsBack() throws Exception {
@@ -241,6 +242,31 @@ public class SettingsKeysTest {
         PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication());
         assertEquals("system", prefs().getString(com.limelight.ui.AppTheme.THEME, null));
         assertFalse(com.limelight.ui.AppTheme.isDark(RuntimeEnvironment.getApplication()));
+    }
+
+    @Test
+    public void theControllerStyleIsGoneAndOnlyAModernChoiceSkipsTheClassicCarryOver() {
+        Application app = RuntimeEnvironment.getApplication();
+        // The on-screen controller's own preferences and its carry-over flag (ModernController, ClassicLayoutMigration).
+        SharedPreferences controller = app.getSharedPreferences("osc_modern", android.content.Context.MODE_PRIVATE);
+        controller.edit().clear().commit();
+        // Classic was the default style: its players still get their classic layout carried over once.
+        prefs().edit().putString("list_osc_style", "classic").commit();
+        PreferenceConfiguration.readPreferences(app);
+        assertFalse(prefs().contains("list_osc_style"));
+        assertFalse(controller.contains("classic-migrated"));
+        // A player who had picked Modern keeps the layouts they have: nothing classic is carried over.
+        prefs().edit().putString("list_osc_style", "modern").commit();
+        PreferenceConfiguration.readPreferences(app);
+        assertFalse(prefs().contains("list_osc_style"));
+        assertTrue(controller.getBoolean("classic-migrated", false));
+        // A broken stored value is dropped too, and a second read changes nothing.
+        controller.edit().clear().commit();
+        prefs().edit().putInt("list_osc_style", 1).commit();
+        PreferenceConfiguration.readPreferences(app);
+        PreferenceConfiguration.readPreferences(app);
+        assertFalse(prefs().contains("list_osc_style"));
+        assertFalse(controller.contains("classic-migrated"));
     }
 
     @Test
@@ -436,7 +462,6 @@ public class SettingsKeysTest {
         reads.put("seekbar_mic_gain", new Read(100, 150, c -> c.micGainPercent));
         reads.put("checkbox_mic_button", new Read(true, false, c -> c.micButton));
         reads.put("checkbox_floating_menu_button", new Read(false, true, c -> c.floatingMenuButton));
-        reads.put("list_osc_style", new Read("classic", "modern", c -> c.oscStyle));
         reads.put("list_osc_stick_mode", new Read("floating", "fixed", c -> c.oscFloatingSticks ? "floating" : "fixed"));
         reads.put("seekbar_osc_stick_deadzone", new Read(8, 15, c -> c.oscStickDeadzone));
         reads.put("checkbox_enable_audiofx", new Read(false, true, c -> c.enableAudioFx));

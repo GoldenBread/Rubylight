@@ -2003,11 +2003,6 @@ public class StreamSettings extends NightjarActivity {
             setShown(PreferenceConfiguration.USB_FORWARDING_PREF_STRING, SettingRules.usbForwardingApplies(prefs));
             setShown(PreferenceConfiguration.CLIPBOARD_SYNC_PREF_STRING, SettingRules.clipboardSyncApplies(prefs));
             setShown(PreferenceConfiguration.FRAME_WARP_PREF_STRING, SettingRules.frameWarpApplies(prefs));
-            boolean modern = onScreen && SettingRules.modernControllerApplies(prefs);
-            setShown(PreferenceConfiguration.OSC_STICK_MODE_PREF_STRING, modern);
-            setShown(PreferenceConfiguration.OSC_STICK_DEADZONE_PREF_STRING, modern);
-            // Both controller styles offer the Steam Controller controls.
-            setShown(PreferenceConfiguration.OSC_STEAM_CONTROLS_PREF_STRING, onScreen);
             placeRows();
         }
 

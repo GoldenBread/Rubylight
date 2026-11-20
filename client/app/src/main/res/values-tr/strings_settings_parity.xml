@@ -41,7 +41,7 @@
     <string name="hint_trackpad_momentum_glide">İmlecin ne kadar uzağa süzüldüğü.</string>
     <string name="hint_pc_keyboard_size">Ekrandaki PC klavyesinin ekran yüksekliğinin ne kadarını kapladığı. Büyük değer tuşları büyütür; küçük değer yayının daha fazlasını görünür bırakır.</string>
     <string name="hint_pc_keyboard_opacity">Ekrandaki PC klavyesinin ne kadar saydam olduğu. Düşük değer arkasındaki yayını daha çok gösterir.</string>
-    <string name="hint_vibrate_osc">Sistemin dokunma geri bildirimi açıksa ekran kontrollerine basınca titrer (“Classic” kumandanın düğmeleri hariç); fiziksel bir kumanda üstlenmiyorsa oyunun titreşimi için de titrer.</string>
+    <string name="hint_vibrate_osc">Sistemin dokunma geri bildirimi açıksa ekran kontrollerine basınca titrer; fiziksel bir kumanda üstlenmiyorsa oyunun titreşimi için de titrer.</string>
     <string name="hint_show_guide_button">Ekran kontrollerine bir Guide düğmesi (Home veya PS) ekler.</string>
     <string name="hint_host_audio">Yayın sırasında ses bilgisayarın hoparlörlerinde de çalar.</string>
     <string name="hint_overlay_position">Performans katmanının bulunduğu köşe.</string>

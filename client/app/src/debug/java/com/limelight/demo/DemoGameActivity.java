@@ -24,7 +24,6 @@ import android.widget.TextView;
 
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.R;
-import com.limelight.binding.input.virtual_controller.VirtualController;
 import com.limelight.binding.video.PerfOverlayListener;
 import com.limelight.binding.video.PerformanceOverlay;
 import com.limelight.nvstream.http.ComputerDetails;
@@ -46,7 +45,7 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
     private final Handler handler = new Handler(Looper.getMainLooper());
     private StreamView stream;
     private TextView overlay, label;
-    private VirtualController controls;
+    private com.limelight.binding.input.pad.ModernController controls;
     private com.limelight.ui.GameTouchControls gameControls;
     private DemoSamplePlayer player;
     private String mode;
@@ -60,7 +59,6 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
     private java.util.concurrent.ScheduledExecutorService radeonThread;
     private DemoTouchpad touchpad;
     private PcKeyboardOverlay pcKeyboard;
-    private com.limelight.binding.input.pad.ModernController modern;
     private String fit;
     private int alignment;
     // The bundled samples are 1920x1080.
@@ -90,7 +88,9 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
         mode = PerformanceOverlay.normalizeMode(state == null ? getIntent().getStringExtra("state") : state.getString("mode"));
         corner = com.limelight.ui.OverlayPlacement.Corner.parse(
                 state == null ? getIntent().getStringExtra("position") : state.getString("position"));
-        showControls = state == null ? "touch".equals(getIntent().getStringExtra("state")) : state.getBoolean("controls");
+        // "--es state touch" or "--ez modern true" starts with the on-screen controls shown.
+        showControls = state == null ? "touch".equals(getIntent().getStringExtra("state")) ||
+                getIntent().getBooleanExtra("modern", false) : state.getBoolean("controls");
         positionUs = state == null ? 0 : state.getLong("positionUs");
         stream = findViewById(R.id.surfaceView);
         // "--es fit stretch", "fill" or "native" pick that video scaling, "--es fit safe" keeps the
@@ -155,7 +155,20 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
             container.addView(pcKeyboard, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
         }
-        controls = new VirtualController(null, container, this);
+        // The on-screen controller with the saved settings and layout; what it sends goes to logcat (tag
+        // NightjarDemoInput): gamepad reports and the WASD stick's virtual-key codes. "--ez edit true" opens its editor.
+        controls = new com.limelight.binding.input.pad.ModernController(this, container,
+                new com.limelight.binding.input.HeldInputState.Sink() {
+                    @Override public void key(int key, boolean down) {
+                        Log.i("NightjarDemoInput", "key " + Integer.toHexString(0x8000 | key) + (down ? " down" : " up"));
+                    }
+                    @Override public void mouse(int button, boolean down) { }
+                    @Override public void gamepad(int buttons, short leftX, short leftY, short rightX, short rightY,
+                                                  byte leftTrigger, byte rightTrigger) {
+                        Log.i("NightjarDemoInput", "gamepad " + Integer.toHexString(buttons) + " " + leftX + "," + leftY
+                                + " " + rightX + "," + rightY);
+                    }
+                }, com.limelight.preferences.PreferenceConfiguration.readPreferences(this), "demo");
         com.limelight.ui.OverlayPlacement.attach(findViewById(R.id.performanceOverlayScroll), container,
                 out -> controls.collectVisibleBounds(out), () -> corner, this::alignOverlay);
         // The per-game layout editor with a demo profile; what the controls send goes to the log.
@@ -178,30 +191,8 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
         container.addView(gameControls, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
         controls.refreshLayout();
-        controls.setOpacity(65);
         if (showControls) controls.show(); else controls.hide();
-        if (getIntent().getBooleanExtra("modern", false)) {
-            // The modern controller with the saved settings and layout; what it sends goes to logcat (tag
-            // NightjarDemoInput): gamepad reports and the WASD stick's virtual-key codes. "--ez edit true" opens its editor.
-            com.limelight.preferences.PreferenceConfiguration prefs =
-                    com.limelight.preferences.PreferenceConfiguration.readPreferences(this);
-            prefs.oscStyle = com.limelight.preferences.PreferenceConfiguration.OSC_STYLE_MODERN;
-            modern = new com.limelight.binding.input.pad.ModernController(this, container,
-                    new com.limelight.binding.input.HeldInputState.Sink() {
-                        @Override public void key(int key, boolean down) {
-                            Log.i("NightjarDemoInput", "key " + Integer.toHexString(0x8000 | key) + (down ? " down" : " up"));
-                        }
-                        @Override public void mouse(int button, boolean down) { }
-                        @Override public void gamepad(int buttons, short leftX, short leftY, short rightX, short rightY,
-                                                      byte leftTrigger, byte rightTrigger) {
-                            Log.i("NightjarDemoInput", "gamepad " + Integer.toHexString(buttons) + " " + leftX + "," + leftY
-                                    + " " + rightX + "," + rightY);
-                        }
-                    }, prefs, "demo");
-            modern.refreshLayout();
-            modern.show();
-            if (getIntent().getBooleanExtra("edit", false)) container.post(modern::startEditing);
-        }
+        if (getIntent().getBooleanExtra("edit", false)) container.post(controls::startEditing);
         label = new TextView(this);
         label.setText(R.string.demo_sample);
         label.setTextColor(0xffbcc8ce);
@@ -476,13 +467,13 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
     @Override protected void onPause() {
         super.onPause();
         gameControls.releaseInput();
-        if (modern != null) modern.releaseInput();
+        controls.releaseInput();
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (!hasFocus) gameControls.releaseInput();
-        if (!hasFocus && modern != null) modern.releaseInput();
+        if (!hasFocus) controls.releaseInput();
     }
 
     @Override protected void onStart() {
@@ -531,8 +522,7 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
     @Override protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
         if (radeonThread != null) radeonThread.shutdownNow();
-        controls.hide();
-        if (modern != null) modern.destroy();
+        controls.destroy();
         releasePlayer();
         super.onDestroy();
     }
@@ -585,7 +575,8 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
         super.onConfigurationChanged(configuration);
         androidx.core.view.ViewCompat.requestApplyInsets(findViewById(android.R.id.content));
         placeOverlay();
-        controls.refreshLayout();
+        // Portrait and landscape have their own layouts.
+        controls.onOrientationChanged();
         if (showControls && (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !isInPictureInPictureMode())) controls.show();
         else controls.hide();
     }

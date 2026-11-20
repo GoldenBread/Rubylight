@@ -1,10 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The modern on-screen controller and its layout editor. -->
 <resources>
-    <string name="title_list_osc_style">Controller style</string>
-    <string name="summary_list_osc_style">Modern has sticks that follow your thumb and face buttons you can press two at a time. Classic keeps the original layout; both send the same gamepad to the PC.</string>
-    <string name="osc_style_classic">Classic</string>
-    <string name="osc_style_modern">Modern</string>
     <string name="title_list_osc_stick_mode">Modern controller sticks</string>
     <string name="summary_list_osc_stick_mode">Floating centers a stick where your thumb lands, so you need not hit it exactly. Pick Fixed if you prefer to aim at the drawn stick.</string>
     <string name="osc_stick_floating">Floating</string>
@@ -68,8 +64,6 @@
     <string name="pad_right_trackpad">Right trackpad</string>
     <string name="pad_left_grip">Left grip</string>
     <string name="pad_right_grip">Right grip</string>
-    <string-array name="osc_style_names"><item>@string/osc_style_classic</item><item>@string/osc_style_modern</item></string-array>
-    <string-array name="osc_style_values" translatable="false"><item>classic</item><item>modern</item></string-array>
     <string-array name="osc_stick_mode_names"><item>@string/osc_stick_floating</item><item>@string/osc_stick_fixed</item></string-array>
     <string-array name="osc_stick_mode_values" translatable="false"><item>floating</item><item>fixed</item></string-array>
     <string-array name="pad_preset_names"><item>@string/pad_preset_default</item><item>@string/pad_preset_minimal</item><item>@string/pad_preset_full</item></string-array>

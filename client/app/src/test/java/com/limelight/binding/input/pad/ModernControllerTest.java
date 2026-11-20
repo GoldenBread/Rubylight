@@ -63,13 +63,12 @@ public class ModernControllerTest {
     public void setUp() {
         Context app = RuntimeEnvironment.getApplication();
         ModernController.clearLayouts(app);
-        app.getSharedPreferences(com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader.OSC_PREFERENCE,
+        app.getSharedPreferences(ClassicLayoutMigration.CLASSIC_PREFS,
                 Context.MODE_PRIVATE).edit().clear().commit();
         UiNavigationTest.Screen screen = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup().visible().get();
         frame = new FrameLayout(screen);
         screen.setContentView(frame, new FrameLayout.LayoutParams(1600, 720));
         prefs = new PreferenceConfiguration();
-        prefs.oscStyle = PreferenceConfiguration.OSC_STYLE_MODERN;
         prefs.oscOpacity = 90;
         // HOME follows the guide button setting; on here so every control is covered.
         prefs.showGuideButton = true;
@@ -986,7 +985,7 @@ public class ModernControllerTest {
     /** The first modern stream after a classic one keeps the classic controls' places. */
     @Test public void aClassicLayoutIsCarriedOverOnce() {
         RuntimeEnvironment.getApplication().getSharedPreferences(
-                        com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader.OSC_PREFERENCE,
+                        ClassicLayoutMigration.CLASSIC_PREFS,
                         Context.MODE_PRIVATE)
                 .edit().putString("13", "{\"LEFT\":1200,\"TOP\":400,\"WIDTH\":200,\"HEIGHT\":200}").commit();
         // A stream that never saw the modern controller: the one-time carry-over is still due.
@@ -1337,7 +1336,7 @@ public class ModernControllerTest {
     @Test @Config(qualifiers = "w360dp-h800dp-port-xhdpi")
     public void aClassicLayoutCarriedOverInPortraitUsesLandscapeDimensions() {
         RuntimeEnvironment.getApplication().getSharedPreferences(
-                        com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader.OSC_PREFERENCE,
+                        ClassicLayoutMigration.CLASSIC_PREFS,
                         Context.MODE_PRIVATE)
                 .edit().putString("13", "{\"LEFT\":1200,\"TOP\":400,\"WIDTH\":200,\"HEIGHT\":200}").commit();
         RuntimeEnvironment.getApplication().getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE)

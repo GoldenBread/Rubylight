@@ -5,9 +5,6 @@
     <string name="stream_controls_show">オンスクリーンコントロールを表示</string>
     <string name="stream_controls_hide">オンスクリーンコントロールを非表示</string>
     <string name="stream_controls_layout">コントローラのレイアウトを編集</string>
-    <string name="stream_controls_move_help">ドラッグしてコントロールを移動します。サイズ変更や保存はメニューから行います。</string>
-    <string name="stream_controls_resize_help">ドラッグしてコントロールのサイズを変更します。保存はメニューから行います。</string>
-    <string name="stream_controls_saved">コントローラのレイアウトを保存しました</string>
     <string name="stream_reconnect">ストリームに再接続</string>
     <string name="stream_reconnecting">実行中のアプリに再接続しています…</string>
     <string name="stream_native_touch_help">タッチで PC を直接操作します。\nキーボードはストリームメニューから開けます。</string>
@@ -19,10 +16,5 @@
         <item>ローカルカーソル</item>
         <item>タッチオフ</item>
         <item>トラックパッド（タッチパッド操作）</item>
-    </string-array>
-    <string-array name="stream_control_layout_actions">
-        <item>コントロールを移動</item>
-        <item>コントロールのサイズを変更</item>
-        <item>レイアウトを保存してプレイ</item>
     </string-array>
 </resources>
