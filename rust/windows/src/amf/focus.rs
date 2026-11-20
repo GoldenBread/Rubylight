@@ -218,9 +218,10 @@ struct Ask {
     keep: bool,
 }
 /// The encoder's kept ROI map surface and the grid it was allocated for.
-/// Refilled for each frame that carries a map, as AMD's SimpleROI sample
-/// refills one surface; a grid of another size replaces it, and the
-/// encoder releases the last surface when it ends.
+/// Refilled in place for a frame only while nothing else holds it (see
+/// [`MapKept::reusable`]); a grid of another size, or a surface a submitted
+/// frame still holds, is replaced by a fresh one, and the encoder releases
+/// the last surface when it ends.
 pub(crate) struct MapSurface(*mut AMFSurface, (u32, u32));
 impl Drop for MapSurface {
     fn drop(&mut self) {
@@ -230,6 +231,43 @@ impl Drop for MapSurface {
         unsafe {
             ((*(*self.0).pVtbl).Release.unwrap())(self.0);
         }
+    }
+}
+
+/// The ROI map surface kept across frames, with this session's count of
+/// frames that refilled it and frames that needed a fresh surface.
+#[derive(Default)]
+pub(crate) struct MapKept {
+    surface: Option<MapSurface>,
+    reused: u64,
+    fresh: u64,
+}
+/// Whether the kept surface may be refilled: `count` is what `Acquire`
+/// returned while we also hold our own reference, so exactly 2 means a
+/// submitted frame (whose `SetProperty` acquired its own reference, held
+/// until AMF is done with the frame) holds none. AMF's headers declare
+/// `amf_long Acquire()` without saying what it returns; the SDK's
+/// implementation returns the new count, so any other value, a count
+/// above 2 or an unexpected one, counts as shared and takes a fresh surface.
+fn map_is_exclusive(count: i64) -> bool {
+    count == 2
+}
+impl MapKept {
+    /// The kept surface when it is for this grid and no frame still holds it.
+    ///
+    /// # Safety
+    /// The kept surface, if any, is live (the AMF runtime is loaded).
+    unsafe fn reusable(&self, grid: (u32, u32)) -> Option<*mut AMFSurface> {
+        let kept = self.surface.as_ref().filter(|kept| kept.1 == grid)?;
+        // SAFETY: Live per this function's contract; the Acquire is released
+        // at once, so the count is ours again.
+        let count = unsafe {
+            let v = &*(*kept.0).pVtbl;
+            let count = (v.Acquire.unwrap())(kept.0);
+            (v.Release.unwrap())(kept.0);
+            count
+        };
+        map_is_exclusive(i64::from(count)).then_some(kept.0)
     }
 }
 
@@ -250,7 +288,7 @@ pub(crate) struct State {
     /// The probe's map, attached instead of the converter's.
     pub(crate) fixed: Option<Grid>,
     /// The ROI map's kept surface ([`attach`]).
-    pub(crate) map: Option<MapSurface>,
+    pub(crate) map: MapKept,
     /// The probe asks every frame for feedback.
     keep: bool,
     asked: VecDeque<Ask>,
@@ -300,10 +338,15 @@ impl State {
         self.failure = Some(error);
     }
     /// Release the kept ROI map surface, as the encoder ends with the AMF
-    /// runtime still loaded. Frames already submitted hold AMF's own
-    /// references to it.
+    /// runtime still loaded, and log how often it was refilled. Frames
+    /// already submitted hold AMF's own references to it.
     pub(crate) fn release_map(&mut self) {
-        self.map.take();
+        tracing::debug!(
+            reused = self.map.reused,
+            fresh = self.map.fresh,
+            "encoder focus map surface: refilled in place vs allocated fresh"
+        );
+        self.map.surface.take();
     }
 }
 
@@ -325,14 +368,16 @@ unsafe fn set(surface: *mut AMFSurface, name: &'static str, value: AMFVariantStr
 }
 /// Put `rows` on `surface` as the codec's ROI map, as AMD's SimpleROI does:
 /// a host GRAY32 surface of the grid, filled row by row at its pitch. The
-/// surface is kept in `kept` and refilled for each frame, so only a grid
-/// of another size allocates again.
+/// surface is kept in `kept` and refilled for the next frame only while no
+/// submitted frame holds it, because AMF may read it after SubmitInput;
+/// otherwise (and for a grid of another size) a fresh one replaces it, and
+/// the old one is freed by AMF when its last frame completes.
 ///
 /// # Safety
 /// `context` and `surface` are this encoder's, live, and not yet submitted.
 pub(crate) unsafe fn attach(
     context: *mut AMFContext,
-    kept: &mut Option<MapSurface>,
+    kept: &mut MapKept,
     surface: *mut AMFSurface,
     codec: u8,
     rows: &[u32],
@@ -344,9 +389,16 @@ pub(crate) unsafe fn attach(
         "encoder focus map of {} values is not {width}x{height}",
         rows.len()
     );
-    if kept.as_ref().is_none_or(|map| map.1 != (width, height)) {
+    // SAFETY: The kept surface, if any, is live: the runtime stays loaded
+    // until `Encoder::drop` has released it.
+    let reuse = unsafe { kept.reusable((width, height)) };
+    let map = if let Some(map) = reuse {
+        kept.reused += 1;
+        map
+    } else {
         // SAFETY: The live context allocates an owned host surface; the old
-        // one, if any, is released as this replaces it, and the last one in
+        // one, if any, is released as this replaces it (a frame that still
+        // holds it keeps AMF's own reference), and the last one in
         // `Encoder::drop`, both with the runtime loaded.
         unsafe {
             let mut map = ptr::null_mut();
@@ -360,14 +412,16 @@ pub(crate) unsafe fn attach(
             ))
             .context("AMF ROI map surface")?;
             anyhow::ensure!(!map.is_null(), "AMF returned no ROI map surface");
-            kept.replace(MapSurface(map, (width, height)));
+            kept.fresh += 1;
+            kept.surface.replace(MapSurface(map, (width, height)));
+            map
         }
-    }
-    let map = kept.as_ref().expect("just allocated").0;
-    // SAFETY: The kept surface is live host memory of the grid's size until
-    // the encoder ends; plane 0's native memory holds `height` rows of
-    // `pitch` bytes, checked to fit a row, and SetProperty acquires its own
-    // reference to the surface before returning.
+    };
+    // SAFETY: `map` is the kept surface, live host memory of the grid's size
+    // until the encoder ends and, as checked above, held by no submitted
+    // frame; plane 0's native memory holds `height` rows of `pitch` bytes,
+    // checked to fit a row, and SetProperty acquires its own reference to
+    // the surface before returning.
     unsafe {
         (|| -> Result<()> {
             let plane = ((*(*map).pVtbl).GetPlaneAt.unwrap())(map, 0);

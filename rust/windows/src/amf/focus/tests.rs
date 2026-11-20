@@ -143,6 +143,19 @@ fn the_map_grid_matches_the_coded_frame() -> Result<()> {
 }
 
 #[test]
+fn the_kept_map_is_refilled_only_while_no_submitted_frame_holds_it() {
+    // Our reference plus the probing Acquire: nothing else holds it.
+    assert!(map_is_exclusive(2));
+    // A submitted frame's SetProperty reference, or several.
+    assert!(!map_is_exclusive(3));
+    assert!(!map_is_exclusive(9));
+    // A count that cannot be ours, such as a runtime that returns no count.
+    assert!(!map_is_exclusive(0));
+    assert!(!map_is_exclusive(1));
+    assert!(!map_is_exclusive(-1));
+}
+
+#[test]
 fn codec_property_names() {
     assert_eq!(
         [roi_name(0), roi_name(1), roi_name(2)],
