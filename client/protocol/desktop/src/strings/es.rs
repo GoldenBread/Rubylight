@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Show debug settings", "Mostrar ajustes de depuración"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Muestra la sección Depuración, con interruptores para comparar ajustes o descartar una causa. Déjalo desactivado salvo que el soporte te lo pida o quieras comparar; un ajuste de Depuración que hayas cambiado se muestra igualmente."),
     ("Not used without {}", "No se usa sin {}"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "Mandos está desactivado en Ajustes, así que ningún mando llega al PC."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Mandos está desactivado en el perfil {}, así que ningún mando llega al PC."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "Mandos está desactivado para este PC, así que no le llega ningún mando."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "Mandos está desactivado para este juego, así que ningún mando llega al PC."),
 ];

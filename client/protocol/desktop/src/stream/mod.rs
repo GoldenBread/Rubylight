@@ -290,6 +290,8 @@ pub struct LaunchPlan {
     pub vrr: bool,
     pub gamepad_mask: u32,
     pub prepared_controllers: String,
+    /// The settings layer that made the "Controllers" choice, for the start's notice when it is Off.
+    pub controllers_from: crate::app::ControllersFrom,
     pub microphone_muted: bool,
     pub bitrate_limit_kbps: u32,
     /// The internet connection. The route to the host decides the link speed and wireless hints

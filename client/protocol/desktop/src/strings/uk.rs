@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Show debug settings", "Показувати налаштування налагодження"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Показує розділ «Налагодження» з перемикачами для порівняння налаштувань або виключення причини. Залиште вимкненим, якщо про це не просить підтримка і ви не хочете порівняти; змінене налаштування налагодження показується в будь-якому разі."),
     ("Not used without {}", "Не використовується без: {}"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "«Контролери» вимкнено в налаштуваннях, тому жоден контролер не потрапляє на ПК."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "«Контролери» вимкнено в профілі {}, тому жоден контролер не потрапляє на ПК."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "«Контролери» вимкнено для цього ПК, тому жоден контролер до нього не доходить."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "«Контролери» вимкнено для цієї гри, тому жоден контролер не потрапляє на ПК."),
 ];

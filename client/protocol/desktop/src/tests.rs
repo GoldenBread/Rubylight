@@ -580,3 +580,67 @@ fn a_failed_save_is_told_once_with_the_folder() {
     assert!(!first_save_failure(&mut told), "one notice a run");
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// Overrides holding `keys` from `settings`, as a settings page saves a row.
+fn layer(settings: &config::Settings, keys: &[&str]) -> config::Overrides {
+    let mut own = config::Overrides::default();
+    own.capture(settings, keys);
+    own
+}
+
+#[test]
+fn the_topmost_layer_holding_controllers_is_named() {
+    let off = config::Settings { controllers: false, ..Default::default() };
+    let on = config::Settings::default();
+    let both = &["controllers", "multi_controller"];
+    let profile = config::Profile { id: 1, name: "Travel".into(), settings: layer(&off, both) };
+    let pc = layer(&off, both);
+    let game = layer(&on, both);
+    let unrelated = layer(&on, &["fps"]);
+    assert_eq!(ControllersFrom::of_layers(true, None, None, None, false), ControllersFrom::Settings);
+    assert_eq!(ControllersFrom::of_layers(true, Some(&profile), Some(&unrelated), Some(&unrelated), false),
+        ControllersFrom::Profile("Travel".into()), "layers without the row are passed over");
+    assert_eq!(ControllersFrom::of_layers(true, Some(&profile), Some(&pc), None, false), ControllersFrom::Pc);
+    assert_eq!(ControllersFrom::of_layers(false, Some(&profile), Some(&pc), Some(&game), true), ControllersFrom::CommandLine,
+        "--multi-controller decides the players over every layer");
+    assert_eq!(ControllersFrom::of_layers(false, Some(&profile), Some(&pc), Some(&game), false), ControllersFrom::Game);
+    // A game that keeps only the player switch did not turn controllers off: the PC's Off did.
+    let players_only = layer(&on, &["multi_controller"]);
+    assert_eq!(ControllersFrom::of_layers(true, None, Some(&pc), Some(&players_only), true), ControllersFrom::Pc,
+        "the command line never makes Off");
+}
+
+#[test]
+fn a_launch_logs_the_controllers_choice_its_layer_and_the_connected_ones() {
+    let off = config::Settings { controllers: false, ..Default::default() };
+    assert_eq!(controllers_line(&off, &ControllersFrom::Pc, &["Xbox Controller"], 0),
+        "controllers: off from this PC's settings, 1 connected (Xbox Controller), gamepad mask 0x0");
+    assert_eq!(controllers_line(&config::Settings::default(), &ControllersFrom::Settings, &["A", "B"], 3),
+        "controllers: player_each from main settings, 2 connected (A, B), gamepad mask 0x3");
+    let one = config::Settings { multi_controller: false, ..Default::default() };
+    assert_eq!(controllers_line(&one, &ControllersFrom::Profile("Home".into()), &[], 1),
+        "controllers: one_player from profile \"Home\", 0 connected, gamepad mask 0x1");
+}
+
+#[test]
+fn controllers_off_with_one_connected_says_where_it_was_turned_off() {
+    let off = config::Settings { controllers: false, ..Default::default() };
+    assert_eq!(controllers_notice(&off, &ControllersFrom::Game, 1).as_deref(),
+        Some("Controllers is set to Off for this game, so no controller reaches the PC."));
+    assert_eq!(controllers_notice(&off, &ControllersFrom::Pc, 2).as_deref(),
+        Some("Controllers is set to Off for this PC, so no controller reaches it."));
+    assert_eq!(controllers_notice(&off, &ControllersFrom::Profile("Travel".into()), 1).as_deref(),
+        Some("Controllers is Off in the profile Travel, so no controller reaches the PC."));
+    assert_eq!(controllers_notice(&off, &ControllersFrom::Settings, 1).as_deref(),
+        Some("Controllers is Off in Settings, so no controller reaches the PC."));
+    assert_eq!(controllers_notice(&off, &ControllersFrom::Pc, 0), None, "no controller here, nothing to say");
+    assert_eq!(controllers_notice(&off, &ControllersFrom::StreamKind, 1), None,
+        "a microphone-only stream or a second screen sends none by design");
+    for on in [config::Settings::default(), config::Settings { multi_controller: false, ..Default::default() }] {
+        assert_eq!(controllers_notice(&on, &ControllersFrom::Game, 2), None, "every connected controller is sent");
+    }
+    crate::strings::tests::with_lang(crate::strings::Lang::De, || {
+        assert_eq!(controllers_notice(&off, &ControllersFrom::Profile("Reise".into()), 1).as_deref(),
+            Some("„Controller“ ist im Profil Reise auf Aus gestellt, daher erreicht kein Controller den PC."));
+    });
+}

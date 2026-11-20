@@ -39,6 +39,7 @@ pub(super) fn launch_plan() -> LaunchPlan {
         vrr: false,
         gamepad_mask: 0,
         prepared_controllers: String::new(),
+        controllers_from: Default::default(),
         microphone_muted: false,
         bitrate_limit_kbps: 0,
         network: Default::default(),

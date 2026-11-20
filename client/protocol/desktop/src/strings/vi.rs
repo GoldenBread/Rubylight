@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Show debug settings", "Hiện cài đặt gỡ lỗi"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Hiện mục Gỡ lỗi, với các công tắc để so sánh cài đặt hoặc loại trừ một nguyên nhân. Nên để tắt trừ khi bộ phận hỗ trợ yêu cầu hoặc bạn muốn so sánh; cài đặt Gỡ lỗi bạn đã đổi vẫn hiện trong mọi trường hợp."),
     ("Not used without {}", "Không dùng khi không có {}"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "Tay cầm điều khiển đang Tắt trong Cài đặt, nên không tay cầm nào đến được PC."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Tay cầm điều khiển đang Tắt trong hồ sơ {}, nên không tay cầm nào đến được PC."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "Tay cầm điều khiển được đặt Tắt cho PC này, nên không tay cầm nào đến được nó."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "Tay cầm điều khiển được đặt Tắt cho trò chơi này, nên không tay cầm nào đến được PC."),
 ];

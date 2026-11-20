@@ -46,4 +46,5 @@
     <string name="hint_host_audio">Yayın sırasında ses bilgisayarın hoparlörlerinde de çalar.</string>
     <string name="hint_overlay_position">Performans katmanının bulunduğu köşe.</string>
     <string name="summary_reset_all">Tüm ayarları varsayılanlarına döndürür; bilgisayarlar, oyunlar, profiller ve dil korunur.</string>
+    <string name="stream_controllers_off">Ayarlar’da Kumandalar Kapalı, bu yüzden PC’ye hiçbir kumanda ulaşmıyor.</string>
 </resources>

@@ -46,4 +46,5 @@
     <string name="hint_host_audio">Mantiene el sonido en los altavoces del PC durante la transmisión.</string>
     <string name="hint_overlay_position">La esquina en la que se muestra la superposición de rendimiento.</string>
     <string name="summary_reset_all">Devuelve todos los ajustes a su valor predeterminado; se conservan los PC, juegos, perfiles e idioma.</string>
+    <string name="stream_controllers_off">Mandos está desactivado en Ajustes, así que ningún mando llega al PC.</string>
 </resources>

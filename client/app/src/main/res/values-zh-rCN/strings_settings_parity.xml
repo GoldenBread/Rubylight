@@ -46,4 +46,5 @@
     <string name="hint_host_audio">串流时电脑的扬声器仍会发出声音。</string>
     <string name="hint_overlay_position">性能叠加层所在的角落。</string>
     <string name="summary_reset_all">将所有设置恢复为默认值；电脑、游戏、配置和语言会保留。</string>
+    <string name="stream_controllers_off">“手柄”在设置中已关闭，因此没有手柄能连到 PC。</string>
 </resources>

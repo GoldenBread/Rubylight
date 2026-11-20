@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Show debug settings", "Afficher les réglages de débogage"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Affiche la section Débogage, avec des interrupteurs pour comparer des réglages ou écarter une cause. Laissez-le désactivé sauf si l’assistance le demande ou si vous voulez comparer ; un réglage de Débogage modifié s’affiche dans tous les cas."),
     ("Not used without {}", "Non utilisé sans {}"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "Manettes est désactivé dans les Paramètres, donc aucune manette n’atteint le PC."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Manettes est désactivé dans le profil {}, donc aucune manette n’atteint le PC."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "Manettes est désactivé pour ce PC, donc aucune manette ne lui parvient."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "Manettes est désactivé pour ce jeu, donc aucune manette n’atteint le PC."),
 ];

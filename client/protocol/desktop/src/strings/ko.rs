@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Show debug settings", "디버그 설정 표시"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "설정을 비교하거나 원인을 배제할 때 쓰는 스위치가 있는 디버그 섹션을 표시합니다. 지원팀이 요청하거나 비교하려는 경우가 아니면 꺼 두세요. 변경한 디버그 설정은 어느 경우든 표시됩니다."),
     ("Not used without {}", "{}이(가) 켜져 있어야 사용됨"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "설정에서 '컨트롤러'가 사용 안함이므로 PC에 컨트롤러가 전달되지 않습니다."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "프로필 {}에서 '컨트롤러'가 사용 안함이므로 PC에 컨트롤러가 전달되지 않습니다."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "이 PC에 대해 '컨트롤러'가 사용 안함으로 설정되어 있어 컨트롤러가 전달되지 않습니다."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "이 게임에 대해 '컨트롤러'가 사용 안함으로 설정되어 있어 PC에 컨트롤러가 전달되지 않습니다."),
 ];

@@ -9,7 +9,7 @@ import android.content.SharedPreferences;
  * reads as One player. Off leaves the player switch as it was, so turning controllers back on returns to it.
  * Desktop Nightjar's row writes {@code controllers} and {@code multi_controller} the same way.
  */
-final class ControllersChoice {
+public final class ControllersChoice {
     static final int OFF = 0;
     static final int ONE_PLAYER = 1;
     static final int PLAYER_EACH = 2;
@@ -24,5 +24,20 @@ final class ControllersChoice {
     static void save(SharedPreferences.Editor editor, int choice) {
         editor.putBoolean(PreferenceConfiguration.SEND_CONTROLLERS_PREF_STRING, choice != OFF);
         if (choice != OFF) editor.putBoolean(PreferenceConfiguration.MULTI_CONTROLLER_PREF_STRING, choice == PLAYER_EACH);
+    }
+
+    /**
+     * Whether a stream's start says that the {@code connected} controllers on this device stay here
+     * (nightjar_policy::controllers::Controllers::leaves_connected_here). Only Off leaves one out: One
+     * player and A player each send every controller, also one connected after the launch counted them.
+     */
+    public static boolean leavesConnectedHere(boolean sendControllers, int connected) {
+        return !sendControllers && connected > 0;
+    }
+
+    /** The choice's name in logs, as desktop Nightjar's (Controllers::key). */
+    public static String key(boolean sendControllers, boolean multiController) {
+        if (!sendControllers) return "off";
+        return multiController ? "player_each" : "one_player";
     }
 }

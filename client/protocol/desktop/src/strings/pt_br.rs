@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer de recepção: o sistema concedeu 
     ("Show debug settings", "Mostrar configurações de depuração"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Mostra a seção Depuração, com chaves para comparar configurações ou descartar uma causa. Deixe desativado, a menos que o suporte peça ou você queira comparar; uma configuração de Depuração que você alterou aparece de qualquer forma."),
     ("Not used without {}", "Não usado sem {}"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "Controles está desativado nas Configurações, então nenhum controle chega ao PC."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Controles está desativado no perfil {}, então nenhum controle chega ao PC."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "Controles está desativado para este PC, então nenhum controle chega a ele."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "Controles está desativado para este jogo, então nenhum controle chega ao PC."),
 ];

@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Show debug settings", "Mostra le impostazioni di debug"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Mostra la sezione Debug, con interruttori per confrontare le impostazioni o escludere una causa. Lascialo disattivato a meno che l’assistenza non lo chieda o tu voglia confrontare; un’impostazione di Debug che hai cambiato si vede comunque."),
     ("Not used without {}", "Non usato senza {}"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "Controller è disattivato nelle Impostazioni, quindi nessun controller raggiunge il PC."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Controller è disattivato nel profilo {}, quindi nessun controller raggiunge il PC."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "Controller è disattivato per questo PC, quindi nessun controller lo raggiunge."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "Controller è disattivato per questo gioco, quindi nessun controller raggiunge il PC."),
 ];

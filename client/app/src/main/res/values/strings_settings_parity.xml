@@ -47,4 +47,6 @@
     <string name="hint_overlay_position">The corner the performance overlay sits in.</string>
     <string name="summary_reset_all">Puts every setting back to its default; PCs, games, profiles and language stay.</string>
     <string name="settings_category_pyrowave" translatable="false">PyroWave</string>
+    <!-- Said at a stream's start when controllers are connected but Controllers is Off. -->
+    <string name="stream_controllers_off">Controllers is Off in Settings, so no controller reaches the PC.</string>
 </resources>

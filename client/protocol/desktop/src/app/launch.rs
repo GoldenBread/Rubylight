@@ -77,7 +77,12 @@ impl App {
         plan.hardware = self.hardware(&plan.settings);
         plan.gpu_decoder = plan.gpu_decoder.and(self.gpu_device());
         plan.device = media::DeviceRef::of_device(self.renderer_device());
-        plan.gamepad_mask = self.pads.launch_mask(&plan.settings);
+        let mask = self.pads.launch_mask(&plan.settings);
+        if mask != plan.gamepad_mask {
+            let pads: Vec<&str> = self.pads.pads.iter().map(|pad| pad.name.as_str()).collect();
+            eprintln!("nightjar: {}", controllers_line(&plan.settings, &plan.controllers_from, &pads, mask));
+        }
+        plan.gamepad_mask = mask;
         plan.prepared_controllers = self.pads.launch_controllers(&plan.settings);
     }
 
@@ -365,7 +370,12 @@ impl App {
         let mut settings = host.record.settings(&self.launcher.profiles.settings(&self.launcher.settings, self.launcher.network.kind(&self.launcher.profiles.home_wifi)));
         if let Some(overrides) = host.record.app_settings(&app.uuid, app.id) { settings = overrides.apply(&settings); }
         // moonlight-qt's stream options from the command line, for this run's streams from its PC.
-        if let Some(cli) = self.cli.as_ref().filter(|cli| cli.host == host_id) { cli.launch.options.apply(&mut settings); }
+        let cli_options = self.cli.as_ref().filter(|cli| cli.host == host_id).map(|cli| &cli.launch.options);
+        if let Some(options) = cli_options { options.apply(&mut settings); }
+        let mut controllers_from = ControllersFrom::of_layers(!settings.controllers,
+            self.launcher.profiles.profile(self.launcher.network.kind(&self.launcher.profiles.home_wifi)),
+            host.record.settings.as_ref(), host.record.app_settings(&app.uuid, app.id),
+            cli_options.is_some_and(|options| options.multi_controller.is_some()));
         if settings.codec.is_pyrowave() { settings.experimental_packed_444 = false; }
         if mic_only || app.role(small) == nightjar_core::http::AppRole::InputOnly {
             input_only_settings(&mut settings);
@@ -379,6 +389,8 @@ impl App {
         if second_screen::this_process() {
             second_screen::stream_settings(&mut settings);
         }
+        // Both kinds leave the controllers to another stream or to none: nothing the player chose.
+        if mic_only || second_screen::this_process() { controllers_from = ControllersFrom::StreamKind; }
         // Before the renderer may be made again for this stream: a launch that cannot go out makes none.
         // The demo library has no identity: its launch goes as far as the checks.
         let identity = self.hosts.identity().cloned();
@@ -632,6 +644,7 @@ impl App {
             vrr,
             gamepad_mask: self.pads.launch_mask(&settings),
             prepared_controllers: self.pads.launch_controllers(&settings),
+            controllers_from,
             network: self.launcher.network.clone(),
             pace: host.record.pace.clone(),
             host_link_mbps: host.info.as_ref().map_or(0, |info| info.pyrowave_host_link_mbps),
@@ -645,6 +658,8 @@ impl App {
             resume_bitrate_kbps: None,
             resume_quality: None,
         };
+        let pads: Vec<&str> = self.pads.pads.iter().map(|pad| pad.name.as_str()).collect();
+        eprintln!("nightjar: {}", controllers_line(&plan.settings, &plan.controllers_from, &pads, plan.gamepad_mask));
         // A stream that just ended may still be stopping: this launch's first request waits for it.
         let stopping = self.take_stopping();
         self.attempts.begin(Connecting::start(plan, self.waker.clone(), stopping));
@@ -847,6 +862,87 @@ pub(crate) fn launch_line(from: LaunchFrom, app_id: i32, resume: bool, busy: boo
         if resume { ", resume" } else { "" },
         if busy { ", ignored: another stream is starting" } else { "" }
     )
+}
+
+/// The saved switches of "Controllers" ([`nightjar_policy::controllers`]).
+const CONTROLLERS_KEYS: &[&str] = &["controllers", "multi_controller"];
+
+/// Where a stream's "Controllers" choice was made: any settings layer can hold it, and the topmost
+/// one wins, so the log and the start's notice name it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ControllersFrom {
+    /// The main settings.
+    #[default]
+    Settings,
+    /// The profile this network uses, by name.
+    Profile(String),
+    /// This PC's own settings.
+    Pc,
+    /// This game's own settings.
+    Game,
+    /// moonlight-qt's `--multi-controller` option, for this run's streams from its PC.
+    CommandLine,
+    /// The kind of stream: a microphone-only session or a second screen sends no controller.
+    StreamKind,
+}
+
+impl ControllersFrom {
+    /// The topmost layer holding the choice: for Off, the one that turned controllers off; else
+    /// the one that holds either switch. The main settings when no layer above holds it.
+    pub(crate) fn of_layers(off: bool, profile: Option<&config::Profile>, pc: Option<&config::Overrides>, game: Option<&config::Overrides>, command_line: bool) -> Self {
+        let keys = if off { &CONTROLLERS_KEYS[..1] } else { CONTROLLERS_KEYS };
+        let holds = |layer: Option<&config::Overrides>| layer.is_some_and(|own| own.has(keys));
+        // The command line sets only the player switch, never Off.
+        if command_line && !off {
+            Self::CommandLine
+        } else if holds(game) {
+            Self::Game
+        } else if holds(pc) {
+            Self::Pc
+        } else if let Some(profile) = profile.filter(|p| p.settings.has(keys)) {
+            Self::Profile(profile.name.clone())
+        } else {
+            Self::Settings
+        }
+    }
+
+    fn log_name(&self) -> String {
+        match self {
+            Self::Settings => "main settings".to_owned(),
+            Self::Profile(name) => format!("profile \"{name}\""),
+            Self::Pc => "this PC's settings".to_owned(),
+            Self::Game => "this game's settings".to_owned(),
+            Self::CommandLine => "command line".to_owned(),
+            Self::StreamKind => "stream kind".to_owned(),
+        }
+    }
+
+    /// What the stream's start says when Controllers Off made here leaves a controller on this
+    /// device; None where the stream's kind turned controllers off, not the player.
+    fn off_notice(&self) -> Option<String> {
+        Some(match self {
+            Self::Settings | Self::CommandLine => tr("Controllers is Off in Settings, so no controller reaches the PC.").to_owned(),
+            Self::Profile(name) => trf("Controllers is Off in the profile {}, so no controller reaches the PC.", &[name]),
+            Self::Pc => tr("Controllers is set to Off for this PC, so no controller reaches it.").to_owned(),
+            Self::Game => tr("Controllers is set to Off for this game, so no controller reaches the PC.").to_owned(),
+            Self::StreamKind => return None,
+        })
+    }
+}
+
+/// The launch's `controllers:` log line: the choice, where it was made, the controllers connected
+/// now and the gamepad mask the launch tells the PC.
+pub(crate) fn controllers_line(settings: &config::Settings, from: &ControllersFrom, connected: &[&str], mask: u32) -> String {
+    let choice = nightjar_policy::controllers::Controllers::from_saved(settings.controllers, settings.multi_controller);
+    let names = if connected.is_empty() { String::new() } else { format!(" ({})", connected.join(", ")) };
+    format!("controllers: {} from {}, {} connected{names}, gamepad mask {mask:#x}", choice.key(), from.log_name(), connected.len())
+}
+
+/// The stream start's notice that the `connected` controllers stay on this device, as the
+/// "Controllers" choice made in `from` is Off.
+pub(crate) fn controllers_notice(settings: &config::Settings, from: &ControllersFrom, connected: usize) -> Option<String> {
+    let choice = nightjar_policy::controllers::Controllers::from_saved(settings.controllers, settings.multi_controller);
+    choice.leaves_connected_here(connected).then(|| from.off_notice()).flatten()
 }
 
 /// What a launch can do with a PC's app list as it is now.

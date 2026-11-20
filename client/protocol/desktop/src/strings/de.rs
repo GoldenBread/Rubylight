@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={2}"),
     ("Show debug settings", "Debug-Einstellungen anzeigen"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Zeigt den Bereich Debug mit Schaltern, um Einstellungen zu vergleichen oder eine Ursache auszuschließen. Lass es aus, außer der Support bittet darum oder du willst vergleichen; eine geänderte Debug-Einstellung wird so oder so angezeigt."),
     ("Not used without {}", "Ohne {} nicht verwendbar"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "„Controller“ ist in den Einstellungen auf Aus gestellt, daher erreicht kein Controller den PC."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "„Controller“ ist im Profil {} auf Aus gestellt, daher erreicht kein Controller den PC."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "„Controller“ ist für diesen PC auf Aus gestellt, daher erreicht ihn kein Controller."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "„Controller“ ist für dieses Spiel auf Aus gestellt, daher erreicht kein Controller den PC."),
 ];

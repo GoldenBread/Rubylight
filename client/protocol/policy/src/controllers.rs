@@ -47,6 +47,14 @@ impl Controllers {
         }
     }
 
+    /// Whether a stream's start tells the user that the `connected` controllers on this device stay
+    /// here. Only Off leaves one out: One player and A player each send every controller, also one
+    /// that connects after the launch counted them (it is announced when the stream starts or when
+    /// it connects), and a PC that takes fewer says so on its own.
+    pub fn leaves_connected_here(self, connected: usize) -> bool {
+        self == Self::Off && connected > 0
+    }
+
     /// The choice's name on the JSON wire and in logs.
     pub fn key(self) -> &'static str {
         match self {
@@ -93,5 +101,17 @@ mod tests {
         assert_eq!(Controllers::OnePlayer.sent_index(3), Some(0));
         assert_eq!(Controllers::PlayerEach.sent_index(3), Some(3));
         assert_eq!(Controllers::Off.sent_index(0), None);
+    }
+
+    #[test]
+    fn only_off_with_a_controller_connected_leaves_it_here() {
+        assert!(Controllers::Off.leaves_connected_here(1));
+        assert!(Controllers::Off.leaves_connected_here(3));
+        assert!(!Controllers::Off.leaves_connected_here(0), "nothing to leave out");
+        for choice in [Controllers::OnePlayer, Controllers::PlayerEach] {
+            for connected in [0, 1, 4] {
+                assert!(!choice.leaves_connected_here(connected), "{choice:?} sends every controller");
+            }
+        }
     }
 }

@@ -46,4 +46,5 @@
     <string name="hint_host_audio">Vẫn phát âm thanh trên loa của PC khi stream.</string>
     <string name="hint_overlay_position">Góc đặt lớp phủ hiệu năng.</string>
     <string name="summary_reset_all">Đưa mọi cài đặt về mặc định; PC, trò chơi, hồ sơ và ngôn ngữ được giữ nguyên.</string>
+    <string name="stream_controllers_off">Tay cầm điều khiển đang Tắt trong Cài đặt, nên không tay cầm nào đến được PC.</string>
 </resources>

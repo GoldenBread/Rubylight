@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Show debug settings", "デバッグ設定を表示"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "設定の比較や原因の切り分けに使うスイッチがある「デバッグ」セクションを表示します。サポートに頼まれたときや比較したいとき以外はオフのままにしてください。変更したデバッグ設定はどちらの場合も表示されます。"),
     ("Not used without {}", "{} がオンでないと使われません"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "設定で「コントローラ」がオフのため、コントローラーは PC に届きません。"),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "プロファイル{}で「コントローラ」がオフのため、コントローラーは PC に届きません。"),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "この PC では「コントローラ」がオフに設定されているため、コントローラーは届きません。"),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "このゲームでは「コントローラ」がオフに設定されているため、コントローラーは PC に届きません。"),
 ];

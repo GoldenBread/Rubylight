@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Show debug settings", "Pokaż ustawienia debugowania"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "Pokazuje sekcję Debugowanie z przełącznikami do porównywania ustawień lub wykluczania przyczyny. Zostaw wyłączone, chyba że prosi o to pomoc techniczna lub chcesz porównać; zmienione ustawienie z Debugowania i tak się pokazuje."),
     ("Not used without {}", "Nie używane bez: {}"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "Kontrolery są wyłączone w Ustawieniach, więc żaden kontroler nie trafia do PC."),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "Kontrolery są wyłączone w profilu {}, więc żaden kontroler nie trafia do PC."),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "Kontrolery są wyłączone dla tego PC, więc nie trafia do niego żaden kontroler."),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "Kontrolery są wyłączone dla tej gry, więc żaden kontroler nie trafia do PC."),
 ];

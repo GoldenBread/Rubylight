@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Show debug settings", "顯示偵錯設定"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "顯示「偵錯」區段，其中的開關用於比較設定或排除原因。除非支援人員要求或你想比較，否則請保持關閉；你變更過的偵錯設定無論如何都會顯示。"),
     ("Not used without {}", "未開啟 {} 時不使用"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "「控制器」在設定中已關閉，因此沒有控制器能連到 PC。"),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "「控制器」在設定檔 {} 中已關閉，因此沒有控制器能連到 PC。"),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "此 PC 的「控制器」設為關閉，因此沒有控制器能連到它。"),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "此遊戲的「控制器」設為關閉，因此沒有控制器能連到 PC。"),
 ];

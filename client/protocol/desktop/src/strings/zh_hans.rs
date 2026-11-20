@@ -1741,4 +1741,8 @@ sudo sysctl -w net.core.rmem_max={}", "接收缓冲区：系统只分配了所�
     ("Show debug settings", "显示调试设置"),
     ("Shows the Debug section, with switches for comparing settings or ruling out a cause. Leave it off unless support asks for it or you want to compare; a Debug setting you changed shows either way.", "显示“调试”部分，其中的开关用于比较设置或排除原因。除非支持人员要求或你想做比较，否则请保持关闭；你更改过的调试设置无论如何都会显示。"),
     ("Not used without {}", "未开启 {} 时不使用"),
+    ("Controllers is Off in Settings, so no controller reaches the PC.", "“手柄”在设置中已关闭，因此没有手柄能连到 PC。"),
+    ("Controllers is Off in the profile {}, so no controller reaches the PC.", "“手柄”在配置 {} 中已关闭，因此没有手柄能连到 PC。"),
+    ("Controllers is set to Off for this PC, so no controller reaches it.", "此 PC 的“手柄”设为关闭，因此没有手柄能连到它。"),
+    ("Controllers is set to Off for this game, so no controller reaches the PC.", "此游戏的“手柄”设为关闭，因此没有手柄能连到 PC。"),
 ];

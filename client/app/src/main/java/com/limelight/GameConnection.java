@@ -34,6 +34,7 @@ import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.pin.PinGate;
+import com.limelight.preferences.ControllersChoice;
 import com.limelight.preferences.GlPreferences;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.ui.LegacyKeyboardInsets;
@@ -465,6 +466,7 @@ final class GameConnection {
         int supportedVideoFormats = mediaStream ? game.decoderRenderer.getSupportedVideoFormats(willStreamHdr, game.streamSdr10) : MoonBridge.VIDEO_FORMAT_H264;
 
         int gamepadMask = ControllerHandler.getAttachedControllerMask(game);
+        int connectedControllers = Integer.bitCount(gamepadMask & 0xFFFF);
         if (!game.prefConfig.multiController) {
             // Always set gamepad 1 present for when multi-controller is
             // disabled for games that don't properly support detection
@@ -479,9 +481,17 @@ final class GameConnection {
             // If we're using OSC, always set at least gamepad 1.
             gamepadMask |= 1;
         }
-        if (DualScreen.isSecond(game.getIntent())) {
+        boolean secondScreen = DualScreen.isSecond(game.getIntent());
+        if (secondScreen) {
             // The controllers belong to the first screen's stream.
             gamepadMask = 0;
+        }
+        LimeLog.info("Controllers: " + ControllersChoice.key(game.prefConfig.sendControllers, game.prefConfig.multiController) +
+                " from main settings, " + connectedControllers + " connected, gamepad mask 0x" + Integer.toHexString(gamepadMask) +
+                (secondScreen ? " (second screen)" : ""));
+        if (!secondScreen && ControllersChoice.leavesConnectedHere(game.prefConfig.sendControllers, connectedControllers)) {
+            // Controllers connected while Controllers is Off: said, so the PC is not blamed for losing them.
+            game.messages.alert(R.string.stream_controllers_off, Toast.LENGTH_LONG);
         }
 
         // Set to the optimal mode for streaming
