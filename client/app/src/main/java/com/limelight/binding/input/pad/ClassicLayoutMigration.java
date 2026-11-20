@@ -180,10 +180,12 @@ public final class ClassicLayoutMigration {
      * size: each place holds the member that sends what the classic button there sent (B at the bottom, A on the
      * right, Y on the left, X at the top). A whole cluster is split where it stands; split members trade places.
      *
-     * @return false when the face buttons are hidden, so there is nothing to swap
+     * @return false when the face buttons are hidden or already in the Nintendo arrangement, so there is nothing to swap
      */
     static boolean swapFaceButtons(PadLayout layout, float width, float height, float density) {
         PadLayout.Control[] members = PadLayout.members(PadLayout.Control.FACE);
+        // Already in the Nintendo arrangement: nothing to swap.
+        if (layout.facesSwapped()) return false;
         if (layout.isSplit(PadLayout.Control.FACE)) {
             // SWAPPED trades A with B and X with Y, so each pair swaps its whole spec.
             for (int i = 0; i < members.length; i++) {
@@ -195,6 +197,7 @@ public final class ClassicLayoutMigration {
                 a.copyFrom(b);
                 b.copyFrom(held);
             }
+            layout.setFacesSwapped(true);
             return true;
         }
         if (layout.spec(PadLayout.Control.FACE).hidden) return false;
@@ -205,6 +208,7 @@ public final class ClassicLayoutMigration {
             float[] place = places[i];
             layout.setBounds(members[SWAPPED[i]], place[0], place[1], place[2], place[3], width, height, density);
         }
+        layout.setFacesSwapped(true);
         return true;
     }
 
@@ -280,6 +284,8 @@ public final class ClassicLayoutMigration {
                                     boolean swapFaces) {
         PadLayout layout = new PadLayout();
         if (boxes == null || width <= 0 || height <= 0) return layout;
+        // The layout knows its arrangement from the start, so a later Join, preset or Add keeps B at the bottom.
+        layout.setFacesSwapped(swapFaces);
         for (Map.Entry<Integer, float[]> entry : boxes.entrySet()) {
             PadLayout.Control control = control(entry.getKey());
             if (control != null && valid(entry.getValue())) {

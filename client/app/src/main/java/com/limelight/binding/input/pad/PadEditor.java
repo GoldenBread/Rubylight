@@ -505,6 +505,11 @@ final class PadEditor extends FrameLayout {
     /** Puts a control the layout leaves out back in, where it was, and picks it, so it can be placed at once. */
     void add(PadLayout.Control control) {
         if (!addable(control)) return;
+        if (control == PadLayout.Control.FACE) {
+            // Its members were hidden: it comes back in the arrangement they stood in.
+            draft.takeFaceArrangement();
+            painter.setFacesSwapped(draft.facesSwapped());
+        }
         draft.spec(control).hidden = false;
         select(control);
         changed();

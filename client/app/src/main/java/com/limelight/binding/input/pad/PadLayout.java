@@ -277,6 +277,8 @@ public final class PadLayout {
         // player's other choices and stay as they are, so the editor's buttons do not visibly revert.
         Glyph keptGlyph = glyph;
         PointerMode keptPointerMode = pointerMode;
+        // Presets show the face cluster whole: in the arrangement its split members stand in, if they tell.
+        if (isSplit(Control.FACE)) takeFaceArrangement();
         boolean keptFacesSwapped = facesSwapped;
         Spec[] keptSteam = new Spec[specs.length];
         for (Control control : Control.values()) {
@@ -472,27 +474,26 @@ public final class PadLayout {
 
     /**
      * Joins a split cluster again where its members stand on this {@code width} x {@code height} surface, and they
-     * hide. Members still where {@link #split} put them give the cluster back as it was; moved, or never split from it
-     * (a layout carried over), the cluster covers the box they span, centred on it and kept on the surface. The face
-     * cluster keeps the arrangement they stood in, the standard one or the Nintendo one ({@link #facesSwapped}); with
-     * too few of them to tell, it keeps the one it had.
+     * hide. Members still where {@link #split} put them give the cluster back as it was. Moved, or never split from
+     * it (a layout carried over), the cluster gets the place and size from which {@link #split} would lay them out
+     * as they stand ({@link #clusterFor}), so a Join and a Split keep their size however often they follow each
+     * other; one member alone is enough. The face cluster keeps the arrangement they stood in, the standard one or the
+     * Nintendo one ({@link #facesSwapped}); where the members shown cannot tell, it keeps the one it had.
      */
     public void join(Control cluster, float width, float height, float density) {
         Control[] members = members(cluster);
-        float left = Float.MAX_VALUE, top = Float.MAX_VALUE, right = -Float.MAX_VALUE, bottom = -Float.MAX_VALUE;
         float[][] boxes = new float[members.length][];
+        boolean any = false;
         for (int i = 0; i < members.length; i++) {
             if (!shown(members[i])) continue;
-            float[] box = boxes[i] = bounds(members[i], width, height, density, new float[4]);
-            left = Math.min(left, box[0]);
-            top = Math.min(top, box[1]);
-            right = Math.max(right, box[0] + box[2]);
-            bottom = Math.max(bottom, box[1] + box[3]);
+            boxes[i] = bounds(members[i], width, height, density, new float[4]);
+            any = true;
         }
-        if (right > left && width > 0 && height > 0) {
-            if (cluster == Control.FACE) facesSwapped = swappedArrangement(boxes, left, top, right - left, bottom - top);
+        if (any && width > 0 && height > 0) {
+            if (cluster == Control.FACE) facesSwapped = arrangement(centers(boxes), facesSwapped);
             if (!whereSplitPutThem(cluster, boxes, width, height, density)) {
-                setBounds(cluster, left, top, right - left, bottom - top, width, height, density);
+                float[] box = clusterFor(cluster, boxes, bounds(cluster, width, height, density, new float[4]), density);
+                setBounds(cluster, box[0], box[1], box[2], box[3], width, height, density);
             }
         }
         for (Control member : members) spec(member).hidden = true;
@@ -500,18 +501,175 @@ public final class PadLayout {
     }
 
     /**
-     * Whether face members in {@code boxes} (null where hidden) stand nearer the Nintendo arrangement than the standard
-     * one in the box they span; {@link #facesSwapped} as it is when they cannot tell.
+     * Takes the face cluster's arrangement from where its members stand, while it is split or before it shows again
+     * with all four hidden: from the members shown, or with none shown, from every placed one. A preset and Add then
+     * show the cluster as the members stood, not in an arrangement only Join set. Unchanged where they cannot tell.
      */
-    private boolean swappedArrangement(float[][] boxes, float left, float top, float width, float height) {
+    public void takeFaceArrangement() {
+        Control[] members = members(Control.FACE);
+        boolean anyShown = false;
+        for (Control member : members) anyShown |= shown(member);
+        float[][] centers = new float[members.length][];
+        for (int i = 0; i < members.length; i++) {
+            Spec spec = spec(members[i]);
+            if (spec.placed() && (!anyShown || shown(members[i]))) centers[i] = new float[] {spec.cx, spec.cy};
+        }
+        facesSwapped = arrangement(centers, facesSwapped);
+    }
+
+    private static float[][] centers(float[][] boxes) {
+        float[][] centers = new float[boxes.length][];
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null) centers[i] = new float[] {boxes[i][0] + boxes[i][2] / 2, boxes[i][1] + boxes[i][3] / 2};
+        }
+        return centers;
+    }
+
+    /** How much nearer one arrangement must fit than the other to decide, in squared fractions of the span. */
+    private static final float ARRANGEMENT_MARGIN = .01f;
+
+    /**
+     * Whether face members centred at {@code centers} (null where left out) stand in the Nintendo arrangement rather
+     * than the standard one, judged in the box they span; {@code current} where they cannot tell. A and X alone, or B
+     * and Y alone, stand alike in both, as does one member alone.
+     */
+    static boolean arrangement(float[][] centers, boolean current) {
+        int count = 0;
+        boolean ax = true, by = true;
+        float left = Float.MAX_VALUE, top = Float.MAX_VALUE, right = -Float.MAX_VALUE, bottom = -Float.MAX_VALUE;
+        for (int i = 0; i < centers.length; i++) {
+            if (centers[i] == null) continue;
+            count++;
+            ax &= i == 0 || i == 2;
+            by &= i == 1 || i == 3;
+            left = Math.min(left, centers[i][0]);
+            right = Math.max(right, centers[i][0]);
+            top = Math.min(top, centers[i][1]);
+            bottom = Math.max(bottom, centers[i][1]);
+        }
+        if (count < 2 || ax || by) return current;
+        // The centres span the buttons' places, from .22 to .78 of a cluster where they spread both ways.
+        float spanX = Math.max(right - left, 1e-6f), spanY = Math.max(bottom - top, 1e-6f);
         float standard = 0, swapped = 0;
+        for (int i = 0; i < centers.length; i++) {
+            if (centers[i] == null) continue;
+            float x = (centers[i][0] - left) / spanX, y = (centers[i][1] - top) / spanY;
+            standard += distance(x, y, spanned(PadInput.FACE_CENTERS[i]));
+            swapped += distance(x, y, spanned(PadInput.FACE_CENTERS[PadInput.FACE_SWAPPED[i]]));
+        }
+        if (Math.abs(standard - swapped) < ARRANGEMENT_MARGIN) return current;
+        return swapped < standard;
+    }
+
+    /** A face button's place in the box the four centres span: 0 to 1 where {@link PadInput#FACE_CENTERS} has .22 to .78. */
+    private static float[] spanned(float[] center) {
+        return new float[] {(center[0] - .22f) / .56f, (center[1] - .22f) / .56f};
+    }
+
+    /**
+     * The cluster box ({left, top, width, height}) from which {@link #split} lays out members as they stand in
+     * {@code boxes} (null where hidden), inverting {@link #memberBox}: the members' size gives the cluster's shorter
+     * side, a pair spread further apart than their size requires gives that side, and its centre is where the members'
+     * offsets from it put it. Where a side is not told by the members, it is the shorter side. Members at a full
+     * touch, the least they get, tell only that the cluster was no larger: the cluster's own shorter side ({@code now})
+     * stays where it fits that.
+     */
+    private float[] clusterFor(Control cluster, float[][] boxes, float[] now, float density) {
+        float touch = MIN_TOUCH_DP * density;
+        int[] order = order(cluster);
+        float w, h;
+        if (cluster == Control.FACE) {
+            // A member's button is 2 * FACE_RADIUS of the shorter side, at least a full touch.
+            float size = 0;
+            int count = 0;
+            float[][] places = new float[boxes.length][];
+            for (int i = 0; i < boxes.length; i++) {
+                if (boxes[i] == null) continue;
+                size += (boxes[i][2] + boxes[i][3]) / 2;
+                count++;
+                places[order[i]] = boxes[i];
+            }
+            size = Math.max(size / count, touch);
+            float shorter = size / (2 * PadInput.FACE_RADIUS), least = size + 2;
+            float nowShorter = Math.min(now[2], now[3]);
+            if (size <= touch + .5f && 2 * PadInput.FACE_RADIUS * nowShorter <= touch + .5f) shorter = nowShorter;
+            // Right and left from the middle by .28 of the width, or by the least that keeps them apart.
+            float spreadX = places[1] != null && places[2] != null ? (centerX(places[1]) - centerX(places[2])) / 2 : 0;
+            float spreadY = places[0] != null && places[3] != null ? (centerY(places[0]) - centerY(places[3])) / 2 : 0;
+            float reach = PadInput.FACE_CENTERS[1][0] - .5f;
+            // A pair no further apart than their size requires tells only that its side was at most least / reach:
+            // the cluster's own side stays where it fits that, as a Split from it gives the same members.
+            w = spreadX > least + .5f ? spreadX / reach : fitting(now[2], shorter, least / reach);
+            h = spreadY > least + .5f ? spreadY / reach : fitting(now[3], shorter, least / reach);
+            // The shorter side sets the buttons' size; a cluster spread both ways keeps the size and the wider spread.
+            if (Math.min(w, h) > shorter) {
+                if (w / shorter < h / shorter) w = shorter;
+                else h = shorter;
+            }
+        } else {
+            // An arm is DPAD_ARM of the shorter side thick (at least a touch) and reaches (side - arm) / 2 + corner.
+            float thick = 0, alongV = 0, alongH = 0;
+            int countT = 0;
+            for (int i = 0; i < boxes.length; i++) {
+                if (boxes[i] == null) continue;
+                boolean vertical = i < 2;
+                thick += vertical ? boxes[i][2] : boxes[i][3];
+                countT++;
+                if (vertical) alongV = Math.max(alongV, boxes[i][3]);
+                else alongH = Math.max(alongH, boxes[i][2]);
+            }
+            thick /= countT;
+            // The shorter reach belongs to the shorter side.
+            float along = alongV > 0 && alongH > 0 ? Math.min(alongV, alongH) : Math.max(alongV, alongH);
+            // Square, the arm reaches (1 - DPAD_ARM) / 2 + DPAD_CORNER of the side.
+            float reachSquare = (1 - PadInput.DPAD_ARM) / 2 + PadInput.DPAD_CORNER;
+            float shorter;
+            if (thick > touch + .5f) {
+                shorter = thick / PadInput.DPAD_ARM;
+            } else if (along > touch + .5f) {
+                shorter = along / reachSquare;
+            } else {
+                // Arms at a full touch both ways: the cluster's own size where it gives them that, else the least.
+                float nowShorter = Math.min(now[2], now[3]);
+                shorter = nowShorter * reachSquare <= touch + .5f ? nowShorter : touch / reachSquare;
+            }
+            float arm = PadInput.DPAD_ARM * shorter, corner = PadInput.DPAD_CORNER * shorter;
+            h = alongV > touch + .5f ? 2 * (alongV - corner) + arm : shorter;
+            w = alongH > touch + .5f ? 2 * (alongH - corner) + arm : shorter;
+            if (Math.min(w, h) > shorter * 1.001f) {
+                if (w < h) w = shorter;
+                else h = shorter;
+            }
+        }
+        // The middle: each member shown, less its offset from the middle of a cluster this size.
+        float x = 0, y = 0;
+        int count = 0;
+        float[] relative = new float[4];
+        Control[] members = members(cluster);
         for (int i = 0; i < boxes.length; i++) {
             if (boxes[i] == null) continue;
-            float x = (boxes[i][0] + boxes[i][2] / 2 - left) / width, y = (boxes[i][1] + boxes[i][3] / 2 - top) / height;
-            standard += distance(x, y, PadInput.FACE_CENTERS[i]);
-            swapped += distance(x, y, PadInput.FACE_CENTERS[PadInput.FACE_SWAPPED[i]]);
+            // The member at place order[i] sits where memberBox puts that place's member.
+            memberBox(members[order[i]], 0, 0, w, h, density, relative);
+            x += centerX(boxes[i]) - (relative[0] + relative[2] / 2 - w / 2);
+            y += centerY(boxes[i]) - (relative[1] + relative[3] / 2 - h / 2);
+            count++;
         }
-        return standard == swapped ? facesSwapped : swapped < standard;
+        x /= count;
+        y /= count;
+        return new float[] {x - w / 2, y - h / 2, w, h};
+    }
+
+    /** {@code side} where it lies from {@code least} to {@code most}, else {@code least}. */
+    private static float fitting(float side, float least, float most) {
+        return side >= least - .5f && side <= most + .5f ? side : least;
+    }
+
+    private static float centerX(float[] box) {
+        return box[0] + box[2] / 2;
+    }
+
+    private static float centerY(float[] box) {
+        return box[1] + box[3] / 2;
     }
 
     /** Whether the shown members' {@code boxes} are where splitting the cluster as it stands puts them. */

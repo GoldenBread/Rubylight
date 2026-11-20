@@ -653,6 +653,32 @@ public class ClassicLayoutMigrationTest {
         assertFalse(ClassicLayoutMigration.classicDiamond(row));
     }
 
+    @Test public void everyNintendoSwappedLayoutSavesItsArrangement() {
+        assertTrue(ClassicLayoutMigration.migrate(classicDefault(), WIDTH, HEIGHT, DENSITY, true).facesSwapped());
+        assertFalse(ClassicLayoutMigration.migrate(classicDefault(), WIDTH, HEIGHT, DENSITY, false).facesSwapped());
+        assertTrue(ClassicLayoutMigration.swappedDefaults(WIDTH, HEIGHT, DENSITY).serialize().contains("|faces=swapped"));
+        // Classic boxes without face buttons leave the cluster whole: in the Nintendo arrangement, B at the bottom.
+        Map<Integer, float[]> noFaces = new HashMap<>();
+        noFaces.put(12, new float[] {60, 40, 260, 260});
+        PadLayout whole = ClassicLayoutMigration.migrate(noFaces, WIDTH, HEIGHT, DENSITY, true);
+        assertTrue(whole.shown(PadLayout.Control.FACE));
+        assertTrue(whole.facesSwapped());
+        // A layout for one game, whole or split, swapped by the carry-over; once is enough.
+        PadLayout game = PadLayout.parse("v1|FACE,0.6000,0.5000,1.000,100,0");
+        assertTrue(ClassicLayoutMigration.swapFaceButtons(game, WIDTH, HEIGHT, DENSITY));
+        assertTrue(game.facesSwapped());
+        assertFalse("already swapped", ClassicLayoutMigration.swapFaceButtons(game, WIDTH, HEIGHT, DENSITY));
+        PadLayout split = new PadLayout();
+        split.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
+        assertTrue(ClassicLayoutMigration.swapFaceButtons(split, WIDTH, HEIGHT, DENSITY));
+        assertTrue(split.facesSwapped());
+        // Joined, a preset applied, the bottom still sends B.
+        split.applyPreset(PadLayout.Preset.DEFAULT);
+        float[] face = box(split, PadLayout.Control.FACE);
+        assertEquals(ControllerPacket.B_FLAG, PadInput.face(face[2] / 2, face[3] * .78f, face[2], face[3],
+                split.facesSwapped()));
+    }
+
     @Test public void withTheNintendoLayoutEachPlaceKeepsTheButtonItSent() {
         // Classic sent B from the bottom button, A from the right one, Y from the left and X from the top.
         PadLayout layout = ClassicLayoutMigration.migrate(classicDefault(), WIDTH, HEIGHT, DENSITY, true);
@@ -785,17 +811,20 @@ public class ClassicLayoutMigrationTest {
         assertNull(ClassicLayoutMigration.control(999));
     }
 
-    /** The device report: Join and Split in the editor on a carried-over Nintendo layout keep its place and buttons. */
-    @Test public void joinAndSplitKeepACarriedOverNintendoLayoutsPlaceAndButtons() {
-        // The Retroid's layout after the upgrade: the classic buttons, Nintendo-swapped, where the player had them,
-        // and the face cluster never placed.
-        String device = "v1|LEFT_STICK,0.3953,0.2927,0.868,100,0|RIGHT_STICK,0.8740,0.7629,1.072,100,0|"
+    /** The Retroid's layout after the upgrade: Nintendo-swapped classic buttons, the cluster never placed. */
+    private static final String DEVICE = "v1|LEFT_STICK,0.3953,0.2927,0.868,100,0|RIGHT_STICK,0.8740,0.7629,1.072,100,0|"
                 + "DPAD,0.1404,0.7771,1.403,100,0|FACE,-,-,1.000,100,1|LB,0.2219,0.4927,1.051,100,0,0.670,1.051|"
                 + "RB,0.7771,0.4927,1.051,100,0,0.670,1.051|LT,0.0516,0.4927,1.051,100,0,0.670,1.051|"
                 + "RT,0.9479,0.4927,1.051,100,0,0.670,1.051|SELECT,0.2964,0.9371,1.523,100,0,1.523,0.887|"
                 + "START,0.5734,0.7420,1.523,100,0,1.523,0.887|HOME,0.4583,0.9371,1.523,100,0,1.523,0.887|"
                 + "A,0.9479,0.2215,0.921,100,0|B,0.8740,0.3600,0.921,100,0|X,0.8740,0.0829,0.921,100,0|"
                 + "Y,0.7995,0.2215,0.921,100,0";
+
+    /** The device report: Join and Split in the editor on a carried-over Nintendo layout keep its place and buttons. */
+    @Test public void joinAndSplitKeepACarriedOverNintendoLayoutsPlaceAndButtons() {
+        // The Retroid's layout after the upgrade: the classic buttons, Nintendo-swapped, where the player had them,
+        // and the face cluster never placed.
+        String device = DEVICE;
         store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true).putBoolean(ClassicLayoutMigration.STYLE_RETIRED, true)
                 .putString(PadLayoutKeys.key(true, null), device).putString(PadLayoutKeys.key(false, null), device).commit();
         PreferenceConfiguration prefs = new PreferenceConfiguration();
@@ -820,9 +849,19 @@ public class ClassicLayoutMigrationTest {
         controller.finishEditing(true);
         layout(frame);
         PadControlView face = controller.view(PadLayout.Control.FACE);
-        assertEquals("where the members were", (left + right) / 2, face.getLeft() + face.getWidth() / 2f, 2);
-        assertEquals((top + bottom) / 2, face.getTop() + face.getHeight() / 2f, 2);
-        assertEquals(right - left, face.getWidth(), 2);
+        // Each place of the joined cluster stands where the member sending that button stood: B at the bottom, A on
+        // the right, Y on the left, X at the top. The cluster draws its buttons a little closer together than Split
+        // spreads them, and one at the edge is kept on the screen, so within a third of a button.
+        PadLayout.Control[] atPlace = {PadLayout.Control.B, PadLayout.Control.A, PadLayout.Control.Y,
+                PadLayout.Control.X};
+        float[][] places = {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, {.5f, .22f}};
+        for (int p = 0; p < places.length; p++) {
+            float[] member = box(carried, atPlace[p]);
+            float x = face.getLeft() + places[p][0] * face.getWidth(), y = face.getTop() + places[p][1] * face.getHeight();
+            assertEquals(atPlace[p] + " x", member[0] + member[2] / 2, x, member[2] / 3);
+            assertEquals(atPlace[p] + " y", member[1] + member[3] / 2, y, member[3] / 3);
+        }
+        assertTrue("on the screen", face.getLeft() >= 0 && face.getRight() <= WIDTH && face.getTop() >= 0);
         face.down(0, face.getWidth() / 2f, face.getHeight() * .78f, 100);
         assertEquals("the bottom still sends B", ControllerPacket.B_FLAG, (int) buttons.get(buttons.size() - 1));
         face.up(0, 200);
@@ -842,6 +881,30 @@ public class ClassicLayoutMigrationTest {
         b.down(0, b.getWidth() / 2f, b.getHeight() / 2f, 500);
         assertEquals(ControllerPacket.B_FLAG, (int) buttons.get(buttons.size() - 1));
         b.up(0, 600);
+        controller.destroy();
+    }
+
+    /** All four members hidden, the face cluster added back: in the arrangement they stood in, B at the bottom. */
+    @Test public void theFaceClusterAddedBackAfterItsMembersKeepsTheirButtons() {
+        store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true).putBoolean(ClassicLayoutMigration.STYLE_RETIRED, true)
+                .putString(PadLayoutKeys.key(true, null), DEVICE).putString(PadLayoutKeys.key(false, null), DEVICE).commit();
+        FrameLayout frame = frame();
+        ModernController controller = controller(frame, new PreferenceConfiguration());
+        assertFalse("carried over before the arrangement was saved", controller.layout().facesSwapped());
+        controller.startEditing();
+        PadEditor editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        for (PadLayout.Control member : MEMBERS) {
+            editor.select(member);
+            editor.toggleHidden();
+        }
+        editor.add(PadLayout.Control.FACE);
+        assertTrue(editor.draft().facesSwapped());
+        controller.finishEditing(true);
+        layout(frame);
+        PadControlView face = controller.view(PadLayout.Control.FACE);
+        face.down(0, face.getWidth() / 2f, face.getHeight() * .78f, 100);
+        assertEquals(ControllerPacket.B_FLAG, (int) buttons.get(buttons.size() - 1));
+        face.up(0, 200);
         controller.destroy();
     }
 }

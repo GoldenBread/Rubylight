@@ -1,5 +1,6 @@
 package com.limelight.binding.input.pad;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -36,6 +37,23 @@ public class PadPainterTest {
             before = level;
         }
         assertTrue("Most of the way back by half the time", PadPainter.easeBack(PadPainter.RELEASE_MS / 2) < .5f);
+    }
+
+    @Test public void aSwappedClusterLightsAndDrawsEachButtonAtItsPlace() {
+        PadPainter.State state = new PadPainter.State();
+        // The Nintendo arrangement: B at the bottom (place 0), A on the right (1), Y on the left (2), X at the top (3).
+        state.flags = ControllerPacket.B_FLAG;
+        assertEquals("B lights the bottom", 1, PadPainter.heldParts(PadLayout.Control.FACE, state, true));
+        assertEquals("standard, B lights the right", 2, PadPainter.heldParts(PadLayout.Control.FACE, state, false));
+        state.flags = ControllerPacket.A_FLAG | ControllerPacket.X_FLAG;
+        assertEquals("A right, X top", 2 | 8, PadPainter.heldParts(PadLayout.Control.FACE, state, true));
+        PadPainter painter = new PadPainter(RuntimeEnvironment.getApplication());
+        painter.setFacesSwapped(true);
+        int[] drawn = new int[4];
+        for (int place = 0; place < 4; place++) drawn[place] = painter.faceButtonAt(place);
+        assertArrayEquals("B, A, Y, X glyphs from the bottom", new int[] {1, 0, 3, 2}, drawn);
+        painter.setFacesSwapped(false);
+        for (int place = 0; place < 4; place++) assertEquals(place, painter.faceButtonAt(place));
     }
 
     @Test public void aPressLightsTheControlsOwnParts() {

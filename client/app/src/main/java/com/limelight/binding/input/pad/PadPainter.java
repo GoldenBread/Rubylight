@@ -226,6 +226,11 @@ final class PadPainter {
         return facesSwapped;
     }
 
+    /** The face button drawn at {@code place} of the cluster, in {@link PadInput#FACE_CENTERS} order. */
+    int faceButtonAt(int place) {
+        return PadInput.faceOrder(facesSwapped)[place];
+    }
+
     /** The parts {@code state} holds now, as bits in {@link State#press} order, with the standard face buttons. */
     static int heldParts(PadLayout.Control control, State state) {
         return heldParts(control, state, false);
@@ -842,12 +847,11 @@ final class PadPainter {
         float size = Math.min(width, height), r = size * PadInput.FACE_RADIUS;
         // The buttons leave a sliver of the box free around them; their shadows stay inside it.
         float reach = Math.max(0, Math.min(SHADOW_REACH_DP * density, size * FACE_SLACK - SHADOW_DROP_DP * density));
-        int[] order = PadInput.faceOrder(facesSwapped);
         for (int i = 0; i < PadInput.FACE_CENTERS.length; i++) {
             float cx = left + PadInput.FACE_CENTERS[i][0] * width, cy = top + PadInput.FACE_CENTERS[i][1] * height;
             float level = state.press[i];
             disc(canvas, cx, cy, r, r, level, reach);
-            faceGlyph(canvas, order[i], cx, cy, r - PRESS_IN_DP * density * level, level);
+            faceGlyph(canvas, faceButtonAt(i), cx, cy, r - PRESS_IN_DP * density * level, level);
         }
     }
 

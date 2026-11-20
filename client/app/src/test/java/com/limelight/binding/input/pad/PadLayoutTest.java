@@ -1,6 +1,10 @@
 package com.limelight.binding.input.pad;
 
 import org.junit.Test;
+
+import java.util.Map;
+
+import java.util.HashMap;
 import com.limelight.nvstream.input.ControllerPacket;
 
 import static org.junit.Assert.*;
@@ -765,41 +769,144 @@ public class PadLayoutTest {
         return new float[] {left, top, right - left, bottom - top};
     }
 
+    /** Moves the shown members of {@code cluster} together by {@code dx}, {@code dy} pixels. */
+    private static void moveMembers(PadLayout layout, PadLayout.Control cluster, float dx, float dy, float width,
+                                    float height) {
+        for (PadLayout.Control member : PadLayout.members(cluster)) {
+            if (!layout.shown(member)) continue;
+            float[] box = layout.bounds(member, width, height, DENSITY, new float[4]);
+            layout.moveTo(member, box[0] + box[2] / 2 + dx, box[1] + box[3] / 2 + dy, width, height, DENSITY);
+        }
+    }
+
+    /** A layout with only {@code cluster} shown, so a Split meets no neighbour to move its members off. */
+    private static PadLayout alone(PadLayout.Control cluster) {
+        PadLayout layout = new PadLayout();
+        for (PadLayout.Control control : PadLayout.Control.values()) {
+            if (control != cluster && control.cluster() != cluster) layout.spec(control).hidden = true;
+        }
+        return layout;
+    }
+
     @Test public void joinPutsTheClusterWhereItsMembersStand() {
         float width = 2400, height = 1080;
         for (PadLayout.Control cluster : new PadLayout.Control[] {PadLayout.Control.FACE, PadLayout.Control.DPAD}) {
-            PadLayout layout = new PadLayout();
+            PadLayout layout = alone(cluster);
             float[] home = layout.bounds(cluster, width, height, DENSITY, new float[4]);
             layout.split(cluster, width, height, DENSITY);
-            // The player drags the four, together, to the middle of the screen.
-            for (PadLayout.Control member : PadLayout.members(cluster)) {
-                float[] box = layout.bounds(member, width, height, DENSITY, new float[4]);
-                layout.moveTo(member, box[0] + box[2] / 2 - home[0] - home[2] / 2 + width / 2,
-                        box[1] + box[3] / 2 - home[1] - home[3] / 2 + height / 2, width, height, DENSITY);
-            }
+            float[] member = layout.bounds(PadLayout.members(cluster)[0], width, height, DENSITY, new float[4]);
+            // The player drags the four, together, towards the middle of the screen.
+            float dx = width / 2 - home[0] - home[2] / 2, dy = height / 2 - home[1] - home[3] / 2;
+            moveMembers(layout, cluster, dx, dy, width, height);
             float[] members = span(layout, cluster, width, height);
             layout.join(cluster, width, height, DENSITY);
             float[] joined = layout.bounds(cluster, width, height, DENSITY, new float[4]);
-            assertEquals(cluster + ": centred on them", members[0] + members[2] / 2, joined[0] + joined[2] / 2, 1);
+            // The cluster from which Split lays them out as they stand: its own size, in the middle of the four.
+            assertEquals(cluster + ": where they are", members[0] + members[2] / 2, joined[0] + joined[2] / 2, 1);
             assertEquals(cluster.name(), members[1] + members[3] / 2, joined[1] + joined[3] / 2, 1);
-            assertEquals(cluster + ": covering them", members[2], joined[2], 1);
-            assertEquals(cluster.name(), members[3], joined[3], 1);
             assertTrue(cluster + ": not back home", Math.abs(joined[0] - home[0]) > 100);
+            assertEquals(cluster + ": its size", home[2], joined[2], home[2] * .01f);
+            assertEquals(cluster.name(), home[3], joined[3], home[3] * .01f);
 
-            // Split lays them out around the cluster's own place and size; joined again unmoved, it is as it was.
+            // Split lays them out around it as they stood; joined again unmoved, it is exactly as it was.
             layout.split(cluster, width, height, DENSITY);
-            float[] again = span(layout, cluster, width, height);
-            assertEquals(cluster + ": split around it", joined[0] + joined[2] / 2, again[0] + again[2] / 2, 1);
-            assertEquals(cluster.name(), joined[1] + joined[3] / 2, again[1] + again[3] / 2, 1);
             float[] split = layout.bounds(PadLayout.members(cluster)[0], width, height, DENSITY, new float[4]);
+            assertEquals(cluster + ": the member where it stood", member[0] + dx, split[0], 1);
+            assertEquals(cluster.name(), member[1] + dy, split[1], 1);
+            assertEquals(cluster.name(), member[2], split[2], .5f);
             layout.join(cluster, width, height, DENSITY);
             assertArrayEquals(cluster + ": round trip", joined, layout.bounds(cluster, width, height, DENSITY,
                     new float[4]), .01f);
-            layout.split(cluster, width, height, DENSITY);
-            assertArrayEquals(cluster + ": and again", split, layout.bounds(PadLayout.members(cluster)[0], width,
-                    height, DENSITY, new float[4]), .01f);
         }
     }
+
+    @Test public void moveJoinSplitCyclesKeepTheSize() {
+        float width = 2400, height = 1080;
+        for (PadLayout.Control cluster : new PadLayout.Control[] {PadLayout.Control.FACE, PadLayout.Control.DPAD}) {
+            PadLayout layout = new PadLayout();
+            float[] start = layout.bounds(cluster, width, height, DENSITY, new float[4]);
+            layout.split(cluster, width, height, DENSITY);
+            float[] memberStart = layout.bounds(PadLayout.members(cluster)[0], width, height, DENSITY, new float[4]);
+            float[][] moves = {{-300, 0}, {0, -120}, {250, 80}, {-40, 60}, {180, -90}, {-90, 30}};
+            for (int cycle = 0; cycle < moves.length; cycle++) {
+                moveMembers(layout, cluster, moves[cycle][0], moves[cycle][1], width, height);
+                layout.join(cluster, width, height, DENSITY);
+                float[] joined = layout.bounds(cluster, width, height, DENSITY, new float[4]);
+                assertEquals(cluster + " cycle " + cycle, start[2], joined[2], start[2] * .01f);
+                assertEquals(cluster + " cycle " + cycle, start[3], joined[3], start[3] * .01f);
+                layout.split(cluster, width, height, DENSITY);
+                float[] member = layout.bounds(PadLayout.members(cluster)[0], width, height, DENSITY, new float[4]);
+                assertEquals(cluster + " member, cycle " + cycle, memberStart[2], member[2], memberStart[2] * .01f);
+                assertEquals(cluster + " member, cycle " + cycle, memberStart[3], member[3], memberStart[3] * .01f);
+            }
+        }
+    }
+
+    @Test public void oneMemberLeftJoinsAClusterOfFullSizeAroundIt() {
+        float width = 2400, height = 1080;
+        for (PadLayout.Control cluster : new PadLayout.Control[] {PadLayout.Control.FACE, PadLayout.Control.DPAD}) {
+            PadLayout layout = alone(cluster);
+            float[] home = layout.bounds(cluster, width, height, DENSITY, new float[4]);
+            layout.split(cluster, width, height, DENSITY);
+            PadLayout.Control[] members = PadLayout.members(cluster);
+            for (int i = 1; i < members.length; i++) layout.spec(members[i]).hidden = true;
+            // Moved to the middle, where splitting it again meets no neighbour.
+            float dx = width / 2 - home[0] - home[2] / 2, dy = height / 2 - home[1] - home[3] / 2;
+            moveMembers(layout, cluster, dx, dy, width, height);
+            float[] kept = layout.bounds(members[0], width, height, DENSITY, new float[4]);
+            layout.join(cluster, width, height, DENSITY);
+            float[] joined = layout.bounds(cluster, width, height, DENSITY, new float[4]);
+            // Not a cluster the size of one button: the size the members came from, where they put its middle.
+            assertEquals(cluster + ": its size", home[2], joined[2], home[2] * .01f);
+            assertEquals(cluster.name(), home[3], joined[3], home[3] * .01f);
+            layout.split(cluster, width, height, DENSITY);
+            float[] back = layout.bounds(members[0], width, height, DENSITY, new float[4]);
+            assertEquals(cluster + ": the member where it stood", kept[0], back[0], 1);
+            assertEquals(cluster.name(), kept[1], back[1], 1);
+        }
+    }
+
+    @Test public void membersThatStandAlikeInBothArrangementsKeepTheOneTheClusterHad() {
+        float[][] ax = {{.5f, .78f}, null, {.22f, .5f}, null};
+        float[][] by = {null, {.78f, .5f}, null, {.5f, .22f}};
+        float[][] one = {{.5f, .78f}, null, null, null};
+        for (boolean current : new boolean[] {false, true}) {
+            assertEquals(current, PadLayout.arrangement(ax, current));
+            assertEquals(current, PadLayout.arrangement(by, current));
+            assertEquals(current, PadLayout.arrangement(one, current));
+            // All four in the middle tell nothing either.
+            float[][] heap = {{.5f, .5f}, {.5f, .5f}, {.5f, .5f}, {.5f, .5f}};
+            assertEquals(current, PadLayout.arrangement(heap, current));
+        }
+        // Three are enough: A, B and X standard, or B, A and Y swapped.
+        assertFalse(PadLayout.arrangement(new float[][] {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, null}, true));
+        assertTrue(PadLayout.arrangement(new float[][] {{.78f, .5f}, {.5f, .78f}, null, {.22f, .5f}}, false));
+    }
+
+    @Test public void aPresetOrAddShowsTheClusterInTheArrangementItsMembersStoodIn() {
+        float width = 2400, height = 1080;
+        for (PadLayout.Preset preset : PadLayout.Preset.values()) {
+            // Swapped members carried over before the arrangement was saved: no token.
+            PadLayout layout = PadLayout.parse(ClassicLayoutMigration.swappedDefaults(width, height, DENSITY)
+                    .serialize().replace("|faces=swapped", ""));
+            assertFalse(layout.facesSwapped());
+            layout.applyPreset(preset);
+            assertTrue(preset + ": B at the bottom", layout.facesSwapped());
+        }
+        // All four hidden, the cluster shown again: from where they were.
+        PadLayout layout = PadLayout.parse(ClassicLayoutMigration.swappedDefaults(width, height, DENSITY)
+                .serialize().replace("|faces=swapped", ""));
+        for (PadLayout.Control member : MEMBERS_OF_FACE) layout.spec(member).hidden = true;
+        layout.takeFaceArrangement();
+        assertTrue(layout.facesSwapped());
+        // Standard members leave a standard cluster standard.
+        PadLayout standard = new PadLayout();
+        standard.split(PadLayout.Control.FACE, width, height, DENSITY);
+        standard.applyPreset(PadLayout.Preset.FULL);
+        assertFalse(standard.facesSwapped());
+    }
+
+    private static final PadLayout.Control[] MEMBERS_OF_FACE = PadLayout.members(PadLayout.Control.FACE);
 
     @Test public void aClusterJoinedFromSwappedMembersKeepsTheirButtons() {
         float width = 2400, height = 1080;
@@ -851,13 +958,50 @@ public class PadLayoutTest {
         // Saved before it existed: the standard arrangement.
         assertFalse(PadLayout.parse("v1|FACE,0.7083,0.5556,1.300,100,0").facesSwapped());
         assertFalse(PadLayout.parse("v1|FACE,-,-,2.500,100,0,2.500,1.200").facesSwapped());
-        // Its token has no comma, so a build that does not know it skips it as an entry of too few fields (6.0 and
-        // later read an entry only with six), and loads the rest.
-        PadLayout swapped = PadLayout.parse("v1|faces=swapped|FACE,0.7083,0.5556,1.300,100,0|later=1");
+        String text = "v1|faces=swapped|FACE,0.7083,0.5556,1.300,100,0|LT,-,-,0.700,80,0";
+        PadLayout swapped = PadLayout.parse(text);
         assertTrue(swapped.facesSwapped());
         assertEquals(.7083f, swapped.spec(PadLayout.Control.FACE).cx, .0001f);
-        assertTrue("faces=swapped".split(",", -1).length < 6);
         assertEquals("v1|faces=swapped", swappedOnly().serialize());
+
+        // The first build with this format (40569fe2e) reads it, skipping the token and loading every entry.
+        Map<String, float[]> old = parseAsTheFirstBuild(text);
+        assertEquals(2, old.size());
+        assertArrayEquals(new float[] {.7083f, .5556f, 1.3f, 100, 0}, old.get("FACE"), .0001f);
+        assertArrayEquals(new float[] {Float.NaN, Float.NaN, .7f, 80, 0}, old.get("LT"), .0001f);
+        // The same build reads the whole layout this build saves with the arrangement.
+        PadLayout saved = PadLayout.parse("v1|FACE,0.7000,0.5000,1.200,100,0");
+        saved.setFacesSwapped(true);
+        Map<String, float[]> read = parseAsTheFirstBuild(saved.serialize());
+        assertTrue(saved.serialize(), read.containsKey("FACE"));
+        assertFalse(read.containsKey("faces=swapped"));
+    }
+
+    /**
+     * The parse loop of the build that introduced this format (40569fe2e, PadLayout.parse), copied as it was:
+     * each entry as {cx, cy, scale, opacity, hidden} under its control's name.
+     */
+    private static Map<String, float[]> parseAsTheFirstBuild(String text) {
+        Map<String, float[]> layout = new HashMap<>();
+        String[] parts = text.split("\\|");
+        if (parts.length == 0 || !"v1".equals(parts[0])) return layout;
+        for (int i = 1; i < parts.length; i++) {
+            String[] fields = parts[i].split(",", -1);
+            if (fields.length < 6) continue;
+            if (PadLayout.Control.named(fields[0]) == null) continue;
+            try {
+                float cx = Float.NaN, cy = Float.NaN;
+                if (!"-".equals(fields[1]) && !"-".equals(fields[2])) {
+                    cx = Float.parseFloat(fields[1]);
+                    cy = Float.parseFloat(fields[2]);
+                }
+                layout.put(fields[0], new float[] {cx, cy, Float.parseFloat(fields[3]), Integer.parseInt(fields[4]),
+                        "1".equals(fields[5]) ? 1 : 0});
+            } catch (NumberFormatException ignored) {
+                // Skip this entry and keep the rest.
+            }
+        }
+        return layout;
     }
 
     private static PadLayout swappedOnly() {
