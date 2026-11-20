@@ -23,6 +23,8 @@ use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 
 /// How long a conversion may take before the stream gives up on it.
 const QUERY_DEADLINE: Duration = Duration::from_millis(100);
+/// The pause between conversion polls after the first retry.
+const POLL_PAUSE: Duration = Duration::from_millis(1);
 /// How often the conversion tally is logged.
 const REPORT_EVERY: Duration = Duration::from_secs(10);
 
@@ -400,6 +402,10 @@ impl Vpe {
             }))
             .context("AMF video converter SubmitInput")?;
             let deadline = Instant::now() + QUERY_DEADLINE;
+            // The first retry costs a yield, which a conversion often
+            // finishes within; the rest pause between polls, so the wait
+            // stays bounded however long the conversion takes.
+            let mut paused = false;
             let data = loop {
                 let mut data = ptr::null_mut();
                 let result =
@@ -416,7 +422,12 @@ impl Vpe {
                 if Instant::now() >= deadline {
                     bail!("AMF video converter returned no picture within 100 ms");
                 }
-                std::thread::yield_now();
+                if paused {
+                    std::thread::sleep(POLL_PAUSE);
+                } else {
+                    std::thread::yield_now();
+                    paused = true;
+                }
             };
             let mut queried = ptr::null_mut();
             let result = ((*(*data).pVtbl).QueryInterface.unwrap())(
