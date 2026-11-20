@@ -1,29 +1,30 @@
 name: Release candidate
 
-# Every green main run of android.yml becomes a release candidate: a prerelease vX.Y.Z-rc.N with
-# the commits since the previous release as its text. X.Y.Z is versionName, or the patch after it
-# once that is released. The RC's tag points at a commit outside main that only sets versionName
-# to the RC's version, so the apps report it and release.yml's version checks hold. release.yml
-# builds, signs and publishes it like any release. When commits land close together only the
-# newest one's RC is built: an older run steps aside and a newer one cancels older RC builds.
-# RCs stay until the next full release, which removes them. In-app updates never offer a
-# prerelease. Full releases stay manual.
+# Rubylight's main CI mirrors client/ here once Nightjar's checks passed there and sends the
+# repository_dispatch event rc with the RC's version and this repo's commit
+# (.github/workflows/nightjar-mirror.yml in RamazanKara/Rubylight). Rubylight and Nightjar share
+# their version, so a commit's RC has the same version vX.Y.Z-rc.N in both: X.Y.Z is versionName,
+# or the patch after it once that is released, and N counts the commits since the latest full
+# release (.github/scripts/rc.mjs plan). The RC's text lists the commits since the previous
+# release; without app changes (docs, notes, .github only) there is no RC. Its tag points at a
+# commit outside main that only sets versionName to the RC's version, so the apps report it and
+# release.yml's version checks hold. release.yml builds, signs and publishes it like any release.
+# When commits land close together only the newest one's RC is built: an older event steps aside
+# and a newer one cancels older RC builds. RCs stay until the next full release, which removes
+# them. In-app updates never offer a prerelease. Full releases stay manual.
 
 on:
-  workflow_run:
-    workflows: [Android debug]
-    types: [completed]
-    branches: [main]
+  repository_dispatch:
+    types: [rc]
 
 permissions: {}
 
 concurrency:
   group: nightjar-rc
-  cancel-in-progress: false # never between the tag and its draft; older runs step aside below
+  cancel-in-progress: false # never between the tag and its draft; older events step aside below
 
 jobs:
   rc:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -32,42 +33,45 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       GH_TOKEN: ${{ github.token }}
-      SHA: ${{ github.event.workflow_run.head_sha }}
+      SHA: ${{ github.event.client_payload.sha }}
+      VERSION: ${{ github.event.client_payload.version }}
     steps:
-      # A newer push to main has its own run, which builds the RC instead.
+      # A newer mirror push sends its own event, which builds the RC instead.
       - id: newest
         run: |
-          newest=$(gh run list -R "$GITHUB_REPOSITORY" --workflow android.yml --branch main --event push --limit 1 --json headSha --jq '.[0].headSha')
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ && "$VERSION" =~ ^[0-9]+[.][0-9]+[.][0-9]+-rc[.][0-9]+$ ]] || { echo "::error::bad event: $SHA $VERSION"; exit 1; }
+          newest=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           if [ "$newest" != "$SHA" ]; then
-            echo "::notice::main moved on to $newest; its run builds the RC"
+            echo "::notice::main moved on to $newest; its event builds the RC"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > /dev/null 2>&1; then
+            echo "::notice::v$VERSION exists already"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.newest.outputs.skip != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.client_payload.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - id: plan
-        if: steps.newest.outputs.skip != 'true'
-        run: node .github/scripts/rc.mjs plan "$(sed -n 's/^ *versionName "\(.*\)"$/\1/p' app/build.gradle | head -n 1)"
       - name: Release text
+        id: notes
         if: steps.newest.outputs.skip != 'true'
         env:
-          TAG: ${{ steps.plan.outputs.tag }}
+          TAG: v${{ github.event.client_payload.version }}
+          RC_PATHSPEC: . :!*.md :!docs :!fastlane :!store-assets :!.github :!LICENSE.txt
           RC_INTRO: >-
             Release candidate: a build of main for testing, not a full release. In-app updates
             don't offer it; install it by hand. The APK carries the release signature, so it
             installs over Nightjar.
         run: node .github/scripts/rc.mjs notes "$TAG" "$SHA" "$RUNNER_TEMP/notes.md"
       - id: commit
-        if: steps.newest.outputs.skip != 'true'
-        run: node .github/scripts/rc.mjs version-commit "$SHA" "${{ steps.plan.outputs.version }}"
+        if: steps.newest.outputs.skip != 'true' && steps.notes.outputs.commits != '0'
+        run: node .github/scripts/rc.mjs version-commit "$SHA" "$VERSION"
       - name: Tag, draft the release and start release.yml
-        if: steps.newest.outputs.skip != 'true'
+        if: steps.newest.outputs.skip != 'true' && steps.notes.outputs.commits != '0'
         env:
-          TAG: ${{ steps.plan.outputs.tag }}
-          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: v${{ github.event.client_payload.version }}
           COMMIT: ${{ steps.commit.outputs.commit }}
         run: |
           # Older RC builds still running are superseded by this one; prune drops their drafts.

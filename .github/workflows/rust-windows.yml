@@ -595,7 +595,7 @@ jobs:
         run: |
           built=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           echo "built=$built" >> "$GITHUB_OUTPUT"
-          node .github/scripts/rc.mjs plan "$built"
+          node .github/scripts/rc.mjs plan "$built" "$GITHUB_SHA"
       # The commits in what the host is built from (this workflow's paths filter);
       # without any, there is no RC.
       - id: notes
@@ -609,7 +609,7 @@ jobs:
             updates don't offer it; install it with the setup by hand.
         run: node .github/scripts/rc.mjs notes "$TAG" "$GITHUB_SHA" body.md
       - name: Publish the release candidate
-        if: steps.newest.outputs.skip != 'true' && steps.notes.outputs.commits != '0'
+        if: steps.newest.outputs.skip != 'true' && steps.plan.outputs.exists != 'true' && steps.notes.outputs.commits != '0'
         env:
           TAG: ${{ steps.plan.outputs.tag }}
           VERSION: ${{ steps.plan.outputs.version }}

@@ -1,6 +1,7 @@
 # Publishes client/ to the nightjar repo, fast-forward only. The work is done
 # by mirror_nightjar.py, an incremental `git subtree split` that starts from
 # nightjar main (seconds instead of the 10+ minutes the full split takes).
+# CI runs it after Nightjar's main checks pass (.github/workflows/nightjar-mirror.yml).
 #   tools\mirror-nightjar.ps1 -DryRun    # split, check, `git push --dry-run`
 #   tools\mirror-nightjar.ps1            # the real push
 param(

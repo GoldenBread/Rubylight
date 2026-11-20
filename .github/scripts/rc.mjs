@@ -2,8 +2,11 @@
 // Release candidates: every green main CI run publishes one as a GitHub prerelease. Full releases
 // stay manual. Shared by Rubylight and Nightjar (client/.github/scripts/rc.mjs is the same file).
 //
-//   plan <version>                  picks the next RC: vX.Y.Z-rc.N, where X.Y.Z is <version>, or the
-//                                   patch after it once v<version> is released. Writes version, tag.
+//   plan <version> <sha>            picks the RC of <sha>: vX.Y.Z-rc.N, where X.Y.Z is <version>, or the
+//                                   first patch after it without a release tag, and N counts the commits
+//                                   from the latest full release to <sha>. Rubylight and Nightjar share
+//                                   their version, so one commit gets the same RC version in both.
+//                                   Writes version, tag and exists (true when the repo has that tag).
 //   notes <tag> <sha> <out>         writes the release text: the commits since the previous release,
 //                                   RC or full (RC_PATHSPEC limits them to a part of the tree).
 //   version-commit <sha> <version>  Nightjar: commits app/build.gradle with versionName <version> on
@@ -12,7 +15,7 @@
 //   prune                           deletes the RCs older than the latest full release, with their
 //                                   tags, and failed RC drafts. Never touches a full release.
 //
-// Env: GITHUB_TOKEN, GITHUB_REPOSITORY, RC_INTRO (text above the commit list), RC_PATHSPEC
+// Env: GITHUB_TOKEN, GITHUB_REPOSITORY (or RC_REPO for another repo), RC_INTRO (text above the commit list), RC_PATHSPEC
 // (optional, space-separated git pathspecs), RC_DRY_RUN=true (prune only lists what it would delete).
 
 import fs from "node:fs";
@@ -21,7 +24,7 @@ import { execFileSync } from "node:child_process";
 const env = process.env;
 const API = env.GITHUB_API_URL || "https://api.github.com";
 const SERVER = env.GITHUB_SERVER_URL || "https://github.com";
-const REPO = env.GITHUB_REPOSITORY;
+const REPO = env.RC_REPO || env.GITHUB_REPOSITORY;
 const RC_TAG = /^v(\d+)\.(\d+)\.(\d+)-rc\.(\d+)$/;
 const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 const COMMITS_MAX = 150;
@@ -75,21 +78,6 @@ const isRc = (release) => RC_TAG.test(release.tag_name) && (release.prerelease |
 const isFull = (release) => !release.draft && !release.prerelease && key(release.tag_name)?.[3] === 1;
 const newest = (list) => [...list].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 
-async function plan(version) {
-  const match = String(version).trim().match(VERSION);
-  if (!match) throw new Error(`not an X.Y.Z version: ${version}`);
-  // The first patch from <version> on that is not released yet.
-  let patch = +match[3];
-  const released = async (base) =>
-    (await gh(`/repos/${REPO}/git/ref/tags/v${base}`, { allow: [404] })) || (await gh(`/repos/${REPO}/git/ref/tags/${base}`, { allow: [404] }));
-  while (await released(`${match[1]}.${match[2]}.${patch}`)) patch++;
-  const base = `${match[1]}.${match[2]}.${patch}`;
-  const refs = (await gh(`/repos/${REPO}/git/matching-refs/tags/v${base}-rc.`)) || [];
-  const last = Math.max(0, ...refs.map((ref) => Number(ref.ref.match(/-rc\.(\d+)$/)?.[1] || 0)));
-  output("version", `${base}-rc.${last + 1}`);
-  output("tag", `v${base}-rc.${last + 1}`);
-}
-
 function git(...args) {
   return execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim();
 }
@@ -101,6 +89,27 @@ function hasCommit(ref) {
   } catch {
     return false;
   }
+}
+
+async function plan(version, sha) {
+  const match = String(version).trim().match(VERSION);
+  if (!match) throw new Error(`not an X.Y.Z version: ${version}`);
+  if (!sha) throw new Error("plan needs the commit");
+  // The first patch from <version> on without a release tag (the checkout's tags).
+  let patch = +match[3];
+  while (hasCommit(`refs/tags/v${match[1]}.${match[2]}.${patch}`)) patch++;
+  const base = `${match[1]}.${match[2]}.${patch}`;
+  let since = null;
+  try {
+    since = git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--exclude", "*-*", sha);
+  } catch {
+    // no full release in the history: count every commit
+  }
+  const n = Number(git("rev-list", "--count", since ? `${since}..${sha}` : sha));
+  const tag = `v${base}-rc.${n}`;
+  output("version", `${base}-rc.${n}`);
+  output("tag", tag);
+  output("exists", Boolean(await gh(`/repos/${REPO}/git/ref/tags/${tag}`, { allow: [404] })));
 }
 
 // The commits in from..to (all of `to` when from is null), without the RC version commits.
