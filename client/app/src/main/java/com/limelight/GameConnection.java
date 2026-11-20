@@ -616,6 +616,8 @@ final class GameConnection {
                     game.menuActions::showStreamDialog);
             game.gameTouchControls.setStreamTouchListener(game.touchInput::onTouchControlsPassthrough);
             game.gameTouchControls.setGestureCancelListener(game.touchInput::cancelTouchInput);
+            // The on-screen controls lie above this overlay, so they leave while its buttons are moved.
+            game.gameTouchControls.setEditingListener(game::onGameButtonsEditing);
             ((FrameLayout)game.streamView.getParent()).addView(game.gameTouchControls,
                     new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         }

@@ -67,6 +67,7 @@ public final class GameTouchControls extends FrameLayout {
     private final View passthrough;
     private View.OnTouchListener streamTouch;
     private Runnable gestureCancelled;
+    private Runnable editingChanged;
 
     @SuppressLint("ClickableViewAccessibility") // The passthrough layer only forwards touches; it has no click.
     public GameTouchControls(Activity activity, String profile, HeldInputState.Sink sink,
@@ -120,6 +121,18 @@ public final class GameTouchControls extends FrameLayout {
         gestureCancelled = listener;
     }
 
+    /**
+     * Runs when moving the buttons starts or ends ({@link #isEditing}), so controls above this overlay can step aside
+     * while a button under them is moved.
+     */
+    public void setEditingListener(Runnable listener) {
+        editingChanged = listener;
+    }
+
+    private void editingChanged(boolean wasEditing) {
+        if (editing != wasEditing && editingChanged != null) editingChanged.run();
+    }
+
     @Override public void setVisibility(int visibility) {
         boolean changed = visibility != getVisibility();
         super.setVisibility(visibility);
@@ -149,12 +162,14 @@ public final class GameTouchControls extends FrameLayout {
     public void setProfile(String profile) {
         if (this.profile.equals(profile)) return;
         releaseInput();
+        boolean wasEditing = editing;
         editing = false;
         this.profile = profile;
         layout = TouchLayout.load(activity, profile);
         enabled = TouchLayout.enabled(activity, profile);
         setVisibility(hiddenForPip || !enabled ? GONE : VISIBLE);
         rebuild();
+        editingChanged(wasEditing);
     }
 
     /** Lets go of everything: keys and mouse buttons up, gamepad buttons up, triggers to 0, sticks centerd. */
@@ -202,9 +217,11 @@ public final class GameTouchControls extends FrameLayout {
                     // Wait for the stream menu's dismissal/focus restoration before showing another dialog.
                     post(() -> {
                         if (which == 0) {
+                            boolean wasEditing = editing;
                             enabled = !enabled; editing = false;
                             TouchLayout.setEnabled(activity, profile, enabled);
                             setVisibility(enabled ? VISIBLE : GONE);
+                            editingChanged(wasEditing);
                         } else if (which == 1) {
                             if (layout.buttons.size() < TouchLayout.MAX_BUTTONS) chooseKind();
                             else info(R.string.touch_layout_limit);
@@ -215,6 +232,7 @@ public final class GameTouchControls extends FrameLayout {
                             if (!editing) layout.save(activity, profile);
                             else info(R.string.touch_layout_move_help);
                             rebuild();
+                            editingChanged(!editing);
                         } else if (which == 3) chooseGrid();
                         else if (which == 4) importLayout();
                         else if (which == 5) exportLayout();
@@ -699,10 +717,17 @@ public final class GameTouchControls extends FrameLayout {
             TouchLayout.Button b = layout.buttons.get(i); View v = buttonAt(i);
             int width = Math.min(getWidth(), Math.max(min, Math.round(b.width * getWidth())));
             int height = Math.min(getHeight(), Math.max(min, Math.round(b.height * getHeight())));
-            LayoutParams params = (LayoutParams)v.getLayoutParams(); params.width = width; params.height = height;
-            params.leftMargin = Math.min(getWidth() - width, Math.round(b.x * getWidth()));
-            params.topMargin = Math.min(getHeight() - height, Math.round(b.y * getHeight()));
-            v.setLayoutParams(params); v.setTranslationX(0); v.setTranslationY(0);
+            int left = Math.min(getWidth() - width, Math.round(b.x * getWidth()));
+            int top = Math.min(getHeight() - height, Math.round(b.y * getHeight()));
+            LayoutParams params = (LayoutParams) v.getLayoutParams();
+            // This runs after every layout of the overlay; asking for another one when nothing moved laid the
+            // overlay out again on every frame while it showed buttons.
+            if (params.width != width || params.height != height || params.leftMargin != left
+                    || params.topMargin != top) {
+                params.width = width; params.height = height; params.leftMargin = left; params.topMargin = top;
+                v.setLayoutParams(params);
+            }
+            v.setTranslationX(0); v.setTranslationY(0);
         }
     }
 

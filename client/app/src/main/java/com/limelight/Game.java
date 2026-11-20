@@ -1238,11 +1238,13 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         return !adaptiveBitrate && !rateChangeBitrate && !adaptiveQuality;
     }
 
-    // The on-screen controls' switch, Hide while a controller is connected, and whether one is here.
+    // The on-screen controls' switch, Hide while a controller is connected, and whether one is here. They also step
+    // aside while the game buttons are moved: they lie above those buttons and would take the drags.
     boolean onscreenControlsShown() {
         return prefConfig != null && com.limelight.binding.input.pad.PadVisibility.shouldShow(
                 prefConfig.onscreenController, prefConfig.oscAutoHideOnController, physicalControllerConnected,
-                prefConfig.sendControllers, touchControlsWithPad());
+                prefConfig.sendControllers, touchControlsWithPad()) &&
+                (gameTouchControls == null || !gameTouchControls.isEditing());
     }
 
     /**
@@ -1265,6 +1267,18 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
                 virtualController.getControllerMode() != VirtualController.ControllerMode.Active) return;
         // The settings decide, not a pad's arrival: Only L3/R3, the on-screen controls as their own player, and
         // Controllers Off all keep touch with a pad, and this is where their controls used to disappear.
+        if (!onscreenControlsShown()) {
+            hideOnscreenControllers();
+        } else if (!isHidingOverlays && conn != null && conn.canSendInput()) {
+            showOnscreenController();
+        }
+    }
+
+    /** Moving the game buttons started or ended: the on-screen controls leave while it lasts and come back after. */
+    void onGameButtonsEditing() {
+        if (prefConfig == null || !prefConfig.onscreenController || isFinishing()) return;
+        // An open editor of the modern controls is the player's work; it hides them itself when it closes.
+        if (modernController != null && modernController.isEditing()) return;
         if (!onscreenControlsShown()) {
             hideOnscreenControllers();
         } else if (!isHidingOverlays && conn != null && conn.canSendInput()) {

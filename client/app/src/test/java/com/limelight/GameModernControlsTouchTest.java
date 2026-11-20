@@ -3,6 +3,7 @@ package com.limelight;
 import android.app.Application;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.ActivityInfo;
@@ -17,7 +18,13 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
+import androidx.appcompat.app.AlertDialog;
+
+import com.limelight.binding.input.KeyboardShortcuts;
 import com.limelight.binding.input.TouchLayout;
+import com.limelight.nvstream.NvConnection;
+import com.limelight.nvstream.StreamConfiguration;
+import com.limelight.nvstream.http.ComputerDetails;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -29,9 +36,11 @@ import org.robolectric.annotation.Config;
 import org.robolectric.util.ReflectionHelpers;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.*;
@@ -345,5 +354,220 @@ public class GameModernControlsTouchTest {
         assertFalse("the first finger's control", controls.get(places.get(0)).isEmpty());
         assertFalse("the second finger's control, beside the touch layout", controls.get(places.get(1)).isEmpty());
         assertEquals(MotionEvent.ACTION_DOWN, controls.get(places.get(1)).get(0).getActionMasked());
+    }
+
+    // Moving the game buttons. The entries of Controls for this game, in GameTouchControls.showMenu's order.
+    private static final int SHOW_OR_HIDE = 0, MOVE_OR_SAVE = 2;
+    private static final String BUTTONS_PROFILE = TouchLayout.profileKey(PC, null, 12);
+
+    /** Counts the gamepad reports that leave for the PC. */
+    private static final class CountingConnection extends NvConnection {
+        int gamepadReports;
+
+        CountingConnection() {
+            super(null, new ComputerDetails.AddressTuple("192.0.2.1", 47989), 47984, "test",
+                    new StreamConfiguration.Builder().build(), null, null);
+        }
+
+        @Override public boolean canSendInput() { return true; }
+
+        @Override public void sendControllerInput(short controllerNumber, short activeGamepadMask, int buttonFlags,
+                                                  byte leftTrigger, byte rightTrigger, short leftStickX,
+                                                  short leftStickY, short rightStickX, short rightStickY) {
+            gamepadReports++;
+        }
+    }
+
+    private static CountingConnection countGamepadReports(Game game) {
+        CountingConnection counting = new CountingConnection();
+        ReflectionHelpers.setField(game.controllerHandler, "conn", counting);
+        return counting;
+    }
+
+    private static List<Rect> visibleControls(Game game) {
+        List<Rect> visible = new ArrayList<>();
+        game.modernController.collectVisibleBounds(visible);
+        return visible;
+    }
+
+    private static Rect largestControl(Game game) {
+        Rect largest = null;
+        for (Rect rect : visibleControls(game)) {
+            if (largest == null || rect.width() * rect.height() > largest.width() * largest.height()) largest = rect;
+        }
+        assertNotNull(largest);
+        return largest;
+    }
+
+    /** One game button in the middle of a modern control, shown as switching to a game that has it does; its id. */
+    private static String showGameButtonOver(Game game, Rect control) {
+        ViewGroup frame = frame(game);
+        float size = Math.min(control.width(), control.height()) * .6f;
+        String id = UUID.randomUUID().toString();
+        TouchLayout.Button button = new TouchLayout.Button(id, "Jump", KeyboardShortcuts.parseChord("SPACE"), 0, false,
+                (control.exactCenterX() - size / 2) / frame.getWidth(),
+                (control.exactCenterY() - size / 2) / frame.getHeight(),
+                size / frame.getWidth(), size / frame.getHeight());
+        Context context = RuntimeEnvironment.getApplication();
+        new TouchLayout(Collections.singletonList(button)).save(context, BUTTONS_PROFILE);
+        TouchLayout.setEnabled(context, BUTTONS_PROFILE, true);
+        game.gameTouchControls.setProfile(BUTTONS_PROFILE);
+        idle();
+        assertTrue("it lies under the control", control.contains(boundsIn(frame, gameButton(game, id))));
+        return id;
+    }
+
+    /** The game button's view as the overlay has it now: moving the buttons builds their views again. */
+    private static View gameButton(Game game, String id) {
+        View view = game.gameTouchControls.findViewWithTag(id);
+        assertNotNull("the game button", view);
+        return view;
+    }
+
+    /** Picks an entry of Controls for this game, as a tap on it does. */
+    private static void chooseInGameButtonsMenu(Game game, int entry) {
+        game.gameTouchControls.showMenu();
+        idle();
+        AlertDialog menu = (AlertDialog) game.streamMenu;
+        assertNotNull("the menu opened", menu);
+        menu.getListView().performItemClick(null, entry, entry);
+        idle();
+        // Moving explains itself in a dialog of its own.
+        if (game.streamMenu != null) {
+            game.streamMenu.dismiss();
+            idle();
+        }
+        menuClosed(game);
+    }
+
+    /**
+     * Input goes back to the PC, as a live stream does once a menu closes. Without it, the touch layout would let
+     * touches through to whatever lies below it, as it does while input is not captured.
+     */
+    private static void menuClosed(Game game) {
+        game.touchInput.setInputGrabState(true);
+        idle();
+        assertTrue(game.grabbedInput);
+    }
+
+    private static void startMovingTheButtons(Game game) {
+        chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
+        assertTrue("moving the game buttons", game.gameTouchControls.isEditing());
+        assertTrue("the modern controls stepped aside", visibleControls(game).isEmpty());
+    }
+
+    private static float[] middleOf(View view) {
+        int[] at = new int[2];
+        view.getLocationInWindow(at);
+        return new float[] {at[0] + view.getWidth() / 2f, at[1] + view.getHeight() / 2f};
+    }
+
+    /**
+     * Shown game buttons lie under the modern controls, which take touches first. While the buttons are moved the
+     * controls leave, so a button under one of them can be grabbed and dragged away.
+     */
+    @Test public void aGameButtonUnderAModernControlCanBeDraggedWhileTheButtonsAreMoved() {
+        Game game = stream(true, false);
+        Rect control = largestControl(game);
+        String id = showGameButtonOver(game, control);
+        Map<Rect, List<MotionEvent>> controls = recordControls(game);
+        float[] start = middleOf(gameButton(game, id));
+        long now = SystemClock.uptimeMillis();
+        dispatch(game, touch(now, now, MotionEvent.ACTION_DOWN, start));
+        dispatch(game, touch(now, now + 100, MotionEvent.ACTION_UP, start));
+        assertFalse("outside the editor the control above the button takes the touch", controls.get(control).isEmpty());
+
+        startMovingTheButtons(game);
+        View button = gameButton(game, id);
+        assertArrayEquals("the button is where it was", start, middleOf(button), 1);
+        float before = TouchLayout.load(RuntimeEnvironment.getApplication(), BUTTONS_PROFILE).buttons.get(0).x;
+        float startX = button.getX();
+        // Toward the middle of the screen, so the drag stays on it.
+        float dx = start[0] < frame(game).getWidth() / 2f ? 300 : -300;
+        float[] end = {start[0] + dx, start[1]};
+        now = SystemClock.uptimeMillis();
+        dispatch(game, touch(now, now, MotionEvent.ACTION_DOWN, start));
+        dispatch(game, touch(now, now + 50, MotionEvent.ACTION_MOVE, new float[] {start[0] + dx / 2, start[1]}));
+        dispatch(game, touch(now, now + 100, MotionEvent.ACTION_MOVE, end));
+        dispatch(game, touch(now, now + 150, MotionEvent.ACTION_UP, end));
+        assertEquals("the button followed the finger", startX + dx, button.getX(), 2);
+        float after = TouchLayout.load(RuntimeEnvironment.getApplication(), BUTTONS_PROFILE).buttons.get(0).x;
+        assertEquals("and stays where it was dropped", dx, (after - before) * frame(game).getWidth(), 2);
+    }
+
+    /** No drag or tap while the buttons are moved reaches the PC as gamepad input, wherever a control was. */
+    @Test public void noGamepadReportLeavesWhileTheButtonsAreMoved() {
+        Game game = stream(true, false);
+        List<Rect> places = visibleControls(game);
+        String id = showGameButtonOver(game, largestControl(game));
+        CountingConnection pc = countGamepadReports(game);
+        startMovingTheButtons(game);
+        // Opening the menu told the PC its pads are at rest; from here on only a touch could send anything.
+        pc.gamepadReports = 0;
+        for (Rect place : places) {
+            float[] finger = middle(game, place);
+            long now = SystemClock.uptimeMillis();
+            dispatch(game, touch(now, now, MotionEvent.ACTION_DOWN, finger));
+            dispatch(game, touch(now, now + 50, MotionEvent.ACTION_MOVE, new float[] {finger[0] + 60, finger[1] + 60}));
+            dispatch(game, touch(now, now + 100, MotionEvent.ACTION_UP, new float[] {finger[0] + 60, finger[1] + 60}));
+        }
+        float[] start = middleOf(gameButton(game, id));
+        long now = SystemClock.uptimeMillis();
+        dispatch(game, touch(now, now, MotionEvent.ACTION_DOWN, start));
+        dispatch(game, touch(now, now + 100, MotionEvent.ACTION_MOVE, new float[] {start[0] + 200, start[1]}));
+        dispatch(game, touch(now, now + 150, MotionEvent.ACTION_UP, new float[] {start[0] + 200, start[1]}));
+        idle();
+        assertEquals("no gamepad report while the buttons are moved", 0, pc.gamepadReports);
+        assertEquals(0, oscButtons(game));
+
+        // The count is real: once the editor closes, presses go out again.
+        chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
+        pc.gamepadReports = 0;
+        assertEveryControlAnswers(game, "after Save");
+        assertTrue("presses after Save reach the PC", pc.gamepadReports > 0);
+    }
+
+    @Test public void theModernControlsAnswerAgainAfterTheMovedButtonsAreSaved() {
+        Game game = stream(true, false);
+        showGameButtonOver(game, largestControl(game));
+        startMovingTheButtons(game);
+        chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
+        assertFalse(game.gameTouchControls.isEditing());
+        assertEquals("the game buttons stay shown", View.VISIBLE, game.gameTouchControls.getVisibility());
+        assertEveryControlAnswers(game, "after Save");
+    }
+
+    /**
+     * The editor has no Cancel of its own: the menu's Cancel leaves it open (each drag is kept as it ends), and Hide
+     * game buttons is the other way out.
+     */
+    @Test public void theModernControlsAnswerAgainAfterTheButtonEditorIsLeftByHidingTheButtons() {
+        Game game = stream(true, false);
+        showGameButtonOver(game, largestControl(game));
+        startMovingTheButtons(game);
+        game.gameTouchControls.showMenu();
+        idle();
+        ((AlertDialog) game.streamMenu).getButton(DialogInterface.BUTTON_NEGATIVE).performClick();
+        idle();
+        menuClosed(game);
+        assertTrue("Cancel keeps moving the buttons", game.gameTouchControls.isEditing());
+        assertTrue("and the controls away", visibleControls(game).isEmpty());
+        chooseInGameButtonsMenu(game, SHOW_OR_HIDE);
+        assertFalse(game.gameTouchControls.isEditing());
+        assertEquals(View.GONE, game.gameTouchControls.getVisibility());
+        assertEveryControlAnswers(game, "after Hide game buttons");
+    }
+
+    @Test public void aControllerLeavingWhileTheButtonsAreMovedLeavesTheControlsAway() {
+        Game game = stream(true, false);
+        showGameButtonOver(game, largestControl(game));
+        startMovingTheButtons(game);
+        game.setPhysicalControllerConnected(true);
+        idle();
+        game.setPhysicalControllerConnected(false);
+        idle();
+        assertTrue("still away while the buttons are moved", visibleControls(game).isEmpty());
+        chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
+        assertEveryControlAnswers(game, "after Save");
     }
 }
