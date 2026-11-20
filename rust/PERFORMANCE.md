@@ -6,6 +6,7 @@ This is the dated measurement record. For a guided comparison, start with the [p
 
 | Find a result | Recorded evidence |
 | --- | --- |
+| The window in front counts as moving only after half a second: a strip behind a window repainting in bursts (the real one and a fixture), the October case of a 240 Hz window beside a VRR game, a hitching game beside it, and a window in front repainting for over half a second, 6.1.0's host against the fix | [November 20, the window in front counts as moving after half a second](#november-20-the-window-in-front-counts-as-moving-after-half-a-second) |
 | A picture that is not the foreground window, behind a window that repaints: the 50 ms holds that failed the check's keyframe-request case on 6.1.0 and 6.0.1, in the host's claim trace, with the strip behind and in front, and in a Retroid run (the check's strip now runs in front; the host's rule is unchanged) | [November 20, a picture behind a window that repaints](#november-20-a-picture-behind-a-window-that-repaints-is-held-50-ms-at-a-time) |
 | A game that sets its own display mode under the automatic frame cap (#133): frame intervals with a cap beside V-Sync at the display's rate, with V-Sync alone, at 1000 Hz with the cap and with an uncapped source; the display slowed mid-stream with RTSS as the cap, 6.0.0 against the cap that switches off; the default bitrate controller cutting on loss in a calm picture; congestion control cutting a light picture's bitrate on a clean link; why Adapt error correction is off by default | [November 19, a frame cap beside V-Sync at the display's own rate](#november-19-a-frame-cap-beside-v-sync-at-the-displays-own-rate-133-and-two-defaults) |
 | HDR 4:2:0 chroma filtered in light instead of on PQ or HLG codes (#130, ClearType text tinted magenta): GPU cost of the host conversion at 1080p, 1440p and 4K, SDR and HDR, P010 and PyroWave, compute and graphics paths, release build (no change measured) | [November 18, HDR chroma filtered in light (#130), conversion cost](#november-18-hdr-chroma-filtered-in-light-130-conversion-cost) |
@@ -83,6 +84,71 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | Temporal upscaler for Nightjar (SGSR 2 adaptation), not landed | [November 16, temporal upscaler](#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed) |
 | A capped path and a busy PC | [November 17, a capped path holds its learned rate](#november-17-a-capped-path-holds-its-learned-rate-and-a-busy-pc-is-not-the-network) |
 
+## November 20: the window in front counts as moving after half a second
+
+The fix for the holds recorded in the next section. `Freshness::observe_focus`
+now counts the foreground window as animating only once its pictures have come
+at most 50 ms apart for 500 ms (`FOCUS_SUSTAINED`); before, its second picture
+within 50 ms was enough. And the source phase no longer learns from captures
+that only extend the focus picture.
+
+**How the real window repaints.** The publish lines of the pacing trace now
+carry the focus label. The window in front in the failed check (a terminal app
+with agents printing) repainted 176 times in 12 s: mostly every 83 ms, with
+short bursts between (4 to 21 ms apart). Its longest run of pictures at most
+50 ms apart lasted 167 ms, and no run reached 500 ms.
+
+**Hardware A/B** (RX 7900 XT, desktop 5120x1440 at 240 Hz, HEVC 2560x720 at
+60 fps, 12 s streams with the strip at the stream rate, `minimum_fps_target=20`,
+nobody at the PC). A is the published 6.1.0 package, B the same package with
+the fix's host (release build, 2026-11-20, before the source phase read each
+capture's own label; the final build's runs follow the table). All four rows
+ran within 6 minutes.
+
+| Case | A: steady fps, intervals over 1.5 periods, max | B |
+| --- | --- | --- |
+| strip behind the real window in front (the original failure) | 56.05, 21, 50.4 ms | 60.00, 0, 18.5 ms |
+| strip behind a window repainting 3 times 16 ms apart every 0.52 s (`hevc-behind`) | 56.11, 17, 51.1 ms | 60.00, 0, 21.9 ms |
+| strip in front under VRR, a window beside it repainted at 240 Hz (the October case) | 60.07, 0, 21.6 ms | 60.00, 0, 19.9 ms |
+| as above, the strip hitching 80 ms every 90 frames | 59.34, 6, 50.4 ms | 59.43, 6, 46.3 ms |
+
+In the October case B's trace has 2,846 captures of the window beside the strip
+in 12 s, 2,495 of them extending the strip's picture: the protection works
+there. The receiver's picture age improved with B (p95 19.6 against 15.8 ms,
+max 22.6 against 16.6 ms). With the hitching strip the run of focus pictures
+starts over at each hitch, so 2 of 3 seconds are protected; the stream came out
+the same on A and B (57.3 and 57.4 unique fps, picture age p99 75 and 72 ms).
+
+**The final build** (the landed code, release build 2026-11-20, the same
+package and settings, 2 minutes apart): behind the real window in front A gave
+55.42 fps with 26 intervals over 1.5 periods (max 51.1 ms) and B 60.00 fps with
+none (max 21.6 ms, 59.66 unique fps, picture age p95 12.0 ms); `hevc-behind`
+60.01 fps, none, max 19.1 ms; the October case 60.03 fps, none, max 18.0 ms,
+picture age p95 15.3 ms; the hitching strip 59.35 fps with its 6 hitches, 57.3
+unique fps.
+
+**What is left.** A window in front that repaints without a pause for longer
+than half a second still counts as moving, and the picture behind it then waits
+for its next repaint, or up to the minimum frame rate's period when it stops: a
+window repainting at 60 Hz for 0.6 s of every second gave 9 intervals over
+1.5 periods on both A and B, with 53.8 unique fps on A against 58.4 on B and a
+picture age p95 of 28.3 against 16.4 ms. A game that hitches longer than 50 ms
+goes without the protection for half a second afterwards.
+
+**In the simulation** (`stream_policy` tests): bursts of 2 to 12 repaints 12 to
+30 ms apart every half second leave a 60 Hz strip behind them as paced without
+focus labels, on a fixed-rate and a VRR desktop, against strip frames up to
+66 ms apart before. In 16 seeds of the October scenario, the phase learner fed
+with every capture failed one seed with main's rule (game frames about 3 ms old
+at p95) and another with the new rule; fed only pictures, none of 96 cases
+fails. Bounding the wait by the window's own next picture helped continuous
+repaints but made a game hitching every second worse (picture age p95 16.6
+against 24.6 ms), so it was left out.
+
+Results: `D:/CodexArtifacts/fix-found/host/run` (`e2e-orca-*`, `e2e-behind-*`,
+`e2e-vrr-beside-*`, `e2e-hitch-beside-*`, `e2e-sustained-*`; the final build's
+runs end in `2`).
+
 ## November 20: a picture behind a window that repaints is held 50 ms at a time
 
 **What failed.** The check of the published 6.1.0 package (`check.ps1`, RX 7900
@@ -134,13 +200,8 @@ runs as the foreground window, as a game does
 (`BUTTERPOLLO_TEST_MOTION_FOREGROUND`, set by `e2e.py`), and the case fails
 with that reason when the strip was seen behind another window.
 
-**Not changed, and open.** The host's rule. A game or video that is not the
-foreground window on the streamed display is held the same way whenever the
-window in front produces two pictures within 50 ms, although `observe_focus`
-says a caret or typing leaves every update a picture of its own. No check case
-covers it now. What real windows do (a pair of compositions or longer bursts)
-was not measured: the claim trace carries no focus label, so the rule to put in
-its place is not chosen yet.
+**Not changed then.** The host's rule, which the next record (above) changed
+the same day, with a check case for it (`hevc-behind`).
 
 ## November 19: a frame cap beside V-Sync at the display's own rate (#133), and two defaults
 
