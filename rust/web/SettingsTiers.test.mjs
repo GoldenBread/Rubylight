@@ -35,7 +35,7 @@ test('every key in the tier lists is a setting, and no key has two tiers', () =>
       assert.equal(tierOf(key), name, key);
     }
   }
-  assert.deepEqual([GAMES_PAGE_KEYS.length, ALWAYS_ON.length, DIAGNOSTICS.length], [15, 20, 3]);
+  assert.deepEqual([GAMES_PAGE_KEYS.length, ALWAYS_ON.length, DIAGNOSTICS.length], [15, 18, 5]);
   // No expert tier: those settings are everyday ones in their topic tab.
   assert.equal('EXPERT_KEYS' in tiers, false);
   assert.equal(tierOf('amd_preanalysis'), 'everyday');
