@@ -58,6 +58,7 @@ Rubylight 6.1.0 makes the settings easier to read and a stream's bitrate easier 
 - **The `compute_queue_realtime` setting now reaches the Windows Graphics Capture helper.** With capture through its helper process the setting did nothing; the helper is now told and asks for the same real-time GPU priority. Nothing changes while it is off. The setting's description in the console now says first that it can hang the GPU driver.
 - **On NVIDIA, slice delivery is no longer turned off for HEVC streams that never split a frame across encoders.** On a GPU with several NVENC engines and a driver with API 12.2 or later, slices were turned off whenever split encoding was not set to Off, even where it never engages, such as below 2112 rows with split encoding on Automatic.
 - **The stream menu no longer fails on a long value.** A row whose value was 32 characters or more (28 on the focused row) made the menu on the stream fail instead of drawing. The value is now cut with "..." and its label stays readable; rows that fit are drawn as before.
+- **Sleep PC, Restart and Shut down go ahead once the device was told they were accepted.** A device that read the answer and closed its connection at once could leave the PC awake now and then, with no word why. The PC still stays on when the answer never left it.
 
 ## New in 6.0.1
 
