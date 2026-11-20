@@ -94,12 +94,7 @@ fn a_game_capped_at_the_stream_rate_is_claimed_as_it_arrives() {
         assert_eq!(capped(30, picture, mean).interval(now, sixty), None);
     }
     // Not before the source has held for 30 frames: the hold is never kept on purpose.
-    assert!(
-        capped(29, SIXTY, SIXTY)
-            .interval(now, sixty)
-            .unwrap()
-            > sixty
-    );
+    assert!(capped(29, SIXTY, SIXTY).interval(now, sixty).unwrap() > sixty);
     assert!(capped(30, SIXTY, SIXTY).standing_aside());
     // A faster source keeps the lock: the host takes a later picture, not an older one.
     // A 64 fps game at 60 fps as well, whose mean is faster than the stream's.

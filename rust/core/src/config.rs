@@ -21,7 +21,17 @@ pub use folders::{SharedFolderConfig, valid_folder_id, valid_folder_root};
 pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
-    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE, PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, fold_remove_remote_monitor, folded_remove_remote_monitor, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR, DD_DISCONNECT_BEHAVIOR, DD_HOLD_LAYOUT, DD_REVERT_ON_DISCONNECT, fold_disconnect_behavior, folded_disconnect_behavior, RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting, SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app, migrate_overrides, removed, replace_retired, replacement, retired_name, retired_warning, AUTO_UPDATE, MIN_QP, MIN_QP_SWITCH, UPDATE_CHECK_INTERVAL, UPDATES, fold_min_qp, fold_updates, folded_updates, min_qp_switch_on, fold_library_sync, LIBRARY_SYNC_OPTIONS,
+    AUTO_UPDATE, BITRATE_ADAPTATION, DD_DISCONNECT_BEHAVIOR, DD_REVERT_ON_DISCONNECT, FOLDED_KEYS,
+    HDR_OPTION, HDR_REQUEST, HOST_PACING, LIBRARY_SYNC_OPTIONS, LINK_RATE, MIN_QP, MIN_QP_SWITCH,
+    PACING_RATE, PACKET_PACING, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR,
+    REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, RENAMED_APP_SWITCHES, RENAMED_KEYS,
+    RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting, UPDATE_CHECK_INTERVAL, UPDATES,
+    WIRELESS_PACING, current_name, fold_bitrate_adaptation, fold_disconnect_behavior,
+    fold_library_sync, fold_min_qp, fold_packet_pacing, fold_pyrowave_fec,
+    fold_remove_remote_monitor, fold_updates, folded_bitrate_adaptation,
+    folded_disconnect_behavior, folded_hdr, folded_in_layer, folded_packet_pacing,
+    folded_remove_remote_monitor, folded_updates, migrate_app, migrate_overrides, min_qp_switch_on,
+    removed, replace_retired, replacement, retired_name, retired_warning,
 };
 use text::{bracket_depth, decode, strip_comment};
 pub use values::{
@@ -248,7 +258,8 @@ impl Config {
         let rate = self.values.remove(retired::PACING_RATE);
         let host = self.values.remove(retired::HOST_PACING);
         let wireless = self.values.remove(retired::WIRELESS_PACING);
-        if let Some(folded) = folded_packet_pacing(rate.as_deref(), host.as_deref(), wireless.as_deref())
+        if let Some(folded) =
+            folded_packet_pacing(rate.as_deref(), host.as_deref(), wireless.as_deref())
             && !self.values.contains_key(PACKET_PACING)
         {
             self.values.insert(PACKET_PACING.to_owned(), folded);
@@ -352,7 +363,8 @@ impl Config {
     /// the restore delay (`restore`, the default). An unknown value reads as
     /// `restore`.
     pub fn keeps_display_while_paused(&self) -> bool {
-        unquote(self.get(DD_DISCONNECT_BEHAVIOR, "restore").trim()).eq_ignore_ascii_case("keep_while_paused")
+        unquote(self.get(DD_DISCONNECT_BEHAVIOR, "restore").trim())
+            .eq_ignore_ascii_case("keep_while_paused")
     }
     /// How long a disconnected stream may keep its display. Exclusive layouts
     /// must release even when an older profile disables restoration: otherwise
@@ -988,9 +1000,6 @@ impl Config {
         {
             next.values.remove(retired::PYROWAVE_FEC);
         }
-        // Only what changes is checked: a value the file already had (the
-        // host reads it leniently) must not block every other save.
-        let changed = |key: &str| object.contains_key(key) && next.values.contains_key(key);
         // Changing a shared Library sync setting re-decides it for every
         // launcher: the per-launcher keys of earlier releases go. A save that
         // leaves the shared value as held (or unsent) keeps a launcher's
@@ -1019,6 +1028,9 @@ impl Config {
                 next.values.remove(&format!("{prefix}_{option}"));
             }
         }
+        // Only what changes is checked: a value the file already had (the
+        // host reads it leniently) must not block every other save.
+        let changed = |key: &str| object.contains_key(key) && next.values.contains_key(key);
         if changed("port") && !PORTS.contains(&next.integer("port", 0)) {
             bail!("port must be between 1029 and 65514");
         }

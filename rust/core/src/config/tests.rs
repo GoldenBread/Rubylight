@@ -250,10 +250,18 @@ fn pyrowave_error_correction_follows_the_one_percentage() {
         ("", 20, false),
         ("fec_percentage=30", 30, false),
         ("pyrowave_critical_fec_percentage=20", 20, false),
-        ("fec_percentage=30
-pyrowave_critical_fec_percentage=30", 30, false),
-        ("fec_percentage=30
-pyrowave_critical_fec_percentage=20", 20, true),
+        (
+            "fec_percentage=30
+pyrowave_critical_fec_percentage=30",
+            30,
+            false,
+        ),
+        (
+            "fec_percentage=30
+pyrowave_critical_fec_percentage=20",
+            20,
+            true,
+        ),
         ("pyrowave_critical_fec_percentage=0", 0, true),
         ("pyrowave_critical_fec_percentage=40", 40, true),
         ("pyrowave_critical_fec_percentage=0x14", 20, false),
@@ -275,13 +283,26 @@ pyrowave_critical_fec_percentage=20", 20, true),
     assert_eq!(config.pyrowave_fec_percentage(), 40);
     // An app's or device's overrides.
     for (layer, kept) in [
-        (serde_json::json!({"fec_percentage": 30, "pyrowave_critical_fec_percentage": 30}), false),
-        (serde_json::json!({"fec_percentage": 30, "pyrowave_critical_fec_percentage": 10}), true),
-        (serde_json::json!({"pyrowave_critical_fec_percentage": 10}), true),
+        (
+            serde_json::json!({"fec_percentage": 30, "pyrowave_critical_fec_percentage": 30}),
+            false,
+        ),
+        (
+            serde_json::json!({"fec_percentage": 30, "pyrowave_critical_fec_percentage": 10}),
+            true,
+        ),
+        (
+            serde_json::json!({"pyrowave_critical_fec_percentage": 10}),
+            true,
+        ),
     ] {
         let mut layer = layer.as_object().unwrap().clone();
         super::migrate_overrides(&mut layer);
-        assert_eq!(layer.contains_key("pyrowave_critical_fec_percentage"), kept, "{layer:?}");
+        assert_eq!(
+            layer.contains_key("pyrowave_critical_fec_percentage"),
+            kept,
+            "{layer:?}"
+        );
     }
     assert!(super::override_allowed("pyrowave_critical_fec_percentage"));
 }
@@ -557,29 +578,11 @@ fn a_wireless_client_gets_adaptive_pacing_on_h26x_and_av1_unless_something_owns_
             off,
             [true; 4],
         ),
-        (
-            "packet_pacing=off",
-            off,
-            [true; 4],
-            off,
-            [true; 4],
-        ),
+        ("packet_pacing=off", off, [true; 4], off, [true; 4]),
         // Always still turns it on for everything, wired or wireless.
-        (
-            "packet_pacing=always",
-            all,
-            [false; 4],
-            all,
-            [false; 4],
-        ),
+        ("packet_pacing=always", all, [false; 4], all, [false; 4]),
         // A fixed rate owns pacing.
-        (
-            "packet_pacing=80000",
-            off,
-            [false; 4],
-            off,
-            [false; 4],
-        ),
+        ("packet_pacing=80000", off, [false; 4], off, [false; 4]),
         (
             "packet_pacing=0",
             on,
@@ -776,36 +779,66 @@ fn the_pacing_settings_fold_into_packet_pacing() {
         (None, Some("false"), None, None),
         (None, Some("invalid"), Some("invalid"), None),
     ] {
-        assert_eq!(fold(rate, host, wireless).as_deref(), folded, "{rate:?} {host:?} {wireless:?}");
+        assert_eq!(
+            fold(rate, host, wireless).as_deref(),
+            folded,
+            "{rate:?} {host:?} {wireless:?}"
+        );
     }
     for (text, expected) in [
         ("", P::Auto),
         ("pacing_max_bitrate_kbps=120000", P::Fixed(120000)),
         ("host_adaptive_pacing=true", P::Always),
         ("wireless_adaptive_pacing=false", P::Off),
-        ("host_adaptive_pacing=true
-pacing_max_bitrate_kbps=80000", P::Fixed(80000)),
-        ("packet_pacing=off
-host_adaptive_pacing=true", P::Off),
+        (
+            "host_adaptive_pacing=true
+pacing_max_bitrate_kbps=80000",
+            P::Fixed(80000),
+        ),
+        (
+            "packet_pacing=off
+host_adaptive_pacing=true",
+            P::Off,
+        ),
     ] {
         let config = Config::parse(text).unwrap();
         assert_eq!(config.packet_pacing(), expected, "{text}");
-        for key in ["pacing_max_bitrate_kbps", "host_adaptive_pacing", "wireless_adaptive_pacing"] {
+        for key in [
+            "pacing_max_bitrate_kbps",
+            "host_adaptive_pacing",
+            "wireless_adaptive_pacing",
+        ] {
             assert!(!config.text().contains(key), "{text}");
         }
     }
     // An app's or device's overrides.
     for (layer, expected) in [
-        (serde_json::json!({"pacing_max_bitrate_kbps": 80000}), Some("80000")),
-        (serde_json::json!({"host_adaptive_pacing": true}), Some("always")),
-        (serde_json::json!({"wireless_adaptive_pacing": "false"}), Some("off")),
-        (serde_json::json!({"host_adaptive_pacing": true, "packet_pacing": "off"}), Some("off")),
+        (
+            serde_json::json!({"pacing_max_bitrate_kbps": 80000}),
+            Some("80000"),
+        ),
+        (
+            serde_json::json!({"host_adaptive_pacing": true}),
+            Some("always"),
+        ),
+        (
+            serde_json::json!({"wireless_adaptive_pacing": "false"}),
+            Some("off"),
+        ),
+        (
+            serde_json::json!({"host_adaptive_pacing": true, "packet_pacing": "off"}),
+            Some("off"),
+        ),
         (serde_json::json!({"wireless_adaptive_pacing": true}), None),
         (serde_json::json!({"fec_percentage": 20}), None),
     ] {
         let mut layer = layer.as_object().unwrap().clone();
         migrate_overrides(&mut layer);
-        assert_eq!(layer.get("packet_pacing").and_then(|v| v.as_str()), expected, "{layer:?}");
+        assert_eq!(
+            layer.get("packet_pacing").and_then(|v| v.as_str()),
+            expected,
+            "{layer:?}"
+        );
         assert!(!layer.contains_key("host_adaptive_pacing"));
         assert!(!layer.contains_key("wireless_adaptive_pacing"));
         assert!(!layer.contains_key("pacing_max_bitrate_kbps"));
@@ -917,11 +950,19 @@ fn resetting_packet_pacing_restores_the_default() {
     assert!(!config.adaptive_packet_pacing(0, false));
     for reset in [serde_json::Value::Null, serde_json::json!("")] {
         config
-            .update(serde_json::json!({"packet_pacing": "always"}).as_object().unwrap())
+            .update(
+                serde_json::json!({"packet_pacing": "always"})
+                    .as_object()
+                    .unwrap(),
+            )
             .unwrap();
         assert!(config.adaptive_packet_pacing(0, false));
         config
-            .update(serde_json::json!({"packet_pacing": reset}).as_object().unwrap())
+            .update(
+                serde_json::json!({"packet_pacing": reset})
+                    .as_object()
+                    .unwrap(),
+            )
             .unwrap();
         assert!(!config.adaptive_packet_pacing(0, false));
         assert!(!config.values.contains_key("packet_pacing"));

@@ -260,15 +260,11 @@ pub const FOLDED_KEYS: &[&str] = &[
     PACING_RATE,
     HOST_PACING,
     WIRELESS_PACING,
-];
-/// [`BITRATE_ADAPTATION`], [`REMOVE_REMOTE_MONITOR`]).
-pub const FOLDED_KEYS: &[&str] = &[
-    HDR_REQUEST,
-    LINK_RATE,
-    CONGESTION,
     REMOTE_STREAM_END,
     REMOTE_CLIENT_DISCONNECT,
     DD_REVERT_ON_DISCONNECT,
+    MIN_QP_SWITCH,
+    AUTO_UPDATE,
 ];
 
 /// When a remote monitor is removed from Windows (`never`, `stream_end`,
@@ -323,14 +319,6 @@ pub fn fold_remove_remote_monitor(layer: &mut serde_json::Map<String, serde_json
     }
     changed
 }
-/// [`BITRATE_ADAPTATION`]).
-pub const FOLDED_KEYS: &[&str] = &[
-    HDR_REQUEST,
-    LINK_RATE,
-    CONGESTION,
-    MIN_QP_SWITCH,
-    AUTO_UPDATE,
-];
 /// Adaptive bitrate for the two switches saved in one layer, each `None`
 /// when that layer does not hold it (its earlier default then counts):
 /// congestion control on is `delay`, as it ran together with link-rate

@@ -357,7 +357,10 @@ mod tests {
             ("congestion_control = false\n", false),
             ("bitrate_adaptation = delay\n", true),
             ("bitrate_adaptation = on\n", false),
-            ("bitrate_adaptation = off\ncongestion_control = true\n", false),
+            (
+                "bitrate_adaptation = off\ncongestion_control = true\n",
+                false,
+            ),
         ] {
             let config = Config::parse(text).unwrap();
             assert_eq!(transport_feedback(&config), offered, "{text}");

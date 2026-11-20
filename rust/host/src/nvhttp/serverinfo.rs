@@ -368,10 +368,7 @@ pub(super) fn serverinfo_response(
         (
             "PyroWaveCriticalFecPercentage",
             if paired {
-                config
-                    .pyrowave_fec_percentage()
-                    .clamp(0, 100)
-                    .to_string()
+                config.pyrowave_fec_percentage().clamp(0, 100).to_string()
             } else {
                 String::new()
             },

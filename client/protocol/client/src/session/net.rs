@@ -1067,8 +1067,7 @@ fn cmsg_data(control: &[u8], level: i32, kind: i32) -> Option<&[u8]> {
             return None;
         }
         if int(at + WORD) == level && int(at + WORD + 4) == kind && length >= DATA + 4 {
-            let value = &control[at + DATA..at + DATA + 4];
-            return Some(u32::from_ne_bytes(value.try_into().unwrap()) as usize);
+            return Some(&control[at + DATA..at + length]);
         }
         // The next header, at the header alignment.
         at += length.next_multiple_of(WORD);
