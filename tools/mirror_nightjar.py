@@ -4,7 +4,8 @@ Incremental replacement for `git subtree split --prefix client`, which walks
 all of the monorepo's history in a shell loop on every run (over 10 minutes on
 Windows). This one starts from what nightjar main already has:
 
-1. fetch nightjar main (the published split);
+1. fetch nightjar main (the published split) into a private ref, so a
+   concurrent `git fetch` rewriting FETCH_HEAD cannot change what is read;
 2. walk the monorepo's first-parent history back to the newest commit whose
    client/ tree matches a commit on nightjar's first-parent history (the anchor:
    that monorepo commit was the last one mirrored, or a `git subtree pull` of
@@ -17,6 +18,7 @@ Nightjar commits merged back with `git subtree pull` keep their own ids. The
 push only ever fast-forwards nightjar main; anything else stops before pushing.
     python tools/mirror_nightjar.py --dry-run    # split, check, push --dry-run
     python tools/mirror_nightjar.py              # the real push
+--ref defaults to origin/main after a fetch of origin, not the local HEAD.
 """
 import argparse
 import subprocess
@@ -152,20 +154,34 @@ def rewrite(git, commit, tree, parents):
     return git.out('hash-object', '-t', 'commit', '-w', '--stdin', stdin=obj)
 
 
+def fetch_published(git, remote, branch):
+    """Fetches the remote branch into a private ref and returns its commit.
+
+    FETCH_HEAD is shared by every fetch in the checkout; a ref of our own is not.
+    """
+    ref = f'refs/mirror/nightjar-{branch}'
+    git.run('fetch', '--quiet', '--no-tags', remote, f'+refs/heads/{branch}:{ref}')
+    return git.out('rev-parse', '--verify', f'{ref}^{{commit}}')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--remote', default=REMOTE)
     ap.add_argument('--branch', default='main')
-    ap.add_argument('--ref', default='HEAD', help='monorepo commit to publish (main after green CI)')
+    ap.add_argument('--ref', default=None,
+                    help='monorepo commit to publish (default: origin/main after fetching origin)')
     ap.add_argument('--repo', default=None)
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args(argv)
 
     git = Git(args.repo or '.')
     git = Git(git.out('rev-parse', '--show-toplevel'))
-    commit = git.out('rev-parse', '--verify', f'{args.ref}^{{commit}}')
-    git.run('fetch', '--quiet', '--no-tags', args.remote, f'refs/heads/{args.branch}')
-    published = git.out('rev-parse', '--verify', 'FETCH_HEAD^{commit}')
+    ref = args.ref
+    if ref is None:
+        git.run('fetch', '--quiet', '--no-tags', 'origin')
+        ref = 'refs/remotes/origin/main'
+    commit = git.out('rev-parse', '--verify', f'{ref}^{{commit}}')
+    published = fetch_published(git, args.remote, args.branch)
     result = split(git, commit, published)
     print(f'monorepo {commit}, {PREFIX}/ split {result}, nightjar {args.branch} {published}')
     if result == published:

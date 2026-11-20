@@ -6,11 +6,13 @@
 param(
     [string] $Remote = 'https://github.com/RamazanKara/nightjar.git',
     [string] $Branch = 'main',
-    # The monorepo commit to publish; usually main after its CI is green.
-    [string] $Ref = 'HEAD',
+    # The monorepo commit to publish. Default: origin/main after a fetch of
+    # origin (never the local HEAD, which may be stale); main after its CI is green.
+    [string] $Ref = '',
     [switch] $DryRun
 )
-$py = @("$PSScriptRoot\mirror_nightjar.py", '--repo', "$PSScriptRoot\..", '--remote', $Remote, '--branch', $Branch, '--ref', $Ref)
+$py = @("$PSScriptRoot\mirror_nightjar.py", '--repo', "$PSScriptRoot\..", '--remote', $Remote, '--branch', $Branch)
+if ($Ref) { $py += @('--ref', $Ref) }
 if ($DryRun) { $py += '--dry-run' }
 & python @py
 exit $LASTEXITCODE

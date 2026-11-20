@@ -1,4 +1,6 @@
 """Tests for mirror_nightjar.py against a small monorepo built with `git subtree add`."""
+import contextlib
+import io
 import os
 import subprocess
 import tempfile
@@ -110,6 +112,37 @@ class MirrorTest(unittest.TestCase):
         pub = self.published()
         result = m.split(self.git, 'HEAD', pub)
         self.check(result, pub, ['after pull'])
+
+    def test_fetch_survives_a_concurrent_fetch_overwriting_fetch_head(self):
+        pub = m.fetch_published(self.git, self.nj.path, 'main')
+        self.assertEqual(pub, self.nj.git('rev-parse', 'main'))
+        # another fetch in the same checkout rewrites FETCH_HEAD
+        other = Repo(os.path.join(self.tmp.name, 'other'))
+        other.commit('x.txt', 'x', 'unrelated')
+        self.mono.git('fetch', '-q', '--no-tags', other.path, 'main')
+        self.assertNotEqual(self.mono.git('rev-parse', 'FETCH_HEAD'), pub)
+        self.assertEqual(self.mono.git('rev-parse', 'refs/mirror/nightjar-main'), pub)
+
+    def test_default_ref_is_fetched_origin_main_not_local_head(self):
+        origin = os.path.join(self.tmp.name, 'origin.git')
+        subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', origin], env=ENV, check=True)
+        self.mono.git('remote', 'add', 'origin', origin)
+        self.mono.git('push', '-q', 'origin', 'main')
+        # origin gets a client commit the local checkout does not have
+        clone = Repo(os.path.join(self.tmp.name, 'clone'))
+        clone.git('remote', 'add', 'origin', origin)
+        clone.git('pull', '-q', 'origin', 'main')
+        new = clone.commit('client/app/a.txt', 'new', 'client on origin')
+        clone.git('push', '-q', 'origin', 'main')
+        self.assertNotEqual(self.mono.git('rev-parse', 'HEAD'), new)
+        dest = os.path.join(self.tmp.name, 'dest.git')
+        subprocess.run(['git', 'clone', '-q', '--bare', self.nj.path, dest], env=ENV, check=True)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = m.main(['--repo', self.mono.path, '--remote', dest, '--dry-run'])
+        self.assertEqual(rc, 0)
+        self.assertIn(f'monorepo {new}', out.getvalue())
+        self.assertIn('fast-forward by 1 commit(s)', out.getvalue())
 
 
 if __name__ == '__main__':
