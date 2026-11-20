@@ -2470,9 +2470,9 @@ fn row_counts_at_defaults() {
 const ROWS_AT_DEFAULTS: usize = if cfg!(windows) {
     98
 } else if cfg!(target_os = "macos") {
-    94
+    95
 } else {
-    99
+    100
 };
 
 /// Debug is listed only with "Show debug settings", while one of its settings is changed, while it
