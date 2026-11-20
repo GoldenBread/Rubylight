@@ -641,6 +641,10 @@ impl Host {
         // Stopping the app waits for it to exit, up to its exit timeout and
         // undo commands: never under the lock every serverinfo request takes.
         let mut app = self.current_app.lock().unwrap().take();
+        // The launcher watch is over with the app it watched: its prompt
+        // notice goes here rather than waiting for a tick to notice the app
+        // slot is empty, which on a resting host never comes.
+        self.notes.end_launch();
         // At shutdown the wait runs under a budget. The display layout goes
         // back before the game is asked to close; its audio route stays until
         // its processes have stopped (before its undo commands), or until its

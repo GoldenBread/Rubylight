@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::io::AsyncWriteExt;
 
@@ -415,6 +415,43 @@ pub fn check_due(h: &Shared) -> bool {
         return false;
     }
     !streaming(h) && next_check(h).is_some_and(|at| now() >= at)
+}
+
+/// How long the loop sleeps before it looks for a release again: a check
+/// already due (a stream or one still running defers it) a second, as its
+/// poll asked; the remaining interval otherwise, capped at a day so an
+/// interval longer than that is looked at again rather than slept past.
+fn next_wait(due: u64, now: u64) -> Duration {
+    if due <= now {
+        return Duration::from_secs(1);
+    }
+    Duration::from_secs((due - now).min(86_400))
+}
+
+/// When the maintenance loop next looks for a release, as its own deadline
+/// instead of a poll: `None` when no automatic check is scheduled. The loop
+/// re-reads it on every wake, so a PC that slept checks on the first wake
+/// after, and a save's wake catches a changed interval at once.
+pub fn next_deadline(h: &Shared) -> Option<Instant> {
+    let due = next_check(h)?;
+    Some(Instant::now() + next_wait(due, now()))
+}
+
+/// Whether `poll` has work beyond an update in flight: the download tidy or
+/// the install report, each on its own cadence. The maintenance loop starts
+/// a task for it only then, so a resting host spawns none.
+pub fn housekeeping_due() -> bool {
+    let now = now();
+    NEXT_TIDY.load(Ordering::Relaxed) <= now || NEXT_REPORT.load(Ordering::Relaxed) <= now
+}
+
+/// When [`housekeeping_due`] next turns true, for the idle loop's sleep.
+pub fn housekeeping_at() -> Instant {
+    let now = now();
+    let due = NEXT_TIDY
+        .load(Ordering::Relaxed)
+        .min(NEXT_REPORT.load(Ordering::Relaxed));
+    Instant::now() + Duration::from_secs(due.saturating_sub(now).min(86_400))
 }
 
 pub fn installing(h: &Shared) -> bool {

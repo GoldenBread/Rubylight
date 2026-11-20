@@ -269,7 +269,10 @@ struct RestoreHotkey {
     wanted: Option<(u32, u32)>,
     registered: Option<butterpollo_windows::hotkey::Hotkey>,
     presses: Option<std::sync::mpsc::Receiver<()>>,
-    checked: Option<Instant>,
+    /// The settings revision the hotkey was last read at: `None` before the
+    /// first read. A save wakes the loop, so the revision says whether to
+    /// read again, rather than a poll every couple of seconds.
+    checked: Option<u64>,
 }
 impl RestoreHotkey {
     fn poll(&mut self, h: &Shared) {
@@ -283,13 +286,11 @@ impl RestoreHotkey {
             // Restoring the layout waits on Windows.
             tokio::task::spawn_blocking(move || release_displays(&h));
         }
-        if self
-            .checked
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(2))
-        {
+        let revision = h.config_version.load(Ordering::Acquire);
+        if self.checked == Some(revision) {
             return;
         }
-        self.checked = Some(Instant::now());
+        self.checked = Some(revision);
         let wanted = butterpollo_core::hotkey::restore_hotkey(&h.config.read().unwrap());
         if wanted == self.wanted {
             return;
@@ -345,7 +346,8 @@ const LIBRARY_TICK_TOO_LONG: Duration = Duration::from_secs(5 * 60);
 /// The loop's tick while the host has work: it follows sessions, the running app, kept displays
 /// and a queued update this often.
 const BUSY_TICK: Duration = Duration::from_millis(100);
-/// The longest an idle host sleeps: the update check, due by the wall clock, looks every second.
+/// How long an idle loop sleeps when no timer names a moment: any real rest
+/// runs to the earliest of its jobs' deadlines, however far that is.
 const IDLE_TICK: Duration = Duration::from_secs(1);
 /// Whether nothing the loop follows every [`BUSY_TICK`] goes on: no launch, stream, teardown or
 /// remote monitor, no app, app audio or kept display, a session machine that rests idle, and no
@@ -363,12 +365,14 @@ fn idle(h: &Shared) -> bool {
         )
         && h.try_session_state() == Some(State::Idle)
 }
-/// When an idle loop runs next, unless woken: at its first timer, no later than [`IDLE_TICK`] and
-/// no sooner than [`BUSY_TICK`] from `now`.
+/// When an idle loop runs next, unless woken: at its earliest timer, however
+/// far, and no sooner than [`BUSY_TICK`] from `now`; [`IDLE_TICK`] only when
+/// no timer names a moment.
 fn idle_until(now: Instant, timers: impl IntoIterator<Item = Instant>) -> Instant {
     timers
         .into_iter()
-        .fold(now + IDLE_TICK, Instant::min)
+        .min()
+        .unwrap_or(now + IDLE_TICK)
         .max(now + BUSY_TICK)
 }
 /// Hands each tray action on, and wakes the idle loop for it, from a thread that ends with the
@@ -450,7 +454,14 @@ pub async fn maintain(
         let h = h.clone();
         tokio::task::spawn_blocking(move || crate::neural::clear_legacy_cache(&h));
     }
-    let mut update_at = Instant::now();
+    let mut update_at = Some(Instant::now());
+    // The settings revision the release check last read: a save can change
+    // the interval, and it wakes the loop, so the check follows the revision
+    // instead of looking every second.
+    let mut settings_version = h.config_version.load(Ordering::Acquire);
+    // The pending Neural Rendering removals retry on their own cadence; the
+    // first look asks whether any are recorded.
+    let mut removal_at = Instant::now();
     let mut steam_at = Instant::now() + Duration::from_secs(5);
     let mut launcher_at = Instant::now();
     let launcher_reading = Arc::new(AtomicBool::new(false));
@@ -466,8 +477,8 @@ pub async fn maintain(
     let mut housekeeping: Option<tokio::task::JoinHandle<()>> = None;
     let ticking = Arc::new(AtomicBool::new(false));
     // An idle loop sleeps until its next timer. A launch or stream (`Sessions::with_waker`), an
-    // app started from the console, a queued update, a quit or restart, a tray action, the
-    // restore hotkey and the service's stop wake it sooner.
+    // app started from the console, a queued update, a settings save, a quit or restart, a tray
+    // action, the restore hotkey and the service's stop wake it sooner.
     let wake = h.maintain_wake().clone();
     let stop_signal = Arc::new(stop_signal);
     wake_on_stop(&stop_signal, wake.clone());
@@ -478,31 +489,44 @@ pub async fn maintain(
             h.stop.store(true, Ordering::Release);
             break;
         }
-        let expired = h.sessions.lock().unwrap().expire();
-        if !expired.is_empty() {
-            tokio::task::spawn_blocking(move || drop(expired));
+        // Whether the host rests: every job below that has nothing to do
+        // while it rests is skipped, and the loop then sleeps to the earliest
+        // of its deadlines instead of ticking. Each state change (a launch, a
+        // stream, an app, a queued update, a save) wakes the loop, so reading
+        // this first cannot miss one.
+        let resting = idle(&h);
+        if !resting {
+            let expired = h.sessions.lock().unwrap().expire();
+            if !expired.is_empty() {
+                tokio::task::spawn_blocking(move || drop(expired));
+            }
+            if housekeeping.as_ref().is_none_or(|task| task.is_finished())
+                && (h.current_app.lock().unwrap().is_some()
+                    || h.app_audio.lock().unwrap().is_some()
+                    || !h.app_display.lock().unwrap().is_empty())
+            {
+                let h = h.clone();
+                housekeeping = Some(tokio::task::spawn_blocking(move || {
+                    let Ok(_transition) = h.launch_transition.try_lock() else {
+                        return;
+                    };
+                    h.reap_paused_display();
+                    if application_finished(&h) {
+                        let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
+                        drop(canceled);
+                        h.stop_app(AppStop::Exited);
+                    }
+                }));
+            }
+            // The session machine rests when the host does: while the host
+            // works, this follows its timed transitions and samples each
+            // stream's frame rate. On a resting host it would only rewrite
+            // an unchanged journal.
+            spawn_session_tick(&h, &ticking);
+            start_deferred(&h);
         }
-        if housekeeping.as_ref().is_none_or(|task| task.is_finished())
-            && (h.current_app.lock().unwrap().is_some()
-                || h.app_audio.lock().unwrap().is_some()
-                || !h.app_display.lock().unwrap().is_empty())
-        {
-            let h = h.clone();
-            housekeeping = Some(tokio::task::spawn_blocking(move || {
-                let Ok(_transition) = h.launch_transition.try_lock() else {
-                    return;
-                };
-                h.reap_paused_display();
-                if application_finished(&h) {
-                    let canceled = h.sessions.lock().unwrap().stop_role(Role::Stream, None);
-                    drop(canceled);
-                    h.stop_app(AppStop::Exited);
-                }
-            }));
-        }
-        spawn_session_tick(&h, &ticking);
         hotkey.poll(&h);
-        if Instant::now() >= launcher_at {
+        if Instant::now() >= launcher_at && !resting {
             launcher_at = Instant::now() + crate::launcher_watch::EVERY;
             let h = h.clone();
             spawn_exclusive(&launcher_reading, move || crate::launcher_watch::watch(&h));
@@ -526,25 +550,38 @@ pub async fn maintain(
                 );
             }
         }
-        if Instant::now() >= update_at {
-            update_at = Instant::now() + Duration::from_secs(1);
-            // Due by the wall clock since the last check, so a PC that slept
-            // checks as soon as it wakes and a new interval applies at once.
+        // The release check is due by the wall clock, so its own deadline
+        // says when the loop looks, not a poll every second; the loop also
+        // asks whenever it wakes, so a PC that slept or a shorter interval
+        // (a save bumps the revision and wakes) is caught by the next wake.
+        // A stream or a check still running defers a due check, and the
+        // deadline then says a second, as the poll did.
+        if resting
+            || update_at.is_some_and(|at| Instant::now() >= at)
+            || h.config_version.load(Ordering::Acquire) != settings_version
+        {
+            settings_version = h.config_version.load(Ordering::Acquire);
             if crate::updater::check_due(&h) {
                 maintenance::trigger_update(&h, false);
             }
+            update_at = crate::updater::next_deadline(&h);
+        }
+        if Instant::now() >= removal_at {
             if crate::neural::removal_due(&h) {
                 let h = h.clone();
                 tokio::task::spawn_blocking(move || crate::neural::remove_pending(&h));
             }
+            removal_at = crate::neural::removal_due_at(&h);
         }
-        {
+        // An update in any active phase keeps the host on its busy tick,
+        // where `poll` runs as before. On a resting host only the updater's
+        // own tidy and report are due, and only then does a task start.
+        if !resting || crate::updater::housekeeping_due() {
             // It hashes the downloaded installer, up to hundreds of megabytes.
             let h = h.clone();
             spawn_exclusive(&updating, move || crate::updater::poll(&h));
         }
         auto_lock.poll(&h);
-        start_deferred(&h);
         if actions.is_some() {
             show_app(&h, &mut tray);
             butterpollo_windows::tray::release_overdue_notices();
@@ -560,7 +597,7 @@ pub async fn maintain(
         if housekeeping
             .as_ref()
             .is_some_and(|task| !task.is_finished())
-            || !idle(&h)
+            || !resting
         {
             tokio::time::sleep(BUSY_TICK).await;
             continue;
@@ -569,11 +606,20 @@ pub async fn maintain(
             .is_some()
             .then(butterpollo_windows::tray::notices_due)
             .flatten();
-        let timers = [update_at, launcher_at, wake_at, steam_at];
-        let at = idle_until(
-            Instant::now(),
-            timers.into_iter().chain(notices).chain(auto_lock.due()),
-        );
+        // Each job's own deadline: the release check, the updater's tidy and
+        // report, the pending removals' retry, the library and cover checks,
+        // the sleep-after-idle look, and the tray's notices. The loop rests
+        // until the earliest of them, or until an event wakes it.
+        let timers = [
+            update_at,
+            Some(crate::updater::housekeeping_at()),
+            Some(removal_at),
+            Some(wake_at),
+            Some(steam_at),
+            notices,
+            auto_lock.due(),
+        ];
+        let at = idle_until(Instant::now(), timers.into_iter().flatten());
         tokio::select! {
             () = tokio::time::sleep_until(at.into()) => {}
             () = wake.notified() => {}

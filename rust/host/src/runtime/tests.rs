@@ -69,7 +69,9 @@ fn an_idle_loop_sleeps_until_its_first_timer_within_its_bounds() {
     let soon = now + Duration::from_millis(400);
     let later = now + Duration::from_secs(30);
     assert_eq!(idle_until(now, [later, soon]), soon);
-    assert_eq!(idle_until(now, [later]), now + IDLE_TICK);
+    // The rest runs to the earliest timer, however far: no second-of-wake
+    // floor between the deadlines the jobs themselves keep.
+    assert_eq!(idle_until(now, [later]), later);
     // A timer already due runs no more often than a busy host ticks.
     assert_eq!(idle_until(now, [now, soon]), now + BUSY_TICK);
 }

@@ -108,6 +108,10 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             ended_usb(h);
             h.packed_settings_saved(&before);
             h.metadata.lock().unwrap().take();
+            // The idle loop follows some settings by their own deadlines (the
+            // update interval, the restore hotkey): a save wakes it to look
+            // at once.
+            h.wake_maintenance();
             // The launchers to read changed: the last scan answers for the old ones.
             if object.keys().any(|key| key.starts_with("library_")) {
                 crate::library::invalidate(h);
@@ -243,6 +247,9 @@ pub(super) fn save_setting(
         .fetch_add(1, std::sync::atomic::Ordering::Release);
     ended_usb(h);
     h.packed_settings_saved(&before);
+    // The idle loop follows some settings by their own deadlines (the update
+    // interval, the restore hotkey): a save wakes it to look at once.
+    h.wake_maintenance();
     Ok(())
 }
 

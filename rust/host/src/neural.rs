@@ -2388,6 +2388,12 @@ pub fn removal_due(h: &Shared) -> bool {
     !pending(h).is_empty()
 }
 
+/// When the loop looks for pending removals again, for its idle sleep: the
+/// retry cadence `removal_due` keeps, now, when none has been tried yet.
+pub fn removal_due_at(h: &Shared) -> Instant {
+    h.neural.lock().removal_at.unwrap_or_else(Instant::now)
+}
+
 /// Try the recorded removals again. Blocks.
 pub fn remove_pending(h: &Shared) {
     try_pending(h, &[]);

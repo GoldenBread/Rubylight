@@ -323,6 +323,19 @@ fn the_schedule_follows_the_wall_clock_and_the_current_interval() {
     assert!(retry > t && retry <= t + 300, "{retry}");
 }
 #[test]
+fn the_loop_sleeps_to_the_checks_own_deadline_not_a_seconds_poll() {
+    let t = 1_000_000_000;
+    // A check already due (a stream or one still running defers it) is
+    // asked again after a second, as its poll was.
+    assert_eq!(next_wait(t, t), Duration::from_secs(1));
+    assert_eq!(next_wait(t - 1, t), Duration::from_secs(1));
+    // An interval that has not passed is slept to, however far.
+    assert_eq!(next_wait(t + 7, t), Duration::from_secs(7));
+    // One longer than a day is looked at again after a day, so a slept
+    // clock is caught without polling.
+    assert_eq!(next_wait(t + 10 * 86_400, t), Duration::from_secs(86_400));
+}
+#[test]
 fn repeated_failures_back_off_up_to_the_interval() {
     let t = 1_000_000_000;
     let day = 86400;
