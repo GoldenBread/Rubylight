@@ -495,8 +495,9 @@ impl Sender {
                 owed = owed.wrapping_add(skipped);
                 if frame.unit != Unit::Whole && !streamed::begins(frame.unit) {
                     // A later unit of the streamed frame: its blocks go out as they complete.
+                    let last = streamed::is_last(frame.unit);
                     streams.unit(
-                        shared, &s, &mut packetizer, &frame.bytes, streamed::is_last(frame.unit),
+                        shared, &s, &mut packetizer, frame.bytes, last,
                         polled, encode, &mut fec_reported,
                     )?;
                     shared.state.lock().unwrap().streaming = streams.is_open();
@@ -526,8 +527,9 @@ impl Sender {
                         age: micros(claimed.saturating_duration_since(captured)),
                         claim, timestamp, cap: frame.frame_cap_bytes, blocks: slice_blocks,
                     });
+                    let last = streamed::is_last(frame.unit);
                     streams.unit(
-                        shared, &s, &mut packetizer, &frame.bytes, streamed::is_last(frame.unit),
+                        shared, &s, &mut packetizer, frame.bytes, last,
                         polled, encode, &mut fec_reported,
                     )?;
                     shared.state.lock().unwrap().streaming = streams.is_open();

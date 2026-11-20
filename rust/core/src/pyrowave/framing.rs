@@ -321,11 +321,13 @@ impl Framed<'_> {
     }
 }
 
-/// A picture as the packetizer reads it: contiguous bytes, or framed pieces.
+/// A picture as the packetizer reads it: contiguous bytes, framed pieces, or
+/// several owned pieces (a streamed frame's encoder units) read in order.
 #[derive(Clone, Copy, Debug)]
 pub enum Payload<'a> {
     Bytes(&'a [u8]),
     Framed(Framed<'a>),
+    Pieces(&'a [Vec<u8>]),
 }
 
 impl<'a> From<&'a [u8]> for Payload<'a> {
@@ -357,6 +359,7 @@ impl<'a> Payload<'a> {
         match self {
             Self::Bytes(bytes) => bytes.len(),
             Self::Framed(framed) => framed.len(),
+            Self::Pieces(pieces) => pieces.iter().map(Vec::len).sum(),
         }
     }
 
@@ -369,6 +372,23 @@ impl<'a> Payload<'a> {
         match self {
             Self::Bytes(bytes) => out.copy_from_slice(&bytes[at..at + out.len()]),
             Self::Framed(framed) => framed.copy_to(at, out),
+            Self::Pieces(pieces) => {
+                let mut at = at;
+                let mut written = 0;
+                for piece in *pieces {
+                    if written == out.len() {
+                        break;
+                    }
+                    if at >= piece.len() {
+                        at -= piece.len();
+                        continue;
+                    }
+                    let n = (piece.len() - at).min(out.len() - written);
+                    out[written..written + n].copy_from_slice(&piece[at..at + n]);
+                    written += n;
+                    at = 0;
+                }
+            }
         }
     }
 
@@ -411,9 +431,16 @@ impl Reader<'_> {
 
     /// The little-endian word at `at`; panics past the end, as a slice does.
     pub(super) fn word(&mut self, at: usize) -> u32 {
-        let framed = match self.payload {
+        let payload = self.payload;
+        let framed = match payload {
             Payload::Bytes(bytes) => return super::word(bytes, at),
             Payload::Framed(framed) => framed,
+            // Streamed frames are never read as words; copy through.
+            Payload::Pieces(_) => {
+                let mut bytes = [0; 4];
+                payload.copy_to(at, &mut bytes);
+                return u32::from_le_bytes(bytes);
+            }
         };
         let pieces = &framed.framing.pieces;
         if pieces.get(self.index).is_none_or(|piece| piece.at > at) {

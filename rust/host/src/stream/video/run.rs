@@ -283,7 +283,7 @@ impl SessionThread<'_> {
         let mut slice_route = slices::Route::default();
         let mut streaming: Option<slices::Streaming> = None;
         // The streamed frames' payload buffer, kept between frames.
-        let mut slice_spare: Vec<u8> = Vec::new();
+        let mut slice_spare: Vec<Vec<u8>> = Vec::new();
         let mut send_drop = butterpollo_core::stream_policy::SendDrop::from_env();
         let batch_kb = match c.integer("video_max_batch_size_kb", 64) {
             16 => 16,
@@ -427,7 +427,7 @@ impl SessionThread<'_> {
                         let mut fatal = None;
                         let slices::Streaming { frame: streamed, sent, bps, wire_frame, .. } = st;
                         let (bps, wire_frame) = (*bps, *wire_frame);
-                        let pushed = streamed.push(&mut packetizer, &frame.bytes, last, &mut packets, |shards, block| {
+                        let pushed = streamed.push(&mut packetizer, frame.bytes, last, &mut packets, |shards, block| {
                             sent.lost.push_block(block.data, block.parity);
                             if block.index == 0 {
                                 // The frame's batches share one wait for a full socket.

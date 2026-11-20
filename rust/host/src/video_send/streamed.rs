@@ -51,8 +51,8 @@ pub(super) struct Streams {
     /// Slices per frame the encoder was asked for.
     slices: usize,
     open: Option<Open>,
-    /// The payload buffer, kept from frame to frame.
-    spare: Vec<u8>,
+    /// The unit buffers, kept from frame to frame.
+    spare: Vec<Vec<u8>>,
     shards: PacketBlock,
 }
 
@@ -149,7 +149,7 @@ impl Streams {
         shared: &Slot,
         s: &Session,
         packetizer: &mut VideoPacketizer,
-        bytes: &[u8],
+        bytes: Vec<u8>,
         last: bool,
         polled: Instant,
         latency: Duration,

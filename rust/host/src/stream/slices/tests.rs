@@ -113,7 +113,7 @@ fn packetizer() -> VideoPacketizer {
         key: None,
     }
 }
-fn streaming(packetizer: &mut VideoPacketizer, spare: Vec<u8>, cap: usize) -> Streaming {
+fn streaming(packetizer: &mut VideoPacketizer, spare: Vec<Vec<u8>>, cap: usize) -> Streaming {
     let now = Instant::now();
     Streaming {
         frame: packetizer.streamed_in(spare, 9000, 500, 4, 4, cap).unwrap(),
@@ -144,7 +144,7 @@ fn push(
     streaming.unit(Instant::now(), bytes);
     streaming.frame.push(
         packetizer,
-        &vec![0x55; bytes],
+        vec![0x55; bytes],
         last,
         &mut shards,
         |packets, _| {
@@ -169,7 +169,7 @@ fn an_interrupted_frame_that_built_no_block_consumes_its_index() {
     assert!(open.is_none());
     assert_eq!((next, packetizer.frame), (8, 8), "the next frame takes 8");
     assert_eq!((packetizer.sequence, packetizer.iv_counter), (100, 5));
-    assert!(spare.capacity() >= SLICE / 2, "the buffer comes back");
+    assert!(spare.is_empty(), "the unit buffers come back emptied");
     // Nothing open: the number is where it was.
     assert_eq!(drop_frame(&mut open, &mut packetizer, &mut spare), 8);
 }
@@ -205,7 +205,7 @@ fn the_next_frame_after_a_dropped_one_shows_the_client_a_gap() {
     frame
         .push(
             &mut packetizer,
-            &vec![1; 3 * SLICE],
+            vec![1; 3 * SLICE],
             true,
             &mut Vec::new(),
             |packets, _| {

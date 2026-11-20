@@ -114,7 +114,7 @@ pub fn open(route: &Route, streaming: &Option<Streaming>) -> bool {
 pub fn drop_frame(
     streaming: &mut Option<Streaming>,
     packetizer: &mut VideoPacketizer,
-    spare: &mut Vec<u8>,
+    spare: &mut Vec<Vec<u8>>,
 ) -> u32 {
     if let Some(mut open) = streaming.take() {
         open.frame.abandon(packetizer);

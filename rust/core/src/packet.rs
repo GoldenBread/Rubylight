@@ -772,7 +772,7 @@ impl VideoPacketizer {
     /// so a stream allocates it once.
     pub fn streamed_in(
         &self,
-        mut buffer: Vec<u8>,
+        mut buffer: Vec<Vec<u8>>,
         timestamp: u32,
         latency_us: u64,
         blocks: usize,
@@ -804,7 +804,7 @@ impl VideoPacketizer {
         Ok(StreamedFrame {
             sealer: self.key.as_ref().map(crypto::PacketSealer::new),
             header,
-            payload: buffer,
+            pieces: buffer,
             len: 0,
             timestamp,
             frame: self.frame,
@@ -867,8 +867,10 @@ fn tail_split(
 pub struct StreamedFrame {
     sealer: Option<crypto::PacketSealer>,
     header: [u8; 8],
-    payload: Vec<u8>,
-    /// Payload bytes received, which `payload` stops holding once the frame
+    /// The encoder's units, moved in as they arrive and read in order, so the
+    /// packetizer copies each byte straight from its unit into a shard.
+    pieces: Vec<Vec<u8>>,
+    /// Payload bytes received, which `pieces` stop holding once the frame
     /// is over.
     len: usize,
     timestamp: u32,
@@ -895,7 +897,7 @@ impl StreamedFrame {
     pub fn push(
         &mut self,
         packetizer: &mut VideoPacketizer,
-        unit: &[u8],
+        unit: Vec<u8>,
         last: bool,
         shards: &mut PacketBlock,
         mut emit: impl FnMut(&mut [Vec<u8>], StreamedBlock) -> Result<()>,
@@ -927,30 +929,30 @@ impl StreamedFrame {
             packetizer.skip_frame();
         }
     }
-    /// The payload buffer, emptied, for the next frame ([`VideoPacketizer::streamed_in`]).
-    pub fn into_buffer(mut self) -> Vec<u8> {
-        self.payload.clear();
-        self.payload
+    /// The unit buffers, emptied, for the next frame ([`VideoPacketizer::streamed_in`]).
+    pub fn into_buffer(mut self) -> Vec<Vec<u8>> {
+        self.pieces.clear();
+        self.pieces
     }
     fn push_unit(
         &mut self,
         packetizer: &mut VideoPacketizer,
-        unit: &[u8],
+        unit: Vec<u8>,
         last: bool,
         shards: &mut PacketBlock,
         emit: &mut impl FnMut(&mut [Vec<u8>], StreamedBlock) -> Result<()>,
     ) -> Result<()> {
-        self.payload.extend_from_slice(unit);
-        self.len = self.payload.len();
+        self.len += unit.len();
+        self.pieces.push(unit);
         self.units += 1;
-        if self.payload.len() > self.cap {
+        if self.len > self.cap {
             return Err(self.overflow());
         }
-        let stream_len = 8 + self.payload.len();
+        let stream_len = 8 + self.len;
         if !last {
             return self.send_ready(packetizer, stream_len, shards, emit);
         }
-        if self.payload.is_empty() {
+        if self.len == 0 {
             bail!("encoded frame is empty");
         }
         if self.next_block == 0 {
@@ -995,7 +997,7 @@ impl StreamedFrame {
     fn overflow(&self) -> anyhow::Error {
         SliceOverflow {
             cap: self.cap,
-            bytes: self.payload.len(),
+            bytes: self.len,
         }
         .into()
     }
@@ -1047,7 +1049,7 @@ impl StreamedFrame {
                 percentage,
                 minimum: self.minimum,
                 header: &self.header,
-                payload: Payload::Bytes(&self.payload),
+                payload: Payload::Pieces(&self.pieces),
                 layout: None,
                 sealer: self.sealer.as_ref(),
                 timestamp: self.timestamp,

@@ -67,7 +67,7 @@ fn run(
     let mut result = Ok(());
     for (index, part) in parts.iter().enumerate() {
         let last = index + 1 == parts.len();
-        let unit = &payload[offset..offset + part];
+        let unit = payload[offset..offset + part].to_vec();
         offset += part;
         let out = &mut sent;
         result = frame.push(p, unit, last, &mut shards, |packets, block| {
@@ -497,7 +497,7 @@ fn a_unit_past_the_cap_fails_the_frame_and_keeps_its_progress() {
     let mut got = Vec::new();
     next.push(
         &mut p,
-        &payload[..60 * SLICE],
+        payload[..60 * SLICE].to_vec(),
         false,
         &mut shards,
         |packets, _| {
@@ -520,7 +520,7 @@ fn an_abandoned_streamed_frame_builds_nothing_more() {
     let error = frame
         .push(
             &mut p,
-            &payload[..60 * SLICE],
+            payload[..60 * SLICE].to_vec(),
             false,
             &mut shards,
             |_, _| bail!("socket gone"),
@@ -532,7 +532,7 @@ fn an_abandoned_streamed_frame_builds_nothing_more() {
         frame
             .push(
                 &mut p,
-                &payload[60 * SLICE..],
+                payload[60 * SLICE..].to_vec(),
                 true,
                 &mut shards,
                 |_, _| Ok(())
@@ -545,18 +545,18 @@ fn an_abandoned_streamed_frame_builds_nothing_more() {
     p.encode(&[1; 100], false, 0, 0).unwrap();
     assert!(
         frame
-            .push(&mut p, &payload, true, &mut shards, |_, _| Ok(()))
+            .push(&mut p, payload.clone(), true, &mut shards, |_, _| Ok(()))
             .is_err()
     );
     // A finished frame takes no more units.
     let mut frame = p.streamed(9000, 500, 4, 4, 200 * SLICE).unwrap();
     frame
-        .push(&mut p, &payload, true, &mut shards, |_, _| Ok(()))
+        .push(&mut p, payload.clone(), true, &mut shards, |_, _| Ok(()))
         .unwrap();
     assert!(frame.is_done());
     assert!(
         frame
-            .push(&mut p, &payload, true, &mut shards, |_, _| Ok(()))
+            .push(&mut p, payload.clone(), true, &mut shards, |_, _| Ok(()))
             .is_err()
     );
 }
@@ -569,16 +569,20 @@ fn abandoning_a_frame_that_built_no_block_consumes_its_index() {
     let mut p = packetizer(20, 2, None);
     let mut frame = p.streamed(9000, 500, 4, 4, 100 * SLICE).unwrap();
     frame
-        .push(&mut p, &payload[..SLICE / 2], false, &mut shards, |_, _| {
-            panic!("nothing is ready yet")
-        })
+        .push(
+            &mut p,
+            payload[..SLICE / 2].to_vec(),
+            false,
+            &mut shards,
+            |_, _| panic!("nothing is ready yet"),
+        )
         .unwrap();
     assert_eq!(p.frame, 7);
     frame.abandon(&mut p);
     assert_eq!((p.frame, p.sequence, p.iv_counter), (8, 100, 5));
     assert!(
         frame
-            .push(&mut p, &payload, true, &mut shards, |_, _| Ok(()))
+            .push(&mut p, payload.clone(), true, &mut shards, |_, _| Ok(()))
             .is_err()
     );
     frame.abandon(&mut p);
@@ -588,7 +592,7 @@ fn abandoning_a_frame_that_built_no_block_consumes_its_index() {
     frame
         .push(
             &mut p,
-            &payload[..30 * SLICE],
+            payload[..30 * SLICE].to_vec(),
             false,
             &mut shards,
             |_, _| Ok(()),
@@ -601,7 +605,7 @@ fn abandoning_a_frame_that_built_no_block_consumes_its_index() {
     // A finished frame is left alone, and a frame another one overtook too.
     let mut frame = p.streamed(9000, 500, 2, 2, 100 * SLICE).unwrap();
     frame
-        .push(&mut p, &payload, true, &mut shards, |_, _| Ok(()))
+        .push(&mut p, payload.clone(), true, &mut shards, |_, _| Ok(()))
         .unwrap();
     assert_eq!(p.frame, 10);
     frame.abandon(&mut p);
@@ -625,28 +629,28 @@ fn a_tail_that_does_not_fit_the_remaining_blocks_is_an_overflow() {
     frame.cap = usize::MAX / 4;
     p.frame = 8;
     let error = frame
-        .push(&mut p, &payload, true, &mut shards, |_, _| Ok(()))
+        .push(&mut p, payload.clone(), true, &mut shards, |_, _| Ok(()))
         .unwrap_err();
     assert!(error.downcast_ref::<SliceOverflow>().is_some(), "{error:#}");
     assert!(!frame.is_done());
 }
 
 #[test]
-fn the_payload_buffer_is_reused_across_frames_and_the_length_outlives_it() {
+fn the_unit_buffers_are_reused_across_frames_and_the_length_outlives_it() {
     let payload = frame_bytes(30 * SLICE);
     let mut p = packetizer(20, 2, None);
     let mut shards = PacketBlock::new();
     let mut frame = p.streamed(9000, 500, 2, 2, 100 * SLICE).unwrap();
     frame
-        .push(&mut p, &payload, true, &mut shards, |_, _| Ok(()))
+        .push(&mut p, payload.clone(), true, &mut shards, |_, _| Ok(()))
         .unwrap();
     assert_eq!(frame.payload_len(), payload.len());
     let buffer = frame.into_buffer();
-    assert!(buffer.is_empty() && buffer.capacity() >= payload.len());
+    assert!(buffer.is_empty());
     let (pointer, capacity) = (buffer.as_ptr(), buffer.capacity());
     let mut frame = p.streamed_in(buffer, 9000, 500, 2, 2, 100 * SLICE).unwrap();
     frame
-        .push(&mut p, &payload, true, &mut shards, |_, _| Ok(()))
+        .push(&mut p, payload, true, &mut shards, |_, _| Ok(()))
         .unwrap();
     let buffer = frame.into_buffer();
     assert_eq!((buffer.as_ptr(), buffer.capacity()), (pointer, capacity));
@@ -671,7 +675,7 @@ fn streamed_blocks_overwrite_every_byte_of_dirty_shards() {
             let mut packets = Vec::new();
             let mut offset = 0;
             for (index, part) in parts.iter().enumerate() {
-                let unit = &payload[offset..offset + part];
+                let unit = payload[offset..offset + part].to_vec();
                 offset += part;
                 let last = index + 1 == parts.len();
                 frame
