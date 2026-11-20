@@ -56,6 +56,10 @@ final class PadControlView extends View {
     private float touchPressure = 1;
     /** A trackpad tap in the making: when the finger went down, and how far it has travelled since. */
     private long padDownAt;
+    /** A tapped trackpad's click is held and its touch not yet ended; where the finger was. */
+    private boolean padClickPending;
+    private float padClickX, padClickY;
+    private final Runnable padClickRelease = this::finishPadClick;
     private float padTravel, padLastX, padLastY;
     /** The split cluster this control is a member of; null for every other control. */
     private Group group;
@@ -75,6 +79,12 @@ final class PadControlView extends View {
     private final float density;
     private static final float SCROLL_DP_PER_NOTCH = 24, SCROLL_UNITS_PER_NOTCH = 120, HORIZONTAL_SCROLL_RATIO = .5f;
     private static final int CAMERA_TICK_MS = 16;
+    /**
+     * How long a tapped trackpad's click is held, finger still on the pad, before it releases and the
+     * touch ends: a little over the classic controller's 25 ms first resend, so one report carries
+     * the press alone. The OSC has no other tap or hold constant to reuse.
+     */
+    static final long PAD_CLICK_HOLD_MS = 40;
     private long pointerTickNs;
     private float pointerTravel;
     private final float[] pointerLastX = new float[2], pointerLastY = new float[2];
@@ -438,6 +448,7 @@ final class PadControlView extends View {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         removeCallbacks(easing);
+        finishPadClick();
     }
 
     private void redraw() {
@@ -555,6 +566,7 @@ final class PadControlView extends View {
             case PAD:
                 // One finger per pad, as on the controller.
                 if (state.pressed) return;
+                finishPadClick();
                 pointerIds[0] = pointer;
                 state.pressed = true;
                 padDownAt = time;
@@ -751,13 +763,23 @@ final class PadControlView extends View {
                 if (!state.pressed || pointer != pointerIds[0]) return;
                 pointerIds[0] = -1;
                 state.pressed = false;
-                padTouch(MoonBridge.LI_TOUCH_EVENT_UP, state.touchX, state.touchY, touchPressure);
-                state.touchX = Float.NaN;
-                state.touchY = Float.NaN;
                 // A tap clicks the pad, as pressing the real one does: short, and the finger stayed
                 // near where it landed, by the pointer touchpad's own thresholds. A drag or a
-                // lingering finger does not.
-                if (PadInput.touchpadTap(time - padDownAt, padTravel, density)) padClick();
+                // lingering finger does not. The click goes out with the finger still on the pad
+                // and the touch ends after it, so a click that reads the touch position sees one.
+                if (PadInput.touchpadTap(time - padDownAt, padTravel, density) && PadInput.padClickFlag(control) != 0) {
+                    padClickX = state.touchX;
+                    padClickY = state.touchY;
+                    padClickPending = true;
+                    gamepad.setButtons(slot(), PadInput.padClickFlag(control));
+                    if (haptics) Haptics.perform(this, Haptics.Kind.CLICK);
+                    changed();
+                    postDelayed(padClickRelease, PAD_CLICK_HOLD_MS);
+                } else {
+                    padTouch(MoonBridge.LI_TOUCH_EVENT_UP, state.touchX, state.touchY, touchPressure);
+                }
+                state.touchX = Float.NaN;
+                state.touchY = Float.NaN;
                 applyAlpha();
                 redraw();
                 break;
@@ -783,6 +805,8 @@ final class PadControlView extends View {
             redraw();
             return;
         }
+        // A held click ends with its touch, in order, before the rest lets go.
+        finishPadClick();
         // A pointer touchpad stops at once when input is taken away; nothing can carry on.
         removeCallbacks(cameraTick);
         if (control.shape == PadLayout.Shape.TOUCHPAD) {
@@ -898,15 +922,19 @@ final class PadControlView extends View {
     }
 
     /**
-     * A tap on the pad clicked it: press and release at once, as the pointer touchpad's tap does.
-     * The touch has just ended, so the pad's slot holds nothing else; a resend then carries the
-     * release, as for any button let go.
+     * Ends a tapped pad's click: the release, then the touch's end, so the click went out with the
+     * finger on the pad. The pad's slot holds nothing else, so a resend carries the release as for
+     * any button let go. A no-op when no click is held.
      */
-    private void padClick() {
-        gamepad.setButtons(slot(), PadInput.padClickFlag(control));
+    private void finishPadClick() {
+        if (!padClickPending) return;
+        padClickPending = false;
+        removeCallbacks(padClickRelease);
         gamepad.setButtons(slot(), 0);
-        if (haptics) Haptics.perform(this, Haptics.Kind.CLICK);
         changed();
+        padTouch(MoonBridge.LI_TOUCH_EVENT_UP, padClickX, padClickY, touchPressure);
+        state.touchX = Float.NaN;
+        state.touchY = Float.NaN;
     }
 
     private void releaseButton() {

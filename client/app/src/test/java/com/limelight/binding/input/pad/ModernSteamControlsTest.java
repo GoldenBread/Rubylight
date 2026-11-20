@@ -19,9 +19,11 @@ import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLooper;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.*;
 
@@ -38,10 +40,12 @@ public class ModernSteamControlsTest {
     private final List<Integer> buttons = new ArrayList<>();
     /** Trackpad touches as {type, pointer, x * 1000, y * 1000}. */
     private final List<int[]> touches = new ArrayList<>();
+    /** Buttons and touches in the order they went out: "b<flags>" and "t<type>". */
+    private final List<String> events = new ArrayList<>();
     private final HeldInputState.Sink sink = new HeldInputState.Sink() {
         @Override public void key(int key, boolean down) { fail("Gamepad only"); }
         @Override public void mouse(int button, boolean down) { fail("Gamepad only"); }
-        @Override public void gamepad(int b, short lx, short ly, short rx, short ry, byte lt, byte rt) { buttons.add(b); }
+        @Override public void gamepad(int b, short lx, short ly, short rx, short ry, byte lt, byte rt) { buttons.add(b); events.add("b" + b); }
     };
     private FrameLayout frame;
     private PreferenceConfiguration prefs;
@@ -68,7 +72,7 @@ public class ModernSteamControlsTest {
     private ModernController controller() {
         ModernController controller = new ModernController(frame.getContext(), frame, sink, prefs, null);
         controller.setTouchSink((type, pointer, x, y, pressure) ->
-                touches.add(new int[] {type, pointer, Math.round(x * 1000), Math.round(y * 1000)}));
+                { touches.add(new int[] {type, pointer, Math.round(x * 1000), Math.round(y * 1000)}); events.add("t" + type); });
         controller.refreshLayout();
         controller.show();
         layout();
@@ -225,21 +229,30 @@ public class ModernSteamControlsTest {
         PadControlView left = controller.view(PadLayout.Control.LEFT_PAD);
         float w = left.getWidth(), h = left.getHeight();
 
-        // A tap: the touch streams as before, then the pad's click presses and releases at once.
+        // A tap: the click presses with the finger still on the pad, holds a moment, releases, and
+        // only then does the touch end.
         int count = buttons.size();
         left.down(0, w / 2, h / 4, 100);
         assertEquals(count, buttons.size());
+        events.clear();
         left.up(0, 200);
+        assertEquals("The press goes out with the touch still down",
+                java.util.Arrays.asList("b" + SteamControls.LEFT_PAD_CLICK_FLAG), events);
+        ShadowLooper.idleMainLooper(PadControlView.PAD_CLICK_HOLD_MS, TimeUnit.MILLISECONDS);
+        assertEquals(java.util.Arrays.asList("b" + SteamControls.LEFT_PAD_CLICK_FLAG, "b0",
+                "t" + MoonBridge.LI_TOUCH_EVENT_UP), events);
         assertEquals(MoonBridge.LI_TOUCH_EVENT_UP, touches.get(touches.size() - 1)[0]);
-        assertEquals(SteamControls.LEFT_PAD_CLICK_FLAG, buttons.get(buttons.size() - 2));
-        assertEquals("The click releases at once", 0, last());
+        assertEquals(0, last());
 
         // The right pad clicks its own button.
         PadControlView right = controller.view(PadLayout.Control.RIGHT_PAD);
         right.down(1, 5, 5, 300);
         right.up(1, 400);
+        assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, last());
+        ShadowLooper.idleMainLooper(PadControlView.PAD_CLICK_HOLD_MS, TimeUnit.MILLISECONDS);
         assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, buttons.get(buttons.size() - 2));
         assertEquals(0, last());
+        assertEquals(MoonBridge.LI_TOUCH_EVENT_UP, touches.get(touches.size() - 1)[0]);
 
         // A drag: the finger crosses the pad within tap time, but too far.
         count = buttons.size();
@@ -253,6 +266,18 @@ public class ModernSteamControlsTest {
         left.down(0, w / 2, h / 2, 2000);
         left.up(0, 2000 + PadInput.TOUCHPAD_TAP_MS + 50);
         assertEquals("A lingering finger sends no click", count, buttons.size());
+
+        // A new touch within the hold ends the click first, in order.
+        events.clear();
+        left.down(0, w / 2, h / 2, 2500);
+        left.up(0, 2550);
+        left.down(0, w / 2, h / 2, 2560);
+        assertEquals(java.util.Arrays.asList("t" + MoonBridge.LI_TOUCH_EVENT_DOWN,
+                "b" + SteamControls.LEFT_PAD_CLICK_FLAG, "b0", "t" + MoonBridge.LI_TOUCH_EVENT_UP,
+                "t" + MoonBridge.LI_TOUCH_EVENT_DOWN), events);
+        left.up(0, 3000 - 10);
+        ShadowLooper.idleMainLooper(PadControlView.PAD_CLICK_HOLD_MS, TimeUnit.MILLISECONDS);
+        count = buttons.size();
 
         // Input taken away mid-touch is no tap either: the touch is cancelled, nothing clicks.
         left.down(0, w / 2, h / 2, 3000);
