@@ -255,9 +255,13 @@ public class SettingsKeysTest {
         PreferenceConfiguration.readPreferences(app);
         assertFalse(prefs().contains("list_osc_style"));
         assertFalse(controller.contains("classic-migrated"));
+        // The classic layout is the one in use, so it replaces what an earlier carry-over left.
+        assertTrue(controller.getBoolean("classic-style", false));
         // A player who had picked Modern keeps the layouts they have: nothing classic is carried over.
+        controller.edit().clear().commit();
         prefs().edit().putString("list_osc_style", "modern").commit();
         PreferenceConfiguration.readPreferences(app);
+        assertFalse(controller.contains("classic-style"));
         assertFalse(prefs().contains("list_osc_style"));
         assertTrue(controller.getBoolean("classic-migrated", false));
         // A broken stored value is dropped too, and a second read changes nothing.
@@ -267,6 +271,7 @@ public class SettingsKeysTest {
         PreferenceConfiguration.readPreferences(app);
         assertFalse(prefs().contains("list_osc_style"));
         assertFalse(controller.contains("classic-migrated"));
+        assertTrue(controller.getBoolean("classic-style", false));
     }
 
     @Test

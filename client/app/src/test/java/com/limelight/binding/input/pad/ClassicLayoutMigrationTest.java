@@ -31,7 +31,8 @@ import static org.junit.Assert.*;
  * after the update that removed the classic controller.
  */
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 30, application = Application.class, qualifiers = "w800dp-h360dp-land-xhdpi")
+@Config(sdk = 30, application = Application.class, qualifiers = "w800dp-h360dp-land-xhdpi",
+        shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class)
 public class ClassicLayoutMigrationTest {
     private static final float WIDTH = 1600, HEIGHT = 720, DENSITY = 2;
     /** The classic right stick, at (1300, 500) on this 1600x720 screen. */
@@ -135,6 +136,68 @@ public class ClassicLayoutMigrationTest {
         ClassicLayoutMigration.carryOverOnce(context, store, false);
         assertFalse(shared().spec(PadLayout.Control.LEFT_STICK).placed());
         assertTrue(shared().spec(PadLayout.Control.RIGHT_STICK).placed());
+    }
+
+    /** An older build's carry-over, from the first time the player tried this controller: the stick at the left. */
+    private static final String EARLIER = "v1|RIGHT_STICK,0.1000,0.5000,1.000,100,0";
+
+    private void retire(String style) {
+        android.preference.PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .putString("list_osc_style", style).commit();
+        PreferenceConfiguration.readPreferences(context);
+    }
+
+    @Test public void aPlayerWhoWentBackToTheClassicControllerGetsTheLayoutTheyKeptArranging() {
+        // They tried this controller once, which carried the classic layout over and set the flag, then went back
+        // to the classic controller and moved its right stick to (1300, 500).
+        store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true)
+                .putString(PadLayoutKeys.legacyKey(null), EARLIER).commit();
+        classic.edit().putString("13", RIGHT_STICK).commit();
+        retire("classic");
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        PadLayout.Spec stick = shared().spec(PadLayout.Control.RIGHT_STICK);
+        assertEquals(1300f / WIDTH, stick.cx, .01f);
+        assertEquals(500f / HEIGHT, stick.cy, .01f);
+        assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
+        assertFalse(store.contains(ClassicLayoutMigration.CLASSIC_STYLE));
+
+        // Still only once: the classic layout moved later is never read.
+        String carried = store.getString(PadLayoutKeys.legacyKey(null), null);
+        classic.edit().putString("13", "{\"LEFT\":0,\"TOP\":0,\"WIDTH\":200,\"HEIGHT\":200}").commit();
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertEquals(carried, store.getString(PadLayoutKeys.legacyKey(null), null));
+    }
+
+    @Test public void goingBackToTheClassicControllerKeepsWhatThePlayerArrangedHere() {
+        store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true)
+                .putString(PadLayoutKeys.legacyKey(null), EARLIER).commit();
+        classic.edit().putString("13", RIGHT_STICK).commit();
+        // A layout arranged in this controller for both orientations: the earlier carry-over can reach nobody, and
+        // what the player arranged stays.
+        String mine = "v1|FACE,0.7083,0.5556,1.300,100,0";
+        store.edit().putString(PadLayoutKeys.key(true, null), mine).putString(PadLayoutKeys.key(false, null), mine)
+                .commit();
+        retire("classic");
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertEquals(mine, store.getString(PadLayoutKeys.key(true, null), null));
+        assertEquals(mine, store.getString(PadLayoutKeys.key(false, null), null));
+        assertEquals(EARLIER, store.getString(PadLayoutKeys.legacyKey(null), null));
+
+        // A player who stayed with this controller keeps the earlier carry-over: it is the layout they play with.
+        store.edit().clear().putBoolean(ClassicLayoutMigration.MIGRATED, true)
+                .putString(PadLayoutKeys.legacyKey(null), EARLIER).commit();
+        retire("modern");
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertEquals(EARLIER, store.getString(PadLayoutKeys.legacyKey(null), null));
+    }
+
+    @Test public void aClassicPlayerWhoResetTheClassicLayoutGetsTheDefaults() {
+        store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true)
+                .putString(PadLayoutKeys.legacyKey(null), EARLIER).commit();
+        retire("classic");
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
     }
 
     /**

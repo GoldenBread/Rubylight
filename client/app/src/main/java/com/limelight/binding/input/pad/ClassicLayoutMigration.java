@@ -31,6 +31,11 @@ public final class ClassicLayoutMigration {
      * sets it too, so a reset means the defaults.
      */
     static final String MIGRATED = "classic-migrated";
+    /**
+     * Set when the retired Controller style was the classic one: the classic layout is the one in use, so it is carried
+     * over once more even when an earlier carry-over set {@link #MIGRATED}. Cleared by that carry-over.
+     */
+    static final String CLASSIC_STYLE = "classic-style";
 
     // The classic controller's element ids (its VirtualControllerElement.EID_*), as its preferences stored them.
     private static final int DPAD = 1, LT = 2, RT = 3, LB = 4, RB = 5, A = 6, B = 7, X = 8, Y = 9,
@@ -58,28 +63,48 @@ public final class ClassicLayoutMigration {
      * always wins. It is marked done whatever it found, so it never runs again, and a classic layout written later
      * is never read.
      *
+     * <p>Older builds carried the classic layout over the first time a player tried this controller, and set
+     * {@link #MIGRATED} with it. A player who went back to the classic controller ({@link #CLASSIC_STYLE}) kept
+     * arranging it after that, so for them it runs once more and replaces that earlier carry-over's layout.
+     *
      * @param store the controller's own preferences ({@link ModernController#PREFS})
      * @param swapFaces the Nintendo button layout setting, which the classic face buttons followed
      */
     static void carryOverOnce(Context context, SharedPreferences store, boolean swapFaces) {
-        if (store.getBoolean(MIGRATED, false)) return;
-        SharedPreferences.Editor edit = store.edit().putBoolean(MIGRATED, true);
-        // The older shared key is both orientations' fallback (PadLayoutKeys); it is free only while no shared layout
-        // fills it, and it reaches a player only in an orientation without a shared layout of its own.
-        boolean free = !store.contains(PadLayoutKeys.legacyKey(null)) &&
+        boolean earlier = store.getBoolean(MIGRATED, false), classicStyle = store.getBoolean(CLASSIC_STYLE, false);
+        if (earlier && !classicStyle) return;
+        SharedPreferences.Editor edit = store.edit().putBoolean(MIGRATED, true).remove(CLASSIC_STYLE);
+        String shared = PadLayoutKeys.legacyKey(null);
+        // The older shared key is both orientations' fallback (PadLayoutKeys); it reaches a player only in an
+        // orientation without a shared layout of its own. Since this controller saves per orientation, only a
+        // carry-over writes it, and it set the flag with it: with the flag already set, a layout there is an earlier
+        // carry-over's, older than the classic layout in use.
+        boolean stale = earlier && store.contains(shared);
+        boolean free = (!store.contains(shared) || stale) &&
                 !(store.contains(PadLayoutKeys.key(true, null)) && store.contains(PadLayoutKeys.key(false, null)));
-        Map<Integer, float[]> boxes = free ?
-                boxes(context.getSharedPreferences(CLASSIC_PREFS, Context.MODE_PRIVATE)) : new HashMap<>();
-        if (!boxes.isEmpty()) {
-            DisplayMetrics metrics = context.getResources().getDisplayMetrics();
-            // The classic layout is arranged in landscape pixels; a first start in portrait must map it with the same
-            // dimensions, because the shared key it is stored under is used in both orientations.
-            float width = Math.max(metrics.widthPixels, metrics.heightPixels);
-            float height = Math.min(metrics.widthPixels, metrics.heightPixels);
-            PadLayout migrated = migrate(boxes, width, height, metrics.density, swapFaces);
-            if (!migrated.isDefault()) edit.putString(PadLayoutKeys.legacyKey(null), migrated.serialize());
+        if (free) {
+            if (stale) edit.remove(shared);
+            Map<Integer, float[]> boxes = boxes(context.getSharedPreferences(CLASSIC_PREFS, Context.MODE_PRIVATE));
+            if (!boxes.isEmpty()) {
+                DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+                // The classic layout is arranged in landscape pixels; a first start in portrait must map it with the
+                // same dimensions, because the shared key it is stored under is used in both orientations.
+                float width = Math.max(metrics.widthPixels, metrics.heightPixels);
+                float height = Math.min(metrics.widthPixels, metrics.heightPixels);
+                PadLayout migrated = migrate(boxes, width, height, metrics.density, swapFaces);
+                if (!migrated.isDefault()) edit.putString(shared, migrated.serialize());
+            }
         }
         edit.apply();
+    }
+
+    /**
+     * The retired Controller style was the classic controller: its layout is the one in use, so it is carried over
+     * when the controller is next built, replacing what an earlier carry-over left.
+     */
+    public static void classicStyle(Context context) {
+        context.getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE).edit()
+                .putBoolean(CLASSIC_STYLE, true).apply();
     }
 
     /**

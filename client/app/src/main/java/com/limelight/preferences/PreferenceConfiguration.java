@@ -1560,12 +1560,16 @@ public class PreferenceConfiguration {
     /**
      * "Controller style" is gone with the classic on-screen controller: there is one controller now. A player who had
      * picked Modern keeps the layouts they have; for everyone else the controller carries the classic layout over
-     * once, when it is first built (ClassicLayoutMigration). The stored choice is dropped either way.
+     * once, when it is first built (ClassicLayoutMigration). Any other stored choice means the classic controller was
+     * in use, so its layout also replaces one an earlier carry-over left when the player tried Modern. The stored
+     * choice is dropped either way.
      */
     static void retireOscStyle(Context context, SharedPreferences prefs) {
         if (!prefs.contains(RETIRED_OSC_STYLE_PREF_STRING)) return;
         if ("modern".equals(prefs.getAll().get(RETIRED_OSC_STYLE_PREF_STRING))) {
             com.limelight.binding.input.pad.ClassicLayoutMigration.skip(context);
+        } else {
+            com.limelight.binding.input.pad.ClassicLayoutMigration.classicStyle(context);
         }
         prefs.edit().remove(RETIRED_OSC_STYLE_PREF_STRING).apply();
     }
