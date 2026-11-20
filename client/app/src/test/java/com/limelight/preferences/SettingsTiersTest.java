@@ -323,9 +323,8 @@ public class SettingsTiersTest {
     public void tellThePcAndDiagnosticsSitInDebug() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
-            for (String key : new String[] {"checkbox_tell_host_wireless", "checkbox_tell_host_link_speed"}) {
-                assertEquals(key, "debug", StreamSettings.sectionOfKey(screen, key));
-            }
+            // One switch tells the PC about the network; checkbox_tell_host_link_speed folded into this row.
+            assertEquals("debug", StreamSettings.sectionOfKey(screen, "checkbox_tell_host_wireless"));
             for (String key : new String[] {"checkbox_link_probe", "checkbox_show_gyro_diagnostics",
                     "checkbox_enable_post_stream_toast", "latency_benchmark", "export_latency_csv"}) {
                 assertEquals(key, "debug", StreamSettings.sectionOfKey(screen, key));
