@@ -366,6 +366,31 @@ public class ClassicLayoutMigrationTest {
         controller.destroy();
     }
 
+    @Test public void aGamesOlderLayoutGivesPortraitItsOwnSwappedCopy() {
+        // The older layout for one game is both orientations' layout for it; this game has no portrait one.
+        String whole = "v1|FACE,0.6000,0.5000,1.000,100,0";
+        store.edit().putString(PadLayoutKeys.legacyKey(GAME), whole).commit();
+        retire("classic", true);
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        PadLayout portrait = PadLayout.parse(store.getString(PadLayoutKeys.key(false, GAME), null));
+        PadLayout before = PadLayout.parse(whole);
+        before.split(PadLayout.Control.FACE, HEIGHT, WIDTH, DENSITY);
+        assertTrue(portrait.isSplit(PadLayout.Control.FACE));
+        assertBox("portrait: bottom sends B", box(before, PadLayout.Control.A, HEIGHT, WIDTH),
+                box(portrait, PadLayout.Control.B, HEIGHT, WIDTH));
+        assertBox("portrait: top sends X", box(before, PadLayout.Control.Y, HEIGHT, WIDTH),
+                box(portrait, PadLayout.Control.X, HEIGHT, WIDTH));
+        // Nothing was there before, so there is no backup; the older layout's own is kept.
+        assertNull(backup(PadLayoutKeys.key(false, GAME)));
+        assertEquals(whole, backup(PadLayoutKeys.legacyKey(GAME)));
+        // Landscape still reads the older layout, swapped on landscape places.
+        PadLayout landscape = PadLayout.parse(store.getString(PadLayoutKeys.legacyKey(GAME), null));
+        PadLayout wide = PadLayout.parse(whole);
+        wide.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
+        assertBox("landscape: bottom sends B", box(wide, PadLayout.Control.A), box(landscape, PadLayout.Control.B));
+        assertFalse(store.contains(PadLayoutKeys.key(true, GAME)));
+    }
+
     @Test public void withoutTheNintendoLayoutAClassicPlayerGetsTheClassicArrangementAndKeepsTheirGames() {
         String mine = "v1|FACE,0.7083,0.5556,1.300,100,0", game = "v1|FACE,0.6000,0.5000,1.000,100,0";
         store.edit().putString(PadLayoutKeys.key(true, null), mine).putString(PadLayoutKeys.key(true, GAME), game)

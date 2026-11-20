@@ -142,12 +142,13 @@ public final class ClassicLayoutMigration {
         }
         if (!swapFaces) return;
         // A layout for one game: its face buttons send what the classic ones there sent.
-        String portraitGames = portraitKey + ':';
+        String portraitGames = portraitKey + ':', landscapeGames = landscapeKey + ':';
         for (Map.Entry<String, ?> entry : saved.entrySet()) {
             String key = entry.getKey();
             if (!(entry.getValue() instanceof String) || !key.startsWith(PadLayoutKeys.ROOT + ':') ||
                     key.equals(landscapeKey) || key.equals(portraitKey) || key.endsWith(BACKUP_SUFFIX)) continue;
-            PadLayout layout = PadLayout.parse((String) entry.getValue());
+            String text = (String) entry.getValue();
+            PadLayout layout = PadLayout.parse(text);
             // A game's portrait layout has portrait places; its landscape one, and the older layout for both
             // orientations, which landscape reads first, landscape places.
             boolean portrait = key.startsWith(portraitGames);
@@ -155,6 +156,14 @@ public final class ClassicLayoutMigration {
             if (!swapFaceButtons(layout, width, height, density)) continue;
             backUp(saved, edit, key);
             edit.putString(key, layout.serialize());
+            // The older layout is the game's portrait one too, until it has one of its own: portrait gets its copy,
+            // swapped on portrait places. Nothing was under that key, so there is nothing to back up.
+            if (portrait || key.startsWith(landscapeGames)) continue;
+            String portraitGame = PadLayoutKeys.key(false, key.substring(PadLayoutKeys.ROOT.length() + 1));
+            if (saved.containsKey(portraitGame)) continue;
+            PadLayout copy = PadLayout.parse(text);
+            swapFaceButtons(copy, shortSide, longSide, density);
+            edit.putString(portraitGame, copy.serialize());
         }
     }
 
