@@ -79,4 +79,21 @@ public class SteamControlsTest {
         // flags alone, and the controls send each one — a pad's from a tap, a trigger's from its pull.
         assertEquals(SteamControls.LI_CCAP_SC26_BUTTONS, SteamControls.CAPABILITIES & SteamControls.LI_CCAP_SC26_BUTTONS);
     }
+
+    /** A physical pad's Touchpad button clicks the Steam pad its finger is on; the right pad when none has touched. */
+    @Test
+    public void aPhysicalTouchpadPressClicksThePadBeingTouched() {
+        int touchpad = ControllerPacket.TOUCHPAD_FLAG;
+        assertEquals(SteamControls.LEFT_PAD_CLICK_FLAG, SteamControls.touchpadClickFlag(0.2f));
+        assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, SteamControls.touchpadClickFlag(0.5f));
+        assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, SteamControls.touchpadClickFlag(0.9f));
+        assertEquals("No finger yet: the driver's old right pad",
+                SteamControls.RIGHT_PAD_CLICK_FLAG, SteamControls.touchpadClickFlag(Float.NaN));
+
+        int held = ControllerPacket.A_FLAG | touchpad;
+        assertEquals(held | SteamControls.LEFT_PAD_CLICK_FLAG, SteamControls.withTouchpadClick(held, 0.1f));
+        assertEquals(held | SteamControls.RIGHT_PAD_CLICK_FLAG, SteamControls.withTouchpadClick(held, 0.8f));
+        // Nothing held, nothing clicks.
+        assertEquals(ControllerPacket.A_FLAG, SteamControls.withTouchpadClick(ControllerPacket.A_FLAG, 0.1f));
+    }
 }

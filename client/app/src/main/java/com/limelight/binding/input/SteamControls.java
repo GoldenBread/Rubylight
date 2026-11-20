@@ -84,6 +84,21 @@ public final class SteamControls {
         return clamp(pressure);
     }
 
+    /**
+     * A physical pad's Touchpad button as the click of the pad its finger is on: the left pad's
+     * for a touch left of the middle, otherwise the right pad's, which is also the answer when no
+     * finger has touched yet (the driver's own click was the right pad's).
+     */
+    public static int touchpadClickFlag(float lastTouchX) {
+        return lastTouchX < 0.5f ? LEFT_PAD_CLICK_FLAG : RIGHT_PAD_CLICK_FLAG;
+    }
+
+    /** The buttons with the Touchpad button, if held, also clicking the pad {@code lastTouchX} is on. */
+    public static int withTouchpadClick(int buttons, float lastTouchX) {
+        if ((buttons & ControllerPacket.TOUCHPAD_FLAG) == 0) return buttons;
+        return buttons | touchpadClickFlag(lastTouchX);
+    }
+
     private static float clamp(float value) {
         if (Float.isNaN(value)) return 0f;
         return Math.max(0f, Math.min(1f, value));

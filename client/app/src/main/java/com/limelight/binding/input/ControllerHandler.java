@@ -201,6 +201,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * touch, and the back buttons.
      */
     private final boolean steamControlsSession;
+    /** Where the last physical touchpad finger on player 1 was across the pad; NaN until one touches. */
+    private volatile float steamPadTouchX = Float.NaN;
     /** The slot whose pad may use this device's motors and sensors: the first one a pad can have. */
     private final short deviceFallbackSlot;
     /**
@@ -2447,6 +2449,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if ((rightTrigger & 0xFF) >= SteamControls.TRIGGER_CLICK_THRESHOLD) {
                     inputMap |= SteamControls.RIGHT_TRIGGER_CLICK_FLAG;
                 }
+                // A physical pad's Touchpad button clicks the pad its finger is on (the right pad
+                // when none has touched): the click flags switch off the driver's own pad click.
+                inputMap = SteamControls.withTouchpadClick(inputMap, steamPadTouchX);
             }
             conn.sendControllerInput(controllerNumber, activeControllerMask,
                     inputMap,
@@ -2861,6 +2866,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 normalizeRawValueWithRange(event.getPressure(pointerIndex), context.touchpadPressureRange)
                 : 0;
 
+        if (steamControlsSession && context.controllerNumber == 0) steamPadTouchX = normalizedX;
         return conn.sendControllerTouchEvent((byte)context.controllerNumber, touchType,
                 event.getPointerId(pointerIndex),
                 normalizedX, normalizedY, normalizedPressure) != MoonBridge.LI_ERR_UNSUPPORTED;
