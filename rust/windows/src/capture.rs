@@ -1420,6 +1420,10 @@ impl GpuPool {
                 }
                 self.textures.clear();
                 self.shape = shape;
+                // The old shape's frame-pool, ring or helper textures need
+                // not stay pinned by the description cache.
+                let current = source.as_raw();
+                self.sources.retain(|(texture, _)| texture.as_raw() == current);
             }
             let free = self
                 .textures
@@ -1869,6 +1873,8 @@ impl Capture {
         })();
         Some(opened.map(|mut capture| {
             capture.owned = std::mem::take(&mut current.owned);
+            // The old capture's textures are not this one's sources.
+            capture.owned.sources.clear();
             capture.owned.warnings = warnings;
             Self::Wgc(Box::new(capture))
         }))

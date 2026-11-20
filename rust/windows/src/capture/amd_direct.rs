@@ -324,7 +324,13 @@ impl Session {
                     desc.ArraySize
                 );
             }
+            let shape = self.owned.shape;
             let image = self.owned.copy(&self.gpu, texture, None)?;
+            if self.owned.shape != shape {
+                // The ring was rebuilt for a new shape: release the old
+                // surfaces' textures but keep the current one.
+                self.descs.retain(|(texture, _)| texture.as_raw() == raw);
+            }
             Ok(image.map(|mut image| {
                 image.captured = Instant::now();
                 image.published = Instant::now();
