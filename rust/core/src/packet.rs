@@ -627,14 +627,19 @@ impl VideoPacketizer {
         }
         let shards = &mut shards[..count + fec];
         // A reused buffer is not cleared as a whole: every byte is written
-        // below. Data shards clear their header and the tail past the payload,
-        // the encoder clears the parity rows and the sealer fills the envelope.
+        // below. Data shards clear only the header bytes nothing writes and
+        // the tail past the payload, the encoder clears the parity rows and
+        // the sealer fills the envelope.
         for shard in shards.iter_mut() {
             shard.resize(envelope + block_size, 0);
         }
         for (i, shard) in shards.iter_mut().take(count).enumerate() {
             let s = &mut shard[envelope..];
-            s[..32].fill(0);
+            // The header bytes the loops below never write: the RTP payload
+            // type, the SSRC and the reserved byte stay zero.
+            s[1] = 0;
+            s[8..16].fill(0);
+            s[25] = 0;
             // Place the short header and source payload directly into their
             // final shards instead of allocating/copying a full packed frame.
             let offset = (first_shard + i) * slice;
@@ -647,13 +652,11 @@ impl VideoPacketizer {
             payload.copy_to(begin, &mut s[32 + h..32 + h + n]);
             s[32 + h + n..].fill(0);
             s[16..20].copy_from_slice(&(self.sequence.wrapping_add(i as u32) << 8).to_le_bytes());
-            s[20..24].copy_from_slice(&frame.to_le_bytes());
             s[24] = 1 | if i == 0 { 4 } else { 0 } | if i == count - 1 { 2 } else { 0 };
             s[26] = 0x10;
             if layout.is_some_and(|l| l.starts.get(first_shard + i) == Some(&true)) {
                 s[26] |= 0x80;
             }
-            s[27] = ((block as u8) << 4) | (((blocks - 1) as u8) << 6);
         }
         if fec > 0 {
             if envelope == 0 {
