@@ -1653,12 +1653,20 @@ void VulkanRenderer::onVsync(int64_t frameTimeNanos) {
 
 // Whether the vsync callbacks can stop until the next frame arrives: no frame waiting, no present
 // still to be reported, and none of the work that runs at every vsync (keep-alive, frame warp,
-// aligned draws, a swapchain to rebuild).
+// aligned draws, a swapchain to rebuild), and no new frame shown for
+// kKeepAliveAfterNs (the stream has paused).
 bool VulkanRenderer::canParkVsync() {
     if (keepAliveNs_ > 0 || warpApi_ || swapchainDirty_ || !alignedDraws_.empty() || quit_) {
         return false;
     }
     if (!pendingPresents_.empty() && nowNs() - lastPresentNs_ < kParkAfterPresentNs) {
+        return false;
+    }
+    // Not while the stream is running: a 60 fps stream on a 120 Hz screen finds nothing pending at
+    // every other vsync, and a frame arriving after parking waits for the thread to wake before a
+    // callback is posted (1 ms at the median, over 3 ms one time in ten; see enqueueFrame()), so one
+    // arriving inside that margin would show a vsync late
+    if (nowNs() - lastNewFrameNs_ < kKeepAliveAfterNs) {
         return false;
     }
     std::lock_guard<std::mutex> lock(mutex_);
