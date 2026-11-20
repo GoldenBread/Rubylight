@@ -264,34 +264,34 @@ pub(crate) fn sample(
     dynamic.take(stats.latest(dynamic.sampled()), started);
 }
 
-/// An output `unit` as the sender gets it, from the `bytes` AMF wrote and
+/// An output `unit` as the sender gets it, from the bytes AMF wrote and
 /// its frame `cap`: HDR10+ and HDR Vivid go before a frame's first slice or
 /// tile, the Dolby Vision RPU after its last (a whole frame gets both) or,
 /// on AV1, before its first tile after HDR10+, and every unit of that frame
 /// gets a cap that counts what the frame gained. A `keyframe` refreshes the
-/// RPU's scene. The bytes are `None` to send them as they are: without
-/// dynamic metadata, a middle unit, or nothing added.
+/// RPU's scene. The unit's own buffer is spliced; without dynamic metadata,
+/// a middle unit, or nothing added, it comes back as it went in.
 pub(crate) fn output(
     dynamic: Option<&mut Dynamic>,
     unit: Unit,
-    bytes: &[u8],
+    bytes: Vec<u8>,
     cap: Option<u64>,
     keyframe: bool,
-) -> (Option<Vec<u8>>, Option<u64>) {
+) -> (Vec<u8>, Option<u64>) {
     let Some(dynamic) = dynamic else {
-        return (None, cap);
+        return (bytes, cap);
     };
     let first = matches!(
         unit,
         Unit::Whole | Unit::Slice { index: 0 } | Unit::Last { index: 0 }
     );
-    let mut out = None;
+    let mut out = bytes;
     if first {
-        dynamic.next_rpu(!bytes.is_empty(), keyframe);
-        out = dynamic.first_unit(bytes);
+        dynamic.next_rpu(!out.is_empty(), keyframe);
+        out = dynamic.first_unit(out);
     }
     if matches!(unit, Unit::Whole | Unit::Last { .. }) {
-        out = dynamic.last_unit(out, bytes);
+        out = dynamic.last_unit(out);
     }
     (out, dynamic.cap(cap))
 }
@@ -467,15 +467,16 @@ impl Dynamic {
         }
     }
     /// The first unit of an output frame with the current HDR10+ and HDR
-    /// Vivid units in it, and on AV1 the frame's RPU OBU after them, or
-    /// `None` to send it as it is: without them, when it has no insertion
-    /// point, or when AMF produced nothing. Counts what the frame gains for
-    /// its cap, an HEVC frame's RPU ([`Dynamic::next_rpu`]) included.
-    pub(crate) fn first_unit(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
+    /// Vivid units in it, and on AV1 the frame's RPU OBU after them,
+    /// spliced into the unit's own buffer, or the unit as it came in:
+    /// without them, when it has no insertion point, or when AMF produced
+    /// nothing. Counts what the frame gains for its cap, an HEVC frame's
+    /// RPU ([`Dynamic::next_rpu`]) included.
+    pub(crate) fn first_unit(&mut self, bytes: Vec<u8>) -> Vec<u8> {
         let started = Instant::now();
         self.added = 0;
         if bytes.is_empty() {
-            return None;
+            return bytes;
         }
         self.report.frames += 1;
         let codec = self.writer.codec();
@@ -493,9 +494,9 @@ impl Dynamic {
             Vec::new()
         };
         if t35.is_empty() && rpu.is_empty() {
-            return None;
+            return bytes;
         }
-        let Some(at) = hdr_dynamic::insert_offset(codec, bytes) else {
+        let Some(at) = hdr_dynamic::insert_offset(codec, &bytes) else {
             if self.report.no_insertion == 0 {
                 tracing::warn!(
                     codec = ?codec,
@@ -505,18 +506,22 @@ impl Dynamic {
                 );
             }
             self.report.no_insertion += 1;
-            return None;
+            return bytes;
         };
-        let mut spliced = crate::frame_pool::take(bytes.len() + t35.len() + rpu.len());
-        spliced.extend_from_slice(&bytes[..at]);
-        spliced.extend_from_slice(t35);
-        spliced.extend_from_slice(&rpu);
-        spliced.extend_from_slice(&bytes[at..]);
+        // The metadata is written into the unit's own buffer, shifted apart
+        // at `at`, so a spliced frame is copied once: into the buffer it
+        // arrives in.
+        let len = bytes.len();
+        let mut spliced = bytes;
+        spliced.resize(len + t35.len() + rpu.len(), 0);
+        spliced.copy_within(at..len, at + t35.len() + rpu.len());
+        spliced[at..at + t35.len()].copy_from_slice(t35);
+        spliced[at + t35.len()..at + t35.len() + rpu.len()].copy_from_slice(&rpu);
         self.added += (t35.len() + rpu.len()) as u64;
         self.report.spliced += 1;
         self.report.stand_in += u64::from(!t35.is_empty() && !self.writer.measured());
         self.report.splice.add(started);
-        Some(spliced)
+        spliced
     }
     /// The RPU of a frame that starts, for [`Dynamic::first_unit`] to place
     /// and count: none for a frame AMF produced nothing for, or without Dolby
@@ -533,19 +538,14 @@ impl Dynamic {
         self.report.unmeasured_rpus += u64::from(!measured);
         self.report.rpu.add(started);
     }
-    /// A frame's last unit (`out` if it was spliced, else `bytes`) with the
-    /// frame's RPU after it, the last NAL unit of the access unit.
-    fn last_unit(&mut self, out: Option<Vec<u8>>, bytes: &[u8]) -> Option<Vec<u8>> {
+    /// A frame's last unit with the frame's RPU after it, the last NAL unit
+    /// of the access unit, appended onto the unit's own buffer.
+    fn last_unit(&mut self, mut out: Vec<u8>) -> Vec<u8> {
         if self.rpu.is_empty() {
             return out;
         }
-        let mut out = out.unwrap_or_else(|| {
-            let mut copy = crate::frame_pool::take(bytes.len() + self.rpu.len());
-            copy.extend_from_slice(bytes);
-            copy
-        });
         out.append(&mut self.rpu);
-        Some(out)
+        out
     }
     /// A frame cap that counts the units the current frame gained. Zero (the
     /// driver's unrestricted default) and unknown stay as they are.

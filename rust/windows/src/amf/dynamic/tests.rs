@@ -88,7 +88,7 @@ fn frames_before_the_first_sample_carry_the_static_stand_in() {
     };
     // Frame 0 comes out before its statistics: it carries the stand-in.
     let (expected, added) = with(&Default::default());
-    assert_eq!(dynamic.first_unit(&frame), Some(expected));
+    assert_eq!(dynamic.first_unit(frame.clone()), expected);
     assert_eq!(dynamic.cap(Some(5000)), Some(5000 + added));
     // The stream's static metadata rebuilds it.
     let mut metadata = butterpollo_core::hdr::Metadata::display(600., 0.01, 300.);
@@ -96,21 +96,21 @@ fn frames_before_the_first_sample_carry_the_static_stand_in() {
     dynamic.set_metadata(metadata);
     // Nothing finished yet: still the stand-in.
     dynamic.take(Ok(None), Instant::now());
-    assert_eq!(dynamic.first_unit(&frame), Some(with(&metadata).0));
+    assert_eq!(dynamic.first_unit(frame.clone()), with(&metadata).0);
     assert_eq!(dynamic.sampled(), 0);
     assert_eq!((dynamic.report.spliced, dynamic.report.stand_in), (2, 2));
     // An invalid first sample keeps it too.
     let mut empty = readout(4, 0, 0);
     empty.histogram.fill(0);
     dynamic.take(Ok(Some(empty)), Instant::now());
-    assert_eq!(dynamic.first_unit(&frame), Some(with(&metadata).0));
+    assert_eq!(dynamic.first_unit(frame.clone()), with(&metadata).0);
     // A sample replaces it.
     let sample = readout(5, 200, 600);
     let units = frame_units(Codec::Hevc, &sample.frame_stats().unwrap()).unwrap();
     dynamic.take(Ok(Some(sample)), Instant::now());
     assert_eq!(
-        dynamic.first_unit(&frame),
-        Some([&frame[..at], &units, &frame[at..]].concat())
+        dynamic.first_unit(frame),
+        [&frame[..at], &units, &frame[at..]].concat()
     );
     assert_eq!((dynamic.report.spliced, dynamic.report.stand_in), (4, 3));
 }
@@ -127,17 +127,18 @@ fn a_sample_is_spliced_into_every_frame_until_the_next() {
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
     let expected = [&frame[..at], &units, &frame[at..]].concat();
     for _ in 0..3 {
-        assert_eq!(dynamic.first_unit(&frame).as_ref(), Some(&expected));
+        assert_eq!(dynamic.first_unit(frame.clone()), expected);
         assert_eq!(dynamic.cap(Some(5000)), Some(5000 + units.len() as u64));
         assert_eq!(dynamic.cap(Some(0)), Some(0), "unrestricted stays so");
         assert_eq!(dynamic.cap(None), None);
     }
     // A frame without an insertion point goes out as it is, its cap too.
-    assert_eq!(dynamic.first_unit(&nal(32, &[0x0C])), None);
+    let bare = nal(32, &[0x0C]);
+    assert_eq!(dynamic.first_unit(bare.clone()), bare);
     assert_eq!(dynamic.cap(Some(5000)), Some(5000));
     assert_eq!(dynamic.report.no_insertion, 1);
     // An empty output is no frame to report.
-    assert_eq!(dynamic.first_unit(&[]), None);
+    assert_eq!(dynamic.first_unit(Vec::new()), Vec::<u8>::new());
     assert_eq!(dynamic.cap(Some(5000)), Some(5000));
     assert_eq!(dynamic.report.no_insertion, 1);
     // A cut to a dark scene is taken as it is.
@@ -146,14 +147,14 @@ fn a_sample_is_spliced_into_every_frame_until_the_next() {
     dynamic.take(Ok(Some(dark)), Instant::now());
     let units = frame_units(Codec::Hevc, &dark_stats).unwrap();
     assert_eq!(
-        dynamic.first_unit(&frame),
-        Some([&frame[..at], &units, &frame[at..]].concat())
+        dynamic.first_unit(frame),
+        [&frame[..at], &units, &frame[at..]].concat()
     );
     assert_eq!(dynamic.report.scene_cuts, 2);
 }
 
 #[test]
-fn a_large_frame_is_spliced_into_a_pooled_buffer_unchanged() {
+fn a_large_frame_is_spliced_into_its_own_pooled_buffer_unchanged() {
     let _alone = crate::frame_pool::alone();
     let mut dynamic = Dynamic::new(Codec::Hevc);
     dynamic.take(Ok(Some(readout(7, 200, 600))), Instant::now());
@@ -165,10 +166,13 @@ fn a_large_frame_is_spliced_into_a_pooled_buffer_unchanged() {
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
     let units = frame_units(Codec::Hevc, &readout(7, 200, 600).frame_stats().unwrap()).unwrap();
     let expected = [&frame[..at], &units, &frame[at..]].concat();
-    // A reused buffer is emptied before it is filled again.
+    // The unit arrives in a reused pooled buffer, as the whole-frame path
+    // copies it: the splice writes into it without leaving any of the
+    // bytes it held, and the buffer goes back for the next frame.
     crate::frame_pool::give(vec![0xEE; frame.len() + units.len()]);
     for _ in 0..2 {
-        let spliced = dynamic.first_unit(&frame).unwrap();
+        let owned = crate::frame_pool::copy(&frame);
+        let spliced = dynamic.first_unit(owned);
         assert_eq!(spliced, expected);
         crate::frame_pool::give(spliced);
     }
@@ -184,12 +188,12 @@ fn a_failed_readout_keeps_the_previous_units() {
         vec![0x32, 0x01, 0x10],
     ]
     .concat();
-    let before = dynamic.first_unit(&frame).unwrap();
+    let before = dynamic.first_unit(frame.clone());
     dynamic.take(Err(anyhow::anyhow!("inconsistent")), Instant::now());
     let mut empty = readout(4, 0, 0);
     empty.histogram.fill(0);
     dynamic.take(Ok(Some(empty)), Instant::now());
-    assert_eq!(dynamic.first_unit(&frame), Some(before));
+    assert_eq!(dynamic.first_unit(frame), before);
     assert_eq!(
         (dynamic.report.readout_errors, dynamic.report.invalid),
         (1, 1)
@@ -424,11 +428,14 @@ fn an_av1_dolby_vision_frame_carries_its_rpu_obu_before_the_frame_after_hdr10_pl
     assert_eq!(at, 5, "after the temporal delimiter and sequence header");
     // A whole frame: HDR10+, then the RPU, then the frame OBU; nothing after.
     let rpu = rpus.frame(true).obu();
-    let (bytes, cap) = output(Some(&mut *dynamic), Unit::Whole, &frame, Some(5000), true);
-    assert_eq!(
-        bytes,
-        Some([&frame[..at], &units, &rpu, &frame[at..]].concat())
+    let (bytes, cap) = output(
+        Some(&mut *dynamic),
+        Unit::Whole,
+        frame.clone(),
+        Some(5000),
+        true,
     );
+    assert_eq!(bytes, [&frame[..at], &units, &rpu, &frame[at..]].concat());
     assert_eq!(cap, Some(5000 + (units.len() + rpu.len()) as u64));
     // Tiles streamed as units: the first takes both, the last nothing.
     let rpu = rpus.frame(false).obu();
@@ -462,20 +469,21 @@ fn an_av1_dolby_vision_frame_without_hdr10_plus_or_a_place_says_so() {
     let mut rpus = dovi::Writer::new(1000).with_profile(dovi::Profile::P101);
     let frame = av1_frame(0x10);
     let rpu = rpus.frame(false).obu();
-    let (bytes, cap) = output(Some(&mut dynamic), Unit::Whole, &frame, Some(5000), false);
-    assert_eq!(bytes, Some([&frame[..5], &rpu, &frame[5..]].concat()));
+    let (bytes, cap) = output(
+        Some(&mut dynamic),
+        Unit::Whole,
+        frame.clone(),
+        Some(5000),
+        false,
+    );
+    assert_eq!(bytes, [&frame[..5], &rpu, &frame[5..]].concat());
     assert_eq!(cap, Some(5000 + rpu.len() as u64));
     assert_eq!((dynamic.report.spliced, dynamic.report.stand_in), (1, 0));
     // A temporal unit with no frame OBU has no place: it goes out as AMF
     // wrote it, counted, and the RPU is not appended after it.
-    let (bytes, cap) = output(
-        Some(&mut dynamic),
-        Unit::Whole,
-        &frame[..5],
-        Some(5000),
-        false,
-    );
-    assert_eq!((bytes, cap), (None, Some(5000)));
+    let bare = frame[..5].to_vec();
+    let (bytes, cap) = output(Some(&mut dynamic), Unit::Whole, bare.clone(), Some(5000), false);
+    assert_eq!((bytes, cap), (bare, Some(5000)));
     assert_eq!(dynamic.report.no_insertion, 1);
     assert!(dynamic.rpu.is_empty());
 }
@@ -536,11 +544,14 @@ fn a_dolby_vision_8_4_frame_carries_hdr_vivid_for_hlg_and_an_8_4_rpu() {
     let rpu = rpus.frame(false).nal();
     let frame = keyframe();
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
-    let (bytes, cap) = output(Some(dynamic), Unit::Whole, &frame, Some(5000), false);
-    assert_eq!(
-        bytes,
-        Some([&frame[..at], &units, &frame[at..], &rpu].concat())
+    let (bytes, cap) = output(
+        Some(dynamic),
+        Unit::Whole,
+        frame.clone(),
+        Some(5000),
+        false,
     );
+    assert_eq!(bytes, [&frame[..at], &units, &frame[at..], &rpu].concat());
     assert_eq!(cap, Some(5000 + (units.len() + rpu.len()) as u64));
     assert!(warnings.snapshot().is_empty());
 }
@@ -557,8 +568,14 @@ fn every_dolby_vision_frame_ends_with_an_rpu_counted_in_its_cap() {
     // A keyframe, whole: the RPU after its last slice.
     let frame = keyframe();
     let expected = rpus.frame(true).nal();
-    let (bytes, cap) = output(Some(&mut dynamic), Unit::Whole, &frame, Some(5000), true);
-    assert_eq!(bytes, Some([frame.clone(), expected.clone()].concat()));
+    let (bytes, cap) = output(
+        Some(&mut dynamic),
+        Unit::Whole,
+        frame.clone(),
+        Some(5000),
+        true,
+    );
+    assert_eq!(bytes, [frame.clone(), expected.clone()].concat());
     assert_eq!(cap, Some(5000 + expected.len() as u64));
     // A streamed frame in slices: the first and middle units go out as
     // they are, the last takes the RPU, and all count it.
@@ -595,8 +612,8 @@ fn every_dolby_vision_frame_ends_with_an_rpu_counted_in_its_cap() {
     assert_eq!(dynamic.report.unmeasured_rpus, 2);
     // An empty output gets no RPU.
     assert_eq!(
-        output(Some(&mut dynamic), Unit::Whole, &[], Some(5000), false),
-        (None, Some(5000))
+        output(Some(&mut dynamic), Unit::Whole, Vec::new(), Some(5000), false),
+        (Vec::<u8>::new(), Some(5000))
     );
 }
 
@@ -621,11 +638,14 @@ fn dolby_vision_takes_each_sample_and_hdr10_plus_goes_first() {
     let rpu = rpus.frame(false).nal();
     let frame = keyframe();
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
-    let (bytes, cap) = output(Some(dynamic), Unit::Whole, &frame, Some(5000), false);
-    assert_eq!(
-        bytes,
-        Some([&frame[..at], &units, &frame[at..], &rpu].concat())
+    let (bytes, cap) = output(
+        Some(dynamic),
+        Unit::Whole,
+        frame.clone(),
+        Some(5000),
+        false,
     );
+    assert_eq!(bytes, [&frame[..at], &units, &frame[at..], &rpu].concat());
     assert_eq!(cap, Some(5000 + (units.len() + rpu.len()) as u64));
     assert_eq!(dynamic.report.unmeasured_rpus, 0);
     assert!(warnings.snapshot().is_empty());
@@ -643,8 +663,8 @@ fn dolby_vision_without_statistics_goes_on_from_the_static_metadata_and_says_so(
     codes.sort();
     assert_eq!(codes, ["hdr_dolby_vision", "hdr_dynamic_metadata"]);
     let frame = keyframe();
-    let (bytes, _) = output(Some(dynamic), Unit::Whole, &frame, None, false);
-    assert_eq!(&bytes.unwrap()[..frame.len()], &frame[..], "HDR10+ went in");
+    let (bytes, _) = output(Some(dynamic), Unit::Whole, frame.clone(), None, false);
+    assert_eq!(&bytes[..frame.len()], &frame[..], "HDR10+ went in");
 
     // A pass that fails mid-stream: the RPUs go back to the static values.
     let warnings = Warnings::default();
@@ -668,8 +688,7 @@ fn dolby_vision_without_statistics_goes_on_from_the_static_metadata_and_says_so(
             .all(|w| w.message.contains("the rest of this stream")),
         "{shown:?}"
     );
-    let (bytes, _) = output(Some(dynamic), Unit::Whole, &frame, None, false);
-    let bytes = bytes.unwrap();
+    let (bytes, _) = output(Some(dynamic), Unit::Whole, frame.clone(), None, false);
     assert_eq!(&bytes[..frame.len()], &frame[..]);
     let mut rpus = dovi::Writer::new(1000);
     assert_eq!(ending_rpu(&bytes), &rpus.frame(false).nal()[..]);
@@ -709,8 +728,8 @@ fn deliver(
             Step::Unit(unit, bytes) => (unit, bytes),
             Step::Whole(bytes) => (Unit::Whole, bytes),
         };
-        let (spliced, cap) = output(dynamic.as_deref_mut(), unit, &bytes, Some(5000), meta.idr);
-        sent.push((unit, spliced.unwrap_or(bytes), cap));
+        let (bytes, cap) = output(dynamic.as_deref_mut(), unit, bytes, Some(5000), meta.idr);
+        sent.push((unit, bytes, cap));
     }
     sent
 }
@@ -858,8 +877,8 @@ fn without_dynamic_metadata_every_output_byte_is_amfs() {
         assert!(sent.iter().all(|&(_, _, cap)| cap == Some(5000)));
     }
     assert_eq!(
-        output(None, Unit::Whole, &keyframe(), None, true),
-        (None, None)
+        output(None, Unit::Whole, keyframe(), None, true),
+        (keyframe(), None)
     );
 }
 
@@ -875,7 +894,7 @@ fn the_receivers_display_peak_leaves_the_units() {
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
     let units = frame_units(Codec::Hevc, &stats).unwrap();
     assert_eq!(
-        dynamic.first_unit(&frame),
-        Some([&frame[..at], &units, &frame[at..]].concat())
+        dynamic.first_unit(frame),
+        [&frame[..at], &units, &frame[at..]].concat()
     );
 }

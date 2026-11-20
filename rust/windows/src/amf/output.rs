@@ -350,21 +350,16 @@ impl Encoder {
                     units::Step::Whole(bytes) => (Unit::Whole, bytes),
                 };
                 // Dynamic metadata goes before the first slice or tile, the
-                // Dolby Vision RPU after the last (AV1: before the first).
-                let (spliced, frame_cap_bytes) = dynamic::output(
+                // Dolby Vision RPU after the last (AV1: before the first),
+                // spliced into the unit's own buffer, which the sequencer
+                // copied once.
+                let (bytes, frame_cap_bytes) = dynamic::output(
                     self.dynamic.as_deref_mut(),
                     unit,
-                    &bytes,
+                    bytes,
                     frame_cap_bytes,
                     pushed.meta.idr,
                 );
-                let bytes = match spliced {
-                    Some(spliced) => {
-                        crate::frame_pool::give(bytes);
-                        spliced
-                    }
-                    None => bytes,
-                };
                 let whole = unit == Unit::Whole;
                 // A joined or frame-mode keyframe is recovered as a whole.
                 let bytes =
@@ -397,31 +392,25 @@ impl Encoder {
                 return Ok(output);
             }
             // The sender outlives this AMF buffer reference. Own the compressed
-            // bytes before Release makes its native storage available for reuse.
-            // H.264 carries no dynamic metadata (`dynamic::wanted`).
+            // bytes before Release makes its native storage available for reuse:
+            // a rewrite already owns its pooled buffer, and the splice writes
+            // into it. H.264 carries no dynamic metadata (`dynamic::wanted`).
             let (bytes, frame_cap_bytes) = if self.codec == 0 && idr && self.references.enabled() {
                 let mut recovered = crate::frame_pool::take(bytes.len());
                 butterpollo_core::bitstream::h264_reference_recovery_into(bytes, &mut recovered);
                 (recovered, frame_cap_bytes)
             } else {
-                let (spliced, cap) = dynamic::output(
+                let owned = match sent {
+                    std::borrow::Cow::Borrowed(bytes) => crate::frame_pool::copy(bytes),
+                    std::borrow::Cow::Owned(bytes) => bytes,
+                };
+                dynamic::output(
                     self.dynamic.as_deref_mut(),
                     Unit::Whole,
-                    bytes,
+                    owned,
                     frame_cap_bytes,
                     idr,
-                );
-                let owned = match (spliced, sent) {
-                    (Some(spliced), sent) => {
-                        if let std::borrow::Cow::Owned(rewritten) = sent {
-                            crate::frame_pool::give(rewritten);
-                        }
-                        spliced
-                    }
-                    (None, std::borrow::Cow::Borrowed(bytes)) => crate::frame_pool::copy(bytes),
-                    (None, std::borrow::Cow::Owned(bytes)) => bytes,
-                };
-                (owned, cap)
+                )
             };
             (v.Release.unwrap())(buffer);
             self.frame_completed(timing, !bytes.is_empty());
