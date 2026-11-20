@@ -355,6 +355,14 @@ impl Transport<'_> {
         // packets carry IPv4 headers, which the pacer counts too.
         let ipv6 = peer.ip().to_canonical().is_ipv6();
         let bps = cur.bps;
+        // The datagram size, pace and batch cap are constant for the frame,
+        // so the batch payload limit is computed once, not for every batch.
+        let budget = network_pacing::batch_payload_limit(
+            bps,
+            super::early::datagram(&frame.packetizer),
+            ipv6,
+            self.batch_kb * 1024,
+        );
         let part_packets: usize = frame.counts.iter().sum();
         let part_bytes: usize = frame
             .blocks
@@ -400,12 +408,6 @@ impl Transport<'_> {
                     self.timer.until_paced(self.pacer.due());
                     cur.pacing_wait += now.elapsed();
                 }
-                let budget = network_pacing::batch_payload_limit(
-                    bps,
-                    remaining[0].len(),
-                    ipv6,
-                    self.batch_kb * 1024,
-                );
                 let count = Batch::count(remaining, budget);
                 let batch_wire_bytes = if frame.idr {
                     remaining[..count].iter().map(Vec::len).sum::<usize>()

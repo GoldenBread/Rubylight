@@ -1020,6 +1020,12 @@ pub struct Batch {
     frame: Option<FrameWait>,
     unreported: u64,
     reported: Option<std::time::Instant>,
+    /// Scratch WSABUFs filled for each segmented send, so their 1 KiB is not
+    /// zeroed anew every batch.
+    buffers: [WSABUF; 64],
+    /// The control data and address of the last segmented send, rebuilt only
+    /// when the peer, the first packet's size or the source changes.
+    segmented: Option<Segmented>,
 }
 impl Default for Batch {
     fn default() -> Self {
@@ -1033,6 +1039,11 @@ impl Default for Batch {
             frame: None,
             unreported: 0,
             reported: None,
+            buffers: [WSABUF {
+                len: 0,
+                buf: windows::core::PSTR::null(),
+            }; 64],
+            segmented: None,
         }
     }
 }
@@ -1244,25 +1255,40 @@ impl Batch {
         source: Option<IpAddr>,
         budget: &mut WaitBudget,
     ) -> Result<std::result::Result<usize, WSA_ERROR>> {
-        let mut control = Ancillary::default();
-        control.push(
-            IPPROTO_UDP,
-            UDP_SEND_MSG_SIZE,
-            u32::try_from(packets[0].len())?,
-        );
-        if let Some(source) = source {
-            control.source(source);
+        let size = u32::try_from(packets[0].len())?;
+        // Rebuild the address and control data only when they changed, then
+        // fill the reused scratch buffers and count their bytes in one pass.
+        if self
+            .segmented
+            .as_ref()
+            .is_none_or(|s| s.peer != peer || s.size != size || s.source != source)
+        {
+            let mut control = Ancillary::default();
+            control.push(IPPROTO_UDP, UDP_SEND_MSG_SIZE, size);
+            if let Some(source) = source {
+                control.source(source);
+            }
+            self.segmented = Some(Segmented {
+                peer,
+                size,
+                source,
+                control,
+                address: socket2::SockAddr::from(peer),
+            });
         }
-        let address = socket2::SockAddr::from(peer);
-        // The only caller limits packets to 64.
-        let buffers = wsa_buffers(packets);
-        let buffers = &buffers[..packets.len()];
-        let expected: usize = packets.iter().map(Vec::len).sum();
+        let mut expected = 0usize;
+        for (buffer, packet) in self.buffers.iter_mut().zip(packets) {
+            buffer.len = packet.len() as u32;
+            buffer.buf = windows::core::PSTR(packet.as_ptr().cast_mut());
+            expected += packet.len();
+        }
+        let buffers = &self.buffers[..packets.len()];
+        let segmented = self.segmented.as_ref().unwrap();
         let system_calls = &mut self.system_calls;
         let result = send_with_retry(
             || {
                 *system_calls += 1;
-                send_message(socket, buffers, &address, &control)
+                send_message(socket, buffers, &segmented.address, &segmented.control)
             },
             |error| buffer_available(socket, error, budget, self.waits.as_mut()),
         );
@@ -1492,6 +1518,16 @@ impl Ancillary {
             ),
         }
     }
+}
+/// The control data and address of one segmented send, kept so a frame's
+/// batches rebuild them only when the peer, the first packet's size or the
+/// source changes.
+struct Segmented {
+    peer: SocketAddr,
+    size: u32,
+    source: Option<IpAddr>,
+    control: Ancillary,
+    address: socket2::SockAddr,
 }
 /// One WSASendMsg of `buffers` to `peer` with `control`. The error is Winsock's.
 fn send_message(
