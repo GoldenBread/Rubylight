@@ -705,6 +705,14 @@ public class MediaCodecHelper {
     public static boolean setDecoderLowLatencyOptions(MediaFormat videoFormat, MediaCodecInfo decoderInfo, int tryNumber,
                                                       boolean lowLatency, boolean vendorLowLatency, boolean performanceHints,
                                                       int hevcLowLatencyMode, boolean chipsetTuning) {
+        return setDecoderLowLatencyOptions(videoFormat, decoderInfo, tryNumber, lowLatency, vendorLowLatency,
+                performanceHints, hevcLowLatencyMode, chipsetTuning, true);
+    }
+
+    /** As above; without logOverrides the Amlogic HEVC warnings stay out, for a format that is only compared. */
+    static boolean setDecoderLowLatencyOptions(MediaFormat videoFormat, MediaCodecInfo decoderInfo, int tryNumber,
+                                               boolean lowLatency, boolean vendorLowLatency, boolean performanceHints,
+                                               int hevcLowLatencyMode, boolean chipsetTuning, boolean logOverrides) {
         // Options here should be tried in the order of most to least risky. The decoder will use
         // the first MediaFormat that doesn't fail in configure().
 
@@ -715,7 +723,7 @@ public class MediaCodecHelper {
         String mime = videoFormat.getString(MediaFormat.KEY_MIME);
         boolean disableLowLatency = omitsHevcLowLatencyFlags(mime, decoderInfo.getName(), hevcLowLatencyMode);
         boolean amlogic = "video/hevc".equals(mime) && autoOmitsHevcLowLatencyFlags(decoderInfo.getName());
-        if (amlogic && tryNumber == 0 && (lowLatency || vendorLowLatency)) {
+        if (logOverrides && amlogic && tryNumber == 0 && (lowLatency || vendorLowLatency)) {
             if (hevcLowLatencyMode == PreferenceConfiguration.HEVC_LOW_LATENCY_AUTO) {
                 LimeLog.warning("HEVC low-latency flags omitted on Amlogic decoder " + decoderInfo.getName() +
                         ": they stall its display (erratum 22)");
@@ -1076,6 +1084,20 @@ public class MediaCodecHelper {
             }
         }
         return requested;
+    }
+
+    /**
+     * The tuning keys of a configured try that the vendor low-latency setting added: those the same
+     * try without the setting does not ask for. keyless is a base format the options are set on.
+     */
+    static List<String> vendorAddedKeys(List<String> configured, MediaFormat keyless, MediaCodecInfo decoderInfo,
+                                        int tryNumber, boolean lowLatency, boolean performanceHints,
+                                        int hevcLowLatencyMode, boolean chipsetTuning, List<String> vendorParams) {
+        setDecoderLowLatencyOptions(keyless, decoderInfo, tryNumber, lowLatency, false, performanceHints,
+                hevcLowLatencyMode, chipsetTuning, false);
+        List<String> added = new ArrayList<>(configured);
+        added.removeAll(requestedTuningKeys(keyless, vendorParams));
+        return added;
     }
 
     /** Keys the first configure attempt asked for that the format finally configured no longer carries. */

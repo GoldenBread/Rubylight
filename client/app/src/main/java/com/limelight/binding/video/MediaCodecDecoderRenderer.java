@@ -237,9 +237,22 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // takes the reset for hung and ends the stream
     private static final long HANG_RESET_TIMEOUT_MS = 10_000;
     private long hangResetTimeoutMs = HANG_RESET_TIMEOUT_MS;
-    // Frames out when that reset was asked for, and whether it is still to finish
+    // Frames out and uptime when that reset was asked for, and whether it is still to finish
     private int framesOutAtHangReset = -1;
+    private long uptimeAtHangResetMs;
     private volatile boolean hangResetPending;
+    // A decoder whose format had vendor low-latency keys and that hangs again before it ran well since
+    // its hang reset is set up once more without them instead (resetHungDecoder); whether the last
+    // hang recovery was that one, and whether it is still to run.
+    private boolean hangResetWithoutKeys;
+    private volatile boolean restartWithoutVendorKeys;
+    // The decoder and MIME type (VendorKeyHangs.key) that took no input with its vendor keys, in this
+    // stream or (hungInEarlierStream) an earlier one, and those keys; it runs without them. Recorded
+    // for the next streams once it ran well without them.
+    private volatile String vendorKeysHung;
+    private volatile boolean hungInEarlierStream;
+    private volatile List<String> lowLatencyKeysHung = new ArrayList<>();
+    private volatile boolean vendorKeyHangUnrecorded;
     // Guards decoderFailure; never held while waiting for codecRecoveryMonitor
     private final Object decoderFailureLock = new Object();
     // Recoveries in a row that bring no frame wait longer each time, then end the stream
@@ -431,6 +444,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // Tuning keys of the configure attempt in progress, and those an earlier attempt asked for that it no longer has.
     private volatile List<String> lowLatencyKeysApplied = new ArrayList<>();
     private volatile List<String> lowLatencyKeysDropped = new ArrayList<>();
+    // Those of the configured keys the vendor low-latency setting added, and the decoder and MIME
+    // type they went to (VendorKeyHangs.key): a hang can be retried without them.
+    private volatile List<String> lowLatencyKeysVendor = new ArrayList<>();
+    private volatile String lowLatencyKeysDecoder;
     // Private file name kept from earlier releases so the last stream's timings survive updates.
     public static final String LATENCY_CSV_NAME = "butterpollo-latency.csv";
     public static final String LATENCY_CSV_EXPORT_NAME = "nightjar-latency.csv";
@@ -461,6 +478,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
             pyroWaveRenderer.pollRenderedFrames(frameLatencyStats);
             pollVulkan();
+            recordVendorKeyHang();
             logScanoutLatency(System.nanoTime());
             frameLatencyStats.expire(System.nanoTime());
             flushLatencyCsv();
@@ -2915,6 +2933,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         String keyReport = (videoDecoder == null || (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0) ? "" :
                 "\nTuning keys applied: " + describeKeys(lowLatencyKeysApplied) +
                 "\nTuning keys dropped after rejected configures: " + describeKeys(lowLatencyKeysDropped) +
+                        (runsWithoutHungKeys() ? "\nTuning keys dropped after a hang" +
+                                (hungInEarlierStream ? " in an earlier stream" : "") + ": " +
+                                describeKeys(lowLatencyKeysHung) : "") +
                         (lowLatencyKeysExperimental
                                 ? "\nVendor keys not run on this hardware" : "");
         ProblemReport.setDecoderDiagnostics(initialWidth + "x" + initialHeight + " @ " + refreshRate + " FPS\n" +
@@ -2979,6 +3000,40 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                      PreferenceConfiguration prefs, boolean vendorLowLatency) {
         return MediaCodecHelper.setDecoderLowLatencyOptions(format, decoder, tryNumber, prefs.codecLowLatency,
                 vendorLowLatency, prefs.codecPerformance, prefs.hevcLowLatency(), prefs.experimentalChipsetTuning);
+    }
+
+    // Those of a try's keys that the vendor low-latency setting added: the same try without it lacks them.
+    private List<String> vendorAddedKeys(List<String> triedKeys, String mimeType, MediaCodecInfo decoder, int tryNumber,
+                                         List<String> vendorParams) {
+        return MediaCodecHelper.vendorAddedKeys(triedKeys, createBaseMediaFormat(mimeType), decoder, tryNumber,
+                prefs.codecLowLatency, prefs.codecPerformance, prefs.hevcLowLatency(), prefs.experimentalChipsetTuning,
+                vendorParams);
+    }
+
+    /**
+     * Whether this decoder goes without its vendor keys: it took no input with them (resetHungDecoder)
+     * in this stream, or in an earlier one of this app version on this system build (VendorKeyHangs).
+     * The Vulkan rule for MediaTek decoders is checked before this.
+     */
+    private boolean dropsVendorKeysAfterHang(String decoderName, String mimeType) {
+        String key = VendorKeyHangs.key(decoderName, mimeType);
+        if (!key.equals(vendorKeysHung)) {
+            List<String> earlier = VendorKeyHangs.recorded(context, key);
+            if (earlier == null) return false;
+            lowLatencyKeysHung = earlier;
+            hungInEarlierStream = true;
+            vendorKeysHung = key;
+        }
+        LimeLog.warning("Decoder " + decoderName + " gets no vendor low-latency keys: it took no input with them" +
+                (hungInEarlierStream ? " in an earlier stream" : "") + " (" + describeKeys(lowLatencyKeysHung) + ")" +
+                (hungInEarlierStream ? "; an app or system update tries them again" : ""));
+        return true;
+    }
+
+    // Whether the configured decoder runs without the vendor keys it took no input with.
+    private boolean runsWithoutHungKeys() {
+        String hung = vendorKeysHung;
+        return hung != null && hung.equals(lowLatencyKeysDecoder);
     }
 
     // Judged by the flag this decoder got: a retry after a rejected configure has none, whatever the setting.
@@ -3128,6 +3183,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             LimeLog.info("Decoder " + selectedDecoderInfo.getName() +
                     " gets no vendor low-latency keys: the Vulkan renderer draws its frames");
         }
+        lowLatencyKeysDecoder = VendorKeyHangs.key(selectedDecoderInfo.getName(), mimeType);
+        if (vendorLowLatency && dropsVendorKeysAfterHang(selectedDecoderInfo.getName(), mimeType)) {
+            vendorLowLatency = false;
+        }
         for (int tryNumber = 0;; tryNumber++) {
             LimeLog.info("Decoder configuration try: "+tryNumber);
 
@@ -3144,6 +3203,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
             lowLatencyKeysDropped = MediaCodecHelper.droppedTuningKeys(firstTryKeys, triedKeys);
             lowLatencyKeysApplied = triedKeys;
+            lowLatencyKeysVendor = vendorLowLatency ?
+                    vendorAddedKeys(triedKeys, mimeType, selectedDecoderInfo, tryNumber, vendorParams) : new ArrayList<>();
 
             // Throw the underlying codec exception on the last attempt if the caller requested it
             // A Dolby Vision decoder that refuses every try falls back to HEVC or AV1 below instead of throwing.
@@ -3163,7 +3224,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         (lowLatencyKeysExperimental ? " (vendor keys not run on this hardware)" : "") +
                         " tuning keys applied: " +
                         describeKeys(lowLatencyKeysApplied) + "; dropped after rejected configures: " +
-                        describeKeys(lowLatencyKeysDropped));
+                        describeKeys(lowLatencyKeysDropped) +
+                        (runsWithoutHungKeys() ? "; dropped after a hang: " + describeKeys(lowLatencyKeysHung) : ""));
                 dolbyVisionActive = dolbyVision;
                 restartRecreates = restartRecreates(selectedDecoderInfo.getName(), lowLatencyKeysApplied);
                 if (restartRecreates) {
@@ -3432,9 +3494,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
                     // The codec is configured again, with the current metadata.
                     uncheckedHdrStaticInfo = null;
+                    // A decoder that hung with its vendor keys is set up anew without them (resetHungDecoder).
+                    boolean withoutKeys = restartWithoutVendorKeys;
                     try {
-                        if (!CodecRecoverySteps.run(codecRecoveryType.get() == CR_RECOVERY_TYPE_RESTART,
-                                restartRecreates, restartReason, recoveryCodec)) {
+                        if (!(withoutKeys ?
+                                CodecRecoverySteps.rebuild("it took no input with its vendor low-latency keys", recoveryCodec) :
+                                CodecRecoverySteps.run(codecRecoveryType.get() == CR_RECOVERY_TYPE_RESTART,
+                                        restartRecreates, restartReason, recoveryCodec))) {
                             if (renderTarget != null && renderTarget.isValid()) {
                                 // The surface is fine: the decoder refused its configuration.
                                 failDecoder(decoderName() + " refused its configuration after a recovery", null);
@@ -3446,6 +3512,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         codecRecoveryType.set(CR_RECOVERY_TYPE_NONE);
                         recoveryAfterFailure = false;
                         hangResetPending = false;
+                        if (withoutKeys) {
+                            restartWithoutVendorKeys = false;
+                            vendorKeyHangUnrecorded = true;
+                        }
                     } catch (IllegalStateException e) {
                         // Not even a decoder set up from scratch works: end the stream.
                         e.printStackTrace();
@@ -3558,7 +3628,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             startRebuild();
             if (codecFailed) {
                 videoDecoder.release();
-                if (dolbyVisionActive) {
+                // Without its vendor keys the same decoder is set up again: it is what is tried.
+                if (dolbyVisionActive && !restartWithoutVendorKeys) {
                     // The same stream decodes as HEVC or AV1; the Dolby Vision decoder is not tried again.
                     dolbyVisionFailed = true;
                     LimeLog.warning("Dolby Vision decoder failed while streaming; recreating the decoder for " +
@@ -4645,7 +4716,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 // The engine drops an exception thrown here, which left the picture frozen.
                 if (!resetHungDecoder(deltaMs)) {
                     failDecoder(decoderName() + " took no input for " + deltaMs + " ms" +
-                            (framesOutAtHangReset == numFramesOut ? ", also after a reset" : ""),
+                            (framesOutAtHangReset != numFramesOut ? "" : hangResetWithoutKeys ?
+                                    ", also after its setup without vendor low-latency keys" : ", also after a reset"),
                             new DecoderHungException(deltaMs));
                 }
             }
@@ -4658,20 +4730,44 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     // Asks for a reset of a decoder that took no input for deltaMs, through the recovery attempts:
     // false when they are used up, or the last such reset brought no frame (then the stream ends).
-    // A watchdog ends the stream if the reset itself hangs.
+    // A decoder whose format has vendor low-latency keys and that hangs again before it ran well
+    // since its hang reset, or with no attempt left, is set up once more instead, by setup's ladder
+    // without the vendor setting: the format the Vulkan renderer gives MediaTek decoders, the one
+    // keyless format measured (TCL C6K). The reset with the same keys comes first, as a hang alone
+    // does not show the keys caused it. A watchdog ends the stream if the reset itself hangs.
     private boolean resetHungDecoder(int deltaMs) {
-        if (framesOutAtHangReset == numFramesOut || !recoveryAttemptsLeft()) {
+        // Hung without its keys before it ran well: the keys were not all of it, nothing is recorded.
+        vendorKeyHangUnrecorded = false;
+        List<String> vendorKeys = lowLatencyKeysVendor;
+        boolean withoutKeys = !vendorKeys.isEmpty() && vendorKeysHung == null &&
+                ((framesOutAtHangReset >= 0 && !ranWellSinceHangReset()) || !recoveryAttemptsLeft());
+        if (!withoutKeys && (framesOutAtHangReset == numFramesOut || !recoveryAttemptsLeft())) {
             return false;
         }
+        boolean afterReset = framesOutAtHangReset >= 0;
         synchronized (codecRecoveryMonitor) {
             if (stopping) return true;
             framesOutAtHangReset = numFramesOut;
+            uptimeAtHangResetMs = SystemClock.uptimeMillis();
+            hangResetWithoutKeys = withoutKeys;
+            if (withoutKeys) {
+                lowLatencyKeysHung = vendorKeys;
+                vendorKeysHung = lowLatencyKeysDecoder;
+                restartWithoutVendorKeys = true;
+            }
             recoveryAfterFailure = true;
             hangResetPending = true;
             codecRecoveryType.set(CR_RECOVERY_TYPE_RESET);
         }
-        LimeLog.warning(decoderName() + " took no input for " + deltaMs + " ms; resetting it");
+        if (withoutKeys) {
+            LimeLog.warning(decoderName() + " took no input for " + deltaMs + " ms with its vendor low-latency keys" +
+                    (afterReset ? ", again after a reset" : "") + "; setting it up again without them: " +
+                    describeKeys(vendorKeys));
+        } else {
+            LimeLog.warning(decoderName() + " took no input for " + deltaMs + " ms; resetting it");
+        }
         long timeoutMs = hangResetTimeoutMs;
+        String recovery = withoutKeys ? "its setup without vendor low-latency keys" : "its reset";
         Thread watchdog = new Thread(() -> {
             long deadlineNs = System.nanoTime() + timeoutMs * 1_000_000L;
             try {
@@ -4685,7 +4781,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             if (!hangResetPending || stopping) return;
             // The reset may hang inside MediaCodec holding codecRecoveryMonitor: end the stream without it.
             String reason = markDecoderFailed(decoderName() + " took no input for " + deltaMs +
-                    " ms, and its reset did not finish within " + timeoutMs + " ms");
+                    " ms, and " + recovery + " did not finish within " + timeoutMs + " ms");
             if (reason != null) {
                 reportDecoderFailure(reason, new DecoderHungException(deltaMs));
             }
@@ -4693,6 +4789,28 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         watchdog.setDaemon(true);
         watchdog.start();
         return true;
+    }
+
+    // Whether the decoder ran well since its last hang reset: CR_REFILL_FRAMES frames over CR_REFILL_MS,
+    // the measure that refills the recovery attempts.
+    private boolean ranWellSinceHangReset() {
+        return numFramesOut - framesOutAtHangReset >= CR_REFILL_FRAMES &&
+                SystemClock.uptimeMillis() - uptimeAtHangResetMs >= CR_REFILL_MS;
+    }
+
+    // Once the decoder set up without its vendor keys after a hang ran well, the next streams start it
+    // without them (VendorKeyHangs). One that hangs again first is never recorded. On the latency
+    // thread, off the decoder's.
+    private void recordVendorKeyHang() {
+        String hung = vendorKeysHung;
+        if (!vendorKeyHangUnrecorded || hung == null || stopping || hangResetPending || !ranWellSinceHangReset()) {
+            return;
+        }
+        vendorKeyHangUnrecorded = false;
+        List<String> keys = lowLatencyKeysHung;
+        VendorKeyHangs.record(context, hung, keys);
+        LimeLog.warning(decoderName() + " ran well without the vendor low-latency keys it took no input with (" +
+                describeKeys(keys) + "); the next streams start it without them until an app or system update");
     }
 
     // The recovery attempts are refilled once the decoder put out CR_REFILL_FRAMES frames over at

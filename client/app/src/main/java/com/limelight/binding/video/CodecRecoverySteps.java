@@ -97,4 +97,20 @@ final class CodecRecoverySteps {
         }
         return true;
     }
+
+    /**
+     * Sets the decoder up from scratch at once, releasing the codec, as for one that took no input
+     * with its vendor low-latency keys: neither its restart nor its reset leaves the format. Returns
+     * false when the surface is gone; an IllegalStateException means the decoder could not be set up.
+     */
+    static boolean rebuild(String reason, Codec codec) {
+        LimeLog.warning("Setting the decoder up again because " + reason);
+        try {
+            codec.rebuild(true);
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+            return false;
+        }
+        return true;
+    }
 }

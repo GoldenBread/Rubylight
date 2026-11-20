@@ -138,4 +138,25 @@ public class CodecRecoveryStepsTest {
         }
         assertEquals(Arrays.asList("reset", "rebuild"), codec.steps);
     }
+
+    // A decoder that took no input with its vendor keys: its restart and reset would keep its format.
+    @Test
+    public void aSetupWithoutTheVendorKeysReleasesTheCodecAndRebuildsAtOnce() {
+        FakeCodec codec = new FakeCodec();
+        assertTrue(CodecRecoverySteps.rebuild("it took no input with its vendor low-latency keys", codec));
+        assertEquals(Arrays.asList("rebuild"), codec.steps);
+
+        FakeCodec gone = new FakeCodec();
+        gone.rebuildFails = new IllegalArgumentException("surface");
+        assertFalse(CodecRecoverySteps.rebuild("it took no input with its vendor low-latency keys", gone));
+
+        FakeCodec failed = new FakeCodec();
+        failed.rebuildFails = new IllegalStateException("Decoder reset failed: -5");
+        try {
+            CodecRecoverySteps.rebuild("it took no input with its vendor low-latency keys", failed);
+            fail("expected the rebuild's failure");
+        } catch (IllegalStateException e) {
+            assertSame(failed.rebuildFails, e);
+        }
+    }
 }
