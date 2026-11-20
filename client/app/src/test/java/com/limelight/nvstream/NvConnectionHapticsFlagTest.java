@@ -118,6 +118,23 @@ public class NvConnectionHapticsFlagTest {
         assertFalse("another host", CapturingBridge.clientWireless);
     }
 
+    // The one switch for both hints writes both keys. A file an earlier version saved with only one of
+    // them off reads as both off.
+    @Test public void oneOfTheTwoKeysOffTurnsBothHintsOff() throws Exception {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication());
+        FakeWiredLink.mbps = 2500;
+        FakeWiredLink.wireless = true;
+        for (String off : new String[] {"checkbox_tell_host_wireless", "checkbox_tell_host_link_speed"}) {
+            prefs.edit().remove("checkbox_tell_host_wireless").remove("checkbox_tell_host_link_speed")
+                    .putBoolean(off, false).commit();
+            CapturingBridge.clientWireless = true;
+            CapturingBridge.linkMbps = -1;
+            startStream();
+            assertFalse(off, CapturingBridge.clientWireless);
+            assertEquals(off, 0, CapturingBridge.linkMbps);
+        }
+    }
+
     // "Tell the PC the link speed" is on by default; off leaves the speed out of the stream
     // description for every codec, and the calibrated pace is still looked up with the real speed.
     @Test public void linkSpeedHintNeedsTheSetting() throws Exception {

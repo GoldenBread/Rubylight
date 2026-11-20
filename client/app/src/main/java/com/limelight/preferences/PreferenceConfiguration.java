@@ -1806,8 +1806,10 @@ public class PreferenceConfiguration {
         config.autoReconnect = prefs.getBoolean(AUTO_RECONNECT_PREF_STRING, DEFAULT_AUTO_RECONNECT);
         config.networkGraceSeconds = com.limelight.utils.NetworkGrace.parseSeconds(
                 prefs.getString(NETWORK_GRACE_PREF_STRING, "0"));
-        config.tellHostWireless = prefs.getBoolean(TELL_HOST_WIRELESS_PREF_STRING, true);
-        config.tellHostLinkSpeed = prefs.getBoolean(TELL_HOST_LINK_SPEED_PREF_STRING, true);
+        // One switch writes both keys now; where an earlier version saved them apart and only one was off, the
+        // switch shows off, so both are off rather than a PC being told what the player turned off.
+        config.tellHostWireless = config.tellHostLinkSpeed = prefs.getBoolean(TELL_HOST_WIRELESS_PREF_STRING, true)
+                && prefs.getBoolean(TELL_HOST_LINK_SPEED_PREF_STRING, true);
         config.fecChoice = FecChoice.fromPreference(prefs.getString(FEC_CHOICE_PREF_STRING, FecChoice.HOST.wireValue));
         config.linkProbe = prefs.getBoolean(LINK_PROBE_PREF_STRING, false);
         config.quickResume = prefs.getBoolean(QUICK_RESUME_PREF_STRING, false);

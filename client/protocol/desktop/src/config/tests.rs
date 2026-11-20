@@ -1061,6 +1061,26 @@ fn telling_the_host_the_link_speed_is_on_by_default_and_in_old_files() {
     assert!(!off.tell_host_link_speed);
 }
 
+/// The one switch for both hints writes both keys: a file that saved only one of them off loads with
+/// both off, in the main settings and in a layer.
+#[test]
+fn one_network_hint_off_turns_both_off() {
+    for key in ["tell_host_wireless", "tell_host_link_speed"] {
+        let json = format!(r#"{{"{key}":false}}"#);
+        let mut settings: Settings = serde_json::from_str(&json).unwrap();
+        settings.migrate();
+        assert!(!settings.tell_host_wireless && !settings.tell_host_link_speed, "{key}");
+        let layer: Overrides = serde_json::from_str(&json).unwrap();
+        assert_eq!(layer.0.get("tell_host_wireless"), Some(&serde_json::json!(false)), "{key}");
+        assert_eq!(layer.0.get("tell_host_link_speed"), Some(&serde_json::json!(false)), "{key}");
+    }
+    let mut on: Settings = serde_json::from_str("{}").unwrap();
+    on.migrate();
+    assert!(on.tell_host_wireless && on.tell_host_link_speed);
+    let layer: Overrides = serde_json::from_str(r#"{"tell_host_wireless":true}"#).unwrap();
+    assert!(!layer.0.contains_key("tell_host_link_speed"));
+}
+
 /// Lower bitrate's three switches fold into its one value once, in the main settings and in every
 /// override layer: a player who had it off keeps it off, and the old keys are never written again.
 #[test]

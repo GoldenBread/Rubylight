@@ -1087,7 +1087,21 @@ impl Settings {
         if let Some(choice) = folded_lower_bitrate(switches) {
             self.lower_bitrate = choice;
         }
+        // One switch writes both of these now; where an earlier version saved them apart and only one was
+        // off, the switch shows off, so both are off.
+        let on = self.tell_host_wireless && self.tell_host_link_speed;
+        (self.tell_host_wireless, self.tell_host_link_speed) = (on, on);
         normalize_values(&mut SettingsValues(self));
+    }
+}
+
+/// A layer that saved only one of the two network hints off turns both off: the one switch for both
+/// writes them together, so it shows off.
+pub(crate) fn fold_tell_host(values: &mut serde_json::Map<String, serde_json::Value>) {
+    let off = |key: &str| values.get(key).and_then(|value| value.as_bool()) == Some(false);
+    if off("tell_host_wireless") || off("tell_host_link_speed") {
+        values.insert("tell_host_wireless".to_owned(), false.into());
+        values.insert("tell_host_link_speed".to_owned(), false.into());
     }
 }
 
@@ -1603,6 +1617,7 @@ impl<'de> Deserialize<'de> for Overrides {
         serde_json::from_value::<Settings>(serde_json::Value::Object(values.clone())).map_err(serde::de::Error::custom)?;
         normalize_values(&mut values);
         fold_lower_bitrate(&mut values);
+        fold_tell_host(&mut values);
         Ok(Self(values))
     }
 }
