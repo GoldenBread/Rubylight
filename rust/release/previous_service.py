@@ -56,12 +56,19 @@ def version_key(tag):
     return numbers + ((0,) + pre,)
 
 
+def has_zip(release):
+    """Whether a release ships a windows-x64 zip (assumed when the list leaves
+    its assets out). Release candidates don't: their files are rubylight-rc-*."""
+    assets = release.get('assets')
+    return assets is None or any(ZIP.search(asset.get('name', '')) for asset in assets)
+
+
 def previous_release(releases, current):
     """The published release with the highest version below `current` (this
     build's version), from GitHub's release list; None when there is none."""
     below = version_key(current)
     candidates = [(version_key(release['tag_name']), release) for release in releases
-                  if not release.get('draft') and version_key(release['tag_name'])]
+                  if not release.get('draft') and version_key(release['tag_name']) and has_zip(release)]
     candidates = [(key, release) for key, release in candidates if below is None or key < below]
     return max(candidates, key=lambda candidate: candidate[0])[1] if candidates else None
 

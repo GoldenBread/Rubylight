@@ -550,6 +550,10 @@ class PreviousService(unittest.TestCase):
         self.assertEqual(tag('3.2.1'), 'v3.2.0')
         self.assertEqual(tag('2.6.10'), 'v2.6.9')
         self.assertIsNone(tag('2.0.0'))
+        # A release candidate from main's CI ships no windows-x64 zip and is passed over.
+        releases.append({'tag_name': 'v3.3.0-rc.2', 'draft': False, 'prerelease': True,
+                         'assets': [{'name': 'rubylight-rc-3.3.0-rc.2-x64.zip'}, {'name': 'SHA256SUMS'}]})
+        self.assertEqual(tag('3.3.0'), 'v3.3.0-rc.1')
         self.assertEqual(self.tool.checksums('ab12  rubylight-3.2.1-windows-x64.zip\nCD34 *SHA\n'),
                          {'rubylight-3.2.1-windows-x64.zip': 'ab12', 'SHA': 'cd34'})
 

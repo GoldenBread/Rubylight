@@ -142,6 +142,10 @@ The Linux helper is `bash scripts/build-release.sh`. Both helpers lint and build
 
 Releases are built and signed by [`release.yml`](../.github/workflows/release.yml) when a `v*` tag is pushed (see below); publishing locally with `gh release create` and the release key also works. Test prereleases carry a debug-signed arm64 APK, `nightjar-arm64-debug.apk`, with the separate debug package ID and are never marked Latest.
 
+### Release candidates
+
+Every green main run of `android.yml` becomes a release candidate (`rc.yml`, `.github/scripts/rc.mjs`): the prerelease `v<X.Y.Z>-rc.<N>`, where `X.Y.Z` is `versionName`, or the patch after it once that is released. Its tag points at a commit outside `main` that only sets `versionName` to the RC's version, so the apps report it, and `release.yml` builds, signs and publishes it like any release, with the commits since the previous release, RC or full, as its text. When commits land close together, only the newest one's RC is built. In-app updates and Google Play never take a prerelease. RCs stay until the next full release, whose run removes them and their tags. Full releases stay manual.
+
 ### Releasing from CI
 
 Pushing a tag such as `v4.0.1` first checks that the tag equals `v` plus `versionName` in `app/build.gradle`, then runs five jobs:

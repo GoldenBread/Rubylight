@@ -8,7 +8,7 @@ name: Release
 # side by side, and the release job publishes only once all of them passed, so a tag publishes
 # everything or nothing.
 # Main's own CI (android.yml) already tested the commit: tag a commit whose
-# main run is green. The signing key and passwords are repository secrets,
+# main run is green. rc.yml runs this for every green main run with a release candidate tag. The signing key and passwords are repository secrets,
 # see "Releasing from CI" in docs/building.md.
 #
 # Run it by hand with dry_run (the default) to build and verify without
@@ -1003,6 +1003,8 @@ jobs:
           (cd out && sha256sum nightjar-* nightjar.apk >"SHA256SUMS-$VERSION.txt")
           flags=()
           if [[ $VERSION == *-* ]]; then flags+=(--prerelease --latest=false); fi
+          # rc.yml made a release candidate's release as a draft with its text: publish it now.
+          if [[ $GITHUB_REF_NAME =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then flags+=(--draft=false); fi
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             # CI replaces assets only on a draft; a published release keeps what it has.
             if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true ]; then
@@ -1024,6 +1026,17 @@ jobs:
               --notes "The APKs are signed by CI with the Nightjar release key; $DESKTOP_SIGNING SHA-256 hashes of everything are in SHA256SUMS-$VERSION.txt." "${flags[@]}"
           fi
           echo "::notice::published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
+      # A full release removes the RCs it replaces; an RC drops failed RC drafts (rc.mjs prune).
+      - if: ${{ env.PUBLISH == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Remove replaced release candidates
+        if: ${{ env.PUBLISH == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/rc.mjs prune
       - name: Dry run result
         if: ${{ env.PUBLISH != 'true' }}
         run: echo "::notice::dry run of $VERSION built and verified (APKs, bundle, desktop client); nothing was published"

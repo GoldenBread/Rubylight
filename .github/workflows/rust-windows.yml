@@ -555,6 +555,76 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ steps.nvidia-cache.outputs.cache-primary-key }}
+  # Every green main run becomes a release candidate: a prerelease vX.Y.Z-rc.N
+  # with this run's unsigned Windows build and the host commits since the
+  # previous release as its text (.github/scripts/rc.mjs). X.Y.Z is Cargo.toml's
+  # version, or the patch after it once that is released. The files are named
+  # rubylight-rc-*, which in-app updates and rust/release/previous_service.py
+  # don't take, so no host is ever offered an RC. When commits land close
+  # together only the newest run's RC is published. RCs stay until the next full
+  # release, which removes them. Full releases stay manual (tag and publish).
+  rc:
+    needs: [test, lint, windows]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.lint.result == 'success' && needs.windows.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: rubylight-rc
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # A newer push to main has its own run, which publishes the RC instead.
+      - id: newest
+        run: |
+          newest=$(gh run list -R "$GITHUB_REPOSITORY" --workflow rust-windows.yml --branch main --event push --limit 1 --json headSha --jq '.[0].headSha')
+          if [ "$newest" != "$GITHUB_SHA" ]; then
+            echo "::notice::main moved on to $newest; its run publishes the RC"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - id: plan
+        if: steps.newest.outputs.skip != 'true'
+        run: |
+          built=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          echo "built=$built" >> "$GITHUB_OUTPUT"
+          node .github/scripts/rc.mjs plan "$built"
+      # The commits in what the host is built from (this workflow's paths filter);
+      # without any, there is no RC.
+      - id: notes
+        if: steps.newest.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          RC_PATHSPEC: rust client/protocol Cargo.toml Cargo.lock rust-toolchain.toml .cargo clippy.toml third-party
+          RC_INTRO: >-
+            Release candidate: a build of main for testing, not a full release. Its Windows
+            files are unsigned and report version ${{ steps.plan.outputs.built }}. In-app
+            updates don't offer it; install it with the setup by hand.
+        run: node .github/scripts/rc.mjs notes "$TAG" "$GITHUB_SHA" body.md
+      - name: Publish the release candidate
+        if: steps.newest.outputs.skip != 'true' && steps.notes.outputs.commits != '0'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" -n butterpollo-rust-windows-x64 -D build
+          mkdir out
+          mv build/butterpollo-setup-*.exe "out/rubylight-rc-setup-$VERSION.exe"
+          mv build/butterpollo-rust-release.zip "out/rubylight-rc-$VERSION-x64.zip"
+          (cd out && sha256sum * > SHA256SUMS)
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Rubylight $VERSION" --notes-file body.md \
+            --prerelease --latest=false out/*
+          echo "::notice::published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+      - name: Remove the RCs a full release replaced
+        if: steps.newest.outputs.skip != 'true'
+        run: node .github/scripts/rc.mjs prune
   # Signs the release with the maintainer's Certum code signing certificate when
   # the repository variable CERTUM_SIGNING is 'true' (SignPath, when configured,
   # signs instead). The key stays in Certum's cloud: client/scripts/certum-login.ps1

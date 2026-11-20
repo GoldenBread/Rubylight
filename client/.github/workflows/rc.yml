@@ -1,0 +1,83 @@
+name: Release candidate
+
+# Every green main run of android.yml becomes a release candidate: a prerelease vX.Y.Z-rc.N with
+# the commits since the previous release as its text. X.Y.Z is versionName, or the patch after it
+# once that is released. The RC's tag points at a commit outside main that only sets versionName
+# to the RC's version, so the apps report it and release.yml's version checks hold. release.yml
+# builds, signs and publishes it like any release. When commits land close together only the
+# newest one's RC is built: an older run steps aside and a newer one cancels older RC builds.
+# RCs stay until the next full release, which removes them. In-app updates never offer a
+# prerelease. Full releases stay manual.
+
+on:
+  workflow_run:
+    workflows: [Android debug]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: nightjar-rc
+  cancel-in-progress: false # never between the tag and its draft; older runs step aside below
+
+jobs:
+  rc:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # the RC's commit, tag and draft release
+      actions: write # starts release.yml
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      # A newer push to main has its own run, which builds the RC instead.
+      - id: newest
+        run: |
+          newest=$(gh run list -R "$GITHUB_REPOSITORY" --workflow android.yml --branch main --event push --limit 1 --json headSha --jq '.[0].headSha')
+          if [ "$newest" != "$SHA" ]; then
+            echo "::notice::main moved on to $newest; its run builds the RC"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.newest.outputs.skip != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        if: steps.newest.outputs.skip != 'true'
+        run: node .github/scripts/rc.mjs plan "$(sed -n 's/^ *versionName "\(.*\)"$/\1/p' app/build.gradle | head -n 1)"
+      - name: Release text
+        if: steps.newest.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          RC_INTRO: >-
+            Release candidate: a build of main for testing, not a full release. In-app updates
+            don't offer it; install it by hand. The APK carries the release signature, so it
+            installs over Nightjar.
+        run: node .github/scripts/rc.mjs notes "$TAG" "$SHA" "$RUNNER_TEMP/notes.md"
+      - id: commit
+        if: steps.newest.outputs.skip != 'true'
+        run: node .github/scripts/rc.mjs version-commit "$SHA" "${{ steps.plan.outputs.version }}"
+      - name: Tag, draft the release and start release.yml
+        if: steps.newest.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.commit.outputs.commit }}
+        run: |
+          # Older RC builds still running are superseded by this one; prune drops their drafts.
+          gh run list -R "$GITHUB_REPOSITORY" --workflow release.yml --limit 30 --json databaseId,headBranch,status --jq '.[] | select(.status != "completed" and (.headBranch | test("^v[0-9]+[.][0-9]+[.][0-9]+-rc[.][0-9]+$"))) | .databaseId' |
+            while read -r run; do gh run cancel "$run" -R "$GITHUB_REPOSITORY" || true; done
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$COMMIT" > /dev/null
+          if ! gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --draft --prerelease \
+            --title "Nightjar $VERSION" --notes-file "$RUNNER_TEMP/notes.md"; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || true # no tag without a release
+            exit 1
+          fi
+          gh workflow run release.yml -R "$GITHUB_REPOSITORY" --ref "$TAG" -f dry_run=false
+          echo "::notice::release.yml builds $TAG ($COMMIT, from $SHA)"
