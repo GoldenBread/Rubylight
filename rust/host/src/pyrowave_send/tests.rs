@@ -15,9 +15,7 @@ fn stopping_interrupts_a_paced_wait_without_sending_another_packet() -> Result<(
         },
     );
     let mut config = fixture.host.config.read().unwrap().clone();
-    config
-        .values
-        .insert("packet_pacing".into(), "1".into());
+    config.values.insert("packet_pacing".into(), "1".into());
     let client = UdpSocket::bind("127.0.0.1:0")?;
     client.set_read_timeout(Some(Duration::from_secs(2)))?;
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0")?);
