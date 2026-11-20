@@ -79,7 +79,7 @@ async function fixture(t, initial = {}, metadata = {}) {
   return { page, writes };
 }
 
-// All settings shows every setting; only expert groups fold.
+// All settings shows every setting; only the long groups (FOLDED_GROUPS) fold.
 async function showAdvanced(page) {
   await page.locator('[data-setting]').first().waitFor();
 }
@@ -340,7 +340,7 @@ test("with Automatic, the encoder settings of this PC's GPU are shown", async t 
   const gpu = (name, vendor) => ({ name, vendor, dedicated_memory: 0, luid: [1, 0], pnp_id: null });
   const { page } = await fixture(t, {}, { gpus: [gpu('NVIDIA GeForce RTX 4090', 0x10de)] });
   await page.goto(base + '/settings/picture');
-  // NVIDIA NVENC is an expert group: folded until opened.
+  // NVIDIA NVENC is a folded group: closed until opened.
   await fold(page, 'NVIDIA NVENC').locator(':scope > summary').click();
   const preset = setting(page, 'nvenc_preset');
   await preset.waitFor();
@@ -364,7 +364,7 @@ test("with Automatic, the encoder settings of this PC's GPU are shown", async t 
   assert.equal(await setting(page, 'nvenc_preset').count(), 0);
 });
 
-test('undoing a change in an expert group keeps the group open', async t => {
+test('undoing a change in a folded group keeps the group open', async t => {
   const { page } = await fixture(t);
   await page.goto(base + '/settings/picture');
   const advanced = fold(page, 'Capture troubleshooting');
@@ -381,6 +381,8 @@ test('editing a dependency does not hide unsaved child settings and review keeps
   const { page } = await fixture(t);
   await page.goto(base + '/settings/pc');
   await showAdvanced(page);
+  // Hardware metrics is a folded group: closed until opened.
+  await fold(page, 'Hardware metrics').locator(':scope > summary').click();
   const toggle = page.getByRole('switch', { name: /^Send hardware metrics to client/ });
   await toggle.press('Space');
   // Named intervals are menu choices; Custom opens the field for any other.
