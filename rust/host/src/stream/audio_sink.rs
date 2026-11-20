@@ -372,6 +372,29 @@ pub(super) fn reopen_check(check: Instant, opened: Instant) -> Instant {
     check.min(opened + REOPEN_SPACING)
 }
 
+/// How often the audio thread reads a capture that sends no events: WASAPI
+/// shared mode delivers in periods, and the read takes whatever is queued, so
+/// no packet waits longer for its read than this.
+pub(super) const READ_POLL: Duration = Duration::from_millis(5);
+
+/// How long the audio thread waits before its next pass: until the earliest of
+/// the next packet deadline `due` and the next housekeeping deadline `check`,
+/// never longer than `poll` (how often a capture without events is read) and
+/// never less than 1 ms, so an expired deadline cannot spin the loop. Stop
+/// stays prompt: every pass reads the stop flag, and no packet deadline sits
+/// further out than the 50 ms silence threshold, so the wait never does either.
+pub(super) fn audio_wait(
+    now: Instant,
+    due: Instant,
+    check: Option<Instant>,
+    poll: Option<Duration>,
+) -> Duration {
+    let due = check.map_or(due, |check| due.min(check));
+    let wait = due.saturating_duration_since(now);
+    poll.map_or(wait, |poll| wait.min(poll))
+        .max(Duration::from_millis(1))
+}
+
 /// [`collect_into`] for packets of their own.
 #[cfg(test)]
 pub(super) fn collect<C: AudioCapture>(

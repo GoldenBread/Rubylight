@@ -668,3 +668,34 @@ fn a_capture_that_fails_reopens_at_once_but_not_right_after_it_opened() {
     let opened = now - Duration::from_millis(500);
     assert_eq!(reopen_check(check, opened), opened + REOPEN_SPACING);
 }
+
+#[test]
+fn the_wait_runs_to_the_earliest_deadline_and_never_below_one_millisecond() {
+    let now = Instant::now();
+    let ms = |ms| Duration::from_millis(ms);
+    // Event mode: the packet deadline rules, however far out, and housekeeping
+    // gates it when its own deadline comes first.
+    assert_eq!(audio_wait(now, now + ms(50), None, None), ms(50));
+    assert_eq!(
+        audio_wait(now, now + ms(50), Some(now + ms(900)), None),
+        ms(50)
+    );
+    assert_eq!(
+        audio_wait(now, now + ms(50), Some(now + ms(10)), None),
+        ms(10)
+    );
+    // An expired deadline waits the millisecond floor, not a spin.
+    assert_eq!(audio_wait(now, now, None, None), ms(1));
+    assert_eq!(
+        audio_wait(now, now + ms(50), Some(now - ms(1)), None),
+        ms(1)
+    );
+    // Without events the read poll caps the wait, so no packet waits longer
+    // for its read; a nearer deadline still wins.
+    assert_eq!(
+        audio_wait(now, now + ms(50), Some(now + ms(900)), Some(READ_POLL)),
+        READ_POLL
+    );
+    assert_eq!(audio_wait(now, now + ms(3), None, Some(READ_POLL)), ms(3));
+    assert_eq!(audio_wait(now, now - ms(4), None, Some(READ_POLL)), ms(1));
+}

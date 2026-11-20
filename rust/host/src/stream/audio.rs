@@ -290,23 +290,29 @@ impl Media {
         // Each pass's packets, in room kept from pass to pass.
         let mut packets = audio_sink::Packets::default();
         while !s.stopping() && !h.stop.load(Ordering::Acquire) {
+            // The wait runs to the earliest deadline, not on a fixed tick: the
+            // next packet deadline, or the once-a-second device check when that
+            // comes first. Every pass reads the stop flag, and no deadline sits
+            // further out than the 50 ms silence threshold, so a stop is still
+            // seen promptly.
+            let now = Instant::now();
+            let check = (!muted && !game_audio).then_some(audio_check);
             match capture
                 .as_ref()
                 .filter(|capturing| capturing.event_driven())
             {
-                // Audio events wake immediately. Before the silence threshold,
-                // an expired packet deadline must not turn this into a 1 ms poll.
-                Some(capturing) => capturing.wait(
-                    pace.due()
-                        .saturating_duration_since(Instant::now())
-                        .clamp(Duration::from_millis(1), Duration::from_millis(5)),
-                ),
+                // Audio events wake the thread the moment audio arrives; the
+                // deadline ends the wait only when none comes.
+                Some(capturing) => {
+                    capturing.wait(audio_sink::audio_wait(now, pace.due(), check, None))
+                }
                 None => timer.until(
-                    Instant::now()
-                        + pace
-                            .due()
-                            .saturating_duration_since(Instant::now())
-                            .clamp(Duration::from_millis(1), Duration::from_millis(5)),
+                    now + audio_sink::audio_wait(
+                        now,
+                        pace.due(),
+                        check,
+                        Some(audio_sink::READ_POLL),
+                    ),
                 ),
             }
             #[cfg(debug_assertions)]
