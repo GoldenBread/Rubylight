@@ -539,15 +539,8 @@ pub fn discover(settings: &library::Settings) -> Discovery {
                     if !item.uninstall.to_lowercase().contains("battle.net") {
                         continue;
                     }
-                    if let Some((_, rest)) = item.uninstall.split_once("--uid=") {
-                        let id = rest
-                            .trim_start_matches('"')
-                            .split(['"', ' '])
-                            .next()
-                            .unwrap_or("");
-                        if !id.is_empty() {
-                            entries.push((id.into(), item.folder.clone()));
-                        }
+                    if let Some((uid, product)) = library::battlenet_uninstall(&item.uninstall) {
+                        entries.push((uid, product, item.folder.clone()));
                     }
                 }
                 // When each game was last played, for the recent-games options: the signed-in
@@ -563,8 +556,9 @@ pub fn discover(settings: &library::Settings) -> Discovery {
                             .ok()
                     })
                     .unwrap_or_default();
-                for (uid, folder) in entries {
-                    let mut game = library::battlenet(&uid, &folder, executable.as_deref());
+                for (uid, product, folder) in entries {
+                    let mut game =
+                        library::battlenet(&uid, &product, &folder, executable.as_deref());
                     if let Some(game) = &mut game {
                         game.last_played = played.get(&game.id).copied();
                     }

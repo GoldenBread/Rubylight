@@ -66,7 +66,11 @@ fn battlenet_database_and_registered_products_share_verified_commands() {
     let database = battlenet_database(include_bytes!("fixtures/product.db")).unwrap();
     assert_eq!(
         database,
-        vec![("fen".into(), PathBuf::from(r"E:\Jeux\Diablo IV"))]
+        vec![(
+            "fen".into(),
+            "fen".into(),
+            PathBuf::from(r"E:\Jeux\Diablo IV")
+        )]
     );
     let registrations: Vec<Value> =
         serde_json::from_str(include_str!("fixtures/battlenet.json")).unwrap();
@@ -76,6 +80,7 @@ fn battlenet_database_and_registered_products_share_verified_commands() {
         .filter_map(|record| {
             battlenet(
                 record["id"].as_str().unwrap(),
+                "",
                 Path::new(record["folder"].as_str().unwrap()),
                 Some(launcher),
             )
@@ -96,12 +101,149 @@ fn battlenet_database_and_registered_products_share_verified_commands() {
             .contains("not recognized")
     );
     assert!(
-        battlenet("fen", Path::new("E:/Games/Diablo IV"), None)
+        battlenet("fen", "", Path::new("E:/Games/Diablo IV"), None)
             .unwrap()
             .app()
             .is_err()
     );
     assert!(battlenet_database(&[0x0a, 0xff]).is_err());
+}
+
+/// Current Battle.net writes a long uid (`fenris`) beside the product code (`fen`) the
+/// launcher starts it by.
+#[test]
+fn battlenet_finds_a_product_by_its_code_when_the_uid_is_long() {
+    let bytes = BattleDatabase {
+        games: vec![
+            BattleInstall {
+                uid: "fenris".into(),
+                product: "fen".into(),
+                settings: Some(BattleSettings {
+                    path: r"E:\Jeux\Diablo IV".into(),
+                }),
+            },
+            BattleInstall {
+                uid: "wowf".into(),
+                product: "wow".into(),
+                settings: Some(BattleSettings {
+                    path: r"E:\Jeux\World of Warcraft".into(),
+                }),
+            },
+            BattleInstall {
+                uid: "bna".into(),
+                product: "bna".into(),
+                settings: Some(BattleSettings {
+                    path: r"C:\Battle.net".into(),
+                }),
+            },
+        ],
+    }
+    .encode_to_vec();
+    let launcher = Path::new(r"D:\Launchers\Battle.net Launcher.exe");
+    let games: Vec<Game> = battlenet_database(&bytes)
+        .unwrap()
+        .iter()
+        .filter_map(|(uid, product, folder)| battlenet(uid, product, folder, Some(launcher)))
+        .collect();
+    assert_eq!(games.len(), 2);
+    let diablo = &games[0];
+    assert_eq!(diablo.name, "Diablo IV");
+    assert_eq!(diablo.id, "fenris");
+    assert_eq!(diablo.install_dir, r"E:\Jeux\Diablo IV");
+    assert_eq!(diablo.unavailable_reason, None);
+    assert_eq!(
+        diablo.launch.as_ref().unwrap().command(),
+        r#""D:\Launchers\Battle.net Launcher.exe" --exec="launch Fen""#
+    );
+    assert_eq!(games[1].name, "World of Warcraft");
+    assert_eq!(games[1].id, "wowf");
+    assert_eq!(games[1].unavailable_reason, None);
+    assert_eq!(
+        games[1].launch.as_ref().unwrap().command(),
+        r#""D:\Launchers\Battle.net Launcher.exe" --exec="launch WoW""#
+    );
+    // The same id each scan, so a synced app keeps matching its game.
+    assert_eq!(
+        battlenet("fenris", "fen", Path::new("E:/Jeux/Diablo IV"), None)
+            .unwrap()
+            .id,
+        "fenris"
+    );
+    // A known long uid without a product code, and a code without a uid.
+    for (uid, product) in [("fenris", ""), ("", "FEN"), ("Prometheus", "")] {
+        let game = battlenet(uid, product, Path::new("E:/Games/Game"), Some(launcher)).unwrap();
+        assert_eq!(game.unavailable_reason, None, "{uid:?} {product:?}");
+    }
+    assert_eq!(
+        battlenet("", "FEN", Path::new("E:/Games/Diablo IV"), None)
+            .unwrap()
+            .id,
+        "fen"
+    );
+}
+
+#[test]
+fn an_unknown_battlenet_product_is_named_after_its_folder() {
+    let launcher = Path::new(r"D:\Launchers\Battle.net Launcher.exe");
+    let game = battlenet(
+        "newgame",
+        "ngm",
+        Path::new("E:/Jeux/Brand New Game"),
+        Some(launcher),
+    )
+    .unwrap();
+    assert_eq!(game.name, "Brand New Game");
+    assert_eq!(game.id, "newgame");
+    assert!(game.launch.is_none());
+    assert!(
+        game.unavailable_reason
+            .as_deref()
+            .unwrap()
+            .contains("not recognized")
+    );
+    // Without a folder name the raw id is all there is.
+    assert_eq!(
+        battlenet("newgame", "", Path::new(""), Some(launcher))
+            .unwrap()
+            .name,
+        "newgame"
+    );
+    assert_eq!(
+        battlenet("", "ngm", Path::new("/"), None).unwrap().name,
+        "ngm"
+    );
+}
+
+#[test]
+fn battlenet_uninstall_commands_name_the_uid_and_product_code() {
+    assert_eq!(
+        battlenet_uninstall(
+            r#""C:\ProgramData\Battle.net\Agent\Blizzard Uninstaller.exe" --lang=enUS --uid=fenris --productcode=fen --displayname="Diablo IV""#
+        ),
+        Some(("fenris".into(), "fen".into()))
+    );
+    assert_eq!(
+        battlenet_uninstall(
+            r#""C:\ProgramData\Battle.net\Agent\Blizzard Uninstaller.exe" --ProductCode="pro" --UID="prometheus""#
+        ),
+        Some(("prometheus".into(), "pro".into()))
+    );
+    assert_eq!(
+        battlenet_uninstall(r#""C:\Battle.net\Uninstaller.exe" --uid=wow"#),
+        Some(("wow".into(), String::new()))
+    );
+    assert_eq!(
+        battlenet_uninstall(r#""C:\Battle.net\Uninstaller.exe" --productcode=osi"#),
+        Some((String::new(), "osi".into()))
+    );
+    assert_eq!(
+        battlenet_uninstall(r#""C:\Program Files (x86)\Battle.net\Battle.net Uninstaller.exe""#),
+        None
+    );
+    assert_eq!(
+        battlenet_uninstall("Uninstaller.exe --uid= --productcode="),
+        None
+    );
 }
 
 #[test]
@@ -971,6 +1113,7 @@ fn a_launcher_with_a_play_history_can_keep_only_its_recent_games_as_steam_does()
     let game = |uid: &str, played: Option<u64>| {
         let mut game = battlenet(
             uid,
+            "",
             Path::new(&format!("C:/Games/{uid}")),
             Some(Path::new("C:/Battle.net/Battle.net.exe")),
         )

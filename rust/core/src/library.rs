@@ -1193,7 +1193,9 @@ struct BattleSettings {
     #[prost(string, tag = "1")]
     path: String,
 }
-pub fn battlenet_database(bytes: &[u8]) -> Result<Vec<(String, PathBuf)>> {
+/// Each installed product in the Battle.net Agent's product.db: its uid, its product code and
+/// its install folder. Either name may be empty.
+pub fn battlenet_database(bytes: &[u8]) -> Result<Vec<(String, String, PathBuf)>> {
     Ok(BattleDatabase::decode(bytes)?
         .games
         .into_iter()
@@ -1202,59 +1204,101 @@ pub fn battlenet_database(bytes: &[u8]) -> Result<Vec<(String, PathBuf)>> {
             if settings.path.is_empty() {
                 return None;
             }
-            Some((game.uid, PathBuf::from(settings.path)))
+            Some((game.uid, game.product, PathBuf::from(settings.path)))
         })
         .collect())
 }
-pub fn battlenet(uid: &str, folder: &Path, launcher: Option<&Path>) -> Option<Game> {
-    let (id, name) = match uid.to_ascii_lowercase().as_str() {
-        "bna" | "agent" | "battle.net" => return None,
-        "wow" => ("WoW", "World of Warcraft"),
-        "diablo3" => ("D3", "Diablo III"),
-        "s2" => ("S2", "StarCraft II"),
-        "s1" => ("S1", "StarCraft"),
-        "hs_beta" => ("WTCG", "Hearthstone"),
-        "heroes" => ("Hero", "Heroes of the Storm"),
-        "prometheus" => ("Pro", "Overwatch 2"),
-        "viper" => ("VIPR", "Call of Duty: Black Ops 4"),
-        "odin" => ("ODIN", "Call of Duty: Modern Warfare"),
-        "w3" => ("W3", "Warcraft III: Reforged"),
-        "lazarus" => ("LAZR", "Call of Duty: Modern Warfare 2 Campaign Remastered"),
-        "zeus" => ("ZEUS", "Call of Duty: Black Ops Cold War"),
-        "wlby" => ("WLBY", "Crash Bandicoot 4"),
-        "osi" => ("OSI", "Diablo II: Resurrected"),
-        "rtro" => ("RTRO", "Blizzard Arcade Collection"),
-        "fore" => ("FORE", "Call of Duty: Vanguard"),
-        "anbs" => ("ANBS", "Diablo Immortal"),
-        "auks" => ("AUKS", "Call of Duty: Modern Warfare II"),
-        "fen" => ("Fen", "Diablo IV"),
-        "d1" => ("D1", "Diablo"),
-        "w1r" => ("W1R", "Warcraft: Remastered"),
-        "w2r" => ("W2R", "Warcraft II: Remastered"),
-        "w1" => ("W1", "Warcraft: Orcs & Humans"),
-        "w2" => ("W2", "Warcraft II: Battle.net Edition"),
-        "gryphon" => ("GRY", "Warcraft Rumble"),
-        "aris" => ("ARIS", "Doom: The Dark Ages"),
-        "scorpio" => ("SCOR", "Sea of Thieves"),
-        "arkansas" => ("ARK", "The Outer Worlds 2"),
-        "libra" => ("LBRA", "Tony Hawk's Pro Skater 3 + 4"),
-        "pinta" => ("PNTA", "Call of Duty: Modern Warfare III"),
-        "aqua" => ("AQUA", "Avowed"),
-        _ => {
-            let mut game = Game::new(Source::Battlenet, uid.into(), uid.into(), folder, None);
-            game.unavailable_reason =
-                Some("This Battle.net product is not recognized. Add it manually.".into());
-            return Some(game);
-        }
+/// The uid and product code (`--uid=`, `--productcode=`) a Battle.net uninstall command
+/// names, either possibly empty; none when it names neither.
+pub fn battlenet_uninstall(command: &str) -> Option<(String, String)> {
+    let lower = command.to_ascii_lowercase();
+    let argument = |name: &str| {
+        let at = lower.find(name)? + name.len();
+        let value = command[at..].trim_start_matches('"');
+        value.split(['"', ' ']).next().map(str::to_owned)
+    };
+    let uid = argument("--uid=").unwrap_or_default();
+    let product = argument("--productcode=").unwrap_or_default();
+    (!uid.is_empty() || !product.is_empty()).then_some((uid, product))
+}
+/// The Battle.net products Rubylight can start: the product code `--exec="launch <code>"`
+/// takes, the name, and the uids the Agent may record it under besides the code. Current
+/// Battle.net writes long uids such as `fenris` beside the code `fen`. All match in any case.
+const BATTLENET_PRODUCTS: &[(&str, &str, &[&str])] = &[
+    ("WoW", "World of Warcraft", &[]),
+    ("D3", "Diablo III", &["diablo3"]),
+    ("S2", "StarCraft II", &[]),
+    ("S1", "StarCraft", &[]),
+    ("WTCG", "Hearthstone", &["hs_beta"]),
+    ("Hero", "Heroes of the Storm", &["heroes"]),
+    ("Pro", "Overwatch 2", &["prometheus"]),
+    ("VIPR", "Call of Duty: Black Ops 4", &["viper"]),
+    ("ODIN", "Call of Duty: Modern Warfare", &[]),
+    ("W3", "Warcraft III: Reforged", &[]),
+    (
+        "LAZR",
+        "Call of Duty: Modern Warfare 2 Campaign Remastered",
+        &["lazarus"],
+    ),
+    ("ZEUS", "Call of Duty: Black Ops Cold War", &[]),
+    ("WLBY", "Crash Bandicoot 4", &[]),
+    ("OSI", "Diablo II: Resurrected", &[]),
+    ("RTRO", "Blizzard Arcade Collection", &[]),
+    ("FORE", "Call of Duty: Vanguard", &[]),
+    ("ANBS", "Diablo Immortal", &[]),
+    ("AUKS", "Call of Duty: Modern Warfare II", &[]),
+    ("Fen", "Diablo IV", &["fenris"]),
+    ("D1", "Diablo", &[]),
+    ("W1R", "Warcraft: Remastered", &[]),
+    ("W2R", "Warcraft II: Remastered", &[]),
+    ("W1", "Warcraft: Orcs & Humans", &[]),
+    ("W2", "Warcraft II: Battle.net Edition", &[]),
+    ("GRY", "Warcraft Rumble", &["gryphon"]),
+    ("ARIS", "Doom: The Dark Ages", &[]),
+    ("SCOR", "Sea of Thieves", &["scorpio"]),
+    ("ARK", "The Outer Worlds 2", &["arkansas"]),
+    ("LBRA", "Tony Hawk's Pro Skater 3 + 4", &["libra"]),
+    ("PNTA", "Call of Duty: Modern Warfare III", &["pinta"]),
+    ("AQUA", "Avowed", &[]),
+];
+/// The Battle.net product with this uid and product code (either may be empty), looked up
+/// by the code first, then by the uid. Its id is the uid in lower case (the code without
+/// one), the key `Battle.net.config` keeps its play history under. A product Rubylight does
+/// not know is named after its install folder and listed as unavailable; the Battle.net app
+/// itself is skipped.
+pub fn battlenet(uid: &str, product: &str, folder: &Path, launcher: Option<&Path>) -> Option<Game> {
+    let keys = [product, uid].map(|key| key.trim().to_ascii_lowercase());
+    if keys
+        .iter()
+        .any(|key| matches!(key.as_str(), "bna" | "agent" | "battle.net"))
+    {
+        return None;
+    }
+    let known = keys.iter().filter(|key| !key.is_empty()).find_map(|key| {
+        BATTLENET_PRODUCTS
+            .iter()
+            .find(|(code, _, uids)| code.eq_ignore_ascii_case(key) || uids.contains(&key.as_str()))
+    });
+    let raw = if uid.trim().is_empty() { product } else { uid }.trim();
+    let Some((code, name, _)) = known else {
+        let name = folder
+            .file_name()
+            .map(|name| name.to_string_lossy().trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| raw.to_owned());
+        let mut game = Game::new(Source::Battlenet, raw.into(), name, folder, None);
+        game.unavailable_reason =
+            Some("This Battle.net product is not recognized. Add it manually.".into());
+        return Some(game);
     };
     Some(Game::new(
         Source::Battlenet,
-        uid.to_ascii_lowercase(),
-        name.into(),
+        raw.to_ascii_lowercase(),
+        (*name).into(),
         folder,
         launcher.map(|path| Launch::Program {
             program: path.to_string_lossy().into_owned(),
-            arguments: format!("--exec=\"launch {id}\""),
+            arguments: format!("--exec=\"launch {code}\""),
         }),
     ))
 }
