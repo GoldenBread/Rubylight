@@ -2,6 +2,7 @@
 use anyhow::{Context, Result, bail};
 use std::{
     collections::{HashMap, VecDeque},
+    hash::BuildHasherDefault,
     sync::{Arc, Mutex, PoisonError},
     time::{Duration, Instant},
 };
@@ -916,7 +917,33 @@ pub struct DetailFec {
     previous: Option<Instant>,
     interval: f64,
     stable: f64,
-    blocks: HashMap<u32, (u64, usize)>,
+    /// The last late frame's record hashes by index, and the one being built:
+    /// kept and swapped instead of a fresh map for every late frame, whose
+    /// table a 4K picture's records size to about a megabyte.
+    seen: RecordMap,
+    building: RecordMap,
+}
+/// Record hashes by index, hashed as [`IndexHasher`] hashes them.
+type RecordMap = HashMap<u32, (u64, usize), BuildHasherDefault<IndexHasher>>;
+/// A record index hashed as itself spread by a Fibonacci multiplier: two
+/// lookups a record, where SipHash spends its full word round on each.
+#[derive(Default)]
+struct IndexHasher(u64);
+impl std::hash::Hasher for IndexHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for (at, &byte) in bytes.iter().enumerate() {
+            self.0 = self
+                .0
+                .wrapping_mul(31)
+                .wrapping_add(u64::from(byte) + at as u64);
+        }
+    }
+    fn write_u32(&mut self, index: u32) {
+        self.0 = u64::from(index).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
 }
 impl DetailFec {
     pub fn new(fps_millihz: u32) -> Self {
@@ -925,7 +952,8 @@ impl DetailFec {
             previous: None,
             interval: 0.,
             stable: 0.,
-            blocks: HashMap::new(),
+            seen: RecordMap::default(),
+            building: RecordMap::default(),
         }
     }
     pub fn observe(
@@ -941,7 +969,7 @@ impl DetailFec {
             .map(|p| now.saturating_duration_since(p).as_secs_f64())
             .unwrap_or(0.);
         if elapsed <= self.nominal * 1.01 {
-            self.blocks.clear();
+            self.seen.clear();
             self.stable = 0.;
             self.interval = elapsed;
             return Ok((0, 0));
@@ -956,17 +984,20 @@ impl DetailFec {
                 &parsed
             }
         };
-        let mut next = HashMap::with_capacity(records.len());
+        if self.building.capacity() < records.len() {
+            self.building.reserve(records.len());
+        }
+        self.building.clear();
         let (mut total, mut unchanged) = (0, 0);
         for r in records.iter() {
             let hash = record_hash(&frame[r.offset..r.offset + r.size]);
-            if self.blocks.get(&r.index) == Some(&(hash, r.size)) {
+            if self.seen.get(&r.index) == Some(&(hash, r.size)) {
                 unchanged += r.size;
             }
             total += r.size;
-            next.insert(r.index, (hash, r.size));
+            self.building.insert(r.index, (hash, r.size));
         }
-        self.blocks = next;
+        std::mem::swap(&mut self.seen, &mut self.building);
         self.interval = if self.interval > 0. {
             self.interval * 0.8 + elapsed * 0.2
         } else {
