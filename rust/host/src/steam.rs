@@ -305,10 +305,11 @@ fn fingerprint(settings: &Settings, roots: &[PathBuf]) -> u64 {
     }
     hasher.finish()
 }
-/// The libraries a `steamapps` folder's `libraryfolders.vdf` listed, with the file's size and
-/// time it was read. The file is parsed again only when that moved, which happens when a
-/// library folder comes or goes. A read that fails is not cached.
-static VDF_LIBRARIES: LazyLock<Mutex<HashMap<PathBuf, ((u64, SystemTime), Vec<PathBuf>)>>> =
+/// The library paths a `libraryfolders.vdf` listed, as text, with the file's size and time it
+/// was read. The file is parsed again only when that moved, which happens when a library folder
+/// comes or goes. Only the paths are cached: whether a folder is there is checked on every call,
+/// as a drive can appear after the file was read. A read that fails is not cached.
+static VDF_LIBRARIES: LazyLock<Mutex<HashMap<PathBuf, ((u64, SystemTime), Vec<String>)>>> =
     LazyLock::new(Default::default);
 fn vdf_libraries(apps: &Path) -> Vec<PathBuf> {
     let file = apps.join("libraryfolders.vdf");
@@ -319,40 +320,47 @@ fn vdf_libraries(apps: &Path) -> Vec<PathBuf> {
         // No file to cache by: read it, as before.
         return std::fs::read_to_string(&file)
             .ok()
-            .map(|text| vdf_listed(&text))
+            .map(|text| existing_libraries(&vdf_listed(&text)))
             .unwrap_or_default();
     };
     let mut read = VDF_LIBRARIES.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((last, listed)) = read.get(apps)
         && *last == stamp
     {
-        return listed.clone();
+        return existing_libraries(listed);
     }
     let Some(text) = std::fs::read_to_string(&file).ok() else {
         // Unreadable now, so not cached: the next check reads it again.
         return vec![];
     };
     let listed = vdf_listed(&text);
-    read.insert(apps.to_owned(), (stamp, listed.clone()));
-    listed
+    let libraries = existing_libraries(&listed);
+    read.insert(apps.to_owned(), (stamp, listed));
+    libraries
 }
-/// The libraries the text of `libraryfolders.vdf` lists. Old files give the path as the value
-/// itself.
-fn vdf_listed(text: &str) -> Vec<PathBuf> {
+/// The library paths the text of `libraryfolders.vdf` lists. Old files give the path as the
+/// value itself.
+fn vdf_listed(text: &str) -> Vec<String> {
     let folders = steam::Vdf::parse(text);
     let folders = folders.get("libraryfolders").unwrap_or(&folders);
-    let mut listed = vec![];
-    for (_, folder) in folders.entries() {
-        if let Some(path) = folder
-            .get("path")
-            .or(Some(folder))
-            .and_then(steam::Vdf::text)
-            && let Some(apps) = steam::steamapps(Path::new(path))
-        {
-            listed.push(apps);
-        }
-    }
-    listed
+    folders
+        .entries()
+        .iter()
+        .filter_map(|(_, folder)| {
+            folder
+                .get("path")
+                .or(Some(folder))
+                .and_then(steam::Vdf::text)
+        })
+        .map(str::to_owned)
+        .collect()
+}
+/// The `steamapps` folders of the listed library paths that exist now.
+fn existing_libraries(paths: &[String]) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .filter_map(|path| steam::steamapps(Path::new(path)))
+        .collect()
 }
 /// The user folders a Steam root's `userdata` holds, with the folder's time they were read.
 /// The folder's time moves when a user folder comes or goes, so they are read again only then.
@@ -780,5 +788,25 @@ mod tests {
         assert_ne!(changed, first);
         settings.sync_all_installed = !settings.sync_all_installed;
         assert_ne!(fingerprint(&settings, &roots), changed);
+    }
+
+    #[test]
+    fn a_library_folder_that_appears_later_is_listed_with_the_vdf_unchanged() {
+        let f = Fixture::new();
+        let apps = f.host.directory.join("steamapps");
+        std::fs::create_dir(&apps).unwrap();
+        let missing = f.host.directory.join("Games");
+        std::fs::write(
+            apps.join("libraryfolders.vdf"),
+            format!(
+                "\"libraryfolders\" {{\n\"0\" {{ \"path\" \"{}\" }}\n}}",
+                missing.display().to_string().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+        assert!(vdf_libraries(&apps).is_empty());
+        // The drive appears; the file is not rewritten.
+        std::fs::create_dir_all(missing.join("steamapps")).unwrap();
+        assert_eq!(vdf_libraries(&apps), [missing.join("steamapps")]);
     }
 }

@@ -655,6 +655,28 @@ fn a_library_on_a_network_share_is_never_opened() {
     assert!(libraries(&[PathBuf::from(r"\\nas\Steam")]).is_empty());
 }
 #[test]
+fn a_library_folder_that_appears_later_is_listed_with_the_vdf_unchanged() {
+    let steam = tempfile::tempdir().unwrap();
+    let apps = steam.path().join("steamapps");
+    std::fs::create_dir_all(&apps).unwrap();
+    // A library on a drive that is not there yet.
+    let later = tempfile::tempdir().unwrap();
+    let missing = later.path().join("Games");
+    std::fs::write(
+        apps.join("libraryfolders.vdf"),
+        format!(
+            "\"libraryfolders\" {{\n\"0\" {{ \"path\" \"{}\" }}\n}}",
+            missing.display().to_string().replace('\\', "\\\\")
+        ),
+    )
+    .unwrap();
+    let roots = [steam.path().to_path_buf()];
+    assert_eq!(libraries(&roots), [apps.clone()]);
+    // The drive appears; the file is not rewritten.
+    std::fs::create_dir_all(missing.join("steamapps")).unwrap();
+    assert_eq!(libraries(&roots), [apps, missing.join("steamapps")]);
+}
+#[test]
 fn a_steam_launch_option_outside_its_folder_or_missing_is_refused() {
     let steam = steam_with_launch_options(&[option("0", "..\\Other\\Other.exe", "", &[])]);
     let roots = [steam.path().to_path_buf()];

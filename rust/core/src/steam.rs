@@ -459,11 +459,12 @@ fn only_on_this_pc(roots: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The `steamapps` folders a `libraryfolders.vdf` listed, with the file's size and time it
+/// The library paths a `libraryfolders.vdf` listed, as text, with the file's size and time it
 /// was read. The library checks ask for the libraries every few seconds and Steam rewrites the
 /// file only when a library folder comes or goes, so it is parsed again only when its size or
-/// time moved. A read that fails is not cached.
-static VDF_LIBRARIES: LazyLock<StampCache<Vec<PathBuf>>> = LazyLock::new(Default::default);
+/// time moved. Only the paths are cached: whether a folder is there is checked on every call, as
+/// a drive can appear after the file was read. A read that fails is not cached.
+static VDF_LIBRARIES: LazyLock<StampCache<Vec<String>>> = LazyLock::new(Default::default);
 /// The libraries a `steamapps` folder's `libraryfolders.vdf` lists, as [`libraries`] reads them:
 /// on this PC's drives, the path from old files' values included.
 fn vdf_libraries(apps: &Path) -> Vec<PathBuf> {
@@ -475,38 +476,43 @@ fn vdf_libraries(apps: &Path) -> Vec<PathBuf> {
         // No file to cache by: read it, as before.
         return read_capped(&file)
             .ok()
-            .map(|text| vdf_listed_libraries(&text))
+            .map(|text| existing_libraries(&vdf_listed_paths(&text)))
             .unwrap_or_default();
     };
     let mut read = VDF_LIBRARIES.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((last, listed)) = read.get(apps)
         && *last == stamp
     {
-        return listed.clone();
+        return existing_libraries(listed);
     }
     let Some(text) = read_capped(&file).ok() else {
         // Unreadable now, so not cached: the next check reads it again.
         return vec![];
     };
-    let listed = vdf_listed_libraries(&text);
-    read.insert(apps.to_owned(), (stamp, listed.clone()));
-    listed
+    let listed = vdf_listed_paths(&text);
+    let libraries = existing_libraries(&listed);
+    read.insert(apps.to_owned(), (stamp, listed));
+    libraries
 }
-/// The `steamapps` folders the text of `libraryfolders.vdf` lists on this PC's drives. Old files
-/// give the path as the value itself.
-fn vdf_listed_libraries(text: &str) -> Vec<PathBuf> {
+/// The library paths the text of `libraryfolders.vdf` lists on this PC's drives. Old files give
+/// the path as the value itself.
+fn vdf_listed_paths(text: &str) -> Vec<String> {
     let folders = Vdf::parse(text);
     let folders = folders.get("libraryfolders").unwrap_or(&folders);
-    let mut listed = vec![];
-    for (_, folder) in folders.entries() {
-        let path = folder.get("path").or(Some(folder)).and_then(Vdf::text);
-        if let Some(path) = path.filter(|p| !p.is_empty() && on_this_pc(Path::new(p)))
-            && let Some(library) = steamapps(Path::new(path))
-        {
-            listed.push(library);
-        }
-    }
-    listed
+    folders
+        .entries()
+        .iter()
+        .filter_map(|(_, folder)| folder.get("path").or(Some(folder)).and_then(Vdf::text))
+        .filter(|path| !path.is_empty() && on_this_pc(Path::new(path)))
+        .map(str::to_owned)
+        .collect()
+}
+/// The `steamapps` folders of the listed library paths that exist now.
+fn existing_libraries(paths: &[String]) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .filter_map(|path| steamapps(Path::new(path)))
+        .collect()
 }
 /// The `steamapps` folders of every library of `roots` on this PC's drives.
 fn libraries(roots: &[PathBuf]) -> Vec<PathBuf> {
