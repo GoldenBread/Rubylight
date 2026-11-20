@@ -105,7 +105,9 @@ public class FoldedChoiceTest {
 
     @Test
     public void aStoredTemporalUpscalingBecomesSgsr() {
-        prefs().edit().putString("upscaling_mode", "sgsr2").commit();
+        // A store past the native-defaults migration, which would reset the upscaling to off.
+        prefs().edit().putInt(PreferenceConfiguration.PREFS_VERSION_PREF_STRING, PreferenceConfiguration.FOLLOW_SCREEN_VERSION)
+                .putString("upscaling_mode", "sgsr2").commit();
         assertEquals(com.limelight.binding.video.UpscalingPolicy.Mode.SGSR1,
                 PreferenceConfiguration.readPreferences(app()).upscalingMode);
         assertEquals("sgsr1", prefs().getString("upscaling_mode", null));
