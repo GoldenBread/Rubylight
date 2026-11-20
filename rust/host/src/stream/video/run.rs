@@ -1202,6 +1202,10 @@ impl SessionThread<'_> {
                     latest.release_generation(&capture_wake);
                     continue;
                 };
+                // Whether this capture only extends the focus window's
+                // picture, read before an enhancement replaces the image and
+                // a later capture can take its place (`None` then).
+                let extends_capture = latest.extends_capture(&image);
                 // The picture the encoder receives: enhanced where the
                 // stream runs an enhancement, which then needs an encoder
                 // made for that picture.
@@ -1240,8 +1244,9 @@ impl SessionThread<'_> {
                     // picture is no update of the source: learned as one, a
                     // window composed at 240 Hz beside a 60 Hz game could
                     // move the phase onto its compositions, and each game
-                    // frame then waited for the next of them.
-                    if !extends {
+                    // frame then waited for the next of them. A capture
+                    // replaced before it was read is left out.
+                    if extends_capture == Some(false) {
                         pacer.observe_source(image.captured);
                     }
                     pacer.observe_source_rate(latest.source_rate());

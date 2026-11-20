@@ -396,6 +396,17 @@ impl<T> Latest<T> {
             .picture_mean_interval()
             .map(std::time::Duration::from_nanos)
     }
+    /// Whether `image` only extends the focus window's picture
+    /// (`Freshness::extends_picture`), read with the capture it belongs to:
+    /// `None` once a later capture replaced it.
+    pub(super) fn extends_capture(&self, image: &Arc<T>) -> Option<bool> {
+        let state = self.state.lock().unwrap();
+        state
+            .image
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, image))
+            .then(|| state.cadence.extends_picture())
+    }
     /// When the source's latest picture was first captured, the picture
     /// interval nearly all recent pictures arrived within, and whether the
     /// latest capture only extends the focus window's picture.

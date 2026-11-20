@@ -81,6 +81,29 @@ fn pending_idr_is_served_within_the_short_poll_instead_of_a_stream_period() -> R
     Ok(())
 }
 #[test]
+fn a_capture_is_judged_as_an_extension_only_while_it_is_the_newest() -> Result<()> {
+    // The stream loop reads whether its image only extends the focus
+    // window's picture before an enhancement replaces the image; a capture
+    // published in between must not lend it its own answer.
+    let latest = Latest::new();
+    let start = Instant::now();
+    let ms = |at: u64| start + Duration::from_millis(at);
+    // A focus window animating at about 60 Hz for over 500 ms.
+    for frame in 0..40u8 {
+        latest.publish_focus(Arc::new(frame), ms(16 * u64::from(frame)), Some(true))?;
+    }
+    let focus = Arc::new(40u8);
+    latest.publish_focus(focus.clone(), ms(640), Some(true))?;
+    assert_eq!(latest.extends_capture(&focus), Some(false));
+    let other = Arc::new(41u8);
+    latest.publish_focus(other.clone(), ms(648), Some(false))?;
+    assert_eq!(latest.extends_capture(&other), Some(true));
+    assert_eq!(latest.extends_capture(&focus), None);
+    latest.publish_focus(Arc::new(42u8), ms(656), Some(true))?;
+    assert_eq!(latest.extends_capture(&other), None);
+    Ok(())
+}
+#[test]
 fn publication_trace_matches_frames_still_owned_after_replacement() {
     let mut trace = PublicationTrace::new();
     let old = Arc::new(1u8);
