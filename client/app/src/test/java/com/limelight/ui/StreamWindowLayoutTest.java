@@ -364,7 +364,7 @@ public class StreamWindowLayoutTest {
         preferences.height = height;
         preferences.fromPcProfile = pcProfile;
         preferences.setVideoScaling(stretch ? VideoScaling.STRETCH : VideoScaling.FIT);
-        // This flag is also true for the safe Native entry and any custom nonstandard size.
+        // Even with the flag of a stream that follows the screen, the size alone decides the insets.
         ReflectionHelpers.setField(game, "nativeResolutionStream", true);
         Display display = game.getWindowManager().getDefaultDisplay();
         Display.Mode[] original = display.getSupportedModes();

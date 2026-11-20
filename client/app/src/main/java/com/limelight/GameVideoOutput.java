@@ -388,7 +388,7 @@ final class GameVideoOutput {
                 PreferenceConfiguration.isSquarishScreen(game.getWindowManager().getDefaultDisplay());
         PreferenceConfiguration config = game.prefConfig != null ? game.prefConfig : new PreferenceConfiguration();
         game.setRequestedOrientation(StreamOrientation.requested(game.streamOrientation, freeWindow, largeScreen, squarish,
-                config.onscreenController, game.nativeResolutionStream, config.width, config.height));
+                config.onscreenController, game.keepsRequestedShape, config.width, config.height));
     }
 
     // A host that draws the stream on its virtual display starts it in the shape the Orientation
@@ -574,8 +574,8 @@ final class GameVideoOutput {
 
     /** Fullscreen native/fill video uses the complete panel; fixed presets retain a cutout-safe area. */
     boolean usesFullDisplayForVideo() {
-        // nativeResolutionStream also includes custom sizes and the explicit cutout-safe
-        // Native entry. Only the user's fill/follow choice or an exact panel size spans a notch.
+        // Only the user's fill/follow choice or an exact panel size spans a notch, a preset one
+        // included (nativeResolutionStream leaves that out); the cutout-safe entry keeps clear of it.
         return game.prefConfig != null && (VideoScaling.coversArea(game.prefConfig.videoScaling) ||
                 game.prefConfig.resolutionFollowsScreen || shouldIgnoreInsetsForResolution(game.prefConfig.width, game.prefConfig.height));
     }

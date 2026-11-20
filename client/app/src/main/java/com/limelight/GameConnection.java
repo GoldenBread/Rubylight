@@ -175,8 +175,9 @@ final class GameConnection {
         if (game.prefConfig.layers != null) {
             LimeLog.info("Stream settings layers: " + com.limelight.preferences.StreamLayers.describe(game.prefConfig.layers));
         }
-        // Fixed presets keep their size; anything else is the phone's own resolution and follows it.
-        game.nativeResolutionStream = game.prefConfig.resolutionFollowsScreen ||
+        // Only the screen's own size follows the screen; a preset or a custom size keeps the size asked for.
+        game.nativeResolutionStream = game.prefConfig.streamFollowsScreen(PreferenceConfiguration.nativeResolution(game));
+        game.keepsRequestedShape = game.nativeResolutionStream ||
                 PreferenceConfiguration.isNativeResolution(game.prefConfig.width, game.prefConfig.height);
         game.fpsFollowsDisplay = com.limelight.binding.video.DisplayFrameRatePolicy.fpsFollowsDisplay(game.prefConfig.vrr,
                 game.prefConfig.fps, com.limelight.binding.video.DisplayFrameRatePolicy.maxRefreshRate(

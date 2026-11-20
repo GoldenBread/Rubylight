@@ -595,6 +595,23 @@ public class PreferenceConfiguration {
         return true;
     }
 
+    /**
+     * Whether this stream follows the screen while it runs (a fold, a split-screen pane, the panel)
+     * instead of keeping its size, on a screen whose own resolution is {@code panel} as
+     * nativeResolution gives it (null when unreadable). Following the screen does, and so does the
+     * screen's own size saved as a plain width and height (either way round, where it is no preset),
+     * as PC profiles saved before that choice existed hold it. A preset or any other custom size
+     * keeps its size, and automatic quality never goes above it.
+     */
+    public boolean streamFollowsScreen(String panel) {
+        if (resolutionFollowsScreen) return true;
+        if (panel == null || !isNativeResolution(width, height)) return false;
+        int panelWidth = getWidthFromResolutionString(panel);
+        int panelHeight = getHeightFromResolutionString(panel);
+        return Math.max(width, height) == Math.max(panelWidth, panelHeight) &&
+                Math.min(width, height) == Math.min(panelWidth, panelHeight);
+    }
+
     // If we have a screen that has semi-square dimensions, we may want to change our behavior
     // to allow any orientation and vertical+horizontal resolutions.
     public static boolean isSquarishScreen(int width, int height) {

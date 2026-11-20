@@ -160,6 +160,34 @@ public class CustomResolutionTest {
         }
     }
 
+    /**
+     * During a stream only the screen's own size follows the screen (fold, split-screen pane, panel). A custom size
+     * keeps its size, as a preset does, and automatic quality never goes above it: a custom 1600x900 stream was
+     * asked for its 1920x1080 panel's size. A plain size equal to the panel's own, as settings saved before the
+     * follow-the-screen choice hold it, still follows it, either way round.
+     */
+    @Test
+    public void onlyTheScreensOwnSizeFollowsTheScreenDuringAStream() {
+        assertFalse(followsScreen(false, 1600, 900, "1920x1080"));
+        assertFalse(followsScreen(false, 1280, 720, "1920x1080"));
+        assertFalse("the area beside a camera cutout", followsScreen(false, 2320, 1080, "2400x1080"));
+        assertFalse("another mode of the panel", followsScreen(false, 2340, 1080, "3120x1440"));
+        assertFalse("a preset the panel's size, as before", followsScreen(false, 1920, 1080, "1920x1080"));
+        assertFalse("an unreadable screen", followsScreen(false, 1600, 900, null));
+        assertTrue(followsScreen(true, 1600, 900, "1920x1080"));
+        assertTrue(followsScreen(true, 1920, 1080, null));
+        assertTrue("the panel's own size as a plain size", followsScreen(false, 2400, 1080, "2400x1080"));
+        assertTrue("a squarish screen's portrait entry", followsScreen(false, 1080, 1240, "1240x1080"));
+    }
+
+    private static boolean followsScreen(boolean resolutionFollowsScreen, int width, int height, String panel) {
+        PreferenceConfiguration config = new PreferenceConfiguration();
+        config.resolutionFollowsScreen = resolutionFollowsScreen;
+        config.width = width;
+        config.height = height;
+        return config.streamFollowsScreen(panel);
+    }
+
     @Test
     public void largePresetEnteredManuallyAndPortraitSizesSurviveReopening() {
         for (int[] size : new int[][] {{3840, 2160}, {720, 1600}, {64, 64}, {16384, 16384}}) {

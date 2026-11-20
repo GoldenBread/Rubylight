@@ -79,7 +79,7 @@ public class GameFoldReconfigureTest {
 
     @Test
     public void aStreamStartedOnTheScreenInUseAsksForNothing() {
-        // The cutout-safe or a custom size keeps its own size while the screen stays the same.
+        // A size other than the screen's (one the host answered with, say) stays while the screen stays the same.
         Game activity = connectedNativeStream("800x720");
         ReflectionHelpers.callInstanceMethod(activity.videoOutput, "startReconfigureTracking");
         ShadowLooper.idleMainLooper(2, TimeUnit.SECONDS);

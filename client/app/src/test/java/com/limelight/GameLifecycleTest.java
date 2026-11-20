@@ -507,6 +507,42 @@ public class GameLifecycleTest {
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER, activity.getRequestedOrientation());
     }
 
+    /**
+     * On a squarish phone a custom size keeps the shape it was asked in, as before, although it no longer follows the
+     * screen during the stream; a preset may turn with the phone.
+     */
+    @Test
+    @Config(qualifiers = "w520dp-h480dp-land-mdpi", shadows = PcViewLifecycleTest.NoNativeMoonBridge.class,
+            instrumentedPackages = "com.limelight.nvstream.jni")
+    public void onASquarishScreenACustomSizeKeepsItsShape() {
+        Context context = org.robolectric.RuntimeEnvironment.getApplication();
+        android.content.SharedPreferences prefs = android.preference.PreferenceManager.getDefaultSharedPreferences(context);
+        String[][] cases = {{"1600x900", "" + android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE},
+                {"900x1200", "" + android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT},
+                {"1280x720", "" + android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER}};
+        try {
+            for (String[] stream : cases) {
+                prefs.edit().putInt(preferenceKey("PREFS_VERSION_PREF_STRING"),
+                                ReflectionHelpers.getStaticField(PreferenceConfiguration.class, "PROFILE_NATIVE_VERSION"))
+                        .putString(preferenceKey("RESOLUTION_PREF_STRING"), stream[0])
+                        .putBoolean(preferenceKey("RESOLUTION_FOLLOWS_SCREEN_PREF_STRING"), false)
+                        .putBoolean(preferenceKey("ONSCREEN_CONTROLLER_PREF_STRING"), false).commit();
+                Intent intent = new Intent(context, Game.class).putExtra(Game.EXTRA_HOST, "192.0.2.1")
+                        .putExtra(Game.EXTRA_UNIQUEID, "device").putExtra(Game.EXTRA_APP_ID, 11);
+                Game activity = Robolectric.buildActivity(Game.class, intent).create().get();
+                assertFalse(stream[0], ReflectionHelpers.<Boolean>getField(activity, "nativeResolutionStream"));
+                assertEquals(stream[0], Integer.parseInt(stream[1]), activity.getRequestedOrientation());
+                activity.finish();
+            }
+        } finally {
+            prefs.edit().clear().commit();
+        }
+    }
+
+    private static String preferenceKey(String constant) {
+        return ReflectionHelpers.getStaticField(PreferenceConfiguration.class, constant);
+    }
+
     @Test
     public void offUsesStreamSizedCompositorBuffersWithoutLosingLetterboxing() {
         Game activity = Robolectric.buildActivity(Game.class).get();
