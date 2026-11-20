@@ -227,14 +227,12 @@ pub fn on_resume(on_resume: impl Fn() + Send + Sync + 'static) -> Result<ResumeW
 
 impl Drop for ResumeWatch {
     fn drop(&mut self) {
-        // SAFETY: the handle came from a successful registration, removed once here. The call
-        // returns after a callback in flight has, so nothing uses the context after it.
-        let status = unsafe { PowerUnregisterSuspendResumeNotification(self.registration) };
-        if status == ERROR_SUCCESS {
-            // SAFETY: the box `on_resume` made, now unreferenced.
-            drop(unsafe { Box::from_raw(self.callback) });
-        }
-        // Otherwise the callback may still run: the box is left, a few bytes.
+        // SAFETY: the handle came from a successful registration, removed once here.
+        let _ = unsafe { PowerUnregisterSuspendResumeNotification(self.registration) };
+        // The context box is left: Windows does not document that unregistering waits for a
+        // callback already running, and the watch lives once per host process, so a few
+        // bytes kept beat a callback reading freed memory.
+        let _ = self.callback;
     }
 }
 
