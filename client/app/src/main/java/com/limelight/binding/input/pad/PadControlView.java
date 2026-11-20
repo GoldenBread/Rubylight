@@ -24,7 +24,7 @@ import com.limelight.ui.Haptics;
  * misses every control reaches the stream underneath, while several fingers on different controls
  * each go to their own. Sticks follow one finger; the face cluster and the D-pad follow every finger
  * on them, so a thumb can slide from A to B or rest between them for both. A Steam Controller trackpad follows one
- * finger and sends it as a touch on that pad; a grip holds from one tap to the next. The pointer touchpad moves the
+ * finger, sends it as a touch on that pad and clicks the pad from a tap; a grip holds from one tap to the next. The pointer touchpad moves the
  * mouse or the camera, with tap, two-finger right-click and two-finger scroll. A split cluster's members are views of
  * their own, and a finger that lands on one slides across all four ({@link Group}). A press shows at once; let go, it
  * eases back over {@link PadPainter#RELEASE_MS}, and its halo past the control's edge draws in the {@link HaloLayer}.
@@ -54,6 +54,9 @@ final class PadControlView extends View {
     private ModernController.TouchSink touchSink;
     /** The pressure of the touch being handled, for a trackpad. */
     private float touchPressure = 1;
+    /** A trackpad tap in the making: when the finger went down, and how far it has travelled since. */
+    private long padDownAt;
+    private float padTravel, padLastX, padLastY;
     /** The split cluster this control is a member of; null for every other control. */
     private Group group;
     /** The layer under the controls that draws a press's halo past this control's edge; null without one. */
@@ -554,6 +557,10 @@ final class PadControlView extends View {
                 if (state.pressed) return;
                 pointerIds[0] = pointer;
                 state.pressed = true;
+                padDownAt = time;
+                padTravel = 0;
+                padLastX = x;
+                padLastY = y;
                 padTouch(MoonBridge.LI_TOUCH_EVENT_DOWN, x, y, touchPressure);
                 applyAlpha();
                 redraw();
@@ -661,6 +668,9 @@ final class PadControlView extends View {
             }
             case PAD:
                 if (!state.pressed || pointer != pointerIds[0]) return;
+                padTravel += (float) Math.hypot(x - padLastX, y - padLastY);
+                padLastX = x;
+                padLastY = y;
                 padTouch(MoonBridge.LI_TOUCH_EVENT_MOVE, x, y, touchPressure);
                 redraw();
                 break;
@@ -744,6 +754,10 @@ final class PadControlView extends View {
                 padTouch(MoonBridge.LI_TOUCH_EVENT_UP, state.touchX, state.touchY, touchPressure);
                 state.touchX = Float.NaN;
                 state.touchY = Float.NaN;
+                // A tap clicks the pad, as pressing the real one does: short, and the finger stayed
+                // near where it landed, by the pointer touchpad's own thresholds. A drag or a
+                // lingering finger does not.
+                if (PadInput.touchpadTap(time - padDownAt, padTravel, density)) padClick();
                 applyAlpha();
                 redraw();
                 break;
@@ -788,6 +802,7 @@ final class PadControlView extends View {
         stickPointer = -1;
         stickClick = false;
         stickReleasedAt = 0;
+        padDownAt = 0;
         stick.release();
         boolean was = state.flags != 0 || state.pressed || state.stickActive;
         state.clear();
@@ -880,6 +895,18 @@ final class PadControlView extends View {
 
     private static float fraction(float position, int size) {
         return size > 0 ? position / size : 0f;
+    }
+
+    /**
+     * A tap on the pad clicked it: press and release at once, as the pointer touchpad's tap does.
+     * The touch has just ended, so the pad's slot holds nothing else; a resend then carries the
+     * release, as for any button let go.
+     */
+    private void padClick() {
+        gamepad.setButtons(slot(), PadInput.padClickFlag(control));
+        gamepad.setButtons(slot(), 0);
+        if (haptics) Haptics.perform(this, Haptics.Kind.CLICK);
+        changed();
     }
 
     private void releaseButton() {

@@ -17,12 +17,22 @@ public final class SteamControls {
     public static final short LI_CCAP_GRIP_SENSE = 0x200;
     /** Arrival capability: stick touch through the stick touch flags. */
     public static final short LI_CCAP_STICK_TOUCH = 0x400;
+    /** Arrival capability: the controls send the pad and trigger clicks through the click flags. */
+    public static final short LI_CCAP_SC26_BUTTONS = 0x1000;
 
     /** Held, not pressed: in the upper half of the button word. */
     public static final int LEFT_GRIP_TOUCH_FLAG = 0x0040_0000;
     public static final int RIGHT_GRIP_TOUCH_FLAG = 0x0080_0000;
     public static final int LEFT_STICK_TOUCH_FLAG = 0x0100_0000;
     public static final int RIGHT_STICK_TOUCH_FLAG = 0x0200_0000;
+    /** The pads' own clicks and the triggers' end-stop clicks, pressed like buttons. */
+    public static final int LEFT_PAD_CLICK_FLAG = 0x0400_0000;
+    public static final int RIGHT_PAD_CLICK_FLAG = 0x0800_0000;
+    public static final int LEFT_TRIGGER_CLICK_FLAG = 0x1000_0000;
+    public static final int RIGHT_TRIGGER_CLICK_FLAG = 0x2000_0000;
+
+    /** A trigger pulled this far clicks: the firmware's end-stop threshold, as sc26_usb.h has it. */
+    public static final int TRIGGER_CLICK_THRESHOLD = 0xF0;
 
     /** The back buttons as the PC maps them: R4, L4, R5, L5 are paddles 1 to 4. */
     public static final int R4_FLAG = ControllerPacket.PADDLE1_FLAG;
@@ -37,11 +47,13 @@ public final class SteamControls {
      * The capabilities the controls add to their pad's arrival. Not the touchpad: PCs that choose
      * a controller by its touchpad would make player 1 a PlayStation controller, which has none of
      * the back buttons or grips and which games that read only Xbox controllers cannot see. A PC
-     * that makes the pad a Steam Controller takes the trackpads' touches without it. Not the
-     * independent pad and trigger clicks (SC26 buttons) either: those would make every click
-     * explicit, which these controls cannot send.
+     * that makes the pad a Steam Controller takes the trackpads' touches without it. SC26 buttons
+     * with it: such a PC then takes every click from the click flags alone instead of deriving a
+     * trigger's from its pull, and the controls send every one it loses that way — the pads' from
+     * a tap on them, a trigger's from a pull past {@link #TRIGGER_CLICK_THRESHOLD}.
      */
-    public static final short CAPABILITIES = (short) (LI_CCAP_GRIP_SENSE | LI_CCAP_STICK_TOUCH);
+    public static final short CAPABILITIES =
+            (short) (LI_CCAP_GRIP_SENSE | LI_CCAP_STICK_TOUCH | LI_CCAP_SC26_BUTTONS);
 
     public static final int LEFT_PAD = 0, RIGHT_PAD = 1;
 

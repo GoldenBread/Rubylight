@@ -215,6 +215,63 @@ public class ModernSteamControlsTest {
         assertFalse(right.state().pressed);
     }
 
+    /**
+     * A tap on a trackpad presses and releases the pad's own click button, by the pointer touchpad's
+     * tap thresholds: short, and the finger stayed near where it landed. A drag or a lingering finger
+     * moves the pad and clicks nothing.
+     */
+    @Test public void aTapOnATrackpadClicksItsPadAndADragOrALingeringFingerDoesNot() {
+        ModernController controller = controller();
+        PadControlView left = controller.view(PadLayout.Control.LEFT_PAD);
+        float w = left.getWidth(), h = left.getHeight();
+
+        // A tap: the touch streams as before, then the pad's click presses and releases at once.
+        int count = buttons.size();
+        left.down(0, w / 2, h / 4, 100);
+        assertEquals(count, buttons.size());
+        left.up(0, 200);
+        assertEquals(MoonBridge.LI_TOUCH_EVENT_UP, touches.get(touches.size() - 1)[0]);
+        assertEquals(SteamControls.LEFT_PAD_CLICK_FLAG, buttons.get(buttons.size() - 2));
+        assertEquals("The click releases at once", 0, last());
+
+        // The right pad clicks its own button.
+        PadControlView right = controller.view(PadLayout.Control.RIGHT_PAD);
+        right.down(1, 5, 5, 300);
+        right.up(1, 400);
+        assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, buttons.get(buttons.size() - 2));
+        assertEquals(0, last());
+
+        // A drag: the finger crosses the pad within tap time, but too far.
+        count = buttons.size();
+        left.down(0, 10, 10, 1000);
+        left.move(0, w, h);
+        left.move(0, w, h / 2);
+        left.up(0, 1100);
+        assertEquals("A drag sends no click", count, buttons.size());
+
+        // A long press: the finger stays put but lingers past the tap time.
+        left.down(0, w / 2, h / 2, 2000);
+        left.up(0, 2000 + PadInput.TOUCHPAD_TAP_MS + 50);
+        assertEquals("A lingering finger sends no click", count, buttons.size());
+
+        // Input taken away mid-touch is no tap either: the touch is cancelled, nothing clicks.
+        left.down(0, w / 2, h / 2, 3000);
+        controller.releaseInput();
+        assertEquals(MoonBridge.LI_TOUCH_EVENT_CANCEL, touches.get(touches.size() - 1)[0]);
+        assertEquals(count, buttons.size());
+        controller.destroy();
+
+        // Without the Steam controls there is no trackpad to tap, so nothing can click: their
+        // setting alone puts the pads, and their clicks, on the pad's SC26 arrival.
+        prefs.oscSteamControls = false;
+        buttons.clear();
+        controller = controller();
+        assertNull(controller.view(PadLayout.Control.LEFT_PAD));
+        assertNull(controller.view(PadLayout.Control.RIGHT_PAD));
+        assertTrue(controller.forcedHidden(PadLayout.Control.LEFT_PAD));
+        controller.destroy();
+    }
+
     @Test public void theEditorPicksAndHidesThemLikeAnyControl() {
         ModernController controller = controller();
         controller.startEditing();

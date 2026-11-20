@@ -27,7 +27,8 @@ import java.util.Map;
  * so touches between them reach the stream. Its input is the on-screen gamepad, the same report the classic
  * controller sends (the WASD stick sends keys, the pointer touchpad mouse input), and its layout is kept per
  * orientation for all games or for one game. With the Steam Controller controls setting it adds that
- * controller's trackpads, back buttons and grip touch, sent as the classic controller sends them.
+ * controller's trackpads, back buttons and grip touch — a tap on a trackpad clicks the pad — sent as
+ * the classic controller sends them.
  */
 public final class ModernController {
     static final String PREFS = "osc_modern";

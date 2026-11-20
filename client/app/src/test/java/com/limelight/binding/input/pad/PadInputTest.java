@@ -1,5 +1,6 @@
 package com.limelight.binding.input.pad;
 
+import com.limelight.binding.input.SteamControls;
 import com.limelight.nvstream.input.ControllerPacket;
 
 import org.junit.Test;
@@ -100,5 +101,14 @@ public class PadInputTest {
         assertEquals(0, PadInput.buttonFlag(PadLayout.Control.LT));
         assertTrue(PadInput.isTrigger(PadLayout.Control.RT));
         assertFalse(PadInput.isTrigger(PadLayout.Control.RB));
+    }
+
+    /** A trackpad's tap is its pad's click; nothing else presses a click flag. */
+    @Test public void aTrackpadTapClicksItsOwnPad() {
+        assertEquals(SteamControls.LEFT_PAD_CLICK_FLAG, PadInput.padClickFlag(PadLayout.Control.LEFT_PAD));
+        assertEquals(SteamControls.RIGHT_PAD_CLICK_FLAG, PadInput.padClickFlag(PadLayout.Control.RIGHT_PAD));
+        assertEquals(0, PadInput.padClickFlag(PadLayout.Control.POINTER_PAD));
+        assertEquals(0, PadInput.padClickFlag(PadLayout.Control.TOUCHPAD));
+        assertEquals(0, PadInput.padClickFlag(PadLayout.Control.LEFT_STICK));
     }
 }

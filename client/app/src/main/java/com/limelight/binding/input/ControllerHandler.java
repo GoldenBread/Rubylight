@@ -2434,6 +2434,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     (short)0, (byte)0, (byte)0, (short)0, (short)0, (short)0, (short)0);
         }
         else {
+            // The Steam Controller controls' pad arrives with SC26 buttons, so a PC that makes it a
+            // Steam Controller takes its clicks from the click flags alone and stops deriving a
+            // trigger's from its pull. The controls send every click that loses: the pads' from a
+            // tap, and a trigger's derived here by the PC's own rule while the pull is past the
+            // end-stop. Every pad the PC hears with those controls is number 0, its own or the one
+            // they share.
+            if (steamControlsSession && controllerNumber == 0) {
+                if ((leftTrigger & 0xFF) >= SteamControls.TRIGGER_CLICK_THRESHOLD) {
+                    inputMap |= SteamControls.LEFT_TRIGGER_CLICK_FLAG;
+                }
+                if ((rightTrigger & 0xFF) >= SteamControls.TRIGGER_CLICK_THRESHOLD) {
+                    inputMap |= SteamControls.RIGHT_TRIGGER_CLICK_FLAG;
+                }
+            }
             conn.sendControllerInput(controllerNumber, activeControllerMask,
                     inputMap,
                     leftTrigger, rightTrigger,

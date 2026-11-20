@@ -92,6 +92,8 @@ public class SteamControlsArrivalTest {
     public void thePadSharingPlayerOneArrivesWithTheControlsAndMergesTheirInput() {
         Connection connection = arrive(true);
         assertEquals(SteamControls.CAPABILITIES, connection.arrivalCaps & SteamControls.CAPABILITIES);
+        // Their clicks are explicit (SC26): the pad's taps and full pulls carry its click flags.
+        assertEquals(SteamControls.LI_CCAP_SC26_BUTTONS, connection.arrivalCaps & SteamControls.LI_CCAP_SC26_BUTTONS);
         // No touchpad of the controls' own, which would make a PC pick a PlayStation controller;
         // their trackpad touches are sent all the same (arrive checks one).
         assertEquals(0, connection.arrivalCaps & MoonBridge.LI_CCAP_TOUCHPAD);
@@ -102,6 +104,8 @@ public class SteamControlsArrivalTest {
     public void withoutTheSettingThePadArrivesAsItIs() {
         Connection connection = arrive(false);
         assertEquals(0, connection.arrivalCaps & SteamControls.CAPABILITIES);
+        // No SC26 buttons either: nothing on the pad claims to send its clicks.
+        assertEquals(0, connection.arrivalCaps & SteamControls.LI_CCAP_SC26_BUTTONS);
         assertEquals(ControllerPacket.A_FLAG | ControllerPacket.B_FLAG, connection.arrivalButtons);
     }
 
@@ -132,6 +136,16 @@ public class SteamControlsArrivalTest {
                 assertEquals(MoonBridge.LI_TOUCH_EVENT_DOWN, connection.touchType);
                 assertEquals(SteamControls.pointerId(SteamControls.RIGHT_PAD), connection.touchPointer);
                 assertEquals(x, connection.touchX, 0f);
+
+                // A trigger pulled past the end-stop clicks only with the controls: their SC26
+                // arrival makes the PC take clicks from the flags alone, so the app sends the
+                // trigger's click itself, as the PC's pad would have derived it from the pull.
+                int clicks = SteamControls.LEFT_TRIGGER_CLICK_FLAG | SteamControls.RIGHT_TRIGGER_CLICK_FLAG;
+                handler.reportOscState(0, (short) 0, (short) 0, (short) 0, (short) 0, (byte) 0xFF, (byte) 0xFF);
+                assertEquals(steamControls ? clicks : 0, connection.last() & clicks);
+                // A pull short of the end-stop clicks nothing, and letting go takes the click off.
+                handler.reportOscState(0, (short) 0, (short) 0, (short) 0, (short) 0, (byte) 0, (byte) 0xEF);
+                assertEquals(0, connection.last() & clicks);
                 return connection;
             } finally {
                 handler.destroy();

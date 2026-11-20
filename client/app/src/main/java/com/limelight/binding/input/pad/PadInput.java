@@ -163,6 +163,16 @@ public final class PadInput {
         return control == PadLayout.Control.LEFT_PAD ? SteamControls.LEFT_PAD : SteamControls.RIGHT_PAD;
     }
 
+    /**
+     * The Steam Controller button a tap on a trackpad control presses and releases at once: the pad's
+     * own click, as the real pad's press. 0 for every other control, the pointer touchpad included.
+     */
+    public static int padClickFlag(PadLayout.Control control) {
+        if (control == PadLayout.Control.LEFT_PAD) return SteamControls.LEFT_PAD_CLICK_FLAG;
+        if (control == PadLayout.Control.RIGHT_PAD) return SteamControls.RIGHT_PAD_CLICK_FLAG;
+        return 0;
+    }
+
     public static boolean isTrigger(PadLayout.Control control) {
         return control == PadLayout.Control.LT || control == PadLayout.Control.RT;
     }
