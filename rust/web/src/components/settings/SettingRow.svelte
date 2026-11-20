@@ -57,9 +57,9 @@
     oninvalid: (text: string | null) => void;
     /** The daily time its control's `daily` choice keeps in another setting (SettingControl). */
     daily?: { value: string; onchange: (value: string | null) => void };
-    /** The value a select's `fixed` choice reveals, edited under the select (Setting.partOf). */
     /** The graphics card's device ID, kept for cards that share a name (SettingControl). */
     pnp?: { value: string; onchange: (value: string | null) => void };
+    /** The value a select's `fixed` choice reveals, edited under the select (Setting.partOf). */
     fixed?: {
       setting: Setting;
       value: ConfigValue;
