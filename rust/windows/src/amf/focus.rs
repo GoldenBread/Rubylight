@@ -369,7 +369,7 @@ pub(crate) unsafe fn attach(
     // `pitch` bytes, checked to fit a row, and SetProperty acquires its own
     // reference to the surface before returning.
     unsafe {
-        let filled = (|| -> Result<()> {
+        (|| -> Result<()> {
             let plane = ((*(*map).pVtbl).GetPlaneAt.unwrap())(map, 0);
             anyhow::ensure!(!plane.is_null(), "AMF ROI map surface has no plane");
             let v = &*(*plane).pVtbl;
@@ -396,8 +396,7 @@ pub(crate) unsafe fn attach(
                     },
                 },
             )
-        })();
-        filled
+        })()
     }
 }
 /// The GRAY32 map named `name` on an output buffer: `None` when AMF set none.

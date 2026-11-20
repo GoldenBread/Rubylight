@@ -77,7 +77,7 @@ fn mixed_queue(raw: &[f32], matrix: &[Vec<f32>], silent: usize) -> Vec<f32> {
             queued.push(clamp(mixed));
         }
     }
-    queued.extend(std::iter::repeat(0.).take(silent * matrix.len()));
+    queued.extend(std::iter::repeat_n(0., silent * matrix.len()));
     queued
 }
 

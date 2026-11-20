@@ -1795,7 +1795,8 @@ impl Session {
         } else {
             // A map left over from a frame that cannot carry one keeps its
             // buffer for the next that does.
-            if let Some(map) = map {
+            if let Some(mut map) = map {
+                map.clear();
                 self.map_scratch = map;
             }
             None
@@ -1803,7 +1804,9 @@ impl Session {
         if let Some(map) = map {
             // The slot's last frame is complete, so its map's buffer
             // becomes the next map's scratch.
-            self.map_scratch = std::mem::replace(&mut self.slots[slot].deltas, map);
+            let mut done = std::mem::replace(&mut self.slots[slot].deltas, map);
+            done.clear();
+            self.map_scratch = done;
             self.picture.qpDeltaMap = self.slots[slot].deltas.as_mut_ptr();
             self.picture.qpDeltaMapSize = self.slots[slot].deltas.len() as u32;
         }

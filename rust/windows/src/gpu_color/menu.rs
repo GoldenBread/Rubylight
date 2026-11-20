@@ -5,6 +5,9 @@
 use super::*;
 use crate::overlay::Overlay;
 
+/// The pixel shaders assembled for a set of menu entries, with that set.
+type AssembledShaders = (Vec<&'static [u8]>, std::sync::Arc<[ID3D11PixelShader]>);
+
 #[derive(Default)]
 pub(super) struct Menu {
     overlay: Option<Overlay>,
@@ -13,7 +16,7 @@ pub(super) struct Menu {
     /// The pixel shaders of the last conversion, kept assembled while the
     /// menu is open: each conversion asks for the same entries, and only a
     /// change of them rebuilds the set.
-    assembled: Option<(Vec<&'static [u8]>, std::sync::Arc<[ID3D11PixelShader]>)>,
+    assembled: Option<AssembledShaders>,
     compute: Vec<(&'static [u8], ID3D11ComputeShader)>,
     /// `cbuffer Menu` and the values it holds.
     constants: Option<(ID3D11Buffer, [u32; 12])>,

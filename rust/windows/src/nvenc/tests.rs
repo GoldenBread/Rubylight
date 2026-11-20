@@ -2766,7 +2766,7 @@ fn a_focus_maps_buffer_is_taken_back_and_refilled_for_the_next_map() -> Result<(
     for _ in 0..2 {
         let mut deltas = std::mem::take(&mut encoder.map_scratch);
         deltas.extend([-3, 3]);
-        address.get_or_insert_with(|| deltas.as_ptr());
+        address.get_or_insert(deltas.as_ptr());
         encoder.next_map = Some(deltas);
         encoder.submit(slot, None, false, Instant::now())?;
         encoder.poll()?;
