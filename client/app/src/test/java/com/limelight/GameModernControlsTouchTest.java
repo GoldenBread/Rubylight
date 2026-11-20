@@ -26,6 +26,7 @@ import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.StreamConfiguration;
 import com.limelight.nvstream.http.ComputerDetails;
 
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -60,6 +61,17 @@ public class GameModernControlsTouchTest {
     private static final int APP = 11;
     private static final String PORTRAIT = "w750dp-h832dp-port-420dpi", LANDSCAPE = "w832dp-h750dp-land-420dpi";
     private ActivityController<StreamGame> controller;
+
+    /**
+     * Each stream screen is left as leaving it does. A dialog it opened stays in Dialog's static list until the screen
+     * is destroyed and holds the whole screen, so without this every test's screen stayed in the heap.
+     */
+    @After public void leaveTheStream() {
+        if (controller == null) return;
+        controller.pause().stop().destroy();
+        idle();
+        controller = null;
+    }
 
     /** The stream screen without the Shield controller service, which has no binder here. */
     public static class StreamGame extends Game {
