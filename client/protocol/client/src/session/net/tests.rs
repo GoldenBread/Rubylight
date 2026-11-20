@@ -866,21 +866,6 @@ fn resolution_finds_the_address_with_a_listener() {
     assert!(started.elapsed() < TEST_PORT_TIMEOUT + Duration::from_secs(1), "{:?}", started.elapsed());
 }
 
-/// A control message at `level` and `kind` holding `data`, as the kernel lays it out.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn control_message(level: i32, kind: i32, data: &[u8]) -> Vec<u8> {
-    const WORD: usize = std::mem::size_of::<usize>();
-    let start = (WORD + 8).next_multiple_of(WORD);
-    let mut message = Vec::new();
-    message.extend_from_slice(&(start + data.len()).to_ne_bytes());
-    message.extend_from_slice(&level.to_ne_bytes());
-    message.extend_from_slice(&kind.to_ne_bytes());
-    message.resize(start, 0);
-    message.extend_from_slice(data);
-    message.resize(message.len().next_multiple_of(WORD), 0);
-    message
-}
-
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[test]
 fn a_timestamp_control_message_is_read_among_others() {
