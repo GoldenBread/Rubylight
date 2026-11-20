@@ -578,7 +578,8 @@ final class GameConnection {
         game.controllerHandler = new ControllerHandler(game, game.conn, game, game.prefConfig);
         // With Hide while a controller is connected, the on-screen controls step aside for a physical one.
         game.controllerHandler.setPresenceListener(game::setPhysicalControllerConnected);
-        game.setPhysicalControllerConnected(game.controllerHandler.hasExternalControllers());
+        // Only noted here: the on-screen controls are built below, after the game's touch controls.
+        game.physicalControllerConnected = game.controllerHandler.hasExternalControllers();
         if (DualScreen.isSecond(game.getIntent())) {
             // The controllers belong to the first screen's stream. Stopped here, before the launch request
             // lists them and before the connection announces them, the host never hears of a second set.
@@ -619,6 +620,8 @@ final class GameConnection {
                     new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         }
 
+        // After the touch controls: views stack in the order they are added, and the touch layout covers the whole
+        // screen, so controls built before it would lie underneath, and a shown touch layout would take their touches.
         if (game.prefConfig.onscreenController && game.app.getRole() != NvApp.Role.REMOTE_MONITOR) {
             game.showOnscreenController();
         }
