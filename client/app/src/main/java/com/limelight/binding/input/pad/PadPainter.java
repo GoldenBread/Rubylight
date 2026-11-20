@@ -37,7 +37,7 @@ final class PadPainter {
         boolean stickActive;
         /** A trackpad's finger inside the box, in pixels; NaN while none touches it. */
         float touchX = Float.NaN, touchY = Float.NaN;
-        /** The pointer touchpad's short mode word ("MOUSE" or "CAM"); empty for other controls and in the editor. */
+        /** The pointer touchpad's short mode word ({@link #pointerLabel}); empty for other controls. */
         String label = "";
 
         void clear() {
@@ -84,6 +84,11 @@ final class PadPainter {
 
     int accent() {
         return accent;
+    }
+
+    /** The word the pointer touchpad shows for its mode, in play and in the editor. */
+    static String pointerLabel(boolean camera) {
+        return camera ? "CAM" : "MOUSE";
     }
 
     void setGlyph(PadLayout.Glyph glyph) {

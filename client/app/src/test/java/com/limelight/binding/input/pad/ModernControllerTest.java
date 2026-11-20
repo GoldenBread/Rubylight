@@ -998,18 +998,45 @@ public class ModernControllerTest {
         assertEquals(PadLayout.Control.POINTER_PAD, editor.selected());
         assertFalse(editor.draft().spec(PadLayout.Control.POINTER_PAD).hidden);
         View mode = editor.findViewById(com.limelight.R.id.pad_editor_pointer_mode);
-        assertEquals(View.VISIBLE, mode.getVisibility());
-        assertTrue(mode.performClick());
-        assertEquals(PadLayout.PointerMode.CAMERA, editor.draft().pointerMode());
+        assertEquals("Added, the pad stays picked with its mode at hand", View.VISIBLE, mode.getVisibility());
         com.google.android.material.button.MaterialButton modeButton =
                 editor.findViewById(com.limelight.R.id.pad_editor_pointer_mode);
-        assertEquals("The button names the mode now", "Camera", modeButton.getText().toString());
-        assertEquals("and its description the mode pressing gives", "Mouse", modeButton.getContentDescription().toString());
+        assertEquals("The button names what the touchpad does", "Touchpad: Mouse", modeButton.getText().toString());
+        assertTrue(mode.performClick());
+        assertEquals(PadLayout.PointerMode.CAMERA, editor.draft().pointerMode());
+        assertEquals("Touchpad: Camera", modeButton.getText().toString());
+        assertEquals("and its description the mode pressing gives", "Touchpad: Mouse",
+                modeButton.getContentDescription().toString());
         assertTrue(mode.performClick());
         assertEquals(PadLayout.PointerMode.MOUSE, editor.draft().pointerMode());
+        assertEquals("Touchpad: Mouse", modeButton.getText().toString());
         controller.finishEditing(true);
         layout();
         assertEquals(View.VISIBLE, controller.view(PadLayout.Control.POINTER_PAD).getVisibility());
+    }
+
+    /**
+     * Camera mode is easy to find: the editor's touchpad shows its mode's word as it does in play, and with the pad
+     * picked the panel's line says what Camera does, even on a phone held sideways, where the line is otherwise left out.
+     */
+    @Test public void theEditorShowsTheTouchpadsModeAndSaysWhatCameraDoes() {
+        ModernController controller = controller(GAME);
+        controller.startEditing();
+        settle();
+        PadEditor editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        android.widget.TextView hint = editor.findViewById(com.limelight.R.id.pad_editor_hint);
+        assertEquals("A phone held sideways leaves the line out", View.GONE, hint.getVisibility());
+        editor.addTouchpad();
+        assertEquals("MOUSE", editor.previewState(PadLayout.Control.POINTER_PAD).label);
+        assertEquals("", editor.previewState(PadLayout.Control.FACE).label);
+        assertEquals(View.VISIBLE, hint.getVisibility());
+        assertEquals(frame.getContext().getString(com.limelight.R.string.pad_edit_hint_camera), hint.getText().toString());
+        editor.togglePointerMode();
+        assertEquals("CAM", editor.previewState(PadLayout.Control.POINTER_PAD).label);
+        editor.select(PadLayout.Control.LB);
+        assertEquals(View.GONE, hint.getVisibility());
+        assertEquals(frame.getContext().getString(com.limelight.R.string.pad_edit_hint), hint.getText().toString());
+        controller.finishEditing(false);
     }
 
     /** The pointer touchpad is built from a saved layout with its mode, and it sends through the pointer sink. */

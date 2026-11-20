@@ -29,6 +29,9 @@
     <string name="pad_pointer_touchpad">Pointer touchpad</string>
     <string name="pad_touchpad_mouse">Mouse</string>
     <string name="pad_touchpad_camera">Camera</string>
+    <string name="pad_touchpad_mode_mouse">Touchpad: Mouse</string>
+    <string name="pad_touchpad_mode_camera">Touchpad: Camera</string>
+    <string name="pad_edit_hint_camera">Camera: swipes move the right stick, faster swipes turn further.</string>
     <string name="pad_preset_default">Default</string>
     <string name="pad_preset_minimal">Minimal</string>
     <string name="pad_preset_full">Full</string>

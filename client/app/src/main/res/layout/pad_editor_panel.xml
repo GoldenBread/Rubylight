@@ -171,7 +171,7 @@
             style="@style/Widget.Nightjar.Button.Text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/pad_touchpad_mouse" />
+            android:text="@string/pad_touchpad_mode_mouse" />
 
         <!-- Split for the picked face cluster or D-pad, Join for one of its members. -->
         <com.google.android.material.button.MaterialButton

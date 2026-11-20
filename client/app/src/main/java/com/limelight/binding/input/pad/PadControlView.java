@@ -256,7 +256,7 @@ final class PadControlView extends View {
         pointerCamera = camera;
         pointerMotion = new PadPointerMotion(PointerAcceleration.forCurve(curve), speedPercent);
         // The pad itself says which it does, so a glance tells the Camera mode from the Mouse one.
-        state.label = control == PadLayout.Control.POINTER_PAD ? (camera ? "CAM" : "MOUSE") : "";
+        state.label = control == PadLayout.Control.POINTER_PAD ? PadPainter.pointerLabel(camera) : "";
         redraw();
     }
 

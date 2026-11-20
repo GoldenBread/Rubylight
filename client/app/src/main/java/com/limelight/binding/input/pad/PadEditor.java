@@ -46,7 +46,7 @@ final class PadEditor extends FrameLayout {
     private final View panel;
     private final TextView selection, sizeText, hint;
     private final MaterialButton hide, reset, addWasd, addTouchpad, preset, glyphs, pointerMode, split, join;
-    private boolean compactButtons;
+    private boolean compactButtons, shortSurface;
     private final Slider opacity;
     private final float density;
     private boolean settingOpacity;
@@ -136,11 +136,11 @@ final class PadEditor extends FrameLayout {
         // surface (a phone in landscape) drops the hint so the panel covers fewer controls.
         boolean narrow = width < PANEL_WIDTH_DP * density, shortSurface = h < SHORT_SURFACE_DP * density;
         LayoutParams params = (LayoutParams) panel.getLayoutParams();
-        if (params.width != width || narrow != compactButtons || shortSurface == (hint.getVisibility() == VISIBLE)) {
+        if (params.width != width || narrow != compactButtons || shortSurface != this.shortSurface) {
             params.width = Math.max(0, width);
             post(() -> {
                 compactButtons = narrow;
-                hint.setVisibility(shortSurface ? GONE : VISIBLE);
+                this.shortSurface = shortSurface;
                 updatePanel();
                 panel.setLayoutParams(params);
                 keepPanelClear();
@@ -229,6 +229,11 @@ final class PadEditor extends FrameLayout {
     /** The panel, for tests. */
     View panel() {
         return panel;
+    }
+
+    /** What the surface draws a control with at rest, for tests. */
+    PadPainter.State previewState(PadLayout.Control control) {
+        return surface.previewState(control);
     }
 
     PadLayout draft() {
@@ -400,14 +405,19 @@ final class PadEditor extends FrameLayout {
         addWasd.setVisibility(wasdOut ? VISIBLE : GONE);
         boolean touchpadOut = editable(PadLayout.Control.POINTER_PAD) && draft.spec(PadLayout.Control.POINTER_PAD).hidden;
         addTouchpad.setVisibility(touchpadOut ? VISIBLE : GONE);
-        pointerMode.setVisibility(selected == PadLayout.Control.POINTER_PAD ? VISIBLE : GONE);
+        boolean pointerPad = selected == PadLayout.Control.POINTER_PAD;
+        pointerMode.setVisibility(pointerPad ? VISIBLE : GONE);
+        // The pointer touchpad's line says what Camera does, so the mode is found; a short surface shows only that.
+        hint.setText(pointerPad ? R.string.pad_edit_hint_camera : R.string.pad_edit_hint);
+        hint.setVisibility(pointerPad || !shortSurface ? VISIBLE : GONE);
         // Split for a shown face cluster or D-pad; Join for one of the members that stand in for it.
         split.setVisibility(selected != null && PadLayout.members(selected).length > 0 && !spec.hidden ? VISIBLE : GONE);
         join.setVisibility(selected != null && selected.cluster() != null ? VISIBLE : GONE);
         boolean camera = draft.pointerMode() == PadLayout.PointerMode.CAMERA;
-        // The text names the mode now; the description names what pressing gives, since the button switches.
-        pointerMode.setText(getContext().getString(camera ? R.string.pad_touchpad_camera : R.string.pad_touchpad_mouse));
-        pointerMode.setContentDescription(getContext().getString(camera ? R.string.pad_touchpad_mouse : R.string.pad_touchpad_camera));
+        // The text names what the touchpad does now; the description names what pressing gives, since it switches.
+        pointerMode.setText(getContext().getString(camera ? R.string.pad_touchpad_mode_camera : R.string.pad_touchpad_mode_mouse));
+        pointerMode.setContentDescription(getContext().getString(camera ? R.string.pad_touchpad_mode_mouse :
+                R.string.pad_touchpad_mode_camera));
         glyphs.setText(glyphName(getContext(), draft.glyph()));
         preset.setText(getContext().getString(R.string.pad_edit_preset));
     }
@@ -499,7 +509,7 @@ final class PadEditor extends FrameLayout {
     private final class Surface extends View {
         private final Paint scrim = new Paint(), grid = new Paint();
         private final float[] box = new float[4];
-        private final PadPainter.State idle = new PadPainter.State();
+        private final PadPainter.State idle = new PadPainter.State(), pointerIdle = new PadPainter.State();
         private float offsetX, offsetY, pinchDistance, pinchWidth, pinchHeight, anchorX, anchorY;
         private boolean dragging, pinching;
         /** The corner handle being dragged ({@link #corner}'s bits), or -1. */
@@ -528,10 +538,17 @@ final class PadEditor extends FrameLayout {
                 float alpha = spec.hidden ? .3f : Math.max(.35f, base * spec.opacity / 100f);
                 int saved = canvas.saveLayerAlpha(box[0], box[1], box[0] + box[2], box[1] + box[3],
                         Math.round(alpha * 255));
-                painter.draw(canvas, control, box[0], box[1], box[2], box[3], idle);
+                painter.draw(canvas, control, box[0], box[1], box[2], box[3], previewState(control));
                 canvas.restoreToCount(saved);
                 painter.drawOutline(canvas, box[0], box[1], box[2], box[3], control == selected, spec.hidden);
             }
+        }
+
+        /** What a control shows at rest here: the pointer touchpad its mode's word, as it does in play. */
+        PadPainter.State previewState(PadLayout.Control control) {
+            if (control != PadLayout.Control.POINTER_PAD) return idle;
+            pointerIdle.label = PadPainter.pointerLabel(draft.pointerMode() == PadLayout.PointerMode.CAMERA);
+            return pointerIdle;
         }
 
         private PadLayout.Control hit(float x, float y) {
