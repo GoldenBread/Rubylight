@@ -37,6 +37,9 @@ pub(super) struct RtpQueue {
     /// One bit per `data + parity` offset of the block, so that a duplicate costs no scan:
     /// 57 words cover the 3,632 packets of the largest block.
     seen: [u64; 57],
+    /// The pending block's first timestamp and its presentation time.
+    block_timestamp: u32,
+    block_presentation_us: u64,
     reported_lost_frame: bool,
 
     current_frame: u32,
@@ -87,6 +90,8 @@ impl RtpQueue {
             missing_packets: 0,
             use_fast_queue_path: false,
             seen: [0; 57],
+            block_timestamp: 0,
+            block_presentation_us: 0,
             reported_lost_frame: false,
             current_frame: 1,
             multi_fec_capable: config.at_least(7, 1, 431),
@@ -205,7 +210,17 @@ impl RtpQueue {
         }
 
         packet.is_parity = is_parity;
-        packet.presentation_time_us = u64::from(packet.timestamp) * 1000 / 90;
+        // All packets of a block share the timestamp: divide once per block, when the first
+        // arrives (a recovered packet takes the head's timestamp, so it matches too).
+        if self.pending.is_empty() {
+            self.block_presentation_us = u64::from(packet.timestamp) * 1000 / 90;
+            self.block_timestamp = packet.timestamp;
+        }
+        packet.presentation_time_us = if packet.timestamp == self.block_timestamp {
+            self.block_presentation_us
+        } else {
+            u64::from(packet.timestamp) * 1000 / 90
+        };
         packet.rtp_timestamp = packet.timestamp;
 
         // Recovered packets are ours, so they say nothing about reordering on the network.
@@ -401,6 +416,7 @@ impl RtpQueue {
     ) {
         let lowest = self.buffer_lowest_seq;
         let start = self.completed.len();
+        let in_order = self.use_fast_queue_path;
         for mut packet in self.pending.drain(..) {
             if packet.is_parity {
                 io.pools.recycle_packet(packet.buf);
@@ -410,7 +426,10 @@ impl RtpQueue {
             packet.receive_time_us = self.buffer_first_recv_time_us;
             self.completed.push(packet);
         }
-        self.completed[start..].sort_unstable_by_key(|p| p.seq.wrapping_sub(lowest));
+        // A block that arrived in order is sorted already.
+        if !in_order {
+            self.completed[start..].sort_unstable_by_key(|p| p.seq.wrapping_sub(lowest));
+        }
         if self.early {
             let forwarded = std::mem::take(&mut self.forwarded) as usize;
             for (index, packet) in self.completed.drain(start..).enumerate() {
@@ -760,5 +779,32 @@ mod tests {
         assert!(queue.queue_packet(packet(0x8000), false, false).is_err());
         assert!(queue.queue_packet(packet(0x8002), false, false).is_err());
         assert_eq!(queue.pending.len(), 2);
+    }
+
+    /// The presentation time is the timestamp's, whether computed for the block's first packet
+    /// or reused for the rest; a packet with another timestamp gets its own.
+    #[test]
+    fn a_blocks_packets_share_one_presentation_time() {
+        let mut queue = queue_at(10);
+        for (seq, timestamp) in [(10u16, 9000u32), (11, 9000), (12, 18000)] {
+            let mut p = packet(seq);
+            p.timestamp = timestamp;
+            assert!(queue.queue_packet(p, false, false).is_ok());
+        }
+        let times: Vec<u64> = queue.pending.iter().map(|p| p.presentation_time_us).collect();
+        assert_eq!(times, [100_000, 100_000, 200_000]);
+    }
+
+    /// The flag that lets a completed block skip its sort holds only while every packet came
+    /// in order.
+    #[test]
+    fn the_in_order_flag_drops_at_the_first_packet_out_of_order() {
+        let mut queue = queue_at(10);
+        for seq in [10u16, 11, 12] {
+            assert!(queue.queue_packet(packet(seq), false, false).is_ok());
+        }
+        assert!(queue.use_fast_queue_path);
+        assert!(queue.queue_packet(packet(14), false, false).is_ok());
+        assert!(!queue.use_fast_queue_path);
     }
 }
