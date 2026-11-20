@@ -1459,3 +1459,43 @@ fn a_direct_decoders_held_request_goes_out_from_the_receive_poll() {
     );
     assert!(!direct.send_held(&shared, &mut signals), "sent once");
 }
+
+#[test]
+fn each_datagram_of_a_batch_reports_its_own_arrival_to_the_feedback() {
+    let shared = VideoShared::new(records(false));
+    lock(&shared.receiver).enable_transport_feedback();
+    // Two RTP-sized datagrams of consecutive sequence numbers, and one 60 ms on that closes the
+    // report.
+    let datagram = |seq: u16| {
+        let mut d = vec![0u8; 16];
+        d[2..4].copy_from_slice(&seq.to_be_bytes());
+        d
+    };
+    let packets = [datagram(0x10), datagram(0x11), datagram(0x12)];
+    let arrivals = [Some(1_000), Some(1_400), Some(61_000)];
+    let mut staged = StagedChunks::default();
+    let mut signals = Vec::new();
+    let mut reports = Vec::new();
+    receive_batch_stamped(
+        &shared,
+        None,
+        &mut signals,
+        packets.len(),
+        |i| packets[i].as_slice(),
+        |i| arrivals[i],
+        &mut None,
+        &mut staged,
+        |signals| {
+            for signal in signals.drain(..) {
+                if let VideoSignal::TransportFeedback(report) = signal {
+                    reports.push(report);
+                }
+            }
+        },
+    );
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    let report = &reports[0];
+    assert_eq!(report.base_arrival_us, 1_000);
+    // 4 µs ticks: the second datagram arrived 400 µs after the first.
+    assert_eq!(report.entries[..2], [0, 100], "{report:?}");
+}

@@ -396,6 +396,10 @@ pub struct BatchReceiver {
     /// UDP_GRO and the slot otherwise.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     cut: usize,
+    /// Linux and Android: the arrival of each datagram of the last receive on the clock of
+    /// [`now_us`](super::now_us), as the kernel stamped it; None without a stamp.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    arrivals: Vec<Option<u64>>,
     /// Linux and Android: whether UDP_GRO is on for the socket.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     gro: bool,
@@ -467,6 +471,7 @@ impl BatchReceiver {
                 slot,
                 buffer,
                 spans: Vec::with_capacity(RECEIVE_BATCH),
+                arrivals: Vec::with_capacity(RECEIVE_BATCH),
                 cut: if coalescing {
                     max_datagram.max(1)
                 } else {
@@ -551,9 +556,19 @@ impl BatchReceiver {
             match batch.receive(socket) {
                 Ok(count) => {
                     self.spans.clear();
+                    self.arrivals.clear();
+                    // One reading of both clocks for the batch: each datagram's stamp is
+                    // taken back from it by its age on the kernel's clock.
+                    let clocks = mmsg::Batch::realtime_now_ns().map(|real| (real, super::now_us()));
+                    let mut stamped = 0;
                     for i in 0..count {
                         let segment = batch.gro(i);
                         let total = batch.length(i);
+                        let arrival = clocks
+                            .zip(batch.stamp_ns(i))
+                            .map(|((real, local), ns)| arrival_us(ns, real, local));
+                        stamped += usize::from(arrival.is_some());
+                        let before = self.spans.len();
                         push_segments(
                             &mut self.spans,
                             i * self.slot,
@@ -562,6 +577,11 @@ impl BatchReceiver {
                             total,
                             segment,
                         );
+                        self.arrivals
+                            .resize(self.arrivals.len() + self.spans.len() - before, arrival);
+                    }
+                    if stamped == 0 && count > 0 {
+                        batch.forget_stamps();
                     }
                     return Ok(self.spans.len());
                 }
@@ -589,6 +609,8 @@ impl BatchReceiver {
                     {
                         self.spans.clear();
                         push_segments(&mut self.spans, 0, self.slot, self.cut, length, None);
+                        self.arrivals.clear();
+                        self.arrivals.resize(self.spans.len(), None);
                         return Ok(self.spans.len());
                     }
                     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -669,6 +691,20 @@ impl BatchReceiver {
         }
     }
 
+    /// When datagram `index` of the last receive arrived, in microseconds on the clock of
+    /// [`now_us`](super::now_us), as the kernel stamped it: Linux and Android with batches.
+    /// None where the receive has no stamp (Windows, a kernel without it, one-datagram
+    /// reads); the caller then stamps the batch.
+    pub fn arrival_us(&self, index: usize) -> Option<u64> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        return self.arrivals.get(index).copied().flatten();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            let _ = index;
+            None
+        }
+    }
+
     /// The length on the wire of datagram `index` of the last receive.
     pub fn length(&self, index: usize) -> usize {
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -704,8 +740,8 @@ mod mmsg {
     use super::RECEIVE_BATCH;
 
     /// Control bytes per header: room for a UDP_GRO message (a `cmsghdr` and an int, 24 bytes on
-    /// 64-bit Linux).
-    const CONTROL: usize = 64;
+    /// 64-bit Linux) and a receive time (a `cmsghdr` and a `timespec`, 32 bytes).
+    const CONTROL: usize = 128;
 
     /// `recvmmsg` headers, one per slot of a buffer they point into, each with its control
     /// messages.
@@ -713,6 +749,10 @@ mod mmsg {
         headers: Box<[libc::mmsghdr]>,
         _iovecs: Box<[libc::iovec]>,
         controls: Box<[u8]>,
+        /// The socket `SO_TIMESTAMPNS` was set on, or -1.
+        stamped: std::os::fd::RawFd,
+        /// The kernel refused `SO_TIMESTAMPNS`: datagrams come without a receive time.
+        stamps_refused: bool,
     }
 
     #[cfg(test)]
@@ -760,6 +800,8 @@ mod mmsg {
                 headers,
                 _iovecs: iovecs,
                 controls,
+                stamped: -1,
+                stamps_refused: false,
             }
         }
 
@@ -768,6 +810,7 @@ mod mmsg {
         pub fn receive(&mut self, socket: &UdpSocket) -> io::Result<usize> {
             #[cfg(test)]
             refused()?;
+            self.ask_for_stamps(socket);
             for header in self.headers.iter_mut() {
                 // The kernel leaves the length of the control messages it wrote; each call
                 // needs the whole control buffer again.
@@ -791,6 +834,62 @@ mod mmsg {
 
         pub fn length(&self, index: usize) -> usize {
             self.headers[index].msg_len as usize
+        }
+
+        /// Has the kernel stamp each datagram's arrival (`SO_TIMESTAMPNS`) on `socket`, once
+        /// per socket (the roam's new one included). A refusal is final: the datagrams then
+        /// come without a stamp.
+        fn ask_for_stamps(&mut self, socket: &UdpSocket) {
+            let fd = socket.as_raw_fd();
+            if self.stamps_refused || self.stamped == fd {
+                return;
+            }
+            let value = libc::c_int::from(true);
+            // SAFETY: the option is one int, read for its size.
+            let result = unsafe {
+                libc::setsockopt(
+                    fd,
+                    super::SOL_SOCKET,
+                    super::SO_TIMESTAMPNS,
+                    (&value as *const libc::c_int).cast(),
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                )
+            };
+            if result < 0 {
+                self.stamps_refused = true;
+            } else {
+                self.stamped = fd;
+            }
+        }
+
+        /// Asks again at the next receive, as for a socket not seen before: a batch came with
+        /// no stamps (a closed socket's descriptor number may be a new socket's).
+        pub fn forget_stamps(&mut self) {
+            self.stamped = -1;
+        }
+
+        /// The kernel's receive time of datagram `index`, nanoseconds on `CLOCK_REALTIME`, from
+        /// its control messages. A UDP_GRO message has one for all its datagrams.
+        pub fn stamp_ns(&self, index: usize) -> Option<u64> {
+            // `msg_controllen` is `usize` on glibc and Android but `socklen_t` elsewhere.
+            #[allow(clippy::unnecessary_cast)]
+            let used = (self.headers[index].msg_hdr.msg_controllen as usize).min(CONTROL);
+            let start = index * CONTROL;
+            super::cmsg_timestamp_ns(&self.controls[start..start + used])
+        }
+
+        /// `CLOCK_REALTIME` now, nanoseconds.
+        pub fn realtime_now_ns() -> Option<u64> {
+            let mut now = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            // SAFETY: `now` is a valid timespec to write.
+            if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut now) } < 0 || now.tv_sec < 0
+            {
+                return None;
+            }
+            Some(now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64)
         }
 
         /// The segment size of datagram `index` when UDP_GRO coalesced it, from its control
@@ -948,12 +1047,13 @@ impl Segments {
     }
 }
 
-/// The first int of the control message at `level` and `kind` among the control messages in
+/// The data of the control message at `level` and `kind` among the control messages in
 /// `control`: a `cmsghdr` (`WSACMSGHDR` on Windows, the same layout) of `cmsg_len`, `cmsg_level`
 /// and `cmsg_type`, then the data at the next natural alignment, then padding to the header
-/// alignment. None without one, or when the messages run past the buffer.
+/// alignment. The data runs to the message's `cmsg_len`. None without one, or when the messages
+/// run past the buffer.
 #[cfg(any(windows, target_os = "linux", target_os = "android", test))]
-fn cmsg_int(control: &[u8], level: i32, kind: i32) -> Option<usize> {
+fn cmsg_data(control: &[u8], level: i32, kind: i32) -> Option<&[u8]> {
     const WORD: usize = std::mem::size_of::<usize>();
     // The header, and the data's alignment after it.
     const HEADER: usize = WORD + 8;
@@ -974,6 +1074,54 @@ fn cmsg_int(control: &[u8], level: i32, kind: i32) -> Option<usize> {
         at += length.next_multiple_of(WORD);
     }
     None
+}
+
+/// The first int of the control message at `level` and `kind` (see [`cmsg_data`]). None without
+/// one, or with one shorter than an int.
+#[cfg(any(windows, target_os = "linux", target_os = "android", test))]
+fn cmsg_int(control: &[u8], level: i32, kind: i32) -> Option<usize> {
+    let value = cmsg_data(control, level, kind)?.get(..4)?;
+    Some(u32::from_ne_bytes(value.try_into().unwrap()) as usize)
+}
+
+/// `SOL_SOCKET` and `SO_TIMESTAMPNS` (which also names its control message, `SCM_TIMESTAMPNS`),
+/// as Linux and Android define them on every architecture Nightjar builds for.
+#[cfg(any(target_os = "linux", target_os = "android", test))]
+const SOL_SOCKET: i32 = 1;
+#[cfg(any(target_os = "linux", target_os = "android", test))]
+const SO_TIMESTAMPNS: i32 = 35;
+
+/// The kernel's receive time of a datagram, in nanoseconds on `CLOCK_REALTIME`, from its
+/// `SCM_TIMESTAMPNS` control message (a `timespec`). None without one, or before the epoch.
+#[cfg(any(target_os = "linux", target_os = "android", test))]
+fn cmsg_timestamp_ns(control: &[u8]) -> Option<u64> {
+    const SEC: usize = std::mem::size_of::<std::os::raw::c_long>();
+    let data = cmsg_data(control, SOL_SOCKET, SO_TIMESTAMPNS)?;
+    // `timespec`: seconds, then nanoseconds, each the architecture's own word.
+    let word = |at: usize| -> Option<i64> {
+        let bytes = data.get(at..at + SEC)?;
+        Some(if SEC == 8 {
+            i64::from_ne_bytes(bytes.try_into().unwrap())
+        } else {
+            i64::from(i32::from_ne_bytes(bytes.try_into().unwrap()))
+        })
+    };
+    let (sec, nsec) = (word(0)?, word(SEC)?);
+    if sec < 0 || !(0..1_000_000_000).contains(&nsec) {
+        return None;
+    }
+    Some(sec as u64 * 1_000_000_000 + nsec as u64)
+}
+
+/// The arrival of a datagram on the clock of [`super::now_us`]: its kernel stamp
+/// (`stamp_ns`, `CLOCK_REALTIME`) taken back from `local_now_us` by how long ago it was
+/// against `realtime_now_ns`, both read together once for the batch. A stamp that reads later
+/// than that moment (the wall clock stepped back) counts as now; one before the clock's origin
+/// as 0.
+#[cfg(any(target_os = "linux", target_os = "android", test))]
+fn arrival_us(stamp_ns: u64, realtime_now_ns: u64, local_now_us: u64) -> u64 {
+    let age_us = realtime_now_ns.saturating_sub(stamp_ns) / 1000;
+    local_now_us.saturating_sub(age_us)
 }
 
 /// The datagram size of a coalesced read: the `UDP_COALESCED_INFO` message among the `WSARecvMsg`

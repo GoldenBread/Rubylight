@@ -665,6 +665,11 @@ impl VideoReceiver {
         self.stats
     }
 
+    /// [`VideoStats::decoder_drops`] alone, for the caller that publishes only it.
+    pub fn decoder_drops(&self) -> u64 {
+        self.stats.decoder_drops
+    }
+
     /// Returns a frame's buffers once the caller is done with it, to be reused.
     pub fn recycle(&mut self, frame: Frame) {
         self.pools.recycle_frame(frame.data, frame.buffers);

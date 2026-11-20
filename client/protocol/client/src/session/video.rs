@@ -991,12 +991,13 @@ fn receive_thread(
             session.terminate(error::NO_VIDEO_FRAME);
             break;
         }
-        receive_batch(
+        receive_batch_stamped(
             &shared,
             direct.as_mut(),
             &mut signals,
             count,
             |i| batch.datagram(i),
+            |i| batch.arrival_us(i),
             &mut trace,
             &mut staged,
             |signals| route(&control, signals),
@@ -1027,14 +1028,42 @@ fn receive_thread(
 /// wakes once for a batch of chunks rather than for each, and never later than the end of the
 /// batch. The datagrams of a lock section share one receive time, read at its first: all of
 /// them were queued when the batch was received, and a completed frame (whose signal ends
-/// the section) or a submission starts a new section with a new reading.
+/// the section) or a submission starts a new section with a new reading. A datagram the
+/// receive stamped itself (`arrival_at`: the kernel's receive time) takes its own.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn receive_batch<'b>(
+    shared: &VideoShared,
+    direct: Option<&mut Direct>,
+    signals: &mut Vec<VideoSignal>,
+    count: usize,
+    datagram_at: impl Fn(usize) -> &'b [u8],
+    trace: &mut Option<PacketTrace>,
+    staged: &mut StagedChunks,
+    route_signals: impl FnMut(&mut Vec<VideoSignal>),
+) {
+    receive_batch_stamped(
+        shared,
+        direct,
+        signals,
+        count,
+        datagram_at,
+        |_| None,
+        trace,
+        staged,
+        route_signals,
+    );
+}
+
+/// [`receive_batch`] with each datagram's own arrival where the receive has one.
+#[allow(clippy::too_many_arguments)]
+fn receive_batch_stamped<'b>(
     shared: &VideoShared,
     mut direct: Option<&mut Direct>,
     signals: &mut Vec<VideoSignal>,
     count: usize,
     datagram_at: impl Fn(usize) -> &'b [u8],
+    arrival_at: impl Fn(usize) -> Option<u64>,
     trace: &mut Option<PacketTrace>,
     staged: &mut StagedChunks,
     mut route_signals: impl FnMut(&mut Vec<VideoSignal>),
@@ -1050,8 +1079,9 @@ fn receive_batch<'b>(
             let mut section_us = None;
             while signals.is_empty() && next < count {
                 let datagram = datagram_at(next);
+                let arrival = arrival_at(next);
                 next += 1;
-                let now = *section_us.get_or_insert_with(now_us);
+                let now = arrival.unwrap_or_else(|| *section_us.get_or_insert_with(now_us));
                 if let Some(trace) = trace.as_mut() {
                     trace.push(now, datagram);
                 }
@@ -1065,7 +1095,7 @@ fn receive_batch<'b>(
                 shared
                     .counters
                     .decoder_drops
-                    .store(receiver.stats().decoder_drops, Ordering::Relaxed);
+                    .store(receiver.decoder_drops(), Ordering::Relaxed);
                 if let Some(d) = direct.as_deref_mut() {
                     if !d.decoder.recovers_with_rfi() {
                         receiver.recover_with_idr_only();

@@ -865,3 +865,75 @@ fn resolution_finds_the_address_with_a_listener() {
     assert_eq!(found, Some(addresses[1]));
     assert!(started.elapsed() < TEST_PORT_TIMEOUT + Duration::from_secs(1), "{:?}", started.elapsed());
 }
+
+/// A control message at `level` and `kind` holding `data`, as the kernel lays it out.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn control_message(level: i32, kind: i32, data: &[u8]) -> Vec<u8> {
+    const WORD: usize = std::mem::size_of::<usize>();
+    let start = (WORD + 8).next_multiple_of(WORD);
+    let mut message = Vec::new();
+    message.extend_from_slice(&(start + data.len()).to_ne_bytes());
+    message.extend_from_slice(&level.to_ne_bytes());
+    message.extend_from_slice(&kind.to_ne_bytes());
+    message.resize(start, 0);
+    message.extend_from_slice(data);
+    message.resize(message.len().next_multiple_of(WORD), 0);
+    message
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn a_timestamp_control_message_is_read_among_others() {
+    let word = std::mem::size_of::<std::os::raw::c_long>();
+    let mut timespec = Vec::new();
+    for value in [12i64, 345_678_901] {
+        timespec.extend_from_slice(&value.to_ne_bytes()[..word]);
+    }
+    let mut control = control_message(SOL_UDP_FOR_TEST, 104, &1400i32.to_ne_bytes());
+    control.extend(control_message(SOL_SOCKET, SO_TIMESTAMPNS, &timespec));
+    assert_eq!(cmsg_timestamp_ns(&control), Some(12_345_678_901));
+    assert_eq!(
+        cmsg_timestamp_ns(&control[..24]),
+        None,
+        "no timestamp message"
+    );
+    assert_eq!(cmsg_timestamp_ns(&[]), None);
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const SOL_UDP_FOR_TEST: i32 = 17;
+
+#[test]
+fn an_arrival_is_the_batch_clock_minus_the_datagrams_age() {
+    // Read 500 µs after the stamp: it arrived 500 µs before the local clock's reading.
+    assert_eq!(arrival_us(1_000_000_000, 1_000_500_000, 10_000), 9_500);
+    // A stamp after the reading (the wall clock stepped back) counts as now.
+    assert_eq!(arrival_us(2_000_000_000, 1_000_000_000, 10_000), 10_000);
+    // Older than the local clock's origin: 0.
+    assert_eq!(arrival_us(0, 1_000_000_000, 10_000), 0);
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn datagrams_of_one_batch_carry_their_own_kernel_arrival() {
+    let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+    receiver
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut batch = BatchReceiver::new(&receiver, 1500, false);
+    assert!(batch.batched());
+    // The first receive sets the socket option, so it must come before the datagrams.
+    assert_eq!(batch.receive(&receiver).unwrap(), 0);
+    let to = receiver.local_addr().unwrap();
+    sender.send_to(&[1; 100], to).unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    sender.send_to(&[2; 100], to).unwrap();
+    assert_eq!(batch.receive(&receiver).unwrap(), 2);
+    let (first, second) = (batch.arrival_us(0), batch.arrival_us(1));
+    let (first, second) = (first.expect("a stamp"), second.expect("a stamp"));
+    assert!(
+        second >= first + 15_000,
+        "20 ms apart on the wire: {first} and {second}"
+    );
+}
