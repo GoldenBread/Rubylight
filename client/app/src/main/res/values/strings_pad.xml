@@ -27,6 +27,9 @@
     <string name="pad_pointer_touchpad">Pointer touchpad</string>
     <string name="pad_touchpad_mouse">Mouse</string>
     <string name="pad_touchpad_camera">Camera</string>
+    <!-- The pointer touchpad's mode as one short word in capitals, in a small chip in its corner. -->
+    <string name="pad_touchpad_chip_mouse">MOUSE</string>
+    <string name="pad_touchpad_chip_camera">CAM</string>
     <string name="pad_touchpad_mouse_summary">Moves the pointer</string>
     <string name="pad_touchpad_camera_summary">Turns the view</string>
     <string name="pad_edit_hint_camera">Camera: swipes move the right stick, faster swipes turn further.</string>

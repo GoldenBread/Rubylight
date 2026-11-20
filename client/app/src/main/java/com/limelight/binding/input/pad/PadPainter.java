@@ -161,9 +161,13 @@ final class PadPainter {
     private final float[] knobAt = new float[2];
     /** A touchpad's dot grid, refilled for each pad drawn and grown only when a larger pad needs more. */
     private float[] dotPoints = new float[128];
+    /** The pointer touchpad's mode words in its chip ({@link #pointerLabel}). */
+    private final String mouseWord, cameraWord;
 
     PadPainter(Context context) {
         density = context.getResources().getDisplayMetrics().density;
+        mouseWord = context.getString(R.string.pad_touchpad_chip_mouse);
+        cameraWord = context.getString(R.string.pad_touchpad_chip_camera);
         edgeStroke = STROKE_DP * density;
         accent = ContextCompat.getColor(context, R.color.night_primary);
         onAccent = ContextCompat.getColor(context, R.color.night_on_primary);
@@ -200,8 +204,8 @@ final class PadPainter {
     }
 
     /** The word the pointer touchpad shows for its mode, in play and in the editor. */
-    static String pointerLabel(boolean camera) {
-        return camera ? "CAM" : "MOUSE";
+    String pointerLabel(boolean camera) {
+        return camera ? cameraWord : mouseWord;
     }
 
     void setGlyph(PadLayout.Glyph glyph) {

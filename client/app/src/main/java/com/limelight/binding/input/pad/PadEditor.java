@@ -945,7 +945,7 @@ final class PadEditor extends FrameLayout {
         /** What a control shows at rest here: the pointer touchpad its mode's word, as it does in play. */
         PadPainter.State previewState(PadLayout.Control control) {
             if (control != PadLayout.Control.POINTER_PAD) return idle;
-            pointerIdle.label = PadPainter.pointerLabel(draft.pointerMode() == PadLayout.PointerMode.CAMERA);
+            pointerIdle.label = painter.pointerLabel(draft.pointerMode() == PadLayout.PointerMode.CAMERA);
             return pointerIdle;
         }
 
