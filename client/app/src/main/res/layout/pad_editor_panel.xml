@@ -171,6 +171,7 @@
                     android:id="@+id/pad_editor_pointer_mode"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:baselineAligned="false"
                     android:layout_marginTop="@dimen/space_xs"
                     android:layout_marginBottom="@dimen/space_xs"
                     android:orientation="horizontal"
