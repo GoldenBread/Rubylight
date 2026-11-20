@@ -42,49 +42,6 @@ fn seed(f: &Fixture, client: &Client) {
 }
 
 #[test]
-fn a_resume_keeps_the_learned_link_ceiling() {
-    let f = Fixture::new();
-    let c = f.client(0x071f1f00);
-    // A stream on this route learns a ceiling; its end keeps it.
-    let s = session(&f, &c, "192.0.2.1", 0);
-    s.link_sent.set_live(true);
-    let guard = f.host.configure_keyframe_loss(&s, true);
-    s.seed_link_rate_ceiling(123_000_000);
-    assert_eq!(s.link_rate.lock().unwrap().rate.learned_bps(), 123_000_000);
-    drop(guard);
-    // A resume over the same route seeds the pacer from the kept ceiling.
-    let resumed = session(&f, &c, "192.0.2.1", 0);
-    resumed.link_sent.set_live(true);
-    let guard = f.host.configure_keyframe_loss(&resumed, true);
-    assert_eq!(
-        resumed.link_rate.lock().unwrap().rate.learned_bps(),
-        123_000_000
-    );
-    // The sender reads this cached ceiling, so it paces at the kept rate
-    // rather than the 2x opening.
-    assert_eq!(resumed.link_rate_ceiling_bps(), 123_000_000);
-    drop(guard);
-}
-
-#[test]
-fn a_different_route_starts_fresh() {
-    let f = Fixture::new();
-    let c = f.client(0x071f1f00);
-    let s = session(&f, &c, "192.0.2.1", 0);
-    s.link_sent.set_live(true);
-    let guard = f.host.configure_keyframe_loss(&s, true);
-    s.seed_link_rate_ceiling(123_000_000);
-    drop(guard);
-    // A different address is a different route: no ceiling is seeded.
-    let other = session(&f, &c, "192.0.2.2", 0);
-    other.link_sent.set_live(true);
-    let guard = f.host.configure_keyframe_loss(&other, true);
-    assert_eq!(other.link_rate.lock().unwrap().rate.learned_bps(), 0);
-    assert_eq!(other.link_rate_ceiling_bps(), 0);
-    drop(guard);
-}
-
-#[test]
 fn fresh_loss_persists_and_an_inherited_latch_does_not_renew_it() {
     let f = Fixture::new();
     let c = f.client(0x071f1f00);

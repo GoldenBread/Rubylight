@@ -1478,22 +1478,10 @@ impl LinkRate {
     }
 
     /// The learned ceiling in total wire bits per second, 0 while the path
-    /// has shown no edge. The pacer and a resumed stream's seed read it.
+    /// has shown no edge; for the simulated-link tests.
+    #[cfg(test)]
     pub fn learned_bps(&self) -> u64 {
         self.learned.unwrap_or(0)
-    }
-
-    /// Seed a resumed stream with the ceiling its path already paid for with
-    /// loss. It stays a starting point: a retry can still raise it and a cut
-    /// lower it, exactly as [`Self::learn`] does. The first retry is due after
-    /// [`RETRY_FIRST`], as after a second failure at the same edge, so a path
-    /// that has improved since is found again.
-    pub fn seed_learned(&mut self, learned_bps: u64, now: Instant) {
-        if learned_bps > 0 {
-            self.learned = Some(learned_bps);
-            self.retry_wait = RETRY_FIRST;
-            self.next_retry = Some(now + RETRY_FIRST);
-        }
     }
 
     /// A cut or a failed step at `failed` landed on `safe`. A first failure

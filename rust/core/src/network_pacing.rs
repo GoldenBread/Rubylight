@@ -29,41 +29,6 @@ pub fn rate_bps(
     )
 }
 
-/// About twice the encoder bitrate, the pace a stream opens at until the
-/// link-rate controller has learned a ceiling. The Oct 7 measurement puts 2x
-/// at about 0.5 ms of send stage, against the first-seconds loss the wired
-/// default paid by bursting at the NIC's line rate. Floored at 25 % above wire
-/// demand, clamped to 1–800 Mbps.
-pub fn opening_pace_bps(stream_kbps: u32, needed_bps: u64) -> u64 {
-    (u64::from(stream_kbps) * 2000)
-        .max(needed_bps.saturating_add(needed_bps / 4))
-        .clamp(1_000_000, 800_000_000)
-}
-
-/// The pace a conventional stream's sender starts a frame at: the learned
-/// ceiling when the link-rate controller has one, else the route ceiling held
-/// to about twice the encoder bitrate. An explicit pacing cap or an adaptive
-/// packet controller keeps its own rate: the cap is the user's, and the
-/// controller opens at its seed and probes toward the route ceiling.
-pub fn start_pace_bps(
-    route_ceiling_bps: u64,
-    stream_kbps: u32,
-    needed_bps: u64,
-    learned_bps: u64,
-    explicit_cap: bool,
-    adaptive: bool,
-) -> u64 {
-    if explicit_cap {
-        route_ceiling_bps
-    } else if learned_bps > 0 {
-        route_ceiling_bps.min(learned_bps)
-    } else if adaptive {
-        route_ceiling_bps
-    } else {
-        route_ceiling_bps.min(opening_pace_bps(stream_kbps, needed_bps))
-    }
-}
-
 /// [`rate_bps`] with the client's own link (`x-ss-video[0].pyrowaveLinkMbps`,
 /// zero when it reports none, as stock Moonlight does). The cap is 4/5 of the
 /// slower of the two NICs: a 1 GbE client stays at 800 Mbps, a 100 Mbps
@@ -116,7 +81,9 @@ pub fn rate_bps_following_client(
             .saturating_mul(1000)
             .max(u64::from(stream_kbps) * 1100)
     } else if wireless {
-        opening_pace_bps(stream_kbps, needed_bps)
+        (u64::from(stream_kbps) * 2000)
+            .max(needed_bps.saturating_add(needed_bps / 4))
+            .clamp(1_000_000, 800_000_000)
     } else {
         wired_ceiling
     };

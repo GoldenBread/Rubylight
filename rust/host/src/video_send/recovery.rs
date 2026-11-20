@@ -95,14 +95,6 @@ fn select(
         client_link,
         config.boolean("pacing_follow_client_link", false),
     );
-    let base = network_pacing::start_pace_bps(
-        base,
-        bitrate,
-        needed,
-        session.link_rate_ceiling_bps(),
-        config.integer("pacing_max_bitrate_kbps", 0) > 0,
-        session.automatic_pacing_enabled(),
-    );
     let base = adapt(base, needed);
     let safe = network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
     Pace {

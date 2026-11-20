@@ -119,13 +119,12 @@ fn a_clients_link_hint_caps_the_startup_pace_for_conventional_codecs() {
         bps: 1_000_000_000,
         ..Default::default()
     };
-    // A 1 GbE host: stock Moonlight (no hint) and a 1 GbE or 2.5 GbE client
-    // open at twice the bitrate (120 Mbps at 60 Mbps); a 100 Mbps client is
-    // capped at 80.
+    // A 1 GbE host: stock Moonlight (no hint) and a 1 GbE or 2.5 GbE
+    // client stay at 800 Mbps; a 100 Mbps client is paced at 80.
     for (hint, expected) in [
-        (0, 120_000_000),
-        (1000, 120_000_000),
-        (2500, 120_000_000),
+        (0, 800_000_000),
+        (1000, 800_000_000),
+        (2500, 800_000_000),
         (100, 80_000_000),
     ] {
         let session = Session::new(
@@ -137,7 +136,7 @@ fn a_clients_link_hint_caps_the_startup_pace_for_conventional_codecs() {
         );
         session
             .bitrate
-            .store(60_000, std::sync::atomic::Ordering::Release);
+            .store(40_000, std::sync::atomic::Ordering::Release);
         session.configure_keyframe_loss(true);
         let config = Config::default();
         assert_eq!(
@@ -154,7 +153,7 @@ fn a_clients_link_hint_caps_the_startup_pace_for_conventional_codecs() {
         session.roamed("198.51.100.4".parse().unwrap(), Instant::now());
         assert_eq!(
             pace(&session, &config, &packetizer, period, peer, route).bps,
-            120_000_000,
+            800_000_000,
             "hint {hint} after a roam"
         );
     }
@@ -175,11 +174,10 @@ fn link_stream(fixture: &crate::state::test_support::Fixture) -> std::sync::Arc<
     session
 }
 
-/// `pacing_follow_client_link`: a 10 GbE host and a 2.5 GbE client that says
-/// so lift the ceiling a learned rate is held to from 800 Mbps to 4/5 of the
-/// slower link. The opening is 2x the bitrate either way.
+/// `pacing_follow_client_link`: a 10 GbE host and a 2.5 GbE client that
+/// says so are paced at 2 Gbps instead of 800 Mbps, only when it is on.
 #[test]
-fn following_the_client_link_lifts_the_wired_ceiling_once_a_ceiling_is_learned() {
+fn following_the_client_link_lifts_the_wired_ceiling() {
     let fixture = crate::state::test_support::Fixture::new();
     let packetizer = VideoPacketizer {
         sequence: 0,
@@ -198,15 +196,6 @@ fn following_the_client_link_lifts_the_wired_ceiling_once_a_ceiling_is_learned()
     };
     let session = link_stream(&fixture);
     let mut config = Config::default();
-    // Before a ceiling is learned the opening is 2x the 400 Mbps bitrate.
-    assert_eq!(
-        pace(&session, &config, &packetizer, period, peer, route).bps,
-        800_000_000
-    );
-    // A ceiling above the wired default is held to 800 Mbps unless the
-    // client's link is followed.
-    session.link_sent.set_live(true);
-    session.seed_link_rate_ceiling(1_500_000_000);
     assert_eq!(
         pace(&session, &config, &packetizer, period, peer, route).bps,
         800_000_000
@@ -216,7 +205,7 @@ fn following_the_client_link_lifts_the_wired_ceiling_once_a_ceiling_is_learned()
         .insert("pacing_follow_client_link".into(), "true".into());
     assert_eq!(
         pace(&session, &config, &packetizer, period, peer, route).bps,
-        1_500_000_000
+        2_000_000_000
     );
 }
 
@@ -316,8 +305,7 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
     let needed = network_pacing::video_wire_rate_bps(&packetizer, 40_000, period, false);
     let wifi = network_pacing::rate_bps(0, 40_000, route.bps, true, needed);
     assert_eq!(wifi, 80_000_000);
-    // No controller: the hint paces like a Wi-Fi host, and without it the
-    // opening is the same 2x the bitrate.
+    // No controller: the hint paces like a Wi-Fi host, without it 800 Mbps.
     for (settings, codec) in [
         ("wireless_adaptive_pacing=false", 1),
         ("", 3),
@@ -326,7 +314,7 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
             0,
         ),
     ] {
-        for (hint, expected) in [(true, wifi), (false, wifi)] {
+        for (hint, expected) in [(true, wifi), (false, 800_000_000)] {
             let (session, config, _) = wireless_hint_stream(&fixture, settings, codec, hint);
             assert!(!session.automatic_pacing_enabled(), "{settings}");
             let what = format!("{settings} codec {codec} hint {hint}");
@@ -410,12 +398,6 @@ fn the_first_picture_and_live_loss_use_the_same_pace_as_sending() {
         bps: 1_000_000_000,
         ..Default::default()
     };
-    let fast = preview_pace(&session, &config, &packetizer, period, peer, route);
-    // The opening pace is 2x the bitrate until a ceiling is learned.
-    assert_eq!(fast.bps, 108_000_000);
-    // A learned ceiling paces the recovery keyframe at the route's own rate.
-    session.link_sent.set_live(true);
-    session.seed_link_rate_ceiling(800_000_000);
     let fast = preview_pace(&session, &config, &packetizer, period, peer, route);
     assert_eq!(fast.bps, 800_000_000);
     // The first keyframe and the client's requests around it are the

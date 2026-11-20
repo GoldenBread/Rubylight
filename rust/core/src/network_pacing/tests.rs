@@ -498,43 +498,6 @@ fn pyrowave_paces_a_slower_client_port_at_its_own_rate() {
 }
 
 #[test]
-fn the_opening_pace_is_twice_the_bitrate_until_a_ceiling_is_learned() {
-    // No ceiling: twice the encoder bitrate, floored at 25% above demand.
-    assert_eq!(
-        start_pace_bps(800_000_000, 63_000, 75_000_000, 0, false, false),
-        126_000_000
-    );
-    // An adaptive controller opens at its own seed and probes toward the
-    // route ceiling, so the opening cap does not apply.
-    assert_eq!(
-        start_pace_bps(800_000_000, 63_000, 75_000_000, 0, false, true),
-        800_000_000
-    );
-    // An explicit pacing cap is the user's own rate: neither the opening nor
-    // a learned ceiling overrides it.
-    assert_eq!(
-        start_pace_bps(300_000_000, 63_000, 75_000_000, 0, true, false),
-        300_000_000
-    );
-    // A learned ceiling takes over, still under the route's own ceiling.
-    assert_eq!(
-        start_pace_bps(800_000_000, 63_000, 75_000_000, 400_000_000, false, false),
-        400_000_000
-    );
-    assert_eq!(
-        start_pace_bps(800_000_000, 63_000, 75_000_000, 400_000_000, false, true),
-        400_000_000
-    );
-    assert_eq!(
-        start_pace_bps(100_000_000, 63_000, 75_000_000, 400_000_000, false, false),
-        100_000_000
-    );
-    // The opening is floored at 25% above demand and clamped to 1–800 Mbps.
-    assert_eq!(opening_pace_bps(1, 0), 1_000_000);
-    assert_eq!(opening_pace_bps(u32::MAX, u64::MAX), 800_000_000);
-}
-
-#[test]
 fn host_link_speed_is_a_ceiling_not_a_measurement_of_the_client_path() {
     assert_eq!(rate_bps(0, 50_000, 0, false, 65_000_000), 800_000_000);
     assert_eq!(
