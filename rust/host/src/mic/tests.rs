@@ -392,6 +392,122 @@ fn a_second_microphone_is_refused_and_told_while_one_plays() {
 }
 
 #[test]
+fn a_packet_of_a_second_session_resolves_while_the_cache_holds_the_first() {
+    use butterpollo_core::session::Role;
+    let f = Fixture::new();
+    let negotiated = butterpollo_core::rtsp::Negotiated {
+        mic: true,
+        ..Default::default()
+    };
+    // Every launch here comes from one address, so the two sessions are told
+    // apart by their keys alone, as two clients behind one NAT are.
+    let session = |name: &str, uuid: &str, key: u8| {
+        let mut client = f.client(u32::MAX);
+        client.name = name.into();
+        client.uuid = uuid.into();
+        let mut launch = f.launch(client, Role::Stream);
+        launch.key = [key; 16];
+        let session = Session::new(launch, negotiated.clone());
+        f.host
+            .sessions
+            .lock()
+            .unwrap()
+            .active
+            .insert(session.launch.id.clone(), session.clone());
+        session
+    };
+    let phone = session("Phone", "phone", 1);
+    let tablet = session("Tablet", "tablet", 2);
+    let counters = Arc::new(Counters::default());
+    let mut receiver = Receiver::new(f.host.clone(), counters.clone(), PathBuf::new());
+    receiver.native = false;
+    let packet = |s: &Arc<Session>| mic::seal(&s.launch.key, s.launch.key_id, 7, 140, &[1, 2, 3]);
+    // The phone's packet fills the cache; the speaker it started goes quiet
+    // so the next one may take over.
+    receiver.receive(&packet(&phone), phone.client_ip());
+    receiver.speaker.as_mut().unwrap().heard -= HANDOVER;
+    // The tablet's packet does not open with the phone's key: the full lookup
+    // still finds the tablet, and it takes the microphone over.
+    receiver.receive(&packet(&tablet), tablet.client_ip());
+    assert_eq!(counters.accepted.load(Ordering::Relaxed), 2);
+    assert_eq!(counters.refused.load(Ordering::Relaxed), 0);
+    assert!(Arc::ptr_eq(
+        &receiver.speaker.as_ref().unwrap().session,
+        &tablet
+    ));
+    // The cache holds the tablet now; the phone's packet resolves the same way.
+    receiver.speaker.as_mut().unwrap().heard -= HANDOVER;
+    receiver.receive(&packet(&phone), phone.client_ip());
+    assert!(Arc::ptr_eq(
+        &receiver.speaker.as_ref().unwrap().session,
+        &phone
+    ));
+}
+
+#[test]
+fn an_ended_session_is_not_used_from_the_cache() {
+    use butterpollo_core::session::Role;
+    let f = Fixture::new();
+    let negotiated = butterpollo_core::rtsp::Negotiated {
+        mic: true,
+        ..Default::default()
+    };
+    let session = |name: &str, uuid: &str, key: u8| {
+        let mut client = f.client(u32::MAX);
+        client.name = name.into();
+        client.uuid = uuid.into();
+        let mut launch = f.launch(client, Role::Stream);
+        launch.key = [key; 16];
+        let session = Session::new(launch, negotiated.clone());
+        f.host
+            .sessions
+            .lock()
+            .unwrap()
+            .active
+            .insert(session.launch.id.clone(), session.clone());
+        session
+    };
+    let phone = session("Phone", "phone", 1);
+    let tablet = session("Tablet", "tablet", 2);
+    let counters = Arc::new(Counters::default());
+    let mut receiver = Receiver::new(f.host.clone(), counters.clone(), PathBuf::new());
+    receiver.native = false;
+    let packet = |s: &Arc<Session>| mic::seal(&s.launch.key, s.launch.key_id, 7, 140, &[1, 2, 3]);
+    receiver.receive(&packet(&phone), phone.client_ip());
+    // The tablet's packet resolves too, and fills the cache with the tablet,
+    // but the fresh phone keeps the microphone: the tablet is refused.
+    receiver.receive(&packet(&tablet), tablet.client_ip());
+    assert_eq!(counters.refused.load(Ordering::Relaxed), 1);
+    // The tablet's session ends and is dropped: the cache's handle goes with
+    // it, and its packet resolves to nothing rather than playing from the
+    // cache.
+    let tablet_packet = packet(&tablet);
+    f.host
+        .sessions
+        .lock()
+        .unwrap()
+        .active
+        .remove(&tablet.launch.id);
+    drop(tablet);
+    receiver.receive(&tablet_packet, "127.0.0.1".parse().unwrap());
+    assert_eq!(counters.refused.load(Ordering::Relaxed), 2);
+    assert!(Arc::ptr_eq(
+        &receiver.speaker.as_ref().unwrap().session,
+        &phone
+    ));
+    // A stopping session is not used either, even though its key still opens
+    // the packet.
+    phone.stop();
+    receiver.receive(&packet(&phone), phone.client_ip());
+    assert_eq!(counters.refused.load(Ordering::Relaxed), 3);
+    // The phone still plays: its last packet was refused, not handed over.
+    assert!(Arc::ptr_eq(
+        &receiver.speaker.as_ref().unwrap().session,
+        &phone
+    ));
+}
+
+#[test]
 fn idle_microphone_socket_waits_for_the_receive_timeout() -> Result<()> {
     let f = Fixture::new();
     // Inspect the worker's shared socket without competing for its packets.

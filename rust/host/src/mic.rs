@@ -19,7 +19,7 @@ use std::{
     net::UdpSocket,
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
@@ -102,6 +102,14 @@ struct Speaker {
     /// How evenly its packets arrive, for the log.
     gaps: butterpollo_core::arrival_gaps::ArrivalGaps,
 }
+/// The last session a microphone packet matched, tried before the full lookup.
+struct Cached {
+    /// Weak, so an ended session is dropped rather than held alive here.
+    session: Weak<Session>,
+    /// The session's key and key id, as its packets are opened with.
+    key: [u8; 16],
+    key_id: u32,
+}
 struct Receiver {
     h: Shared,
     counters: Arc<Counters>,
@@ -109,6 +117,8 @@ struct Receiver {
     native: bool,
     directory: PathBuf,
     speaker: Option<Speaker>,
+    /// The session the last packet resolved to, and its key.
+    cached: Option<Cached>,
     /// Shared with the render thread, which conceals dry spells with it.
     /// Lock order: the decoder before the playout, on both threads.
     decoder: Arc<Mutex<Option<OpusDecoder>>>,
@@ -128,6 +138,7 @@ impl Receiver {
             native,
             directory,
             speaker: None,
+            cached: None,
             decoder: Default::default(),
             playout: Default::default(),
             output: Output::default(),
@@ -169,10 +180,28 @@ impl Receiver {
         }
         self.finish();
     }
-    fn receive(&mut self, datagram: &[u8], peer: std::net::IpAddr) {
-        let Some(packet) = mic::parse(datagram) else {
-            return;
-        };
+    /// The session `packet` belongs to and its Opus payload, trying the last
+    /// session a packet matched before the sessions map: one microphone
+    /// speaks at a time, so its key opens the next packet too, and the map's
+    /// lock and the trial decrypt of every candidate run only when it does
+    /// not. The checks the full lookup filters with are repeated on the
+    /// cached session, so a packet of another client, or one from a session
+    /// that has ended or moved away, falls back to the full lookup and is
+    /// answered exactly as before.
+    fn resolve(
+        &mut self,
+        packet: &mic::Packet<'_>,
+        peer: std::net::IpAddr,
+    ) -> Option<(Arc<Session>, Vec<u8>)> {
+        if let Some(cached) = self.cached.as_ref()
+            && let Some(session) = cached.session.upgrade()
+            && session.config.mic
+            && !session.stopping()
+            && session.client_ip() == peer
+            && let Ok(opus) = mic::open(&cached.key, cached.key_id, packet)
+        {
+            return Some((session, opus));
+        }
         let candidates: Vec<_> = self
             .h
             .sessions
@@ -183,10 +212,23 @@ impl Receiver {
             .filter(|s| s.config.mic && s.client_ip() == peer && !s.stopping())
             .cloned()
             .collect();
-        let Some((session, opus)) = candidates.into_iter().find_map(|s| {
-            let opus = mic::open(&s.launch.key, s.launch.key_id, &packet).ok()?;
+        let found = candidates.into_iter().find_map(|s| {
+            let opus = mic::open(&s.launch.key, s.launch.key_id, packet).ok()?;
             Some((s, opus))
-        }) else {
+        })?;
+        self.cached = Some(Cached {
+            session: Arc::downgrade(&found.0),
+            key: found.0.launch.key,
+            key_id: found.0.launch.key_id,
+        });
+        Some(found)
+    }
+
+    fn receive(&mut self, datagram: &[u8], peer: std::net::IpAddr) {
+        let Some(packet) = mic::parse(datagram) else {
+            return;
+        };
+        let Some((session, opus)) = self.resolve(&packet, peer) else {
             self.counters.refused.fetch_add(1, Ordering::Relaxed);
             return;
         };
