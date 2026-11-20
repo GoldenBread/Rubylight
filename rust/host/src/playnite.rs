@@ -459,8 +459,14 @@ pub fn watch(h: &Shared) {
         return;
     }
     let wanted = settings.enabled && settings.fullscreen_entry;
-    if let Err(error) =
-        crate::steam::update_apps(h, |apps| playnite::fullscreen_entry(apps, wanted))
+    // Compare before cloning: the entry step is skipped when it would change nothing, so the
+    // tick does not take the app library's write lock and serialize it for the common case.
+    // `reload_apps` first, as the step itself would, so the check reads the library as it is on
+    // disk.
+    h.reload_apps();
+    if playnite::fullscreen_entry_due(&h.apps.read().unwrap(), wanted)
+        && let Err(error) =
+            crate::steam::update_apps(h, |apps| playnite::fullscreen_entry(apps, wanted))
     {
         tracing::warn!(%error, "the Playnite fullscreen app could not be updated");
     }

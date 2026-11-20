@@ -459,3 +459,55 @@ fn focus_can_stop_at_the_first_success_and_always_stops_at_the_timeout() {
     assert!(!timed.due(at + Duration::from_secs(3)));
     assert!(timed.finished(at + Duration::from_secs(3)));
 }
+#[test]
+fn the_fullscreen_entry_due_check_agrees_with_the_entry_step_it_skips() {
+    // The tick's check must say a change is due exactly when the entry step, over the same apps
+    // as JSON, would change something: every case here is one shape of the library.
+    let app = |value: Value| serde_json::from_value::<crate::state::App>(value).unwrap();
+    let entry = json!({
+        "name": "Playnite (Fullscreen)",
+        "image-path": "playnite_boxart.png",
+        "playnite-fullscreen": true,
+        "auto-detach": true,
+    });
+    let written_timeout = json!({
+        "name": "Playnite (Fullscreen)",
+        "playnite-fullscreen": true,
+        "exit-timeout": 10,
+    });
+    let named = json!({"name": "Playnite (Fullscreen)"});
+    let command = json!({"name": "Desktop", "cmd": "playnite-launcher --fullscreen"});
+    let marked = |mark: Value| json!({"name": "My entry", "playnite-fullscreen": mark});
+    let cases: Vec<(Vec<Value>, bool)> = vec![
+        (vec![], true),
+        (vec![], false),
+        (vec![entry.clone()], true),
+        (vec![entry.clone()], false),
+        (vec![written_timeout.clone()], true),
+        (vec![written_timeout], false),
+        (vec![named.clone()], true),
+        (vec![named], false),
+        (vec![command.clone()], true),
+        (vec![command], false),
+        (vec![marked(json!("TRUE"))], false),
+        (vec![marked(json!(1))], false),
+        (vec![marked(json!(2))], false),
+        (vec![marked(json!(false))], true),
+        (vec![entry.clone(), marked(json!(false))], true),
+    ];
+    for (document, wanted) in cases {
+        let apps: Vec<crate::state::App> = document.iter().cloned().map(app).collect();
+        let mut values = document.clone();
+        assert_eq!(
+            fullscreen_entry_due(&apps, wanted),
+            fullscreen_entry(&mut values, wanted),
+            "the check and the step disagree for {document:?} (wanted {wanted})"
+        );
+    }
+    // Unchanged input means no rewrite: once the entry step has had its way, the check the next
+    // tick makes says nothing is due.
+    let mut values = vec![entry];
+    assert!(fullscreen_entry(&mut values, true));
+    let apps: Vec<crate::state::App> = values.iter().cloned().map(app).collect();
+    assert!(!fullscreen_entry_due(&apps, true));
+}

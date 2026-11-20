@@ -757,6 +757,37 @@ pub fn reconcile(
     }
     *apps != before
 }
+/// Whether [`fullscreen_entry`] would change anything, answered without building the JSON
+/// document it works on: the housekeeping tick asks every 30 seconds, and only a `true` is
+/// worth taking the app library's write lock and serializing it. Reads the same fields, from
+/// the same apps: `playnite-fullscreen`, `cmd`, `name` and the written `exit-timeout`.
+pub fn fullscreen_entry_due(apps: &[crate::state::App], wanted: bool) -> bool {
+    let made_here = |app: &crate::state::App| match app.extra.get("playnite-fullscreen") {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_i64() == Some(1),
+        Some(Value::String(s)) => matches!(s.to_ascii_lowercase().as_str(), "true" | "1" | "yes"),
+        _ => false,
+    };
+    let is_entry = |app: &crate::state::App| {
+        let cmd = app.cmd.to_ascii_lowercase();
+        made_here(app)
+            || (cmd.contains("playnite-launcher") && cmd.contains("--fullscreen"))
+            || app.name == "Playnite (Fullscreen)"
+    };
+    if wanted {
+        if !apps.iter().any(is_entry) {
+            return true;
+        }
+        // The 10 earlier syncs wrote goes, so the entry follows the host's exit timeout. A 10
+        // set by hand on this entry cannot be told apart from it and goes too; any other value
+        // stays.
+        apps.iter()
+            .filter(|app| made_here(app))
+            .any(|app| app.extra.get("exit-timeout").and_then(Value::as_u64) == Some(10))
+    } else {
+        apps.iter().any(made_here)
+    }
+}
 /// The "Playnite (Fullscreen)" app: present while `wanted`, removed
 /// otherwise. An app the user made with that name or Playnite's fullscreen
 /// command counts as present but is never removed: only the one marked

@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
+    sync::{LazyLock, Mutex, PoisonError},
+    time::SystemTime,
 };
 
 mod tracker;
@@ -242,11 +244,39 @@ fn read_capped(path: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
+/// The account the last read of the file gave, with the file's size and time it was read.
+static MOST_RECENT: LazyLock<Mutex<HashMap<PathBuf, ((u64, SystemTime), Option<String>)>>> =
+    LazyLock::new(Default::default);
 /// The `userdata` folder of the account `loginusers.vdf` marks `MostRecent`: a SteamID64's low 32
-/// bits. Not every Steam writes the mark.
+/// bits. Not every Steam writes the mark. The file is read again only when its size or time moved
+/// since the last read: the library checks ask every few seconds and it changes only when another
+/// account signs in.
 fn most_recent_account(root: &Path) -> Option<String> {
-    let text = read_capped(&root.join("config").join("loginusers.vdf")).ok()?;
-    let document = Vdf::parse(&text);
+    let file = root.join("config").join("loginusers.vdf");
+    let stamp = std::fs::metadata(&file)
+        .ok()
+        .and_then(|metadata| Some((metadata.len(), metadata.modified().ok()?)));
+    let Some(stamp) = stamp else {
+        // No file to cache by: read it, as before.
+        return read_capped(&file).ok().and_then(|text| marked(&text));
+    };
+    let mut read = MOST_RECENT.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((last, account)) = read.get(root)
+        && *last == stamp
+    {
+        return account.clone();
+    }
+    let Some(text) = read_capped(&file).ok() else {
+        // Unreadable now, so not cached: the next check reads it again.
+        return None;
+    };
+    let account = marked(&text);
+    read.insert(root.to_owned(), (stamp, account.clone()));
+    account
+}
+/// The account `loginusers.vdf`'s text marks, `None` when it marks none.
+fn marked(text: &str) -> Option<String> {
+    let document = Vdf::parse(text);
     let (id, _) = document
         .get("users")?
         .entries()
@@ -425,6 +455,56 @@ fn only_on_this_pc(roots: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// The `steamapps` folders a `libraryfolders.vdf` listed, with the file's size and time it
+/// was read. The library checks ask for the libraries every few seconds and Steam rewrites the
+/// file only when a library folder comes or goes, so it is parsed again only when its size or
+/// time moved. A read that fails is not cached.
+static VDF_LIBRARIES: LazyLock<Mutex<HashMap<PathBuf, ((u64, SystemTime), Vec<PathBuf>)>>> =
+    LazyLock::new(Default::default);
+/// The libraries a `steamapps` folder's `libraryfolders.vdf` lists, as [`libraries`] reads them:
+/// on this PC's drives, the path from old files' values included.
+fn vdf_libraries(apps: &Path) -> Vec<PathBuf> {
+    let file = apps.join("libraryfolders.vdf");
+    let stamp = std::fs::metadata(&file)
+        .ok()
+        .and_then(|metadata| Some((metadata.len(), metadata.modified().ok()?)));
+    let Some(stamp) = stamp else {
+        // No file to cache by: read it, as before.
+        return read_capped(&file)
+            .ok()
+            .map(|text| vdf_listed_libraries(&text))
+            .unwrap_or_default();
+    };
+    let mut read = VDF_LIBRARIES.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((last, listed)) = read.get(apps)
+        && *last == stamp
+    {
+        return listed.clone();
+    }
+    let Some(text) = read_capped(&file).ok() else {
+        // Unreadable now, so not cached: the next check reads it again.
+        return vec![];
+    };
+    let listed = vdf_listed_libraries(&text);
+    read.insert(apps.to_owned(), (stamp, listed.clone()));
+    listed
+}
+/// The `steamapps` folders the text of `libraryfolders.vdf` lists on this PC's drives. Old files
+/// give the path as the value itself.
+fn vdf_listed_libraries(text: &str) -> Vec<PathBuf> {
+    let folders = Vdf::parse(text);
+    let folders = folders.get("libraryfolders").unwrap_or(&folders);
+    let mut listed = vec![];
+    for (_, folder) in folders.entries() {
+        let path = folder.get("path").or(Some(folder)).and_then(Vdf::text);
+        if let Some(path) = path.filter(|p| !p.is_empty() && on_this_pc(Path::new(p)))
+            && let Some(library) = steamapps(Path::new(path))
+        {
+            listed.push(library);
+        }
+    }
+    listed
+}
 /// The `steamapps` folders of every library of `roots` on this PC's drives.
 fn libraries(roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut libraries: Vec<PathBuf> = vec![];
@@ -438,27 +518,42 @@ fn libraries(roots: &[PathBuf]) -> Vec<PathBuf> {
             continue;
         };
         add(apps.clone(), &mut libraries);
-        let folders = read_capped(&apps.join("libraryfolders.vdf"))
-            .map(|text| Vdf::parse(&text))
-            .unwrap_or(Vdf::Object(vec![]));
-        let folders = folders.get("libraryfolders").unwrap_or(&folders);
-        for (_, folder) in folders.entries() {
-            // Old files give the path as the value itself.
-            let path = folder.get("path").or(Some(folder)).and_then(Vdf::text);
-            if let Some(path) = path.filter(|p| !p.is_empty() && on_this_pc(Path::new(p)))
-                && let Some(library) = steamapps(Path::new(path))
-            {
-                add(library, &mut libraries);
-            }
+        for library in vdf_libraries(&apps) {
+            add(library, &mut libraries);
         }
     }
     libraries
 }
+/// The manifest names of a `steamapps` folder, with the folder's time they were read. The library
+/// checks ask every few seconds: the folder's time moves when a manifest appears, is renamed or
+/// goes, and a download's rewrites of a manifest's content leave it put, so the names are read
+/// again only when that time moved. A folder whose time cannot be read is not cached.
+static MANIFESTS: LazyLock<Mutex<HashMap<PathBuf, (SystemTime, Vec<PathBuf>)>>> =
+    LazyLock::new(Default::default);
 /// The `appmanifest_*.acf` files of a `steamapps` folder, in name order.
 fn manifests(steamapps: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(steamapps) else {
+    let modified = std::fs::metadata(steamapps)
+        .ok()
+        .and_then(|m| m.modified().ok());
+    let Some(modified) = modified else {
+        return manifest_names(steamapps).unwrap_or_default();
+    };
+    let mut read = MANIFESTS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((last, names)) = read.get(steamapps)
+        && *last == modified
+    {
+        return names.clone();
+    }
+    let Some(names) = manifest_names(steamapps) else {
+        // Unreadable now, so not cached: the next check reads it again.
         return vec![];
     };
+    read.insert(steamapps.to_owned(), (modified, names.clone()));
+    names
+}
+/// The folder's manifest names, `None` when they cannot be read.
+fn manifest_names(steamapps: &Path) -> Option<Vec<PathBuf>> {
+    let entries = std::fs::read_dir(steamapps).ok()?;
     let mut manifests: Vec<_> = entries
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .filter(|path| {
@@ -471,7 +566,7 @@ fn manifests(steamapps: &Path) -> Vec<PathBuf> {
         })
         .collect();
     manifests.sort();
-    manifests
+    Some(manifests)
 }
 /// A manifest's app, its `AppState` and its install folder, when the folder
 /// is there.

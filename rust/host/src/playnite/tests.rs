@@ -444,3 +444,32 @@ fn failed_sync_retries_on_the_next_watch_tick() {
     assert_eq!(calls, 1);
     assert_eq!(watch.synced, Some(at + Duration::from_secs(30)));
 }
+#[test]
+fn the_tick_keeps_the_fullscreen_entry_without_rewriting_the_library() {
+    let f = crate::state::test_support::Fixture::new();
+    *f.host.config.write().unwrap() = butterpollo_core::config::Config::parse(
+        "playnite_fullscreen_entry_enabled=true\nplaynite_auto_sync=false",
+    )
+    .unwrap();
+    // The first tick adds the entry; after that the library on disk stays as it is, byte for
+    // byte, and no new version is published.
+    watch(&f.host);
+    let saved = std::fs::read(&f.host.apps_path).unwrap();
+    let version = f.host.config_version.load(Ordering::Acquire);
+    watch(&f.host);
+    watch(&f.host);
+    assert!(
+        f.host
+            .apps
+            .read()
+            .unwrap()
+            .iter()
+            .any(|app| app.name == "Playnite (Fullscreen)")
+    );
+    assert_eq!(std::fs::read(&f.host.apps_path).unwrap(), saved);
+    assert_eq!(
+        f.host.config_version.load(Ordering::Acquire),
+        version,
+        "the tick rewrote an unchanged library"
+    );
+}
