@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">Повідомляти ПК про мережу цього пристрою</string>
+    <string name="summary_tell_host_network">Повідомляє ПК, коли пристрій підключений через Wi-Fi і яка швидкість його дротового порту, щоб він налаштував потік з першого кадру. Залиште ввімкненим; вимикайте лише для порівняння.</string>
+</resources>

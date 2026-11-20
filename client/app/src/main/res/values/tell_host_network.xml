@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">Tell the PC about this device’s network</string>
+    <string name="summary_tell_host_network">Tells the PC when this device is on Wi-Fi and how fast its wired port is, so it paces the stream for them from the first frame. Leave it on; turn it off only to compare.</string>
+</resources>

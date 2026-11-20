@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">Dem PC das Netzwerk dieses Geräts mitteilen</string>
+    <string name="summary_tell_host_network">Teilt dem PC mit, wenn dieses Gerät im WLAN ist und wie schnell sein Kabelanschluss ist, damit er den Stream von Anfang an darauf abstimmt. Lass es an; schalte es nur zum Vergleichen aus.</string>
+</resources>

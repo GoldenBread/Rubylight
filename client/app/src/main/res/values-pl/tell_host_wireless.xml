@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="title_tell_host_wireless">Informuj komputer o Wi-Fi</string>
-    <string name="summary_tell_host_wireless">Informuje komputer, gdy to urządzenie korzysta z Wi-Fi, aby od pierwszej klatki dostosował tempo strumienia do Wi-Fi. Zostaw włączone; wyłącz tylko dla porównania.</string>
-</resources>

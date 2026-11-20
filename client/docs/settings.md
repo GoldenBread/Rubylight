@@ -660,8 +660,7 @@ Rarely needed settings, last in the section list. The search finds them like any
 | Setting | Tier | Default | Choices | Notes |
 | --- | --- | --- | --- | --- |
 | Error correction | Main | PC's setting | PC's setting, Automatic, 10 %, 20 %, 30 %, 50 % | PC's setting leaves the recovery data to the PC's own settings. Automatic asks the PC to follow the losses this device reports; 10, 20, 30 or 50 % fixes the share. Rubylight PCs and Sunshine-based PCs that accept it take the choice; other PCs use their own setting. |
-| Tell the PC when on Wi-Fi | Main | On | On, Off | A Rubylight PC paces the stream for Wi-Fi from the start. |
-| Tell the PC the link speed | Main | On | On, Off | Lets the PC limit its sending rate to this device's wired port speed. |
+| Tell the PC about this device’s network | Main | On | On, Off | A Rubylight PC paces the stream for Wi-Fi from the start and never sends faster than this device's wired port takes. |
 | Prioritize stream traffic | Main | On | On, Off | Windows and Linux only. Gives stream traffic priority on this device: socket and thread priority on Linux, thread priority on Windows. |
 | Instant mouse and pen input | Main | On | On, Off | Sends mouse and pen motion immediately instead of batching it. |
 | Full color range | Main | Off | On, Off | Requests the full RGB range from the host. |

@@ -98,6 +98,7 @@ public class SettingsKeysTest {
             "checkbox_content_rate_frame_rate", // Lower refresh rate's "On, matched to the game" (LowerRefreshChoice)
             // The second switch of each row that was two (SwitchPairChoice).
             "checkbox_back_opens_menu", "checkbox_back_as_guide",
+            "checkbox_tell_host_link_speed", // the Tell the PC about this device's network switch writes it with its own
             "checkbox_system_keys_fullscreen_only", "checkbox_roaming_metered",
             com.limelight.console.HomeSettings.PREF_KEY)); // When Nightjar opens
     // Stored settings that are read outside PreferenceConfiguration.

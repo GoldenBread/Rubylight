@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">このデバイスのネットワークをPCに伝える</string>
+    <string name="summary_tell_host_network">このデバイスがWi-Fiに接続しているか、有線ポートの速度はどれくらいかをPCに伝え、最初のフレームからそれに合わせて配信します。通常はオンのままにし、比較するときだけオフにしてください。</string>
+</resources>

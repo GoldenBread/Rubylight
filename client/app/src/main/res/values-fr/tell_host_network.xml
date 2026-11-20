@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">Informer le PC du réseau de cet appareil</string>
+    <string name="summary_tell_host_network">Indique au PC quand cet appareil est en Wi-Fi et quelle est la vitesse de son port filaire, pour qu’il règle le flux dès la première image. Laissez-le activé ; désactivez-le seulement pour comparer.</string>
+</resources>

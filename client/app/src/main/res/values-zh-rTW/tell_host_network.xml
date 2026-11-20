@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">向電腦告知此裝置的網路</string>
+    <string name="summary_tell_host_network">告知電腦此裝置何時使用 Wi-Fi 以及有線連接埠的速度，讓它從第一個畫面起就依此調整串流。建議保持開啟；僅在比較時關閉。</string>
+</resources>

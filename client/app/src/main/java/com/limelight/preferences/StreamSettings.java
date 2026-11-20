@@ -963,6 +963,8 @@ public class StreamSettings extends NightjarActivity {
                 .remove(FoldedChoice.ACCELERATION.switchKey)
                 .remove(FoldedChoice.MOMENTUM.switchKey)
                 .remove(FoldedChoice.RETIRED_ACCELERATION_V1)
+                // Stored by the one switch that tells the PC about this device's network, beside its row's key.
+                .remove(PreferenceConfiguration.TELL_HOST_LINK_SPEED_PREF_STRING)
                 .remove(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING)
                 .remove(PreferenceConfiguration.BITRATE_PREF_OLD_STRING)
                 .remove(PreferenceConfiguration.PREFS_VERSION_PREF_STRING)
@@ -2910,6 +2912,15 @@ public class StreamSettings extends NightjarActivity {
                         });
                 return true;
             });
+            // One switch tells the PC about this device's network: it writes the Wi-Fi and the link speed switches alike.
+            Preference tellHost = findPreference(PreferenceConfiguration.TELL_HOST_WIRELESS_PREF_STRING);
+            if (tellHost != null) {
+                tellHost.setOnPreferenceChangeListener((preference, value) -> {
+                    getPreferenceManager().getSharedPreferences().edit()
+                            .putBoolean(PreferenceConfiguration.TELL_HOST_LINK_SPEED_PREF_STRING, (Boolean) value).apply();
+                    return true;
+                });
+            }
             findPreference(CONTROLLERS_KEY).setOnPreferenceClickListener(preference -> {
                 SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
                 showChoices(R.string.title_controllers, R.array.controllers_names, ControllersChoice.read(prefs),

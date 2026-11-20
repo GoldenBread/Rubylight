@@ -113,8 +113,8 @@ public class PreferenceConfiguration {
     private static final String ENABLE_PIP_PREF_STRING = "checkbox_enable_pip";
     private static final String AUTO_RECONNECT_PREF_STRING = "checkbox_auto_reconnect";
     private static final String NETWORK_GRACE_PREF_STRING = "list_network_grace";
-    private static final String TELL_HOST_WIRELESS_PREF_STRING = "checkbox_tell_host_wireless";
-    private static final String TELL_HOST_LINK_SPEED_PREF_STRING = "checkbox_tell_host_link_speed";
+    static final String TELL_HOST_WIRELESS_PREF_STRING = "checkbox_tell_host_wireless";
+    static final String TELL_HOST_LINK_SPEED_PREF_STRING = "checkbox_tell_host_link_speed";
     static final String FEC_CHOICE_PREF_STRING = "list_fec_choice";
     static final String LINK_PROBE_PREF_STRING = "checkbox_link_probe";
     private static final String QUICK_RESUME_PREF_STRING = "checkbox_quick_resume";

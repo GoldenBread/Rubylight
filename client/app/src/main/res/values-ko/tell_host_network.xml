@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">이 기기의 네트워크를 PC에 알리기</string>
+    <string name="summary_tell_host_network">이 기기가 Wi-Fi에 연결되어 있는지와 유선 포트 속도를 PC에 알려, 첫 프레임부터 그에 맞춰 스트림을 조절합니다. 켜 두고, 비교할 때만 끄세요.</string>
+</resources>

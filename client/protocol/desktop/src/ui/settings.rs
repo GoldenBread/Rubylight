@@ -76,7 +76,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
     &[&["theme"], &["language"], &["open_on_start", "console_home"], &["quick_resume"], &["check_updates"], &["home_card_size"],
         &["show_debug_settings"], &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
     &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
-    &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
+    &[&["error_correction"], &["tell_host_wireless", "tell_host_link_speed"],
         &["network_priority"], &["unbatched_input"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
         &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["videotoolbox_rfi"], &["cursor_shapes"],
@@ -2061,11 +2061,15 @@ impl Launcher {
                         }
                     }).response
             });
-            setting_row(ui, s, &mut rows, &["tell_host_wireless"], "Tell the PC when on Wi-Fi", "Tells the PC when this device is on Wi-Fi, so it paces the stream for Wi-Fi from the first frame. Leave it on; turn it off only to compare.", |ui, s| {
-                toggle(ui, &mut s.tell_host_wireless)
-            });
-            setting_row(ui, s, &mut rows, &["tell_host_link_speed"], "Tell the PC the link speed", "Tells the PC this device’s wired port speed, so it never sends faster than the port can take. Leave it on; turn it off only to compare.", |ui, s| {
-                toggle(ui, &mut s.tell_host_link_speed)
+            // One switch for both stored fields, as on Android; either one on reads On.
+            setting_row(ui, s, &mut rows, &["tell_host_wireless", "tell_host_link_speed"], "Tell the PC about this device’s network", "Tells the PC when this device is on Wi-Fi and how fast its wired port is, so it paces the stream for them from the first frame. Leave it on; turn it off only to compare.", |ui, s| {
+                let mut on = s.tell_host_wireless || s.tell_host_link_speed;
+                let response = toggle(ui, &mut on);
+                if on != (s.tell_host_wireless || s.tell_host_link_speed) {
+                    s.tell_host_wireless = on;
+                    s.tell_host_link_speed = on;
+                }
+                response
             });
             // The engine sets socket and thread priorities on Linux and thread priorities on Windows.
             if cfg!(any(target_os = "linux", windows)) {
@@ -2983,7 +2987,7 @@ pub(super) const MAIN_KEYS: [(&str, &[&str]); 9] = [
     ("streaming", &["checkbox_enable_perf_overlay", "performance_overlay_position", "checkbox_auto_reconnect", "network_tests"]),
     ("app", &["theme", "list_languages", "list_open_on_start", "checkbox_quick_resume", "pin_lock", "help", "report_problem", "check_updates_now"]),
     ("advanced", &["checkbox_rust_engine", "low_latency_decoding", "low_latency_customize", "gpu_driver", "checkbox_gpu_max_clocks", "checkbox_texture_view", "checkbox_vulkan_render"]),
-    ("debug", &["list_fec_choice", "checkbox_tell_host_wireless", "checkbox_tell_host_link_speed", "checkbox_network_priority", "checkbox_unbatched_input"]),
+    ("debug", &["list_fec_choice", "checkbox_tell_host_wireless", "checkbox_network_priority", "checkbox_unbatched_input"]),
 ];
 
 /// Every desktop row on both platforms and the Android preference it is: a setting's first key or
@@ -3044,7 +3048,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("sops", "checkbox_enable_sops"), ("decode_queue_frames", "list_decode_queue_frames"),
     // Debug
     ("error_correction", "list_fec_choice"),
-    ("tell_host_wireless", "checkbox_tell_host_wireless"), ("tell_host_link_speed", "checkbox_tell_host_link_speed"),
+    ("tell_host_wireless", "checkbox_tell_host_wireless"), ("tell_host_link_speed", "checkbox_tell_host_wireless"),
     ("network_priority", "checkbox_network_priority"), ("unbatched_input", "checkbox_unbatched_input"), ("full_range", "checkbox_full_range"),
     ("link_probe", "checkbox_link_probe"), ("pyrowave_pace", "pace_calibration"),
     ("post_stream_decode_time", "checkbox_enable_post_stream_toast"), ("latency_benchmark", "latency_benchmark"),

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">Informar al PC de la red de este dispositivo</string>
+    <string name="summary_tell_host_network">Indica al PC cuándo este dispositivo está en Wi-Fi y qué velocidad tiene su puerto cableado, para que ajuste el stream desde el primer fotograma. Déjalo activado; desactívalo solo para comparar.</string>
+</resources>

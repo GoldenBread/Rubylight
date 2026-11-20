@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">Powiadom PC o sieci tego urządzenia</string>
+    <string name="summary_tell_host_network">Informuje PC, kiedy to urządzenie jest w Wi-Fi i jak szybki jest jego port przewodowy, aby od pierwszej klatki dopasował do nich stream. Zostaw włączone; wyłącz tylko w celu porównania.</string>
+</resources>

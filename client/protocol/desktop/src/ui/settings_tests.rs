@@ -687,7 +687,7 @@ fn the_section_key_table_is_what_the_page_draws() {
 #[test]
 fn the_developer_rows_and_diagnostics_are_in_debug() {
     // Android's main rows in its order, then PyroWave's, the decoder's, the cursor and Diagnostics.
-    const DEBUG: [&str; 12] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
+    const DEBUG: [&str; 11] = ["error_correction", "tell_host_wireless",
         "network_priority", "unbatched_input", "pyrowave_decoder", "pyrowave_async_compute", "decoder",
         "vulkan_video_first", "vulkan_rfi", "videotoolbox_rfi", "cursor_shapes"];
     assert_eq!(SETTINGS_SECTIONS.last(), Some(&"Debug"));

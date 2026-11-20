@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_tell_host_network">Сообщать ПК о сети этого устройства</string>
+    <string name="summary_tell_host_network">Сообщает ПК, когда устройство подключено по Wi-Fi и какова скорость его проводного порта, чтобы он настроил поток с первого кадра. Оставьте включённым; выключайте только для сравнения.</string>
+</resources>

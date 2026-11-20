@@ -232,7 +232,7 @@ public class AdvancedOptionsTest {
     // decoder switches fold behind its More row in their own groups, so Debug keeps the 8 main rows at most that
     // SettingsTiersTest allows.
     private static final List<String> DEBUG_MAIN = Arrays.asList(
-            "list_fec_choice", "checkbox_tell_host_wireless", "checkbox_tell_host_link_speed",
+            "list_fec_choice", "checkbox_tell_host_wireless",
             "checkbox_network_priority", "checkbox_unbatched_input");
     private static final List<String> DEBUG_CONTROLS = new ArrayList<>(DEBUG_MAIN);
     static {
@@ -308,7 +308,6 @@ public class AdvancedOptionsTest {
         // Now under Debug; the move keeps each one's stored choice, set opposite to its default.
         Map<String, Boolean> debugChoices = new LinkedHashMap<>();
         debugChoices.put("checkbox_tell_host_wireless", false);
-        debugChoices.put("checkbox_tell_host_link_speed", false);
         debugChoices.put("checkbox_network_priority", false);
         debugChoices.put("checkbox_unbatched_input", false);
         for (boolean legacy : new boolean[] {false, true}) {
