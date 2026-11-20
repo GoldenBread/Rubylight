@@ -73,6 +73,12 @@ impl ConnectionEnd {
         receiver
     }
     /// Tells the watchers how the connection ended; `clean` without an error.
+    ///
+    /// After an error the answer counts as delivered when something was written since the watch
+    /// began and all of it was flushed. That does not tell this answer's bytes from the tail of an
+    /// earlier one on the same connection: a device that pipelines a request ahead of an accepted
+    /// one and resets before the answer is written would be taken as told. Only the device that
+    /// was allowed, with its valid token, can do that, and it asked for the action.
     pub fn finish(&self, clean: bool) {
         let mut state = self.0.lock().unwrap();
         let flushed = !state.failed && state.flushed == state.written;
