@@ -278,17 +278,34 @@ impl Drop for Trace {
     }
 }
 
+/// The windows before a traced end, for its settled look ([`settle_later`]).
+pub(crate) struct Baseline(Vec<WindowState>);
+
+/// The windows before the [`Trace`] that last ended on this thread, taken once.
+pub(crate) fn take_baseline() -> Option<Baseline> {
+    SETTLE.with_borrow_mut(Option::take).map(Baseline)
+}
+
 /// Look at the windows again [`SETTLE_DELAY`] after a traced end, from a thread of its
-/// own that nothing waits for. Call once the display state's lock is released; does
-/// nothing unless a [`Trace`] ended on this thread since the last call.
-pub(crate) fn settle_later() {
-    let Some(before) = take_settle() else {
+/// own that nothing waits for. Call once the stream's display is gone or going: with
+/// the lease's lock released, and after the watch that keeps the display. Nothing
+/// without a `baseline`, that is without a traced end.
+pub(crate) fn settle_later(baseline: Option<Baseline>) {
+    let Some(Baseline(before)) = baseline else {
         return;
     };
     let spawned = std::thread::Builder::new()
         .name("layout-end-trace".into())
         .spawn(move || {
             std::thread::sleep(SETTLE_DELAY);
+            let streams = crate::display::leased_displays();
+            if !settled_look_due(&streams) {
+                tracing::debug!(
+                    streams = streams.len(),
+                    "a stream started after the end; skipping the settled look at the windows"
+                );
+                return;
+            }
             log_displays("settled", false);
             let after = crate::input::on_input_desktop(windows);
             log_window_changes("settled", &before, &after, 0, "as the immediate look");
@@ -297,8 +314,11 @@ pub(crate) fn settle_later() {
         tracing::debug!(%error, "the settled look at the windows after a stream's end did not start");
     }
 }
-fn take_settle() -> Option<Vec<WindowState>> {
-    SETTLE.with_borrow_mut(Option::take)
+
+/// Whether the settled look says something of the end: a stream that started since
+/// moves windows of its own. `streams` are the displays streams hold now.
+fn settled_look_due(streams: &[String]) -> bool {
+    streams.is_empty()
 }
 
 fn log_window_changes(

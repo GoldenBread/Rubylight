@@ -1715,6 +1715,7 @@ fn start_wake_watch(
     target: String,
     end: WakeEnd,
     remains: Option<Box<dyn Send>>,
+    baseline: Option<crate::display::end_trace::Baseline>,
 ) {
     let layout_back = end.restored.is_ok();
     let left = LeftWatch {
@@ -1734,6 +1735,8 @@ fn start_wake_watch(
                 || crate::display_recovery::arrangement(None),
             );
             drop(remains);
+            // Issue #129: the stream's display is gone only now.
+            crate::display::end_trace::settle_later(baseline);
             left
         })
     });
@@ -2322,14 +2325,19 @@ impl Drop for Lease {
         state.retained.clear();
         state.following = None;
         drop(state);
-        // Issue #129: the windows again once apps and Windows settled, on its own thread.
-        crate::display::end_trace::settle_later();
+        // Issue #129: the windows again once apps and Windows settled, on its own thread,
+        // after the stream's display is gone: `remains` goes with this lease, or with the
+        // watch that keeps it.
+        let baseline = crate::display::end_trace::take_baseline();
         match what_an_end_leaves(ended, before, &target, &crate::display::leased_displays()) {
-            EndLeaves::Nothing => {}
+            EndLeaves::Nothing => crate::display::end_trace::settle_later(baseline),
             EndLeaves::Watch(before, end) => {
-                start_wake_watch(before, target, end, remains.take());
+                start_wake_watch(before, target, end, remains.take(), baseline);
             }
-            EndLeaves::Left(left) => start_left_watch(left),
+            EndLeaves::Left(left) => {
+                start_left_watch(left);
+                crate::display::end_trace::settle_later(baseline);
+            }
         }
     }
 }

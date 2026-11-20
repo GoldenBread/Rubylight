@@ -182,8 +182,25 @@ fn hooks_do_nothing_unless_armed() {
     assert!(note_commit(true).is_none());
     assert!(ARMED.with_borrow(|armed| armed.is_none()));
     // Nor is there a settled look to start.
-    settle_later();
-    assert!(take_settle().is_none());
+    assert!(take_baseline().is_none());
+    settle_later(None);
+}
+
+#[test]
+fn the_baseline_is_taken_once() {
+    SETTLE.with_borrow_mut(|settle| *settle = Some(vec![window(1, "V", rect(0, 0, 8, 6), 96)]));
+    let Some(Baseline(before)) = take_baseline() else {
+        panic!("no baseline");
+    };
+    assert_eq!(before.len(), 1);
+    assert!(take_baseline().is_none());
+}
+
+#[test]
+fn the_settled_look_waits_for_no_stream() {
+    assert!(settled_look_due(&[]));
+    // A stream started within the delay: its moves are not the end's.
+    assert!(!settled_look_due(&[r"\\?\DISPLAY#RLV0001".to_owned()]));
 }
 
 #[test]
