@@ -499,7 +499,7 @@ pub fn folded_packet_pacing_below(
     // A rate the layer does not hold is the one below it, which owns pacing.
     let rate = match rate {
         Some(rate) => positive(rate).then_some(rate),
-        None => below.filter(|below| positive(*below)),
+        None => below.filter(|below| positive(below)),
     };
     if let Some(rate) = rate {
         return Some(rate.to_owned());
