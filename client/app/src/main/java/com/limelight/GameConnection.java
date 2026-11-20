@@ -505,28 +505,7 @@ final class GameConnection {
                 (game.desiredRefreshRate = game.getWindowManager().getDefaultDisplay().getRefreshRate());
         LimeLog.info("Display refresh rate: "+displayRefreshRate);
 
-        // If the user requested frame pacing using a capped FPS, we will need to change our
-        // desired FPS setting here in accordance with the active display refresh rate, judged
-        // against the mode the stream asks for as well, unless the screen may stay below it
-        // (FramePacingPolicy.limitRefreshHz, limitedFrameRate).
-        int chosenFrameRate = game.prefConfig.fps;
-        if (game.prefConfig.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS) {
-            float limitHz = FramePacingPolicy.limitRefreshHz(game.desiredRefreshRate, displayRefreshRate,
-                    RefreshSwitchMonitor.conditions(game));
-            int limited = FramePacingPolicy.limitedFrameRate(game.prefConfig.fps, limitHz);
-            if (limited == FramePacingPolicy.LIMIT_ABOVE_SCREEN) {
-                // Use frame drops when rendering above the screen frame rate
-                game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
-                LimeLog.info("Using drop mode for FPS > Hz");
-            } else if (limited == FramePacingPolicy.LIMIT_BOGUS_SCREEN) {
-                // Let's avoid clearly bogus refresh rates and fall back to legacy rendering
-                game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
-                LimeLog.info("Bogus refresh rate: " + Math.round(limitHz));
-            } else if (limited != chosenFrameRate) {
-                chosenFrameRate = limited;
-                LimeLog.info("Adjusting FPS target for screen to " + chosenFrameRate);
-            }
-        }
+        int chosenFrameRate = streamFrameRate(displayRefreshRate);
 
         // The capped-FPS policy above can choose Balanced too. Apply the external
         // output fallback after that decision so it cannot reintroduce phone-vsync pacing.
@@ -746,6 +725,35 @@ final class GameConnection {
     }
 
     private volatile Boolean androidTv;
+
+    /**
+     * The frame rate the stream asks the PC for. If the user requested frame pacing using a capped
+     * FPS, it follows the display refresh rate: displayRefreshRate is what prepareDisplayForRendering
+     * gave, the mode it asked for is game.desiredRefreshRate, and the cap is judged at that mode's rate
+     * unless the screen may stay below it (FramePacingPolicy.limitRefreshHz, limitedFrameRate). The
+     * limit can hand the stream to Balanced; other pacings keep the chosen rate.
+     */
+    int streamFrameRate(float displayRefreshRate) {
+        int fps = game.prefConfig.fps;
+        if (game.prefConfig.framePacing != PreferenceConfiguration.FRAME_PACING_CAP_FPS) return fps;
+        float limitHz = FramePacingPolicy.limitRefreshHz(game.desiredRefreshRate, displayRefreshRate,
+                RefreshSwitchMonitor.conditions(game));
+        int limited = FramePacingPolicy.limitedFrameRate(fps, limitHz);
+        if (limited == FramePacingPolicy.LIMIT_ABOVE_SCREEN) {
+            // Use frame drops when rendering above the screen frame rate
+            game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
+            LimeLog.info("Using drop mode for FPS > Hz");
+            return fps;
+        }
+        if (limited == FramePacingPolicy.LIMIT_BOGUS_SCREEN) {
+            // Let's avoid clearly bogus refresh rates and fall back to legacy rendering
+            game.prefConfig.framePacing = PreferenceConfiguration.FRAME_PACING_BALANCED;
+            LimeLog.info("Bogus refresh rate: " + Math.round(limitHz));
+            return fps;
+        }
+        if (limited != fps) LimeLog.info("Adjusting FPS target for screen to " + limited);
+        return limited;
+    }
 
     boolean isAndroidTv() {
         Boolean tv = androidTv;

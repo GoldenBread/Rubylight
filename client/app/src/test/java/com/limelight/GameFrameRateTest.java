@@ -1,17 +1,18 @@
 package com.limelight;
 
 import android.app.Application;
+import android.content.Context;
 import android.graphics.SurfaceTexture;
 import android.media.MediaFormat;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.view.Display;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import com.limelight.binding.video.DisplayFrameRatePolicy;
-import com.limelight.binding.video.FramePacingPolicy;
 import com.limelight.binding.video.MediaCodecDecoderRenderer;
 import com.limelight.binding.video.MediaCodecHelper;
-import com.limelight.binding.video.RefreshSwitchDiagnosis;
 import com.limelight.binding.video.RefreshSwitchMonitorTest;
 import com.limelight.nvstream.AdaptiveBitrateController;
 import com.limelight.nvstream.jni.MoonBridge;
@@ -22,6 +23,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
+import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
@@ -332,24 +335,60 @@ public class GameFrameRateTest {
             for (int pacing : pacings) {
                 String name = "pacing " + pacing;
                 boolean limit = pacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS;
-                float[] top = startStream(pacing, false, 120f, 60f, 120f);
-                assertArrayEquals(name, new float[] {120f, 120f, 120f}, top, 0f);
-                if (limit) assertEquals(60, limited(60, top));
+                StreamStart top = startStream(pacing, false, 60, 120f, 60f, 120f);
+                assertArrayEquals(name, new float[] {120f, 120f, 120f}, top.screen, 0f);
+                assertEquals(name, 60, top.fps);
 
-                // Still at 60 when the stream starts: the stream asks for 120 all the same.
-                float[] rising = startStream(pacing, false, 60f, 60f, 120f);
-                assertArrayEquals(name, new float[] {120f, 120f, 60f}, rising, 0f);
-                if (limit) assertEquals(60, limited(60, rising));
+                // Still at 60 when the stream starts: the stream asks for 120 all the same, uncapped.
+                StreamStart rising = startStream(pacing, false, 60, 60f, 60f, 120f);
+                assertArrayEquals(name, new float[] {120f, 120f, 60f}, rising.screen, 0f);
+                assertEquals(name, 60, rising.fps);
 
-                // Lower refresh rate: the lowest multiple, and the stream's own rate as the vote.
-                float[] lowered = startStream(pacing, true, 120f, 60f, 120f);
-                assertArrayEquals(name, new float[] {60f, 60f, 60f}, lowered, 0f);
-                if (limit) assertEquals(59, limited(60, lowered));
+                // Lower refresh rate: the lowest multiple, the stream's own rate as the vote, the limit at 59.
+                StreamStart lowered = startStream(pacing, true, 60, 120f, 60f, 120f);
+                assertArrayEquals(name, new float[] {60f, 60f, 60f}, lowered.screen, 0f);
+                assertEquals(name, limit ? 59 : 60, lowered.fps);
 
                 // 90 Hz would judder at 60 fps: 60 Hz without the opt-in.
-                float[] judder = startStream(pacing, false, 90f, 60f, 90f);
-                assertArrayEquals(name, new float[] {60f, 60f, 60f}, judder, 0f);
+                StreamStart judder = startStream(pacing, false, 60, 90f, 60f, 90f);
+                assertArrayEquals(name, new float[] {60f, 60f, 60f}, judder.screen, 0f);
+                assertEquals(name, limit ? 59 : 60, judder.fps);
+                assertEquals(name, pacing, judder.pacing);
             }
+        } finally {
+            RefreshSwitchMonitorTest.FakePanel.clear();
+        }
+    }
+
+    /**
+     * Balanced with FPS limit is judged where the screen can go (GameConnection.streamFrameRate): a
+     * 60/120 Hz screen resting at 60 when the stream starts is asked for 120, so 60 fps stays uncapped
+     * and 120 fps is capped at 119. Battery saver or a 60 Hz peak setting may hold the screen at 60,
+     * where 60 fps is capped at 59 and 120 fps goes to Balanced.
+     */
+    @Test
+    @Config(sdk = 34, shadows = {FrameRateSurface.class, RefreshSwitchMonitorTest.FakePanel.class})
+    public void theFpsLimitIsJudgedWhereTheScreenCanGo() {
+        int limit = PreferenceConfiguration.FRAME_PACING_CAP_FPS;
+        Application context = RuntimeEnvironment.getApplication();
+        PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        try {
+            assertEquals(60, startStream(limit, false, 60, 60f, 60f, 120f).fps);
+            StreamStart fast = startStream(limit, false, 120, 60f, 60f, 120f);
+            assertEquals(119, fast.fps);
+            assertEquals(limit, fast.pacing);
+
+            Shadows.shadowOf(power).setIsPowerSaveMode(true);
+            assertEquals(59, startStream(limit, false, 60, 60f, 60f, 120f).fps);
+            StreamStart held = startStream(limit, false, 120, 60f, 60f, 120f);
+            assertEquals(120, held.fps);
+            assertEquals(PreferenceConfiguration.FRAME_PACING_BALANCED, held.pacing);
+            Shadows.shadowOf(power).setIsPowerSaveMode(false);
+
+            Settings.System.putFloat(context.getContentResolver(), "peak_refresh_rate", 60f);
+            assertEquals(59, startStream(limit, false, 60, 60f, 60f, 120f).fps);
+            Settings.System.putFloat(context.getContentResolver(), "peak_refresh_rate", 120f);
+            assertEquals(60, startStream(limit, false, 60, 60f, 60f, 120f).fps);
         } finally {
             RefreshSwitchMonitorTest.FakePanel.clear();
         }
@@ -409,12 +448,25 @@ public class GameFrameRateTest {
         }
     }
 
+    /** What a stream start gave, see startStream. */
+    private static final class StreamStart {
+        /** The chosen mode's refresh (desiredRefreshRate), the surface vote, what prepareDisplayForRendering gave. */
+        final float[] screen;
+        /** The frame rate GameConnection asks the PC for, and the pacing after it. */
+        final int fps, pacing;
+
+        StreamStart(float[] screen, int fps, int pacing) {
+            this.screen = screen;
+            this.fps = fps;
+            this.pacing = pacing;
+        }
+    }
+
     /**
-     * prepareDisplayForRendering, then the base surface vote, for a 60 fps 1080p stream on a screen now at
-     * nowHz whose modes, all of one size, refresh at ratesHz. Returns the refresh of the mode chosen
-     * (desiredRefreshRate), the vote, and the refresh GameConnection judges Balanced with FPS limit by.
+     * prepareDisplayForRendering, the base surface vote and the frame rate GameConnection asks for, for a
+     * 1080p stream at fps on a screen now at nowHz whose modes, all of one size, refresh at ratesHz.
      */
-    private static float[] startStream(int pacing, boolean lowerRefresh, float nowHz, float... ratesHz) {
+    private static StreamStart startStream(int pacing, boolean lowerRefresh, int fps, float nowHz, float... ratesHz) {
         Display.Mode[] modes = new Display.Mode[ratesHz.length];
         Display.Mode now = null;
         for (int i = 0; i < ratesHz.length; i++) {
@@ -426,7 +478,7 @@ public class GameFrameRateTest {
         PreferenceConfiguration prefs = new PreferenceConfiguration();
         prefs.width = 1920;
         prefs.height = 1080;
-        prefs.fps = 60;
+        prefs.fps = fps;
         prefs.framePacing = pacing;
         prefs.reduceRefreshRate = lowerRefresh;
         ReflectionHelpers.setField(activity, "prefConfig", prefs);
@@ -437,17 +489,12 @@ public class GameFrameRateTest {
         try {
             FrameRateSurface vote = Shadow.extract(surface);
             vote(activity, surface);
-            return new float[] {(float) ReflectionHelpers.getField(activity, "desiredRefreshRate"), vote.frameRate, judged};
+            float[] screen = {(float) ReflectionHelpers.getField(activity, "desiredRefreshRate"), vote.frameRate, judged};
+            return new StreamStart(screen, activity.streamConnection.streamFrameRate(judged), prefs.framePacing);
         } finally {
             surface.release();
             texture.release();
         }
-    }
-
-    /** Balanced with FPS limit's frame rate for a stream start from startStream, with nothing holding the screen. */
-    private static int limited(int fps, float[] start) {
-        return FramePacingPolicy.limitedFrameRate(fps,
-                FramePacingPolicy.limitRefreshHz(start[0], start[2], RefreshSwitchDiagnosis.Conditions.NONE));
     }
 
     /** A stream view whose buffers prepareDisplayForRendering can size, and that reads the default display. */
