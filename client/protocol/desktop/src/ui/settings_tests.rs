@@ -2518,7 +2518,6 @@ fn rows_another_layer_can_make_act_stay_with_their_reason() {
         ("Video", "Minimum resolution", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion),
         ("Video", "Minimum frame rate", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion),
         ("Display & image", "Upscaling sharpness", "Not used with Bilinear", |s| s.upscaling = crate::config::Upscaling::Fsr1),
-        ("Controls", "Rumble feel", "Not used with Turn off vibration", |s| s.disable_rumble = false),
         ("Streaming", "Overlay position", "Not used without Performance overlay", |s| s.overlay = true),
         ("Streaming", "Second screen resolution", "Not used without Dual screen mode", |s| s.dual_screen = true),
     ];
@@ -2586,4 +2585,27 @@ fn a_row_set_back_to_its_default_stays_while_its_field_has_focus() {
     f.settle();
     assert!(!f.ctx.text_edit_focused());
     assert!(!shows(&f, label), "gone once focus left: {:?}", f.drawn);
+}
+/// Vibration is one list over the two stored fields: Off keeps the feel, a feel turns vibration on.
+#[test]
+fn vibration_is_one_choice_over_the_two_stored_fields() {
+    use nightjar_policy::rumble::RumbleFeel;
+    let mut s = Settings::default();
+    assert_eq!(vibration_choice(&s), Vibration::Feel(RumbleFeel::Standard));
+    set_vibration_choice(&mut s, Vibration::Feel(RumbleFeel::Strong));
+    assert!(!s.disable_rumble && s.rumble_feel == RumbleFeel::Strong);
+    set_vibration_choice(&mut s, Vibration::Off);
+    assert!(s.disable_rumble && s.rumble_feel == RumbleFeel::Strong, "Off keeps the feel");
+    assert_eq!(vibration_choice(&s), Vibration::Off);
+    // A settings file that had vibration off with any feel reads Off; on, the feel.
+    let old: Settings = serde_json::from_str(r#"{"disable_rumble":true,"rumble_feel":"subtle"}"#).unwrap();
+    assert_eq!(vibration_choice(&old), Vibration::Off);
+    set_vibration_choice(&mut s, Vibration::Feel(RumbleFeel::Subtle));
+    assert!(!s.disable_rumble);
+    assert_eq!(VIBRATION_CHOICES.map(vibration_name), ["Off", "Subtle", "Standard", "Strong"]);
+    // One row for both keys, in Controls, and the old rows are gone.
+    let mut f = settings_with(Settings::default());
+    open_folds(&mut f);
+    in_section(&mut f, "Controls");
+    assert!(shows(&f, "Vibration") && !shows(&f, "Turn off vibration") && !shows(&f, "Rumble feel"), "{:?}", f.drawn);
 }

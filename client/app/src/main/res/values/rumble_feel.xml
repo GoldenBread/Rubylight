@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_list_rumble_feel">Vibration</string>
-    <string name="summary_list_rumble_feel">Off stops every vibration a game asks for: rumble, trigger rumble and haptics. Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.</string>
+    <string name="summary_list_rumble_feel">Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.</string>
     <string name="rumble_feel_standard">Standard</string>
     <string name="rumble_feel_strong">Strong</string>
     <string name="rumble_feel_subtle">Subtle</string>

@@ -1,2 +1,2 @@
 ## en
-- Vibration, Trackpad acceleration and Glide after a flick are one row each on Android and desktop, with Off as the first choice: Vibration is Off, Subtle, Standard or Strong; Trackpad acceleration is Off, Gentle, Medium or Strong; Glide after a flick is Off, Short, Medium or Long. Your earlier choices carry over: a switch that was off becomes Off, and one that was on keeps its strength.
+- Vibration is one row with Off as its first choice (Off, Subtle, Standard, Strong) on Android and desktop; Trackpad acceleration (Off, Gentle, Medium, Strong) and Glide after a flick (Off, Short, Medium, Long) are one row each on Android. Your earlier choices carry over: a switch that was off becomes Off, and one that was on keeps its strength.

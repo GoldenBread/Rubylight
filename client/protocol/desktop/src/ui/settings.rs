@@ -62,7 +62,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
         &["upscaling"], &["upscale_sharpness"], &["align_video_top"], &["full_range"],
         &["host_display", "virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"]],
     &[&["mouse_mode"], &["controllers", "multi_controller"], &["keyboard_follows_text_fields"], &["clipboard_sync"],
-        &["swap_face_buttons"], &["gamepad_quit_combo"], &["deadzone"], &["trigger_deadzone"], &["controller_motion"], &["disable_rumble"], &["rumble_feel"],
+        &["swap_face_buttons"], &["gamepad_quit_combo"], &["deadzone"], &["trigger_deadzone"], &["controller_motion"], &["disable_rumble", "rumble_feel"],
         &["controller_mouse"], &["analog_scrolling"], &["mouse_fixed_step"], &["gamepad_touchpad_as_mouse"], &["background_controllers"],
         &["guide_hold_ms"], &["back_opens_menu", "back_as_guide"], &["stream_menu_buttons"],
         &["mouse_speed"], &["mouse_nav_buttons"], &["native_touchpad"],
@@ -1524,16 +1524,19 @@ impl Launcher {
                 slider(ui, &mut s.trigger_deadzone, 0..=u32::from(crate::gamepad::MAX_TRIGGER_DEADZONE), 1.0, percent, |rail| rail, |field| field.suffix("%"))
             });
             setting_row(ui, s, &mut rows, &["controller_motion"], "Motion controls", "Sends the controller’s gyro and accelerometer to games, for motion aiming. The PC may then treat it as a PlayStation controller; turn it off if games show the wrong buttons.", |ui, s| toggle(ui, &mut s.controller_motion));
-            setting_row(ui, s, &mut rows, &["disable_rumble"], "Turn off vibration", "Stops every vibration a game asks for: rumble, trigger rumble and haptics. Leave it off unless you want no vibration at all.", |ui, s| toggle(ui, &mut s.disable_rumble));
-            // Turn off vibration stops every rumble the feel would shape.
-            // Never left out: a PC's, game's or profile's settings can turn vibration back on for theirs.
-            rows.unused(!s.disable_rumble, || trf("Not used with {}", &[&tr("Turn off vibration")]));
-            setting_row(ui, s, &mut rows, &["rumble_feel"], "Rumble feel", "Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", |ui, s| {
-                Combo::from_id_salt("rumble-feel").selected_text(tr(crate::config::rumble_feel_label(s.rumble_feel))).show_ui(ui, |ui| {
-                    for feel in nightjar_policy::rumble::RumbleFeel::ALL {
-                        ui.selectable_value(&mut s.rumble_feel, feel, tr(crate::config::rumble_feel_label(feel)));
+            // Off stops every vibration a game asks for; the others shape it. Stored in the two fields as before.
+            setting_row(ui, s, &mut rows, &["disable_rumble", "rumble_feel"], "Vibration", "Strong makes weak vibration strong enough for a small motor to show; Subtle caps strong vibration and softens weak. Either one changes the balance of weak and strong rumble the game chose, so leave it on Standard unless vibration is too faint or too harsh.", |ui, s| {
+                let current = vibration_choice(s);
+                let mut choice = current;
+                let response = Combo::from_id_salt("vibration").selected_text(vibration_name(current)).show_ui(ui, |ui| {
+                    for each in VIBRATION_CHOICES {
+                        ui.selectable_value(&mut choice, each, vibration_name(each));
                     }
-                }).response
+                }).response;
+                if choice != current {
+                    set_vibration_choice(s, choice);
+                }
+                response
             });
             setting_row(ui, s, &mut rows, &["controller_mouse"], "Controller mouse mode", "Holding Start switches the controller between gamepad and mouse. Turn it off if that happens by accident in a game; the stream menu’s Mouse tile still switches it.", |ui, s| toggle(ui, &mut s.controller_mouse));
             rows.when(s.controller_mouse);
@@ -2937,7 +2940,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "deadzone" => format!("{}%", s.deadzone),
         "trigger_deadzone" => format!("{}%", s.trigger_deadzone),
         "gamepad_quit_combo" => style.quit_combo(s.gamepad_quit_combo),
-        "rumble_feel" => tr(crate::config::rumble_feel_label(s.rumble_feel)).to_owned(),
+        "disable_rumble" | "rumble_feel" => vibration_name(vibration_choice(s)).to_owned(),
         "stream_menu_buttons" if s.stream_menu_buttons.is_empty() => tr("Default").to_owned(),
         "stream_menu_buttons" => s.stream_menu_buttons.iter().map(|(key, id)| format!("{}: {}", key.cap(), stream_menu_button_name(Some(id)))).collect::<Vec<_>>().join(", "),
         "analog_scrolling" => scrolling_name(s.analog_scrolling).to_owned(),
@@ -3009,7 +3012,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("mouse_mode", "checkbox_absolute_mouse_mode"), ("controllers", "controllers"), ("controller_buttons", "controller_button_mapping"),
     ("controller_test", "controller_test"), ("keyboard_follows_text_fields", "checkbox_keyboard_follows_text_fields"), ("clipboard_sync", "checkbox_clipboard_sync"), ("swap_face_buttons", "checkbox_flip_face_buttons"),
     ("gamepad_quit_combo", "list_gamepad_quit_combo"), ("deadzone", "seekbar_deadzone"), ("trigger_deadzone", "seekbar_trigger_deadzone"),
-    ("controller_motion", "checkbox_gamepad_motion_sensors"), ("disable_rumble", "checkbox_disable_rumble"), ("rumble_feel", "list_rumble_feel"),
+    ("controller_motion", "checkbox_gamepad_motion_sensors"), ("disable_rumble", "list_rumble_feel"), ("rumble_feel", "list_rumble_feel"),
     ("controller_mouse", "checkbox_mouse_emulation"), ("analog_scrolling", "analog_scrolling"),
     ("mouse_fixed_step", "checkbox_mouse_emulation_fixed_step"), ("gamepad_touchpad_as_mouse", "checkbox_gamepad_touchpad_as_mouse"),
     ("guide_hold_ms", "list_guide_menu_hold"), ("back_opens_menu", "back_button"),
@@ -3365,6 +3368,40 @@ fn test_pc_choice(ui: &mut Ui, salt: &str, pcs: &[&Host], pc: &Host, chosen: &mu
 /// What a test's row shows for a PC that is not on the network: its state, no action.
 fn offline(ui: &mut Ui) -> Response {
     ui.label(RichText::new(tr("Offline")).font(regular(text::BODY)).color(ON_SURFACE_VARIANT))
+}
+
+/// Vibration's choices: Off, then the feels. One list over the two stored fields, as on Android.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Vibration {
+    Off,
+    Feel(nightjar_policy::rumble::RumbleFeel),
+}
+
+pub(super) const VIBRATION_CHOICES: [Vibration; 4] = {
+    use nightjar_policy::rumble::RumbleFeel;
+    [Vibration::Off, Vibration::Feel(RumbleFeel::Subtle), Vibration::Feel(RumbleFeel::Standard), Vibration::Feel(RumbleFeel::Strong)]
+};
+
+pub(super) fn vibration_choice(s: &Settings) -> Vibration {
+    if s.disable_rumble { Vibration::Off } else { Vibration::Feel(s.rumble_feel) }
+}
+
+/// Off keeps the stored feel, so turning vibration back on restores it; a feel turns vibration on.
+pub(super) fn set_vibration_choice(s: &mut Settings, choice: Vibration) {
+    match choice {
+        Vibration::Off => s.disable_rumble = true,
+        Vibration::Feel(feel) => {
+            s.disable_rumble = false;
+            s.rumble_feel = feel;
+        }
+    }
+}
+
+pub(super) fn vibration_name(choice: Vibration) -> &'static str {
+    match choice {
+        Vibration::Off => tr("Off"),
+        Vibration::Feel(feel) => tr(crate::config::rumble_feel_label(feel)),
+    }
 }
 
 /// A setting's row, or None while it is not shown (another section, a closed fold, a setting it
