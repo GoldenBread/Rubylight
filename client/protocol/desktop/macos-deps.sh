@@ -48,9 +48,8 @@ fetch() {
 }
 fetch SDL https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20.tar.gz f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f
 fetch ffmpeg https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
-# fetch extracts a fresh copy, but a patch already applied is still recognised and skipped.
 for change in "${ffmpeg_patches[@]}"; do
-  patch -d "$work/ffmpeg" -p1 -R --dry-run -f <"$change" >/dev/null 2>&1 || patch -d "$work/ffmpeg" -p1 -f <"$change" >&2
+  patch -d "$work/ffmpeg" -p1 -f <"$change" >&2
   echo "macos-deps: FFmpeg patch applied: ${change##*/}" >&2
 done
 fetch opus https://ftp.osuosl.org/pub/xiph/releases/opus/opus-1.6.1.tar.gz 6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1

@@ -439,7 +439,7 @@ later) and ships with FFmpeg's licence and source note.
 On macOS, Nightjar's FFmpeg carries a one-line change to libavcodec/videotoolbox.c that
 asks VideoToolbox for Metal-compatible instead of OpenGL-compatible pixel buffers
 (client/protocol/desktop/ffmpeg-patches/macos/), suggested by bit24 in Nightjar issue 141;
-Moonlight's moonlight-deps carries the same change (patches/ffmpeg_metal_vt.patch). It is
+Moonlight's moonlight-deps carries a similar change (patches/ffmpeg_metal_vt.patch). It is
 part of FFmpeg (LGPL-2.1 or later) and ships with FFmpeg's licence in the app.
 
 sonora and WebRTC audio processing

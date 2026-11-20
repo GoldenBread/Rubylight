@@ -1,12 +1,12 @@
 VideoToolbox decoding on macOS asks for Metal-compatible pixel buffers instead of
 OpenGL-texture-compatible ones. Suggested by @bit24 (Nightjar issue 141,
 https://github.com/RamazanKara/nightjar/issues/141), who supplied this one-key change; Moonlight
-carries the same change in moonlight-deps (patches/ffmpeg_metal_vt.patch). See also FFmpeg ticket
+carries a similar change in moonlight-deps (patches/ffmpeg_metal_vt.patch). See also FFmpeg ticket
 10789 (https://trac.ffmpeg.org/ticket/10789).
 
 FFmpeg 9.0.2 sets kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey in the destination pixel
-buffer attributes of every macOS VideoToolbox session, so the decoder produces pictures an OpenGL
-texture can wrap, at a cost on every frame. Nightjar's Mac app has no OpenGL path: it presents
+buffer attributes of every macOS VideoToolbox session, asking for pictures an OpenGL texture can
+wrap, a kind of buffer Nightjar never uses. Nightjar's Mac app has no OpenGL path: it presents
 through SDL's Metal renderer or reads the planes back into memory. Asking for
 kCVPixelBufferMetalCompatibilityKey instead (macOS 10.11 and later) gives IOSurface-backed buffers
 that Metal can use directly. iOS keeps its OpenGL ES key; nothing else changes.
@@ -27,5 +27,5 @@ index 8df8a32..d4d28b5 100644
 -    CFDictionarySetValue(buffer_attributes, kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey, kCFBooleanTrue);
 +    CFDictionarySetValue(buffer_attributes, kCVPixelBufferMetalCompatibilityKey, kCFBooleanTrue);
  #endif
-
+ 
      CFRelease(io_surface_properties);
