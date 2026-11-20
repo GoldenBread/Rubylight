@@ -687,8 +687,8 @@ fn the_section_key_table_is_what_the_page_draws() {
 #[test]
 fn the_developer_rows_and_diagnostics_are_in_debug() {
     // Android's main rows in its order, then PyroWave's, the decoder's, the cursor and Diagnostics.
-    const DEBUG: [&str; 13] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
-        "network_priority", "unbatched_input", "full_range", "pyrowave_decoder", "pyrowave_async_compute", "decoder",
+    const DEBUG: [&str; 12] = ["error_correction", "tell_host_wireless", "tell_host_link_speed",
+        "network_priority", "unbatched_input", "pyrowave_decoder", "pyrowave_async_compute", "decoder",
         "vulkan_video_first", "vulkan_rfi", "videotoolbox_rfi", "cursor_shapes"];
     assert_eq!(SETTINGS_SECTIONS.last(), Some(&"Debug"));
     // Prioritize stream traffic does something on Linux and Windows, so only they draw it; Vulkan
@@ -720,6 +720,8 @@ fn the_developer_rows_and_diagnostics_are_in_debug() {
                 _ => assert!(!drawn.iter().any(|k| DEBUG.contains(k)), "{screen:?} {section}: {drawn:?}"),
             }
             assert_eq!(drawn.contains(&"align_video_top"), section == "Display & image", "{screen:?} {section}: {drawn:?}");
+            // Full color range is a display-matching choice: Display & image, not Debug.
+            assert_eq!(drawn.contains(&"full_range"), section == "Display & image", "{screen:?} {section}: {drawn:?}");
             if section == "Advanced" {
                 // The renderer is Linux's choice for the whole app, so a PC's settings do not have it.
                 assert_eq!(drawn.contains(&"renderer"), cfg!(target_os = "linux") && screen == Screen::Settings, "{drawn:?}");

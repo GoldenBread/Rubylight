@@ -233,7 +233,7 @@ public class AdvancedOptionsTest {
     // SettingsTiersTest allows.
     private static final List<String> DEBUG_MAIN = Arrays.asList(
             "list_fec_choice", "checkbox_tell_host_wireless", "checkbox_tell_host_link_speed",
-            "checkbox_network_priority", "checkbox_unbatched_input", "checkbox_full_range");
+            "checkbox_network_priority", "checkbox_unbatched_input");
     private static final List<String> DEBUG_CONTROLS = new ArrayList<>(DEBUG_MAIN);
     static {
         DEBUG_CONTROLS.addAll(Arrays.asList("checkbox_submit_hint",
@@ -311,7 +311,6 @@ public class AdvancedOptionsTest {
         debugChoices.put("checkbox_tell_host_link_speed", false);
         debugChoices.put("checkbox_network_priority", false);
         debugChoices.put("checkbox_unbatched_input", false);
-        debugChoices.put("checkbox_full_range", true);
         for (boolean legacy : new boolean[] {false, true}) {
             SharedPreferences.Editor editor = prefs().edit().putBoolean(LEGACY_UNLOCK, legacy)
                     .putBoolean("checkbox_unlock_fps", true)

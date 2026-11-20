@@ -79,6 +79,5 @@
         <item>checkbox_tell_host_link_speed</item>
         <item>checkbox_network_priority</item>
         <item>checkbox_unbatched_input</item>
-        <item>checkbox_full_range</item>
     </string-array>
 </resources>

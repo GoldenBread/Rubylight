@@ -247,6 +247,11 @@
             android:entries="@array/video_alignment_names"
             android:entryValues="@array/video_alignment_values"
             android:defaultValue="center" />
+        <com.limelight.preferences.MaterialSwitchPreference
+            android:key="checkbox_full_range"
+            android:title="@string/title_full_range"
+            android:dialogMessage="@string/summary_full_range"
+            android:defaultValue="false" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_host_display" android:title="@string/settings_category_pc_display">
         <!-- The main Display arrangement with Virtual display folded in: writes host_display_location and
@@ -1104,11 +1109,6 @@
             android:title="@string/title_unbatched_input"
             android:dialogMessage="@string/summary_unbatched_input"
             android:defaultValue="true" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_full_range"
-            android:title="@string/title_full_range"
-            android:dialogMessage="@string/summary_full_range"
-            android:defaultValue="false" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_more_debug">
         <Preference android:key="more_debug" android:title="@string/settings_more" android:persistent="false" />

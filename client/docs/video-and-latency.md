@@ -63,7 +63,7 @@ Nightjar for Windows and Linux has both under **Settings → Video**, with the s
 
 Where the hardware decoder has no native 4:4:4, **Automatic** uses packed full chroma, which keeps the hardware decoder: the PC packs 4:4:4 color into an ordinary HEVC or AV1 stream and Nightjar unpacks it on the GPU. It needs the host option (and on Android the **New streaming engine**); the row is hidden with PyroWave, which has its own chroma modes. Before a stream starts, Nightjar checks the PC's modes and this device's decoders: a stream that can't have full chroma starts without it and says why, and when the PC refuses it after the game has started, the stream starts again at once without it and resumes the game. A PC that refused it is asked again after Nightjar or the PC is updated.
 
-**Full color range** (**Settings → Debug** on Android and the desktop) is an explicit override: mismatched range can crush blacks or clip highlights.
+**Full color range** (**Settings → Display & image → Image** on Android and the desktop) is an explicit override: mismatched range can crush blacks or clip highlights.
 
 ## Refresh rate and VRR
 

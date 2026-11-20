@@ -428,16 +428,16 @@ public class SettingsBatchTest {
     }
 
     @Test
-    public void vulkanRenderingSitsInAdvancedAndFullRangeInDebug() {
+    public void vulkanRenderingSitsInAdvancedAndFullRangeInDisplayImage() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen display = section(controller, "display");
             PreferenceScreen advanced = section(controller, "advanced");
             assertNull(display.findPreference("checkbox_vulkan_render"));
             assertEquals("category_advanced_settings", groupOf(advanced, "checkbox_vulkan_render").getKey());
             PreferenceScreen debug = section(controller, "debug");
-            assertNull(display.findPreference("checkbox_full_range"));
+            assertNull(debug.findPreference("checkbox_full_range"));
             assertNull(advanced.findPreference("checkbox_full_range"));
-            assertEquals("category_debug", groupOf(debug, "checkbox_full_range").getKey());
+            assertEquals("category_upscaling", groupOf(display, "checkbox_full_range").getKey());
         }
     }
 

@@ -59,7 +59,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
     &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"], &["vrr_wait"],
         &["frame_pacing", "drop_late_frames", "host_frame_times"], &["vsync"], &["fractional_vsync"],
-        &["upscaling"], &["upscale_sharpness"], &["align_video_top"],
+        &["upscaling"], &["upscale_sharpness"], &["align_video_top"], &["full_range"],
         &["host_display", "virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"]],
     &[&["mouse_mode"], &["controllers", "multi_controller"], &["keyboard_follows_text_fields"], &["clipboard_sync"],
         &["swap_face_buttons"], &["gamepad_quit_combo"], &["deadzone"], &["trigger_deadzone"], &["controller_motion"], &["disable_rumble"], &["rumble_feel"],
@@ -77,7 +77,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
         &["show_debug_settings"], &["ui_zoom"], &["high_contrast"], &["reduce_motion"]],
     &[&["graphics_card"], &["renderer"], &["display_output"], &["video_planes"], &["high_performance_gpu_power"], &["sops"], &["decode_queue_frames"]],
     &[&["error_correction"], &["tell_host_wireless"], &["tell_host_link_speed"],
-        &["network_priority"], &["unbatched_input"], &["full_range"],
+        &["network_priority"], &["unbatched_input"],
         &["pyrowave_decoder"], &["pyrowave_async_compute"],
         &["decoder"], &["software_slices"], &["vulkan_video_first"], &["vulkan_rfi"], &["videotoolbox_rfi"], &["cursor_shapes"],
         &["link_probe"], &["post_stream_decode_time"]],
@@ -1411,6 +1411,7 @@ impl Launcher {
                 }).response
             });
             rows.always();
+            setting_row(ui, s, &mut rows, &["full_range"], "Full color range", "Asks for full-range video, for full shadow and highlight detail. Blacks crush or highlights clip unless the PC and the screen both use full range; leave it off unless you know both do.", |ui, s| toggle(ui, &mut s.full_range));
             rows.group(en("PC display"));
             // A PC's own settings offer the arrangements only if its host takes them (HostDisplayModes);
             // the virtual display switch alone decides elsewhere.
@@ -2072,7 +2073,6 @@ impl Launcher {
             setting_row(ui, s, &mut rows, &["unbatched_input"], "Instant mouse and pen input", "Sends mouse and pen movement at once instead of in batches, for less input delay. A high-rate mouse then uses more CPU and network; leave it on unless that matters.", |ui, s| {
                 toggle(ui, &mut s.unbatched_input)
             });
-            setting_row(ui, s, &mut rows, &["full_range"], "Full color range", "Asks for full-range video, for full shadow and highlight detail. Blacks crush or highlights clip unless the PC and the screen both use full range; leave it off unless you know both do.", |ui, s| toggle(ui, &mut s.full_range));
             rows.group(en("PyroWave"));
             if let Some(reason) = &gpu_decoder_error {
                 rows.note(trf("GPU decoding isn’t available here: {}", &[reason]), *TERTIARY);
@@ -2980,7 +2980,7 @@ pub(super) const MAIN_KEYS: [(&str, &[&str]); 9] = [
     ("streaming", &["checkbox_enable_perf_overlay", "performance_overlay_position", "checkbox_auto_reconnect", "network_tests"]),
     ("app", &["theme", "list_languages", "list_open_on_start", "checkbox_quick_resume", "pin_lock", "help", "report_problem", "check_updates_now"]),
     ("advanced", &["checkbox_rust_engine", "low_latency_decoding", "low_latency_customize", "gpu_driver", "checkbox_gpu_max_clocks", "checkbox_texture_view", "checkbox_vulkan_render"]),
-    ("debug", &["list_fec_choice", "checkbox_tell_host_wireless", "checkbox_tell_host_link_speed", "checkbox_network_priority", "checkbox_unbatched_input", "checkbox_full_range"]),
+    ("debug", &["list_fec_choice", "checkbox_tell_host_wireless", "checkbox_tell_host_link_speed", "checkbox_network_priority", "checkbox_unbatched_input"]),
 ];
 
 /// Every desktop row on both platforms and the Android preference it is: a setting's first key or
