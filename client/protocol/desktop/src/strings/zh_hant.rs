@@ -1600,7 +1600,7 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", "未使用：此顯示器的 {} Hz 不是畫面更新率的 2 到 4 倍"),
     ("Not used at the {} Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate", "未使用：全螢幕切換到的 {} Hz 不是畫面更新率的 2 到 4 倍"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "在電腦上選取文字欄位時開啟螢幕鍵盤，之後自動關閉。需要電腦能回報文字欄位；關閉後由你自行開啟鍵盤。"),
-    ("Fractional V-Sync", "分數 V-Sync"),
+    ("On, even cadence", "開啟，節奏均勻"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Each frame waits for its turn, which adds delay; turn it on if motion judders with V-Sync.", "螢幕更新率是串流帧率的 2 到 4 倍時(120 Hz 上的 60 fps),每帧顯示相同次數的更新,讓動作保持均勻。每個畫面都要等待自己的輪次,這會增加延遲;如果開啟 V-Sync 後動作卡頓,請開啟。"),
     ("The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", "電腦會從符合串流的虛擬顯示器或其本身的螢幕進行串流。「電腦本身的設定」保留電腦的顯示設定，「虛擬顯示器」將排列交由電腦決定，其他選項則將其放在電腦螢幕旁，或在串流期間關閉這些螢幕。需要電腦支援。"),
     ("This PC doesn’t take display arrangements: it streams as shown here, not as {}", "這台電腦不支援顯示器排列：它會依此處顯示的方式串流，而不是「{}」"),

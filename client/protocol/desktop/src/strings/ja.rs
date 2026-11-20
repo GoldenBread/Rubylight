@@ -1600,7 +1600,7 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", "使用されません: このディスプレイの {} Hz はフレームレートの 2～4 倍ではありません"),
     ("Not used at the {} Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate", "使用されません: 全画面表示で切り替わる {} Hz はフレームレートの 2～4 倍ではありません"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "PC のテキスト欄を選ぶとスクリーンキーボードが開き、入力が終わると閉じます。テキスト欄を通知する PC が必要です。自分で開きたい場合はオフにしてください。"),
-    ("Fractional V-Sync", "分数V-Sync"),
+    ("On, even cadence", "オン（均等なリズム）"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Each frame waits for its turn, which adds delay; turn it on if motion judders with V-Sync.", "画面のリフレッシュレートがストリームのフレームレートの2〜4倍のとき(120 Hzで60 fps)、各フレームを同じ回数のリフレッシュだけ表示し、動きを均一に保ちます。各フレームが自分の順番を待つため遅延が増えます。V-Syncで動きがカクつく場合にオンにしてください。"),
     ("The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", "PC はストリームに合った仮想ディスプレイ、または自身のモニターから配信します。「PC 自体の設定」は PC のディスプレイ設定のままにし、「仮想ディスプレイ」は配置を PC に任せ、ほかの選択肢は PC のモニターの横に置くか、ストリーム中はモニターをオフにします。PC の対応が必要です。"),
     ("This PC doesn’t take display arrangements: it streams as shown here, not as {}", "この PC はディスプレイの配置に対応していません。{} ではなく、ここに表示されているとおりに配信します"),

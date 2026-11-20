@@ -1600,7 +1600,7 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Not used at this display’s {} Hz: that isn’t 2 to 4 times the frame rate", "사용되지 않음: 이 디스플레이의 {} Hz는 프레임 속도의 2~4배가 아닙니다"),
     ("Not used at the {} Hz Fullscreen switches to: that isn’t 2 to 4 times the frame rate", "사용되지 않음: 전체 화면이 전환하는 {} Hz는 프레임 속도의 2~4배가 아닙니다"),
     ("Opens the on-screen keyboard when you select a text field on the PC and closes it after. Needs a PC that reports text fields; turn off to open it yourself.", "PC에서 텍스트 필드를 선택하면 화면 키보드가 열리고, 입력이 끝나면 닫힙니다. 텍스트 필드를 알려 주는 PC가 필요합니다. 직접 열려면 끄세요."),
-    ("Fractional V-Sync", "분수 V-Sync"),
+    ("On, even cadence", "사용, 균일한 간격"),
     ("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Each frame waits for its turn, which adds delay; turn it on if motion judders with V-Sync.", "화면 주사율이 스트림 프레임 속도의 2~4배일 때(120 Hz에서 60 fps) 모든 프레임을 같은 횟수의 새로 고침 동안 보여 주어 움직임이 고르게 유지됩니다. 각 프레임이 자기 차례를 기다리므로 지연이 늘어납니다. V-Sync에서 움직임이 끄겨 보이면 켜세요."),
     ("The PC streams from a virtual display that matches the stream, or from its own monitor. The PC’s own setting keeps the PC’s display settings, Virtual display leaves the arrangement to the PC, and the other choices place it beside the PC’s monitors or switch them off during the stream. Needs PC support.", "PC는 스트림에 맞는 가상 디스플레이 또는 자체 모니터에서 스트리밍합니다. 'PC 자체 설정'은 PC의 디스플레이 설정을 유지하고, '가상 디스플레이'는 배치를 PC에 맡기며, 나머지 선택지는 PC 모니터 옆에 두거나 스트리밍 중 모니터를 끕니다. PC 지원이 필요합니다."),
     ("This PC doesn’t take display arrangements: it streams as shown here, not as {}", "이 PC는 디스플레이 배치를 지원하지 않습니다. {}이(가) 아니라 여기 표시된 대로 스트리밍합니다"),

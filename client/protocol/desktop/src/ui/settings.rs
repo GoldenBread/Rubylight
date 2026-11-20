@@ -58,7 +58,7 @@ pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
     &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"], &["vrr_wait"],
-        &["frame_pacing", "drop_late_frames", "host_frame_times"], &["vsync"], &["fractional_vsync"],
+        &["frame_pacing", "drop_late_frames", "host_frame_times"], &["vsync", "fractional_vsync"],
         &["upscaling"], &["upscale_sharpness"], &["align_video_top"], &["full_range"],
         &["host_display", "virtual_display"], &["virtual_display_scale"], &["virtual_display_dpi"]],
     &[&["mouse_mode"], &["controllers", "multi_controller"], &["keyboard_follows_text_fields"], &["clipboard_sync"],
@@ -1360,24 +1360,36 @@ impl Launcher {
             rows.group(en("Refresh rate"));
             // VRR off, as Frame pacing; a pacing that waits for the refresh keeps it on, and so do
             // the PC's frame times.
-            rows.when(!vrr && !s.frame_pacing.forces_vsync() && !s.host_frame_times);
-            setting_row(ui, s, &mut rows, &["vsync"], "V-Sync", "Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you.", |ui, s| toggle(ui, &mut s.vsync));
-            rows.always();
-            // Under V-Sync, which it needs; it holds nothing with VRR, with the PC's frame times,
-            // which place each picture themselves (`present::fractional_vsync_stands_aside`), or
-            // where the display says not when the last picture was shown (`Streaming::held_times`),
-            // and says so there (client/AGENTS.md).
-            rows.when(s.vsync || s.frame_pacing.forces_vsync() || vrr || s.host_frame_times);
-            if vrr {
-                unused_with(&mut rows, tr("Variable refresh rate"));
-            } else if s.host_frame_times {
-                unused_with(&mut rows, frame_pacing_choice_name(FramePacingChoice::HostTimes));
-            } else if !fractional_vsync_applies(&video_driver()) {
-                rows.note(tr("Not used: this desktop doesn’t report when pictures are shown").to_owned(), *TERTIARY);
-            } else if let Some(reason) = fractional_vsync_display_reason(s, &display, &self.fullscreen_modes, cfg!(windows), crate::kms::active()) {
-                rows.note(reason, *TERTIARY);
+            // One row for V-Sync and Fractional V-Sync: Off, On, or On with an even cadence. The even cadence
+            // holds nothing with VRR, with the PC's frame times, which place each picture themselves
+            // (`present::fractional_vsync_stands_aside`), or where the display says not when the last
+            // picture was shown (`Streaming::held_times`), and says so there (client/AGENTS.md); the row
+            // is left out then unless changed, and while V-Sync is off the even cadence is not in play.
+            let cadence_in_play = s.vsync || s.frame_pacing.forces_vsync() || vrr || s.host_frame_times;
+            if cadence_in_play {
+                if vrr {
+                    unused_with(&mut rows, tr("Variable refresh rate"));
+                } else if s.host_frame_times {
+                    unused_with(&mut rows, frame_pacing_choice_name(FramePacingChoice::HostTimes));
+                } else if !fractional_vsync_applies(&video_driver()) {
+                    rows.note(tr("Not used: this desktop doesn’t report when pictures are shown").to_owned(), *TERTIARY);
+                } else if let Some(reason) = fractional_vsync_display_reason(s, &display, &self.fullscreen_modes, cfg!(windows), crate::kms::active()) {
+                    rows.note(reason, *TERTIARY);
+                }
             }
-            setting_row(ui, s, &mut rows, &["fractional_vsync"], "Fractional V-Sync", "On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Each frame waits for its turn, which adds delay; turn it on if motion judders with V-Sync.", |ui, s| toggle(ui, &mut s.fractional_vsync));
+            setting_row(ui, s, &mut rows, &["vsync", "fractional_vsync"], "V-Sync", &format!("{} {}", tr("Waits for the screen’s refresh, so the picture never tears; the wait adds latency. Turn it off for the lowest latency if tearing doesn’t bother you."), tr("On a screen at 2 to 4 times the stream’s frame rate (60 fps on 120 Hz), shows every frame for the same number of refreshes, so motion stays even. Each frame waits for its turn, which adds delay; turn it on if motion judders with V-Sync.")), |ui, s| {
+                let current = vsync_choice(s);
+                let mut choice = current;
+                let response = Combo::from_id_salt("vsync").selected_text(vsync_name(current)).show_ui(ui, |ui| {
+                    for each in VSYNC_CHOICES {
+                        ui.selectable_value(&mut choice, each, vsync_name(each));
+                    }
+                }).response;
+                if choice != current {
+                    set_vsync_choice(s, choice);
+                }
+                response
+            });
             rows.always();
             rows.group(en("Image"));
             setting_row(ui, s, &mut rows, &["upscaling"], "Upscaling", if cfg!(target_os = "macos") { en("How a stream smaller than the screen is enlarged. FSR, SGSR and MetalFX sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare; MetalFX also adds a few milliseconds of delay. HDR streams are enlarged without them.") } else { en("How a stream smaller than the screen is enlarged. FSR and SGSR sharpen edges at some GPU time and battery; Temporal reuses earlier frames to rebuild detail, but in our tests looked softer than SGSR at three to four times its GPU work, so leave SGSR on unless you want to compare. HDR streams are enlarged without them.") }, |ui, s| {
@@ -2914,6 +2926,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "client_roaming" | "roaming_metered" => tr(roaming_name(Roaming::from_saved(s.client_roaming, s.roaming_metered))).to_owned(),
         "prefer_yuv444" | "experimental_packed_444" => sharp_color_name(sharp_color(s)).to_owned(),
         "vrr" | "present_at_host_times" | "vrr_tear_free" => vrr_choice_name(vrr_choice(s)).to_owned(),
+        "vsync" | "fractional_vsync" => vsync_name(vsync_choice(s)).to_owned(),
         "align_video_top" => video_position_name(s.align_video_top).to_owned(),
         "width" | "height" if s.width == 0 => trf("Native ({}x{})", &[&display.width, &display.height]),
         "width" | "height" => format!("{}x{}", s.width, s.height),
@@ -3405,6 +3418,40 @@ pub(super) fn vibration_name(choice: Vibration) -> &'static str {
     match choice {
         Vibration::Off => tr("Off"),
         Vibration::Feel(feel) => tr(crate::config::rumble_feel_label(feel)),
+    }
+}
+
+/// V-Sync's choices: Off, On, or On with every frame held the same number of refreshes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum VsyncChoice {
+    Off,
+    On,
+    EvenCadence,
+}
+
+pub(super) const VSYNC_CHOICES: [VsyncChoice; 3] = [VsyncChoice::Off, VsyncChoice::On, VsyncChoice::EvenCadence];
+
+/// A pacing that waits for the refresh keeps V-Sync on whatever the switch holds.
+pub(super) fn vsync_choice(s: &Settings) -> VsyncChoice {
+    if !s.vsync && !s.frame_pacing.forces_vsync() { VsyncChoice::Off }
+    else if s.fractional_vsync { VsyncChoice::EvenCadence }
+    else { VsyncChoice::On }
+}
+
+/// Off keeps the even-cadence field, so it is not lost to a look at Off; On and the cadence set both.
+pub(super) fn set_vsync_choice(s: &mut Settings, choice: VsyncChoice) {
+    match choice {
+        VsyncChoice::Off => s.vsync = false,
+        VsyncChoice::On => { s.vsync = true; s.fractional_vsync = false; }
+        VsyncChoice::EvenCadence => { s.vsync = true; s.fractional_vsync = true; }
+    }
+}
+
+pub(super) fn vsync_name(choice: VsyncChoice) -> &'static str {
+    match choice {
+        VsyncChoice::Off => tr("Off"),
+        VsyncChoice::On => tr("On"),
+        VsyncChoice::EvenCadence => tr("On, even cadence"),
     }
 }
 

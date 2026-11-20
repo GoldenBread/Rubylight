@@ -654,7 +654,9 @@ fn the_section_key_table_is_what_the_page_draws() {
         "rtx_hdr" | "rtx_video" => false,
         // Only where a saved PC offers more than stock packets; the fixture PC has no serverinfo.
         "jumbo_frames" => false,
-        "frame_pacing" | "vsync" => !vrr,
+        "frame_pacing" => !vrr,
+        // One row with Fractional V-Sync, saying why the even cadence holds nothing (VRR, macOS, X11).
+        "vsync" => true,
         // Everywhere, saying why where it holds nothing (VRR, macOS, X11).
         "fractional_vsync" => true,
         "renderer" | "display_output" | "video_planes" | "high_performance_gpu_power" | "vulkan_video_first" | "vulkan_rfi" => cfg!(target_os = "linux"),
@@ -1971,28 +1973,49 @@ fn a_games_settings_offer_the_rtx_enhancements_its_host_reports() {
     }
 }
 
-/// Fractional V-Sync stays where it holds nothing and says why (client/AGENTS.md): VRR, the PC's
+/// V-Sync's even cadence says why where it holds nothing (client/AGENTS.md): VRR, the PC's
 /// frame times, and a desktop that tells no time a picture was shown.
 #[test]
-fn fractional_vsync_says_why_where_it_holds_nothing() {
+fn the_even_cadence_says_why_where_it_holds_nothing() {
     let mut f = settings_with(Settings { vsync: true, vrr: false, ..Settings::default() });
     f.l.tearing_supported = true;
     open_folds(&mut f);
     in_section(&mut f, "Display & image");
-    assert!(shows(&f, "Fractional V-Sync"), "{:?}", f.drawn);
+    assert!(shows(&f, "V-Sync") && !shows(&f, "Fractional V-Sync"), "{:?}", f.drawn);
     let desktop_note = !fractional_vsync_applies(&video_driver());
     assert_eq!(shows(&f, "Not used: this desktop doesn’t report when pictures are shown"), desktop_note, "{:?}", f.drawn);
     f.l.settings.host_frame_times = true;
     f.settle();
-    assert!(shows(&f, "Fractional V-Sync") && shows(&f, "Not used with PC’s frame times"), "{:?}", f.drawn);
+    assert!(shows(&f, "V-Sync") && shows(&f, "Not used with PC’s frame times"), "{:?}", f.drawn);
     f.l.settings.host_frame_times = false;
     f.l.settings.vrr = true;
     f.settle();
-    assert!(shows(&f, "Fractional V-Sync") && shows(&f, "Not used with Variable refresh rate"), "{:?}", f.drawn);
+    assert!(shows(&f, "V-Sync") && shows(&f, "Not used with Variable refresh rate"), "{:?}", f.drawn);
     f.l.settings.vrr = false;
     f.l.settings.vsync = false;
     f.settle();
-    assert!(!shows(&f, "Fractional V-Sync"), "under V-Sync, which is off: {:?}", f.drawn);
+    assert!(shows(&f, "V-Sync") && !shows(&f, "Not used: this desktop doesn’t report when pictures are shown"), "V-Sync off: no cadence note: {:?}", f.drawn);
+}
+
+/// One list over the two stored fields: Off, On, On with an even cadence.
+#[test]
+fn v_sync_is_one_choice_over_the_two_stored_fields() {
+    let mut s = Settings { vsync: true, fractional_vsync: false, ..Settings::default() };
+    assert_eq!(vsync_choice(&s), VsyncChoice::On);
+    set_vsync_choice(&mut s, VsyncChoice::EvenCadence);
+    assert!(s.vsync && s.fractional_vsync);
+    assert_eq!(vsync_choice(&s), VsyncChoice::EvenCadence);
+    set_vsync_choice(&mut s, VsyncChoice::Off);
+    assert!(!s.vsync && s.fractional_vsync, "Off keeps the cadence field");
+    assert_eq!(vsync_choice(&s), VsyncChoice::Off, "V-Sync off wins over a stored cadence");
+    set_vsync_choice(&mut s, VsyncChoice::On);
+    assert!(s.vsync && !s.fractional_vsync);
+    // Stored files read as before: both fields keep their names and meaning.
+    let old: Settings = serde_json::from_str(r#"{"vsync":true,"fractional_vsync":true}"#).unwrap();
+    assert_eq!(vsync_choice(&old), VsyncChoice::EvenCadence);
+    let off: Settings = serde_json::from_str(r#"{"vsync":false,"fractional_vsync":true}"#).unwrap();
+    assert_eq!(vsync_choice(&off), VsyncChoice::Off);
+    assert_eq!(VSYNC_CHOICES.map(vsync_name), ["Off", "On", "On, even cadence"]);
 }
 
 /// The display's refresh has to be 2 to 4 times the frame rate, and Windows' Fullscreen without VRR
