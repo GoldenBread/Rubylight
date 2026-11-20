@@ -217,6 +217,22 @@ struct Ask {
     /// The probe keeps the answer.
     keep: bool,
 }
+/// The encoder's kept ROI map surface and the grid it was allocated for.
+/// Refilled for each frame that carries a map, as AMD's SimpleROI sample
+/// refills one surface; a grid of another size replaces it, and the
+/// encoder releases the last surface when it ends.
+pub(crate) struct MapSurface(*mut AMFSurface, (u32, u32));
+impl Drop for MapSurface {
+    fn drop(&mut self) {
+        // SAFETY: Self owns the one reference `attach` kept, and SetProperty
+        // acquired its own for every frame it carried; the encoder releases
+        // this one while the AMF runtime is loaded.
+        unsafe {
+            ((*(*self.0).pVtbl).Release.unwrap())(self.0);
+        }
+    }
+}
+
 /// The encoder's focus state.
 #[derive(Default)]
 pub(crate) struct State {
@@ -233,6 +249,8 @@ pub(crate) struct State {
     pub(crate) qp_count: u32,
     /// The probe's map, attached instead of the converter's.
     pub(crate) fixed: Option<Grid>,
+    /// The ROI map's kept surface ([`attach`]).
+    pub(crate) map: Option<MapSurface>,
     /// The probe asks every frame for feedback.
     keep: bool,
     asked: VecDeque<Ask>,
@@ -281,6 +299,12 @@ impl State {
         self.settings = None;
         self.failure = Some(error);
     }
+    /// Release the kept ROI map surface, as the encoder ends with the AMF
+    /// runtime still loaded. Frames already submitted hold AMF's own
+    /// references to it.
+    pub(crate) fn release_map(&mut self) {
+        self.map.take();
+    }
 }
 
 /// SetProperty on an input surface.
@@ -299,13 +323,16 @@ unsafe fn set(surface: *mut AMFSurface, name: &'static str, value: AMFVariantStr
         .with_context(|| format!("AMF surface property {name}"))
     }
 }
-/// Put `map` on `surface` as the codec's ROI map, as AMD's SimpleROI does: a
-/// host GRAY32 surface of the grid, filled row by row at its pitch.
+/// Put `rows` on `surface` as the codec's ROI map, as AMD's SimpleROI does:
+/// a host GRAY32 surface of the grid, filled row by row at its pitch. The
+/// surface is kept in `kept` and refilled for each frame, so only a grid
+/// of another size allocates again.
 ///
 /// # Safety
 /// `context` and `surface` are this encoder's, live, and not yet submitted.
 pub(crate) unsafe fn attach(
     context: *mut AMFContext,
+    kept: &mut Option<MapSurface>,
     surface: *mut AMFSurface,
     codec: u8,
     rows: &[u32],
@@ -317,21 +344,31 @@ pub(crate) unsafe fn attach(
         "encoder focus map of {} values is not {width}x{height}",
         rows.len()
     );
-    // SAFETY: The context allocates an owned host surface; plane 0's native
-    // memory holds `height` rows of `pitch` bytes, checked to fit a row, until
-    // our reference is released after SetProperty took its own.
+    if kept.as_ref().is_none_or(|map| map.1 != (width, height)) {
+        // SAFETY: The live context allocates an owned host surface; the old
+        // one, if any, is released as this replaces it, and the last one in
+        // `Encoder::drop`, both with the runtime loaded.
+        unsafe {
+            let mut map = ptr::null_mut();
+            check(((*(*context).pVtbl).AllocSurface.unwrap())(
+                context,
+                AMF_MEMORY_TYPE_AMF_MEMORY_HOST,
+                AMF_SURFACE_FORMAT_AMF_SURFACE_GRAY32,
+                width as i32,
+                height as i32,
+                &mut map,
+            ))
+            .context("AMF ROI map surface")?;
+            anyhow::ensure!(!map.is_null(), "AMF returned no ROI map surface");
+            kept.replace(MapSurface(map, (width, height)));
+        }
+    }
+    let map = kept.as_ref().expect("just allocated").0;
+    // SAFETY: The kept surface is live host memory of the grid's size until
+    // the encoder ends; plane 0's native memory holds `height` rows of
+    // `pitch` bytes, checked to fit a row, and SetProperty acquires its own
+    // reference to the surface before returning.
     unsafe {
-        let mut map = ptr::null_mut();
-        check(((*(*context).pVtbl).AllocSurface.unwrap())(
-            context,
-            AMF_MEMORY_TYPE_AMF_MEMORY_HOST,
-            AMF_SURFACE_FORMAT_AMF_SURFACE_GRAY32,
-            width as i32,
-            height as i32,
-            &mut map,
-        ))
-        .context("AMF ROI map surface")?;
-        anyhow::ensure!(!map.is_null(), "AMF returned no ROI map surface");
         let filled = (|| -> Result<()> {
             let plane = ((*(*map).pVtbl).GetPlaneAt.unwrap())(map, 0);
             anyhow::ensure!(!plane.is_null(), "AMF ROI map surface has no plane");
@@ -360,7 +397,6 @@ pub(crate) unsafe fn attach(
                 },
             )
         })();
-        ((*(*map).pVtbl).Release.unwrap())(map);
         filled
     }
 }
@@ -625,6 +661,7 @@ impl Encoder {
             unsafe {
                 attach(
                     context,
+                    &mut self.focus.map,
                     surface,
                     codec,
                     &fixed.values,
@@ -678,7 +715,7 @@ impl Encoder {
         };
         check_grid(codec, self.config.coded_size(), (view.width, view.height))?;
         // SAFETY: Per this function's contract.
-        unsafe { attach(context, surface, codec, view.rows, view.width, view.height)? };
+        unsafe { attach(context, &mut self.focus.map, surface, codec, view.rows, view.width, view.height)? };
         let Some(every) = self.focus.verify else {
             return Ok(());
         };
