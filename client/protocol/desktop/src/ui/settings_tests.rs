@@ -736,7 +736,7 @@ fn the_developer_rows_and_diagnostics_are_in_debug() {
         }
     }
     f.l.go(Screen::Settings);
-    for (query, row) in [("full color range", "Full color range"), ("error correction", "Error correction"), ("local cursor", "Local cursor")] {
+    for (query, row) in [("error correction", "Error correction"), ("local cursor", "Local cursor")] {
         f.l.settings_view.query = query.into();
         f.settle();
         // A search lists "Debug" with the switch off; the section's count says the row was found there.
@@ -753,10 +753,10 @@ fn settings_read_with(changed: Settings) -> Frames {
     f
 }
 
-/// Frame pacing and V-Sync are drawn with Variable refresh rate off, and VRR's way of showing
-/// frames is its own row's choice, with no rows of its own: a gate over some rows never carries
-/// over to the rows after them. A pacing that waits for the refresh keeps V-Sync on, so its row
-/// goes; where the screen can't tear, VRR has no row and works as off.
+/// Frame pacing is drawn with Variable refresh rate off, and VRR's way of showing frames is its own
+/// row's choice, with no rows of its own: a gate over some rows never carries over to the rows after
+/// them. V-Sync is one row with its even cadence, so it stays and says why it holds nothing under
+/// VRR; where the screen can't tear, VRR has no row and works as off.
 #[test]
 fn the_vrr_rows_follow_their_own_gates() {
     let (vrr_row, pacing, vsync) = ("Variable refresh rate", "Frame pacing", "V-Sync");
@@ -770,12 +770,14 @@ fn the_vrr_rows_follow_their_own_gates() {
     for vrr in [false, true] {
         let f = display(Settings { vrr, frame_pacing: crate::config::FramePacing::Latency, ..Settings::default() }, true);
         assert!(shows(&f, vrr_row), "{:?}", f.drawn);
-        assert_eq!((shows(&f, pacing), shows(&f, vsync)), (!vrr, !vrr), "VRR {vrr}: {:?}", f.drawn);
+        // V-Sync is one row with its even cadence, which says why it holds nothing under VRR.
+        assert_eq!((shows(&f, pacing), shows(&f, vsync)), (!vrr, true), "VRR {vrr}: {:?}", f.drawn);
+        assert_eq!(shows(&f, "Not used with Variable refresh rate"), vrr, "VRR {vrr}: {:?}", f.drawn);
         assert!(!shows(&f, "Real VRR") && !shows(&f, "Tear-free VRR"), "VRR {vrr}: one row: {:?}", f.drawn);
         assert!(shows(&f, "Upscaling"), "VRR {vrr}: the next group is its own");
     }
     let f = display(Settings { vrr: false, frame_pacing: crate::config::FramePacing::Balanced, ..Settings::default() }, true);
-    assert!(shows(&f, pacing) && !shows(&f, vsync), "a pacing that waits keeps V-Sync on: {:?}", f.drawn);
+    assert!(shows(&f, pacing) && shows(&f, vsync), "a pacing that waits keeps V-Sync on, its cadence still a choice: {:?}", f.drawn);
     if cfg!(windows) {
         let f = display(Settings { vrr: true, frame_pacing: crate::config::FramePacing::Latency, ..Settings::default() }, false);
         assert!(!shows(&f, vrr_row) && shows(&f, pacing) && shows(&f, vsync), "{:?}", f.drawn);
@@ -1835,15 +1837,15 @@ fn frame_pacing_reads_and_writes_its_three_keys_as_one_choice() {
     }
 }
 
-/// The row shows while VRR is off, with no row of its own for Balanced's newest frame, and V-Sync
-/// gives way to a pacing that waits for the refresh and to the PC's frame times.
+/// The row shows while VRR is off, with no row of its own for Balanced's newest frame; V-Sync, one
+/// row with its even cadence, stays beside a pacing that waits for the refresh and the PC's frame times.
 #[test]
 fn frame_pacing_is_one_row_and_the_pcs_frame_times_wait_for_the_refresh() {
     for (vrr, host_frame_times, pacing, frame_pacing_shown, vsync_shown) in [
         (false, false, crate::config::FramePacing::Latency, true, true),
-        (false, false, crate::config::FramePacing::Balanced, true, false),
-        (false, true, crate::config::FramePacing::Latency, true, false),
-        (true, true, crate::config::FramePacing::Latency, false, false),
+        (false, false, crate::config::FramePacing::Balanced, true, true),
+        (false, true, crate::config::FramePacing::Latency, true, true),
+        (true, true, crate::config::FramePacing::Latency, false, true),
     ] {
         let mut f = settings_with(Settings { vrr, host_frame_times, frame_pacing: pacing, ..Settings::default() });
         f.l.tearing_supported = true;
@@ -2466,11 +2468,11 @@ fn row_counts_at_defaults() {
 /// "Group incoming video packets" and none of Linux' renderer, display output, video planes and
 /// GPU power rows; Windows has rows of its own in their place.
 const ROWS_AT_DEFAULTS: usize = if cfg!(windows) {
-    99
+    98
 } else if cfg!(target_os = "macos") {
-    95
+    94
 } else {
-    100
+    99
 };
 
 /// Debug is listed only with "Show debug settings", while one of its settings is changed, while it
@@ -2509,7 +2511,7 @@ fn a_pcs_settings_list_debug_by_the_same_rule() {
     f.l.open_host_settings(id, &f.hosts.list[0]);
     f.settle();
     assert!(!rail_entries(&f).contains(&"Debug"), "{:?}", rail_entries(&f));
-    f.l.edit_overrides = serde_json::from_str(r#"{"full_range":true}"#).unwrap();
+    f.l.edit_overrides = serde_json::from_str(r#"{"link_probe":true}"#).unwrap();
     f.settle();
     assert!(rail_entries(&f).contains(&"Debug"), "the PC sets one: {:?}", rail_entries(&f));
 }
