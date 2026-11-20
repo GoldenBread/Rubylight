@@ -2149,6 +2149,24 @@ host_adaptive_pacing = true
             .any(|(key, _)| *key == "host_adaptive_bitrate")
     );
 }
+
+/// The phase lock always stands aside for a game capped at the stream rate,
+/// so the setting that asked it to hold is dropped wherever it is stored.
+#[test]
+fn the_phase_lock_hold_setting_is_dropped() {
+    let c = Config::parse("phase_lock_hold_at_stream_rate = true\n").unwrap();
+    assert!(!c.values.contains_key("phase_lock_hold_at_stream_rate"));
+    assert!(!c.text().contains("phase_lock_hold_at_stream_rate"));
+    let mut config = Config::default();
+    change(&mut config, "phase_lock_hold_at_stream_rate", "true").unwrap();
+    assert!(!config.values.contains_key("phase_lock_hold_at_stream_rate"));
+    assert!(removed("phase_lock_hold_at_stream_rate"));
+    assert!(!override_allowed("phase_lock_hold_at_stream_rate"));
+    // An app's or a device's overrides lose it and keep the rest.
+    let mut layer = serde_json::json!({"phase_lock_hold_at_stream_rate": true, "max_bitrate": 50000});
+    assert!(migrate_overrides(layer.as_object_mut().unwrap()));
+    assert_eq!(layer, serde_json::json!({"max_bitrate": 50000}));
+}
 /// An app record from Apollo, Vibepollo or an earlier Rubylight, as
 /// apps.json holds it: removed switches go, renamed ones and renamed or
 /// folded overrides take their current names in the app and in its devices'

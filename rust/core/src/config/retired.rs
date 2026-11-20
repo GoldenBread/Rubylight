@@ -151,6 +151,10 @@ pub const REMOVED_KEYS: &[&str] = &[
     // The opt-in host bitrate controller; link-rate adaptation and
     // congestion control run in its place.
     "host_adaptive_bitrate",
+    // Holding a capped game's frames for the device's refresh: the hold cost
+    // 8 to 11 ms on a Shield TV, so the phase lock always stands aside for a
+    // source at the stream rate or slower.
+    "phase_lock_hold_at_stream_rate",
 ];
 /// The settings of the removed Quick Sync and software encoders.
 pub const REMOVED_PREFIXES: &[&str] = &["qsv_", "sw_"];

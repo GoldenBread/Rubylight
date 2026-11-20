@@ -536,7 +536,7 @@ fn phase_interval(
             client = %s.launch.client.name,
             picture_ns = picture.map_or(0, |picture| picture.as_nanos() as u64),
             stream_period_ns = period.as_nanos() as u64,
-            "phase lock stands aside: the source presents at the stream rate, so frames are claimed as they arrive instead of held (phase_lock_hold_at_stream_rate = true holds them)"
+            "phase lock stands aside: the source presents at the stream rate, so frames are claimed as they arrive instead of held"
         ),
         Some(false) if sync.reporting(at) => {
             tracing::info!(client = %s.launch.client.name, "phase lock steers frames again")

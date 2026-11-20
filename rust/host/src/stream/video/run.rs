@@ -4,10 +4,6 @@
 use super::setup::{Captured, Configured, Started, StreamDisplay};
 use super::*;
 
-/// Off by default: the phase lock stands aside for a source at the stream rate
-/// (`PhaseSync::interval`). On, it holds such frames for the client's refresh.
-const PHASE_LOCK_HOLD_AT_RATE: &str = "phase_lock_hold_at_stream_rate";
-
 // The moved code still borrows `m`, `h`, `s` and the other values it now receives by
 // reference, as it did when it owned them.
 #[allow(clippy::needless_borrow)]
@@ -138,7 +134,6 @@ impl SessionThread<'_> {
         let mut backend_due = false;
         let mut source_phase = source_phase_eligible
             && butterpollo_core::stream_policy::source_phase(&c, backend);
-        s.phase_sync.lock().unwrap().set_hold_at_rate(c.boolean(PHASE_LOCK_HOLD_AT_RATE, false));
         let mut calibration_due = s.launch.client.extra.get("hdr_profile")
             .and_then(serde_json::Value::as_str).filter(|profile| !profile.is_empty())
             .map(|_| Instant::now() + Duration::from_secs(30));
@@ -824,7 +819,6 @@ impl SessionThread<'_> {
                         config_version = version;
                         runtime_config = base_config.clone();
                         runtime_revision = runtime_revision.wrapping_add(1);
-                        s.phase_sync.lock().unwrap().set_hold_at_rate(base_config.boolean(PHASE_LOCK_HOLD_AT_RATE, false));
                         if let Some(due) = &mut calibration_due {
                             *due = Instant::now() + Duration::from_secs(30);
                         }

@@ -64,14 +64,14 @@ fn keeps_the_stream_rate_the_user_chose() {
 fn a_game_capped_at_the_stream_rate_is_claimed_as_it_arrives() {
     // A Shield TV at 60 Hz, a game capped at 60 fps by RTSS: the lock held its frames for
     // the client's refresh, up to 12 ms as the clocks drifted, and the game's present to
-    // the TV's render took 8-11 ms longer at the median while it held.
+    // the TV's render took 8-11 ms longer at the median while it held. The lock now
+    // always stands aside for such a source.
     let now = Instant::now();
     let sixty = Duration::from_nanos(SIXTY);
     // Frames a refresh early at the client: the plain lock would hold them.
     let early = (SIXTY / 2) as i32;
-    let capped = |frames: usize, hold: bool, picture: u64, mean: u64| {
+    let capped = |frames: usize, picture: u64, mean: u64| {
         let mut sync = PhaseSync::default();
-        sync.set_hold_at_rate(hold);
         let (picture, mean) = (Duration::from_nanos(picture), Duration::from_nanos(mean));
         for _ in 0..frames {
             sync.set_source(Some(picture), Some(mean), sixty);
@@ -79,7 +79,7 @@ fn a_game_capped_at_the_stream_rate_is_claimed_as_it_arrives() {
         sync.on_payload(now, &report(SIXTY as u32, early));
         sync
     };
-    let mut sync = capped(30, false, SIXTY, SIXTY);
+    let mut sync = capped(30, SIXTY, SIXTY);
     assert!(sync.standing_aside());
     assert_eq!(sync.interval(now, sixty), None);
     assert_eq!(sync.aside_changed(), Some(true));
@@ -91,24 +91,21 @@ fn a_game_capped_at_the_stream_rate_is_claimed_as_it_arrives() {
         (SIXTY * 15 / 16, SIXTY),
         (13_888_889, SIXTY),
     ] {
-        assert_eq!(capped(30, false, picture, mean).interval(now, sixty), None);
+        assert_eq!(capped(30, picture, mean).interval(now, sixty), None);
     }
-    // Not before the source has held for 30 frames, nor with the hold kept on purpose:
-    // then the lock holds the early frames as before.
+    // Not before the source has held for 30 frames: the hold is never kept on purpose.
     assert!(
-        capped(29, false, SIXTY, SIXTY)
+        capped(29, SIXTY, SIXTY)
             .interval(now, sixty)
             .unwrap()
             > sixty
     );
-    let mut held = capped(30, true, SIXTY, SIXTY);
-    assert!(!held.standing_aside());
-    assert!(held.interval(now, sixty).unwrap() > sixty);
+    assert!(capped(30, SIXTY, SIXTY).standing_aside());
     // A faster source keeps the lock: the host takes a later picture, not an older one.
     // A 64 fps game at 60 fps as well, whose mean is faster than the stream's.
-    assert!(capped(30, false, GAME, GAME).interval(now, sixty).is_some());
+    assert!(capped(30, GAME, GAME).interval(now, sixty).is_some());
     let fast = SIXTY * 15 / 16;
-    assert!(capped(30, false, fast, fast).interval(now, sixty).is_some());
+    assert!(capped(30, fast, fast).interval(now, sixty).is_some());
     // Nor without a lock.
     let mut sync = PhaseSync::default();
     for _ in 0..30 {

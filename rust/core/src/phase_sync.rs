@@ -25,8 +25,6 @@ pub struct PhaseSync {
     at_rate: bool,
     /// Frames in a row whose source disagreed with `at_rate`.
     at_rate_votes: u32,
-    /// The lock holds frames of such a source anyway (`phase_lock_hold_at_stream_rate`).
-    hold_at_rate: bool,
     /// The last [`Self::standing_aside`] state reported, for logging a change once.
     aside_reported: Option<bool>,
     /// [`Self::interval`] stood aside on its last call.
@@ -125,16 +123,11 @@ impl PhaseSync {
         }
     }
 
-    /// Keep holding frames of a source at the stream rate (`phase_lock_hold_at_stream_rate`),
-    /// as the lock did before it stood aside for them.
-    pub fn set_hold_at_rate(&mut self, hold: bool) {
-        self.hold_at_rate = hold;
-    }
-
     /// True while the lock stands aside for a source at the stream rate or slower
-    /// ([`Self::interval`]).
+    /// ([`Self::interval`]): such a frame can only age when held, so the lock
+    /// always stands aside for it.
     pub fn standing_aside(&self) -> bool {
-        self.at_rate && !self.hold_at_rate && self.lock.locked()
+        self.at_rate && self.lock.locked()
     }
 
     /// The new [`Self::standing_aside`] state when it changed since the last call, for logging.
