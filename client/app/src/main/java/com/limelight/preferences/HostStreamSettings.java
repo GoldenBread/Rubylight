@@ -836,10 +836,7 @@ public class HostStreamSettings extends NightjarActivity {
          * Debug, shown as in Settings: while Show debug settings is on or a Debug setting is changed, or while this layer
          * sets it (StreamSettings, SettingRules).
          */
-        private PreferenceCategory debugGroup;
-        private Preference fullRangeRow;
         /** Debug was listed during this visit, so it stays listed until the screen closes. */
-        private boolean debugSeen;
 
         @Override
         public void onActivityCreated(Bundle state) {
@@ -861,6 +858,7 @@ public class HostStreamSettings extends NightjarActivity {
             row(stream, "vrr", R.string.title_vrr, this::showVrr);
             row(stream, "pacing", R.string.title_frame_pacing, this::showPacing);
             row(stream, "yuv444", R.string.title_sharp_color, () -> showSwitch("yuv444", R.string.title_sharp_color));
+            row(stream, "full_range", R.string.title_full_range, () -> showSwitch("full_range", R.string.title_full_range));
             // A PC's or game's own choice over its app setting, for the image enhancements its host offers
             // (NvidiaEnhancements); other hosts and profiles never show them.
             if ((activity.mode == Mode.PC || activity.mode == Mode.GAME) && activity.caps.offersEnhancement(HostCapabilities.RTX_HDR)) {
@@ -908,9 +906,6 @@ public class HostStreamSettings extends NightjarActivity {
                 host = category(screen, R.string.pc_settings_host);
                 showActions();
             }
-            // Last, after the PC's own groups too, as in Settings: rarely needed, kept for troubleshooting.
-            debugGroup = category(screen, R.string.settings_section_debug);
-            fullRangeRow = row(debugGroup, "full_range", R.string.title_full_range, () -> showSwitch("full_range", R.string.title_full_range));
             Preference footer = new Preference(activity);
             footer.setLayoutResource(R.layout.settings_preference);
             footer.setSummary(pc ? R.string.host_profile_footer : R.string.layers_footer);
@@ -1156,19 +1151,8 @@ public class HostStreamSettings extends NightjarActivity {
                     config.upscalingMode == UpscalingPolicy.Mode.SGSR1 ||
                     config.upscalingMode == UpscalingPolicy.Mode.SGSR2);
             for (String key : new String[] {"hdr", "yuv444", "full_range"}) {
-                Preference row = "full_range".equals(key) ? fullRangeRow : findPreference(key);
-                row.setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
+                findPreference(key).setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
             }
-            // Once listed it stays for this visit: setting its row back to the main settings' value must not take the
-            // group, and the focus, from under the D-pad (Settings keeps such rows the same way, StreamSettings.revealed).
-            boolean debugShown = debugSeen || own.fullRange != null || SettingRules.debugShown(activity,
-                    android.preference.PreferenceManager.getDefaultSharedPreferences(activity));
-            debugSeen = debugShown;
-            PreferenceScreen screen = getPreferenceScreen();
-            boolean debugListed = false;
-            for (int i = 0; i < screen.getPreferenceCount(); i++) debugListed |= screen.getPreference(i) == debugGroup;
-            if (debugShown && !debugListed) screen.addPreference(debugGroup);
-            else if (!debugShown && debugListed) screen.removePreference(debugGroup);
             findPreference("vrr").setSummary(summary(HostStreamProfile.Field.VRR, own.vrr != null, vrrText(config)));
             String pacing = summary(HostStreamProfile.Field.PACING, own.has(HostStreamProfile.Field.PACING), pacingText(config));
             findPreference("pacing").setSummary(config.vrr ? pacing + "\n" + getString(R.string.layers_pacing_vrr) : pacing);

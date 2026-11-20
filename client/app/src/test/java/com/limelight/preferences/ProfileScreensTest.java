@@ -121,18 +121,17 @@ public class ProfileScreensTest {
     }
 
     @Test
-    public void fullRangeSitsInTheLastGroupDebugAndKeepsItsValue() {
+    public void fullRangeSitsWithTheImageRowsAndKeepsItsValue() {
         String hotel = StreamProfiles.create(app, "Hotel", HostStreamProfile.deserialize("v2;full_range=true"));
         Intent intent = new Intent(app, HostStreamSettings.class).putExtra(HostStreamSettings.EXTRA_MODE, "PROFILE")
                 .putExtra(HostStreamSettings.EXTRA_PROFILE_ID, hotel);
         ActivityController<HostStreamSettings> controller = Robolectric.buildActivity(HostStreamSettings.class, intent).setup();
         try {
             PreferenceFragment fragment = settings(controller.get());
-            List<String> groups = groups(fragment);
-            assertEquals(app.getString(R.string.settings_section_debug), groups.get(groups.size() - 1));
+            assertFalse(groups(fragment).contains(app.getString(R.string.settings_section_debug)));
             Preference fullRange = fragment.findPreference("full_range");
             assertNotNull(fullRange);
-            assertEquals(app.getString(R.string.settings_section_debug), fullRange.getParent().getTitle().toString());
+            assertSame(fragment.findPreference("yuv444").getParent(), fullRange.getParent());
             assertTrue(summary(fragment, "full_range").startsWith(app.getString(R.string.host_profile_on)));
         } finally {
             controller.pause().stop().destroy();
