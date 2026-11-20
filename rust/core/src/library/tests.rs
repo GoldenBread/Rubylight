@@ -180,6 +180,66 @@ fn battlenet_finds_a_product_by_its_code_when_the_uid_is_long() {
             .id,
         "fen"
     );
+    // The uid decides before the product code: a variant with a known uid of its own keeps
+    // its own name and launch code even if its product code names another game.
+    let variant = battlenet("diablo3", "fen", Path::new("E:/Games/D3"), Some(launcher)).unwrap();
+    assert_eq!(variant.name, "Diablo III");
+    assert_eq!(
+        variant.launch.unwrap().command(),
+        r#""D:\Launchers\Battle.net Launcher.exe" --exec="launch D3""#
+    );
+}
+
+/// Written byte by byte rather than with the decoder's own structs: uid is field 1 and the
+/// product code field 2 of each installation (field 1), whose settings (field 3) hold the
+/// path (field 1).
+#[test]
+fn battlenet_database_reads_the_uid_and_product_code_from_their_own_fields() {
+    let bytes = include_bytes!("fixtures/product_fenris.db");
+    assert_eq!(&bytes[..4], b"\x0a\x22\x0a\x06");
+    assert_eq!(
+        battlenet_database(bytes).unwrap(),
+        vec![(
+            "fenris".into(),
+            "fen".into(),
+            PathBuf::from(r"E:\Jeux\Diablo IV")
+        )]
+    );
+}
+
+#[test]
+fn a_battlenet_game_product_db_lists_is_not_listed_again_from_the_registry() {
+    let entry = |uid: &str, product: &str, folder: &str| {
+        (uid.to_owned(), product.to_owned(), PathBuf::from(folder))
+    };
+    let database = vec![
+        entry("fenris", "fen", r"E:\Jeux\Diablo IV"),
+        entry("prometheus", "", r"E:\Jeux\Overwatch"),
+    ];
+    let registry = vec![
+        // The same product code, without a uid.
+        entry("", "FEN", r"E:\Jeux\Diablo IV"),
+        // The same uid.
+        entry("Prometheus", "pro", r"E:\Jeux\Overwatch"),
+        // No uid and a product code product.db lacks, but the same known product.
+        entry("", "pro", r"E:\Jeux\Overwatch"),
+        // Only the registry knows these.
+        entry("", "osi", r"E:\Jeux\Diablo II Resurrected"),
+        entry("w3", "w3", r"E:\Jeux\Warcraft III"),
+        entry("", "ngm", r"E:\Jeux\New"),
+        // The registry lists one twice.
+        entry("", "ngm", r"E:\Jeux\New"),
+    ];
+    let entries = battlenet_entries(database, registry);
+    let ids: Vec<String> = entries
+        .iter()
+        .filter_map(|(uid, product, folder)| battlenet(uid, product, folder, None))
+        .map(|game| game.id)
+        .collect();
+    assert_eq!(ids, ["fenris", "prometheus", "osi", "w3", "ngm"]);
+    // Without product.db the registry alone still lists Diablo IV, under its product code.
+    let alone = battlenet_entries(vec![], vec![entry("", "fen", r"E:\Jeux\Diablo IV")]);
+    assert_eq!(alone, [entry("", "fen", r"E:\Jeux\Diablo IV")]);
 }
 
 #[test]

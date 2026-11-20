@@ -535,14 +535,15 @@ pub fn discover(settings: &library::Settings) -> Discovery {
                         Err(error) => errors.push(format!("Battle.net product database: {error}")),
                     }
                 }
-                for item in &installs {
-                    if !item.uninstall.to_lowercase().contains("battle.net") {
-                        continue;
-                    }
-                    if let Some((uid, product)) = library::battlenet_uninstall(&item.uninstall) {
-                        entries.push((uid, product, item.folder.clone()));
-                    }
-                }
+                let registry = installs
+                    .iter()
+                    .filter(|item| item.uninstall.to_lowercase().contains("battle.net"))
+                    .filter_map(|item| {
+                        let (uid, product) = library::battlenet_uninstall(&item.uninstall)?;
+                        Some((uid, product, item.folder.clone()))
+                    })
+                    .collect();
+                let entries = library::battlenet_entries(entries, registry);
                 // When each game was last played, for the recent-games options: the signed-in
                 // user's Battle.net.config. Without one no game counts as played.
                 let played = battlenet_config()

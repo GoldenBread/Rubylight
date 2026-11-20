@@ -1261,26 +1261,68 @@ const BATTLENET_PRODUCTS: &[(&str, &str, &[&str])] = &[
     ("PNTA", "Call of Duty: Modern Warfare III", &["pinta"]),
     ("AQUA", "Avowed", &[]),
 ];
+/// The known product a uid and product code name, looked up by the uid first, so a variant
+/// with a uid of its own is never renamed by a product code it shares, then by the code: its
+/// launch code and name.
+fn battlenet_product(uid: &str, product: &str) -> Option<(&'static str, &'static str)> {
+    [uid, product]
+        .map(|key| key.trim().to_ascii_lowercase())
+        .into_iter()
+        .filter(|key| !key.is_empty())
+        .find_map(|key| {
+            BATTLENET_PRODUCTS
+                .iter()
+                .find(|(code, _, uids)| {
+                    code.eq_ignore_ascii_case(&key) || uids.contains(&key.as_str())
+                })
+                .map(|&(code, name, _)| (code, name))
+        })
+}
+/// The products product.db lists (`database`), then those only the uninstall registry names.
+/// A registry entry already listed is dropped: one with the same uid, or one without a uid
+/// whose product code, or the known product it names, is already listed. A game is listed
+/// once, under the id product.db gives it, rather than again under its product code.
+pub fn battlenet_entries(
+    database: Vec<(String, String, PathBuf)>,
+    registry: Vec<(String, String, PathBuf)>,
+) -> Vec<(String, String, PathBuf)> {
+    let mut entries = database;
+    for entry in registry {
+        let (uid, product, _) = &entry;
+        let listed = entries.iter().any(|(listed_uid, listed_product, _)| {
+            if !uid.trim().is_empty() {
+                return uid.trim().eq_ignore_ascii_case(listed_uid.trim());
+            }
+            (!product.trim().is_empty()
+                && product.trim().eq_ignore_ascii_case(listed_product.trim()))
+                || battlenet_product("", product).is_some_and(|(code, _)| {
+                    battlenet_product(listed_uid, listed_product)
+                        .is_some_and(|(listed, _)| listed == code)
+                })
+        });
+        if !listed {
+            entries.push(entry);
+        }
+    }
+    entries
+}
 /// The Battle.net product with this uid and product code (either may be empty), looked up
-/// by the code first, then by the uid. Its id is the uid in lower case (the code without
+/// by the uid first, then by the code. Its id is the uid in lower case (the code without
 /// one), the key `Battle.net.config` keeps its play history under. A product Rubylight does
 /// not know is named after its install folder and listed as unavailable; the Battle.net app
 /// itself is skipped.
 pub fn battlenet(uid: &str, product: &str, folder: &Path, launcher: Option<&Path>) -> Option<Game> {
-    let keys = [product, uid].map(|key| key.trim().to_ascii_lowercase());
-    if keys
-        .iter()
-        .any(|key| matches!(key.as_str(), "bna" | "agent" | "battle.net"))
-    {
+    if [uid, product].iter().any(|key| {
+        matches!(
+            key.trim().to_ascii_lowercase().as_str(),
+            "bna" | "agent" | "battle.net"
+        )
+    }) {
         return None;
     }
-    let known = keys.iter().filter(|key| !key.is_empty()).find_map(|key| {
-        BATTLENET_PRODUCTS
-            .iter()
-            .find(|(code, _, uids)| code.eq_ignore_ascii_case(key) || uids.contains(&key.as_str()))
-    });
+    let known = battlenet_product(uid, product);
     let raw = if uid.trim().is_empty() { product } else { uid }.trim();
-    let Some((code, name, _)) = known else {
+    let Some((code, name)) = known else {
         let name = folder
             .file_name()
             .map(|name| name.to_string_lossy().trim().to_owned())
@@ -1294,7 +1336,7 @@ pub fn battlenet(uid: &str, product: &str, folder: &Path, launcher: Option<&Path
     Some(Game::new(
         Source::Battlenet,
         raw.to_ascii_lowercase(),
-        (*name).into(),
+        name.into(),
         folder,
         launcher.map(|path| Launch::Program {
             program: path.to_string_lossy().into_owned(),
