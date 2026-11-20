@@ -1238,8 +1238,10 @@ impl SessionThread<'_> {
                 // A reopen can change the backend, e.g. to WGC after the
                 // driver's frame push failed.
                 pacer.set_source_phase(source_phase_eligible && butterpollo_core::stream_policy::source_phase(&c, latest.backend()));
+                // One read of the capture's pacing fields for every decision
+                // this frame makes from them.
+                let pacing = latest.pacing_snapshot();
                 if arrival_pacing {
-                    let (start, late, extends) = latest.picture();
                     // Another window's update next to the focus window's
                     // picture is no update of the source: learned as one, a
                     // window composed at 240 Hz beside a 60 Hz game could
@@ -1249,9 +1251,9 @@ impl SessionThread<'_> {
                     if extends_capture == Some(false) {
                         pacer.observe_source(image.captured);
                     }
-                    pacer.observe_source_rate(latest.source_rate());
-                    pacer.observe_picture(start, late);
-                    pacer.observe_extension(extends);
+                    pacer.observe_source_rate(pacing.source_rate);
+                    pacer.observe_picture(pacing.picture_start, pacing.late_picture_interval);
+                    pacer.observe_extension(pacing.extends_picture);
                 }
                 let fresh = last_image.as_ref().is_none_or(|previous| !std::ptr::eq(previous.as_ptr(), Arc::as_ptr(&image)));
                 // Read out first: the guard must not live through the wait
@@ -1263,7 +1265,7 @@ impl SessionThread<'_> {
                     && !rebuild_encoder
                     && !s.idr.load(Ordering::Acquire)
                     && invalidation_clear
-                    && let interval = latest.picture_interval()
+                    && let interval = pacing.picture_interval
                     && let butterpollo_core::stream_policy::Pace::WaitUntil(deadline) =
                         pacer.decide(Instant::now(), image.captured, interval)
                 {
@@ -1299,7 +1301,7 @@ impl SessionThread<'_> {
                     continue;
                 }
                 let repeat_due = if arrival_pacing {
-                    pacer.repeat_deadline(encoded_at + rates.static_period, image.captured, latest.source_interval())
+                    pacer.repeat_deadline(encoded_at + rates.static_period, image.captured, pacing.source_interval)
                 } else {
                     encoded_at + rates.static_period
                 };
@@ -1315,7 +1317,7 @@ impl SessionThread<'_> {
                 let reencode_at = if !recovering {
                     if arrival_pacing { pacer.resend_at(repeat_due, Instant::now()) } else { repeat_due }
                 } else if arrival_pacing {
-                    butterpollo_core::stream_policy::reencode_at(true, image.captured, period, latest.source_interval(), repeat_due)
+                    butterpollo_core::stream_policy::reencode_at(true, image.captured, period, pacing.source_interval, repeat_due)
                 } else {
                     Instant::now()
                 };
@@ -1553,7 +1555,7 @@ impl SessionThread<'_> {
                     let key = Arc::as_ptr(&image) as usize;
                     let (seen, interval, deadline) = match first_seen {
                         Some((k, seen, interval, deadline)) if k == key => (seen, interval, deadline),
-                        _ => (begin, latest.picture_interval(), None),
+                        _ => (begin, pacing.picture_interval, None),
                     };
                     let (capture_id, selected_is_latest, latest_capture_id) = latest.trace_selection(&image);
                     let query = recovery.queries.as_ref().map_or_else(QueryTrace::default, |queries| QueryTrace::new(queries, image.published));
@@ -1868,7 +1870,7 @@ impl SessionThread<'_> {
                         // wait from the client to the host, so the lock sets
                         // the rate cap to the client's refresh instead. VRR
                         // displays follow each frame and need no lock.
-                        match (!vrr).then(|| phase_interval(&s, begin, period, latest.picture_interval(), latest.picture_mean())).flatten() {
+                        match (!vrr).then(|| phase_interval(&s, begin, period, pacing.picture_interval, pacing.picture_mean)).flatten() {
                             Some(interval) => {
                                 let mut grid = latest.grid.lock().unwrap();
                                 unlocked_grid_period.get_or_insert(grid.period);

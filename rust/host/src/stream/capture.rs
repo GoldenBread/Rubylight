@@ -109,6 +109,32 @@ impl std::ops::Deref for Consumer {
         &self.signal
     }
 }
+/// The pacing fields the encode thread reads each frame, copied under one
+/// lock: the source's frame and picture rates, when its latest picture was
+/// first captured, and whether that capture only extends the focus window's
+/// picture.
+pub(super) struct PacingSnapshot {
+    /// When the source's latest picture was first captured, and the picture
+    /// interval nearly all recent pictures arrived within
+    /// (`Freshness::picture_start`, `Freshness::late_picture_interval`).
+    pub(super) picture_start: Option<Instant>,
+    pub(super) late_picture_interval: Option<std::time::Duration>,
+    /// Whether the latest capture only extends the focus window's picture
+    /// (`Freshness::extends_picture`), read without the image identity
+    /// check `extends_capture` adds.
+    pub(super) extends_picture: bool,
+    /// The source's recent interval between pictures, counting captures less
+    /// than 2 ms apart as one picture.
+    pub(super) picture_interval: Option<std::time::Duration>,
+    /// The mean interval between the source's recent pictures, which a source
+    /// alternating between two picture cadences hides from their median.
+    pub(super) picture_mean: Option<std::time::Duration>,
+    /// The source's mean frame interval: its rate, which a source alternating
+    /// between two cadences hides from the median.
+    pub(super) source_rate: Option<std::time::Duration>,
+    /// The source's recent frame interval, as observed by the capture worker.
+    pub(super) source_interval: Option<std::time::Duration>,
+}
 pub(super) struct Latest<T> {
     state: Mutex<State<T>>,
     changed: Mutex<Vec<Weak<Consumer>>>,
@@ -367,35 +393,6 @@ impl<T> Latest<T> {
     pub(super) fn trace_source_id(&self) -> u64 {
         self.trace_source_id
     }
-    /// The source's recent frame interval, as observed by the capture worker.
-    pub(super) fn source_interval(&self) -> Option<std::time::Duration> {
-        self.state
-            .lock()
-            .unwrap()
-            .cadence
-            .median_interval()
-            .map(std::time::Duration::from_nanos)
-    }
-    /// The source's recent interval between pictures, counting captures less
-    /// than 2 ms apart as one picture.
-    pub(super) fn picture_interval(&self) -> Option<std::time::Duration> {
-        self.state
-            .lock()
-            .unwrap()
-            .cadence
-            .picture_interval()
-            .map(std::time::Duration::from_nanos)
-    }
-    /// The mean interval between the source's recent pictures, which a source
-    /// alternating between two picture cadences hides from their median.
-    pub(super) fn picture_mean(&self) -> Option<std::time::Duration> {
-        self.state
-            .lock()
-            .unwrap()
-            .cadence
-            .picture_mean_interval()
-            .map(std::time::Duration::from_nanos)
-    }
     /// Whether `image` only extends the focus window's picture
     /// (`Freshness::extends_picture`), read with the capture it belongs to:
     /// `None` once a later capture replaced it.
@@ -407,32 +404,39 @@ impl<T> Latest<T> {
             .is_some_and(|current| Arc::ptr_eq(current, image))
             .then(|| state.cadence.extends_picture())
     }
-    /// When the source's latest picture was first captured, the picture
-    /// interval nearly all recent pictures arrived within, and whether the
-    /// latest capture only extends the focus window's picture.
-    pub(super) fn picture(&self) -> (Option<Instant>, Option<std::time::Duration>, bool) {
+    /// The pacing fields the encode thread reads each frame, in one read of
+    /// the state: taking them through separate locks let a publication land
+    /// between two of them, and each lock was work on the encode thread's
+    /// every frame.
+    pub(super) fn pacing_snapshot(&self) -> PacingSnapshot {
         let state = self.state.lock().unwrap();
-        (
-            state
+        PacingSnapshot {
+            picture_start: state
                 .cadence
                 .picture_start()
                 .map(|nanos| self.origin + std::time::Duration::from_nanos(nanos)),
-            state
+            late_picture_interval: state
                 .cadence
                 .late_picture_interval()
                 .map(std::time::Duration::from_nanos),
-            state.cadence.extends_picture(),
-        )
-    }
-    /// The source's mean frame interval: its rate, which a source alternating
-    /// between two cadences hides from the median.
-    pub(super) fn source_rate(&self) -> Option<std::time::Duration> {
-        self.state
-            .lock()
-            .unwrap()
-            .cadence
-            .mean_interval()
-            .map(std::time::Duration::from_nanos)
+            extends_picture: state.cadence.extends_picture(),
+            picture_interval: state
+                .cadence
+                .picture_interval()
+                .map(std::time::Duration::from_nanos),
+            picture_mean: state
+                .cadence
+                .picture_mean_interval()
+                .map(std::time::Duration::from_nanos),
+            source_rate: state
+                .cadence
+                .mean_interval()
+                .map(std::time::Duration::from_nanos),
+            source_interval: state
+                .cadence
+                .median_interval()
+                .map(std::time::Duration::from_nanos),
+        }
     }
     pub(super) fn poll_interval(&self, normal: std::time::Duration) -> std::time::Duration {
         let state = self.state.lock().unwrap();

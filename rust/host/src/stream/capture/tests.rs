@@ -104,6 +104,39 @@ fn a_capture_is_judged_as_an_extension_only_while_it_is_the_newest() -> Result<(
     Ok(())
 }
 #[test]
+fn a_pacing_snapshot_reads_what_the_frame_rates_come_from() -> Result<()> {
+    let latest = Latest::new();
+    let start = Instant::now();
+    let ms = |at: u64| start + Duration::from_millis(at);
+    // A focus window animating at about 60 Hz for over 500 ms.
+    for frame in 0..40u8 {
+        latest.publish_focus(Arc::new(frame), ms(16 * u64::from(frame)), Some(true))?;
+    }
+    let focus = Arc::new(40u8);
+    latest.publish_focus(focus.clone(), ms(640), Some(true))?;
+    let pacing = latest.pacing_snapshot();
+    // The identity-checked answer stays its own read, beside the snapshot.
+    assert_eq!(latest.extends_capture(&focus), Some(false));
+    assert_eq!(pacing.extends_picture, false);
+    // The published picture is the latest one, and every rate read 16 ms.
+    let frame = Duration::from_millis(16);
+    assert_eq!(pacing.picture_start, Some(ms(640)));
+    assert_eq!(pacing.late_picture_interval, Some(frame));
+    assert_eq!(pacing.picture_interval, Some(frame));
+    assert_eq!(pacing.picture_mean, Some(frame));
+    assert_eq!(pacing.source_rate, Some(frame));
+    assert_eq!(pacing.source_interval, Some(frame));
+    // Another window's update extends the focus window's picture, and the
+    // snapshot says so without the identity check.
+    let other = Arc::new(41u8);
+    latest.publish_focus(other.clone(), ms(648), Some(false))?;
+    let pacing = latest.pacing_snapshot();
+    assert_eq!(pacing.extends_picture, true);
+    assert_eq!(latest.extends_capture(&other), Some(true));
+    assert_eq!(latest.extends_capture(&focus), None);
+    Ok(())
+}
+#[test]
 fn publication_trace_matches_frames_still_owned_after_replacement() {
     let mut trace = PublicationTrace::new();
     let old = Arc::new(1u8);
