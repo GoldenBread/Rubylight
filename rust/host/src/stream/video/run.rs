@@ -369,7 +369,7 @@ impl SessionThread<'_> {
             if let Some(sender) = video_sender.get() { return sender.submit_tick(output, peer, call_latency, &mut claims.borrow_mut(), processing_started); }
             let polled = Instant::now();
             let micros = |d: Duration| d.as_micros().min(u128::from(u64::MAX)) as u64;
-            'frames: for frame in output {
+            'frames: for mut frame in output {
                 if frame.unit != butterpollo_windows::encoder::Unit::Whole {
                     // One unit of a P-frame sent block by block.
                     let last = matches!(frame.unit, butterpollo_windows::encoder::Unit::Last { .. });
@@ -427,7 +427,7 @@ impl SessionThread<'_> {
                         let mut fatal = None;
                         let slices::Streaming { frame: streamed, sent, bps, wire_frame, .. } = st;
                         let (bps, wire_frame) = (*bps, *wire_frame);
-                        let pushed = streamed.push(&mut packetizer, frame.bytes, last, &mut packets, |shards, block| {
+                        let pushed = streamed.push(&mut packetizer, std::mem::take(&mut frame.bytes), last, &mut packets, |shards, block| {
                             sent.lost.push_block(block.data, block.parity);
                             if block.index == 0 {
                                 // The frame's batches share one wait for a full socket.

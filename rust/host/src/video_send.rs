@@ -489,7 +489,7 @@ impl Sender {
             let mut owed = 0u32;
             shared.run(|queued| {
                 let Frame {
-                    encoded: frame, peer, claimed, polled, latency: encode,
+                    encoded: mut frame, peer, claimed, polled, latency: encode,
                     processing_started, skipped, claim, slice_blocks,
                 } = queued;
                 owed = owed.wrapping_add(skipped);
@@ -497,7 +497,7 @@ impl Sender {
                     // A later unit of the streamed frame: its blocks go out as they complete.
                     let last = streamed::is_last(frame.unit);
                     streams.unit(
-                        shared, &s, &mut packetizer, frame.bytes, last,
+                        shared, &s, &mut packetizer, std::mem::take(&mut frame.bytes), last,
                         polled, encode, &mut fec_reported,
                     )?;
                     shared.state.lock().unwrap().streaming = streams.is_open();
@@ -529,7 +529,7 @@ impl Sender {
                     });
                     let last = streamed::is_last(frame.unit);
                     streams.unit(
-                        shared, &s, &mut packetizer, frame.bytes, last,
+                        shared, &s, &mut packetizer, std::mem::take(&mut frame.bytes), last,
                         polled, encode, &mut fec_reported,
                     )?;
                     shared.state.lock().unwrap().streaming = streams.is_open();

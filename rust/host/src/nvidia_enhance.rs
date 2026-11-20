@@ -632,7 +632,7 @@ capture = {method}
         assert!(!parsed.matches(1, 0, Pixel::RgbaF16));
         // What a new revision parses follows the new values, warning
         // included: here RTX HDR is asked for but nothing offers it.
-        let unoffered = Config::parse("rtx_hdr = true\n").unwrap();
+        let mut unoffered = Config::parse("rtx_hdr = true\n").unwrap();
         unoffered
             .values
             .insert(nvidia_enhance::marker("rtx_hdr"), "true".into());

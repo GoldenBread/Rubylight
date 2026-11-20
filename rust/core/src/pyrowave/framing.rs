@@ -403,7 +403,7 @@ impl<'a> Payload<'a> {
     /// framed for; a picture as plain bytes keeps none.
     pub fn stored_layout(&self, payload: usize) -> Option<&'a Layout> {
         match self {
-            Self::Bytes(_) => None,
+            Self::Bytes(_) | Self::Pieces(_) => None,
             Self::Framed(framed) => framed.framing.layout(payload),
         }
     }

@@ -2364,6 +2364,10 @@ fn a_whole_frame_given_up_part_way_queues_no_more_blocks() {
     let mut layout = wire.block_layout(picture.bytes.len());
     assert!(layout.len() >= 3);
     layout[1].1 += 1;
+    let plan = butterpollo_core::packet::ConventionalPlan {
+        layout: layout.clone(),
+        percentage: wire.conventional_plan(picture.bytes.len()).percentage,
+    };
     let template = wire.clone();
     let now = Instant::now();
     let make = |blocks, counts, block, part, frame_wire_bytes| Prepared {
@@ -2396,8 +2400,20 @@ fn a_whole_frame_given_up_part_way_queues_no_more_blocks() {
         frame_wire_bytes,
     };
     let dropped = std::thread::scope(|scope| {
-        let send = scope
-            .spawn(|| early::send(slot, &mut wire, &picture, 0, 0, &layout, peer(), make).unwrap());
+        let send = scope.spawn(|| {
+            early::send(
+                slot,
+                &mut wire,
+                &picture,
+                0,
+                0,
+                &layout,
+                &plan,
+                peer(),
+                make,
+            )
+            .unwrap()
+        });
         // The sender takes block 0 and waits for block 1.
         let first = take_prepared(&sender);
         assert!(first.stream.unwrap().first);

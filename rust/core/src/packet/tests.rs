@@ -219,15 +219,15 @@ fn the_precomputed_conventional_plan_matches_the_blocks_built_on_the_fly() {
             let payload: Vec<u8> = (0..size).map(|i| (i * 29) as u8).collect();
             let mut expected = make();
             let mut actual = make();
-            let (count, mut expected_next) = expected
-                .conventional_blocks(&payload, false, true, 9000, 500)
-                .unwrap();
             let plan = actual.conventional_plan(payload.len());
             assert_eq!(plan.layout, expected.block_layout(payload.len()));
             assert_eq!(
                 plan.limited(actual.fec_percent),
                 expected.fec_limited(payload.len())
             );
+            let (count, mut expected_next) = expected
+                .conventional_blocks(&payload, false, true, 9000, 500)
+                .unwrap();
             let (planned_count, mut actual_next) = actual
                 .conventional_blocks_planned(&payload, false, true, 9000, 500, &plan)
                 .unwrap();
@@ -242,6 +242,7 @@ fn the_precomputed_conventional_plan_matches_the_blocks_built_on_the_fly() {
                 }
                 assert_eq!(&expected_shards[..ec], &actual_shards[..ac], "size {size}");
             }
+            drop((expected_next, actual_next));
             assert_eq!(actual.frame, expected.frame);
             assert_eq!(actual.sequence, expected.sequence);
             assert_eq!(actual.iv_counter, expected.iv_counter);
@@ -1465,7 +1466,7 @@ fn jumbo_packets_are_streamable() {
     streamed
         .push(
             &mut framed,
-            &[7u8; 20_000],
+            vec![7u8; 20_000],
             true,
             &mut shards,
             |packets: &mut [Vec<u8>], _| {
