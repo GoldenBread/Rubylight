@@ -18,6 +18,7 @@ import org.xmlpull.v1.XmlPullParser;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -541,6 +542,16 @@ public class SettingsKeysTest {
                 getClass().getClassLoader(), new Class<?>[] {SharedPreferences.class}, (proxy, method, args) -> {
                     if (method.getName().startsWith("get") && args != null && args.length > 0 && args[0] instanceof String) {
                         read.add((String) args[0]);
+                    }
+                    if (method.getName().equals("getAll") && (args == null || args.length == 0)) {
+                        // A value read from the snapshot (Lower bitrate's AutoBitrateChoice.read) counts as read.
+                        Map<String, Object> all = new HashMap<String, Object>(backing.getAll()) {
+                            @Override public Object get(Object key) {
+                                if (key instanceof String) read.add((String) key);
+                                return super.get(key);
+                            }
+                        };
+                        return all;
                     }
                     return method.invoke(backing, args);
                 });
