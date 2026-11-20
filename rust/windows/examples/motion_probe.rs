@@ -225,7 +225,7 @@ mod probe {
             System::{LibraryLoader::GetModuleHandleW, Performance::*, Threading::*},
             UI::WindowsAndMessaging::*,
         },
-        core::{Interface, PCSTR, w},
+        core::{Interface, PCSTR, PWSTR, w},
     };
 
     const SHADER: &str = r#"
@@ -286,6 +286,102 @@ float4 picture(float4 p : SV_Position) : SV_Target {
         fn drop(&mut self) {
             unsafe {
                 let _ = CloseHandle(self.0);
+            }
+        }
+    }
+    /// The strip as the foreground window (`BUTTERPOLLO_TEST_MOTION_FOREGROUND`).
+    /// The host paces a stream by the foreground window while that one animates
+    /// (`capture/focus.rs`; two of its pictures at most 50 ms apart count as
+    /// animating), and holds another window's update for the minimum frame
+    /// rate's period then: 50 ms at the default. A strip behind such a window
+    /// measures that hold, not the stream. The window that was in front gets
+    /// the foreground back when the strip ends by itself; when the test ends
+    /// it, Windows picks the window below.
+    struct Front {
+        strip: HWND,
+        before: HWND,
+        /// Frames in a row the strip was seen behind another window.
+        behind: u32,
+    }
+    impl Front {
+        /// Every `taken=false` line is a time the strip was seen behind
+        /// another window, which the test reads as a result that is not the
+        /// strip's.
+        fn take(strip: HWND) -> Self {
+            let before = unsafe { GetForegroundWindow() };
+            if butterpollo_windows::lossless::to_front_quietly(strip) {
+                println!("MOTION stage=foreground taken=true");
+            } else {
+                Self::report();
+            }
+            Self {
+                strip,
+                before,
+                behind: 0,
+            }
+        }
+        /// Each frame: another window in front for two frames is said once
+        /// (one frame can be Windows moving the foreground, which reads as no
+        /// window at all), and the foreground is taken back then and about
+        /// once a second for as long as that window keeps it.
+        fn keep(&mut self) {
+            if unsafe { GetForegroundWindow() } == self.strip {
+                self.behind = 0;
+                return;
+            }
+            self.behind += 1;
+            if self.behind == 2 {
+                Self::report();
+            }
+            if self.behind == 2 || self.behind.is_multiple_of(64) {
+                let _ = butterpollo_windows::lossless::to_front_quietly(self.strip);
+            }
+        }
+        fn report() {
+            let holder = Self::holder();
+            println!("MOTION stage=foreground taken=false holder={holder}");
+        }
+        /// The program of the window in front: its file name, as a window
+        /// title can be a document's.
+        fn holder() -> String {
+            // SAFETY: `pid` and `length` are live out-pointers, `path` holds
+            // `length` UTF-16 units, and the process handle is closed once.
+            unsafe {
+                let window = GetForegroundWindow();
+                if window.is_invalid() {
+                    return "none".to_owned();
+                }
+                let mut pid = 0;
+                GetWindowThreadProcessId(window, Some(&mut pid));
+                let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+                    return format!("process {pid}");
+                };
+                let mut path = [0u16; 1024];
+                let mut length = path.len() as u32;
+                let named = QueryFullProcessImageNameW(
+                    process,
+                    PROCESS_NAME_WIN32,
+                    PWSTR(path.as_mut_ptr()),
+                    &mut length,
+                );
+                let _ = CloseHandle(process);
+                if named.is_err() {
+                    return format!("process {pid}");
+                }
+                let path = String::from_utf16_lossy(&path[..length as usize]);
+                path.rsplit('\\').next().unwrap_or(&path).to_owned()
+            }
+        }
+    }
+    impl Drop for Front {
+        fn drop(&mut self) {
+            // SAFETY: the calls take window handles by value, and a stale one
+            // just fails. Allowed while the strip is the foreground window,
+            // which its own window outlives this for.
+            unsafe {
+                if GetForegroundWindow() == self.strip && !self.before.is_invalid() {
+                    let _ = SetForegroundWindow(self.before);
+                }
             }
         }
     }
@@ -424,6 +520,11 @@ float4 picture(float4 p : SV_Position) : SV_Target {
                 SWP_NOACTIVATE,
             )?;
             println!("MOTION stage=window");
+            // After `window`, so it ends first and hands the foreground back
+            // while the strip still has it.
+            let mut front = std::env::var_os("BUTTERPOLLO_TEST_MOTION_FOREGROUND")
+                .is_some()
+                .then(|| Front::take(window.0));
             let factory: IDXGIFactory2 = CreateDXGIFactory1()?;
             let adapter = factory.EnumAdapters1(display.adapter_index)?;
             let mut device = None;
@@ -609,6 +710,9 @@ float4 picture(float4 p : SV_Position) : SV_Target {
                         start.elapsed().as_secs_f64()
                     );
                     progress_at = Instant::now() + Duration::from_secs(5);
+                }
+                if let Some(front) = &mut front {
+                    front.keep();
                 }
             }
             let data = serde_json::json!({

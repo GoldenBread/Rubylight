@@ -6,6 +6,7 @@ This is the dated measurement record. For a guided comparison, start with the [p
 
 | Find a result | Recorded evidence |
 | --- | --- |
+| A picture that is not the foreground window, behind a window that repaints: the 50 ms holds that failed the check's keyframe-request case on 6.1.0 and 6.0.1, in the host's claim trace, with the strip behind and in front, and in a Retroid run (the check's strip now runs in front; the host's rule is unchanged) | [November 20, a picture behind a window that repaints](#november-20-a-picture-behind-a-window-that-repaints-is-held-50-ms-at-a-time) |
 | A game that sets its own display mode under the automatic frame cap (#133): frame intervals with a cap beside V-Sync at the display's rate, with V-Sync alone, at 1000 Hz with the cap and with an uncapped source; the display slowed mid-stream with RTSS as the cap, 6.0.0 against the cap that switches off; the default bitrate controller cutting on loss in a calm picture; congestion control cutting a light picture's bitrate on a clean link; why Adapt error correction is off by default | [November 19, a frame cap beside V-Sync at the display's own rate](#november-19-a-frame-cap-beside-v-sync-at-the-displays-own-rate-133-and-two-defaults) |
 | HDR 4:2:0 chroma filtered in light instead of on PQ or HLG codes (#130, ClearType text tinted magenta): GPU cost of the host conversion at 1080p, 1440p and 4K, SDR and HDR, P010 and PyroWave, compute and graphics paths, release build (no change measured) | [November 18, HDR chroma filtered in light (#130), conversion cost](#november-18-hdr-chroma-filtered-in-light-130-conversion-cost) |
 | AMF slice output taking its frame buffers from the frame pool instead of the heap: encode, encoded to first packet, send spread and page faults at 4K60 HEVC with 20 recovery keyframes (no change measured, kept as the smaller allocation) | [November 15, AMF slice output through the frame pool](#november-15-amf-slice-output-through-the-frame-pool) |
@@ -81,6 +82,65 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | PyroWave encode overlap, send buffer, Nightjar receive path | [November 10, PyroWave at 1.4 Gbps](#november-10-pyrowave-at-14-gbps-to-a-780m-laptop) |
 | Temporal upscaler for Nightjar (SGSR 2 adaptation), not landed | [November 16, temporal upscaler](#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed) |
 | A capped path and a busy PC | [November 17, a capped path holds its learned rate](#november-17-a-capped-path-holds-its-learned-rate-and-a-busy-pc-is-not-the-network) |
+
+## November 20: a picture behind a window that repaints is held 50 ms at a time
+
+**What failed.** The check of the published 6.1.0 package (`check.ps1`, RX 7900
+XT, desktop 5120x1440 at 240 Hz, HEVC 2560x720 at 60 fps) failed its
+keyframe-request case (`e2e.py --recovery 16`, strip at the stream rate,
+`minimum_fps_target=20` as an unconfigured host has) twice in a row: 55.9 and
+56.4 fps in the steady window, 24 and 26 frame intervals of about 50 ms, 43 and
+37 strip frames skipped, all 16 requested keyframes delivered, 9 ms after the
+request on average. Nobody had touched the PC for four hours. The check of
+6.0.1 failed the same way once on November 19 (56.3 fps, 21 intervals of 50 ms,
+36 skipped) and passed 90 minutes later. Between the two releases
+`stream_policy.rs` changed only in the bitrate budget, and `capture_policy.rs`
+and `capture/focus.rs` not at all.
+
+**Cause.** The host's claim trace of the second failed run has 24 waits of 43
+to 51 ms between claims in 12 s, about one every 0.52 s: eight before the first
+requested keyframe and four after the last, so they do not follow the requests.
+The strip's compositions kept being published during a wait. The foreground
+window was a terminal application with text being written, which did not reach
+the strip (128 rows at the bottom of the display). `Freshness::observe_focus`
+counts the foreground window as animating once two of its pictures are at most
+50 ms apart (`FOCUS_ANIMATING`); another window's update then extends the focus
+window's picture, and `Pacer::decide` waits `static_period` for it, which is
+the minimum frame rate's period: 50 ms at the default of 20, one frame in the
+check's other cases, which set the minimum to the stream rate. By the code a
+strip update inside the bounds of the window in front counts as that window's
+own, so where the window lay decided whether a run passed; no run checked that.
+
+**Same package, 22 s apart, nobody at the PC** (12 s streams, steady window):
+
+| Strip | Steady fps | Intervals over 1.5 periods | Interval p99 / max | Strip frames skipped / sent again | Case |
+| --- | ---: | ---: | ---: | ---: | --- |
+| behind the window in front, as in the failed check | 56.46 | 19 | 50.5 / 51.3 ms | 33 / 2 | fails |
+| as the foreground window | 60.00 | 0 | 18.2 / 23.6 ms | 0 / 0 | passes |
+
+**On a device.** The Nightjar release check's Retroid Pocket 6 run (debug build
+of the 6.1.0 tag, 60 s, the strip at 60 Hz on the same desktop) behind the same
+window: 3,022 and 3,017 frames in 53.4 and 53.9 s (56.6 and 56.0 fps), 160 and
+132 gaps over 25 ms, none over 100 ms; the host's own log reads 53.6 to 57.5 fps
+in its eleven windows of each run, beside 64 to 71 source pictures and 73 to 82
+captures a second. With the strip as the foreground window: 3,232 frames in
+53.8 s (60.1 fps), one gap over 25 ms, host log 59.5 to 59.6 fps beside 60 to
+62 source pictures a second. Two earlier rows of that rig show the same pattern
+(145 and 90 gaps over 25 ms); what was in front of the strip then was not
+recorded.
+
+**Changed.** In the keyframe-request case and its control the check's strip now
+runs as the foreground window, as a game does
+(`BUTTERPOLLO_TEST_MOTION_FOREGROUND`, set by `e2e.py`), and the case fails
+with that reason when the strip was seen behind another window.
+
+**Not changed, and open.** The host's rule. A game or video that is not the
+foreground window on the streamed display is held the same way whenever the
+window in front produces two pictures within 50 ms, although `observe_focus`
+says a caret or typing leaves every update a picture of its own. No check case
+covers it now. What real windows do (a pair of compositions or longer bursts)
+was not measured: the claim trace carries no focus label, so the rule to put in
+its place is not chosen yet.
 
 ## November 19: a frame cap beside V-Sync at the display's own rate (#133), and two defaults
 

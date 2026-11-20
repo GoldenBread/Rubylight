@@ -16,7 +16,9 @@ A mode faster than the captured display refreshes is recorded as skipped.
 RECOVERY_INTERVAL_MS, as a client losing packets does, while the moving
 strip runs at the stream rate (a game held there by a frame limit) and the
 minimum frame rate keeps its default of 20. Each request must ride the
-next new frame instead of the unchanged picture being encoded again.
+next new frame instead of the unchanged picture being encoded again. The
+strip is the foreground window for the stream, as a game is, and the case
+fails with that reason when the strip was seen behind another window.
 
 --record: the host writes its timing record to WORK/e2e-NAME/record
 (BUTTERPOLLO_TIMING_RECORD) and the receiver its frames.csv; the joined stage
@@ -56,7 +58,7 @@ import argparse, json, pathlib, subprocess, sys, time
 import xml.etree.ElementTree as ET
 import requests
 import demo_content
-from e2e_result import evaluate, host_frames
+from e2e_result import evaluate, host_frames, strip_behind
 from e2e_host import installed_idle, prepare, receiver_environment
 from gpu_hang import EXIT_GPU_HANG, Guard, hang_result
 from machine_load import load_since, snapshot
@@ -181,7 +183,10 @@ try:
     tone = spawn([str(audio_probe), fixture_seconds, sink['id'], '--render-only'], 'tone.log', env=env)
     motion_rate = args.motion_script or (int(fps) if at_rate else int(fps) * 2)
     strip = [str(args.noise_height), 'noise'] if args.noise_height else ['128']
-    motion = None if player else spawn([str(motion_probe), display['display_name'], fixture_seconds, str(case / 'motion.json'), str(motion_rate), *strip], 'motion.log', env=env)
+    # At the stream rate the strip is the game: it runs as the foreground window, which the host paces the stream by
+    # while it animates (behind a window whose pictures come in pairs, the strip's waited the minimum frame rate's 50 ms).
+    motion_env = dict(env, BUTTERPOLLO_TEST_MOTION_FOREGROUND='1') if at_rate else env
+    motion = None if player else spawn([str(motion_probe), display['display_name'], fixture_seconds, str(case / 'motion.json'), str(motion_rate), *strip], 'motion.log', env=motion_env)
     time.sleep(.5)
     assert tone.poll() is None and (motion is None or motion.poll() is None), 'audio or motion fixture exited'
     client_env = receiver_environment(env, display, args.mode, args.client, args.vrr, args.port)
@@ -264,6 +269,11 @@ result = evaluate(client, rc, args.codec, args.mode, args.vrr, recovery=args.rec
                   host_frames=host_frames(case / 'receiver'),
                   claim_trace='pacing=trace' in env.get('RUST_LOG', ''), content=content)
 result = dict(case=name, **result, machine_load=stream_load, quiet_wait=quiet_wait, **audio_sink)
+if at_rate:
+    behind = strip_behind((case / 'motion.log').read_text(errors='replace'))
+    if behind:
+        result['failures'].append(behind)
+        result['passed'] = False
 if args.launch_fps:
     result['launch_fps'] = args.launch_fps
 if args.record:

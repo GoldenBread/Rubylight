@@ -1,6 +1,6 @@
 import json, pathlib, subprocess, sys, tempfile, unittest
 from unittest.mock import patch
-from e2e_result import active_clients, evaluate, host_frames
+from e2e_result import active_clients, evaluate, host_frames, strip_behind
 
 
 GOOD = '''RESULT frames=1800 decoded_frames=1800 audio_packets=6000 failures=0
@@ -281,6 +281,16 @@ class ReleaseMeasurements(unittest.TestCase):
         # Picture age is reported, not judged, and other streams ignore the probe.
         self.assertEqual(check(moving)['picture_age_p99_ms'], 22)
         self.assertNotIn('pictures_sent_again', evaluate(GOOD, 0, 'hevc', '1280x720x60'))
+
+    def test_a_strip_that_ran_behind_another_window_is_named(self):
+        stages = 'MOTION stage=display name=\\\\.\\DISPLAY1\nMOTION stage=window\n'
+        taken = stages + 'MOTION stage=foreground taken=true\nMOTION stage=device\nMOTION_PROGRESS frames=300 seconds=5.000\n'
+        self.assertIsNone(strip_behind(taken))
+        # Windows refused, another window took the foreground mid-stream, or the probe is too old to say.
+        refused = strip_behind(stages + 'MOTION stage=foreground taken=false holder=Orca.exe\nMOTION stage=device\n')
+        self.assertIn('not the foreground window (Orca.exe was)', refused)
+        self.assertIn('(game.exe was)', strip_behind(taken + 'MOTION stage=foreground taken=false holder=game.exe\r\n'))
+        self.assertIn('not the foreground window:', strip_behind(stages + 'MOTION stage=device\n'))
 
     def test_pyrowave_sdr_and_hdr_records_pass_with_picture_age(self):
         for codec, hdr in (('pyrowave', 0), ('pyrowave-hdr-444', 1800)):
