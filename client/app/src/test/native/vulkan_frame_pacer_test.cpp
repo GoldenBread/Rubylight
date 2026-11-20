@@ -79,18 +79,35 @@ std::vector<int64_t> bunched(int vsyncsPerFrame, int64_t periodNs, int frames) {
     return arrivals;
 }
 
+// The same numbers on every run
+struct Random {
+    uint64_t state;
+    int64_t below(int64_t limit) {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return static_cast<int64_t>((state >> 33) % static_cast<uint64_t>(limit));
+    }
+};
+
 // 60 fps by the host's clock, the first frame aheadNs before the first vsync, each off by up to
-// jitterNs either way (evenly spread, from a fixed seed).
+// jitterNs either way (evenly spread).
 std::vector<int64_t> at60Fps(int frames, int64_t aheadNs, int64_t jitterNs = 0, uint64_t seed = 1) {
     std::vector<int64_t> arrivals;
-    uint64_t state = seed;
+    Random random{seed};
     for (int i = 0; i < frames; i++) {
-        int64_t offsetNs = 0;
-        if (jitterNs > 0) {
-            state = state * 6364136223846793005ULL + 1442695040888963407ULL;
-            offsetNs = static_cast<int64_t>((state >> 33) % static_cast<uint64_t>(2 * jitterNs + 1)) - jitterNs;
-        }
+        const int64_t offsetNs = jitterNs > 0 ? random.below(2 * jitterNs + 1) - jitterNs : 0;
         arrivals.push_back(kStartNs - aheadNs + i * k60FpsNs + offsetNs);
+    }
+    return arrivals;
+}
+
+// One frame in a hundred held 20 to 60 ms, the frames behind it coming with it
+std::vector<int64_t> withStalls(std::vector<int64_t> arrivals, uint64_t seed) {
+    Random random{seed * 977};
+    for (size_t i = 1; i < arrivals.size(); i++) {
+        if (random.below(100) == 0) {
+            arrivals[i] += 20 * kMs + random.below(40 * kMs);
+        }
+        arrivals[i] = std::max(arrivals[i], arrivals[i - 1]);
     }
     return arrivals;
 }
@@ -182,6 +199,35 @@ void testFasterHostMovesTheTurnsEarlier() {
     assert(faster.mostWaitedNs() < k60FpsNs + 2 * kMs);
 }
 
+// A host further ahead than those moves take back, within the half a hertz per multiple that holds
+// frames for their turn (60.000 fps on 119.4 and 119.1 Hz): a frame waits at most two vsyncs past the
+// first one it is there for, so once one has it goes up a vsync early, and none is skipped (7 and 24 in
+// two minutes with the moves alone).
+void testMuchFasterHostSkipsNothing() {
+    const std::vector<int64_t> periods = {8'375'209, 8'396'306};
+    for (int64_t periodNs : periods) {
+        const Run out = run(PacingMode::Smoothness, 60, periodNs, at60Fps(7200, kMs), 14'400);
+        assert(out.skipped == 0);
+        assert(out.overflowed == 0);
+        assert(out.count(1) + out.count(2) == out.gaps.size());
+        assert(out.mostWaitedNs() <= 3 * periodNs);
+    }
+}
+
+// After a stall the frames that come together wait no more than that either: of several that have
+// waited two vsyncs past the first one they are there for, the newest goes up and the others give way.
+// The turns alone left them waiting up to 33 ms.
+void testStalledFramesWaitNoLongerThanTwoVsyncs() {
+    const std::vector<int64_t> periods = {8'333'333, 8'341'675};
+    for (int64_t periodNs : periods) {
+        for (uint64_t seed : {7ULL, 8ULL, 9ULL}) {
+            const std::vector<int64_t> arrivals = withStalls(at60Fps(7200, 4 * kMs, 2 * kMs, seed), seed);
+            const Run out = run(PacingMode::Smoothness, 60, periodNs, arrivals, 14'400);
+            assert(out.mostWaitedNs() <= 3 * periodNs);
+        }
+    }
+}
+
 // Frames up to 8 ms either side of their time skip none: at their turn the oldest goes up even when it
 // is more than a stream frame old with the next frame already there, which jitter brings often. Only
 // the first frame that comes late moves the turns, once, and on 119.88 Hz the moves earlier above.
@@ -208,6 +254,8 @@ int main() {
     testLateFrameStartsTheTurnsAgain();
     testBurstSettlesBack();
     testFasterHostMovesTheTurnsEarlier();
+    testMuchFasterHostSkipsNothing();
+    testStalledFramesWaitNoLongerThanTwoVsyncs();
     testJitterSkipsNothing();
     return 0;
 }
