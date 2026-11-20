@@ -32,6 +32,7 @@
     oninvalid,
     describedby,
     daily,
+    pnp,
   }: {
     setting: Setting;
     /** On the control the row's label points at. */
@@ -50,6 +51,11 @@
      * setting: its value, and a setter (null clears it).
      */
     daily?: { value: string; onchange: (value: string | null) => void };
+    /**
+     * The graphics card's device ID setting, for an adapter control: its value,
+     * and a setter (null clears it). Kept only for cards that share a name.
+     */
+    pnp?: { value: string; onchange: (value: string | null) => void };
   } = $props();
 
   const control = $derived(setting.control);
@@ -61,6 +67,27 @@
   // ---------- choices: select, display, audio, adapter ----------
 
   const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+  /** The device ID choices of an adapter control are this prefix and the ID. */
+  const PNP = 'pnp:';
+  /** The card names more than one listed GPU has: those are told apart by device ID. */
+  const sharedNames = $derived.by(() => {
+    const seen = new Set<string>();
+    const shared = new Set<string>();
+    for (const gpu of session.metadata?.gpus ?? []) {
+      const name = gpu.name.toLowerCase();
+      if (!name) continue;
+      if (seen.has(name)) shared.add(name);
+      seen.add(name);
+    }
+    return shared;
+  });
+  /** What the control shows as chosen: the saved device ID when there is one, else the name. */
+  const selected = $derived.by(() => {
+    const id = control.kind === 'adapter' ? (pnp?.value.trim() ?? '') : '';
+    if (!id) return current;
+    return PNP + id;
+  });
 
   const choices = $derived.by((): Option[] => {
     const meta = session.metadata;
@@ -103,15 +130,33 @@
         break;
       case 'adapter': {
         options.push({ value: '', label: 'Automatic' });
-        const names = new Set((meta?.gpus ?? []).map((gpu) => gpu.name).filter(Boolean));
-        for (const name of names) options.push({ value: current && same(current, name) ? current : name, label: name });
+        const listed = new Set<string>();
+        const counts = new Map<string, number>();
+        for (const gpu of meta?.gpus ?? []) {
+          const name = gpu.name;
+          if (!name) continue;
+          const shared = sharedNames.has(name.toLowerCase()) && !!gpu.pnp_id && !!pnp;
+          if (shared) {
+            // Two cards with one name: each is its own choice, kept by its device ID.
+            const nth = (counts.get(name.toLowerCase()) ?? 0) + 1;
+            counts.set(name.toLowerCase(), nth);
+            const id = gpu.pnp_id as string;
+            options.push({ value: selected !== '' && same(selected, PNP + id) ? selected : PNP + id, label: `${name} (${nth})` });
+          } else if (!listed.has(name.toLowerCase())) {
+            listed.add(name.toLowerCase());
+            options.push({ value: selected !== '' && same(selected, name) ? selected : name, label: name });
+          }
+        }
         break;
       }
       default:
         return [];
     }
-    if (!options.some((option) => option.value === current)) {
-      const missing = { value: current, label: current === '' ? 'Not set' : `Saved custom choice: ${current}` };
+    if (!options.some((option) => option.value === selected)) {
+      const missing = {
+        value: selected,
+        label: selected === '' ? 'Not set' : `Saved custom choice: ${selected.startsWith(PNP) ? selected.slice(PNP.length) : selected}`,
+      };
       options.splice(options[0]?.value === '' ? 1 : 0, 0, missing);
     }
     return options;
@@ -348,6 +393,21 @@
       oninvalid?.(text);
     }
   }
+
+  /** A choice in the menu. A card that shares its name with another is kept by device ID, the rest by name. */
+  function choose(choice: string) {
+    if (control.kind === 'adapter' && pnp) {
+      if (choice.startsWith(PNP)) {
+        const id = choice.slice(PNP.length);
+        const gpu = (session.metadata?.gpus ?? []).find((gpu) => gpu.pnp_id && same(gpu.pnp_id, id));
+        pnp.onchange(id);
+        if (gpu) onchange(gpu.name);
+        return;
+      }
+      if (pnp.value.trim()) pnp.onchange(null);
+    }
+    onchange(choice);
+  }
 </script>
 
 {#if control.kind === 'toggle'}
@@ -357,10 +417,10 @@
     {id}
     class="select"
     aria-describedby={describe(!!hostError && `${id}-host`)}
-    onchange={(event) => onchange(event.currentTarget.value)}
+    onchange={(event) => choose(event.currentTarget.value)}
   >
     {#each choices as option (option.value)}
-      <option value={option.value} selected={option.value === current}>{option.label}</option>
+      <option value={option.value} selected={option.value === selected}>{option.label}</option>
     {/each}
     {#if listsHost && session.metadata === null}
       <option disabled value={'\u0000loading'}>Loading…</option>

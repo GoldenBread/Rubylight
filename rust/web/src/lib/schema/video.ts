@@ -706,10 +706,10 @@ const encoders: Setting[] = [
     description:
       'The GPU that captures and encodes the video. Leave it on Automatic, which uses the card connected to the streamed display, unless this PC has several GPUs and you want another.',
     details:
-      'Lists hardware GPUs even without a connected display. Available codecs depend on the GPU and driver. With a GPU chosen, virtual displays are created to render on it.',
+      'Lists hardware GPUs even without a connected display. Available codecs depend on the GPU and driver. With a GPU chosen, virtual displays are created to render on it. Two identical GPUs are listed one by one and kept by their Windows device ID, which takes precedence over the name.',
     category: 'encoders',
     group: 'Encoder',
-    control: { kind: 'adapter' },
+    control: { kind: 'adapter', pnp: 'adapter_pnp_id' },
     default: '',
     restart: true,
   },
@@ -722,6 +722,7 @@ const encoders: Setting[] = [
     group: 'Encoder',
     control: { kind: 'text', placeholder: 'PCI\\VEN_1002&DEV_744C&...', mono: true },
     default: '',
+    partOf: 'adapter_name',
     advanced: true,
     restart: true,
   },

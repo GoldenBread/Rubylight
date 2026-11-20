@@ -25,6 +25,7 @@
     oninvalid,
     daily,
     fixed,
+    pnp,
   }: {
     setting: Setting;
     /** The effective value, normalised for the control. */
@@ -57,6 +58,8 @@
     /** The daily time its control's `daily` choice keeps in another setting (SettingControl). */
     daily?: { value: string; onchange: (value: string | null) => void };
     /** The value a select's `fixed` choice reveals, edited under the select (Setting.partOf). */
+    /** The graphics card's device ID, kept for cards that share a name (SettingControl). */
+    pnp?: { value: string; onchange: (value: string | null) => void };
     fixed?: {
       setting: Setting;
       value: ConfigValue;
@@ -126,6 +129,7 @@
           {invalidText}
           {oninvalid}
           {daily}
+          {pnp}
           describedby={setting.description ? `${uid}-description` : undefined}
         />
       {/if}

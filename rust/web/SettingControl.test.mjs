@@ -55,6 +55,27 @@ test('duplicate adapter names keep the saved spelling selected once', () => {
   assert.doesNotMatch(html, /Saved custom choice/);
 });
 
+test('two identical graphics cards are listed one by one and kept by device ID', () => {
+  const twin = (id) => ({ ...gpu(radeon), pnp_id: id });
+  session.metadata = { ...metadata, gpus: [gpu(intel), twin('PCI-A'), twin('PCI-B')] };
+  try {
+    const setting = schema.settings.find((setting) => setting.key === 'adapter_name');
+    const html = (pnp) => render(SettingControl, { props: { setting, id: setting.key, value: radeon, pnp, onchange: () => {} } }).body;
+    const plain = html({ value: '', onchange: () => {} });
+    // A card with a unique name stays a name choice; the twins are told apart.
+    assert.match(plain, /value="Intel\(R\) HD Graphics 530"/);
+    assert.match(plain, /value="pnp:PCI-A"[^>]*>(?:<!--[^>]*-->)?AMD Radeon R7 M370 \(1\)/);
+    assert.match(plain, /AMD Radeon R7 M370 \(2\)/);
+    // A saved device ID selects its card.
+    const chosen = html({ value: 'pci-b', onchange: () => {} });
+    assert.match(chosen, /value="pnp:pci-b"[^>]*selected/);
+    assert.doesNotMatch(chosen, /Saved custom choice/);
+  } finally {
+    session.metadata = null;
+  }
+  assert.equal(schema.settings.find((setting) => setting.key === 'adapter_pnp_id').partOf, 'adapter_name');
+});
+
 test('a temporarily unavailable saved GPU is preserved', () => {
   const html = graphicsControl({ gpus: [] }, radeon);
   assert.match(html, /value="AMD Radeon R7 M370"/);

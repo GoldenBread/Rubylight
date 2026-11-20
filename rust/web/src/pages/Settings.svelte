@@ -212,6 +212,10 @@
   const fixedPart = (setting: Setting): Setting | undefined =>
     setting.control.kind === 'select' && setting.control.fixed ? defaults.get(setting.control.fixed.key) : undefined;
 
+  /** The setting a row's graphics card choice keeps its device ID in (Setting.partOf). */
+  const pnpPart = (setting: Setting): Setting | undefined =>
+    setting.control.kind === 'adapter' && setting.control.pnp ? defaults.get(setting.control.pnp) : undefined;
+
   const asked = (setting: Setting) => askedFor(setting, edits, config, pending);
   // Keep a pending control reachable if editing its parent makes it inactive.
   const reachable = (setting: Setting) => visible(setting) || pending.has(setting.key);
@@ -595,7 +599,8 @@
 
 {#snippet row(setting: Setting, inactive: boolean)}
   {@const fixedSetting = fixedPart(setting)}
-  {@const part = dailyPart(setting) ?? fixedSetting}
+  {@const pnpSetting = pnpPart(setting)}
+  {@const part = dailyPart(setting) ?? fixedSetting ?? pnpSetting}
   <SettingRow
     {setting}
     value={normalise(setting, effective(setting, edits, config))}
@@ -611,6 +616,12 @@
           invalidText: invalid[fixedSetting.key],
           onchange: (value) => edit(fixedSetting.key, value),
           oninvalid: (text) => setInvalid(fixedSetting.key, text),
+        }
+      : undefined}
+    pnp={pnpSetting
+      ? {
+          value: toText(normalise(pnpSetting, effective(pnpSetting, edits, config))),
+          onchange: (value) => (value === null ? reset(pnpSetting.key) : edit(pnpSetting.key, value)),
         }
       : undefined}
     daily={part && part === dailyPart(setting)

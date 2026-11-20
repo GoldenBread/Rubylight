@@ -72,8 +72,12 @@ export type Control =
   | { kind: 'display' }
   /** An audio endpoint, chosen from the host's endpoints (empty = default). */
   | { kind: 'audio' }
-  /** A GPU, chosen by name from the host's adapters (empty = automatic). */
-  | { kind: 'adapter' };
+  /**
+   * A GPU, chosen by name from the host's adapters (empty = automatic). `pnp`
+   * is the setting (`partOf` this one) that keeps the device ID, written only
+   * for a card whose name another card shares.
+   */
+  | { kind: 'adapter'; pnp?: string };
 
 /**
  * Other spellings the host reads as one of a select's options, so a value
