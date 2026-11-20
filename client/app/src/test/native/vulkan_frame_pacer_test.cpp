@@ -28,6 +28,22 @@ struct Run {
 
     size_t count(int gap) const { return static_cast<size_t>(std::count(gaps.begin(), gaps.end(), gap)); }
     int64_t mostWaitedNs() const { return *std::max_element(waitedNs.begin(), waitedNs.end()); }
+    double meanWaitedNs() const {
+        double sum = 0;
+        for (int64_t waited : waitedNs) {
+            sum += static_cast<double>(waited);
+        }
+        return sum / static_cast<double>(waitedNs.size());
+    }
+    // Frames that went up a vsync after the one before, having waited no more than limitNs: the early
+    // turns, where a frame past the longest wait goes up for having waited
+    size_t earlyTurns(int64_t limitNs) const {
+        size_t turns = 0;
+        for (size_t i = 0; i < gaps.size(); i++) {
+            turns += gaps[i] == 1 && waitedNs[i + 1] <= limitNs ? 1 : 0;
+        }
+        return turns;
+    }
 };
 
 Run run(PacingMode mode, int fps, int64_t periodNs, const std::vector<int64_t>& arrivalsNs, int vsyncs,
@@ -202,7 +218,9 @@ void testFasterHostMovesTheTurnsEarlier() {
 // A host further ahead than those moves take back, within the half a hertz per multiple that holds
 // frames for their turn (60.000 fps on 119.4 and 119.1 Hz): a frame waits at most two vsyncs past the
 // first one it is there for, so once one has it goes up a vsync early, and none is skipped (7 and 24 in
-// two minutes with the moves alone).
+// two minutes with the moves alone). The early turns still fire between those (56 of 70 and 53 of 106
+// moves): their timer runs on through the others, and cleared at each it never reached two seconds,
+// so frames waited 20.6 and 20.8 ms on average instead of 18.2 and 17.4.
 void testMuchFasterHostSkipsNothing() {
     const std::vector<int64_t> periods = {8'375'209, 8'396'306};
     for (int64_t periodNs : periods) {
@@ -211,6 +229,8 @@ void testMuchFasterHostSkipsNothing() {
         assert(out.overflowed == 0);
         assert(out.count(1) + out.count(2) == out.gaps.size());
         assert(out.mostWaitedNs() <= 3 * periodNs);
+        assert(out.earlyTurns(2 * periodNs) >= 50);
+        assert(out.meanWaitedNs() < 19e6);
     }
 }
 

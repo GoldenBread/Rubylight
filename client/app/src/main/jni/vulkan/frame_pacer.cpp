@@ -908,7 +908,9 @@ int FramePacer::onVsync(int64_t vsyncNs, const FrameTiming* frames, size_t count
                 // up, as there, rather than each a vsync after the last. A host further ahead than those
                 // moves take back (60.000 fps on 119.1 Hz) brings each frame that old before its turn, and
                 // it goes up then, a vsync early: before, the frames backed up until one gave way, 24 in
-                // two minutes there.
+                // two minutes there. The early turns' timer runs on through this, as MediaCodec's does
+                // through its limit: there this fires every 1.1-1.8 s, and clearing the timer kept the
+                // early turns from ever firing, so frames waited 20.7 ms on average instead of 17-18.
                 const int64_t longestNs = held * periodNs_;
                 if (frames[0].arrivalNs > 0 && vsyncNs - frames[0].arrivalNs > longestNs) {
                     choice = 0;
@@ -916,7 +918,6 @@ int FramePacer::onVsync(int64_t vsyncNs, const FrameTiming* frames, size_t count
                            vsyncNs - frames[choice + 1].arrivalNs > longestNs) {
                         choice++;
                     }
-                    earlySinceNs_ = 0;
                 }
                 else if (earlyTurn) {
                     choice = 0;
