@@ -650,14 +650,12 @@ fn ask_for_notices(s: &Session) {
     use crate::link_notice::LinkNoticeRequest;
     assert_eq!(
         s.link_notices
-            .lock()
-            .unwrap()
             .on_request(&LinkNoticeRequest { enabled: true }.encode()),
         Some(true)
     );
 }
 fn notice_at(s: &Session, at: Instant) -> Option<crate::link_notice::LinkNotice> {
-    let bytes = s.link_notices.lock().unwrap().take(at)?;
+    let bytes = s.link_notices.take(at)?;
     Some(crate::link_notice::LinkNotice::decode(&bytes).expect("the host sends valid notices"))
 }
 #[test]
@@ -2999,17 +2997,15 @@ fn a_sent_picture_feeds_the_client_report_and_the_record_sink_alike() {
     };
     // Neither a client report nor a sink: nothing is kept.
     session.record_sent(1, 9_000, &stamps, epoch);
-    assert_eq!(session.host_timings.lock().unwrap().take_report(), None);
+    assert_eq!(session.host_timings.take_report(), None);
 
     let (sink, rows) = timing_record::channel(8);
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     session
         .host_timings
-        .lock()
-        .unwrap()
         .on_request(&HostTimingRequest { enabled: true }.encode());
     session.record_sent(2, 9_000, &stamps, epoch);
-    let report = session.host_timings.lock().unwrap().take_report().unwrap();
+    let report = session.host_timings.take_report().unwrap();
     let (record, extra) = crate::host_timing::HostTiming::decode_report_with(&report)
         .unwrap()
         .remove(0);

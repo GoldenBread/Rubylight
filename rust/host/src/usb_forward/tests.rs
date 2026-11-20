@@ -356,6 +356,44 @@ fn an_unopened_tunnel_times_out() {
     );
 }
 
+/// The control loop reads `queued` to skip the registry's lock; an answer
+/// queued after its look must still be taken on the next one, and a token
+/// still to open keeps the gate set until it is reported.
+#[test]
+fn a_message_queued_after_the_loops_look_is_taken_on_the_next_one() {
+    let (vhci, _) = FakeVhci::new(true);
+    let forwarding = forwarding(vhci);
+    let now = Instant::now();
+    // A quiet pass: the gate the control loop reads says nothing waits.
+    assert!(!forwarding.queued());
+    assert!(forwarding.take(SESSION, now).is_empty());
+    assert!(!forwarding.queued(), "a quiet pass reads the gate clear");
+    // The refusal lands after the look above.
+    forwarding.on_message(SESSION, &client(true), false, 4, request(7, BUSID));
+    assert!(forwarding.queued(), "the next pass sees the answer");
+    assert_eq!(
+        refusal(&forwarding.take(SESSION, now)),
+        Some(UsbReason::Disabled)
+    );
+    assert!(!forwarding.queued(), "the answer was taken");
+    // An attachment whose tunnel has not opened keeps the gate set: its
+    // failure has to be reported when its token runs out.
+    forwarding.on_message(SESSION, &client(true), true, 4, request(8, BUSID));
+    assert!(forwarding.queued(), "the token still waits");
+    token(&forwarding.take(SESSION, now));
+    assert!(forwarding.queued(), "the attachment is still to open");
+    let late = now + Duration::from_secs(TOKEN_TTL_SECS + 1);
+    assert!(matches!(
+        forwarding.take(SESSION, late)[..],
+        [UsbMessage::Status {
+            request_id: 8,
+            state: UsbState::Failed,
+            reason: UsbReason::TunnelTimeout
+        }]
+    ));
+    assert!(!forwarding.queued(), "nothing waits for anyone");
+}
+
 #[test]
 fn waiting_attachments_end_with_the_client_the_console_and_the_session() {
     let (vhci, _) = FakeVhci::new(true);

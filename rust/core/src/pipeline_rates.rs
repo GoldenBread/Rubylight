@@ -19,7 +19,8 @@ use rubylight_protocol::pipeline_rates::{
     PIPELINE_RATES_REPORT_BYTES, PipelineRatesReport, PipelineRatesRequest, UNKNOWN,
 };
 use serde::Serialize;
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 
 pub use rubylight_protocol::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE;
@@ -167,6 +168,17 @@ impl Sampler {
 /// the control loop.
 #[derive(Default)]
 pub struct Reporter {
+    /// Whether a report is on or due, read without the lock: the control
+    /// loop takes the lock only when this says so. Set with the request that
+    /// turns reports on, and cleared by `take` once they are off. While they
+    /// are on it stays set: a report comes due with time alone, which only a
+    /// take can see.
+    queued: AtomicBool,
+    inner: Mutex<Asking>,
+}
+
+#[derive(Default)]
+struct Asking {
     /// The interval and when the next report is due, while reports are on.
     asked: Option<(Duration, Instant)>,
     sampler: Sampler,
@@ -175,31 +187,43 @@ pub struct Reporter {
 impl Reporter {
     /// Applies a request, starting a new window. Returns whether reports are
     /// on, or `None` for a malformed request, which changes nothing.
-    pub fn on_request(&mut self, now: Instant, payload: &[u8], counts: Counts) -> Option<bool> {
+    pub fn on_request(&self, now: Instant, payload: &[u8], counts: Counts) -> Option<bool> {
         let request = PipelineRatesRequest::decode(payload)?;
-        self.sampler = Sampler::default();
-        self.asked = request.enabled.then(|| {
+        let mut inner = self.inner.lock().unwrap();
+        inner.sampler = Sampler::default();
+        inner.asked = request.enabled.then(|| {
             let interval = Duration::from_millis(u64::from(request.interval_ms));
-            self.sampler.sample(now, counts, interval);
+            inner.sampler.sample(now, counts, interval);
             (interval, now + interval)
         });
+        self.queued.store(true, Ordering::Release);
         Some(request.enabled)
     }
 
     /// The encoded report due at `now`, if one is.
     pub fn take(
-        &mut self,
+        &self,
         now: Instant,
         counts: impl FnOnce() -> Counts,
     ) -> Option<[u8; PIPELINE_RATES_REPORT_BYTES]> {
-        let (interval, due) = self.asked?;
+        let mut inner = self.inner.lock().unwrap();
+        let Some((interval, due)) = inner.asked else {
+            self.queued.store(false, Ordering::Release);
+            return None;
+        };
         if now < due {
             return None;
         }
-        self.asked = Some((interval, now + interval));
-        self.sampler
+        inner.asked = Some((interval, now + interval));
+        inner
+            .sampler
             .sample(now, counts(), interval)
             .map(|report| report.encode())
+    }
+
+    /// Whether the control loop should look for a report.
+    pub fn queued(&self) -> bool {
+        self.queued.load(Ordering::Acquire)
     }
 }
 
@@ -517,7 +541,7 @@ mod tests {
     #[test]
     fn reports_follow_the_requested_interval_and_stop() {
         let start = Instant::now();
-        let mut reporter = Reporter::default();
+        let reporter = Reporter::default();
         assert_eq!(reporter.take(start, Counts::default), None);
         let on = PipelineRatesRequest {
             enabled: true,
@@ -561,6 +585,49 @@ mod tests {
             Some(false)
         );
         assert_eq!(reporter.take(start + half * 10, Counts::default), None);
+    }
+
+    #[test]
+    fn the_gate_is_set_while_reports_are_on_and_clears_when_they_stop() {
+        let start = Instant::now();
+        let reporter = Reporter::default();
+        assert!(!reporter.queued());
+        assert_eq!(reporter.take(start, Counts::default), None);
+        assert!(!reporter.queued(), "a quiet pass reads the gate clear");
+        let on = PipelineRatesRequest {
+            enabled: true,
+            interval_ms: 500,
+        };
+        reporter.on_request(start, &on.encode(), counts(0, 0, 0, 100, 0));
+        assert!(reporter.queued(), "reports are on");
+        assert_eq!(
+            reporter.take(start + Duration::from_millis(100), || {
+                unreachable!("not due")
+            }),
+            None
+        );
+        assert!(
+            reporter.queued(),
+            "the next report comes due with time alone"
+        );
+        assert!(
+            reporter
+                .take(start + Duration::from_millis(500), || {
+                    counts(60, 60, 60, 160, 0)
+                })
+                .is_some()
+        );
+        assert!(reporter.queued(), "the report after keeps the gate set");
+        let off = PipelineRatesRequest {
+            enabled: false,
+            interval_ms: 500,
+        };
+        reporter.on_request(start, &off.encode(), Counts::default());
+        assert_eq!(
+            reporter.take(start + Duration::from_secs(10), Counts::default),
+            None
+        );
+        assert!(!reporter.queued(), "reports off: the gate clears");
     }
 
     #[test]

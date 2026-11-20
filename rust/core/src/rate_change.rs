@@ -14,6 +14,8 @@
 //! ran it or went back, and every answer until the control thread sends it. A stream that
 //! never launched with `rlRateChange` takes none and answers none.
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{Result, bail};
@@ -210,6 +212,16 @@ struct Pending {
 /// session loop reports what it took and how each switch ended.
 #[derive(Debug, Default)]
 pub struct RateChanges {
+    /// Whether an answer may wait, read without the lock: the control loop
+    /// takes the lock only when this says so. Set under the lock with every
+    /// change, and cleared under it by `take` when the last answer is taken,
+    /// so an answer cannot land behind the clear.
+    queued: AtomicBool,
+    inner: Mutex<Changes>,
+}
+
+#[derive(Debug, Default)]
+struct Changes {
     queued: Option<Pending>,
     switching: Option<Pending>,
     answers: VecDeque<RateChangeResult>,
@@ -227,6 +239,67 @@ impl RateChanges {
     /// encoder since. A stream launched without the bitrate its user set is asked for the
     /// encoder's own.
     pub fn client_bitrate_kbps(&self, live_kbps: u32, launched: &Negotiated) -> u32 {
+        self.inner
+            .lock()
+            .unwrap()
+            .client_bitrate_kbps(live_kbps, launched)
+    }
+
+    /// Records a decided request, queueing its switch in `reconfigure`. A rate the stream
+    /// will run at replaces one still queued, which is answered as superseded; a bitrate
+    /// alone, or a refused or invalid rate, leaves it queued.
+    pub fn record(&self, decision: &Decision, reconfigure: &mut Reconfiguration, now: Instant) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.record(decision, reconfigure, now);
+        self.queued.store(true, Ordering::Release);
+    }
+
+    /// A 0x5532 request came. One for another rate replaces the queued one, and so does one
+    /// for the current mode, which withdrew the switch; one for another size takes it along.
+    pub fn on_reconfigure(&self, outcome: reconfigure::Outcome) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.on_reconfigure(outcome);
+        self.queued.store(true, Ordering::Release);
+    }
+
+    /// The session loop took `mode` to switch to. A queued rate it carries now switches; a
+    /// queued rate it does not carry was replaced by a later 0x5532 request, and a switch
+    /// still running by this one.
+    pub fn taken(&self, mode: Mode) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.taken(mode);
+        self.queued.store(true, Ordering::Release);
+    }
+
+    /// The session loop's switch ended: the stream now runs at `now`, which is the mode it
+    /// had before when `refused` says why it went back. A queued request for that mode was
+    /// withdrawn with it (`Reconfiguration::refused`) and is answered as running.
+    pub fn switched(&self, now: Mode, refused: Option<Reason>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.switched(now, refused);
+        self.queued.store(true, Ordering::Release);
+    }
+
+    /// The next answer to send.
+    pub fn take(&self) -> Option<RateChangeResult> {
+        let mut inner = self.inner.lock().unwrap();
+        let result = inner.take();
+        if result.is_none() {
+            self.queued.store(false, Ordering::Release);
+        }
+        result
+    }
+
+    /// Whether the control loop should look for an answer.
+    pub fn queued(&self) -> bool {
+        self.queued.load(Ordering::Acquire)
+    }
+}
+
+impl Changes {
+    /// The stream's bitrate in the unit its client asks in; see
+    /// [`RateChanges::client_bitrate_kbps`].
+    fn client_bitrate_kbps(&self, live_kbps: u32, launched: &Negotiated) -> u32 {
         match self.client {
             Some((client, encoder))
                 if encoder == live_kbps && launched.configured_bitrate_kbps != 0 =>
@@ -237,10 +310,8 @@ impl RateChanges {
         }
     }
 
-    /// Records a decided request, queueing its switch in `reconfigure`. A rate the stream
-    /// will run at replaces one still queued, which is answered as superseded; a bitrate
-    /// alone, or a refused or invalid rate, leaves it queued.
-    pub fn record(&mut self, decision: &Decision, reconfigure: &mut Reconfiguration, now: Instant) {
+    /// Records a decided request; see [`RateChanges::record`].
+    fn record(&mut self, decision: &Decision, reconfigure: &mut Reconfiguration, now: Instant) {
         let mut result = decision.result;
         if let Some(encoder) = decision.bitrate_kbps {
             self.client = Some((result.bitrate_kbps, encoder));
@@ -262,9 +333,8 @@ impl RateChanges {
         }
     }
 
-    /// A 0x5532 request came. One for another rate replaces the queued one, and so does one
-    /// for the current mode, which withdrew the switch; one for another size takes it along.
-    pub fn on_reconfigure(&mut self, outcome: reconfigure::Outcome) {
+    /// A 0x5532 request came; see [`RateChanges::on_reconfigure`].
+    fn on_reconfigure(&mut self, outcome: reconfigure::Outcome) {
         let Some(mut pending) = self.queued.take() else {
             return;
         };
@@ -280,10 +350,8 @@ impl RateChanges {
         self.queued = Some(pending);
     }
 
-    /// The session loop took `mode` to switch to. A queued rate it carries now switches; a
-    /// queued rate it does not carry was replaced by a later 0x5532 request, and a switch
-    /// still running by this one.
-    pub fn taken(&mut self, mode: Mode) {
+    /// The session loop took `mode` to switch to; see [`RateChanges::taken`].
+    fn taken(&mut self, mode: Mode) {
         if let Some(previous) = self.switching.take() {
             self.superseded(previous);
         }
@@ -296,10 +364,8 @@ impl RateChanges {
         }
     }
 
-    /// The session loop's switch ended: the stream now runs at `now`, which is the mode it
-    /// had before when `refused` says why it went back. A queued request for that mode was
-    /// withdrawn with it (`Reconfiguration::refused`) and is answered as running.
-    pub fn switched(&mut self, now: Mode, refused: Option<Reason>) {
+    /// The session loop's switch ended; see [`RateChanges::switched`].
+    fn switched(&mut self, now: Mode, refused: Option<Reason>) {
         if let Some(mut pending) = self.switching.take() {
             pending.result.fps_millihz = now.fps_millihz;
             if let Some(reason) = refused {
@@ -316,7 +382,7 @@ impl RateChanges {
     }
 
     /// The next answer to send.
-    pub fn take(&mut self) -> Option<RateChangeResult> {
+    fn take(&mut self) -> Option<RateChangeResult> {
         self.answers.pop_front()
     }
 

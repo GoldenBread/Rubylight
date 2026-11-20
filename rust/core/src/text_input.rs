@@ -19,6 +19,8 @@ pub use rubylight_protocol::text_input::{
     InputType, MAX_TEXT_BYTES, NoticeKind, SELECTION_UNKNOWN, TEXT_INPUT_MESSAGE_TYPE,
     TextInputNotice, TextInputRequest,
 };
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// The least time between two notices; a burst of focus changes sends the newest.
@@ -274,6 +276,16 @@ struct Context {
 /// the client was last told.
 #[derive(Debug, Default)]
 pub struct TextInputs {
+    /// Whether a notice may be due, read without the lock: the control loop
+    /// takes the lock only when this says so. Set under the lock with every
+    /// focus and request, and cleared under it by `take` once nothing is left
+    /// to tell, so a focus cannot land behind the clear.
+    queued: AtomicBool,
+    inner: Mutex<Fields>,
+}
+
+#[derive(Debug, Default)]
+struct Fields {
     request: TextInputRequest,
     /// `text_input_surrounding_text` when the client asked.
     surrounding_allowed: bool,
@@ -292,34 +304,71 @@ impl TextInputs {
     /// malformed request, which changes nothing. Every valid request starts afresh: a client
     /// that asks while a field has the focus hears it at once.
     pub fn on_request(
-        &mut self,
+        &self,
         payload: &[u8],
         offered: bool,
         surrounding_allowed: bool,
     ) -> Option<Watch> {
         let request = TextInputRequest::decode(payload)?;
-        self.request = TextInputRequest {
+        let mut inner = self.inner.lock().unwrap();
+        inner.request = TextInputRequest {
             notices: request.notices && offered,
             ..request
         };
-        self.surrounding_allowed = surrounding_allowed;
-        self.raised = None;
-        self.sent_at = None;
-        if !self.request.notices {
-            self.latest = None;
-            self.left_at = None;
-            return Some(Watch::Off);
+        inner.surrounding_allowed = surrounding_allowed;
+        inner.raised = None;
+        inner.sent_at = None;
+        if !inner.request.notices {
+            inner.latest = None;
+            inner.left_at = None;
         }
-        Some(Watch::On {
-            max_text: self.max_text(),
-        })
+        self.queued.store(true, Ordering::Release);
+        if inner.request.notices {
+            Some(Watch::On {
+                max_text: inner.max_text(),
+            })
+        } else {
+            Some(Watch::Off)
+        }
     }
 
     /// Whether the client asked and the host offers it.
     pub fn watching(&self) -> bool {
-        self.request.notices
+        self.inner.lock().unwrap().request.notices
     }
 
+    /// The watcher's newest focus: a text field, or `None` when the focus left them.
+    pub fn note(&self, focused: Option<Focused>, now: Instant) {
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.request.notices {
+            return;
+        }
+        if focused.is_none() && inner.latest.is_some() {
+            inner.left_at = Some(now);
+        }
+        inner.latest = focused;
+        self.queued.store(true, Ordering::Release);
+    }
+
+    /// The notice to send now, if any: a raise when a field gained the focus, an update when
+    /// it changed while raised, a lower once no field has had the focus for
+    /// [`LOWER_DELAY`]; at most one per [`INTERVAL`], and the newest focus wins.
+    pub fn take(&self, now: Instant) -> Option<Vec<u8>> {
+        let mut inner = self.inner.lock().unwrap();
+        let notice = inner.take(now);
+        if !inner.pending() {
+            self.queued.store(false, Ordering::Release);
+        }
+        notice
+    }
+
+    /// Whether the control loop should look for a notice.
+    pub fn queued(&self) -> bool {
+        self.queued.load(Ordering::Acquire)
+    }
+}
+
+impl Fields {
     /// The most text a notice carries now: 0 unless the client asked and the host allows it.
     fn max_text(&self) -> usize {
         if self.request.surrounding_text && self.surrounding_allowed {
@@ -329,21 +378,8 @@ impl TextInputs {
         }
     }
 
-    /// The watcher's newest focus: a text field, or `None` when the focus left them.
-    pub fn note(&mut self, focused: Option<Focused>, now: Instant) {
-        if !self.request.notices {
-            return;
-        }
-        if focused.is_none() && self.latest.is_some() {
-            self.left_at = Some(now);
-        }
-        self.latest = focused;
-    }
-
-    /// The notice to send now, if any: a raise when a field gained the focus, an update when
-    /// it changed while raised, a lower once no field has had the focus for
-    /// [`LOWER_DELAY`]; at most one per [`INTERVAL`], and the newest focus wins.
-    pub fn take(&mut self, now: Instant) -> Option<Vec<u8>> {
+    /// The notice to send now; see [`TextInputs::take`].
+    fn take(&mut self, now: Instant) -> Option<Vec<u8>> {
         if !self.request.notices {
             return None;
         }
@@ -412,6 +448,18 @@ impl TextInputs {
         let encoded = notice.encode();
         debug_assert!(encoded.is_some(), "an unencodable text input notice");
         encoded
+    }
+
+    /// Whether a future `take` might send a notice: a raise or an update that
+    /// was not told, or the lower once the focus has left.
+    fn pending(&self) -> bool {
+        self.request.notices
+            && match (&self.raised, &self.latest) {
+                (None, None) => false,
+                (None, Some(_)) => true,
+                (Some(raised), Some(focused)) => self.context(focused) != *raised,
+                (Some(_), None) => true,
+            }
     }
 
     fn context(&self, focused: &Focused) -> Context {

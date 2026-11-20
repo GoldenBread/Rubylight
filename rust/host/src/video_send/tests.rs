@@ -1227,10 +1227,7 @@ fn the_sender_thread_records_where_a_new_pictures_time_went() {
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     // A client that asked for host timing reports (0x5536).
     let asked = butterpollo_core::host_timing::HostTimingRequest { enabled: true }.encode();
-    assert_eq!(
-        session.host_timings.lock().unwrap().on_request(&asked),
-        Some(true)
-    );
+    assert_eq!(session.host_timings.on_request(&asked), Some(true));
     // A picture presented 6 ms ago, held 1 ms, claimed 3 ms ago and encoded
     // in 2 ms, beside a static repeat that has no present.
     let mut claims = Claims::default();
@@ -1281,7 +1278,7 @@ fn the_sender_thread_records_where_a_new_pictures_time_went() {
     assert!((gap - excluded).abs() < 0.01, "{gap} != {excluded}");
     // The client that asked hears the whole span for the new picture alone,
     // numbered as its packets are, with the same stages.
-    let report = session.host_timings.lock().unwrap().take_report().unwrap();
+    let report = session.host_timings.take_report().unwrap();
     let records = butterpollo_core::host_timing::HostTiming::decode_report(&report).unwrap();
     assert_eq!(records.len(), 1);
     let record = records[0];
@@ -1331,7 +1328,7 @@ fn the_sender_thread_records_where_a_new_pictures_time_went() {
     );
     assert!((i64::from(record.encode_us) - us(ms("encode"))).abs() <= 1);
     assert!((i64::from(record.send_us) - us(ms("send"))).abs() <= 1);
-    assert_eq!(session.host_timings.lock().unwrap().take_report(), None);
+    assert_eq!(session.host_timings.take_report(), None);
 }
 
 #[test]

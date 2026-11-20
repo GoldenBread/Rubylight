@@ -181,7 +181,7 @@ fn frames_are_refused_by_permission_kind_and_size() {
 fn a_copy_this_host_sent_coming_back_is_dropped_for_five_seconds() {
     let mut sync = PeerSync::default();
     let now = Instant::now();
-    *sync.outbox.lock().unwrap() = Some(Item::Text("pc".into()).frame(42));
+    sync.outbox.put(Item::Text("pc".into()).frame(42));
     assert_eq!(sync.take(now, || true).unwrap(), text(42, "pc"));
     assert_eq!(sync.take(now, || true), None);
     assert_eq!(sync.accept(&text(42, "pc"), &ALL, now), Accepted::Nothing);
@@ -195,7 +195,7 @@ fn a_copy_this_host_sent_coming_back_is_dropped_for_five_seconds() {
     );
     // Only the newest tokens are kept.
     for token in 0..=ECHO_TOKENS as u32 {
-        *sync.outbox.lock().unwrap() = Some(Item::Text("pc".into()).frame(100 + token));
+        sync.outbox.put(Item::Text("pc".into()).frame(100 + token));
         sync.take(now, || true);
     }
     assert_eq!(sync.sent.len(), ECHO_TOKENS);
@@ -206,12 +206,15 @@ fn a_copy_this_host_sent_coming_back_is_dropped_for_five_seconds() {
 fn a_copy_is_not_sent_once_the_device_may_no_longer_read_it() {
     let mut sync = PeerSync::default();
     let now = Instant::now();
-    *sync.outbox.lock().unwrap() = Some(Item::Text("pc".into()).frame(7));
+    sync.outbox.put(Item::Text("pc".into()).frame(7));
     // Made view only after the stream's first clipboard frame: asked again, refused.
     assert_eq!(sync.take(now, || false), None);
-    assert!(sync.outbox.lock().unwrap().is_none(), "the copy is dropped");
+    assert!(
+        sync.outbox.frame.lock().unwrap().is_none(),
+        "the copy is dropped"
+    );
     assert!(sync.sent.is_empty());
-    *sync.outbox.lock().unwrap() = Some(Item::Text("again".into()).frame(8));
+    sync.outbox.put(Item::Text("again".into()).frame(8));
     assert_eq!(sync.take(now, || true).unwrap(), text(8, "again"));
 }
 
@@ -315,7 +318,7 @@ fn a_copy_kept_from_a_device_without_read_is_warned_on_the_stream_card_once() {
     let watch = Watch::new(fake.clone(), Allowed { read: false, ..ALL });
     let items = Mailbox(Arc::default());
     let worker = items.0.clone();
-    let outbox = Arc::new(Mutex::new(None));
+    let outbox = Arc::new(Outbox::default());
     let wake = Arc::new(UdpSocket::bind("127.0.0.1:0").unwrap());
     let warnings = Arc::new(Warnings::default());
     let thread = {
@@ -348,7 +351,30 @@ fn a_copy_kept_from_a_device_without_read_is_warned_on_the_stream_card_once() {
     fake.copy("another copy");
     std::thread::sleep(POLL * 3);
     assert!(card().is_empty());
-    assert!(outbox.lock().unwrap().is_none(), "nothing was sent");
+    assert!(outbox.frame.lock().unwrap().is_none(), "nothing was sent");
     drop(items);
     thread.join().unwrap();
+}
+
+/// The control loop reads `queued` to skip the outbox's lock; a copy the
+/// worker puts after its look is still sent on the next one, and one kept
+/// back for want of the read permission clears the gate when it is dropped.
+#[test]
+fn a_copy_put_after_the_loops_look_is_taken_on_the_next_one() {
+    let mut sync = PeerSync::default();
+    let now = Instant::now();
+    // A quiet pass: the gate the control loop reads says nothing waits.
+    assert!(!sync.queued());
+    assert_eq!(sync.take(now, || true), None);
+    assert!(!sync.queued(), "a quiet pass reads the gate clear");
+    // The worker puts the PC's newest copy after the look above.
+    sync.outbox.put(Item::Text("pc".into()).frame(42));
+    assert!(sync.queued(), "the next pass sees the copy");
+    assert_eq!(sync.take(now, || true).unwrap(), text(42, "pc"));
+    assert!(!sync.queued(), "the copy was taken");
+    // A copy the device may not read is dropped, and the gate clears with it.
+    sync.outbox.put(Item::Text("secret".into()).frame(43));
+    assert!(sync.queued());
+    assert_eq!(sync.take(now, || false), None);
+    assert!(!sync.queued(), "the refused copy was dropped");
 }

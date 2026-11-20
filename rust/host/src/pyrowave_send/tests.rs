@@ -83,10 +83,7 @@ fn a_pyrowave_picture_yields_host_timing_stages_and_a_record_row() {
         },
     );
     let asked = butterpollo_core::host_timing::HostTimingRequest { enabled: true }.encode();
-    assert_eq!(
-        session.host_timings.lock().unwrap().on_request(&asked),
-        Some(true)
-    );
+    assert_eq!(session.host_timings.on_request(&asked), Some(true));
     let (sink, rows) = butterpollo_core::timing_record::channel(8);
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     let client = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -135,7 +132,7 @@ fn a_pyrowave_picture_yields_host_timing_stages_and_a_record_row() {
         .unwrap();
     let mut report = None;
     for _ in 0..400 {
-        report = session.host_timings.lock().unwrap().take_report();
+        report = session.host_timings.take_report();
         if report.is_some() {
             break;
         }

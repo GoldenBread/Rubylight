@@ -329,3 +329,46 @@ fn large_and_unusable_shapes() {
 fn image_of(noted: Noted) -> Converted {
     image(&noted, 96, 100)
 }
+
+/// A pointer the video thread notes after the control loop's look is sent on
+/// its next one, and the gate stays set while a coalesced shape waits out its
+/// window.
+#[test]
+fn a_pointer_noted_after_the_loops_look_is_sent_on_the_next_one() {
+    let cursor = ClientCursor::default();
+    let arrow = solid(4, 4, [10, 20, 30, 255]);
+    let other = solid(4, 4, [40, 50, 60, 255]);
+    let now = Instant::now();
+    cursor.on_request(&request(true, 96), true, 1);
+    // A quiet pass: the gate the control loop reads says nothing waits, and
+    // the wait's own deadline is none either.
+    assert!(!cursor.queued());
+    assert_eq!(cursor.take(1, now, scale(100)), None);
+    assert_eq!(cursor.next_due(), None);
+    // The video thread notes a change after the look above.
+    assert!(cursor.note(Some(pointer(&arrow, 4, 4)), "D1"));
+    assert!(cursor.queued(), "the next pass sees the shape");
+    assert_eq!(cursor.next_due(), None, "the first shape is not coalesced");
+    assert!(matches!(
+        decoded(cursor.take(1, now, scale(100))),
+        CursorShape::Image { .. }
+    ));
+    assert!(!cursor.queued());
+    assert_eq!(cursor.next_due(), None, "nothing waits");
+    // A change inside the 16 ms window: nothing goes out now, but the gate
+    // stays set, and the wait reports when the newest shape is due.
+    assert!(cursor.note(Some(pointer(&other, 4, 4)), "D1"));
+    assert!(cursor.queued());
+    assert_eq!(
+        cursor.take(1, now + Duration::from_millis(8), scale(100)),
+        None,
+        "coalesced"
+    );
+    assert!(cursor.queued(), "the newest shape still waits");
+    assert_eq!(cursor.next_due(), Some(now + INTERVAL));
+    assert!(matches!(
+        decoded(cursor.take(1, now + INTERVAL, scale(100))),
+        CursorShape::Image { .. }
+    ));
+    assert!(!cursor.queued(), "the last shape cleared the gate");
+}

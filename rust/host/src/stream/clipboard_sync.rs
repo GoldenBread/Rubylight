@@ -12,6 +12,7 @@
 //! is on, and nothing while the stream plays in the background.
 use std::collections::VecDeque;
 use std::net::UdpSocket;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -268,12 +269,43 @@ impl Drop for Mailbox {
 pub(crate) struct PeerSync {
     /// The worker's inbox of the device's copies, from the first frame.
     worker: Option<Mailbox>,
-    /// The PC's newest copy, for the loop to send.
-    outbox: Arc<Mutex<Option<Frame>>>,
+    /// The PC's newest copy, for the loop to send, shared with the worker.
+    outbox: Arc<Outbox>,
     /// Tokens of the PC's copies sent, with when.
     sent: VecDeque<(u32, Instant)>,
     /// [`Refused::bit`]s warned about once.
     warned: u32,
+}
+
+/// The PC's newest copy, shared between the worker that watches the clipboard
+/// and the control loop that sends it.
+#[derive(Default)]
+struct Outbox {
+    frame: Mutex<Option<Frame>>,
+    /// Whether a copy may wait, read without the lock: the control loop takes
+    /// the lock only when this says so. Set under the lock with each copy,
+    /// and cleared under it by `take` when nothing is left, so a copy cannot
+    /// land behind the clear.
+    queued: AtomicBool,
+}
+impl Outbox {
+    /// The worker's newest copy of the PC's clipboard.
+    fn put(&self, frame: Frame) {
+        *self.frame.lock().unwrap() = Some(frame);
+        self.queued.store(true, Ordering::Release);
+    }
+    /// The waiting copy, if any.
+    fn take(&self) -> Option<Frame> {
+        let mut frame = self.frame.lock().unwrap();
+        let taken = frame.take();
+        if frame.is_none() {
+            self.queued.store(false, Ordering::Release);
+        }
+        taken
+    }
+    fn queued(&self) -> bool {
+        self.queued.load(Ordering::Acquire)
+    }
 }
 impl PeerSync {
     /// Takes a frame from the device (0x5508): starts the worker on the first, and puts its
@@ -379,7 +411,7 @@ impl PeerSync {
         now: Instant,
         may_read: impl FnOnce() -> bool,
     ) -> Option<Vec<u8>> {
-        let frame = self.outbox.lock().unwrap().take()?;
+        let frame = self.outbox.take()?;
         if !may_read() {
             return None;
         }
@@ -388,6 +420,11 @@ impl PeerSync {
         }
         self.sent.push_back((frame.token, now));
         frame.encode()
+    }
+
+    /// Whether the control loop should look for a copy.
+    pub(crate) fn queued(&self) -> bool {
+        self.outbox.queued()
     }
 }
 
@@ -493,7 +530,7 @@ impl std::error::Error for Unread {}
 fn run<C: Clipboard>(
     mut watch: Watch<C>,
     items: Arc<Inbox>,
-    outbox: Arc<Mutex<Option<Frame>>>,
+    outbox: Arc<Outbox>,
     wake: Arc<UdpSocket>,
     client: &str,
     warnings: &Warnings,
@@ -516,7 +553,7 @@ fn run<C: Clipboard>(
         match watch.poll() {
             Ok(Some(frame)) => {
                 read_failed = false;
-                *outbox.lock().unwrap() = Some(frame);
+                outbox.put(frame);
                 let _ = wake.send(&[1]);
             }
             Ok(None) => {}

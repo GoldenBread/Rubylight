@@ -1086,7 +1086,7 @@ impl SessionThread<'_> {
                     let mut reconfigure = s.reconfigure.lock().unwrap();
                     let requested = reconfigure.take_due(Instant::now());
                     if let Some(to) = requested {
-                        s.rate_changes.lock().unwrap().taken(to);
+                        s.rate_changes.taken(to);
                     }
                     requested
                 };
@@ -1817,7 +1817,8 @@ impl SessionThread<'_> {
                     }
                     stutter_totals.forget_usual();
                     s.stats.publish_stutter(&stutter_totals);
-                    s.rate_changes.lock().unwrap().switched(butterpollo_core::reconfigure::Mode::of(&stream), None);
+                    s.rate_changes
+                        .switched(butterpollo_core::reconfigure::Mode::of(&stream), None);
                     tracing::info!(
                         client = %s.launch.client.name,
                         from = %from,

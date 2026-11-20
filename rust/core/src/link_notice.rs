@@ -11,6 +11,8 @@ pub use rubylight_protocol::control::{
     LINK_NOTICE_BYTES, LINK_NOTICE_MESSAGE_TYPE, LinkNotice, LinkNoticeRequest, LinkReason,
     LinkState,
 };
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// The least time between two notices. A burst of changes (a step down, a failed probe, the
@@ -27,6 +29,17 @@ const CALM_FRACTION: u32 = 10;
 
 #[derive(Default)]
 pub struct LinkNotices {
+    /// Whether a notice may be due, read without the lock: the control loop
+    /// takes the lock only when this says so. Set under the lock with every
+    /// change and request, and cleared under it by `take` once the client
+    /// was told everything that can follow, so a change cannot land behind
+    /// the clear.
+    queued: AtomicBool,
+    inner: Mutex<Notices>,
+}
+
+#[derive(Default)]
+struct Notices {
     enabled: bool,
     /// The newest state the controller reported; `None` until the first change.
     latest: Option<LinkNotice>,
@@ -38,21 +51,59 @@ impl LinkNotices {
     /// Applies a client's request. Returns whether notices are on, or `None` for a malformed
     /// request, which changes nothing. A client that asks while the host is already below the
     /// requested bitrate hears it at once.
-    pub fn on_request(&mut self, payload: &[u8]) -> Option<bool> {
+    pub fn on_request(&self, payload: &[u8]) -> Option<bool> {
         let request = LinkNoticeRequest::decode(payload)?;
+        let mut inner = self.inner.lock().unwrap();
         // Every valid request repeats a standing limit, also a second "on" in a row.
-        self.sent = None;
-        self.enabled = request.enabled;
-        Some(self.enabled)
+        inner.sent = None;
+        inner.enabled = request.enabled;
+        self.queued.store(true, Ordering::Release);
+        Some(inner.enabled)
     }
 
     pub fn enabled(&self) -> bool {
-        self.enabled
+        self.inner.lock().unwrap().enabled
     }
 
     /// Notes what the controller just did. A return to the requested rate is only kept for a
     /// client that asked; one that has not yet asked still hears a limit that holds.
-    pub fn note(&mut self, notice: LinkNotice) {
+    pub fn note(&self, notice: LinkNotice) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.note(notice);
+        self.queued.store(true, Ordering::Release);
+    }
+
+    /// The host is at the requested bitrate again (a rebuilt controller, or the client set the
+    /// bitrate itself) at `kbps`. A no-op unless a limit was reported.
+    pub fn note_full(&self, kbps: u32) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.note_full(kbps);
+        self.queued.store(true, Ordering::Release);
+    }
+
+    /// The notice to send now, if the client asked, it differs from the last one sent and a
+    /// second has passed since that. A change of state goes out then; a bitrate that moved
+    /// inside the same state goes out when it moved by more than a tenth, or after
+    /// [`CALM_INTERVAL`]. The newest wins. The first notice a client gets is never `Full`,
+    /// which it assumes.
+    pub fn take(&self, now: Instant) -> Option<[u8; LINK_NOTICE_BYTES]> {
+        let mut inner = self.inner.lock().unwrap();
+        let notice = inner.take(now);
+        if !inner.pending() {
+            self.queued.store(false, Ordering::Release);
+        }
+        notice
+    }
+
+    /// Whether the control loop should look for a notice.
+    pub fn queued(&self) -> bool {
+        self.queued.load(Ordering::Acquire)
+    }
+}
+
+impl Notices {
+    /// Notes what the controller just did; see [`LinkNotices::note`].
+    fn note(&mut self, notice: LinkNotice) {
         if !self.enabled && !notice.limited() {
             self.latest = None;
             return;
@@ -60,9 +111,8 @@ impl LinkNotices {
         self.latest = Some(notice);
     }
 
-    /// The host is at the requested bitrate again (a rebuilt controller, or the client set the
-    /// bitrate itself) at `kbps`. A no-op unless a limit was reported.
-    pub fn note_full(&mut self, kbps: u32) {
+    /// The host is at the requested bitrate again at `kbps`; see [`LinkNotices::note_full`].
+    fn note_full(&mut self, kbps: u32) {
         if self.latest.is_some_and(|latest| latest.limited()) && kbps != 0 {
             self.note(LinkNotice {
                 state: LinkState::Full,
@@ -73,12 +123,8 @@ impl LinkNotices {
         }
     }
 
-    /// The notice to send now, if the client asked, it differs from the last one sent and a
-    /// second has passed since that. A change of state goes out then; a bitrate that moved
-    /// inside the same state goes out when it moved by more than a tenth, or after
-    /// [`CALM_INTERVAL`]. The newest wins. The first notice a client gets is never `Full`,
-    /// which it assumes.
-    pub fn take(&mut self, now: Instant) -> Option<[u8; LINK_NOTICE_BYTES]> {
+    /// The notice to send now; see [`LinkNotices::take`].
+    fn take(&mut self, now: Instant) -> Option<[u8; LINK_NOTICE_BYTES]> {
         if !self.enabled {
             return None;
         }
@@ -96,6 +142,18 @@ impl LinkNotices {
         }
         self.sent = Some((latest, now));
         Some(latest.encode())
+    }
+
+    /// Whether a future `take` might send something: a notice the client has
+    /// not been told, or the first limit of a client that just asked.
+    fn pending(&self) -> bool {
+        self.enabled
+            && match (&self.sent, &self.latest) {
+                (_, None) => false,
+                (Some((sent, _)), Some(latest)) => *sent != *latest,
+                // The first notice a client gets is never `Full`.
+                (None, Some(latest)) => latest.limited(),
+            }
     }
 }
 
@@ -130,7 +188,7 @@ mod tests {
     }
 
     fn asking() -> LinkNotices {
-        let mut notices = LinkNotices::default();
+        let notices = LinkNotices::default();
         assert_eq!(
             notices.on_request(&LinkNoticeRequest { enabled: true }.encode()),
             Some(true)
@@ -140,7 +198,7 @@ mod tests {
 
     #[test]
     fn a_client_that_did_not_ask_never_hears() {
-        let mut notices = LinkNotices::default();
+        let notices = LinkNotices::default();
         let t = Instant::now();
         notices.note(limited(75_000));
         assert_eq!(notices.take(t), None);
@@ -157,18 +215,18 @@ mod tests {
 
     #[test]
     fn a_malformed_request_changes_nothing() {
-        let mut notices = LinkNotices::default();
+        let notices = LinkNotices::default();
         assert_eq!(notices.on_request(&[1, 1]), None);
         assert_eq!(notices.on_request(&[9, 1, 0, 0]), None);
         assert!(!notices.enabled());
-        let mut notices = asking();
+        let notices = asking();
         assert_eq!(notices.on_request(&[1]), None);
         assert!(notices.enabled());
     }
 
     #[test]
     fn a_step_down_and_the_return_to_full_are_sent() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         assert_eq!(notices.take(t), None, "nothing happened yet");
         notices.note(limited(75_000));
@@ -183,7 +241,7 @@ mod tests {
 
     #[test]
     fn at_most_one_notice_a_second_and_the_newest_wins() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         notices.note(limited(100_000));
         assert!(notices.take(t).is_some());
@@ -206,7 +264,7 @@ mod tests {
 
     #[test]
     fn a_return_to_full_inside_the_second_is_not_lost() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         notices.note(limited(75_000));
         assert!(notices.take(t).is_some());
@@ -220,8 +278,36 @@ mod tests {
     }
 
     #[test]
+    fn the_gate_stays_set_while_a_throttled_notice_waits() {
+        let notices = asking();
+        let t = Instant::now();
+        // The request armed a look; no limit stands, so the first take clears it.
+        assert!(notices.take(t).is_none());
+        assert!(!notices.queued(), "nothing has happened");
+        notices.note(limited(75_000));
+        assert!(notices.queued());
+        assert!(notices.take(t).is_some(), "the step down goes at once");
+        assert!(!notices.queued(), "the client was told everything");
+        // A change inside the second: nothing goes out now, but the gate stays
+        // set, as the control loop must come back for it when the second is up.
+        notices.note(limited(50_000));
+        assert!(notices.queued());
+        assert_eq!(notices.take(t + Duration::from_millis(8)), None);
+        assert!(notices.queued(), "the throttled notice still waits");
+        let bytes = notices.take(t + INTERVAL).expect("the second is up");
+        assert_eq!(LinkNotice::decode(&bytes), Some(limited(50_000)));
+        assert!(!notices.queued());
+        // A client that never asked leaves the gate clear as well.
+        let unheard = LinkNotices::default();
+        unheard.note(limited(60_000));
+        assert!(unheard.queued());
+        assert_eq!(unheard.take(t), None);
+        assert!(!unheard.queued());
+    }
+
+    #[test]
     fn a_change_back_to_what_the_client_has_sends_nothing() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         notices.note(limited(75_000));
         assert!(notices.take(t).is_some());
@@ -232,7 +318,7 @@ mod tests {
 
     #[test]
     fn a_full_the_client_never_saw_limited_is_not_sent() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         notices.note(full());
         assert_eq!(notices.take(t), None);
@@ -242,7 +328,7 @@ mod tests {
 
     #[test]
     fn a_client_that_asks_late_hears_the_standing_limit() {
-        let mut notices = LinkNotices::default();
+        let notices = LinkNotices::default();
         let t = Instant::now();
         // Reported before anyone asked: kept, because it still holds.
         notices.note(limited(60_000));
@@ -254,7 +340,7 @@ mod tests {
 
     #[test]
     fn asking_again_repeats_the_standing_limit() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         notices.note(limited(60_000));
         assert!(notices.take(t).is_some());
@@ -265,7 +351,7 @@ mod tests {
 
     #[test]
     fn asking_twice_in_a_row_repeats_the_standing_limit() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         notices.note(limited(60_000));
         assert!(notices.take(t).is_some());
@@ -279,7 +365,7 @@ mod tests {
 
     #[test]
     fn a_small_drift_inside_one_state_waits_five_seconds_a_big_move_does_not() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         notices.note(limited(100_000));
         assert!(notices.take(t).is_some());
@@ -315,7 +401,7 @@ mod tests {
 
     #[test]
     fn a_rebuilt_controller_or_a_client_bitrate_clears_a_reported_limit() {
-        let mut notices = asking();
+        let notices = asking();
         let t = Instant::now();
         notices.note(limited(60_000));
         assert!(notices.take(t).is_some());

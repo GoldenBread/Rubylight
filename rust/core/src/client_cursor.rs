@@ -39,6 +39,11 @@ pub struct Pointer<'a> {
 pub struct ClientCursor {
     /// Between an enable and a disable: the stream leaves the pointer out of the video.
     active: AtomicBool,
+    /// Whether a pointer change waits to be sent, read without the lock: the
+    /// control loop takes the lock only when this says so. Set under the lock
+    /// by `note`, and cleared under it by `take` once the change is sent, so a
+    /// note cannot land behind the clear.
+    dirty: AtomicBool,
     state: Mutex<State>,
 }
 
@@ -161,6 +166,7 @@ impl ClientCursor {
             output: output.to_owned(),
         }));
         session.dirty = true;
+        self.dirty.store(true, Ordering::Release);
         // Due again: the next take asks for the scale anew.
         session.scale_pending = false;
         true
@@ -168,6 +174,9 @@ impl ClientCursor {
 
     /// When a coalesced change is due, for the control loop's wait.
     pub fn next_due(&self) -> Option<Instant> {
+        if !self.dirty.load(Ordering::Acquire) {
+            return None;
+        }
         let state = self.state.lock().unwrap();
         let session = state
             .session
@@ -187,68 +196,87 @@ impl ClientCursor {
         scale: impl FnOnce(&str) -> Option<anyhow::Result<u32>>,
     ) -> Option<Vec<u8>> {
         let mut state = self.state.lock().unwrap();
-        let session = state.session.as_mut().filter(|s| s.owner == owner)?;
-        if !session.dirty
-            || session
-                .sent_at
-                .is_some_and(|at| now.saturating_duration_since(at) < INTERVAL)
-        {
+        let taken = take_shape(&mut state, owner, now, scale);
+        if !state.session.as_ref().is_some_and(|s| s.dirty) {
+            self.dirty.store(false, Ordering::Release);
+        }
+        taken
+    }
+
+    /// Whether the control loop should look for a shape.
+    pub fn queued(&self) -> bool {
+        self.dirty.load(Ordering::Acquire)
+    }
+}
+
+/// The message to send control peer `owner` now; see [`ClientCursor::take`].
+fn take_shape(
+    state: &mut State,
+    owner: usize,
+    now: Instant,
+    scale: impl FnOnce(&str) -> Option<anyhow::Result<u32>>,
+) -> Option<Vec<u8>> {
+    let session = state.session.as_mut().filter(|s| s.owner == owner)?;
+    if !session.dirty
+        || session
+            .sent_at
+            .is_some_and(|at| now.saturating_duration_since(at) < INTERVAL)
+    {
+        return None;
+    }
+    let noted = session.noted.clone().flatten();
+    if let Some(noted) = &noted
+        && session
+            .scale
+            .as_ref()
+            .is_none_or(|(output, _)| *output != noted.output)
+    {
+        let Some(percent) = scale(&noted.output) else {
+            session.scale_pending = true;
             return None;
-        }
-        let noted = session.noted.clone().flatten();
-        if let Some(noted) = &noted
-            && session
-                .scale
-                .as_ref()
-                .is_none_or(|(output, _)| *output != noted.output)
-        {
-            let Some(percent) = scale(&noted.output) else {
-                session.scale_pending = true;
-                return None;
-            };
-            let percent = match percent {
-                Ok(percent) => percent,
-                Err(error) => {
-                    tracing::warn!(output = %noted.output, error = %format!("{error:#}"), "display scale unavailable for the client cursor; sent at 100%");
-                    100
-                }
-            };
-            session.scale = Some((noted.output.clone(), clamp_scale(percent)));
-        }
-        session.dirty = false;
-        session.scale_pending = false;
-        let shape = match noted {
-            None => CursorShape::Hide,
-            Some(noted) => {
-                let display_scale = session.scale.as_ref().map_or(MIN_SCALE, |s| s.1);
-                match image(&noted, session.max_edge, display_scale) {
-                    Converted::Hidden => CursorShape::Hide,
-                    Converted::Unusable(why) => {
-                        tracing::warn!(
-                            width = noted.width,
-                            height = noted.height,
-                            why,
-                            "pointer shape not sent; the device draws its own"
-                        );
-                        CursorShape::Default
-                    }
-                    Converted::Image(image) => session.define(image),
-                }
+        };
+        let percent = match percent {
+            Ok(percent) => percent,
+            Err(error) => {
+                tracing::warn!(output = %noted.output, error = %format!("{error:#}"), "display scale unavailable for the client cursor; sent at 100%");
+                100
             }
         };
-        let shown = match &shape {
-            CursorShape::Hide => Shown::Hide,
-            CursorShape::Default => Shown::Default,
-            CursorShape::Show { id } | CursorShape::Image { id, .. } => Shown::Id(*id),
-        };
-        // A change back to what the device shows sends nothing.
-        if session.shown == Some(shown) && !matches!(shape, CursorShape::Image { .. }) {
-            return None;
-        }
-        session.shown = Some(shown);
-        session.sent_at = Some(now);
-        shape.encode()
+        session.scale = Some((noted.output.clone(), clamp_scale(percent)));
     }
+    session.dirty = false;
+    session.scale_pending = false;
+    let shape = match noted {
+        None => CursorShape::Hide,
+        Some(noted) => {
+            let display_scale = session.scale.as_ref().map_or(MIN_SCALE, |s| s.1);
+            match image(&noted, session.max_edge, display_scale) {
+                Converted::Hidden => CursorShape::Hide,
+                Converted::Unusable(why) => {
+                    tracing::warn!(
+                        width = noted.width,
+                        height = noted.height,
+                        why,
+                        "pointer shape not sent; the device draws its own"
+                    );
+                    CursorShape::Default
+                }
+                Converted::Image(image) => session.define(image),
+            }
+        }
+    };
+    let shown = match &shape {
+        CursorShape::Hide => Shown::Hide,
+        CursorShape::Default => Shown::Default,
+        CursorShape::Show { id } | CursorShape::Image { id, .. } => Shown::Id(*id),
+    };
+    // A change back to what the device shows sends nothing.
+    if session.shown == Some(shown) && !matches!(shape, CursorShape::Image { .. }) {
+        return None;
+    }
+    session.shown = Some(shown);
+    session.sent_at = Some(now);
+    shape.encode()
 }
 
 impl Session {

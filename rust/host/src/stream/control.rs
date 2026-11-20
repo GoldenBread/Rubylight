@@ -410,6 +410,7 @@ impl Media {
                                     received: Default::default(),
                                     ciphers: Default::default(),
                                     hdr_metadata: None,
+                                    hdr_seen: 0,
                                     legacy: butterpollo_core::packet::LegacyInput::new(l.key_id),
                                     seen: Instant::now(),
                                     input_released: false,
@@ -706,7 +707,7 @@ impl Media {
                                 }
                             }
                             butterpollo_core::host_timing::HOST_TIMING_MESSAGE_TYPE => {
-                                match s.host_timings.lock().unwrap().on_request(&payload) {
+                                match s.host_timings.on_request(&payload) {
                                     Some(enabled) => tracing::info!(
                                         client = %s.launch.client.name,
                                         enabled,
@@ -719,7 +720,7 @@ impl Media {
                                 }
                             }
                             butterpollo_core::link_notice::LINK_NOTICE_MESSAGE_TYPE => {
-                                match s.link_notices.lock().unwrap().on_request(&payload) {
+                                match s.link_notices.on_request(&payload) {
                                     Some(enabled) => tracing::info!(
                                         client = %s.launch.client.name,
                                         enabled,
@@ -733,11 +734,10 @@ impl Media {
                             }
                             butterpollo_core::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE => {
                                 let counts = s.pipeline_counts();
-                                match s.pipeline_rates.lock().unwrap().on_request(
-                                    Instant::now(),
-                                    &payload,
-                                    counts,
-                                ) {
+                                match s
+                                    .pipeline_rates
+                                    .on_request(Instant::now(), &payload, counts)
+                                {
                                     Some(enabled) => tracing::info!(
                                         client = %s.launch.client.name,
                                         enabled,
@@ -758,11 +758,7 @@ impl Media {
                                 let offered = crate::extensions::offered(&h, &config).text_input
                                     && s.launch.client.allows(input::KEYBOARD_PERMISSION);
                                 let surrounding = encrypted && config.text_input_surrounding_text();
-                                let watch = s.text_input.lock().unwrap().on_request(
-                                    &payload,
-                                    offered,
-                                    surrounding,
-                                );
+                                let watch = s.text_input.on_request(&payload, offered, surrounding);
                                 match watch {
                                     Some(watch) => {
                                         tracing::info!(
@@ -969,7 +965,7 @@ impl Media {
                                 let outcome = {
                                     let mut reconfigure = s.reconfigure.lock().unwrap();
                                     let outcome = reconfigure.on_payload(Instant::now(), &payload);
-                                    s.rate_changes.lock().unwrap().on_reconfigure(outcome);
+                                    s.rate_changes.on_reconfigure(outcome);
                                     outcome
                                 };
                                 tracing::debug!(
@@ -1004,11 +1000,10 @@ impl Media {
                                 let current = reconfigure.current().fps_millihz;
                                 // In the client's unit, as its request is: the bitrate its
                                 // user set, where the launch carried one.
-                                let bitrate_kbps =
-                                    s.rate_changes.lock().unwrap().client_bitrate_kbps(
-                                        s.bitrate.load(Ordering::Acquire),
-                                        &s.config,
-                                    );
+                                let bitrate_kbps = s.rate_changes.client_bitrate_kbps(
+                                    s.bitrate.load(Ordering::Acquire),
+                                    &s.config,
+                                );
                                 let decision = match config {
                                     Ok(config) => {
                                         let enabled = config.boolean("stream_reconfigure", true);
@@ -1045,11 +1040,8 @@ impl Media {
                                         )
                                     }
                                 };
-                                s.rate_changes.lock().unwrap().record(
-                                    &decision,
-                                    &mut reconfigure,
-                                    Instant::now(),
-                                );
+                                s.rate_changes
+                                    .record(&decision, &mut reconfigure, Instant::now());
                                 drop(reconfigure);
                                 // Set before the answer goes out, later in this loop.
                                 if let Some(encoder_kbps) = decision.bitrate_kbps {
@@ -1216,14 +1208,20 @@ impl Media {
                 if h.reconnect_fixture.is_some() {
                     p.injector_tried = true;
                 }
-                let sessions = h.sessions.lock().unwrap();
-                let s = sessions
-                    .active
-                    .get(&p.id)
-                    .cloned()
-                    .or_else(|| p.session.clone());
-                let pending = sessions.pending.contains_key(&p.id);
-                drop(sessions);
+                // The sessions lock only while the peer has no session: a
+                // launch id names one session, so the map cannot hold another
+                // under this peer's id while it has one, live or going. A peer
+                // without a session watches for its launch starting, and the
+                // pending flag below keeps it until one does or it times out.
+                let (s, pending) = match &p.session {
+                    Some(s) => (Some(s.clone()), true),
+                    None => {
+                        let sessions = h.sessions.lock().unwrap();
+                        let s = sessions.active.get(&p.id).cloned();
+                        let pending = sessions.pending.contains_key(&p.id);
+                        (s, pending)
+                    }
+                };
                 if let Some(s) = s {
                     p.session = Some(s.clone());
                     let timed_out = p.seen.elapsed() > ping_timeout;
@@ -1261,28 +1259,59 @@ impl Media {
                     // Sunshine does, and again only if it changes. Moonlight
                     // for Xbox sets the TV's HDMI mode on every message, so an
                     // earlier one with placeholder values switched it twice
-                    // (issue #11).
-                    let metadata = s.hdr_metadata.read().unwrap().map(|m| m.wire(s.config.hdr));
-                    if let Some(metadata) = metadata
-                        && p.hdr_metadata != Some(metadata)
-                        && let Ok(message) = p.encrypt(&s, 0x010e, &metadata)
-                        && host
-                            .peer_mut(*peer_id)
-                            .send(0, &Packet::new(message, PacketKind::Reliable))
-                            .is_ok()
-                    {
-                        p.hdr_metadata = Some(metadata);
+                    // (issue #11). The revision is read first, so a write that
+                    // lands after this pass leaves the number moved and the
+                    // next pass re-reads.
+                    let revision = s.hdr_revision.load(Ordering::Acquire);
+                    if revision != p.hdr_seen {
+                        p.hdr_seen = revision;
+                        let metadata = s.hdr_metadata.read().unwrap().map(|m| m.wire(s.config.hdr));
+                        if let Some(metadata) = metadata
+                            && p.hdr_metadata != Some(metadata)
+                            && let Ok(message) = p.encrypt(&s, 0x010e, &metadata)
+                            && host
+                                .peer_mut(*peer_id)
+                                .send(0, &Packet::new(message, PacketKind::Reliable))
+                                .is_ok()
+                        {
+                            p.hdr_metadata = Some(metadata);
+                        }
                     }
                     // Present-to-sent reports for a client that asked (0x5536).
                     // Unreliable: a lost one costs the client those samples only.
-                    loop {
-                        let report = s.host_timings.lock().unwrap().take_report();
-                        let Some(report) = report else { break };
-                        if let Ok(message) = p.encrypt(
-                            &s,
-                            butterpollo_core::host_timing::HOST_TIMING_MESSAGE_TYPE,
-                            &report,
-                        ) {
+                    if s.host_timings.queued() {
+                        loop {
+                            let Some(report) = s.host_timings.take_report() else {
+                                break;
+                            };
+                            if let Ok(message) = p.encrypt(
+                                &s,
+                                butterpollo_core::host_timing::HOST_TIMING_MESSAGE_TYPE,
+                                &report,
+                            ) {
+                                let _ = host.peer_mut(*peer_id).send(
+                                    0,
+                                    &Packet::new(
+                                        message,
+                                        PacketKind::AlwaysUnreliable { sequenced: false },
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    // Pipeline frame rates for a client that asked (0x553D); unreliable
+                    // like the timing reports, as the next one replaces a lost one.
+                    if s.pipeline_rates.queued() {
+                        let rates = s
+                            .pipeline_rates
+                            .take(Instant::now(), || s.pipeline_counts());
+                        if let Some(report) = rates
+                            && let Ok(message) = p.encrypt(
+                                &s,
+                                butterpollo_core::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE,
+                                &report,
+                            )
+                        {
                             let _ = host.peer_mut(*peer_id).send(
                                 0,
                                 &Packet::new(
@@ -1291,28 +1320,6 @@ impl Media {
                                 ),
                             );
                         }
-                    }
-                    // Pipeline frame rates for a client that asked (0x553D); unreliable
-                    // like the timing reports, as the next one replaces a lost one.
-                    let rates = s
-                        .pipeline_rates
-                        .lock()
-                        .unwrap()
-                        .take(Instant::now(), || s.pipeline_counts());
-                    if let Some(report) = rates
-                        && let Ok(message) = p.encrypt(
-                            &s,
-                            butterpollo_core::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE,
-                            &report,
-                        )
-                    {
-                        let _ = host.peer_mut(*peer_id).send(
-                            0,
-                            &Packet::new(
-                                message,
-                                PacketKind::AlwaysUnreliable { sequenced: false },
-                            ),
-                        );
                     }
                     // Frame Warp for a client that asked (0x5543): the model and the HUD
                     // mask reliably, then the frames' tags unreliably, as each tags
@@ -1382,77 +1389,84 @@ impl Media {
                     }
                     // The bitrate notice for a client that asked (0x5538): reliable, so
                     // the overlay is not left stale, and at most one a second.
-                    let notice = s.link_notices.lock().unwrap().take(Instant::now());
-                    if let Some(notice) = notice {
-                        match p.encrypt(
-                            &s,
-                            butterpollo_core::link_notice::LINK_NOTICE_MESSAGE_TYPE,
-                            &notice,
-                        ) {
-                            Ok(message) => {
-                                if let Err(e) = host
-                                    .peer_mut(*peer_id)
-                                    .send(0, &Packet::new(message, PacketKind::Reliable))
-                                {
-                                    tracing::warn!(error = %e, "link notice not sent");
+                    if s.link_notices.queued() {
+                        let notice = s.link_notices.take(Instant::now());
+                        if let Some(notice) = notice {
+                            match p.encrypt(
+                                &s,
+                                butterpollo_core::link_notice::LINK_NOTICE_MESSAGE_TYPE,
+                                &notice,
+                            ) {
+                                Ok(message) => {
+                                    if let Err(e) = host
+                                        .peer_mut(*peer_id)
+                                        .send(0, &Packet::new(message, PacketKind::Reliable))
+                                    {
+                                        tracing::warn!(error = %e, "link notice not sent");
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %format!("{e:#}"), "link notice not encrypted");
+                                Err(e) => {
+                                    tracing::warn!(error = %format!("{e:#}"), "link notice not encrypted");
+                                }
                             }
                         }
                     }
                     // Rate change answers (0x553C), reliable and in order.
-                    loop {
-                        let Some(result) = s.rate_changes.lock().unwrap().take() else {
-                            break;
-                        };
-                        match p.encrypt(
-                            &s,
-                            butterpollo_core::rate_change::RATE_CHANGE_MESSAGE_TYPE,
-                            &result.encode(),
-                        ) {
-                            Ok(message) => {
-                                if let Err(e) = host
-                                    .peer_mut(*peer_id)
-                                    .send(0, &Packet::new(message, PacketKind::Reliable))
-                                {
-                                    tracing::warn!(error = %e, serial = result.serial, "rate change answer not sent");
+                    if s.rate_changes.queued() {
+                        loop {
+                            let Some(result) = s.rate_changes.take() else {
+                                break;
+                            };
+                            match p.encrypt(
+                                &s,
+                                butterpollo_core::rate_change::RATE_CHANGE_MESSAGE_TYPE,
+                                &result.encode(),
+                            ) {
+                                Ok(message) => {
+                                    if let Err(e) = host
+                                        .peer_mut(*peer_id)
+                                        .send(0, &Packet::new(message, PacketKind::Reliable))
+                                    {
+                                        tracing::warn!(error = %e, serial = result.serial, "rate change answer not sent");
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %format!("{e:#}"), serial = result.serial, "rate change answer not encrypted");
+                                Err(e) => {
+                                    tracing::warn!(error = %format!("{e:#}"), serial = result.serial, "rate change answer not encrypted");
+                                }
                             }
                         }
                     }
                     // The text field notice for a client that asked (0x553B): reliable,
                     // the newest focus at most every 50 ms.
-                    let notice = s.text_input.lock().unwrap().take(Instant::now());
-                    if let Some(notice) = notice {
-                        match p.encrypt(
-                            &s,
-                            butterpollo_core::text_input::TEXT_INPUT_MESSAGE_TYPE,
-                            &notice,
-                        ) {
-                            Ok(message) => {
-                                if let Err(e) = host
-                                    .peer_mut(*peer_id)
-                                    .send(0, &Packet::new(message, PacketKind::Reliable))
-                                {
-                                    tracing::warn!(error = %e, "text input notice not sent");
+                    if s.text_input.queued() {
+                        let notice = s.text_input.take(Instant::now());
+                        if let Some(notice) = notice {
+                            match p.encrypt(
+                                &s,
+                                butterpollo_core::text_input::TEXT_INPUT_MESSAGE_TYPE,
+                                &notice,
+                            ) {
+                                Ok(message) => {
+                                    if let Err(e) = host
+                                        .peer_mut(*peer_id)
+                                        .send(0, &Packet::new(message, PacketKind::Reliable))
+                                    {
+                                        tracing::warn!(error = %e, "text input notice not sent");
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %format!("{e:#}"), "text input notice not encrypted");
+                                Err(e) => {
+                                    tracing::warn!(error = %format!("{e:#}"), "text input notice not encrypted");
+                                }
                             }
                         }
                     }
                     // The PC's newest copy for a device that syncs the clipboard (0x5508):
                     // reliable.
                     // A guest's permission is asked per copy: one made view only gets no more.
-                    if let Some(frame) = p
-                        .clipboard_sync
-                        .take(Instant::now(), || h.device_guests.full_access(&s))
+                    if p.clipboard_sync.queued()
+                        && let Some(frame) = p
+                            .clipboard_sync
+                            .take(Instant::now(), || h.device_guests.full_access(&s))
                     {
                         match p.encrypt(
                             &s,
@@ -1474,56 +1488,60 @@ impl Media {
                     }
                     // The device-drawn cursor's shapes (0x5541): reliable, the newest at
                     // most every 16 ms.
-                    let shape = s
-                        .client_cursor
-                        .take(p.cursor_owner, Instant::now(), |output| {
-                            let wake = self.control_wake.clone();
-                            p.cursor_scale.poll(
-                                output,
-                                butterpollo_windows::display::output_scale,
-                                move || {
-                                    let _ = wake.send(&[1]);
-                                },
-                            )
-                        });
-                    if let Some(shape) = shape {
-                        match p.encrypt(
-                            &s,
-                            butterpollo_core::client_cursor::CURSOR_SHAPE_MESSAGE_TYPE,
-                            &shape,
-                        ) {
-                            Ok(message) => {
-                                if let Err(e) = host
-                                    .peer_mut(*peer_id)
-                                    .send(0, &Packet::new(message, PacketKind::Reliable))
-                                {
-                                    tracing::warn!(error = %e, "cursor shape not sent");
+                    if s.client_cursor.queued() {
+                        let shape =
+                            s.client_cursor
+                                .take(p.cursor_owner, Instant::now(), |output| {
+                                    let wake = self.control_wake.clone();
+                                    p.cursor_scale.poll(
+                                        output,
+                                        butterpollo_windows::display::output_scale,
+                                        move || {
+                                            let _ = wake.send(&[1]);
+                                        },
+                                    )
+                                });
+                        if let Some(shape) = shape {
+                            match p.encrypt(
+                                &s,
+                                butterpollo_core::client_cursor::CURSOR_SHAPE_MESSAGE_TYPE,
+                                &shape,
+                            ) {
+                                Ok(message) => {
+                                    if let Err(e) = host
+                                        .peer_mut(*peer_id)
+                                        .send(0, &Packet::new(message, PacketKind::Reliable))
+                                    {
+                                        tracing::warn!(error = %e, "cursor shape not sent");
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %format!("{e:#}"), "cursor shape not encrypted");
+                                Err(e) => {
+                                    tracing::warn!(error = %format!("{e:#}"), "cursor shape not encrypted");
+                                }
                             }
                         }
                     }
                     // USB forwarding's answers and detaches (0x553A), reliable and in order.
-                    for usb in h.usb.take(&p.id, Instant::now()) {
-                        let sent = usb
-                            .encode()
-                            .context("the USB message does not encode")
-                            .and_then(|payload| {
-                                p.encrypt(
-                                    &s,
-                                    butterpollo_core::usb_forward::USB_MESSAGE_TYPE,
-                                    &payload,
-                                )
-                            })
-                            .and_then(|message| {
-                                host.peer_mut(*peer_id)
-                                    .send(0, &Packet::new(message, PacketKind::Reliable))
-                                    .map_err(|e| anyhow::anyhow!("{e}"))
-                            });
-                        if let Err(e) = sent {
-                            tracing::warn!(error = %format!("{e:#}"), ?usb, "USB message not sent");
+                    if h.usb.queued() {
+                        for usb in h.usb.take(&p.id, Instant::now()) {
+                            let sent = usb
+                                .encode()
+                                .context("the USB message does not encode")
+                                .and_then(|payload| {
+                                    p.encrypt(
+                                        &s,
+                                        butterpollo_core::usb_forward::USB_MESSAGE_TYPE,
+                                        &payload,
+                                    )
+                                })
+                                .and_then(|message| {
+                                    host.peer_mut(*peer_id)
+                                        .send(0, &Packet::new(message, PacketKind::Reliable))
+                                        .map_err(|e| anyhow::anyhow!("{e}"))
+                                });
+                            if let Err(e) = sent {
+                                tracing::warn!(error = %format!("{e:#}"), ?usb, "USB message not sent");
+                            }
                         }
                     }
                     // A co-op player's input drives its slot's pad and never
@@ -2021,6 +2039,9 @@ pub(super) struct ControlPeer {
     /// The session key's control cipher, expanded once rather than per message.
     ciphers: butterpollo_core::packet::ControlCiphers,
     hdr_metadata: Option<[u8; 27]>,
+    /// The session's `hdr_revision` the metadata above was read at: the loop
+    /// reads the metadata only when the number moved.
+    hdr_seen: u64,
     legacy: butterpollo_core::packet::LegacyInput,
     seen: Instant,
     input_released: bool,
@@ -2110,7 +2131,7 @@ impl ControlPeer {
             max_text,
             move |focused| {
                 if let Some(s) = session.upgrade() {
-                    s.text_input.lock().unwrap().note(focused, Instant::now());
+                    s.text_input.note(focused, Instant::now());
                     let _ = wake.send(&[1]);
                 }
             },

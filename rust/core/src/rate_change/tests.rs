@@ -245,7 +245,7 @@ fn a_bitrate_is_in_the_unit_of_the_launch() {
 #[test]
 fn answers_name_the_bitrate_in_the_unit_of_the_launch() {
     let launch = launched(20_000, 0);
-    let mut changes = RateChanges::default();
+    let changes = RateChanges::default();
     assert_eq!(changes.client_bitrate_kbps(14_988, &launch), 20_000);
     // The host's own controllers halved the encoder's bitrate: the number that gives the
     // encoder as much, so a client that asks for it again leaves the encoder where it is.
@@ -308,10 +308,35 @@ fn answers_name_the_bitrate_in_the_unit_of_the_launch() {
     // Another route (the HTTP bitrate change) moved the encoder since.
     assert_eq!(changes.client_bitrate_kbps(11_494, &launch), 15_633);
     // On a stock launch the number asked for is the encoder's.
-    let mut stock_changes = RateChanges::default();
+    let stock_changes = RateChanges::default();
     let own = decide(&request(3, 12_000, 0), &self::stream(), &config(0));
     stock_changes.record(&own, &mut reconfigure, Instant::now());
     assert_eq!(stock_changes.client_bitrate_kbps(12_000, stock()), 12_000);
+}
+
+/// The control loop reads `queued` to skip the lock; an answer recorded after
+/// its look must still be taken on the next one.
+#[test]
+fn an_answer_recorded_after_the_loops_look_is_taken_on_the_next_one() {
+    let changes = RateChanges::default();
+    let mut reconfigure = Reconfiguration::new(mode(1920, 1080, 60));
+    assert!(!changes.queued());
+    assert_eq!(changes.take(), None);
+    assert!(!changes.queued(), "a quiet pass reads the gate clear");
+    // A bitrate alone queues its answer at once; the control loop may be
+    // between passes when it is recorded.
+    let raised = decide(&request(1, 30_000, 0), &stream(), &config(0));
+    changes.record(&raised, &mut reconfigure, Instant::now());
+    assert!(changes.queued(), "the next pass sees the answer");
+    assert_eq!(changes.take(), Some(raised.result));
+    assert_eq!(changes.take(), None);
+    assert!(!changes.queued(), "the last answer cleared the gate");
+    // What the session loop reports of a switch arms the gate even when it
+    // holds no answer of its own; the next take clears it again.
+    changes.taken(mode(1920, 1080, 30));
+    assert!(changes.queued());
+    assert_eq!(changes.take(), None);
+    assert!(!changes.queued());
 }
 
 #[test]
@@ -425,7 +450,7 @@ fn an_undecided_request_refuses_what_it_asked_for_and_is_still_answered() {
                 fps,
             }
         );
-        let mut changes = RateChanges::default();
+        let changes = RateChanges::default();
         let mut reconfigure = Reconfiguration::new(mode(1920, 1080, 60));
         changes.record(&decision, &mut reconfigure, Instant::now());
         assert_eq!(changes.take(), Some(decision.result));

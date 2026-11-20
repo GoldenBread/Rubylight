@@ -226,25 +226,29 @@ pub struct Session<P = (), A = ()> {
     pub reconfigure: std::sync::Mutex<crate::reconfigure::Reconfiguration>,
     /// Bitrate and rate changes for a client that launched with `rlRateChange=1` (0x553C):
     /// their switches and answers, sent by the control loop. Take after `reconfigure`.
-    pub rate_changes: std::sync::Mutex<crate::rate_change::RateChanges>,
+    pub rate_changes: crate::rate_change::RateChanges,
     pub stats: Stats,
     pub started: Instant,
     pub output: std::sync::RwLock<String>,
     /// The display's HDR metadata, once the encoder has it. Clients are told
     /// the HDR state only then, so they hear it once with the real values.
     pub hdr_metadata: std::sync::RwLock<Option<crate::hdr::Metadata>>,
+    /// Bumped after every `hdr_metadata` write, with release: the control
+    /// loop reads it to skip the lock while the metadata stands. Starts above
+    /// a new peer's zero, so its first pass reads the metadata.
+    pub hdr_revision: AtomicU64,
     /// Source HDR metadata and diagnostic client display luminance (0x5531).
     pub hdr_source: std::sync::Mutex<crate::display_caps::HdrSource>,
     /// Per-picture present-to-sent reports for a client that asked (0x5536).
-    pub host_timings: std::sync::Mutex<crate::host_timing::HostTimings>,
+    pub host_timings: crate::host_timing::HostTimings,
     /// Tells a client that asked (0x5538) when the host holds the bitrate down for the
     /// network; fed by `tick_link_rate`, sent by the control loop.
-    pub link_notices: std::sync::Mutex<crate::link_notice::LinkNotices>,
+    pub link_notices: crate::link_notice::LinkNotices,
     /// Pipeline frame rates for a client that asked (0x553D), sent by the control loop.
-    pub pipeline_rates: std::sync::Mutex<crate::pipeline_rates::Reporter>,
+    pub pipeline_rates: crate::pipeline_rates::Reporter,
     /// Keyboard follows focus for a client that asked (0x553B): fed by the focus watcher,
     /// sent by the control loop.
-    pub text_input: std::sync::Mutex<crate::text_input::TextInputs>,
+    pub text_input: crate::text_input::TextInputs,
     /// The layout id the device's newest keyboard layout report (0x553E) resolved to, on
     /// arrival; None when it named none the host knows, or sent none.
     pub keyboard_layout: std::sync::Mutex<Option<u32>>,
@@ -304,10 +308,7 @@ impl<P, A> Session<P, A> {
         stamps: &crate::performance::Stamps,
         epoch: Instant,
     ) {
-        self.host_timings
-            .lock()
-            .unwrap()
-            .record(wire_frame, stamps, epoch);
+        self.host_timings.record(wire_frame, stamps, epoch);
         if let Some(sink) = &*self.timing_record.read().unwrap() {
             sink.record(crate::timing_record::Row::new(
                 wire_frame,
@@ -369,6 +370,7 @@ impl<P, A> Session<P, A> {
             started,
             output: std::sync::RwLock::new(String::new()),
             hdr_metadata: Default::default(),
+            hdr_revision: AtomicU64::new(1),
             hdr_source: Default::default(),
             host_timings: Default::default(),
             link_notices: Default::default(),
@@ -988,7 +990,7 @@ impl<P, A> Session<P, A> {
         }
         self.launch.warnings.clear("host_bitrate_budget");
         self.launch.warnings.clear(LINK_WARNING);
-        self.link_notices.lock().unwrap().note_full(kbps);
+        self.link_notices.note_full(kbps);
     }
     pub fn adaptive_pacing_bps(&self, configured_bps: u64) -> u64 {
         let limit = self.adaptive_video_pacing_bps.load(Ordering::Acquire);
@@ -1035,8 +1037,6 @@ impl<P, A> Session<P, A> {
         drop(link);
         self.launch.warnings.clear(LINK_WARNING);
         self.link_notices
-            .lock()
-            .unwrap()
             .note_full(self.bitrate.load(Ordering::Acquire));
     }
     /// A frame the video sender sent: its wire frame number, packets (data and
@@ -1188,7 +1188,7 @@ impl<P, A> Session<P, A> {
             .map(|change| note_link_change(&mut link, now, change));
         drop(link);
         if let Some(report) = report {
-            self.link_notices.lock().unwrap().note(link_notice(&report));
+            self.link_notices.note(link_notice(&report));
             self.announce_link_change(report);
         }
         (applied != current).then_some((current, applied))
@@ -1442,11 +1442,10 @@ impl<P, A> Session<P, A> {
         drop(link);
         if let Some(change) = change.filter(|_| !shadow) {
             use crate::congestion::ChangeKind;
-            let mut notices = self.link_notices.lock().unwrap();
             match change.kind {
-                ChangeKind::Restored | ChangeKind::Stale => notices.note_full(applied),
+                ChangeKind::Restored | ChangeKind::Stale => self.link_notices.note_full(applied),
                 ChangeKind::Overuse | ChangeKind::Loss => {
-                    notices.note(crate::link_notice::LinkNotice {
+                    self.link_notices.note(crate::link_notice::LinkNotice {
                         state: crate::link_notice::LinkState::Limited,
                         reason: crate::link_notice::LinkReason::Network,
                         ceiling_kbps: self.config.bitrate_kbps.max(applied),
@@ -1754,6 +1753,9 @@ impl<P, A> Session<P, A> {
     pub fn set_display_hdr_metadata(&self, display: crate::hdr::Metadata) -> crate::hdr::Metadata {
         self.hdr_source.lock().unwrap().display = Some(display);
         *self.hdr_metadata.write().unwrap() = Some(display);
+        // After the write, with release: a loop that reads the new number also
+        // reads the new metadata; one that misses it re-reads on its next pass.
+        self.hdr_revision.fetch_add(1, Ordering::Release);
         display
     }
     /// Record receiver capabilities for diagnostics. They describe the output

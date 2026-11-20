@@ -11,12 +11,26 @@ pub use rubylight_protocol::control::{
     HOST_TIMING_EXTENDED_MAX_RECORDS, HostTiming, HostTimingExtra, HostTimingRequest,
 };
 use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 pub use rubylight_protocol::control::HOST_TIMING_MESSAGE_TYPE;
 
+/// One session's pending present-to-sent reports, fed by the stream threads
+/// and taken by the control loop.
 #[derive(Default)]
 pub struct HostTimings {
+    /// Whether a report may wait, read without the lock: the control loop
+    /// takes the lock only when this says so. Set under the lock with every
+    /// record kept, and cleared under it by `take_report` when the last
+    /// waiting report is taken, so a record cannot land behind the clear.
+    queued: AtomicBool,
+    inner: Mutex<Reports>,
+}
+
+#[derive(Default)]
+struct Reports {
     enabled: bool,
     pending: VecDeque<(HostTiming, HostTimingExtra)>,
 }
@@ -28,43 +42,54 @@ impl HostTimings {
 
     /// Applies a client's request. Returns whether reports are on, or `None` for a
     /// malformed request, which changes nothing.
-    pub fn on_request(&mut self, payload: &[u8]) -> Option<bool> {
+    pub fn on_request(&self, payload: &[u8]) -> Option<bool> {
         let request = HostTimingRequest::decode(payload)?;
-        self.enabled = request.enabled;
-        if !self.enabled {
-            self.pending.clear();
+        let mut inner = self.inner.lock().unwrap();
+        inner.enabled = request.enabled;
+        if !inner.enabled {
+            inner.pending.clear();
         }
-        Some(self.enabled)
+        self.queued.store(true, Ordering::Release);
+        Some(inner.enabled)
     }
 
     pub fn enabled(&self) -> bool {
-        self.enabled
+        self.inner.lock().unwrap().enabled
     }
 
     /// Notes a new picture whose last packet was just handed to the socket as video frame
     /// `frame`; `epoch` is the media clock's start. Nothing is kept unless the client asked.
-    pub fn record(&mut self, frame: u32, stamps: &Stamps, epoch: Instant) {
-        if !self.enabled {
+    pub fn record(&self, frame: u32, stamps: &Stamps, epoch: Instant) {
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.enabled {
             return;
         }
         let Some(timing) = timing(frame, stamps, epoch) else {
             return;
         };
-        if self.pending.len() == Self::LIMIT {
-            self.pending.pop_front();
+        if inner.pending.len() == Self::LIMIT {
+            inner.pending.pop_front();
         }
-        self.pending.push_back(timing);
+        inner.pending.push_back(timing);
+        self.queued.store(true, Ordering::Release);
     }
 
     /// The next report of up to [`HOST_TIMING_EXTENDED_MAX_RECORDS`] pending records, oldest
     /// first, with the absolute and split stage times a client can place on the media clock.
-    pub fn take_report(&mut self) -> Option<Vec<u8>> {
-        if self.pending.is_empty() {
+    pub fn take_report(&self) -> Option<Vec<u8>> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.pending.is_empty() {
+            self.queued.store(false, Ordering::Release);
             return None;
         }
-        let count = self.pending.len().min(HOST_TIMING_EXTENDED_MAX_RECORDS);
-        let records: Vec<_> = self.pending.drain(..count).collect();
+        let count = inner.pending.len().min(HOST_TIMING_EXTENDED_MAX_RECORDS);
+        let records: Vec<_> = inner.pending.drain(..count).collect();
         Some(HostTiming::encode_report_with(&records))
+    }
+
+    /// Whether the control loop should look for a report.
+    pub fn queued(&self) -> bool {
+        self.queued.load(Ordering::Acquire)
     }
 }
 
@@ -139,6 +164,42 @@ mod tests {
     }
 
     #[test]
+    fn a_record_after_the_loops_look_is_taken_on_the_next_one() {
+        let timings = HostTimings::default();
+        let at = Instant::now();
+        // A quiet pass: the gate the control loop reads says nothing waits.
+        assert!(!timings.queued());
+        assert_eq!(timings.take_report(), None);
+        assert!(!timings.queued(), "a quiet pass reads the gate clear");
+        timings.on_request(&HostTimingRequest { enabled: true }.encode());
+        // The record lands after the look above.
+        timings.record(41, &stamps(at), epoch(at));
+        assert!(timings.queued(), "the next pass sees the record");
+        let drained = HostTiming::decode_report(&timings.take_report().unwrap()).unwrap();
+        assert_eq!(
+            drained
+                .iter()
+                .map(|record| record.frame)
+                .collect::<Vec<_>>(),
+            vec![41]
+        );
+        assert!(!timings.queued(), "nothing more waits");
+        // Turning reports off drops what waits, and the gate clears with it.
+        timings.record(42, &stamps(at), epoch(at));
+        assert!(timings.queued());
+        assert_eq!(
+            timings.on_request(&HostTimingRequest { enabled: false }.encode()),
+            Some(false)
+        );
+        assert_eq!(
+            timings.take_report(),
+            None,
+            "turning reports off drops what waits"
+        );
+        assert!(!timings.queued());
+    }
+
+    #[test]
     fn a_record_splits_present_to_sent_like_punktfunk() {
         let at = Instant::now();
         let (record, _) = timing(41, &stamps(at), epoch(at)).unwrap();
@@ -192,7 +253,7 @@ mod tests {
 
     #[test]
     fn records_are_kept_only_for_a_client_that_asked() {
-        let mut timings = HostTimings::default();
+        let timings = HostTimings::default();
         let at = Instant::now();
         timings.record(1, &stamps(at), epoch(at));
         assert_eq!(timings.take_report(), None);
@@ -234,7 +295,7 @@ mod tests {
 
     #[test]
     fn a_full_extended_report_decodes_in_the_old_decoder() {
-        let mut timings = HostTimings::default();
+        let timings = HostTimings::default();
         timings.on_request(&HostTimingRequest { enabled: true }.encode());
         let at = Instant::now();
         for frame in 0..HOST_TIMING_EXTENDED_MAX_RECORDS as u32 {
@@ -258,7 +319,7 @@ mod tests {
     fn a_backlog_yields_extended_reports_that_fit_shipped_nightjars_native_limit() {
         // Nightjar's patched common-c hands 0x5536 to Java only if `length <= 644`.
         const NATIVE_LIMIT: usize = 644;
-        let mut timings = HostTimings::default();
+        let timings = HostTimings::default();
         timings.on_request(&HostTimingRequest { enabled: true }.encode());
         let at = Instant::now();
         for frame in 0..40 {
@@ -284,7 +345,7 @@ mod tests {
 
     #[test]
     fn a_stalled_control_loop_keeps_the_newest_records() {
-        let mut timings = HostTimings::default();
+        let timings = HostTimings::default();
         timings.on_request(&HostTimingRequest { enabled: true }.encode());
         let at = Instant::now();
         for frame in 0..(HostTimings::LIMIT as u32 + 10) {

@@ -20,7 +20,10 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -102,6 +105,12 @@ pub struct UsbForwarding {
     /// The last driver install check: when it ran and what it found.
     checked: Mutex<Option<(Instant, bool)>>,
     registry: Mutex<Registry>,
+    /// Whether a message may wait for some session's client, read without the
+    /// lock: the control loop takes the lock only when this says so. Set under
+    /// the registry lock wherever a message is queued, and cleared under it by
+    /// `take` when nothing waits for anyone, so a message cannot land behind
+    /// the clear.
+    queued: AtomicBool,
 }
 impl Default for UsbForwarding {
     fn default() -> Self {
@@ -109,6 +118,7 @@ impl Default for UsbForwarding {
             vhci: Mutex::new(Arc::new(Usbip)),
             checked: Mutex::default(),
             registry: Mutex::default(),
+            queued: AtomicBool::new(false),
         }
     }
 }
@@ -263,6 +273,16 @@ impl UsbForwarding {
     fn registry(&self) -> MutexGuard<'_, Registry> {
         self.registry.lock().unwrap_or_else(PoisonError::into_inner)
     }
+    /// Marks a message as waiting, with release, under the registry lock: a
+    /// take that empties the outbox clears it under the same lock, so nothing
+    /// queued can hide behind the clear.
+    fn mark_queued(&self) {
+        self.queued.store(true, Ordering::Release);
+    }
+    /// Whether the control loop should look for a message.
+    pub fn queued(&self) -> bool {
+        self.queued.load(Ordering::Acquire)
+    }
     fn vhci(&self) -> Arc<dyn Vhci> {
         self.vhci
             .lock()
@@ -335,6 +355,7 @@ impl UsbForwarding {
                 if let Some(reason) = refusal {
                     tracing::warn!(client = %client.name, device = %name, vid = format_args!("{vid:04x}"), pid = format_args!("{pid:04x}"), ?reason, "USB attach refused");
                     registry.queue(session, [status(request_id, UsbState::Refused, reason)]);
+                    self.mark_queued();
                     return;
                 }
                 tracing::info!(client = %client.name, device = %name, vid = format_args!("{vid:04x}"), pid = format_args!("{pid:04x}"), %busid, "USB attach requested");
@@ -365,6 +386,7 @@ impl UsbForwarding {
                     error: None,
                 });
                 registry.queue(session, [UsbMessage::TunnelReady { request_id, token }]);
+                self.mark_queued();
             }
             UsbMessage::Detach { request_id } => {
                 let mut registry = self.registry();
@@ -380,6 +402,7 @@ impl UsbForwarding {
                             id,
                             vec![status(request_id, UsbState::Detached, UsbReason::None)],
                         );
+                        self.mark_queued();
                     }
                     None => tracing::debug!(request_id, "USB detach for no attachment"),
                 }
@@ -392,6 +415,7 @@ impl UsbForwarding {
     pub fn take(&self, session: &str, now: Instant) -> Vec<UsbMessage> {
         let mut registry = self.registry();
         if registry.attachments.is_empty() && registry.outbox.is_empty() {
+            self.queued.store(false, Ordering::Release);
             return Vec::new();
         }
         let mut expired = Vec::new();
@@ -409,7 +433,19 @@ impl UsbForwarding {
             !gone
         });
         registry.queue(session, expired);
-        registry.outbox.remove(session).unwrap_or_default()
+        let messages = registry.outbox.remove(session).unwrap_or_default();
+        // Nothing waits for anyone once every outbox is empty and no tunnel is
+        // still to open; a token that is still pending would have to be
+        // reported when it runs out.
+        if registry.outbox.is_empty()
+            && !registry
+                .attachments
+                .iter()
+                .any(|a| matches!(a.stage, Stage::Pending { .. }))
+        {
+            self.queued.store(false, Ordering::Release);
+        }
+        messages
     }
 
     /// `session` ended or disconnected: detaches everything it attached and returns what to
@@ -466,6 +502,7 @@ impl UsbForwarding {
                 devices = ending.len(),
                 "USB forwarding turned off; detaching every device"
             );
+            self.mark_queued();
         }
         ending.len()
     }
@@ -538,13 +575,17 @@ impl UsbForwarding {
             };
         }
         tracing::info!(id, "USB device detached from the console");
-        Ok(registry.end(
+        let ended = registry.end(
             id,
             vec![
                 UsbMessage::Detach { request_id },
                 status(request_id, UsbState::Detached, UsbReason::None),
             ],
-        ))
+        );
+        if ended {
+            self.mark_queued();
+        }
+        Ok(ended)
     }
 
     /// Takes the tunnel token of the device with certificate `cert`.
@@ -686,6 +727,7 @@ impl UsbForwarding {
                     UsbReason::None,
                 )],
             );
+            self.mark_queued();
         }
     }
 
@@ -698,6 +740,7 @@ impl UsbForwarding {
         let attachment = registry.attachments.remove(index);
         let notice = attachment.ending.unwrap_or(natural);
         registry.queue(&attachment.session, notice);
+        self.mark_queued();
     }
 
     /// The relay ended but the driver kept the device: the console keeps listing it until a
@@ -732,6 +775,7 @@ impl UsbForwarding {
             .collect();
         let session = attachment.session.clone();
         registry.queue(&session, notice);
+        self.mark_queued();
     }
 }
 

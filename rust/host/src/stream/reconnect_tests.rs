@@ -1853,7 +1853,7 @@ async fn link_notices_reach_only_a_client_that_asks() -> Result<()> {
     let (session, client) = h.play(&launch).await?;
 
     // Nobody asked: a lowered bitrate is the host's business.
-    session.link_notices.lock().unwrap().note(limited(75_000));
+    session.link_notices.note(limited(75_000));
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(
         heard(&client).is_empty(),
@@ -1876,7 +1876,7 @@ async fn link_notices_reach_only_a_client_that_asks() -> Result<()> {
     // left the host after the request did; a busy client may hear it late, so measure from
     // the request.
     for kbps in [60_000, 50_000, 40_000] {
-        session.link_notices.lock().unwrap().note(limited(kbps));
+        session.link_notices.note(limited(kbps));
     }
     until("the newest arrives", WAIT * 2, || heard(&client).len() == 2).await;
     let notices = heard(&client);
@@ -1888,7 +1888,7 @@ async fn link_notices_reach_only_a_client_that_asks() -> Result<()> {
     );
 
     // The return to the requested rate clears it, and nothing else follows.
-    session.link_notices.lock().unwrap().note_full(100_000);
+    session.link_notices.note_full(100_000);
     until("the clear arrives", WAIT * 2, || heard(&client).len() == 3).await;
     let clear = heard(&client)[2].1;
     assert_eq!(clear.state, LinkState::Full);
@@ -1948,8 +1948,6 @@ async fn text_input_notices_reach_only_a_client_that_asks() -> Result<()> {
     // Stock Moonlight never asks: the focus stays the host's business.
     session
         .text_input
-        .lock()
-        .unwrap()
         .note(Some(text_field(InputType::Text)), Instant::now());
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(text_notices(&client).is_empty());
@@ -1973,8 +1971,6 @@ async fn text_input_notices_reach_only_a_client_that_asks() -> Result<()> {
     );
     session
         .text_input
-        .lock()
-        .unwrap()
         .note(Some(text_field(InputType::Email)), Instant::now());
     until("the raise arrives", WAIT, || {
         text_notices(&client).len() == 1
@@ -1988,11 +1984,7 @@ async fn text_input_notices_reach_only_a_client_that_asks() -> Result<()> {
     assert_eq!(raise.text, "");
     assert_eq!(raise.element, 0, "the client did not ask for element ids");
 
-    session
-        .text_input
-        .lock()
-        .unwrap()
-        .note(None, Instant::now());
+    session.text_input.note(None, Instant::now());
     until("the lower arrives", WAIT, || {
         text_notices(&client).len() == 2
     })
@@ -2009,8 +2001,6 @@ async fn text_input_notices_reach_only_a_client_that_asks() -> Result<()> {
     assert_eq!(h.fixture.text_watches.lock().unwrap()[1], Watch::Off);
     session
         .text_input
-        .lock()
-        .unwrap()
         .note(Some(text_field(InputType::Text)), Instant::now());
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(text_notices(&client).len(), 2);
@@ -2055,8 +2045,6 @@ async fn text_input_sends_surrounding_text_only_over_encrypted_control() -> Resu
     );
     session
         .text_input
-        .lock()
-        .unwrap()
         .note(Some(text_field(InputType::Text)), Instant::now());
     until("the raise arrives", WAIT, || {
         text_notices(&client).len() == 1
@@ -2069,8 +2057,6 @@ async fn text_input_sends_surrounding_text_only_over_encrypted_control() -> Resu
 
     session
         .text_input
-        .lock()
-        .unwrap()
         .note(Some(text_field(InputType::Password)), Instant::now());
     until("the update arrives", WAIT, || {
         text_notices(&client).len() == 2
@@ -2116,8 +2102,6 @@ async fn text_input_needs_the_keyboard_permission_and_the_setting() -> Result<()
         );
         session
             .text_input
-            .lock()
-            .unwrap()
             .note(Some(text_field(InputType::Text)), Instant::now());
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(text_notices(&client).is_empty(), "{config}");
@@ -2226,7 +2210,7 @@ async fn reliable_messages_sent_in_an_outage_arrive_when_it_ends() -> Result<()>
     let h = Harness::new(15_000, 1).await?;
     let launch = h.launch(0, false).await?;
     let (session, client) = h.play(&launch).await?;
-    session.link_notices.lock().unwrap().note(limited(75_000));
+    session.link_notices.note(limited(75_000));
     client.send_control(
         LINK_NOTICE_MESSAGE_TYPE,
         &LinkNoticeRequest { enabled: true }.encode(),
@@ -2241,7 +2225,7 @@ async fn reliable_messages_sent_in_an_outage_arrive_when_it_ends() -> Result<()>
     // Over a second apart, so the host sends both in the outage.
     for (at_ms, kbps) in [(1_200, 60_000), (2_400, 50_000)] {
         tokio::time::sleep(Duration::from_millis(at_ms).saturating_sub(lost_at.elapsed())).await;
-        session.link_notices.lock().unwrap().note(limited(kbps));
+        session.link_notices.note(limited(kbps));
     }
     tokio::time::sleep(Duration::from_secs(10).saturating_sub(lost_at.elapsed())).await;
     assert!(

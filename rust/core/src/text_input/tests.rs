@@ -242,7 +242,7 @@ fn notice(wire: Option<Vec<u8>>) -> TextInputNotice {
 #[test]
 fn nothing_goes_to_a_client_that_did_not_ask_or_a_host_that_does_not_offer() {
     let now = Instant::now();
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     inputs.note(focused("Name", "x"), now);
     assert_eq!(inputs.take(now), None);
     assert!(!inputs.watching());
@@ -258,9 +258,50 @@ fn nothing_goes_to_a_client_that_did_not_ask_or_a_host_that_does_not_offer() {
 }
 
 #[test]
+fn a_focus_after_the_loops_look_is_told_on_the_next_one_and_a_wait_keeps_the_gate_set() {
+    let start = Instant::now();
+    let inputs = TextInputs::default();
+    assert_eq!(
+        inputs.on_request(&request(false, 0), true, false),
+        Some(Watch::On { max_text: 0 })
+    );
+    // The request arms a look; nothing is focused, so it clears at once.
+    assert!(inputs.queued());
+    assert_eq!(inputs.take(start), None);
+    assert!(!inputs.queued(), "a quiet pass reads the gate clear");
+    // The watcher reports a focus after the look above.
+    inputs.note(focused("Name", "x"), start);
+    assert!(inputs.queued(), "the next pass sees the focus");
+    assert_eq!(notice(inputs.take(start)).kind, NoticeKind::Raise);
+    assert!(!inputs.queued(), "the raise was told");
+    // A second focus inside the 50 ms window: nothing goes out now, but the
+    // gate stays set, as the loop must come back for it.
+    inputs.note(focused("Mail", "y"), start);
+    assert!(inputs.queued());
+    assert_eq!(inputs.take(start + Duration::from_millis(10)), None);
+    assert!(inputs.queued(), "the coalesced update still waits");
+    assert_eq!(
+        notice(inputs.take(start + INTERVAL)).kind,
+        NoticeKind::Update
+    );
+    assert!(!inputs.queued());
+    // The focus leaving lowers the keyboard after LOWER_DELAY; the gate stays
+    // set through that wait too.
+    inputs.note(None, start);
+    assert!(inputs.queued());
+    assert_eq!(inputs.take(start + INTERVAL), None, "the lower waits");
+    assert!(inputs.queued(), "the lower is still due");
+    assert_eq!(
+        notice(inputs.take(start + INTERVAL + LOWER_DELAY)).kind,
+        NoticeKind::Lower
+    );
+    assert!(!inputs.queued(), "nothing is left to tell");
+}
+
+#[test]
 fn raises_updates_and_lowers_are_coalesced() {
     let start = Instant::now();
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     assert_eq!(
         inputs.on_request(&request(false, 0), true, false),
         Some(Watch::On { max_text: 0 })
@@ -309,7 +350,7 @@ fn surrounding_text_needs_the_client_the_setting_and_a_public_field() {
     let now = Instant::now();
     let later = now + INTERVAL;
     // Asked and allowed: bounded to the client's max_text.
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     assert_eq!(
         inputs.on_request(&request(true, 8), true, true),
         Some(Watch::On { max_text: 8 })
@@ -336,7 +377,7 @@ fn surrounding_text_needs_the_client_the_setting_and_a_public_field() {
     assert!(password.sensitive && password.text.is_empty());
     assert_eq!(password.selection_start, SELECTION_UNKNOWN);
     // text_input_surrounding_text off: no text even though the client asked.
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     assert_eq!(
         inputs.on_request(&request(true, 64), true, false),
         Some(Watch::On { max_text: 0 })
@@ -344,7 +385,7 @@ fn surrounding_text_needs_the_client_the_setting_and_a_public_field() {
     inputs.note(focused("Name", "hello"), now);
     assert!(notice(inputs.take(now)).text.is_empty());
     // The client did not ask: no text even though the host allows it.
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     inputs.on_request(&request(false, 64), true, true);
     inputs.note(focused("Name", "hello"), now);
     assert!(notice(inputs.take(now)).text.is_empty());
@@ -353,7 +394,7 @@ fn surrounding_text_needs_the_client_the_setting_and_a_public_field() {
 #[test]
 fn a_new_request_repeats_the_focus_and_stopping_forgets_it() {
     let now = Instant::now();
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     inputs.on_request(&request(false, 0), true, false);
     inputs.note(focused("Name", ""), now);
     assert_eq!(notice(inputs.take(now)).serial, 1);
@@ -380,7 +421,7 @@ fn a_new_request_repeats_the_focus_and_stopping_forgets_it() {
 #[test]
 fn moving_to_another_field_of_the_same_kind_is_an_update() {
     let now = Instant::now();
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     inputs.on_request(&request(false, 0), true, false);
     inputs.note(in_element("First name", "", 1), now);
     assert_eq!(notice(inputs.take(now)).kind, NoticeKind::Raise);
@@ -413,7 +454,7 @@ fn element_ids_are_stable_per_runtime_id_and_never_0() {
 #[test]
 fn element_ids_go_only_to_a_client_that_asked() {
     let now = Instant::now();
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     inputs.on_request(&request_ids(), true, false);
     inputs.note(in_element("First name", "", 0x1234_5678), now);
     let wire = inputs.take(now).expect("a raise");
@@ -441,7 +482,7 @@ fn element_ids_go_only_to_a_client_that_asked() {
     assert_eq!(TextInputNotice::decode(&wire).unwrap().element, 0);
 
     // Not asked: the same focus goes out as version 1, without the id.
-    let mut inputs = TextInputs::default();
+    let inputs = TextInputs::default();
     inputs.on_request(&request(false, 0), true, false);
     inputs.note(in_element("First name", "", 0x1234_5678), now);
     let wire = inputs.take(now).expect("a raise");

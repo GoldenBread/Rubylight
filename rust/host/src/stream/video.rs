@@ -566,7 +566,7 @@ fn refuse_switch(
 ) {
     let mut reconfigure = s.reconfigure.lock().unwrap();
     reconfigure.refused(from, applied);
-    s.rate_changes.lock().unwrap().switched(from, Some(reason));
+    s.rate_changes.switched(from, Some(reason));
 }
 
 /// What every phase of a session thread reads: the media sockets, the host and the session.
