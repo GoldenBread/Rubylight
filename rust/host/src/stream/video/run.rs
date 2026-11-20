@@ -1235,9 +1235,16 @@ impl SessionThread<'_> {
                 // driver's frame push failed.
                 pacer.set_source_phase(source_phase_eligible && butterpollo_core::stream_policy::source_phase(&c, latest.backend()));
                 if arrival_pacing {
-                    pacer.observe_source(image.captured);
-                    pacer.observe_source_rate(latest.source_rate());
                     let (start, late, extends) = latest.picture();
+                    // Another window's update next to the focus window's
+                    // picture is no update of the source: learned as one, a
+                    // window composed at 240 Hz beside a 60 Hz game could
+                    // move the phase onto its compositions, and each game
+                    // frame then waited for the next of them.
+                    if !extends {
+                        pacer.observe_source(image.captured);
+                    }
+                    pacer.observe_source_rate(latest.source_rate());
                     pacer.observe_picture(start, late);
                     pacer.observe_extension(extends);
                 }

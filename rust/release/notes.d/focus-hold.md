@@ -1,0 +1,2 @@
+# Pictures behind the window in front
+- **A game or video that is not the window in front no longer stutters.** When the window in front repainted in short bursts (a chat app, a terminal printing, a blinking caret), the host held the picture behind it for 50 ms at a time: 56.5 fps of 60 on this PC, and 130 to 160 pauses over 25 ms a minute on a handheld. The window in front now counts as moving only once it has kept changing for half a second, as a game or video does.

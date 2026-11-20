@@ -111,6 +111,9 @@ pub struct Freshness {
     focus_at: Option<u64>,
     focus_start: Option<u64>,
     focus_interval: Option<u64>,
+    /// The first capture of the focus window's current run of pictures, each
+    /// at most `FOCUS_ANIMATING` after the one before (`FOCUS_SUSTAINED`).
+    focus_run: Option<u64>,
     extends: bool,
     /// The latest publication repeated the previous picture (`capture = wgcc`):
     /// the next capture starts a picture of its own even less than
@@ -121,10 +124,19 @@ pub struct Freshness {
 impl Freshness {
     /// A capture this soon after the previous one belongs to the same picture.
     const PICTURE_GAP: u64 = 2_000_000;
-    /// The focus window animates while its pictures come at least this often;
-    /// other windows' updates then extend its latest picture for twice its
-    /// latest interval, and at least this long.
+    /// The focus window animates while its pictures come at least this often
+    /// and have come so for `FOCUS_SUSTAINED`; other windows' updates then
+    /// extend its latest picture for twice its latest interval, and at least
+    /// this long.
     const FOCUS_ANIMATING: u64 = 50_000_000;
+    /// A window that repaints in short bursts (a terminal printing, a caret,
+    /// a chat app) does not animate. Counted as animating from its second
+    /// picture, such a window in front of the check's motion strip made the
+    /// strip's updates wait for the static repeat: a 50 ms hold about every
+    /// half second, 56.5 fps of 60 (rust/PERFORMANCE.md, November 20). A game
+    /// or video presents without such pauses; after a hitch longer than
+    /// `FOCUS_ANIMATING` it goes without the extension for this long.
+    const FOCUS_SUSTAINED: u64 = 500_000_000;
     /// The median interval between pictures, once a few are known: a capture
     /// less than 2 ms after the previous one counts as part of its picture.
     /// WGC on a 240 Hz VRR display delivers each frame of a 120 Hz game with
@@ -238,10 +250,10 @@ impl Freshness {
     /// claims at the stream rate drifted through the game's frames and took
     /// some of them twice and skipped as many. A capture that changed only
     /// other windows extends the focus window's picture while that window
-    /// animates (`FOCUS_ANIMATING`), and so does one that cannot tell then (a
-    /// pointer move); a still or slowly changing focus window
-    /// (typing, a caret) leaves every update a picture of its own, as without
-    /// the distinction.
+    /// animates (`FOCUS_ANIMATING`, `FOCUS_SUSTAINED`), and so does one that
+    /// cannot tell then (a pointer move); a still, slowly changing or bursty
+    /// focus window (typing, a caret, a terminal printing) leaves every update
+    /// a picture of its own, as without the distinction.
     pub fn observe_focus(&mut self, captured: u64, delay: u64, focus: Option<bool>) {
         let mut same_picture = self.record(captured, delay);
         // A real capture after a repeat is a new picture of the game, however
@@ -250,10 +262,16 @@ impl Freshness {
             same_picture = false;
         }
         self.extends = false;
-        let animating = match (self.focus_at, self.focus_interval) {
-            (Some(at), Some(interval)) => {
+        let animating = match (
+            self.focus_at,
+            self.focus_interval,
+            self.focus_start,
+            self.focus_run,
+        ) {
+            (Some(at), Some(interval), Some(start), Some(run)) => {
                 interval <= Self::FOCUS_ANIMATING
                     && captured.saturating_sub(at) <= (2 * interval).max(Self::FOCUS_ANIMATING)
+                    && start.saturating_sub(run) >= Self::FOCUS_SUSTAINED
             }
             _ => false,
         };
@@ -267,6 +285,12 @@ impl Freshness {
                 if !same_picture {
                     self.focus_interval =
                         self.focus_start.map(|start| captured.saturating_sub(start));
+                    if self
+                        .focus_interval
+                        .is_none_or(|interval| interval > Self::FOCUS_ANIMATING)
+                    {
+                        self.focus_run = Some(captured);
+                    }
                     self.focus_start = Some(captured);
                 }
                 self.focus_at = Some(captured);
@@ -294,6 +318,7 @@ impl Freshness {
         self.focus_at = None;
         self.focus_start = None;
         self.focus_interval = None;
+        self.focus_run = None;
         self.repeated = true;
         self.published(captured, false);
     }

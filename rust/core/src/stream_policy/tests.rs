@@ -204,7 +204,11 @@ fn simulate_focus(
             cadence.late_picture_interval().map(Duration::from_nanos),
         );
         newest = Some(presented);
-        pacer.observe_source(at(presented));
+        // As the host does: another window's update next to a focus picture
+        // is no update of the source.
+        if !cadence.extends_picture() {
+            pacer.observe_source(at(presented));
+        }
         evaluate(published, &mut newest, &mut deadline, &mut pacer, interval);
     }
     claims
@@ -1069,6 +1073,139 @@ fn a_game_alone_on_the_display_is_claimed_as_without_focus_labels() {
             vrr_desktop,
         );
         assert_eq!(labelled, unlabelled, "seed {seed}");
+    }
+}
+/// A window that is not the foreground window animating at 60 Hz (a video,
+/// or the check's motion strip) behind a foreground window that repaints in
+/// bursts of `burst` repaints `gap` ms apart about every `every` ms (a
+/// terminal printing, a chat app): the compositions, each with whether it
+/// changed the foreground window, and the strip's frames. A repaint within
+/// half a millisecond of a strip frame is composed with it; each present
+/// may come with a second composition up to a millisecond later.
+fn strip_behind_focus(
+    seconds: f64,
+    every: f64,
+    burst: usize,
+    gap: f64,
+    seed: u64,
+) -> (Vec<(f64, bool)>, Vec<f64>) {
+    let strip = 1000. / 60.;
+    let frames: Vec<f64> = (0..(seconds * 1000. / strip) as usize)
+        .map(|frame| frame as f64 * strip + 1.3 + 0.5 * noise(frame, seed))
+        .collect();
+    let mut repaints = vec![];
+    let mut start = 100. + every * noise(0, seed + 5);
+    let mut index = 0;
+    while start < seconds * 1000. {
+        for k in 0..burst {
+            repaints.push(start + k as f64 * gap + 0.4 * noise(index, seed + 6));
+            index += 1;
+        }
+        start += every * (0.8 + 0.4 * noise(index, seed + 7));
+    }
+    let near = |list: &[f64], at: f64| {
+        let next = list.partition_point(|t| *t < at);
+        [next.wrapping_sub(1), next]
+            .iter()
+            .any(|i| list.get(*i).is_some_and(|t| (t - at).abs() < 0.5))
+    };
+    let mut compositions = vec![];
+    for (i, &frame) in frames.iter().enumerate() {
+        let focus = near(&repaints, frame);
+        compositions.push((frame, focus));
+        if noise(i, seed + 8) < 0.5 {
+            compositions.push((frame + 0.1 + 0.9 * noise(i, seed + 9), focus));
+        }
+    }
+    for (i, &repaint) in repaints.iter().enumerate() {
+        if !near(&frames, repaint) {
+            compositions.push((repaint, true));
+            if noise(i, seed + 10) < 0.5 {
+                compositions.push((repaint + 0.1 + 0.9 * noise(i, seed + 11), true));
+            }
+        }
+    }
+    compositions.sort_by(|a, b| a.0.total_cmp(&b.0));
+    (compositions, frames)
+}
+/// Strip frames shown by `claims` (claim, presented): frames never shown,
+/// gaps longer than `long` ms between claims showing a newer strip frame,
+/// and the longest such gap.
+fn strip_shown(claims: &[(f64, f64)], frames: &[f64], long: f64) -> (usize, usize, f64) {
+    let shown = |at: f64| frames.partition_point(|f| *f <= at + 1e-9);
+    let (mut skipped, mut longs, mut longest) = (0, 0, 0f64);
+    let mut last: Option<(usize, f64)> = None;
+    for &(claim, presented) in claims {
+        let count = shown(presented);
+        match last {
+            Some((previous, at)) if count > previous => {
+                skipped += count - previous - 1;
+                let gap = claim - at;
+                longs += usize::from(gap > long);
+                longest = longest.max(gap);
+                last = Some((count, claim));
+            }
+            None => last = Some((count, claim)),
+            _ => {}
+        }
+    }
+    (skipped, longs, longest)
+}
+fn fixed_desktop(pacer: Pacer) -> Pacer {
+    pacer.with_source_phase(true).with_spacing(0.75)
+}
+#[test]
+fn a_window_repainting_in_bursts_in_front_does_not_hold_the_picture_behind_it() {
+    // Hardware (rust/PERFORMANCE.md, November 20): the check's motion strip
+    // at 60 Hz behind a foreground window that repainted in bursts (agents
+    // printing in a terminal app) streamed 56.5 fps with a 50 ms hold about
+    // every half second. The window counted as animating from its second
+    // repaint, so each strip frame waited, as another window's update of
+    // its picture, for the static repeat (here strip frames up to 66 ms
+    // apart, and 290 to 1450 frames left out in 76 s). A window repainting
+    // in bursts shorter than 500 ms now paces the strip as it did without
+    // focus labels.
+    let desktops: [(&str, fn(Pacer) -> Pacer); 2] =
+        [("fixed", fixed_desktop), ("vrr", vrr_desktop)];
+    for (desktop, configure) in desktops {
+        for (burst, gap) in [(2, 12.), (3, 16.), (5, 16.), (8, 16.), (12, 30.)] {
+            let (mut labelled, mut unlabelled) = ((0, 0), (0, 0));
+            for seed in 0..4 {
+                let (compositions, frames) = strip_behind_focus(20., 520., burst, gap, seed * 10);
+                let shown = |focus_labels: bool| {
+                    let labels: Vec<(f64, Option<bool>)> = compositions
+                        .iter()
+                        .map(|&(t, focus)| (t, focus_labels.then_some(focus)))
+                        .collect();
+                    let claims = simulate_focus(
+                        1000. / 60.,
+                        &labels,
+                        |i| 0.08 + 0.12 * noise(i, seed + 99),
+                        configure,
+                    );
+                    let steady: Vec<(f64, f64)> =
+                        claims.into_iter().filter(|c| c.0 > 1000.).collect();
+                    strip_shown(&steady, &frames, 25.)
+                };
+                let (with, without) = (shown(true), shown(false));
+                assert!(
+                    with.2 < 40.,
+                    "{desktop} burst {burst}x{gap} ms seed {seed}: a strip frame {:.1} ms after the one before",
+                    with.2
+                );
+                labelled = (labelled.0 + with.0, labelled.1 + with.1);
+                unlabelled = (unlabelled.0 + without.0, unlabelled.1 + without.1);
+            }
+            // Frames left out and gaps over 25 ms, over the four seeds: a
+            // focus repaint is a picture of its own either way (a labelled
+            // one also right after a strip frame), and at the stream rate it
+            // takes a strip frame's claim now and then.
+            let close = |with: usize, without: usize| with <= without + without / 10 + 4;
+            assert!(
+                close(labelled.0, unlabelled.0) && close(labelled.1, unlabelled.1),
+                "{desktop} burst {burst}x{gap} ms: {labelled:?} against {unlabelled:?} without labels"
+            );
+        }
     }
 }
 #[test]
@@ -3529,4 +3666,38 @@ fn dscp_tagging_off_turns_off_what_the_device_asked_for() {
         .unwrap(),
     );
     assert!(!remote.video_qos && !remote.audio_qos);
+}
+#[test]
+fn the_source_phase_learns_only_the_focus_pictures() {
+    // Another window's update next to the focus window's picture is no
+    // update of the source. Learned as one, a window composed at 240 Hz
+    // beside the 60 Hz game could move the learned phase onto its own
+    // compositions: for seconds each game frame then waited about 4 ms for
+    // the next of them, which a change of the warm-up alone (how soon the
+    // focus window counts as animating) brought out in one seed of four.
+    for other in [1000. / 245., 1000. / 240., 1000. / 144.] {
+        for seed in 0..16 {
+            let (compositions, frames) = mixed_desktop(25., other, seed * 10);
+            for duplicate_other in [false, true] {
+                let claims = simulate_focus(
+                    1000. / 60.,
+                    &focus_labels(&compositions, true, duplicate_other),
+                    |i| 0.08 + 0.12 * noise(i, seed + 99),
+                    vrr_desktop,
+                );
+                let steady = &claims[300..];
+                let case =
+                    format!("other {other:.2} ms seed {seed} duplicate other {duplicate_other}");
+                assert_eq!(game_frames_shown(steady, &frames), (0, 0, 0), "{case}");
+                let shown = |at: f64| frames.partition_point(|f| *f <= at + 1e-9);
+                let mut ages: Vec<f64> = steady
+                    .iter()
+                    .map(|(claim, presented)| claim - frames[shown(*presented).max(1) - 1])
+                    .collect();
+                ages.sort_by(f64::total_cmp);
+                let p95 = ages[ages.len() * 95 / 100];
+                assert!(p95 < 1., "{case}: game age p95 {p95:.2} ms");
+            }
+        }
+    }
 }

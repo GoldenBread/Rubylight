@@ -331,6 +331,11 @@ impl<T> Latest<T> {
                 age_ns = delay_ns,
                 source_id = self.trace_source_id,
                 repeat,
+                // Whether the capture changed the foreground window, and
+                // whether it only extends that window's picture
+                // (`Freshness::observe_focus`).
+                focus = focus.map_or("unknown", |changed| if changed { "focus" } else { "other" }),
+                extends = state.cadence.extends_picture(),
                 "publish"
             );
         }

@@ -195,33 +195,49 @@ fn another_window_extends_the_focus_picture_only_while_the_focus_changes() {
         assert!(!cadence.extends_picture());
         assert_eq!(cadence.picture_start(), Some((at + 4) * ms));
     }
-    // A game at 60 Hz animates.
-    cadence.observe_focus(300 * ms, ms, Some(true));
-    cadence.observe_focus(316 * ms, ms, Some(true));
-    let game = cadence.picture_start();
-    assert_eq!(game, Some(316 * ms));
-    // The duplicate composition and another window's updates extend it.
-    cadence.observe_focus(317 * ms, ms, Some(true));
+    // Nor does one that repaints in short bursts (a terminal printing a
+    // line): two repaints 12 ms apart.
+    cadence.observe_focus(400 * ms, ms, Some(true));
+    cadence.observe_focus(412 * ms, ms, Some(true));
+    cadence.observe_focus(416 * ms, ms, Some(false));
     assert!(!cadence.extends_picture());
-    for at in [321, 325, 329] {
+    assert_eq!(cadence.picture_start(), Some(416 * ms));
+    // A game at 60 Hz animates once its frames have come for 500 ms.
+    for frame in 0..32 {
+        cadence.observe_focus((1000 + 16 * frame) * ms, ms, Some(true));
+    }
+    cadence.observe_focus(1500 * ms, ms, Some(false));
+    assert!(!cadence.extends_picture());
+    cadence.observe_focus(1512 * ms, ms, Some(true));
+    let game = cadence.picture_start();
+    assert_eq!(game, Some(1512 * ms));
+    // The duplicate composition and another window's updates extend it.
+    cadence.observe_focus(1513 * ms, ms, Some(true));
+    assert!(!cadence.extends_picture());
+    for at in [1517, 1521, 1525] {
         cadence.observe_focus(at * ms, ms, Some(false));
         assert!(cadence.extends_picture());
         assert_eq!(cadence.picture_start(), game);
     }
     // A focus change soon after another window's update is a new picture.
-    cadence.observe_focus(330 * ms, ms, Some(true));
+    cadence.observe_focus(1526 * ms, ms, Some(true));
     assert!(!cadence.extends_picture());
-    assert_eq!(cadence.picture_start(), Some(330 * ms));
-    cadence.observe_focus(370 * ms, ms, Some(false));
+    assert_eq!(cadence.picture_start(), Some(1526 * ms));
+    cadence.observe_focus(1566 * ms, ms, Some(false));
     assert!(cadence.extends_picture());
     // Once the focus window is still, every update is a picture again.
-    cadence.observe_focus(381 * ms, ms, Some(false));
+    cadence.observe_focus(1577 * ms, ms, Some(false));
     assert!(!cadence.extends_picture());
-    assert_eq!(cadence.picture_start(), Some(381 * ms));
+    assert_eq!(cadence.picture_start(), Some(1577 * ms));
     // Without dirty regions nothing changes.
-    cadence.observe_focus(385 * ms, ms, None);
+    cadence.observe_focus(1581 * ms, ms, None);
     assert!(!cadence.extends_picture());
-    assert_eq!(cadence.picture_start(), Some(385 * ms));
+    assert_eq!(cadence.picture_start(), Some(1581 * ms));
+    // A hitch longer than 50 ms starts the 500 ms over.
+    cadence.observe_focus(1700 * ms, ms, Some(true));
+    cadence.observe_focus(1716 * ms, ms, Some(true));
+    cadence.observe_focus(1720 * ms, ms, Some(false));
+    assert!(!cadence.extends_picture());
 }
 fn learned(interval: u64) -> Freshness {
     let mut cadence = Freshness::default();
