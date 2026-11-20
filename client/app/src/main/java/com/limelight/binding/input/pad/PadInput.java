@@ -10,6 +10,17 @@ public final class PadInput {
     static final float[][] FACE_CENTERS = {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, {.5f, .22f}};
     static final int[] FACE_FLAGS = {ControllerPacket.A_FLAG, ControllerPacket.B_FLAG,
             ControllerPacket.X_FLAG, ControllerPacket.Y_FLAG};
+    /**
+     * Which button stands at each place of the face cluster, in {@link #FACE_CENTERS} order: the standard arrangement,
+     * and the Nintendo one a cluster joined from swapped members keeps, B at the bottom, A on the right, Y on the left
+     * and X at the top. Each swaps a pair, so the same table maps places to buttons and buttons to places.
+     */
+    static final int[] FACE_STANDARD = {0, 1, 2, 3}, FACE_SWAPPED = {1, 0, 3, 2};
+
+    /** The button at each place of a face cluster with the standard or the Nintendo arrangement. */
+    static int[] faceOrder(boolean swapped) {
+        return swapped ? FACE_SWAPPED : FACE_STANDARD;
+    }
     /** A face button's radius, how far from its center a finger still presses it, and the chord margin. */
     static final float FACE_RADIUS = .19f, FACE_REACH = .30f, FACE_CHORD = .07f, FACE_CENTER_GAP = .10f;
     /** A D-pad arm's thickness and its corners' radius, as fractions of the D-pad's shorter side. */
@@ -38,7 +49,13 @@ public final class PadInput {
      * same part of a square one does. A square box answers exactly as {@link #face(float, float, float)}.
      */
     public static int face(float x, float y, float width, float height) {
+        return face(x, y, width, height, false);
+    }
+
+    /** As {@link #face(float, float, float, float)}, with the buttons in the Nintendo arrangement when swapped. */
+    public static int face(float x, float y, float width, float height, boolean swapped) {
         if (width <= 0 || height <= 0) return 0;
+        int[] order = faceOrder(swapped);
         float fx = x / width, fy = y / height;
         float mx = fx - .5f, my = fy - .5f;
         if (mx * mx + my * my < FACE_CENTER_GAP * FACE_CENTER_GAP) return 0;
@@ -55,8 +72,8 @@ public final class PadInput {
             }
         }
         if (nearestD > FACE_REACH) return 0;
-        int flags = FACE_FLAGS[nearest];
-        if (second >= 0 && secondD <= FACE_REACH && secondD - nearestD < FACE_CHORD) flags |= FACE_FLAGS[second];
+        int flags = FACE_FLAGS[order[nearest]];
+        if (second >= 0 && secondD <= FACE_REACH && secondD - nearestD < FACE_CHORD) flags |= FACE_FLAGS[order[second]];
         return flags;
     }
 

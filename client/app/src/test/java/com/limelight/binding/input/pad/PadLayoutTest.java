@@ -1,6 +1,7 @@
 package com.limelight.binding.input.pad;
 
 import org.junit.Test;
+import com.limelight.nvstream.input.ControllerPacket;
 
 import static org.junit.Assert.*;
 
@@ -196,7 +197,7 @@ public class PadLayoutTest {
         assertFalse(layout.shown(PadLayout.Control.A));
         layout.spec(PadLayout.Control.FACE).hidden = true;
 
-        layout.join(PadLayout.Control.FACE);
+        layout.join(PadLayout.Control.FACE, width, height, DENSITY);
         assertTrue(layout.shown(PadLayout.Control.FACE));
         for (PadLayout.Control member : PadLayout.members(PadLayout.Control.FACE)) assertTrue(layout.spec(member).hidden);
         assertArrayEquals("Where and as it was", face, layout.bounds(PadLayout.Control.FACE, width, height, DENSITY,
@@ -749,5 +750,119 @@ public class PadLayoutTest {
         assertTrue(hidden.spec(PadLayout.Control.POINTER_PAD).hidden);
         assertFalse(hidden.spec(PadLayout.Control.POINTER_PAD).placed());
         assertEquals("v1", new PadLayout().serialize());
+    }
+
+    private static float[] span(PadLayout layout, PadLayout.Control cluster, float width, float height) {
+        float left = Float.MAX_VALUE, top = Float.MAX_VALUE, right = -Float.MAX_VALUE, bottom = -Float.MAX_VALUE;
+        for (PadLayout.Control member : PadLayout.members(cluster)) {
+            if (!layout.shown(member)) continue;
+            float[] box = layout.bounds(member, width, height, DENSITY, new float[4]);
+            left = Math.min(left, box[0]);
+            top = Math.min(top, box[1]);
+            right = Math.max(right, box[0] + box[2]);
+            bottom = Math.max(bottom, box[1] + box[3]);
+        }
+        return new float[] {left, top, right - left, bottom - top};
+    }
+
+    @Test public void joinPutsTheClusterWhereItsMembersStand() {
+        float width = 2400, height = 1080;
+        for (PadLayout.Control cluster : new PadLayout.Control[] {PadLayout.Control.FACE, PadLayout.Control.DPAD}) {
+            PadLayout layout = new PadLayout();
+            float[] home = layout.bounds(cluster, width, height, DENSITY, new float[4]);
+            layout.split(cluster, width, height, DENSITY);
+            // The player drags the four, together, to the middle of the screen.
+            for (PadLayout.Control member : PadLayout.members(cluster)) {
+                float[] box = layout.bounds(member, width, height, DENSITY, new float[4]);
+                layout.moveTo(member, box[0] + box[2] / 2 - home[0] - home[2] / 2 + width / 2,
+                        box[1] + box[3] / 2 - home[1] - home[3] / 2 + height / 2, width, height, DENSITY);
+            }
+            float[] members = span(layout, cluster, width, height);
+            layout.join(cluster, width, height, DENSITY);
+            float[] joined = layout.bounds(cluster, width, height, DENSITY, new float[4]);
+            assertEquals(cluster + ": centred on them", members[0] + members[2] / 2, joined[0] + joined[2] / 2, 1);
+            assertEquals(cluster.name(), members[1] + members[3] / 2, joined[1] + joined[3] / 2, 1);
+            assertEquals(cluster + ": covering them", members[2], joined[2], 1);
+            assertEquals(cluster.name(), members[3], joined[3], 1);
+            assertTrue(cluster + ": not back home", Math.abs(joined[0] - home[0]) > 100);
+
+            // Split lays them out around the cluster's own place and size; joined again unmoved, it is as it was.
+            layout.split(cluster, width, height, DENSITY);
+            float[] again = span(layout, cluster, width, height);
+            assertEquals(cluster + ": split around it", joined[0] + joined[2] / 2, again[0] + again[2] / 2, 1);
+            assertEquals(cluster.name(), joined[1] + joined[3] / 2, again[1] + again[3] / 2, 1);
+            float[] split = layout.bounds(PadLayout.members(cluster)[0], width, height, DENSITY, new float[4]);
+            layout.join(cluster, width, height, DENSITY);
+            assertArrayEquals(cluster + ": round trip", joined, layout.bounds(cluster, width, height, DENSITY,
+                    new float[4]), .01f);
+            layout.split(cluster, width, height, DENSITY);
+            assertArrayEquals(cluster + ": and again", split, layout.bounds(PadLayout.members(cluster)[0], width,
+                    height, DENSITY, new float[4]), .01f);
+        }
+    }
+
+    @Test public void aClusterJoinedFromSwappedMembersKeepsTheirButtons() {
+        float width = 2400, height = 1080;
+        PadLayout layout = ClassicLayoutMigration.swappedDefaults(width, height, DENSITY);
+        float[] bottom = layout.bounds(PadLayout.Control.B, width, height, DENSITY, new float[4]);
+        layout.join(PadLayout.Control.FACE, width, height, DENSITY);
+        assertTrue(layout.facesSwapped());
+        // The bottom of the cluster sends B, its right A, its left Y and its top X.
+        float[] face = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
+        float[][] places = {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, {.5f, .22f}};
+        int[] sent = {ControllerPacket.B_FLAG, ControllerPacket.A_FLAG, ControllerPacket.Y_FLAG, ControllerPacket.X_FLAG};
+        for (int i = 0; i < places.length; i++) {
+            assertEquals(sent[i], PadInput.face(places[i][0] * face[2], places[i][1] * face[3], face[2], face[3], true));
+        }
+        assertEquals(ControllerPacket.A_FLAG, PadInput.face(.5f * face[2], .78f * face[3], face[2], face[3]));
+
+        // Saved and loaded it stays so, and Split brings B back to the bottom.
+        String text = layout.serialize();
+        assertTrue(text, text.contains("|faces=swapped"));
+        PadLayout loaded = PadLayout.parse(text);
+        assertTrue(loaded.facesSwapped());
+        loaded.split(PadLayout.Control.FACE, width, height, DENSITY);
+        float[] b = loaded.bounds(PadLayout.Control.B, width, height, DENSITY, new float[4]);
+        float[] a = loaded.bounds(PadLayout.Control.A, width, height, DENSITY, new float[4]);
+        assertTrue("B at the bottom", b[1] > a[1] + 1 && b[1] > loaded.bounds(PadLayout.Control.Y, width, height,
+                DENSITY, new float[4])[1]);
+        assertTrue("A on the right", a[0] > b[0] + 1);
+        assertTrue(loaded.facesSwapped());
+        // Joined again, still swapped; members in the standard places join standard.
+        loaded.join(PadLayout.Control.FACE, width, height, DENSITY);
+        assertTrue(loaded.facesSwapped());
+        PadLayout standard = new PadLayout();
+        standard.split(PadLayout.Control.FACE, width, height, DENSITY);
+        standard.join(PadLayout.Control.FACE, width, height, DENSITY);
+        assertFalse(standard.facesSwapped());
+        assertTrue("B where the bottom was", Math.abs(bottom[1] - b[1]) < face[3]);
+
+        // A copy, as the editor's draft, keeps it.
+        assertTrue(loaded.copy().facesSwapped());
+        // A preset keeps the arrangement, as it keeps the glyphs; Reset gives the standard one.
+        loaded.applyPreset(PadLayout.Preset.MINIMAL);
+        assertTrue(loaded.facesSwapped());
+        loaded.reset();
+        assertFalse(loaded.facesSwapped());
+        assertTrue(loaded.isDefault());
+    }
+
+    @Test public void theSwappedArrangementLeavesOlderLayoutsAndBuildsAlone() {
+        // Saved before it existed: the standard arrangement.
+        assertFalse(PadLayout.parse("v1|FACE,0.7083,0.5556,1.300,100,0").facesSwapped());
+        assertFalse(PadLayout.parse("v1|FACE,-,-,2.500,100,0,2.500,1.200").facesSwapped());
+        // Its token has no comma, so a build that does not know it skips it as an entry of too few fields (6.0 and
+        // later read an entry only with six), and loads the rest.
+        PadLayout swapped = PadLayout.parse("v1|faces=swapped|FACE,0.7083,0.5556,1.300,100,0|later=1");
+        assertTrue(swapped.facesSwapped());
+        assertEquals(.7083f, swapped.spec(PadLayout.Control.FACE).cx, .0001f);
+        assertTrue("faces=swapped".split(",", -1).length < 6);
+        assertEquals("v1|faces=swapped", swappedOnly().serialize());
+    }
+
+    private static PadLayout swappedOnly() {
+        PadLayout layout = new PadLayout();
+        layout.setFacesSwapped(true);
+        return layout;
     }
 }

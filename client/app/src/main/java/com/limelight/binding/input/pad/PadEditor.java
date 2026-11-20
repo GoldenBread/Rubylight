@@ -170,6 +170,7 @@ final class PadEditor extends FrameLayout {
         reset.setOnClickListener(v -> {
             draft.reset();
             painter.setGlyph(draft.glyph());
+            painter.setFacesSwapped(draft.facesSwapped());
             select(null);
             changed();
         });
@@ -491,11 +492,12 @@ final class PadEditor extends FrameLayout {
         changed();
     }
 
-    /** Joins the picked member's cluster again, where and as it was, and picks it. */
+    /** Joins the picked member's cluster again where its members stand, in their arrangement, and picks it. */
     void join() {
         if (selected == null || selected.cluster() == null) return;
         PadLayout.Control cluster = selected.cluster();
-        draft.join(cluster);
+        draft.join(cluster, surfaceWidth(), surfaceHeight(), density);
+        painter.setFacesSwapped(draft.facesSwapped());
         select(cluster);
         changed();
     }
@@ -524,6 +526,7 @@ final class PadEditor extends FrameLayout {
                 .setItems(R.array.pad_preset_names, (dialog, which) -> {
                     draft.applyPreset(PadLayout.Preset.values()[which]);
                     painter.setGlyph(draft.glyph());
+                    painter.setFacesSwapped(draft.facesSwapped());
                     select(null);
                     changed();
                 }).setNegativeButton(android.R.string.cancel, null).create().show();
@@ -535,6 +538,7 @@ final class PadEditor extends FrameLayout {
                 .setItems(R.array.pad_glyph_names, (dialog, which) -> {
                     draft.setGlyph(PadLayout.Glyph.values()[which]);
                     painter.setGlyph(draft.glyph());
+                    painter.setFacesSwapped(draft.facesSwapped());
                     changed();
                 }).setNegativeButton(android.R.string.cancel, null).create().show();
     }

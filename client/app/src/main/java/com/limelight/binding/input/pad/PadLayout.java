@@ -142,6 +142,11 @@ public final class PadLayout {
      * buttons: a layout without it was saved when that place was the middle of the surface, and keeps it there.
      */
     private static final String POINTER_PAD_BELOW = "pad=below";
+    /**
+     * Written when the face cluster's buttons stand in the Nintendo arrangement ({@link #facesSwapped}). A token with no
+     * comma: older builds skip it as an entry with too few fields and show the standard arrangement.
+     */
+    private static final String FACES_SWAPPED = "faces=swapped";
 
     /**
      * One control's settings. {@code cx} and {@code cy} are fractions of the surface; NaN means the default place.
@@ -190,6 +195,11 @@ public final class PadLayout {
     private final Spec[] specs = new Spec[Control.values().length];
     private Glyph glyph = Glyph.XBOX;
     private PointerMode pointerMode = PointerMode.MOUSE;
+    /**
+     * The face cluster's buttons stand in the Nintendo arrangement ({@link PadInput#FACE_SWAPPED}): set by
+     * {@link #join} from where the members stood, and kept by {@link #split}. Saved as {@link #FACES_SWAPPED}.
+     */
+    private boolean facesSwapped;
 
     public PadLayout() {
         for (Control control : Control.values()) specs[control.ordinal()] = new Spec(control.hiddenByDefault);
@@ -204,6 +214,7 @@ public final class PadLayout {
         for (int i = 0; i < specs.length; i++) copy.specs[i].copyFrom(specs[i]);
         copy.glyph = glyph;
         copy.pointerMode = pointerMode;
+        copy.facesSwapped = facesSwapped;
         return copy;
     }
 
@@ -211,10 +222,11 @@ public final class PadLayout {
         for (int i = 0; i < specs.length; i++) specs[i].copyFrom(other.specs[i]);
         glyph = other.glyph;
         pointerMode = other.pointerMode;
+        facesSwapped = other.facesSwapped;
     }
 
     public boolean isDefault() {
-        if (glyph != Glyph.XBOX || pointerMode != PointerMode.MOUSE) return false;
+        if (glyph != Glyph.XBOX || pointerMode != PointerMode.MOUSE || facesSwapped) return false;
         for (Spec spec : specs) {
             if (!spec.isDefault()) return false;
         }
@@ -225,6 +237,16 @@ public final class PadLayout {
         for (Spec spec : specs) spec.copyFrom(new Spec(spec.defaultHidden));
         glyph = Glyph.XBOX;
         pointerMode = PointerMode.MOUSE;
+        facesSwapped = false;
+    }
+
+    /** Whether the face cluster's buttons stand in the Nintendo arrangement: B at the bottom, A right, Y left, X top. */
+    public boolean facesSwapped() {
+        return facesSwapped;
+    }
+
+    public void setFacesSwapped(boolean swapped) {
+        facesSwapped = swapped;
     }
 
     public Glyph glyph() {
@@ -255,6 +277,7 @@ public final class PadLayout {
         // player's other choices and stay as they are, so the editor's buttons do not visibly revert.
         Glyph keptGlyph = glyph;
         PointerMode keptPointerMode = pointerMode;
+        boolean keptFacesSwapped = facesSwapped;
         Spec[] keptSteam = new Spec[specs.length];
         for (Control control : Control.values()) {
             if (!control.steam) continue;
@@ -267,6 +290,7 @@ public final class PadLayout {
         }
         glyph = keptGlyph;
         pointerMode = keptPointerMode;
+        facesSwapped = keptFacesSwapped;
         if (preset == Preset.DEFAULT) return;
         for (Control control : Control.values()) {
             if (control.steam) continue;
@@ -365,16 +389,29 @@ public final class PadLayout {
     public void split(Control cluster, float width, float height, float density) {
         Control[] members = members(cluster);
         if (members.length == 0) return;
-        float[] box = bounds(cluster, width, height, density, new float[4]);
-        float[][] boxes = memberBoxes(cluster, box[0], box[1], box[2], box[3], width, height, density);
-        clearOfNeighbours(cluster, boxes, width, height, density);
+        float[][] boxes = splitBoxes(cluster, width, height, density);
+        // Each place gets the button the cluster shows there, so a Nintendo arrangement stays one.
+        int[] order = order(cluster);
         for (int i = 0; i < members.length; i++) {
-            Control control = members[i];
+            Control control = members[order[i]];
             setBounds(control, boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3], width, height, density);
             spec(control).opacity = spec(cluster).opacity;
             spec(control).hidden = false;
         }
         spec(cluster).hidden = true;
+    }
+
+    /** Where {@link #split} puts the members' places around the cluster's own box, in {@link PadInput#FACE_CENTERS} order. */
+    private float[][] splitBoxes(Control cluster, float width, float height, float density) {
+        float[] box = bounds(cluster, width, height, density, new float[4]);
+        float[][] boxes = memberBoxes(cluster, box[0], box[1], box[2], box[3], width, height, density);
+        clearOfNeighbours(cluster, boxes, width, height, density);
+        return boxes;
+    }
+
+    /** The member at each place of the cluster: the face cluster's arrangement, the D-pad's fixed one. */
+    private int[] order(Control cluster) {
+        return cluster == Control.FACE ? PadInput.faceOrder(facesSwapped) : PadInput.FACE_STANDARD;
     }
 
     /**
@@ -433,10 +470,68 @@ public final class PadLayout {
                 && box[1] + dy < other[1] + other[3] && other[1] < box[1] + dy + box[3];
     }
 
-    /** Joins a split cluster again: its members hide, and the cluster shows where and as it was before the split. */
-    public void join(Control cluster) {
-        for (Control member : members(cluster)) spec(member).hidden = true;
+    /**
+     * Joins a split cluster again where its members stand on this {@code width} x {@code height} surface, and they
+     * hide. Members still where {@link #split} put them give the cluster back as it was; moved, or never split from it
+     * (a layout carried over), the cluster covers the box they span, centred on it and kept on the surface. The face
+     * cluster keeps the arrangement they stood in, the standard one or the Nintendo one ({@link #facesSwapped}); with
+     * too few of them to tell, it keeps the one it had.
+     */
+    public void join(Control cluster, float width, float height, float density) {
+        Control[] members = members(cluster);
+        float left = Float.MAX_VALUE, top = Float.MAX_VALUE, right = -Float.MAX_VALUE, bottom = -Float.MAX_VALUE;
+        float[][] boxes = new float[members.length][];
+        for (int i = 0; i < members.length; i++) {
+            if (!shown(members[i])) continue;
+            float[] box = boxes[i] = bounds(members[i], width, height, density, new float[4]);
+            left = Math.min(left, box[0]);
+            top = Math.min(top, box[1]);
+            right = Math.max(right, box[0] + box[2]);
+            bottom = Math.max(bottom, box[1] + box[3]);
+        }
+        if (right > left && width > 0 && height > 0) {
+            if (cluster == Control.FACE) facesSwapped = swappedArrangement(boxes, left, top, right - left, bottom - top);
+            if (!whereSplitPutThem(cluster, boxes, width, height, density)) {
+                setBounds(cluster, left, top, right - left, bottom - top, width, height, density);
+            }
+        }
+        for (Control member : members) spec(member).hidden = true;
         spec(cluster).hidden = false;
+    }
+
+    /**
+     * Whether face members in {@code boxes} (null where hidden) stand nearer the Nintendo arrangement than the standard
+     * one in the box they span; {@link #facesSwapped} as it is when they cannot tell.
+     */
+    private boolean swappedArrangement(float[][] boxes, float left, float top, float width, float height) {
+        float standard = 0, swapped = 0;
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] == null) continue;
+            float x = (boxes[i][0] + boxes[i][2] / 2 - left) / width, y = (boxes[i][1] + boxes[i][3] / 2 - top) / height;
+            standard += distance(x, y, PadInput.FACE_CENTERS[i]);
+            swapped += distance(x, y, PadInput.FACE_CENTERS[PadInput.FACE_SWAPPED[i]]);
+        }
+        return standard == swapped ? facesSwapped : swapped < standard;
+    }
+
+    /** Whether the shown members' {@code boxes} are where splitting the cluster as it stands puts them. */
+    private boolean whereSplitPutThem(Control cluster, float[][] boxes, float width, float height, float density) {
+        float[][] places = splitBoxes(cluster, width, height, density);
+        int[] order = order(cluster);
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] == null) continue;
+            // Each order swaps pairs, so the member's own index gives its place.
+            float[] place = places[order[i]];
+            for (int k = 0; k < 4; k++) {
+                if (Math.abs(place[k] - boxes[i][k]) > 2) return false;
+            }
+        }
+        return true;
+    }
+
+    private static float distance(float x, float y, float[] center) {
+        float dx = x - center[0], dy = y - center[1];
+        return dx * dx + dy * dy;
     }
 
     /**
@@ -828,6 +923,7 @@ public final class PadLayout {
         StringBuilder out = new StringBuilder(VERSION);
         if (glyph != Glyph.XBOX) out.append("|glyph=").append(glyph.name().toLowerCase(Locale.ROOT));
         if (pointerMode != PointerMode.MOUSE) out.append("|mode=").append(pointerMode.name().toLowerCase(Locale.ROOT));
+        if (facesSwapped) out.append('|').append(FACES_SWAPPED);
         Spec pad = spec(Control.POINTER_PAD);
         if (!pad.hidden && !pad.placed()) out.append('|').append(POINTER_PAD_BELOW);
         for (Control control : Control.values()) {
@@ -872,6 +968,10 @@ public final class PadLayout {
                 } catch (IllegalArgumentException ignored) {
                     // A glyph from a newer build: Xbox, what this one shows.
                 }
+                continue;
+            }
+            if (part.equals(FACES_SWAPPED)) {
+                layout.facesSwapped = true;
                 continue;
             }
             if (part.startsWith("mode=")) {

@@ -112,6 +112,7 @@ public final class ModernController {
         if (text == null) text = store.getString(PadLayoutKeys.legacyKey(null), null);
         layout = PadLayout.parse(text);
         painter.setGlyph(layout.glyph());
+        painter.setFacesSwapped(layout.facesSwapped());
     }
 
     /** Sends the Steam Controller trackpads' touches here; without a sink they send nothing. */
@@ -148,6 +149,7 @@ public final class ModernController {
         removeElements();
         load();
         painter.setGlyph(layout.glyph());
+        painter.setFacesSwapped(layout.facesSwapped());
         // The acceleration curve and the Trackpad speed reach the pointer touchpad's motion model, here and in
         // applyAppearance; the speed sets how far Camera mode turns, PointerMove applies it to the pointer.
         String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.LINEAR;
@@ -259,6 +261,7 @@ public final class ModernController {
     /** Redraws the controls after the glyphs or the pointer touchpad's mode changed. */
     private void applyAppearance() {
         painter.setGlyph(layout.glyph());
+        painter.setFacesSwapped(layout.facesSwapped());
         String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.LINEAR;
         for (Map.Entry<PadLayout.Control, PadControlView> entry : views.entrySet()) {
             PadControlView view = entry.getValue();

@@ -159,6 +159,8 @@ final class PadPainter {
     private final Paint knobGlossPressed, fingerGlow;
     /** The face letters and shoulder names; the layout editor changes it and every view redraws. */
     private PadLayout.Glyph glyph = PadLayout.Glyph.XBOX;
+    /** The face cluster's buttons stand in the Nintendo arrangement ({@link PadLayout#facesSwapped}). */
+    private boolean facesSwapped;
     /** The stick geometry for the last size drawn, recomputed only when a stick's size changes. */
     private float stickSize = Float.NaN, stickBase, stickKnob;
     private final float[] knobAt = new float[2];
@@ -215,13 +217,28 @@ final class PadPainter {
         this.glyph = glyph;
     }
 
-    /** The parts {@code state} holds now, as bits in {@link State#press} order. */
+    /** Draws and reads the face cluster with its buttons in the Nintendo arrangement, or the standard one. */
+    void setFacesSwapped(boolean swapped) {
+        facesSwapped = swapped;
+    }
+
+    boolean facesSwapped() {
+        return facesSwapped;
+    }
+
+    /** The parts {@code state} holds now, as bits in {@link State#press} order, with the standard face buttons. */
     static int heldParts(PadLayout.Control control, State state) {
+        return heldParts(control, state, false);
+    }
+
+    /** The parts {@code state} holds now; a face cluster's places hold its buttons in the Nintendo order if swapped. */
+    static int heldParts(PadLayout.Control control, State state, boolean facesSwapped) {
         switch (control.shape) {
             case FACE: {
+                int[] order = PadInput.faceOrder(facesSwapped);
                 int bits = 0;
                 for (int i = 0; i < PARTS; i++) {
-                    if ((state.flags & PadInput.FACE_FLAGS[i]) != 0) bits |= 1 << i;
+                    if ((state.flags & PadInput.FACE_FLAGS[order[i]]) != 0) bits |= 1 << i;
                 }
                 return bits;
             }
@@ -825,11 +842,12 @@ final class PadPainter {
         float size = Math.min(width, height), r = size * PadInput.FACE_RADIUS;
         // The buttons leave a sliver of the box free around them; their shadows stay inside it.
         float reach = Math.max(0, Math.min(SHADOW_REACH_DP * density, size * FACE_SLACK - SHADOW_DROP_DP * density));
+        int[] order = PadInput.faceOrder(facesSwapped);
         for (int i = 0; i < PadInput.FACE_CENTERS.length; i++) {
             float cx = left + PadInput.FACE_CENTERS[i][0] * width, cy = top + PadInput.FACE_CENTERS[i][1] * height;
             float level = state.press[i];
             disc(canvas, cx, cy, r, r, level, reach);
-            faceGlyph(canvas, i, cx, cy, r - PRESS_IN_DP * density * level, level);
+            faceGlyph(canvas, order[i], cx, cy, r - PRESS_IN_DP * density * level, level);
         }
     }
 

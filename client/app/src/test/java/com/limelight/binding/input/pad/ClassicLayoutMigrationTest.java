@@ -784,4 +784,64 @@ public class ClassicLayoutMigrationTest {
         assertNull("The face buttons become the cluster or its members", ClassicLayoutMigration.control(6));
         assertNull(ClassicLayoutMigration.control(999));
     }
+
+    /** The device report: Join and Split in the editor on a carried-over Nintendo layout keep its place and buttons. */
+    @Test public void joinAndSplitKeepACarriedOverNintendoLayoutsPlaceAndButtons() {
+        // The Retroid's layout after the upgrade: the classic buttons, Nintendo-swapped, where the player had them,
+        // and the face cluster never placed.
+        String device = "v1|LEFT_STICK,0.3953,0.2927,0.868,100,0|RIGHT_STICK,0.8740,0.7629,1.072,100,0|"
+                + "DPAD,0.1404,0.7771,1.403,100,0|FACE,-,-,1.000,100,1|LB,0.2219,0.4927,1.051,100,0,0.670,1.051|"
+                + "RB,0.7771,0.4927,1.051,100,0,0.670,1.051|LT,0.0516,0.4927,1.051,100,0,0.670,1.051|"
+                + "RT,0.9479,0.4927,1.051,100,0,0.670,1.051|SELECT,0.2964,0.9371,1.523,100,0,1.523,0.887|"
+                + "START,0.5734,0.7420,1.523,100,0,1.523,0.887|HOME,0.4583,0.9371,1.523,100,0,1.523,0.887|"
+                + "A,0.9479,0.2215,0.921,100,0|B,0.8740,0.3600,0.921,100,0|X,0.8740,0.0829,0.921,100,0|"
+                + "Y,0.7995,0.2215,0.921,100,0";
+        store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true).putBoolean(ClassicLayoutMigration.STYLE_RETIRED, true)
+                .putString(PadLayoutKeys.key(true, null), device).putString(PadLayoutKeys.key(false, null), device).commit();
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        prefs.flipFaceButtons = true;
+        FrameLayout frame = frame();
+        ModernController controller = controller(frame, prefs);
+        PadLayout carried = new PadLayout();
+        carried.copyFrom(controller.layout());
+        float left = Float.MAX_VALUE, top = Float.MAX_VALUE, right = -Float.MAX_VALUE, bottom = -Float.MAX_VALUE;
+        for (PadLayout.Control member : MEMBERS) {
+            float[] b = box(carried, member);
+            left = Math.min(left, b[0]);
+            top = Math.min(top, b[1]);
+            right = Math.max(right, b[0] + b[2]);
+            bottom = Math.max(bottom, b[1] + b[3]);
+        }
+
+        controller.startEditing();
+        PadEditor editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        editor.select(PadLayout.Control.B);
+        editor.join();
+        controller.finishEditing(true);
+        layout(frame);
+        PadControlView face = controller.view(PadLayout.Control.FACE);
+        assertEquals("where the members were", (left + right) / 2, face.getLeft() + face.getWidth() / 2f, 2);
+        assertEquals((top + bottom) / 2, face.getTop() + face.getHeight() / 2f, 2);
+        assertEquals(right - left, face.getWidth(), 2);
+        face.down(0, face.getWidth() / 2f, face.getHeight() * .78f, 100);
+        assertEquals("the bottom still sends B", ControllerPacket.B_FLAG, (int) buttons.get(buttons.size() - 1));
+        face.up(0, 200);
+        face.down(0, face.getWidth() * .78f, face.getHeight() / 2f, 300);
+        assertEquals("the right A", ControllerPacket.A_FLAG, (int) buttons.get(buttons.size() - 1));
+        face.up(0, 400);
+
+        controller.startEditing();
+        editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        editor.select(PadLayout.Control.FACE);
+        editor.split();
+        controller.finishEditing(true);
+        layout(frame);
+        PadControlView b = controller.view(PadLayout.Control.B), a = controller.view(PadLayout.Control.A);
+        assertTrue("B at the bottom again", b.getTop() > a.getTop());
+        assertTrue("around where the cluster was", b.getLeft() + b.getWidth() / 2f > left && b.getTop() < bottom);
+        b.down(0, b.getWidth() / 2f, b.getHeight() / 2f, 500);
+        assertEquals(ControllerPacket.B_FLAG, (int) buttons.get(buttons.size() - 1));
+        b.up(0, 600);
+        controller.destroy();
+    }
 }

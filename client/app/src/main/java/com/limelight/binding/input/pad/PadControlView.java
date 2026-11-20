@@ -372,7 +372,7 @@ final class PadControlView extends View {
      * the next frames ({@link #ease}). At opacity 0 a part only goes in and out, as nothing of it is drawn.
      */
     private void trackPress() {
-        int held = PadPainter.heldParts(control, state);
+        int held = PadPainter.heldParts(control, state, painter.facesSwapped());
         if (held == heldParts) return;
         long now = AnimationUtils.currentAnimationTimeMillis();
         boolean visible = restingAlpha > 0, letGo = false;
@@ -421,7 +421,7 @@ final class PadControlView extends View {
     private void stopEasing() {
         removeCallbacks(easing);
         java.util.Arrays.fill(releasedAt, 0);
-        heldParts = PadPainter.heldParts(control, state);
+        heldParts = PadPainter.heldParts(control, state, painter.facesSwapped());
         for (int i = 0; i < PadPainter.PARTS; i++) {
             boolean on = (heldParts & 1 << i) != 0;
             state.press[i] = on ? 1 : 0;
@@ -645,7 +645,8 @@ final class PadControlView extends View {
                 int index = slotFor(pointer);
                 if (index < 0) return;
                 // The whole box answers, a resized one's buttons spread over it as they are drawn.
-                int flags = control.shape == PadLayout.Shape.FACE ? PadInput.face(x, y, getWidth(), getHeight()) :
+                int flags = control.shape == PadLayout.Shape.FACE ?
+                        PadInput.face(x, y, getWidth(), getHeight(), painter.facesSwapped()) :
                         PadInput.dpad(x, y, getWidth(), getHeight());
                 if (flags == pointerFlags[index]) return;
                 int before = state.flags;
