@@ -17,6 +17,7 @@ use butterpollo_core::{
 };
 use butterpollo_windows::{
     encoder::{Encoded, Unit},
+    frame_pool,
     net::{Batch, ReplySocket},
 };
 use std::{cell::Cell, net::SocketAddr, sync::atomic::Ordering, time::Instant};
@@ -176,9 +177,22 @@ pub struct Routed {
 #[derive(Default)]
 pub struct Route {
     mode: Mode,
+    /// The joined frame under way, in a buffer from the frame pool.
     joined: Vec<u8>,
-    /// The last joined frame's length, to reserve the next buffer.
+    /// The last joined frame's length, to size the next buffer from the pool.
     last_joined_len: usize,
+}
+
+/// Append `bytes` to a joined frame, growing through the frame pool as the
+/// encoder's own joined frames grow.
+fn append(joined: &mut Vec<u8>, bytes: &[u8], hint: usize) {
+    let needed = joined.len() + bytes.len();
+    if needed > joined.capacity() {
+        let mut grown = frame_pool::take(needed.max(hint).max(joined.capacity() * 2));
+        grown.extend_from_slice(joined);
+        frame_pool::give(std::mem::replace(joined, grown));
+    }
+    joined.extend_from_slice(bytes);
 }
 
 impl Route {
@@ -189,7 +203,7 @@ impl Route {
             Unit::Whole => {
                 let interrupted = self.mode == Mode::Stream;
                 self.mode = Mode::Idle;
-                self.joined.clear();
+                frame_pool::give(std::mem::take(&mut self.joined));
                 return Routed {
                     frame: Some(frame),
                     interrupted,
@@ -201,14 +215,16 @@ impl Route {
         let mut interrupted = false;
         if index == 0 {
             interrupted = self.mode == Mode::Stream;
-            self.joined.clear();
+            frame_pool::give(std::mem::take(&mut self.joined));
             self.mode = if stream(&frame) {
                 Mode::Stream
             } else {
                 Mode::Join
             };
             if self.mode == Mode::Join {
-                self.joined.reserve(self.last_joined_len);
+                // The joined frame is gathered in a pooled buffer sized
+                // for the last one, as the encoder's own whole frames are.
+                self.joined = frame_pool::take(self.last_joined_len.max(frame.bytes.len()));
             }
         }
         let mode = self.mode;
@@ -220,7 +236,7 @@ impl Route {
             Mode::Idle => None,
             Mode::Stream => Some(frame),
             Mode::Join => {
-                self.joined.extend_from_slice(&frame.bytes);
+                append(&mut self.joined, &frame.bytes, self.last_joined_len);
                 last.then(|| {
                     let bytes = std::mem::take(&mut self.joined);
                     self.last_joined_len = bytes.len();
