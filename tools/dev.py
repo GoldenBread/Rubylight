@@ -304,30 +304,44 @@ def local_packages(root=ROOT):
 
 
 def fingerprint_dirs(target):
-    """Cargo's .fingerprint folders in a target dir: <profile>, <triple>/<profile>, and the
-    same below a nested target (the service's <target>/service)."""
+    """Where Cargo keeps its build records in a target dir, two layouts: the .fingerprint
+    folders (<profile>, <triple>/<profile>, and the same below a nested target such as the
+    service's <target>/service; entries <name>-<16 hex>) and, since Cargo 1.100, the build
+    folders whose entries are <name>/<16 hex>, one folder per build with its fingerprint
+    and outputs inside (the 2026-11-20 CI failure: no .fingerprint exists there)."""
     target = pathlib.Path(target)
     found = []
-    for pattern in ('*/.fingerprint', '*/*/.fingerprint', '*/*/*/.fingerprint'):
+    for pattern in ('*/.fingerprint', '*/*/.fingerprint', '*/*/*/.fingerprint',
+                    '*/build', '*/*/build', '*/*/*/build'):
         found += [p for p in target.glob(pattern) if p.is_dir()]
     return found
 
 
+def stale_entries(directory, names):
+    """The folders in one fingerprint_dirs entry that belong to the named packages."""
+    pattern = re.compile('^(?:%s)-[0-9a-f]{16}$' % '|'.join(re.escape(n) for n in sorted(names)))
+    if directory.name == '.fingerprint':
+        return [e for e in directory.iterdir() if e.is_dir() and pattern.match(e.name)]
+    # build/<name>/<16 hex>; the older layout's build/<name>-<16 hex> script folders match
+    # neither part and stay (Cargo reruns them by their own fingerprints).
+    return [unit for package in directory.iterdir() if package.is_dir() and package.name in names
+            for unit in package.iterdir() if unit.is_dir() and re.fullmatch('[0-9a-f]{16}', unit.name)]
+
+
 def invalidate(target, names):
-    """Remove the fingerprints of the named packages so Cargo rebuilds them; the
-    dependencies' (registry and git crates, keyed by version and source) stay warm."""
+    """Remove the builds of the named packages so Cargo rebuilds them, from either layout of
+    fingerprint_dirs; the dependencies' (registry and git crates, keyed by version and
+    source) stay warm."""
     if not names:
         return 0
-    pattern = re.compile('^(?:%s)-[0-9a-f]{16}$' % '|'.join(re.escape(n) for n in sorted(names)))
     removed, left = 0, []
     for directory in fingerprint_dirs(target):
-        for entry in directory.iterdir():
-            if entry.is_dir() and pattern.match(entry.name):
-                shutil.rmtree(entry, ignore_errors=True)
-                if entry.exists():
-                    left.append(str(entry))
-                else:
-                    removed += 1
+        for entry in stale_entries(directory, names):
+            shutil.rmtree(entry, ignore_errors=True)
+            if entry.exists():
+                left.append(str(entry))
+            else:
+                removed += 1
     if left:
         raise RuntimeError(f'could not reset {len(left)} fingerprints in {target} (is another build using it?): {left[0]}')
     return removed

@@ -182,6 +182,22 @@ class WarmTargets(unittest.TestCase):
                                        'service/debug/.fingerprint/tokio-00112233445566aa'])
         self.assertTrue(dev.same_path((self.target / dev.STAMP).read_text(), ROOT))
 
+    def test_cargo_1_100_build_folders_are_reset_too(self):
+        # Cargo 1.100 keeps <profile>/build/<name>/<16 hex>/{fingerprint,out} and no .fingerprint.
+        target = self.target.parent / 'new-layout'
+        mine = [target / 'debug/build/butterpollo-core/0123456789abcdef/fingerprint',
+                target / 'service/debug/build/rubylight-protocol/fedcba9876543210/out']
+        kept = [target / 'debug/build/tokio/00112233445566aa/out', target / 'debug/build/butterpollo-core/notahash',
+                target / 'debug/build/butterpollo-core-0123456789abcdef']
+        for path in mine + kept:
+            path.mkdir(parents=True)
+        (target / dev.STAMP).write_text(r'C:\src\other-checkout')
+        self.assertEqual(dev.claim_target(target, ROOT), 2)
+        self.assertEqual([p.exists() for p in mine + kept], [False, False, True, True, True])
+        unknown = self.target.parent / 'unknown'
+        (unknown / 'debug/build/butterpollo-core/0123456789abcdef').mkdir(parents=True)
+        self.assertEqual(dev.claim_target(unknown, ROOT), 1)
+
     def test_its_own_last_build_is_kept(self):
         (self.target / dev.STAMP).write_text(str(ROOT).upper() + '\\')
         self.assertEqual(dev.claim_target(self.target, ROOT), 0)
