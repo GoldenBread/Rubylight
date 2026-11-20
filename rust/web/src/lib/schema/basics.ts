@@ -798,6 +798,30 @@ const audio: Setting[] = [
     visibleWhen: streamsAudio,
   },
   {
+    key: 'audio_night_mode',
+    label: 'Night mode',
+    description:
+      'Evens out loud and quiet passages, so explosions stay bearable and voices stay clear at low volume. A device or app can set its own, and the couch menu switches it during a stream.',
+    category: 'audio',
+    group: 'Sound',
+    control: { kind: 'toggle' },
+    default: false,
+    inactiveHint: "Turn on Stream audio to use this setting.",
+    visibleWhen: streamsAudio,
+  },
+  {
+    key: 'audio_headphone_surround',
+    label: 'Headphone surround',
+    description:
+      "For a device that plays stereo, takes the PC's surround channels and renders them for headphones, so sound keeps its direction. Leave it off for speakers. A device or app can set its own, and the couch menu switches it during a stream.",
+    category: 'audio',
+    group: 'Sound',
+    control: { kind: 'toggle' },
+    default: false,
+    inactiveHint: "Turn on Stream audio to use this setting.",
+    visibleWhen: streamsAudio,
+  },
+  {
     key: 'audio_sink',
     label: 'Audio device',
     description:
@@ -909,6 +933,7 @@ const audio: Setting[] = [
 const keyboardOn = (values: Values) => on(values, 'keyboard', true);
 const mouseOn = (values: Values) => on(values, 'mouse', true);
 const controllerOn = (values: Values) => on(values, 'controller', true);
+const couchMenuOn = (values: Values) => on(values, 'couch_menu', true);
 const rumbleOn = (values: Values) => controllerOn(values) && on(values, 'forward_rumble', true);
 const audioHapticsOn = (values: Values) => rumbleOn(values) && on(values, 'audio_haptics', false);
 
@@ -1359,6 +1384,84 @@ const input: Setting[] = [
     default: -1,
     inactiveHint: "Turn on Controllers under Input devices to use this setting. Paired devices also need the Controllers permission.",
     visibleWhen: controllerOn,
+  },
+  {
+    key: 'couch_menu',
+    label: 'Couch menu',
+    description:
+      'A menu the PC draws over the stream, so any device can change sound and other options without leaving the game. It opens on L3 + R3 held on a controller, a corner hold or a keyboard chord, and a game that uses one of those never sees it. Turn it off if a game needs them.',
+    category: 'input',
+    group: 'Couch menu',
+    control: { kind: 'toggle' },
+    default: true,
+  },
+  {
+    key: 'couch_menu_open_with',
+    label: 'Open the couch menu with',
+    description: 'Switch off the ways you do not want, for example the controller chord when a game uses L3 + R3.',
+    category: 'input',
+    group: 'Couch menu',
+    control: {
+      kind: 'flags',
+      options: [
+        { value: 'controller', label: 'Controller chord' },
+        { value: 'keyboard', label: 'Keyboard chord' },
+        { value: 'touch', label: 'Top-left corner hold' },
+      ],
+    },
+    default: 'controller,keyboard,touch',
+    inactiveHint: 'Turn on Couch menu to use this setting.',
+    visibleWhen: couchMenuOn,
+  },
+  {
+    key: 'couch_menu_controller_chord',
+    label: 'Controller chord',
+    description:
+      'The buttons held together on one controller, joined with +: select, l3, r3, l1, r1, guide, x, y, paddle1 to paddle4, touchpad or misc. One button alone works, such as select.',
+    category: 'input',
+    group: 'Couch menu',
+    control: { kind: 'text', placeholder: 'l3+r3', mono: true },
+    default: 'l3+r3',
+    inactiveHint: 'Turn on Couch menu to use this setting.',
+    visibleWhen: couchMenuOn,
+  },
+  {
+    key: 'couch_menu_hold_ms',
+    label: 'Controller chord hold',
+    description: 'How long the chord is held before the menu opens, 300 to 3000 ms.',
+    category: 'input',
+    group: 'Couch menu',
+    control: { kind: 'number', min: 300, max: 3000, step: 100, unit: 'ms' },
+    default: 1000,
+    inactiveHint: 'Turn on Couch menu to use this setting.',
+    visibleWhen: couchMenuOn,
+  },
+  {
+    key: 'couch_menu_corner_hold_ms',
+    label: 'Corner hold',
+    description: 'How long a touch, pen or mouse button holds the top-left corner before the menu opens, 500 to 3000 ms.',
+    category: 'input',
+    group: 'Couch menu',
+    control: { kind: 'number', min: 500, max: 3000, step: 100, unit: 'ms' },
+    default: 1500,
+    inactiveHint: 'Turn on Couch menu to use this setting.',
+    visibleWhen: couchMenuOn,
+  },
+  {
+    key: 'couch_menu_keyboard_chord',
+    label: 'Keyboard chord',
+    description: 'The keys that open the menu from a keyboard.',
+    category: 'input',
+    group: 'Couch menu',
+    control: { kind: 'select', options: [
+      { value: 'ctrl+alt+backspace', label: 'Ctrl + Alt + Backspace' },
+      { value: 'ctrl+alt+home', label: 'Ctrl + Alt + Home' },
+      { value: 'ctrl+alt+end', label: 'Ctrl + Alt + End' },
+      { value: 'ctrl+alt+insert', label: 'Ctrl + Alt + Insert' },
+    ] },
+    default: 'ctrl+alt+backspace',
+    inactiveHint: 'Turn on Couch menu to use this setting.',
+    visibleWhen: couchMenuOn,
   },
   {
     key: 'steam_deck_controller',

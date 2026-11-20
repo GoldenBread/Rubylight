@@ -49,6 +49,8 @@ pub const GLOBAL: &[Setting] = settings! {
         "virtual_sink", "Virtual audio device", Text;
         "stream_audio", "Stream audio", Bool;
         "audio_passthrough", "PCM, Dolby Digital and Dolby Digital Plus audio", Bool;
+        "audio_night_mode", "Night mode (evens out loud and quiet sound)", Bool;
+        "audio_headphone_surround", "Headphone surround (surround sound rendered for headphones on a stereo device)", Bool;
         "audio_sink_capture_only", "Capture selected audio without changing defaults", Bool;
         "auto_capture_sink", "Follow audio device changes", Bool;
         "keep_sink_default", "Keep virtual speakers as the default during streaming", Bool;
@@ -300,7 +302,12 @@ pub const CLIENT: &[Setting] = settings! {
         "do", "Connection commands", Json;
         "undo", "Disconnect commands", Json;
     ]
+    "Sound" => [
+        "audio_night_mode", "Night mode (evens out loud and quiet sound)", Bool;
+        "audio_headphone_surround", "Headphone surround (surround sound rendered for headphones on a stereo device)", Bool;
+    ]
     "Couch menu" => [
+        "couch_menu", "Host menu drawn into the stream", Bool;
         "couch_menu_open_with", "Ways to open it (comma-separated: controller, keyboard, touch; empty turns all off)", Text;
         "couch_menu_controller_chord", "Controller chord (buttons joined with +, default l3+r3)", Text;
         "couch_menu_hold_ms", "Controller chord hold (300–3000 milliseconds; default 1000)", Number;

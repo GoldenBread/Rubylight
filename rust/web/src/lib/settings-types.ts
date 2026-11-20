@@ -60,6 +60,8 @@ export type Control =
   | { kind: 'text'; placeholder?: string; mono?: boolean; browse?: BrowseType; time?: boolean; presets?: Option[] }
   /** A string list, stored as a JSON array of strings. */
   | { kind: 'list'; placeholder?: string }
+  /** A comma-separated text list, shown as one switch per option; with every switch off, the stored value is the host's "every option off" text. */
+  | { kind: 'flags'; options: Option[] }
   /** Any JSON value, edited as text and validated. */
   | { kind: 'json' }
   /** Global preparation or state commands: [{do, undo, elevated}]. */

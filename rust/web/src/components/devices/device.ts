@@ -134,6 +134,10 @@ export interface Draft {
   release_delay: string;
   /** That delay exactly as stored, sent back while the field is untouched. */
   stored_release_delay?: unknown;
+  /** The device's sound overrides (`audio_night_mode`, `audio_headphone_surround`) as the selects show them; empty follows the host. */
+  audio: Record<AudioOverride, '' | 'on' | 'off'>;
+  /** Those overrides exactly as stored, sent back while their choice is untouched. */
+  stored_audio: Partial<Record<AudioOverride, unknown>>;
   /** The device's other config overrides, kept and sent back untouched. */
   other_overrides: Record<string, unknown>;
   /** Lets the device change Radeon settings and close games; off unless granted here. */
@@ -215,6 +219,16 @@ export const DISPLAY_OVERRIDE_OPTIONS = Object.fromEntries(
   }),
 ) as Record<DisplayOverride, { value: string; label: string }[]>;
 
+/** The sound options a device sets for itself, in its config overrides. */
+export const AUDIO_OVERRIDES = ['audio_night_mode', 'audio_headphone_surround'] as const;
+export type AudioOverride = (typeof AUDIO_OVERRIDES)[number];
+
+/** A stored sound override as its select shows it: as the host reads it, a boolean or its word. */
+function shownAudio(value: unknown): '' | 'on' | 'off' {
+  const on = flag(value);
+  return on === null ? '' : on ? 'on' : 'off';
+}
+
 /** A stored display override as its select shows it: a number as written, a choice in lower case. */
 function shownDisplay(value: unknown): string {
   return typeof value === 'number' ? String(value) : text(value).toLowerCase();
@@ -277,6 +291,13 @@ export function toDraft(client: Client): Draft {
       delete other[key];
     }
   }
+  const storedAudio: Partial<Record<AudioOverride, unknown>> = {};
+  for (const key of AUDIO_OVERRIDES) {
+    if (key in other) {
+      storedAudio[key] = other[key];
+      delete other[key];
+    }
+  }
   const storedGamepad = other.gamepad;
   delete other.gamepad;
   // A null is no value: sent back, it would delete the host's own for this device's streams.
@@ -315,6 +336,11 @@ export function toDraft(client: Client): Draft {
     stored_ltr_frames: storedLtrFrames,
     release_delay: shownReleaseDelay(storedReleaseDelay),
     stored_release_delay: storedReleaseDelay,
+    audio: Object.fromEntries(AUDIO_OVERRIDES.map((key) => [key, shownAudio(storedAudio[key])])) as Record<
+      AudioOverride,
+      '' | 'on' | 'off'
+    >,
+    stored_audio: storedAudio,
     other_overrides: other,
     // As the host reads it: only true and "true" are on, so 1 and "yes" stay off.
     host_control: client.host_control === true || client.host_control === 'true',
@@ -379,6 +405,15 @@ function overrides(draft: Draft): Record<string, unknown> | null {
       display[key] = key === 'dd_rotation_option' ? value : Number(value);
     }
   }
+  const audio: Record<string, unknown> = {};
+  for (const key of AUDIO_OVERRIDES) {
+    const value = draft.audio[key];
+    if (key in draft.stored_audio && shownAudio(draft.stored_audio[key]) === value) {
+      audio[key] = draft.stored_audio[key];
+    } else if (value !== '') {
+      audio[key] = value === 'on';
+    }
+  }
   const gamepadUntouched = draft.stored_gamepad !== undefined && shownGamepad(draft.stored_gamepad) === draft.gamepad;
   const gamepad = gamepadUntouched ? { gamepad: draft.stored_gamepad } : draft.gamepad ? { gamepad: draft.gamepad } : {};
   const ltrUntouched = draft.stored_ltr_frames !== undefined && shownLtrFrames(draft.stored_ltr_frames) === draft.ltr_frames;
@@ -391,6 +426,7 @@ function overrides(draft: Draft): Record<string, unknown> | null {
       ? { absolute_left_release_delay: Number(draft.release_delay) }
       : {};
   const next = { ...draft.other_overrides, ...display, ...gamepad, ...ltr, ...delay, ...preset };
+  const next = { ...draft.other_overrides, ...display, ...audio, ...gamepad, ...ltr, ...preset };
   return Object.keys(next).length > 0 ? next : null;
 }
 

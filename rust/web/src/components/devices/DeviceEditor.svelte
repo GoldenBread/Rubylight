@@ -206,6 +206,7 @@
   let presetOpen = $state(untrack(() => presetUnknown));
   const gamepadUnknown = $derived(draft.gamepad !== '' && !GAMEPAD_OPTIONS.some((option) => option.value === draft.gamepad));
   let controllerOpen = $state(untrack(() => gamepadUnknown));
+  let soundOpen = $state(untrack(() => Object.values(draft.audio).some((value) => value !== '')));
   const ltrUnknown = $derived(draft.ltr_frames !== '' && !LTR_FRAME_OPTIONS.some((option) => option.value === draft.ltr_frames));
   let encoderOpen = $state(untrack(() => ltrUnknown));
   const delayInvalid = $derived(!validReleaseDelay(draft.release_delay));
@@ -504,6 +505,35 @@
       hint={`When you change the resolution or the scale of this device's own virtual display in Windows during a stream, such as 1440p at 200% under a 4K stream, the next streams start at them. The stream keeps the resolution the device asks for, and the refresh rate and VRR follow the stream as usual. A display mode above comes first, and a Virtual display scale set in the host settings comes before the kept scale.${draft.remember_display_mode && draft.remembered_resolution ? ` Kept now: ${draft.remembered_resolution}${draft.remembered_scale ? ` at ${draft.remembered_scale}%` : ''}.` : draft.remember_display_mode && draft.remembered_scale ? ` Kept now: ${draft.remembered_scale}% scale.` : ''}`}
       bind:checked={draft.remember_display_mode}
     />
+  </section>
+  </details>
+
+  <details class="override" bind:open={soundOpen}><summary>Sound</summary>
+  <section>
+    <div class="form-grid">
+      <Field
+        label="Night mode"
+        id="{uid}-night"
+        hint="Evens out loud and quiet passages for this device, in place of Night mode in Settings. Leave it on Use the host setting unless this device needs its own."
+      >
+        <select id="{uid}-night" class="select" bind:value={draft.audio.audio_night_mode}>
+          <option value="">Use the host setting</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </Field>
+      <Field
+        label="Headphone surround"
+        id="{uid}-surround"
+        hint="For a device that plays stereo, renders the PC's surround channels for headphones so sound keeps its direction, in place of Headphone surround in Settings. Leave it off for speakers."
+      >
+        <select id="{uid}-surround" class="select" bind:value={draft.audio.audio_headphone_surround}>
+          <option value="">Use the host setting</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </Field>
+    </div>
   </section>
   </details>
 

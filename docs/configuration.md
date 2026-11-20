@@ -55,12 +55,10 @@ The format is `key = value`, one setting per line. Stop the host before editing 
 
 ### Settings outside the console
 
-These keys are read from the configuration file (`sunshine.conf` in the profile folder) but have no field in the console. The audio, couch menu and `absolute_left_release_delay` keys can also be set in device and app overrides:
+These keys are read from the configuration file (`sunshine.conf` in the profile folder) but have no field in the console. The `absolute_left_release_delay` key can also be set in device and app overrides:
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `audio_night_mode`, `audio_headphone_surround` | `false` | See [Surround, night mode and headphone surround](#surround-night-mode-and-headphone-surround). |
-| `couch_menu` and the `couch_menu_*` keys | `true`, and the values under [Couch menu](#couch-menu) | How the couch menu opens. |
 | `video_slice_delivery` | `auto` | Sends H.264 and HEVC P-frames in 2 or 4 FEC blocks as their slices leave the encoder; `auto` uses 4 for pictures of 4K size. See [Capture and video](#capture-and-video). |
 | `webrtc_pacing`, `webrtc_rtx` | `true` | Send pacing and retransmission for the WebRTC server. |
 | `webrtc_loss_permille` | `0` | Drops WebRTC video packets on purpose, in thousandths, for tests. Leave it at 0. |
@@ -503,7 +501,7 @@ Two sound options work on the host's audio before it is encoded, and change noth
 | `audio_night_mode` | `false` | Evens out loud and quiet passages, so explosions stay bearable and voices stay clear at low volume. |
 | `audio_headphone_surround` | `false` | For a stereo device, captures the PC's surround channels and renders them for headphones, so sound keeps its direction. |
 
-Both can be set per device or app in their overrides, and switched during a stream from the couch menu or a native client. They are not in the console's settings.
+Both are under Sound & controls › Sound in the console. They can be set per device or app in their overrides, and switched during a stream from the couch menu or a native client.
 
 ## Keyboard, touch, pen and cursor
 
@@ -599,7 +597,7 @@ If controls do nothing, check the paired device's **Controllers** permission und
 
 ## Couch menu
 
-The couch menu is a host menu drawn into the stream, so any Moonlight client can reach it ([design](couch-menu-design.md)). It opens by holding L3+R3 on a controller, pressing Ctrl+Alt+Backspace, or holding the top-left corner. These settings, set in the configuration file or a device's or app's overrides, choose how it opens:
+The couch menu is a host menu drawn into the stream, so any Moonlight client can reach it ([design](couch-menu-design.md)). It opens by holding L3+R3 on a controller, pressing Ctrl+Alt+Backspace, or holding the top-left corner. These settings, in the console under Sound & controls › Couch menu, in the configuration file or in a device's or app's overrides, choose how it opens:
 
 | Setting | Default | Values |
 | --- | --- | --- |

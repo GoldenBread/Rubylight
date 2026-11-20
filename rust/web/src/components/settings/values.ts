@@ -230,6 +230,8 @@ export function normalise(setting: Setting, value: ConfigValue | undefined): Con
       return toNumber(value);
     case 'list':
       return toList(value);
+    case 'flags':
+      return toList(value);
     case 'commands':
       return toCommands(value);
     case 'server-commands':
@@ -353,6 +355,11 @@ export function describeDefault(setting: Setting): DefaultText {
       return literal(toText(value), 'System default');
     case 'list':
       return literal(toList(value).join(', '), setting.key === 'hardware_metrics_selection' ? 'All supported readings' : 'None');
+    case 'flags': {
+      const on = toList(value);
+      const names = control.options.filter((option) => on.includes(option.value)).map((option) => option.label);
+      return literal(names.join(', '), 'None');
+    }
     case 'commands':
       return word(count(toCommands(value).length));
     case 'server-commands':
@@ -406,6 +413,16 @@ export function patchValue(setting: Setting | undefined, value: ConfigValue | un
           .filter((item) => item !== ''),
         setting.default,
       );
+    case 'flags': {
+      const items = toList(value)
+        .map((item) => item.trim())
+        .filter((item) => item !== '');
+      // An empty list must stay an empty list: the PATCH and the configuration
+      // file both drop an empty value, which would fall back to the default.
+      // The host reads a lone comma as "every option off" (config's
+      // couch_menu_open_with), so that is what all switches off stores.
+      return items.length ? items.join(',') : ',';
+    }
     case 'commands':
       return listValue(
         toCommands(value)

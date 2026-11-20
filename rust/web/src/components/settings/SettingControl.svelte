@@ -641,6 +641,28 @@
       </Button>
     </div>
   </div>
+{:else if control.kind === 'flags'}
+  <div class="rows" {id} role="group" aria-label={label}>
+    {#each control.options as option (option.value)}
+      {@const on = toList(value).includes(option.value)}
+      <div class="item">
+        <span>{option.label}</span>
+        <Switch
+          id="{id}-{option.value}"
+          {describedby}
+          checked={on}
+          onchange={(checked) => {
+            const rest = toList(value).filter((item) => item !== option.value);
+            onchange(
+              (control.kind === 'flags' ? control.options : [])
+                .map((candidate) => candidate.value)
+                .filter((name) => (name === option.value ? checked : rest.includes(name))),
+            );
+          }}
+        />
+      </div>
+    {/each}
+  </div>
 {:else if control.kind === 'folders'}
   <div class="rows" {id} bind:this={rowsElement}>
     {#if folderList.problem}
