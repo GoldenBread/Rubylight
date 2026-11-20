@@ -130,6 +130,10 @@ impl OutputThread {
             thread.thread().unpark();
         }
     }
+    #[cfg(test)]
+    pub(super) fn wanted(&self) -> bool {
+        self.shared.wanted.load(Ordering::Acquire)
+    }
     /// The oldest result the thread queued: its code and buffer (null for a
     /// failure), or `None` while there is none.
     pub(super) fn take(&self) -> Option<(AMF_RESULT, *mut AMFData)> {
@@ -253,6 +257,33 @@ mod tests {
             thread.take(),
             Some((AMF_RESULT_AMF_OK, FRAME as *mut AMFData))
         );
+        // No longer wanted, it stops querying within one query; wanted
+        // again, it resumes.
+        thread.want(false);
+        let mut stopped = queried.load(Ordering::SeqCst);
+        for _ in 0..400 {
+            std::thread::sleep(Duration::from_millis(5));
+            let now = queried.load(Ordering::SeqCst);
+            if now == stopped {
+                break;
+            }
+            stopped = now;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            queried.load(Ordering::SeqCst),
+            stopped,
+            "idle once unwanted"
+        );
+        thread.want(true);
+        let resumed = Instant::now();
+        while queried.load(Ordering::SeqCst) == stopped {
+            assert!(
+                resumed.elapsed() < Duration::from_secs(2),
+                "queries again once wanted"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         // An empty queue resets the event: a wait now runs to its timeout.
         let started = Instant::now();
         thread.wait(Duration::from_millis(5));

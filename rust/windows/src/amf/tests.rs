@@ -211,6 +211,10 @@ fn native_output_survives_a_late_poll_without_losing_submission_metadata() -> Re
         _converted: Some(converted),
         _converted12: None,
     });
+    // As a submission does: the output thread queries while frames are in flight.
+    if let Some(thread) = &encoder.output_thread {
+        thread.want(true);
+    }
     encoder.backlog.submitted();
     encoder.references.accepted(encoder.index as u64 + 1, &plan);
     encoder.index += 1;
@@ -230,6 +234,15 @@ fn native_output_survives_a_late_poll_without_losing_submission_metadata() -> Re
         "late polling must still query native output"
     );
     assert!(!encoder.pending());
+    // The poll that took the last frame parks the output thread: it would
+    // otherwise query until the next submission.
+    assert!(
+        encoder
+            .output_thread
+            .as_ref()
+            .is_none_or(|thread| !thread.wanted()),
+        "the output thread stops once nothing is in flight"
+    );
     assert!(!output[0].bytes.is_empty());
     assert!(output[0].idr);
     assert_eq!(output[0].presentation, Some(presented));

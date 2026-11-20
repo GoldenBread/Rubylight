@@ -112,6 +112,14 @@ impl Encoder {
             self.unit_held = false;
             let output = self.poll_once()?;
             if !(self.unit_held && output.is_empty()) {
+                // The stream thread polls only while frames are in flight, so
+                // the poll that took the last one stops the output thread too;
+                // it would otherwise query until the next submission.
+                if self.in_flight.is_empty()
+                    && let Some(thread) = &self.output_thread
+                {
+                    thread.want(false);
+                }
                 return Ok(output);
             }
         }
