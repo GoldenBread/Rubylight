@@ -491,7 +491,11 @@ final class GameConnection {
                 (secondScreen ? " (second screen)" : ""));
         if (!secondScreen && ControllersChoice.leavesConnectedHere(game.prefConfig.sendControllers, connectedControllers)) {
             // Controllers connected while Controllers is Off: said, so the PC is not blamed for losing them.
-            game.messages.alert(R.string.stream_controllers_off, Toast.LENGTH_LONG);
+            // On the status line, and as a message only while nothing else shows, as the start's other
+            // facts: someone who keeps Controllers Off on purpose is not interrupted at every start.
+            String controllersOff = game.getString(R.string.stream_controllers_off);
+            if (game.prefConfig.disableWarnings) game.messages.note(controllersOff);
+            else game.messages.countedNotice(controllersOff);
         }
 
         // Set to the optimal mode for streaming
