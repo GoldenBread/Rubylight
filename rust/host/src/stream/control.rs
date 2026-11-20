@@ -1262,17 +1262,25 @@ impl Media {
                     // next pass re-reads.
                     let revision = s.hdr_revision.load(Ordering::Acquire);
                     if revision != p.hdr_seen {
-                        p.hdr_seen = revision;
                         let metadata = s.hdr_metadata.read().unwrap().map(|m| m.wire(s.config.hdr));
-                        if let Some(metadata) = metadata
-                            && p.hdr_metadata != Some(metadata)
-                            && let Ok(message) = p.encrypt(&s, 0x010e, &metadata)
-                            && host
-                                .peer_mut(*peer_id)
-                                .send(0, &Packet::new(message, PacketKind::Reliable))
-                                .is_ok()
-                        {
-                            p.hdr_metadata = Some(metadata);
+                        match metadata {
+                            // Nothing to send, or the client has it: this revision is done.
+                            None => p.hdr_seen = revision,
+                            Some(metadata) if p.hdr_metadata == Some(metadata) => {
+                                p.hdr_seen = revision;
+                            }
+                            // Seen only once it was sent: a failed one is retried next pass.
+                            Some(metadata) => {
+                                if let Ok(message) = p.encrypt(&s, 0x010e, &metadata)
+                                    && host
+                                        .peer_mut(*peer_id)
+                                        .send(0, &Packet::new(message, PacketKind::Reliable))
+                                        .is_ok()
+                                {
+                                    p.hdr_metadata = Some(metadata);
+                                    p.hdr_seen = revision;
+                                }
+                            }
                         }
                     }
                     // Present-to-sent reports for a client that asked (0x5536).
