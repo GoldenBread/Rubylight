@@ -499,3 +499,139 @@ fn jumbo_packets_scale_the_frame_budget() {
     let allowance = 3_000_000 * 125 / 60;
     assert!(image_bytes(allowance, max, 20) > image_bytes(allowance, 1392, 20));
 }
+
+/// The plan a frame gets is the one its shards, percentages and wire room
+/// always decided: the parity results the plan now computes once, and the
+/// capacities it no longer rescans per shard, change no decision. The
+/// reference is the plan as it read before, parity call for parity call.
+#[test]
+fn a_plan_reusing_parity_results_is_the_plan_the_parities_decide() {
+    fn reference(
+        total: usize,
+        critical: usize,
+        rate: usize,
+        minimum: usize,
+        detail: usize,
+        extra: usize,
+    ) -> Result<Vec<FecBlock>> {
+        if total == 0 || total > 4000 || rate > 255 || minimum > 255 {
+            bail!("invalid PyroWave FEC plan");
+        }
+        let critical = critical.min(total);
+        let mut out = vec![];
+        if critical == 0 || rate == 0 || critical + parity(critical, rate, minimum) > 255 {
+            split(&mut out, total, 4);
+        } else {
+            out.push(FecBlock {
+                data: critical,
+                percentage: rate,
+            });
+            let fine = total - critical;
+            let detail = detail.min(50);
+            let mut extra = extra.min(parity(fine, detail, 0));
+            let capacity = |rate| {
+                (1..=255)
+                    .rev()
+                    .find(|&data| data + parity(data, rate, minimum) <= 255)
+                    .unwrap_or(0)
+            };
+            for percentage in (1..=detail).rev() {
+                let cap = capacity(percentage);
+                if cap == 0 || fine == 0 {
+                    continue;
+                }
+                let count = fine.div_ceil(cap);
+                if count > 3 {
+                    continue;
+                }
+                let candidate: Vec<_> = (0..count)
+                    .map(|i| FecBlock {
+                        data: fine / count + usize::from(i < fine % count),
+                        percentage,
+                    })
+                    .collect();
+                if candidate
+                    .iter()
+                    .all(|b| b.data + parity(b.data, b.percentage, minimum) <= 255)
+                    && candidate
+                        .iter()
+                        .map(|b| parity(b.data, b.percentage, minimum))
+                        .sum::<usize>()
+                        <= extra
+                {
+                    out.extend(candidate);
+                    return Ok(out);
+                }
+            }
+            let base = parity(critical, rate, minimum);
+            if detail > 0 && extra > 0 {
+                let mut leading = critical;
+                while leading < total.min(capacity(rate))
+                    && leading + 1 + parity(leading + 1, rate, minimum) <= 255
+                    && parity(leading + 1, rate, minimum).saturating_sub(base) <= extra
+                {
+                    leading += 1;
+                }
+                out[0].data = leading;
+                extra -= parity(leading, rate, minimum).saturating_sub(base);
+                let mut remaining = total - leading;
+                while remaining > 0 && out.len() < 4 {
+                    let mut data = remaining.min(capacity(detail));
+                    while data > 0
+                        && (parity(data, detail, minimum) > extra
+                            || data + parity(data, detail, minimum) > 255)
+                    {
+                        data -= 1;
+                    }
+                    if data == 0 || remaining - data > (3 - out.len()) * 1023 {
+                        break;
+                    }
+                    out.push(FecBlock {
+                        data,
+                        percentage: detail,
+                    });
+                    extra -= parity(data, detail, minimum);
+                    remaining -= data;
+                }
+                if remaining > 0 {
+                    let slots = 4 - out.len();
+                    split(&mut out, remaining, slots);
+                }
+            } else {
+                split(&mut out, fine, 3);
+            }
+        }
+        if out.len() > 4
+            || out.iter().any(|b| {
+                b.data > 1023
+                    || (b.percentage > 0 && b.data + parity(b.data, b.percentage, minimum) > 255)
+            })
+        {
+            bail!("PyroWave frame exceeds FEC capacity");
+        }
+        Ok(out)
+    }
+    for total in [1usize, 63, 255, 256, 1023, 1024, 4000] {
+        for critical in [0usize, 1, 12, 255, 300, total] {
+            for rate in [0usize, 1, 20, 100, 255] {
+                for minimum in [0usize, 2, 3, 255] {
+                    for detail in [0usize, 1, 20, 50, 255] {
+                        for extra in [0usize, 2, 100, 100_000] {
+                            let case = format!(
+                                "total {total} critical {critical} rate {rate} \
+                                 minimum {minimum} detail {detail} extra {extra}"
+                            );
+                            assert_eq!(
+                                plan(total, critical, rate, minimum, detail, extra)
+                                    .map_err(|error| error.to_string()),
+                                reference(total, critical, rate, minimum, detail, extra)
+                                    .map_err(|error| error.to_string()),
+                                "{case}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

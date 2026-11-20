@@ -829,14 +829,17 @@ pub fn plan(
                     percentage,
                 })
                 .collect();
+            // Each candidate block's parity is computed once, for both its fit
+            // and its sum.
+            let mut parities = [0usize; 3];
+            for (slot, block) in parities.iter_mut().zip(&candidate) {
+                *slot = parity(block.data, block.percentage, minimum);
+            }
             if candidate
                 .iter()
-                .all(|b| b.data + parity(b.data, b.percentage, minimum) <= 255)
-                && candidate
-                    .iter()
-                    .map(|b| parity(b.data, b.percentage, minimum))
-                    .sum::<usize>()
-                    <= extra
+                .zip(parities)
+                .all(|(block, parity)| block.data + parity <= 255)
+                && parities[..count].iter().sum::<usize>() <= extra
             {
                 out.extend(candidate);
                 return Ok(out);
@@ -844,23 +847,40 @@ pub fn plan(
         }
         let base = parity(critical, rate, minimum);
         if detail > 0 && extra > 0 {
+            // The critical block grows into the wire room `extra` leaves, one
+            // shard at a time: each candidate shard's parity is computed once,
+            // for both conditions and the room it takes.
+            let limit = total.min(capacity(rate));
             let mut leading = critical;
-            while leading < total.min(capacity(rate))
-                && leading + 1 + parity(leading + 1, rate, minimum) <= 255
-                && parity(leading + 1, rate, minimum).saturating_sub(base) <= extra
+            let mut at_leading = base;
+            let mut next = parity(critical + 1, rate, minimum);
+            while leading < limit && leading + 1 + next <= 255 && next.saturating_sub(base) <= extra
             {
                 leading += 1;
+                at_leading = next;
+                next = parity(leading + 1, rate, minimum);
             }
             out[0].data = leading;
-            extra -= parity(leading, rate, minimum).saturating_sub(base);
+            extra -= at_leading.saturating_sub(base);
+            let cap = capacity(detail);
             let mut remaining = total - leading;
             while remaining > 0 && out.len() < 4 {
-                let mut data = remaining.min(capacity(detail));
-                while data > 0
-                    && (parity(data, detail, minimum) > extra
-                        || data + parity(data, detail, minimum) > 255)
-                {
+                // The first block that fits the room its parity leaves closes
+                // the block; its parity is computed once for the walk, the
+                // limit and the room it takes.
+                let mut data = remaining.min(cap);
+                let mut at_data = if data > 0 {
+                    parity(data, detail, minimum)
+                } else {
+                    0
+                };
+                while data > 0 && (at_data > extra || data + at_data > 255) {
                     data -= 1;
+                    at_data = if data > 0 {
+                        parity(data, detail, minimum)
+                    } else {
+                        0
+                    };
                 }
                 if data == 0 || remaining - data > (3 - out.len()) * 1023 {
                     break;
@@ -869,7 +889,7 @@ pub fn plan(
                     data,
                     percentage: detail,
                 });
-                extra -= parity(data, detail, minimum);
+                extra -= at_data;
                 remaining -= data;
             }
             if remaining > 0 {
