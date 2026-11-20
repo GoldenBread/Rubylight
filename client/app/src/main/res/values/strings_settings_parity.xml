@@ -35,7 +35,7 @@
     <string name="sharp_color_hdr_dropped">This stream is in SDR: HDR isn’t available with sharper colored text on this PC.</string>
     <string name="hint_show_onscreen_controls">A touch gamepad drawn over the stream, for playing without a physical controller. It covers part of the picture; lower Opacity to see more of the game.</string>
     <string name="hint_mouse_speed">How fast a physical mouse moves the PC’s pointer. The touch modes have their own speed settings.</string>
-    <string name="hint_trackpad_speed">Pointer speed in the Trackpad touch mode.</string>
+    <string name="hint_trackpad_speed">How far a swipe moves the pointer in the Trackpad touch modes and on the on-screen touchpad, and how far it turns the camera in that touchpad’s Camera mode. Higher is faster but aims less finely; change it when the pointer or the camera feels too slow or too fast.</string>
     <string name="hint_local_cursor_speed">Pointer speed in the Local cursor touch mode. At the default the pointer moves as far as your finger.</string>
     <string name="hint_trackpad_acceleration_curve">How much farther fast swipes go.</string>
     <string name="hint_trackpad_momentum_glide">How far the pointer glides.</string>

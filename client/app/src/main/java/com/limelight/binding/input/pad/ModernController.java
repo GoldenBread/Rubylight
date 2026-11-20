@@ -188,6 +188,8 @@ public final class ModernController {
         removeElements();
         load();
         painter.setGlyph(layout.glyph());
+        // The acceleration curve and the Trackpad speed reach the pointer touchpad's motion model, here and in
+        // applyAppearance; the speed sets how far Camera mode turns, PointerMove applies it to the pointer.
         String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.LINEAR;
         for (PadLayout.Control control : PadLayout.Control.values()) {
             if (forcedHidden(control)) continue;
@@ -197,7 +199,7 @@ public final class ModernController {
             view.setTouchSink(this::touch);
             view.setPointerSink(pointerSink);
             if (control == PadLayout.Control.POINTER_PAD) {
-                view.configurePointer(layout.pointerMode() == PadLayout.PointerMode.CAMERA, curve);
+                view.configurePointer(layout.pointerMode() == PadLayout.PointerMode.CAMERA, curve, prefs.trackpadSpeed);
             }
             views.put(control, view);
             frame.addView(view, new FrameLayout.LayoutParams(0, 0, Gravity.TOP | Gravity.START));
@@ -286,7 +288,7 @@ public final class ModernController {
         for (Map.Entry<PadLayout.Control, PadControlView> entry : views.entrySet()) {
             PadControlView view = entry.getValue();
             if (entry.getKey() == PadLayout.Control.POINTER_PAD) {
-                view.configurePointer(layout.pointerMode() == PadLayout.PointerMode.CAMERA, curve);
+                view.configurePointer(layout.pointerMode() == PadLayout.PointerMode.CAMERA, curve, prefs.trackpadSpeed);
             }
             view.invalidate();
         }

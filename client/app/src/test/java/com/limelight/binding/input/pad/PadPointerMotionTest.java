@@ -108,6 +108,35 @@ public class PadPointerMotionTest {
         assertTrue("a finger moving down looks down", tracker.cameraY() < -.9f);
     }
 
+    /** Trackpad speed sets how far a swipe turns the camera: 200 % turns further, and 100 % keeps today's mapping. */
+    @Test public void trackpadSpeedSetsHowFarASwipeTurnsTheCamera() {
+        PointerAcceleration linear = PointerAcceleration.forCurve(PointerAcceleration.LINEAR);
+        PadPointerMotion before = new PadPointerMotion(linear);
+        PadPointerMotion normal = new PadPointerMotion(PointerAcceleration.forCurve(PointerAcceleration.LINEAR), 100);
+        PadPointerMotion fast = new PadPointerMotion(PointerAcceleration.forCurve(PointerAcceleration.LINEAR), 200);
+        int[] out = new int[2];
+        // 4 px every 10 ms at density 2: 200 dp/s.
+        for (int i = 0; i < 3; i++) {
+            before.move(4, 0, i * 10_000_000L, DENSITY, out);
+            normal.move(4, 0, i * 10_000_000L, DENSITY, out);
+            fast.move(4, 0, i * 10_000_000L, DENSITY, out);
+        }
+        assertEquals(1 - (float) Math.exp(-200 / 300f), before.cameraX(), 1e-5f);
+        assertEquals("100 % is the mapping the camera always had", before.cameraX(), normal.cameraX(), 0);
+        assertEquals("200 % turns as far as a swipe twice as fast", 1 - (float) Math.exp(-200 / 150f), fast.cameraX(), 1e-5f);
+        assertTrue(fast.cameraX() > normal.cameraX());
+
+        // Outside the setting's range, the range's ends.
+        PadPointerMotion tooFast = new PadPointerMotion(PointerAcceleration.forCurve(PointerAcceleration.LINEAR), 1000);
+        PadPointerMotion tooSlow = new PadPointerMotion(PointerAcceleration.forCurve(PointerAcceleration.LINEAR), 0);
+        for (int i = 0; i < 3; i++) {
+            tooFast.move(4, 0, i * 10_000_000L, DENSITY, out);
+            tooSlow.move(4, 0, i * 10_000_000L, DENSITY, out);
+        }
+        assertEquals(1 - (float) Math.exp(-200 / 75f), tooFast.cameraX(), 1e-5f);
+        assertEquals(1 - (float) Math.exp(-200 / 1200f), tooSlow.cameraX(), 1e-5f);
+    }
+
     @Test public void theCameraReturnsToTheCenterWithinFiftyMilliseconds() {
         PadPointerMotion tracker = new PadPointerMotion();
         int[] out = new int[2];

@@ -9,13 +9,16 @@ import com.limelight.binding.input.touch.PointerAcceleration;
  * times, so one jittery report neither spikes nor stalls the pointer; slow movements stay precise and a fast
  * flick crosses more of the screen, and a gesture starts at the slow end. Mouse movement keeps the leftover
  * fraction of a pixel for the next report ({@link MouseDeltaAccumulator}), and the camera's deflection is
- * deadzone-free and returns to the center within about 50 ms after the finger stops.
+ * deadzone-free and returns to the center within about 50 ms after the finger stops. The Trackpad speed setting sets
+ * how far a swipe turns the camera, as it sets how far it moves the pointer.
  *
  * <p>Plain Java, no Android types, so the mapping is tested without a device.
  */
 public final class PadPointerMotion {
-    /** The finger speed, in dp per second, that fully deflects the camera stick. */
+    /** The finger speed, in dp per second, that fully deflects the camera stick at a Trackpad speed of 100 %. */
     static final float CAMERA_FULL_SPEED = 300f;
+    /** The Trackpad speed setting's range in percent ({@code seekbar_trackpad_speed}); 100 % is the default. */
+    static final int MIN_SPEED_PERCENT = 25, MAX_SPEED_PERCENT = 400, DEFAULT_SPEED_PERCENT = 100;
     /** The camera's deflection falls by e every this many milliseconds without movement. */
     static final float CAMERA_DECAY_TAU_MS = 15f;
     /** Below this share of full deflection the camera is centered and the decay stops. */
@@ -24,6 +27,8 @@ public final class PadPointerMotion {
     // A fresh pair starts each touch, so no fraction of the last gesture's pixel is carried into the next.
     private MouseDeltaAccumulator deltaX = new MouseDeltaAccumulator(), deltaY = new MouseDeltaAccumulator();
     private final PointerAcceleration acceleration;
+    /** The finger speed that fully deflects the camera stick: {@link #CAMERA_FULL_SPEED} at the Trackpad speed. */
+    private final float cameraFullSpeed;
     private float directionX, directionY;
     private float cameraX, cameraY;
 
@@ -32,7 +37,18 @@ public final class PadPointerMotion {
     }
 
     public PadPointerMotion(PointerAcceleration acceleration) {
+        this(acceleration, DEFAULT_SPEED_PERCENT);
+    }
+
+    /**
+     * @param speedPercent the Trackpad speed setting, clamped to its range: at 200 % a swipe turns the camera as far
+     *                     as one twice as fast does at 100 %. The pointer's own speed is applied where its movement
+     *                     is sent ({@link PointerMove}), so it changes only the camera here.
+     */
+    public PadPointerMotion(PointerAcceleration acceleration, int speedPercent) {
         this.acceleration = acceleration;
+        int percent = Math.max(MIN_SPEED_PERCENT, Math.min(MAX_SPEED_PERCENT, speedPercent));
+        cameraFullSpeed = CAMERA_FULL_SPEED * DEFAULT_SPEED_PERCENT / percent;
     }
 
     /**
@@ -116,7 +132,7 @@ public final class PadPointerMotion {
     private void updateCamera() {
         // No deadzone: any movement at all deflects the camera, and a faster one approaches full deflection.
         float speed = speed();
-        float magnitude = speed > 0 ? 1 - (float) Math.exp(-speed / CAMERA_FULL_SPEED) : 0;
+        float magnitude = speed > 0 ? 1 - (float) Math.exp(-speed / cameraFullSpeed) : 0;
         cameraX = directionX * magnitude;
         // Screen down is a negative stick y, so a finger moving down looks down.
         cameraY = -directionY * magnitude;

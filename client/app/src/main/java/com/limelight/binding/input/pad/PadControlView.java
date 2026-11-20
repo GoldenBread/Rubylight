@@ -159,10 +159,13 @@ final class PadControlView extends View {
         this.touchSink = touchSink;
     }
 
-    /** Builds the pointer touchpad's motion model: the camera's mapping, or the pointer's with the user's curve. */
-    void configurePointer(boolean camera, String curve) {
+    /**
+     * Builds the pointer touchpad's motion model: the camera's mapping, or the pointer's with the user's curve.
+     * {@code speedPercent} is the Trackpad speed setting, which sets how far a swipe turns the camera.
+     */
+    void configurePointer(boolean camera, String curve, int speedPercent) {
         pointerCamera = camera;
-        pointerMotion = new PadPointerMotion(PointerAcceleration.forCurve(curve));
+        pointerMotion = new PadPointerMotion(PointerAcceleration.forCurve(curve), speedPercent);
         // The pad itself says which it does, so a glance tells the Camera mode from the Mouse one.
         state.label = control == PadLayout.Control.POINTER_PAD ? (camera ? "CAM" : "MOUSE") : "";
         redraw();

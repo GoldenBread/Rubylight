@@ -68,7 +68,7 @@ ADVICE = {
     "analog_scrolling": "Choose which stick scrolls in controller mouse mode. The other moves the pointer; with None, both move it.",
     "checkbox_mouse_emulation_fixed_step": "Enable for precise pointing in controller mouse mode: hold X while moving the stick to move a fixed step; Y doubles the step from 1 to 128 pixels, then wraps to 1.",
     "touch_mode": "Use Trackpad for relative cursor movement, Trackpad (touchpad gestures) for the same with a physical touchpad’s gestures (tap-and-a-half drag, flick momentum), Direct mouse to point at a screen location, Multi-touch for host touch input, Local cursor for a pointer drawn on this device with no round trip, or Touch off to ignore fingers while playing with a controller (Back still opens the stream menu). Unsupported native touch falls back to Direct mouse. The picker's Help explains each mode. See [touch modes](controls.md#touch-modes).",
-    "seekbar_trackpad_speed": "Adjust Trackpad movement; 100% is normal speed.",
+    "seekbar_trackpad_speed": "Adjust how far a swipe moves the pointer in the Trackpad touch modes and on the on-screen touchpad, and how far it turns the camera in that touchpad’s Camera mode; 100% is normal speed.",
     "seekbar_local_cursor_speed": "Adjust Local cursor movement; with Trackpad acceleration off, 100% moves the drawn pointer as far as your finger.",
     "checkbox_trackpad_acceleration_v2": "Slow finger movement aims precisely and fast swipes cover more distance. Leave it on unless you prefer the pointer to follow your finger one to one; Trackpad and Local cursor apply it from the next stream.",
     "list_trackpad_acceleration_curve": "Choose how strongly fast swipes are sped up.",

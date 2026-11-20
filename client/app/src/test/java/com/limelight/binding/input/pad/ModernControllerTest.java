@@ -798,6 +798,26 @@ public class ModernControllerTest {
         assertEquals("Letting go centers the camera", 0, last()[3] | last()[4]);
     }
 
+    /** Trackpad speed reaches the touchpad's Camera mode: the same drag turns further at 200 % than at 100 %. */
+    @Test public void thePointerTouchpadAsACameraFollowsTrackpadSpeed() {
+        int[] turned = new int[2];
+        int[] speeds = {100, 200};
+        for (int i = 0; i < speeds.length; i++) {
+            prefs.trackpadSpeed = speeds[i];
+            ModernController controller = pointerController(true);
+            PadControlView pad = controller.view(PadLayout.Control.POINTER_PAD);
+            float x = pad.getWidth() / 2f, y = pad.getHeight() / 2f;
+            pad.down(0, x, y, 1000);
+            pad.move(0, x + 4, y, 1_010_000_000L);
+            pad.move(0, x + 8, y, 1_020_000_000L);
+            turned[i] = last()[3];
+            pad.release();
+            controller.destroy();
+        }
+        assertTrue("A drag turns the camera", turned[0] > 0);
+        assertTrue("and turns it further at 200 %: " + turned[0] + " vs " + turned[1], turned[1] > turned[0]);
+    }
+
     /**
      * Opacity 0 is a player's choice of controls nobody sees: a press still plays but shows nothing, neither the
      * control, a stick's knob, the touchpad's finger nor the pressed amber. Above 0 a faint control still answers.
