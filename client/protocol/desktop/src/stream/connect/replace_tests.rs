@@ -528,3 +528,12 @@ fn three_encrypted_reconnects_keep_the_requested_packet_size() {
         }
     }
 }
+
+#[test]
+fn the_pyrowave_start_line_names_a_link_only_when_there_is_one() {
+    assert_eq!(pyrowave_start_line(796_000, 1920, 1080, 120, 2500),
+        "PyroWave: starting at 796000 kbps, its default for 1920x1080 at 120 fps and a 2500 Mbps link");
+    // Issue 77: on Wi-Fi the line said "a 0 Mbps link".
+    assert_eq!(pyrowave_start_line(796_000, 1920, 1080, 120, 0),
+        "PyroWave: starting at 796000 kbps, its default for 1920x1080 at 120 fps and no link speed to stay within");
+}

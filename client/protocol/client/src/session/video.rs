@@ -67,6 +67,15 @@ pub enum Item {
     Chunk(Chunk),
 }
 
+/// What [`FrameQueue::wait_behind`] came back with.
+pub enum Waited {
+    /// The next item and the number of frames queued behind it.
+    Item(Item, usize),
+    /// Nothing came by the deadline.
+    TimedOut,
+    Shutdown,
+}
+
 #[derive(Default)]
 struct QueueState {
     items: VecDeque<Item>,
@@ -335,19 +344,23 @@ impl FrameQueue {
     /// [`wait_behind`](Self::wait_behind) without the frame count.
     #[cfg(test)]
     pub fn wait(&self, returned: &mut Vec<Vec<u8>>) -> Option<Item> {
-        self.wait_behind(returned).map(|(item, _)| item)
+        match self.wait_behind(returned, None) {
+            Waited::Item(item, _) => Some(item),
+            _ => None,
+        }
     }
 
-    /// The next frame or chunk with the number of frames still queued behind it, or `None`
-    /// once shut down. The chunk buffers in `returned` go back to the spares under the lock
-    /// this takes anyway: once [`RETURN_BATCH`] have gathered, before sleeping on an empty
-    /// queue, and with every frame, which the decoder may take a while over while the receiver
-    /// needs buffers for the next frame's chunks.
-    pub fn wait_behind(&self, returned: &mut Vec<Vec<u8>>) -> Option<(Item, usize)> {
+    /// The next frame or chunk with the number of frames still queued behind it, or
+    /// [`Waited::Shutdown`] once shut down, or [`Waited::TimedOut`] when nothing came by the
+    /// `deadline`. The chunk buffers in `returned` go back to the spares under the lock this
+    /// takes anyway: once [`RETURN_BATCH`] have gathered, before sleeping on an empty queue, and
+    /// with every frame, which the decoder may take a while over while the receiver needs
+    /// buffers for the next frame's chunks.
+    pub fn wait_behind(&self, returned: &mut Vec<Vec<u8>>, deadline: Option<Instant>) -> Waited {
         let mut state = lock(&self.state);
         loop {
             if state.shutdown {
-                return None;
+                return Waited::Shutdown;
             }
             if returned.len() >= RETURN_BATCH {
                 state.take_spares(returned);
@@ -360,10 +373,22 @@ impl FrameQueue {
                     }
                     Item::Chunk(_) => state.chunks -= 1,
                 }
-                return Some((item, state.frames));
+                return Waited::Item(item, state.frames);
             }
             state.take_spares(returned);
-            state = self.ready.wait(state).unwrap_or_else(|p| p.into_inner());
+            state = match deadline {
+                None => self.ready.wait(state).unwrap_or_else(|p| p.into_inner()),
+                Some(deadline) => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return Waited::TimedOut;
+                    }
+                    self.ready
+                        .wait_timeout(state, left)
+                        .unwrap_or_else(|p| p.into_inner())
+                        .0
+                }
+            };
         }
     }
 
@@ -581,6 +606,22 @@ impl Direct {
         }
     }
 
+    /// Sends a held key frame request once its window has passed, for the receive thread
+    /// between datagrams: without further frames nothing else would. Returns whether it did.
+    fn send_held(&mut self, shared: &VideoShared, signals: &mut Vec<VideoSignal>) -> bool {
+        if !self.refresh.request(false, now_us) {
+            return false;
+        }
+        let mut sink = Sink {
+            shared,
+            direct: None,
+            staged: None,
+            signals,
+        };
+        lock(&shared.receiver).request_decoder_refresh(&mut sink);
+        true
+    }
+
     /// Hands the submissions' feedback and frames back to the receiver.
     fn settle(
         &mut self,
@@ -766,7 +807,10 @@ impl VideoStream {
     ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let (direct, queued) = if start.direct_submit {
-            (Some(Direct::new(decoder, KeyFrameRequests::new(start.fps))), None)
+            (
+                Some(Direct::new(decoder, KeyFrameRequests::new(start.fps))),
+                None,
+            )
         } else {
             (None, Some(decoder))
         };
@@ -899,6 +943,12 @@ fn receive_thread(
                     session.log("Video moved to the roam's new socket");
                     socket = next;
                 }
+                // A direct decoder's held key frame request, due with no frame to carry it.
+                if let Some(direct) = direct.as_mut() {
+                    if direct.send_held(&shared, &mut signals) {
+                        route(&control, &mut signals);
+                    }
+                }
                 if first_data.is_none() {
                     waiting += UDP_RECV_POLL_TIMEOUT;
                     if waiting >= FIRST_FRAME_TIMEOUT {
@@ -951,6 +1001,12 @@ fn receive_thread(
             &mut staged,
             |signals| route(&control, signals),
         );
+        // Datagrams that completed no frame (a held request needs a frame or this to go out).
+        if let Some(direct) = direct.as_mut() {
+            if direct.send_held(&shared, &mut signals) {
+                route(&control, &mut signals);
+            }
+        }
     }
     if let Some(trace) = trace {
         let session = session.clone();
@@ -1046,8 +1102,10 @@ fn receive_batch<'b>(
 /// failure recovers as fast as before. It then stays outstanding until a key frame decodes or
 /// the window passes. A requested key frame that arrives but fails to decode does not clear
 /// it: that is the failing case, and the answer to an immediate new request would fail alike.
-/// Asked again within the window, the request is deferred, not dropped: it goes out with the
-/// first frame after the window, so a decoder replaced meanwhile still gets its key frame. Only
+/// Asked again within the window, the request is deferred, not dropped: it goes out when the
+/// window ends ([`held_until_us`](Self::held_until_us)), with the next frame or, without one (a
+/// still picture the host does not resend), from the decoder thread's timed wait or the receive
+/// thread's poll, so a decoder replaced meanwhile still gets its key frame. Only
 /// the decoder's requests are paced; the receiver's own, for frames lost on the way, are not.
 /// The receiver ([`VideoReceiver::request_decoder_refresh`]) stays as the C core's, which the
 /// differential tests compare it with.
@@ -1074,6 +1132,24 @@ impl KeyFrameRequests {
             sent_us: None,
             deferred: false,
         }
+    }
+
+    /// A window of its own, for tests.
+    #[cfg(test)]
+    pub(super) fn with_window_us(window_us: u64) -> Self {
+        Self {
+            window_us,
+            sent_us: None,
+            deferred: false,
+        }
+    }
+
+    /// When a deferred request falls due (session clock, us), if one waits.
+    pub(super) fn held_until_us(&self) -> Option<u64> {
+        if !self.deferred {
+            return None;
+        }
+        self.sent_us.map(|sent| sent + self.window_us)
     }
 
     /// The decoder took a key frame: the request is answered and the next goes out at once.
@@ -1129,7 +1205,28 @@ fn decode_loop(
     let mut skipped_idr = false;
     // The receiver recovers with key frames only (`recover_with_idr_only`, which stays so).
     let mut idr_only = false;
-    while let Some((item, behind)) = shared.queue.wait_behind(&mut returned) {
+    loop {
+        // A held key frame request wakes the thread when it falls due, frames or not.
+        let deadline = refresh.held_until_us().map(|due| {
+            Instant::now() + Duration::from_micros(due.saturating_sub(now_us()))
+        });
+        let (item, behind) = match shared.queue.wait_behind(&mut returned, deadline) {
+            Waited::Item(item, behind) => (item, behind),
+            Waited::Shutdown => break,
+            Waited::TimedOut => {
+                if refresh.request(false, now_us) {
+                    let mut sink = Sink {
+                        shared,
+                        direct: None,
+                        staged: None,
+                        signals: &mut signals,
+                    };
+                    lock(&shared.receiver).request_decoder_refresh(&mut sink);
+                    route_signals(&mut signals);
+                }
+                continue;
+            }
+        };
         let frame = match item {
             Item::Chunk(chunk) => {
                 // Fewer than two frames behind a chunk never make its frame one to skip.

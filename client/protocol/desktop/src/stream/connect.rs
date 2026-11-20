@@ -1111,6 +1111,14 @@ pub(super) fn route_line(toward: Result<crate::network::Toward, crate::network::
     format!("{medium} ({source}), {link}")
 }
 
+/// The log's line for PyroWave's default starting bitrate. Without a link speed (unknown, or a
+/// wireless route, which has none on purpose) the default has no link to stay within, and the
+/// line says so instead of naming a "0 Mbps link".
+pub(super) fn pyrowave_start_line(bitrate_kbps: u32, width: u32, height: u32, fps: u32, link_mbps: u32) -> String {
+    let link = if link_mbps == 0 { "no link speed to stay within".to_string() } else { format!("a {link_mbps} Mbps link") };
+    format!("PyroWave: starting at {bitrate_kbps} kbps, its default for {width}x{height} at {fps} fps and {link}")
+}
+
 /// The lost-network notice: it promises a reconnect only when one will follow (`on_its_own`: a
 /// dropped stream reconnects by itself, so the connection's timeout or a return it cannot carry
 /// on over recovers it), not where a network drop tolerance holds the connection instead.
@@ -1281,7 +1289,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
     let pyrowave = offers_pyrowave(offer.formats, scm);
     let bitrate = capped_bitrate(start_bitrate(settings, width, height, fps, pyrowave, link_mbps), plan.bitrate_limit_kbps);
     if pyrowave && settings.bitrate_kbps == 0 {
-        eprintln!("nightjar: PyroWave: starting at {bitrate} kbps, its default for {width}x{height} at {fps} fps and a {link_mbps} Mbps link");
+        eprintln!("nightjar: {}", pyrowave_start_line(bitrate, width, height, fps, link_mbps));
     }
     let bitrate = if probes_first_bitrate(settings, plan.resume, &plan.info) {
         match client.probe_link(&plan.info) {

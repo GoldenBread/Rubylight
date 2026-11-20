@@ -1312,3 +1312,150 @@ fn a_decoder_failing_every_key_frame_does_not_flood_the_host_with_requests() {
     assert_eq!(*lock(&log), expected);
     assert_eq!(shared.counters.need_idr.load(Ordering::Relaxed), 22);
 }
+
+/// The window of the tests whose held request must go out without another frame.
+const SHORT_WINDOW: Duration = Duration::from_millis(50);
+
+#[test]
+fn a_held_request_goes_out_after_its_window_without_another_frame() {
+    // A failed key frame and then nothing: a still picture the host does not resend. The
+    // request it held must still go out, or the app's switch to the next decoder never comes.
+    let shared = Arc::new(VideoShared::new(records(false)));
+    let log: Arc<Mutex<Vec<Option<u32>>>> = Arc::default();
+    let requests: Arc<Mutex<Vec<Instant>>> = Arc::default();
+    let (done, routed) = mpsc::channel();
+    let decoder = FailingDecoder {
+        log: log.clone(),
+        ok: 0,
+    };
+    let (for_thread, for_route, sent) = (shared.clone(), log.clone(), requests.clone());
+    let thread = std::thread::spawn(move || {
+        decode_loop(
+            Box::new(decoder),
+            &for_thread,
+            KeyFrameRequests::with_window_us(SHORT_WINDOW.as_micros() as u64),
+            move |signals| {
+                for signal in signals.drain(..) {
+                    if matches!(signal, VideoSignal::RequestIdr) {
+                        lock(&for_route).push(None);
+                        lock(&sent).push(Instant::now());
+                    }
+                }
+                done.send(()).unwrap();
+            },
+        )
+    });
+    for number in 1..=2 {
+        assert!(shared.queue.offer(numbered(number, FrameType::Idr)).is_ok());
+        routed
+            .recv_timeout(HANG_GUARD)
+            .expect("the decoder never took the frame");
+    }
+    assert_eq!(*lock(&log), [Some(1), None, Some(2)], "the second waits");
+    // The thread routes the held request when its wait times out.
+    routed
+        .recv_timeout(HANG_GUARD)
+        .expect("the held request never went out");
+    shared.queue.shutdown();
+    thread.join().unwrap();
+    assert_eq!(*lock(&log), [Some(1), None, Some(2), None]);
+    let sent = lock(&requests);
+    assert!(sent[1] - sent[0] >= SHORT_WINDOW, "{:?}", sent[1] - sent[0]);
+}
+
+/// A direct decoder that answers with `statuses` in turn.
+struct ScriptedDirect {
+    statuses: VecDeque<DecodeStatus>,
+}
+
+impl VideoDecoder for ScriptedDirect {
+    fn setup(&mut self, _: &crate::session::VideoSetup) -> Result<(), i32> {
+        Ok(())
+    }
+
+    fn submit(&mut self, _: &Frame) -> DecodeStatus {
+        self.statuses.pop_front().expect("a status for each frame")
+    }
+}
+
+/// Feeds the PyroWave frames (each a key frame) `numbers` to the direct decoder one at a
+/// time, and returns the key frame requests each caused.
+fn feed_direct(
+    shared: &VideoShared,
+    direct: &mut Direct,
+    host: &mut Blocks,
+    numbers: &[u8],
+) -> Vec<usize> {
+    let mut signals = Vec::new();
+    numbers
+        .iter()
+        .map(|&number| {
+            let packets = flat(host.frame(&[8, 6], number));
+            let mut requests = 0;
+            receive_batch(
+                shared,
+                Some(&mut *direct),
+                &mut signals,
+                packets.len(),
+                |i| packets[i].as_slice(),
+                &mut None,
+                &mut StagedChunks::default(),
+                |signals| {
+                    requests += signals
+                        .drain(..)
+                        .filter(|s| matches!(s, VideoSignal::RequestIdr))
+                        .count();
+                },
+            );
+            requests
+        })
+        .collect()
+}
+
+fn scripted_direct(statuses: &[DecodeStatus], refresh: KeyFrameRequests) -> Direct {
+    Direct::new(
+        Box::new(ScriptedDirect {
+            statuses: statuses.iter().copied().collect(),
+        }),
+        refresh,
+    )
+}
+
+#[test]
+fn a_direct_decoder_failing_in_a_burst_asks_once_and_a_decoded_key_frame_clears_it() {
+    use DecodeStatus::{NeedIdr, Ok as Decoded};
+    let shared = Arc::new(VideoShared::new(records(false)));
+    // A window of seconds (1 fps): the burst stays within it however slowly the test runs.
+    let statuses = [NeedIdr, NeedIdr, NeedIdr, Decoded, NeedIdr, NeedIdr];
+    let mut direct = scripted_direct(&statuses, KeyFrameRequests::new(1));
+    let requests = feed_direct(
+        &shared,
+        &mut direct,
+        &mut Blocks::new(),
+        &[1, 2, 3, 4, 5, 6],
+    );
+    assert_eq!(requests, [1, 0, 0, 0, 1, 0]);
+    assert_eq!(shared.counters.need_idr.load(Ordering::Relaxed), 5);
+}
+
+#[test]
+fn a_direct_decoders_held_request_goes_out_from_the_receive_poll() {
+    use DecodeStatus::NeedIdr;
+    let shared = Arc::new(VideoShared::new(records(false)));
+    let window = KeyFrameRequests::with_window_us(SHORT_WINDOW.as_micros() as u64);
+    let mut direct = scripted_direct(&[NeedIdr, NeedIdr], window);
+    let first = Instant::now();
+    let requests = feed_direct(&shared, &mut direct, &mut Blocks::new(), &[1, 2]);
+    assert_eq!(requests, [1, 0], "the second waits");
+    // No more datagrams: the receive thread's poll timeout asks, and sends once it is due.
+    let mut signals = Vec::new();
+    wait_until("the held request never went out", || {
+        direct.send_held(&shared, &mut signals)
+    });
+    assert!(first.elapsed() >= SHORT_WINDOW);
+    assert!(
+        matches!(signals[..], [VideoSignal::RequestIdr]),
+        "{signals:?}"
+    );
+    assert!(!direct.send_held(&shared, &mut signals), "sent once");
+}
