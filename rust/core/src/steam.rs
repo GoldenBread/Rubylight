@@ -244,9 +244,13 @@ fn read_capped(path: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
+/// A file's parse, keyed by path, with the size and time it was read at.
+type StampCache<T> = Mutex<HashMap<PathBuf, ((u64, SystemTime), T)>>;
+/// A folder's listing, keyed by path, with the time it was read at.
+type TimeCache<T> = Mutex<HashMap<PathBuf, (SystemTime, T)>>;
+
 /// The account the last read of the file gave, with the file's size and time it was read.
-static MOST_RECENT: LazyLock<Mutex<HashMap<PathBuf, ((u64, SystemTime), Option<String>)>>> =
-    LazyLock::new(Default::default);
+static MOST_RECENT: LazyLock<StampCache<Option<String>>> = LazyLock::new(Default::default);
 /// The `userdata` folder of the account `loginusers.vdf` marks `MostRecent`: a SteamID64's low 32
 /// bits. Not every Steam writes the mark. The file is read again only when its size or time moved
 /// since the last read: the library checks ask every few seconds and it changes only when another
@@ -459,8 +463,7 @@ fn only_on_this_pc(roots: &[PathBuf]) -> Vec<PathBuf> {
 /// was read. The library checks ask for the libraries every few seconds and Steam rewrites the
 /// file only when a library folder comes or goes, so it is parsed again only when its size or
 /// time moved. A read that fails is not cached.
-static VDF_LIBRARIES: LazyLock<Mutex<HashMap<PathBuf, ((u64, SystemTime), Vec<PathBuf>)>>> =
-    LazyLock::new(Default::default);
+static VDF_LIBRARIES: LazyLock<StampCache<Vec<PathBuf>>> = LazyLock::new(Default::default);
 /// The libraries a `steamapps` folder's `libraryfolders.vdf` lists, as [`libraries`] reads them:
 /// on this PC's drives, the path from old files' values included.
 fn vdf_libraries(apps: &Path) -> Vec<PathBuf> {
@@ -528,8 +531,7 @@ fn libraries(roots: &[PathBuf]) -> Vec<PathBuf> {
 /// checks ask every few seconds: the folder's time moves when a manifest appears, is renamed or
 /// goes, and a download's rewrites of a manifest's content leave it put, so the names are read
 /// again only when that time moved. A folder whose time cannot be read is not cached.
-static MANIFESTS: LazyLock<Mutex<HashMap<PathBuf, (SystemTime, Vec<PathBuf>)>>> =
-    LazyLock::new(Default::default);
+static MANIFESTS: LazyLock<TimeCache<Vec<PathBuf>>> = LazyLock::new(Default::default);
 /// The `appmanifest_*.acf` files of a `steamapps` folder, in name order.
 fn manifests(steamapps: &Path) -> Vec<PathBuf> {
     let modified = std::fs::metadata(steamapps)

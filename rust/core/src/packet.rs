@@ -419,6 +419,7 @@ impl VideoPacketizer {
         }
         Ok(packets)
     }
+    #[allow(clippy::too_many_arguments)]
     fn frame_blocks<'a>(
         &'a mut self,
         payload: Payload<'a>,

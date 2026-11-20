@@ -84,6 +84,11 @@ impl HostTimings {
         }
         let count = inner.pending.len().min(HOST_TIMING_EXTENDED_MAX_RECORDS);
         let records: Vec<_> = inner.pending.drain(..count).collect();
+        // Cleared under the lock `record` sets it under, so a record after
+        // this drain sets it again.
+        if inner.pending.is_empty() {
+            self.queued.store(false, Ordering::Release);
+        }
         Some(HostTiming::encode_report_with(&records))
     }
 

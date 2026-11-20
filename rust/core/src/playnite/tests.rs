@@ -506,7 +506,7 @@ fn the_fullscreen_entry_due_check_agrees_with_the_entry_step_it_skips() {
     }
     // Unchanged input means no rewrite: once the entry step has had its way, the check the next
     // tick makes says nothing is due.
-    let mut values = vec![entry];
+    let mut values = Vec::new();
     assert!(fullscreen_entry(&mut values, true));
     let apps: Vec<crate::state::App> = values.iter().cloned().map(app).collect();
     assert!(!fullscreen_entry_due(&apps, true));

@@ -400,9 +400,9 @@ pub fn decode(b: &[u8]) -> Result<Input> {
         // event, reserved, pressure, pointer id, x and y (normalized u16s).
         TOUCHPAD_FRAME_MAGIC => {
             let mut contacts = [unused_contact(); crate::virtual_hid::MAX_CONTACTS];
-            for n in 0..usize::from(b[8]) {
+            for (n, contact) in contacts.iter_mut().enumerate().take(usize::from(b[8])) {
                 let at = 16 + n * 12;
-                contacts[n] = crate::virtual_hid::Contact {
+                *contact = crate::virtual_hid::Contact {
                     event: b[at],
                     id: le32(b, at + 4),
                     x: f32::from(le16(b, at + 8)) / 65535.0,

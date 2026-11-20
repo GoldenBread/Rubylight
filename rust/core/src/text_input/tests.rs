@@ -276,7 +276,7 @@ fn a_focus_after_the_loops_look_is_told_on_the_next_one_and_a_wait_keeps_the_gat
     assert!(!inputs.queued(), "the raise was told");
     // A second focus inside the 50 ms window: nothing goes out now, but the
     // gate stays set, as the loop must come back for it.
-    inputs.note(focused("Mail", "y"), start);
+    inputs.note(in_element("Mail", "y", 2), start);
     assert!(inputs.queued());
     assert_eq!(inputs.take(start + Duration::from_millis(10)), None);
     assert!(inputs.queued(), "the coalesced update still waits");
