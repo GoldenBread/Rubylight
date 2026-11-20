@@ -41,6 +41,36 @@ public class PadInputTest {
         assertEquals(0, PadInput.dpad(1, 1, 0));
     }
 
+    /**
+     * A resized cluster answers over its whole box: the face buttons and the D-pad's arms spread as they are drawn,
+     * the band between two neighbours and the dead middle stretch with the box, and a square box answers as before.
+     */
+    @Test public void aResizedClusterAnswersOverItsWholeBox() {
+        float w = 800, h = 200;
+        assertEquals(ControllerPacket.X_FLAG, PadInput.face(.22f * w, .5f * h, w, h));
+        assertEquals(ControllerPacket.B_FLAG, PadInput.face(.78f * w, .5f * h, w, h));
+        assertEquals(ControllerPacket.Y_FLAG, PadInput.face(.5f * w, .22f * h, w, h));
+        assertEquals(ControllerPacket.A_FLAG, PadInput.face(.5f * w, .78f * h, w, h));
+        assertEquals("Far out on the left is still X", ControllerPacket.X_FLAG, PadInput.face(.05f * w, .5f * h, w, h));
+        assertEquals(ControllerPacket.A_FLAG | ControllerPacket.B_FLAG, PadInput.face(.64f * w, .64f * h, w, h));
+        assertEquals("The middle presses nothing", 0, PadInput.face(w / 2, h / 2, w, h));
+        for (float fx = 0; fx <= 1; fx += .05f) {
+            for (float fy = 0; fy <= 1; fy += .05f) {
+                assertEquals(PadInput.face(fx * SIZE, fy * SIZE, SIZE), PadInput.face(fx * SIZE, fy * SIZE, SIZE, SIZE));
+                assertEquals(PadInput.dpad(fx * SIZE, fy * SIZE, SIZE), PadInput.dpad(fx * SIZE, fy * SIZE, SIZE, SIZE));
+            }
+        }
+
+        assertEquals(ControllerPacket.LEFT_FLAG, PadInput.dpad(10, h / 2, w, h));
+        assertEquals(ControllerPacket.RIGHT_FLAG, PadInput.dpad(w - 10, h / 2, w, h));
+        assertEquals(ControllerPacket.UP_FLAG, PadInput.dpad(w / 2, 5, w, h));
+        assertEquals("A corner of the box is the diagonal", ControllerPacket.UP_FLAG | ControllerPacket.RIGHT_FLAG,
+                PadInput.dpad(w - 10, 10, w, h));
+        assertEquals(0, PadInput.dpad(w / 2 + 50, h / 2, w, h));
+        assertEquals(0, PadInput.face(10, 10, 0, 100));
+        assertEquals(0, PadInput.dpad(10, 10, 100, 0));
+    }
+
     @Test public void aStickTapFollowedQuicklyByATouchHoldsTheStickClick() {
         assertTrue(PadInput.stickTap(120, .1f));
         assertFalse("A flick is a push, not a tap", PadInput.stickTap(120, .9f));

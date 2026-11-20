@@ -25,7 +25,7 @@ public class PadLayoutTest {
         PadLayout.Spec face = back.spec(PadLayout.Control.FACE);
         assertEquals(layout.spec(PadLayout.Control.FACE).cx, face.cx, 1e-4);
         assertEquals(layout.spec(PadLayout.Control.FACE).cy, face.cy, 1e-4);
-        assertEquals(1.3f, face.scale, 1e-3);
+        assertEquals(1.3f, face.scale(), 1e-3);
         assertEquals(40, back.spec(PadLayout.Control.LB).opacity);
         assertTrue(back.spec(PadLayout.Control.HOME).hidden);
         // Only edited controls are written; the rest follow the default for the screen.
@@ -33,26 +33,124 @@ public class PadLayoutTest {
         assertEquals(layout.serialize(), back.serialize());
     }
 
+    /** A layout saved before free resizing has one scale per control: it loads as that size in both directions. */
+    @Test public void aLayoutSavedBeforeFreeResizingLoadsWithItsShape() {
+        PadLayout old = PadLayout.parse("v1|FACE,0.7083,0.5556,1.300,100,0|LT,-,-,0.700,80,0");
+        PadLayout.Spec face = old.spec(PadLayout.Control.FACE);
+        assertEquals(1.3f, face.widthScale, 1e-6);
+        assertEquals(1.3f, face.heightScale, 1e-6);
+        assertEquals(.7f, old.spec(PadLayout.Control.LT).widthScale, 1e-6);
+        assertEquals(.7f, old.spec(PadLayout.Control.LT).heightScale, 1e-6);
+        // Saved again, it is written exactly as before: six fields, no width and height of its own.
+        assertEquals("v1|FACE,0.7083,0.5556,1.300,100,0|LT,-,-,0.700,80,0", old.serialize());
+        float[] box = old.bounds(PadLayout.Control.FACE, 2400, 1080, DENSITY, new float[4]);
+        assertEquals("Square, as it always was", box[2], box[3], 0);
+    }
+
+    /**
+     * A width and a height of their own come back as they were. They follow the six fields an older build reads, and
+     * the one scale it reads is the larger, clamped to its own 0.5 to 2, so it shows a sensible size.
+     */
+    @Test public void independentWidthAndHeightComeBackAndAnOlderBuildReadsSixFields() {
+        PadLayout layout = new PadLayout();
+        layout.setSize(PadLayout.Control.FACE, 2.5f, 1.2f);
+        layout.setSize(PadLayout.Control.LB, .6f, 1.4f);
+        String text = layout.serialize();
+        assertEquals("v1|FACE,-,-,2.500,100,0,2.500,1.200|LB,-,-,1.400,100,0,0.600,1.400", text);
+        PadLayout back = PadLayout.parse(text);
+        assertEquals(2.5f, back.spec(PadLayout.Control.FACE).widthScale, 1e-6);
+        assertEquals(1.2f, back.spec(PadLayout.Control.FACE).heightScale, 1e-6);
+        assertEquals(.6f, back.spec(PadLayout.Control.LB).widthScale, 1e-6);
+        assertEquals(1.4f, back.spec(PadLayout.Control.LB).heightScale, 1e-6);
+        assertEquals(text, back.serialize());
+
+        // How the build before this one reads each entry: the first six fields, the scale clamped to 0.5 to 2.
+        for (String part : text.split("\\|")) {
+            String[] fields = part.split(",", -1);
+            if (fields.length < 6) continue;
+            float olderScale = Math.max(.5f, Math.min(2f, Float.parseFloat(fields[3])));
+            PadLayout.Spec spec = back.spec(PadLayout.Control.valueOf(fields[0]));
+            assertEquals(part, Math.min(2f, spec.scale()), olderScale, 1e-6);
+            assertEquals(part, String.valueOf(spec.opacity), fields[4]);
+            assertEquals(part, spec.hidden ? "1" : "0", fields[5]);
+        }
+
+        // A broken width or height falls back to the one scale rather than dropping the entry.
+        PadLayout broken = PadLayout.parse("v1|RB,-,-,1.500,70,0,x,0.800|RT,-,-,1.200,100,0,1.100");
+        assertEquals(1.5f, broken.spec(PadLayout.Control.RB).widthScale, 1e-6);
+        assertEquals(1.5f, broken.spec(PadLayout.Control.RB).heightScale, 1e-6);
+        assertEquals(70, broken.spec(PadLayout.Control.RB).opacity);
+        assertEquals("Seven fields: the one scale", 1.2f, broken.spec(PadLayout.Control.RT).heightScale, 1e-6);
+    }
+
+    /**
+     * A control can be sized up to the whole surface in each direction, and no further: what was sized on a larger
+     * surface fits again. The default unit's tablet cap sets the default sizes only.
+     */
+    @Test public void aControlGrowsToTheWholeSurfaceAndNoFurther() {
+        float[][] surfaces = {{2400, 1080}, {1080, 2400}, {2560, 1600}};
+        float[] box = new float[4];
+        for (float[] surface : surfaces) {
+            for (PadLayout.Control control : PadLayout.Control.values()) {
+                PadLayout layout = new PadLayout();
+                layout.setBounds(control, 0, 0, surface[0], surface[1], surface[0], surface[1], DENSITY);
+                layout.bounds(control, surface[0], surface[1], DENSITY, box);
+                String where = control + " on " + surface[0] + "x" + surface[1];
+                assertEquals(where, 0, box[0], .5f);
+                assertEquals(where, 0, box[1], .5f);
+                assertEquals(where, surface[0], box[2], .5f);
+                assertEquals(where, surface[1], box[3], .5f);
+                // Saved and loaded, it still fills the surface.
+                PadLayout.parse(layout.serialize()).bounds(control, surface[0], surface[1], DENSITY, box);
+                assertEquals(where + " saved", surface[0], box[2], 1.5f);
+                assertEquals(where + " saved", surface[1], box[3], 1.5f);
+                // Sized past the surface (on a larger one), each side stops at the surface.
+                layout.setSize(control, PadLayout.MAX_SCALE, PadLayout.MAX_SCALE);
+                layout.bounds(control, surface[0], surface[1], DENSITY, box);
+                assertEquals(where + " past it", surface[0], box[2], .5f);
+                assertEquals(where + " past it", surface[1], box[3], .5f);
+            }
+        }
+
+        // Growing in both directions keeps the shape and stops where the first side meets the surface.
+        PadLayout layout = new PadLayout();
+        layout.setSize(PadLayout.Control.FACE, 1.5f, 1f);
+        layout.scaleFrom(PadLayout.Control.FACE, 1.5f, 1f, 1000, 2400, 1080, DENSITY);
+        layout.bounds(PadLayout.Control.FACE, 2400, 1080, DENSITY, box);
+        PadLayout.Spec face = layout.spec(PadLayout.Control.FACE);
+        assertEquals("Its shape kept", 1.5f, face.widthScale / face.heightScale, 1e-4);
+        assertEquals("as tall as the surface", 1080, box[3], .5f);
+        assertTrue(box[2] < 2400);
+        // A tablet's control grows past the default unit's cap, up to the whole surface.
+        PadLayout tablet = new PadLayout();
+        tablet.scaleFrom(PadLayout.Control.LEFT_STICK, 1, 1, 1000, 2560, 1600, 2);
+        assertEquals(1600, tablet.bounds(PadLayout.Control.LEFT_STICK, 2560, 1600, 2, box)[3], .5f);
+        // Shrinking stops at the smallest scale.
+        layout.scaleFrom(PadLayout.Control.FACE, 1, 2, .01f, 2400, 1080, DENSITY);
+        assertEquals(PadLayout.MIN_SCALE, face.widthScale, 1e-6);
+        assertEquals(2 * PadLayout.MIN_SCALE, face.heightScale, 1e-6);
+    }
+
     @Test public void aResizedButUnmovedControlKeepsFollowingTheDefaultPlace() {
         PadLayout layout = new PadLayout();
         layout.setScale(PadLayout.Control.DPAD, .8f);
         PadLayout back = PadLayout.parse(layout.serialize());
         assertFalse(back.spec(PadLayout.Control.DPAD).placed());
-        assertEquals(.8f, back.spec(PadLayout.Control.DPAD).scale, 1e-3);
+        assertEquals(.8f, back.spec(PadLayout.Control.DPAD).scale(), 1e-3);
     }
 
     @Test public void brokenOrUnknownEntriesAreSkippedAndTheRestKept() {
         PadLayout layout = PadLayout.parse("v1|PADDLE,0.5,0.5,1,100,0|LB,x,0.2,1,100,0|RB,-,-,1.5,70,0|LT,0.1|"
-                + "RT,7,-3,9,500,1");
+                + "RT,7,-3,900,500,1");
         assertTrue(layout.spec(PadLayout.Control.LB).isDefault());
-        assertEquals(1.5f, layout.spec(PadLayout.Control.RB).scale, 1e-3);
+        assertEquals(1.5f, layout.spec(PadLayout.Control.RB).scale(), 1e-3);
         assertEquals(70, layout.spec(PadLayout.Control.RB).opacity);
         assertTrue(layout.spec(PadLayout.Control.LT).isDefault());
         // Values out of range are clamped, not refused.
         PadLayout.Spec rt = layout.spec(PadLayout.Control.RT);
         assertEquals(1, rt.cx, 0);
         assertEquals(0, rt.cy, 0);
-        assertEquals(PadLayout.MAX_SCALE, rt.scale, 0);
+        assertEquals(PadLayout.MAX_SCALE, rt.scale(), 0);
         assertEquals(PadLayout.MAX_OPACITY, rt.opacity);
         assertTrue(rt.hidden);
     }
@@ -72,7 +170,7 @@ public class PadLayoutTest {
         assertFalse(wasd.hidden);
         assertEquals(layout.spec(PadLayout.Control.WASD).cx, wasd.cx, 1e-4);
         assertEquals(layout.spec(PadLayout.Control.WASD).cy, wasd.cy, 1e-4);
-        assertEquals(1.2f, wasd.scale, 1e-3);
+        assertEquals(1.2f, wasd.scale(), 1e-3);
         assertEquals(60, wasd.opacity);
         assertEquals(layout.serialize(), back.serialize());
         // Shown but otherwise untouched is still an edit worth saving.
@@ -161,10 +259,10 @@ public class PadLayoutTest {
         PadLayout back = PadLayout.parse(text);
         assertEquals(PadLayout.Glyph.PLAYSTATION, back.glyph());
         assertEquals(PadLayout.PointerMode.CAMERA, back.pointerMode());
-        assertEquals(1.3f, back.spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(1.3f, back.spec(PadLayout.Control.FACE).scale(), 1e-3);
         // A layout the short-lived v2 build wrote still loads, settings and all.
         PadLayout v2 = PadLayout.parse("v2|FACE,0.7083,0.5556,1.300,100,0|mode=camera");
-        assertEquals(1.3f, v2.spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(1.3f, v2.spec(PadLayout.Control.FACE).scale(), 1e-3);
         assertEquals(PadLayout.PointerMode.CAMERA, v2.pointerMode());
     }
 
@@ -284,7 +382,7 @@ public class PadLayoutTest {
         PadLayout old = PadLayout.parse("v1|FACE,0.7083,0.5556,1.300,100,0");
         assertEquals(PadLayout.Glyph.XBOX, old.glyph());
         assertEquals(PadLayout.PointerMode.MOUSE, old.pointerMode());
-        assertEquals(1.3f, old.spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(1.3f, old.spec(PadLayout.Control.FACE).scale(), 1e-3);
         // An unknown glyph or mode reads as the default rather than dropping the whole layout.
         PadLayout unknown = PadLayout.parse("v2|glyph=atari|mode=laser|LB,-,-,1,100,0");
         assertEquals(PadLayout.Glyph.XBOX, unknown.glyph());
@@ -334,16 +432,16 @@ public class PadLayoutTest {
             layout.setScale(steam, 1.5f);
             layout.setOpacity(steam, 60);
             layout.spec(steam).hidden = !layout.spec(steam).defaultHidden;
-            layout.spec(PadLayout.Control.FACE).scale = 1.4f;
+            layout.setScale(PadLayout.Control.FACE, 1.4f);
             layout.applyPreset(preset);
             PadLayout.Spec kept = layout.spec(steam);
             String name = preset + " " + steam;
             assertEquals(name, 120f, kept.cx, 1e-3);
             assertEquals(name, 340f, kept.cy, 1e-3);
-            assertEquals(name, 1.5f, kept.scale, 1e-3);
+            assertEquals(name, 1.5f, kept.scale(), 1e-3);
             assertEquals(name, 60, kept.opacity);
             assertEquals(name, !kept.defaultHidden, kept.hidden);
-            assertEquals("the other controls take the preset", 1f, layout.spec(PadLayout.Control.FACE).scale, 1e-3);
+            assertEquals("the other controls take the preset", 1f, layout.spec(PadLayout.Control.FACE).scale(), 1e-3);
         }
     }
 

@@ -22,7 +22,8 @@ import java.util.Locale;
 
 /**
  * Edits the modern controller's layout over a dimmed stream: drag a control to move it, pinch it to
- * resize it, tap it to pick it for the panel's size, opacity and hide buttons. With nothing picked
+ * resize it, drag a picked control's corner handle to size its width and height on their own up to the whole
+ * surface, tap it to pick it for the panel's size, opacity and hide buttons. With nothing picked
  * the panel changes every control. Done keeps the draft, for all games or only this one; Cancel and
  * Back drop it. Hidden controls stay here as faint ghosts so they can be shown again, below every shown control; the
  * WASD stick, left out of the default layout, has its own Add button instead of a ghost.
@@ -31,6 +32,8 @@ import java.util.Locale;
 final class PadEditor extends FrameLayout {
     /** Moved controls land on this grid, so rows and mirrored pairs line up without effort. */
     static final float GRID_DP = 8;
+    /** The bits of a corner handle: 0 is the top-left one. */
+    static final int RIGHT_CORNER = 1, BOTTOM_CORNER = 2;
     private static final float SCALE_STEP = .1f, PANEL_WIDTH_DP = 400, PANEL_MARGIN_DP = 16, SHORT_SURFACE_DP = 480;
 
     private final ModernController controller;
@@ -157,14 +160,29 @@ final class PadEditor extends FrameLayout {
         return editable(control) && !(control.hiddenByDefault && draft.spec(control).hidden);
     }
 
+    /**
+     * The plus and minus buttons: the picked control, or every control, grows or shrinks by a step in both directions,
+     * keeping its shape, up to the whole surface.
+     */
     void scaleBy(float step) {
+        float width = surfaceWidth(), height = surfaceHeight();
         for (PadLayout.Control control : PadLayout.Control.values()) {
             if (!editable(control) || (selected != null && control != selected)) continue;
-            // Round to the step so repeated taps land on 50 %, 60 %, ... rather than drifting.
-            float scale = Math.round((draft.spec(control).scale + step) / SCALE_STEP) * SCALE_STEP;
-            draft.setScale(control, scale);
+            PadLayout.Spec spec = draft.spec(control);
+            // Round the larger side to the step so repeated taps land on 50 %, 60 %, ... rather than drifting.
+            float from = spec.scale(), to = Math.round((from + step) / SCALE_STEP) * SCALE_STEP;
+            draft.scaleFrom(control, spec.widthScale, spec.heightScale, to / from, width, height, density);
         }
         changed();
+    }
+
+    /** The surface's size: the editor's own once laid out, before that the stream frame it fills. */
+    private float surfaceWidth() {
+        return surface.getWidth() > 0 ? surface.getWidth() : controller.frame().getWidth();
+    }
+
+    private float surfaceHeight() {
+        return surface.getHeight() > 0 ? surface.getHeight() : controller.frame().getHeight();
     }
 
     void setOpacity(int value) {
@@ -240,7 +258,7 @@ final class PadEditor extends FrameLayout {
         String name = selected == null ? getContext().getString(R.string.pad_edit_all) : name(getContext(), selected);
         if (selected != null && spec.hidden) name = getContext().getString(R.string.pad_edit_hidden, name);
         selection.setText(name);
-        sizeText.setText(String.format(Locale.getDefault(), "%d %%", Math.round(spec.scale * 100)));
+        sizeText.setText(sizeLabel(spec));
         settingOpacity = true;
         opacity.setValue(Math.max(PadLayout.MIN_OPACITY, Math.min(PadLayout.MAX_OPACITY, Math.round(spec.opacity / 5f) * 5)));
         settingOpacity = false;
@@ -260,6 +278,13 @@ final class PadEditor extends FrameLayout {
         pointerMode.setContentDescription(getContext().getString(camera ? R.string.pad_touchpad_mouse : R.string.pad_touchpad_camera));
         glyphs.setText(glyphName(getContext(), draft.glyph()));
         preset.setText(getContext().getString(R.string.pad_edit_preset));
+    }
+
+    /** "120 %", or "150 × 80 %" for a control whose width and height differ. */
+    static String sizeLabel(PadLayout.Spec spec) {
+        int w = Math.round(spec.widthScale * 100), h = Math.round(spec.heightScale * 100);
+        return w == h ? String.format(Locale.getDefault(), "%d %%", w) :
+                String.format(Locale.getDefault(), "%d × %d %%", w, h);
     }
 
     private static String glyphName(Context context, PadLayout.Glyph glyph) {
@@ -331,8 +356,10 @@ final class PadEditor extends FrameLayout {
         private final Paint scrim = new Paint(), grid = new Paint();
         private final float[] box = new float[4];
         private final PadPainter.State idle = new PadPainter.State();
-        private float offsetX, offsetY, pinchDistance, pinchScale;
+        private float offsetX, offsetY, pinchDistance, pinchWidth, pinchHeight, anchorX, anchorY;
         private boolean dragging, pinching;
+        /** The corner handle being dragged ({@link #corner}'s bits), or -1. */
+        private int resizing = -1;
 
         Surface(Context context) {
             super(context);
@@ -379,15 +406,56 @@ final class PadEditor extends FrameLayout {
             return null;
         }
 
+        /**
+         * The picked control's corner handle under ({@code x}, {@code y}), as {@link #RIGHT_CORNER} and
+         * {@link #BOTTOM_CORNER} bits, or -1. Each handle takes a 48 dp touch around the corner it is drawn on;
+         * inside the control only a corner's quarter counts, so a small control's middle still moves it.
+         */
+        private int corner(float x, float y) {
+            if (selected == null) return -1;
+            draft.bounds(selected, getWidth(), getHeight(), density, box);
+            float reach = PadLayout.MIN_TOUCH_DP / 2 * density, outline = PadPainter.OUTLINE_DP * density;
+            float insideX = Math.min(reach, box[2] / 4), insideY = Math.min(reach, box[3] / 4);
+            boolean inside = x > box[0] && x < box[0] + box[2] && y > box[1] && y < box[1] + box[3];
+            int best = -1;
+            float bestDistance = Float.MAX_VALUE;
+            for (int corner = 0; corner < 4; corner++) {
+                boolean right = (corner & RIGHT_CORNER) != 0, bottom = (corner & BOTTOM_CORNER) != 0;
+                float cornerX = right ? box[0] + box[2] : box[0], cornerY = bottom ? box[1] + box[3] : box[1];
+                float handleX = cornerX + (right ? outline : -outline), handleY = cornerY + (bottom ? outline : -outline);
+                if (Math.abs(x - handleX) > reach || Math.abs(y - handleY) > reach) continue;
+                if (inside && (Math.abs(x - cornerX) > insideX || Math.abs(y - cornerY) > insideY)) continue;
+                float distance = (float) Math.hypot(x - handleX, y - handleY);
+                if (distance < bestDistance) {
+                    best = corner;
+                    bestDistance = distance;
+                }
+            }
+            return best;
+        }
+
         @SuppressLint("ClickableViewAccessibility") // Editing gestures; the panel's buttons are the accessible path.
         @Override
         public boolean onTouchEvent(MotionEvent event) {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: {
+                    pinching = false;
+                    // A corner handle of the picked control wins over whatever lies under it.
+                    resizing = corner(event.getX(), event.getY());
+                    if (resizing >= 0) {
+                        dragging = false;
+                        draft.bounds(selected, getWidth(), getHeight(), density, box);
+                        boolean right = (resizing & RIGHT_CORNER) != 0, bottom = (resizing & BOTTOM_CORNER) != 0;
+                        // The dragged corner follows the finger from where it took hold; the opposite one stays.
+                        offsetX = (right ? box[0] + box[2] : box[0]) - event.getX();
+                        offsetY = (bottom ? box[1] + box[3] : box[1]) - event.getY();
+                        anchorX = right ? box[0] : box[0] + box[2];
+                        anchorY = bottom ? box[1] : box[1] + box[3];
+                        break;
+                    }
                     PadLayout.Control control = hit(event.getX(), event.getY());
                     select(control);
                     dragging = control != null;
-                    pinching = false;
                     if (dragging) {
                         draft.bounds(control, getWidth(), getHeight(), density, box);
                         offsetX = box[0] + box[2] / 2 - event.getX();
@@ -399,14 +467,19 @@ final class PadEditor extends FrameLayout {
                     if (selected != null && event.getPointerCount() == 2) {
                         pinching = true;
                         dragging = false;
+                        resizing = -1;
                         pinchDistance = distance(event);
-                        pinchScale = draft.spec(selected).scale;
+                        pinchWidth = draft.spec(selected).widthScale;
+                        pinchHeight = draft.spec(selected).heightScale;
                     }
                     break;
                 case MotionEvent.ACTION_MOVE:
                     if (pinching && event.getPointerCount() >= 2 && pinchDistance > 0) {
-                        draft.setScale(selected, pinchScale * distance(event) / pinchDistance);
+                        draft.scaleFrom(selected, pinchWidth, pinchHeight, distance(event) / pinchDistance, getWidth(),
+                                getHeight(), density);
                         changed();
+                    } else if (resizing >= 0 && selected != null) {
+                        resize(event.getX() + offsetX, event.getY() + offsetY);
                     } else if (dragging && selected != null) {
                         float grid = GRID_DP * density;
                         float x = Math.round((event.getX() + offsetX) / grid) * grid;
@@ -423,6 +496,7 @@ final class PadEditor extends FrameLayout {
                 case MotionEvent.ACTION_CANCEL:
                     dragging = false;
                     pinching = false;
+                    resizing = -1;
                     keepPanelClear();
                     updatePanel();
                     break;
@@ -430,6 +504,44 @@ final class PadEditor extends FrameLayout {
                     break;
             }
             return true;
+        }
+
+        /**
+         * Puts the dragged corner at ({@code x}, {@code y}), on the grid or flush with the surface's edge, and sizes
+         * the picked control's width and height between it and the opposite corner, which stays: never smaller than
+         * a full touch, never past the surface.
+         */
+        private void resize(float x, float y) {
+            float width = getWidth(), height = getHeight();
+            float u = PadLayout.unit(width, height, density);
+            float leastWide = PadLayout.width(selected, u, density, PadLayout.MIN_SCALE);
+            float leastHigh = PadLayout.height(selected, u, density, PadLayout.MIN_SCALE);
+            x = snapEdge(x, width);
+            y = snapEdge(y, height);
+            float left, right, top, bottom;
+            if ((resizing & RIGHT_CORNER) != 0) {
+                left = anchorX;
+                right = Math.max(anchorX + leastWide, Math.min(width, x));
+            } else {
+                right = anchorX;
+                left = Math.min(anchorX - leastWide, Math.max(0, x));
+            }
+            if ((resizing & BOTTOM_CORNER) != 0) {
+                top = anchorY;
+                bottom = Math.max(anchorY + leastHigh, Math.min(height, y));
+            } else {
+                bottom = anchorY;
+                top = Math.min(anchorY - leastHigh, Math.max(0, y));
+            }
+            draft.setBounds(selected, left, top, right - left, bottom - top, width, height, density);
+            changed();
+        }
+
+        /** A dragged edge lands on the grid, or flush with the surface's edge when that is nearer. */
+        private float snapEdge(float position, float size) {
+            float grid = GRID_DP * density;
+            float snapped = Math.round(position / grid) * grid;
+            return Math.abs(size - position) < Math.abs(snapped - position) ? size : snapped;
         }
 
         private float distance(MotionEvent event) {

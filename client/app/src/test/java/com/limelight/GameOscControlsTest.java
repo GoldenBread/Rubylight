@@ -136,7 +136,7 @@ public class GameOscControlsTest {
         RuntimeEnvironment.setQualifiers("w360dp-h800dp-port-xhdpi");
         game.touchInput.setOnscreenControlsEnabled(true);
         assertEquals("Portrait has no layout of its own yet", 1f,
-                layout(game.modernController).spec(PadLayout.Control.FACE).scale, 1e-3);
+                layout(game.modernController).spec(PadLayout.Control.FACE).scale(), 1e-3);
         PadLayout portrait = layout(game.modernController).copy();
         portrait.setScale(PadLayout.Control.FACE, 1.4f);
         save(game.modernController, portrait);
@@ -144,7 +144,7 @@ public class GameOscControlsTest {
         // Back in landscape, the switch brings landscape's own layout, not portrait's.
         RuntimeEnvironment.setQualifiers("w800dp-h360dp-land-xhdpi");
         game.touchInput.setOnscreenControlsEnabled(true);
-        assertEquals(1.3f, layout(game.modernController).spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(1.3f, layout(game.modernController).spec(PadLayout.Control.FACE).scale(), 1e-3);
         game.modernController.destroy();
     }
 

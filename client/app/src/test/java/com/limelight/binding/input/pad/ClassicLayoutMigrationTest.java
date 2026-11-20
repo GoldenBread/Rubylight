@@ -32,7 +32,7 @@ public class ClassicLayoutMigrationTest {
         assertEquals(200f / WIDTH, stick.cx, .001f);
         assertEquals(200f / HEIGHT, stick.cy, .001f);
         // 200 px against the 302 px the modern stick takes at this size.
-        assertEquals(200f / (PadLayout.baseWidth(PadLayout.Control.LEFT_STICK) * 720), stick.scale, .01f);
+        assertEquals(200f / (PadLayout.baseWidth(PadLayout.Control.LEFT_STICK) * 720), stick.scale(), .01f);
 
         PadLayout.Spec dpad = layout.spec(PadLayout.Control.DPAD);
         assertEquals(800f / WIDTH, dpad.cx, .001f);
@@ -42,7 +42,7 @@ public class ClassicLayoutMigrationTest {
         PadLayout.Spec face = layout.spec(PadLayout.Control.FACE);
         assertEquals(1480f / WIDTH, face.cx, .001f);
         assertEquals(480f / HEIGHT, face.cy, .001f);
-        assertEquals(160f / (PadLayout.baseWidth(PadLayout.Control.FACE) * 720), face.scale, .01f);
+        assertEquals(160f / (PadLayout.baseWidth(PadLayout.Control.FACE) * 720), face.scale(), .01f);
 
         assertFalse("a control the modern default leaves out is shown", layout.spec(PadLayout.Control.HOME).hidden);
         assertFalse(layout.spec(PadLayout.Control.RIGHT_GRIP).hidden);

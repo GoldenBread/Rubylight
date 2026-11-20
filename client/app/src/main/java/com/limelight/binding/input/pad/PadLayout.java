@@ -72,9 +72,18 @@ public final class PadLayout {
     /** A ready-made selection of controls; {@link #applyPreset} places them at their defaults. */
     public enum Preset { DEFAULT, MINIMAL, FULL }
 
-    public static final float MIN_SCALE = .5f, MAX_SCALE = 2f;
+    /**
+     * The smallest and the largest scale a control's width or height stores. Whatever the scale, a control is never
+     * smaller than a full touch ({@link #MIN_TOUCH_DP}, {@link #MIN_PILL_WIDTH_DP}) and never wider or taller than
+     * the surface ({@link #bounds}); the editor grows a control up to the whole surface, and MAX_SCALE only bounds
+     * what a broken or hand-written layout can hold. Layouts saved before free resizing stayed within 0.5 to 2.
+     */
+    public static final float MIN_SCALE = .5f, MAX_SCALE = 100f;
     public static final int MIN_OPACITY = 10, MAX_OPACITY = 100;
-    /** The longest side of the default unit: a tablet's controls stop growing past a large phone's. */
+    /**
+     * The longest side of the default unit: a tablet's controls stop growing past a large phone's. It sets the
+     * default sizes only; a control resized in the editor can still fill the whole surface.
+     */
     static final float MAX_UNIT_DP = 440;
     /**
      * Layouts are written as v1, which an older build still reads: it skips the controls, glyphs and pointer mode it
@@ -84,9 +93,17 @@ public final class PadLayout {
     private static final String VERSION = "v1";
     private static final String VERSION_V2 = "v2";
 
-    /** One control's settings. {@code cx} and {@code cy} are fractions of the surface; NaN means the default place. */
+    /**
+     * One control's settings. {@code cx} and {@code cy} are fractions of the surface; NaN means the default place.
+     *
+     * <p>{@code widthScale} and {@code heightScale} size the control's box independently, each a multiple of its
+     * default width or height ({@link #baseWidth} or {@link #baseHeight} times the {@link #unit}), so a control can
+     * be resized to any shape up to the whole surface. A layout saved before free resizing had one scale for both
+     * and loads with the two equal, so it keeps its size and shape. {@link #serialize} writes the larger as the one
+     * scale an older build reads and adds the two as the seventh and eighth fields.
+     */
     public static final class Spec {
-        public float cx = Float.NaN, cy = Float.NaN, scale = 1;
+        public float cx = Float.NaN, cy = Float.NaN, widthScale = 1, heightScale = 1;
         public int opacity = MAX_OPACITY;
         public boolean hidden;
         /** The control's own default for {@link #hidden}; a spec that matches it is not saved. */
@@ -105,12 +122,18 @@ public final class PadLayout {
             return !Float.isNaN(cx) && !Float.isNaN(cy);
         }
 
+        /** The larger of the two scales: the size the editor shows, and the one scale an older build reads. */
+        public float scale() {
+            return Math.max(widthScale, heightScale);
+        }
+
         void copyFrom(Spec other) {
-            cx = other.cx; cy = other.cy; scale = other.scale; opacity = other.opacity; hidden = other.hidden;
+            cx = other.cx; cy = other.cy; widthScale = other.widthScale; heightScale = other.heightScale;
+            opacity = other.opacity; hidden = other.hidden;
         }
 
         boolean isDefault() {
-            return !placed() && scale == 1 && opacity == MAX_OPACITY && hidden == defaultHidden;
+            return !placed() && widthScale == 1 && heightScale == 1 && opacity == MAX_OPACITY && hidden == defaultHidden;
         }
     }
 
@@ -213,8 +236,54 @@ public final class PadLayout {
         }
     }
 
+    /** Gives the control one scale for its width and height: its default shape at {@code scale} times its size. */
     public void setScale(Control control, float scale) {
-        spec(control).scale = clamp(scale, MIN_SCALE, MAX_SCALE);
+        setSize(control, scale, scale);
+    }
+
+    /** Sizes the control's width and height independently, each as a multiple of its default ({@link Spec}). */
+    public void setSize(Control control, float widthScale, float heightScale) {
+        Spec spec = spec(control);
+        spec.widthScale = clampScale(widthScale);
+        spec.heightScale = clampScale(heightScale);
+    }
+
+    private static float clampScale(float scale) {
+        return Float.isNaN(scale) ? 1 : clamp(scale, MIN_SCALE, MAX_SCALE);
+    }
+
+    /**
+     * Gives the control the box ({@code left}, {@code top}, {@code w}, {@code h}) in pixels of a {@code width} x
+     * {@code height} surface: its center, and its width and height scales, each between a full touch and the
+     * surface. The editor's corner handles size controls this way, and so can a layout carried over from pixel boxes.
+     */
+    public void setBounds(Control control, float left, float top, float w, float h, float width, float height,
+                          float density) {
+        float u = unit(width, height, density);
+        setSize(control, Math.min(w, width) / Math.max(1e-6f, baseWidth(control) * u),
+                Math.min(h, height) / Math.max(1e-6f, baseHeight(control) * u));
+        moveTo(control, left + w / 2, top + h / 2, width, height, density);
+    }
+
+    /**
+     * Scales the control from {@code widthScale} x {@code heightScale} by {@code factor} in both directions, keeping
+     * its shape: the factor stops where a side would fall below {@link #MIN_SCALE} or grow past this surface.
+     * Pinching and the editor's plus and minus buttons resize this way; the corner handles size each side alone.
+     */
+    public void scaleFrom(Control control, float widthScale, float heightScale, float factor, float width,
+                          float height, float density) {
+        float least = Math.max(MIN_SCALE / Math.max(1e-6f, widthScale), MIN_SCALE / Math.max(1e-6f, heightScale));
+        float most = Float.MAX_VALUE;
+        if (width > 0 && height > 0) {
+            // As wide or as tall as the surface, whichever comes first; a surface not yet laid out sets no limit.
+            float u = unit(width, height, density);
+            most = Math.min(width / Math.max(1e-6f, baseWidth(control) * u * widthScale),
+                    height / Math.max(1e-6f, baseHeight(control) * u * heightScale));
+        }
+        float f = Float.isNaN(factor) ? 1 : factor;
+        // Where the two limits cross (a side at its smallest, another past a small surface), it can shrink, not grow.
+        f = most >= least ? Math.max(least, Math.min(most, f)) : Math.min(f, 1);
+        setSize(control, widthScale * f, heightScale * f);
     }
 
     public void setOpacity(Control control, int opacity) {
@@ -468,11 +537,11 @@ public final class PadLayout {
     public float[] bounds(Control control, float width, float height, float density, float[] out) {
         Spec spec = spec(control);
         float u = unit(width, height, density);
-        float w = width(control, u, density, spec.scale), h = height(control, u, density, spec.scale);
-        // A control larger than the surface is shrunk to fit, keeping its shape.
-        float fit = Math.min(1, Math.min(width / Math.max(1, w), height / Math.max(1, h)));
-        w *= fit;
-        h *= fit;
+        // Never wider or taller than the surface: a control grown to the whole surface fills it, and one sized on a
+        // larger surface (before a fold or a window resize) fits again. A scale of 2 or less, all a layout saved
+        // before free resizing has, never reaches the surface's size, so such a layout keeps its shape.
+        float w = Math.min(width(control, u, density, spec.widthScale), Math.max(0, width));
+        float h = Math.min(height(control, u, density, spec.heightScale), Math.max(0, height));
         float cx, cy;
         if (spec.placed()) {
             cx = spec.cx * width;
@@ -489,7 +558,11 @@ public final class PadLayout {
         return out;
     }
 
-    /** "v1|glyph=playstation|mode=camera|ID,cx,cy,scale,opacity,hidden|..." for edits; "v1" alone for none. */
+    /**
+     * "v1|glyph=playstation|mode=camera|ID,cx,cy,scale,opacity,hidden[,widthScale,heightScale]|..." for edits; "v1"
+     * alone for none. A control whose width and height scales differ adds them after the six fields every version
+     * reads, and writes the larger as its one scale, which an older build shows (up to its own limit of 2).
+     */
     public String serialize() {
         StringBuilder out = new StringBuilder(VERSION);
         if (glyph != Glyph.XBOX) out.append("|glyph=").append(glyph.name().toLowerCase(Locale.ROOT));
@@ -500,9 +573,13 @@ public final class PadLayout {
             out.append('|').append(control.name()).append(',')
                     .append(spec.placed() ? String.format(Locale.ROOT, "%.4f", spec.cx) : "-").append(',')
                     .append(spec.placed() ? String.format(Locale.ROOT, "%.4f", spec.cy) : "-").append(',')
-                    .append(String.format(Locale.ROOT, "%.3f", spec.scale)).append(',')
+                    .append(String.format(Locale.ROOT, "%.3f", spec.scale())).append(',')
                     .append(spec.opacity).append(',')
                     .append(spec.hidden ? '1' : '0');
+            if (spec.widthScale != spec.heightScale) {
+                out.append(',').append(String.format(Locale.ROOT, "%.3f", spec.widthScale))
+                        .append(',').append(String.format(Locale.ROOT, "%.3f", spec.heightScale));
+            }
         }
         return out.toString();
     }
@@ -511,7 +588,8 @@ public final class PadLayout {
      * Reads {@link #serialize} output; "v2", the prefix a short-lived build wrote, loads too. The glyphs, the
      * pointer touchpad and its mode are optional: a layout saved before them loads as an Xbox layout with a mouse
      * touchpad. Unknown controls, unknown settings and broken entries are skipped and the rest kept, so a layout from
-     * a newer version still loads what this one knows. Null or another version gives the default layout.
+     * a newer version still loads what this one knows; an entry's fields past the eighth are ignored, as an older
+     * build ignores the seventh and eighth. Null or another version gives the default layout.
      */
     public static PadLayout parse(String text) {
         PadLayout layout = new PadLayout();
@@ -547,16 +625,33 @@ public final class PadLayout {
                         spec.cy = Float.NaN;
                     }
                 }
-                spec.scale = clamp(Float.parseFloat(fields[3]), MIN_SCALE, MAX_SCALE);
-                if (Float.isNaN(spec.scale)) spec.scale = 1;
+                spec.widthScale = spec.heightScale = clampScale(Float.parseFloat(fields[3]));
                 spec.opacity = Math.max(MIN_OPACITY, Math.min(MAX_OPACITY, Integer.parseInt(fields[4])));
                 spec.hidden = "1".equals(fields[5]);
+                // A width and a height of their own, after the six fields; without both, the one scale serves both.
+                if (fields.length >= 8) {
+                    float w = parseScale(fields[6]), h = parseScale(fields[7]);
+                    if (!Float.isNaN(w) && !Float.isNaN(h)) {
+                        spec.widthScale = w;
+                        spec.heightScale = h;
+                    }
+                }
                 layout.spec(control).copyFrom(spec);
             } catch (NumberFormatException ignored) {
                 // Skip this entry and keep the rest.
             }
         }
         return layout;
+    }
+
+    /** A saved width or height scale, clamped; NaN when the field is not a number. */
+    private static float parseScale(String field) {
+        try {
+            float scale = Float.parseFloat(field);
+            return Float.isNaN(scale) ? Float.NaN : clampScale(scale);
+        } catch (NumberFormatException e) {
+            return Float.NaN;
+        }
     }
 
     static float clamp(float value, float min, float max) {

@@ -26,8 +26,18 @@ public final class PadInput {
      * A finger between two neighbours presses both, so A+B is one thumb; the very middle presses none.
      */
     public static int face(float x, float y, float size) {
-        if (size <= 0) return 0;
-        float fx = x / size, fy = y / size;
+        return face(x, y, size, size);
+    }
+
+    /**
+     * The face buttons a finger presses in a cluster box of {@code width} x {@code height} pixels. The box is the
+     * square cluster stretched to its shape: the buttons spread over a wide or tall box, and the band between two
+     * neighbours that presses both and the dead middle stretch with them, so every part of the box answers as the
+     * same part of a square one does. A square box answers exactly as {@link #face(float, float, float)}.
+     */
+    public static int face(float x, float y, float width, float height) {
+        if (width <= 0 || height <= 0) return 0;
+        float fx = x / width, fy = y / height;
         float mx = fx - .5f, my = fy - .5f;
         if (mx * mx + my * my < FACE_CENTER_GAP * FACE_CENTER_GAP) return 0;
         int nearest = -1, second = -1;
@@ -50,9 +60,18 @@ public final class PadInput {
 
     /** The D-pad directions a finger at ({@code x}, {@code y}) holds on a pad of {@code size} pixels, as gamepad flags. */
     public static int dpad(float x, float y, float size) {
-        if (size <= 0) return 0;
-        float half = size / 2;
-        float nx = (x - half) / half, ny = (half - y) / half;
+        return dpad(x, y, size, size);
+    }
+
+    /**
+     * The D-pad directions a finger holds on a pad box of {@code width} x {@code height} pixels: by its angle from
+     * the box's center, measured with the box stretched to a square, so the diagonals lead to the box's corners and
+     * the dead center stretches with the box.
+     */
+    public static int dpad(float x, float y, float width, float height) {
+        if (width <= 0 || height <= 0) return 0;
+        float halfW = width / 2, halfH = height / 2;
+        float nx = (x - halfW) / halfW, ny = (halfH - y) / halfH;
         if (nx * nx + ny * ny < LayoutStick.DPAD_DEADZONE * LayoutStick.DPAD_DEADZONE) return 0;
         return LayoutStick.dpadFlags(LayoutStick.directions(nx, ny, LayoutStick.DPAD_DIAGONAL));
     }

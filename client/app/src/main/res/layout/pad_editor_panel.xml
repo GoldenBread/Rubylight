@@ -38,8 +38,10 @@
 
         <TextView
             android:id="@+id/pad_editor_size"
-            android:layout_width="56dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:minWidth="56dp"
+            android:maxLines="1"
             android:gravity="center"
             android:textAppearance="@style/TextAppearance.Nightjar.Label"
             android:textColor="@color/night_on_surface" />

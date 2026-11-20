@@ -94,25 +94,28 @@ final class PadPainter {
     void draw(Canvas canvas, PadLayout.Control control, float left, float top, float width, float height, State state) {
         switch (control.shape) {
             case STICK: drawStick(canvas, control, left, top, width, height, state); break;
-            case DPAD: drawDpad(canvas, left, top, Math.min(width, height), state.flags); break;
-            case FACE: drawFace(canvas, left, top, Math.min(width, height), state.flags); break;
+            case DPAD: drawDpad(canvas, left, top, width, height, state.flags); break;
+            case FACE: drawFace(canvas, left, top, width, height, state.flags); break;
             case PILL: drawPill(canvas, control, left, top, width, height, state.pressed); break;
             case PAD: drawTrackpad(canvas, control, left, top, width, height, state); break;
             case TOUCHPAD: drawPointerPad(canvas, left, top, width, height, state); break;
-            default: drawRound(canvas, control, left, top, Math.min(width, height), state.pressed); break;
+            default: drawRound(canvas, control, left, top, width, height, state.pressed); break;
         }
     }
 
+    /** How far outside a control's box the editor draws its outline and, at the outline's corners, its handles. */
+    static final float OUTLINE_DP = 3;
+
     /** The editor's outline around a control: amber when selected, dashed white otherwise. */
     void drawOutline(Canvas canvas, float left, float top, float width, float height, boolean selected, boolean hidden) {
-        float pad = 3 * density, radius = 12 * density;
+        float pad = OUTLINE_DP * density, radius = 12 * density;
         rect.set(left - pad, top - pad, left + width + pad, top + height + pad);
         if (selected) {
             stroke.setColor(accent);
             stroke.setStrokeWidth(2.5f * density);
             canvas.drawRoundRect(rect, radius, radius, stroke);
             stroke.setStrokeWidth(1.5f * density);
-            // Corner handles say "this one can be resized".
+            // Corner handles: dragging one sizes the control's width and height (PadEditor).
             fill.setColor(accent);
             float h = 4 * density;
             canvas.drawCircle(rect.left, rect.top, h, fill);
@@ -126,11 +129,26 @@ final class PadPainter {
     }
 
     private void glass(Canvas canvas, boolean pressed, float cx, float cy, float r) {
+        glass(canvas, pressed, cx, cy, r, r);
+    }
+
+    /** A glass disc, or an oval filling a box that is not square, so the shape drawn is the shape touched. */
+    private void glass(Canvas canvas, boolean pressed, float cx, float cy, float rx, float ry) {
         fill.setColor(pressed ? accent : GLASS);
-        canvas.drawCircle(cx, cy, r, fill);
+        if (rx == ry) {
+            canvas.drawCircle(cx, cy, rx, fill);
+        } else {
+            rect.set(cx - rx, cy - ry, cx + rx, cy + ry);
+            canvas.drawOval(rect, fill);
+        }
         if (!pressed) {
             stroke.setColor(RIM);
-            canvas.drawCircle(cx, cy, r, stroke);
+            if (rx == ry) {
+                canvas.drawCircle(cx, cy, rx, stroke);
+            } else {
+                rect.set(cx - rx, cy - ry, cx + rx, cy + ry);
+                canvas.drawOval(rect, stroke);
+            }
         }
     }
 
@@ -243,54 +261,60 @@ final class PadPainter {
         return StickMath.travel(size);
     }
 
-    private void drawDpad(Canvas canvas, float left, float top, float size, int flags) {
+    /**
+     * The D-pad as one plus whose arms reach the box's edges, so a wide or tall box spreads it as {@link PadInput#dpad}
+     * reads it; the arms keep the thickness of the box's shorter side.
+     */
+    private void drawDpad(Canvas canvas, float left, float top, float width, float height, int flags) {
+        float size = Math.min(width, height);
         float arm = size * .34f, r = size * .07f;
-        float cx = left + size / 2, cy = top + size / 2;
+        float cx = left + width / 2, cy = top + height / 2;
         // The plus as one rounded shape, then each held arm filled amber on top.
         path.reset();
-        path.addRoundRect(cx - arm / 2, top, cx + arm / 2, top + size, r, r, Path.Direction.CW);
-        path.addRoundRect(left, cy - arm / 2, left + size, cy + arm / 2, r, r, Path.Direction.CW);
+        path.addRoundRect(cx - arm / 2, top, cx + arm / 2, top + height, r, r, Path.Direction.CW);
+        path.addRoundRect(left, cy - arm / 2, left + width, cy + arm / 2, r, r, Path.Direction.CW);
         path.setFillType(Path.FillType.WINDING);
         fill.setColor(GLASS);
         canvas.drawPath(path, fill);
         stroke.setColor(RIM);
-        drawPlusOutline(canvas, left, top, size, arm, r);
-        float reach = (size - arm) / 2;
-        armFill(canvas, (flags & ControllerPacket.UP_FLAG) != 0, cx - arm / 2, top, cx + arm / 2, top + reach + r, r);
-        armFill(canvas, (flags & ControllerPacket.DOWN_FLAG) != 0, cx - arm / 2, top + size - reach - r, cx + arm / 2, top + size, r);
-        armFill(canvas, (flags & ControllerPacket.LEFT_FLAG) != 0, left, cy - arm / 2, left + reach + r, cy + arm / 2, r);
-        armFill(canvas, (flags & ControllerPacket.RIGHT_FLAG) != 0, left + size - reach - r, cy - arm / 2, left + size, cy + arm / 2, r);
-        float chevron = arm * .22f, inset = reach * .5f;
-        chevron(canvas, cx, top + inset, 0, -1, chevron, (flags & ControllerPacket.UP_FLAG) != 0);
-        chevron(canvas, cx, top + size - inset, 0, 1, chevron, (flags & ControllerPacket.DOWN_FLAG) != 0);
-        chevron(canvas, left + inset, cy, -1, 0, chevron, (flags & ControllerPacket.LEFT_FLAG) != 0);
-        chevron(canvas, left + size - inset, cy, 1, 0, chevron, (flags & ControllerPacket.RIGHT_FLAG) != 0);
+        drawPlusOutline(canvas, left, top, width, height, arm, r);
+        float reachX = (width - arm) / 2, reachY = (height - arm) / 2;
+        armFill(canvas, (flags & ControllerPacket.UP_FLAG) != 0, cx - arm / 2, top, cx + arm / 2, top + reachY + r, r);
+        armFill(canvas, (flags & ControllerPacket.DOWN_FLAG) != 0, cx - arm / 2, top + height - reachY - r, cx + arm / 2, top + height, r);
+        armFill(canvas, (flags & ControllerPacket.LEFT_FLAG) != 0, left, cy - arm / 2, left + reachX + r, cy + arm / 2, r);
+        armFill(canvas, (flags & ControllerPacket.RIGHT_FLAG) != 0, left + width - reachX - r, cy - arm / 2, left + width, cy + arm / 2, r);
+        float chevron = arm * .22f, insetX = reachX * .5f, insetY = reachY * .5f;
+        chevron(canvas, cx, top + insetY, 0, -1, chevron, (flags & ControllerPacket.UP_FLAG) != 0);
+        chevron(canvas, cx, top + height - insetY, 0, 1, chevron, (flags & ControllerPacket.DOWN_FLAG) != 0);
+        chevron(canvas, left + insetX, cy, -1, 0, chevron, (flags & ControllerPacket.LEFT_FLAG) != 0);
+        chevron(canvas, left + width - insetX, cy, 1, 0, chevron, (flags & ControllerPacket.RIGHT_FLAG) != 0);
     }
 
-    private void drawPlusOutline(Canvas canvas, float left, float top, float size, float arm, float r) {
-        float a = (size - arm) / 2, b = a + arm, right = left + size, bottom = top + size;
+    private void drawPlusOutline(Canvas canvas, float left, float top, float width, float height, float arm, float r) {
+        float ax = (width - arm) / 2, bx = ax + arm, ay = (height - arm) / 2, by = ay + arm;
+        float right = left + width, bottom = top + height;
         path.reset();
-        path.moveTo(left + a + r, top);
-        path.lineTo(left + b - r, top);
-        path.quadTo(left + b, top, left + b, top + r);
-        path.lineTo(left + b, top + a);
-        path.lineTo(right - r, top + a);
-        path.quadTo(right, top + a, right, top + a + r);
-        path.lineTo(right, top + b - r);
-        path.quadTo(right, top + b, right - r, top + b);
-        path.lineTo(left + b, top + b);
-        path.lineTo(left + b, bottom - r);
-        path.quadTo(left + b, bottom, left + b - r, bottom);
-        path.lineTo(left + a + r, bottom);
-        path.quadTo(left + a, bottom, left + a, bottom - r);
-        path.lineTo(left + a, top + b);
-        path.lineTo(left + r, top + b);
-        path.quadTo(left, top + b, left, top + b - r);
-        path.lineTo(left, top + a + r);
-        path.quadTo(left, top + a, left + r, top + a);
-        path.lineTo(left + a, top + a);
-        path.lineTo(left + a, top + r);
-        path.quadTo(left + a, top, left + a + r, top);
+        path.moveTo(left + ax + r, top);
+        path.lineTo(left + bx - r, top);
+        path.quadTo(left + bx, top, left + bx, top + r);
+        path.lineTo(left + bx, top + ay);
+        path.lineTo(right - r, top + ay);
+        path.quadTo(right, top + ay, right, top + ay + r);
+        path.lineTo(right, top + by - r);
+        path.quadTo(right, top + by, right - r, top + by);
+        path.lineTo(left + bx, top + by);
+        path.lineTo(left + bx, bottom - r);
+        path.quadTo(left + bx, bottom, left + bx - r, bottom);
+        path.lineTo(left + ax + r, bottom);
+        path.quadTo(left + ax, bottom, left + ax, bottom - r);
+        path.lineTo(left + ax, top + by);
+        path.lineTo(left + r, top + by);
+        path.quadTo(left, top + by, left, top + by - r);
+        path.lineTo(left, top + ay + r);
+        path.quadTo(left, top + ay, left + r, top + ay);
+        path.lineTo(left + ax, top + ay);
+        path.lineTo(left + ax, top + r);
+        path.quadTo(left + ax, top, left + ax + r, top);
         path.close();
         canvas.drawPath(path, stroke);
     }
@@ -315,10 +339,14 @@ final class PadPainter {
         stroke.setStrokeWidth(1.5f * density);
     }
 
-    private void drawFace(Canvas canvas, float left, float top, float size, int flags) {
-        float r = size * PadInput.FACE_RADIUS;
+    /**
+     * The face cluster: each button in its own part of the box (top, bottom, left, right), spread over a wide or tall
+     * box as {@link PadInput#face} reads it, and sized to the box's shorter side so the four never overlap.
+     */
+    private void drawFace(Canvas canvas, float left, float top, float width, float height, int flags) {
+        float r = Math.min(width, height) * PadInput.FACE_RADIUS;
         for (int i = 0; i < PadInput.FACE_CENTERS.length; i++) {
-            float cx = left + PadInput.FACE_CENTERS[i][0] * size, cy = top + PadInput.FACE_CENTERS[i][1] * size;
+            float cx = left + PadInput.FACE_CENTERS[i][0] * width, cy = top + PadInput.FACE_CENTERS[i][1] * height;
             boolean held = (flags & PadInput.FACE_FLAGS[i]) != 0;
             glass(canvas, held, cx, cy, r);
             label(canvas, PadGlyphs.face(glyph, i), cx, cy, r * .95f, held);
@@ -328,7 +356,9 @@ final class PadPainter {
     private void drawPill(Canvas canvas, PadLayout.Control control, float left, float top, float width, float height, boolean pressed) {
         float inset = stroke.getStrokeWidth();
         rect.set(left + inset, top + inset, left + width - inset, top + height - inset);
-        float radius = rect.height() / 2;
+        // A stadium filling the box, lying or standing: the shorter side is the round end.
+        float thickness = Math.min(rect.width(), rect.height());
+        float radius = thickness / 2;
         fill.setColor(pressed ? accent : GLASS);
         canvas.drawRoundRect(rect, radius, radius, fill);
         if (!pressed) {
@@ -337,7 +367,7 @@ final class PadPainter {
         }
         if (control == PadLayout.Control.TOUCHPAD) {
             // Touchpad: a small pad with its click line, like the one on a PlayStation pad.
-            float h = rect.height() * .4f, w = Math.min(rect.width() * .5f, h * 1.8f);
+            float h = thickness * .4f, w = Math.min(rect.width() * .5f, h * 1.8f);
             float l = rect.centerX() - w / 2, t = rect.centerY() - h / 2;
             stroke.setColor(pressed ? onAccent : LABEL);
             rect.set(l, t, l + w, t + h);
@@ -348,9 +378,9 @@ final class PadPainter {
         String name = PadGlyphs.shoulder(control, glyph);
         if (name == null) name = pillLabel(control);
         // A long label (the grips') shrinks to stay inside the pill.
-        text.setTextSize(rect.height() * .42f);
+        text.setTextSize(thickness * .42f);
         float fit = Math.min(1, rect.width() * .8f / Math.max(1, text.measureText(name)));
-        label(canvas, name, rect.centerX(), rect.centerY(), rect.height() * .42f * fit, pressed);
+        label(canvas, name, rect.centerX(), rect.centerY(), thickness * .42f * fit, pressed);
     }
 
     static String pillLabel(PadLayout.Control control) {
@@ -412,9 +442,12 @@ final class PadPainter {
         }
     }
 
-    private void drawRound(Canvas canvas, PadLayout.Control control, float left, float top, float size, boolean pressed) {
-        float cx = left + size / 2, cy = top + size / 2, r = size / 2 - stroke.getStrokeWidth();
-        glass(canvas, pressed, cx, cy, r);
+    /** A round button filling its box: a disc in a square one, an oval in a resized one, its mark in the middle. */
+    private void drawRound(Canvas canvas, PadLayout.Control control, float left, float top, float width, float height,
+                           boolean pressed) {
+        float cx = left + width / 2, cy = top + height / 2;
+        float rx = width / 2 - stroke.getStrokeWidth(), ry = height / 2 - stroke.getStrokeWidth(), r = Math.min(rx, ry);
+        glass(canvas, pressed, cx, cy, rx, ry);
         int color = pressed ? onAccent : LABEL;
         float g = r * .42f;
         stroke.setColor(color);

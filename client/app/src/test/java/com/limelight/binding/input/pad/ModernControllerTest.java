@@ -350,6 +350,80 @@ public class ModernControllerTest {
         controller.finishEditing(false);
     }
 
+    /**
+     * The picked control's corner handles size its width and height independently, the opposite corner staying put,
+     * and the editor's Done keeps the shape.
+     */
+    @Test public void aCornerHandleSizesWidthAndHeightIndependently() {
+        ModernController controller = controller(GAME);
+        controller.startEditing();
+        layout();
+        PadEditor editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        View surface = editor.getChildAt(0);
+        float density = frame.getContext().getResources().getDisplayMetrics().density;
+        float outline = PadPainter.OUTLINE_DP * density;
+        editor.select(PadLayout.Control.FACE);
+        float[] before = editor.draft().bounds(PadLayout.Control.FACE, surface.getWidth(), surface.getHeight(), density,
+                new float[4]);
+
+        // The top-left handle, dragged 200 px to the left: wider, as tall as before, the bottom-right corner kept.
+        drag(surface, before[0] - outline, before[1] - outline, before[0] - outline - 200, before[1] - outline);
+        assertEquals("The pick stays", PadLayout.Control.FACE, editor.selected());
+        float[] wide = editor.draft().bounds(PadLayout.Control.FACE, surface.getWidth(), surface.getHeight(), density,
+                new float[4]);
+        assertEquals("The right edge stays", before[0] + before[2], wide[0] + wide[2], .5f);
+        assertEquals("The bottom edge stays", before[1] + before[3], wide[1] + wide[3], .5f);
+        assertEquals("200 px wider, on the 8 dp grid", before[2] + 200, wide[2], PadEditor.GRID_DP * density / 2 + .5f);
+        assertEquals("As tall, give or take the grid", before[3], wide[3], PadEditor.GRID_DP * density / 2 + .5f);
+        PadLayout.Spec spec = editor.draft().spec(PadLayout.Control.FACE);
+        assertTrue(spec.widthScale + " x " + spec.heightScale, spec.widthScale > spec.heightScale + .5f);
+
+        // The same handle dragged down: only the height changes.
+        float widthScale = spec.widthScale;
+        drag(surface, wide[0] - outline, wide[1] - outline, wide[0] - outline, wide[1] - outline + 100);
+        float[] low = editor.draft().bounds(PadLayout.Control.FACE, surface.getWidth(), surface.getHeight(), density,
+                new float[4]);
+        assertEquals(widthScale, spec.widthScale, 1e-4);
+        assertEquals(wide[3] - 100, low[3], PadEditor.GRID_DP * density / 2 + .5f);
+        assertEquals("The bottom edge still stays", before[1] + before[3], low[1] + low[3], .5f);
+
+        // A handle cannot shrink a control below a full touch, nor drag it past the surface.
+        drag(surface, low[0] - outline, low[1] - outline, low[0] + 2000, low[1] + 2000);
+        float[] least = editor.draft().bounds(PadLayout.Control.FACE, surface.getWidth(), surface.getHeight(), density,
+                new float[4]);
+        assertTrue(least[2] >= PadLayout.MIN_TOUCH_DP * density - .5f && least[3] >= PadLayout.MIN_TOUCH_DP * density - .5f);
+        drag(surface, least[0] - outline, least[1] - outline, -500, -500);
+        float[] most = editor.draft().bounds(PadLayout.Control.FACE, surface.getWidth(), surface.getHeight(), density,
+                new float[4]);
+        assertEquals("Up to the surface's corner", 0, most[0], .5f);
+        assertEquals(0, most[1], .5f);
+        assertEquals(before[0] + before[2], most[0] + most[2], .5f);
+
+        PadLayout.Spec kept = new PadLayout().spec(PadLayout.Control.FACE);
+        kept.copyFrom(spec);
+        controller.finishEditing(true);
+        PadLayout.Spec saved = controller(GAME).layout().spec(PadLayout.Control.FACE);
+        assertEquals(kept.widthScale, saved.widthScale, 1e-3);
+        assertEquals(kept.heightScale, saved.heightScale, 1e-3);
+    }
+
+    private static void drag(View view, float fromX, float fromY, float toX, float toY) {
+        long now = android.os.SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, fromX, fromY, 0);
+        view.dispatchTouchEvent(down);
+        down.recycle();
+        for (int step = 1; step <= 4; step++) {
+            float t = step / 4f;
+            MotionEvent move = MotionEvent.obtain(now, now + 16 * step, MotionEvent.ACTION_MOVE,
+                    fromX + (toX - fromX) * t, fromY + (toY - fromY) * t, 0);
+            view.dispatchTouchEvent(move);
+            move.recycle();
+        }
+        MotionEvent up = MotionEvent.obtain(now, now + 100, MotionEvent.ACTION_UP, toX, toY, 0);
+        view.dispatchTouchEvent(up);
+        up.recycle();
+    }
+
     private static void tap(View view, float x, float y) {
         long now = android.os.SystemClock.uptimeMillis();
         MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0);
@@ -501,7 +575,7 @@ public class ModernControllerTest {
         draft.setScale(PadLayout.Control.FACE, 1.5f);
         first.save(draft, true);
         first.destroy();
-        assertEquals(1.5f, controller(GAME).layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(1.5f, controller(GAME).layout().spec(PadLayout.Control.FACE).scale(), 1e-3);
         assertTrue("Another game keeps the shared layout", controller("pc-1/app-8").layout().isDefault());
     }
 
@@ -514,8 +588,8 @@ public class ModernControllerTest {
         shared.setScale(PadLayout.Control.FACE, .7f);
         controller.save(shared, false);
         controller.destroy();
-        assertEquals(.7f, controller(GAME).layout().spec(PadLayout.Control.FACE).scale, 1e-3);
-        assertEquals(.7f, controller("pc-1/app-8").layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(.7f, controller(GAME).layout().spec(PadLayout.Control.FACE).scale(), 1e-3);
+        assertEquals(.7f, controller("pc-1/app-8").layout().spec(PadLayout.Control.FACE).scale(), 1e-3);
         assertFalse(RuntimeEnvironment.getApplication().getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE)
                 .contains(PadLayoutKeys.key(true, GAME)));
     }
@@ -550,7 +624,7 @@ public class ModernControllerTest {
         editor.scaleBy(.1f);
         editor.toggleHidden();
         controller.finishEditing(true);
-        assertEquals(1.1f, controller.layout().spec(PadLayout.Control.DPAD).scale, 1e-3);
+        assertEquals(1.1f, controller.layout().spec(PadLayout.Control.DPAD).scale(), 1e-3);
         assertEquals(View.GONE, controller.view(PadLayout.Control.DPAD).getVisibility());
         controller.destroy();
         assertTrue("A game without its own layout saves for every game, so another game sees it",
@@ -567,7 +641,7 @@ public class ModernControllerTest {
             // The Steam Controller controls are off without their setting, so the editor leaves them alone.
             if (control.steam) continue;
             assertEquals(control.name(), 50, editor.draft().spec(control).opacity);
-            assertEquals(control.name(), .9f, editor.draft().spec(control).scale, 1e-3);
+            assertEquals(control.name(), .9f, editor.draft().spec(control).scale(), 1e-3);
         }
         editor.toggleHidden();
         assertFalse("Hide needs a picked control", editor.draft().spec(PadLayout.Control.FACE).hidden);
@@ -672,7 +746,7 @@ public class ModernControllerTest {
                 .edit().putString(PadLayoutKeys.legacyKey(null), "v1|FACE,0.7083,0.5556,1.300,100,0").commit();
         ModernController controller = controller(GAME);
         assertEquals(.7083f, controller.layout().spec(PadLayout.Control.FACE).cx, 1e-4);
-        assertEquals(1.3f, controller.layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(1.3f, controller.layout().spec(PadLayout.Control.FACE).scale(), 1e-3);
     }
 
     /** The first modern stream after a classic one keeps the classic controls' places. */
@@ -871,10 +945,10 @@ public class ModernControllerTest {
                 .commit();
         ModernController controller = controller(GAME);
         assertEquals("The game's own layout wins", 1.3f,
-                controller.layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+                controller.layout().spec(PadLayout.Control.FACE).scale(), 1e-3);
         assertEquals(.7083f, controller.layout().spec(PadLayout.Control.FACE).cx, 1e-4);
         assertEquals("A game without its own layout gets the shared one", .7f,
-                controller("pc-1/app-8").layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+                controller("pc-1/app-8").layout().spec(PadLayout.Control.FACE).scale(), 1e-3);
     }
 
     /** M5: saving "for all games" in portrait must not delete the game's landscape layout. */
@@ -974,7 +1048,7 @@ public class ModernControllerTest {
         String legacy = "v1|FACE,0.7083,0.5556,1.300,100,0";
         store.edit().putString(PadLayoutKeys.legacyKey(GAME), legacy).commit();
         ModernController controller = controller(GAME);
-        assertEquals("The game's old layout is its own", 1.3f, controller.layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals("The game's old layout is its own", 1.3f, controller.layout().spec(PadLayout.Control.FACE).scale(), 1e-3);
         PadLayout shared = controller.layout().copy();
         shared.setScale(PadLayout.Control.FACE, .7f);
         controller.save(shared, false);
@@ -987,7 +1061,7 @@ public class ModernControllerTest {
         frame.getLayoutParams().width = 720;
         frame.getLayoutParams().height = 1600;
         ModernController portrait = new ModernController(frame.getContext(), frame, sink, prefs, GAME);
-        assertEquals(1.3f, portrait.layout().spec(PadLayout.Control.FACE).scale, 1e-3);
+        assertEquals(1.3f, portrait.layout().spec(PadLayout.Control.FACE).scale(), 1e-3);
         portrait.destroy();
     }
 

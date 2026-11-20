@@ -385,7 +385,9 @@ final class PadControlView extends View {
             case DPAD: {
                 int index = slotFor(pointer);
                 if (index < 0) return;
-                int flags = control.shape == PadLayout.Shape.FACE ? PadInput.face(x, y, size()) : PadInput.dpad(x, y, size());
+                // The whole box answers, a resized one's buttons spread over it as they are drawn.
+                int flags = control.shape == PadLayout.Shape.FACE ? PadInput.face(x, y, getWidth(), getHeight()) :
+                        PadInput.dpad(x, y, getWidth(), getHeight());
                 if (flags == pointerFlags[index]) return;
                 int before = state.flags;
                 pointerFlags[index] = flags;
