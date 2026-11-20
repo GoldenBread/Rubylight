@@ -138,7 +138,10 @@ pub(super) fn set(adapter: LUID, target: u32, enabled: bool) -> Result<()> {
             std::thread::sleep(Duration::from_millis(50));
             true
         },
-    )
+    )?;
+    // Only a change that was applied: an unchanged display returned above.
+    super::end_trace::committed("HDR", false);
+    Ok(())
 }
 
 fn settle(

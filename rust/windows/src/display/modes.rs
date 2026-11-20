@@ -64,7 +64,9 @@ pub fn set_dpi_scale(monitor: &Monitor, percent: u32) -> Result<()> {
         relative: desired as i32,
     };
     // SAFETY: DpiSet has the expected C layout and its header carries the matching type and size.
-    unsafe { check(DisplayConfigSetDeviceInfo(&set.header)) }
+    unsafe { check(DisplayConfigSetDeviceInfo(&set.header)) }?;
+    super::end_trace::committed("scale", false);
+    Ok(())
 }
 /// The largest Windows scale, in percent, a display offers at its current mode:
 /// Windows caps the scale by resolution.

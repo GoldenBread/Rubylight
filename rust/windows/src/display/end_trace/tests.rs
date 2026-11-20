@@ -176,8 +176,36 @@ fn outcomes_name_each_step() {
 
 #[test]
 fn hooks_do_nothing_unless_armed() {
-    // No trace on this thread: neither touches a display nor arms anything.
-    phase("entry: displays on");
-    committed("switch on", true);
+    // No trace on this thread: neither acts, so neither touches a display.
+    assert!(!phase("entry, displays on"));
+    assert!(!committed("switch on", true));
+    assert!(note_commit(true).is_none());
     assert!(ARMED.with_borrow(|armed| armed.is_none()));
+    // Nor is there a settled look to start.
+    settle_later();
+    assert!(take_settle().is_none());
+}
+
+#[test]
+fn armed_hooks_name_the_phase_and_count_windows_placed_layouts() {
+    // Armed by hand: `Trace::start` would read the displays.
+    arm();
+    assert_eq!(note_commit(false), Some("before"));
+    assert!(phase("entry layout"));
+    assert_eq!(note_commit(true), Some("entry layout"));
+    assert_eq!(note_commit(true), Some("entry layout"));
+    let armed = disarm().expect("armed");
+    assert_eq!(armed.phase, "entry layout");
+    assert_eq!(armed.windows_placed, 2);
+}
+
+#[test]
+fn disarmed_hooks_stop_acting() {
+    arm();
+    assert!(phase("user's layout"));
+    assert!(disarm().is_some());
+    assert!(!phase("user's layout"));
+    assert!(note_commit(true).is_none());
+    assert!(!committed("positions", false));
+    assert!(disarm().is_none());
 }

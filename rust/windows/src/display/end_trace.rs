@@ -217,27 +217,42 @@ struct Armed {
 thread_local! {
     // The end's display work runs on the thread that drops the last lease.
     static ARMED: RefCell<Option<Armed>> = const { RefCell::new(None) };
+    // The windows before the end, for the settled look once the lease's lock is gone.
+    static SETTLE: RefCell<Option<Vec<WindowState>>> = const { RefCell::new(None) };
+}
+/// How long after the end the settled look waits: apps answer WM_DPICHANGED and the
+/// virtual display goes in that time.
+const SETTLE_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+fn arm() {
+    ARMED.with_borrow_mut(|armed| {
+        *armed = Some(Armed {
+            phase: "before",
+            windows_placed: 0,
+        })
+    });
+}
+fn disarm() -> Option<Armed> {
+    ARMED.with_borrow_mut(Option::take)
 }
 
-/// The trace of one stream's end. Dropping it logs the windows that changed.
+/// The trace of one stream's end. Dropping it logs the displays and the windows that
+/// changed, and leaves the windows before for [`settle_later`].
 pub(crate) struct Trace {
     windows: Vec<WindowState>,
     outcomes: Vec<(&'static str, bool)>,
 }
 impl Trace {
-    /// Arm the hooks on this thread, log the displays and take the windows as they are.
+    /// Log the displays, take the windows as they are and arm the hooks on this thread.
+    /// Armed last, so a panic on the way leaves nothing armed.
     pub(crate) fn start() -> Self {
-        ARMED.with_borrow_mut(|armed| {
-            *armed = Some(Armed {
-                phase: "before",
-                windows_placed: 0,
-            })
-        });
         log_displays("before", false);
-        Self {
+        let trace = Self {
             windows: crate::input::on_input_desktop(windows),
             outcomes: Vec::new(),
-        }
+        };
+        arm();
+        trace
     }
     /// Whether a step went through, for the summary: a failed one is tried again later,
     /// so what the windows did is then not the end of it.
@@ -247,48 +262,93 @@ impl Trace {
 }
 impl Drop for Trace {
     fn drop(&mut self) {
-        let windows_placed = ARMED
-            .with_borrow_mut(|armed| armed.take())
-            .map_or(0, |a| a.windows_placed);
+        let windows_placed = disarm().map_or(0, |a| a.windows_placed);
+        // The last commits (scale, HDR) often have no step line after them.
+        log_displays("after", false);
         let after = crate::input::on_input_desktop(windows);
-        let (changes, total) = changed_windows(&self.windows, &after, WINDOW_LINES);
-        tracing::info!(
-            changed = total,
-            listed = changes.len(),
-            windows_before = self.windows.len(),
-            windows_after = after.len(),
+        log_window_changes(
+            "immediate",
+            &self.windows,
+            &after,
             windows_placed,
-            steps = %describe_outcomes(&self.outcomes),
-            "windows that changed display, DPI or size while the user's layout went back"
+            &describe_outcomes(&self.outcomes),
         );
-        for change in &changes {
-            let process = process_name(change.after.pid);
-            tracing::info!(window = %describe_change(change, &process), "a window changed across the layout's return");
-        }
+        let before = std::mem::take(&mut self.windows);
+        SETTLE.with_borrow_mut(|settle| *settle = Some(before));
     }
 }
 
-/// Name the step the next commits belong to.
-pub(crate) fn phase(name: &'static str) {
-    ARMED.with_borrow_mut(|armed| {
-        if let Some(armed) = armed {
-            armed.phase = name;
-        }
-    });
+/// Look at the windows again [`SETTLE_DELAY`] after a traced end, from a thread of its
+/// own that nothing waits for. Call once the display state's lock is released; does
+/// nothing unless a [`Trace`] ended on this thread since the last call.
+pub(crate) fn settle_later() {
+    let Some(before) = take_settle() else {
+        return;
+    };
+    let spawned = std::thread::Builder::new()
+        .name("layout-end-trace".into())
+        .spawn(move || {
+            std::thread::sleep(SETTLE_DELAY);
+            log_displays("settled", false);
+            let after = crate::input::on_input_desktop(windows);
+            log_window_changes("settled", &before, &after, 0, "as the immediate look");
+        });
+    if let Err(error) = spawned {
+        tracing::debug!(%error, "the settled look at the windows after a stream's end did not start");
+    }
+}
+fn take_settle() -> Option<Vec<WindowState>> {
+    SETTLE.with_borrow_mut(Option::take)
+}
+
+fn log_window_changes(
+    look: &str,
+    before: &[WindowState],
+    after: &[WindowState],
+    windows_placed: u32,
+    steps: &str,
+) {
+    let (changes, total) = changed_windows(before, after, WINDOW_LINES);
+    tracing::info!(
+        look,
+        changed = total,
+        listed = changes.len(),
+        windows_before = before.len(),
+        windows_after = after.len(),
+        windows_placed,
+        steps,
+        "windows that changed display, DPI or size while the user's layout went back"
+    );
+    for change in &changes {
+        let process = process_name(change.after.pid);
+        tracing::info!(look, window = %describe_change(change, &process), "a window changed across the layout's return");
+    }
+}
+
+/// Name the step the next commits belong to. Whether a trace is armed on this thread.
+pub(crate) fn phase(name: &'static str) -> bool {
+    ARMED.with_borrow_mut(|armed| armed.as_mut().map(|armed| armed.phase = name).is_some())
 }
 
 /// A layout commit went through: log the displays if armed. `windows_placed` is the
-/// fallback that left every display's position and the primary to Windows.
-pub(crate) fn committed(what: &str, windows_placed: bool) {
-    let Some(phase) = ARMED.with_borrow_mut(|armed| {
+/// fallback that left every display's position and the primary to Windows. Whether
+/// a trace is armed on this thread.
+pub(crate) fn committed(what: &str, windows_placed: bool) -> bool {
+    let Some(phase) = note_commit(windows_placed) else {
+        return false;
+    };
+    log_displays(&format!("{phase}: {what}"), windows_placed);
+    true
+}
+
+/// The armed trace's phase, counting a Windows-placed layout; None when not armed.
+fn note_commit(windows_placed: bool) -> Option<&'static str> {
+    ARMED.with_borrow_mut(|armed| {
         armed.as_mut().map(|armed| {
             armed.windows_placed += u32::from(windows_placed);
             armed.phase
         })
-    }) else {
-        return;
-    };
-    log_displays(&format!("{phase}: {what}"), windows_placed);
+    })
 }
 
 fn log_displays(step: &str, windows_placed: bool) {

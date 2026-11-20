@@ -2322,6 +2322,8 @@ impl Drop for Lease {
         state.retained.clear();
         state.following = None;
         drop(state);
+        // Issue #129: the windows again once apps and Windows settled, on its own thread.
+        crate::display::end_trace::settle_later();
         match what_an_end_leaves(ended, before, &target, &crate::display::leased_displays()) {
             EndLeaves::Nothing => {}
             EndLeaves::Watch(before, end) => {
