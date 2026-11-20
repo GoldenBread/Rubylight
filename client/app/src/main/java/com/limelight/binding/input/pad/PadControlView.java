@@ -172,15 +172,28 @@ final class PadControlView extends View {
         pointerSink = sink;
     }
 
-    /** The alpha at rest; a press shows at least 60 % so a faint control still answers visibly. */
+    /**
+     * The alpha at rest; a press shows at least 60 % so a faint control still answers visibly. At 0, the opacity
+     * setting's 0 %, a control stays invisible even while pressed: the player chose controls nobody sees, so a press
+     * draws nothing, not the control, a stick's knob, a touchpad's finger nor the pressed amber.
+     */
     void setRestingAlpha(float alpha) {
         restingAlpha = alpha;
         applyAlpha();
     }
 
+    /** The alpha a press raises a faint, but visible, control to. */
+    static final float PRESSED_ALPHA = .6f;
+
+    /** The alpha for a control at rest at {@code resting}, while pressed or not. */
+    static float alpha(float resting, boolean active) {
+        if (resting <= 0) return 0;
+        return active ? Math.max(resting, PRESSED_ALPHA) : resting;
+    }
+
     private void applyAlpha() {
         boolean active = state.flags != 0 || state.pressed || state.stickActive;
-        float alpha = active ? Math.max(restingAlpha, .6f) : restingAlpha;
+        float alpha = alpha(restingAlpha, active);
         setAlpha(alpha);
         if (knobLayer != null) knobLayer.setAlpha(alpha);
     }

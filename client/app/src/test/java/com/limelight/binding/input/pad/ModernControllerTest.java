@@ -798,6 +798,49 @@ public class ModernControllerTest {
         assertEquals("Letting go centers the camera", 0, last()[3] | last()[4]);
     }
 
+    /**
+     * Opacity 0 is a player's choice of controls nobody sees: a press still plays but shows nothing, neither the
+     * control, a stick's knob, the touchpad's finger nor the pressed amber. Above 0 a faint control still answers.
+     */
+    @Test public void atOpacityZeroAPressStaysInvisibleAndAboveItAFaintControlStillAnswers() {
+        prefs.oscOpacity = 0;
+        ModernController controller = pointerController(false);
+        PadControlView button = controller.view(PadLayout.Control.LB);
+        PadControlView face = controller.view(PadLayout.Control.FACE);
+        PadControlView stick = controller.view(PadLayout.Control.LEFT_STICK);
+        PadControlView pad = controller.view(PadLayout.Control.POINTER_PAD);
+        for (PadControlView view : new PadControlView[] {button, face, stick, pad}) {
+            assertEquals(view.control + " at rest", 0, view.getAlpha(), 0);
+        }
+        button.down(0, 5, 5, 100);
+        face.down(1, face.getWidth() / 2f, face.getHeight() * .78f, 100);
+        float size = Math.min(stick.getWidth(), stick.getHeight());
+        stick.down(2, stick.getWidth() / 2f, stick.getHeight() / 2f, 100);
+        stick.move(2, stick.getWidth() / 2f + PadPainter.travel(size), stick.getHeight() / 2f);
+        pad.down(3, pad.getWidth() / 2f, pad.getHeight() / 2f, 100);
+        pad.move(3, pad.getWidth() / 2f + 20, pad.getHeight() / 2f, 200_000_000L);
+        assertEquals("Pressed, the buttons still play", ControllerPacket.LB_FLAG | ControllerPacket.A_FLAG,
+                last()[0] & (ControllerPacket.LB_FLAG | ControllerPacket.A_FLAG));
+        assertTrue("and so does the stick", last()[1] > 0);
+        assertFalse("The touchpad follows its finger", Float.isNaN(pad.state().touchX));
+        for (PadControlView view : new PadControlView[] {button, face, stick, pad}) {
+            assertEquals(view.control + " pressed", 0, view.getAlpha(), 0);
+        }
+        assertEquals("The knob layer too", 0, stick.knobLayer().getAlpha(), 0);
+        controller.releaseInput();
+
+        prefs.oscOpacity = 20;
+        controller.place();
+        assertEquals(.2f * PadLayout.MAX_OPACITY / 100f, button.getAlpha(), 1e-4);
+        button.down(0, 5, 5, 100);
+        stick.down(2, stick.getWidth() / 2f, stick.getHeight() / 2f, 100);
+        assertEquals("A press raises a faint control", PadControlView.PRESSED_ALPHA, button.getAlpha(), 1e-4);
+        assertEquals(PadControlView.PRESSED_ALPHA, stick.knobLayer().getAlpha(), 1e-4);
+        button.up(0, 200);
+        assertEquals("and letting go lowers it again", .2f, button.getAlpha(), 1e-4);
+        controller.destroy();
+    }
+
     /** H3: this game's own layout, in the old single key, keeps winning after the player saves one for all games. */
     @Test public void aGamesOwnLayoutWinsOverASharedOneSavedLater() {
         android.content.SharedPreferences store = RuntimeEnvironment.getApplication()
