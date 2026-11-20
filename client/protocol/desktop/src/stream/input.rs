@@ -230,6 +230,8 @@ impl Streaming {
                         if let Some(refused) = pads.refused_notice() {
                             self.show_toast(refused);
                         }
+                    } else if let Some(off) = self.controllers_off_notice(pads.pads.len()) {
+                        self.add_toast(off);
                     }
                 }
                 SDL_EVENT_GAMEPAD_REMOVED => {

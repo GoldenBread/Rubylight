@@ -116,7 +116,6 @@ impl App {
         }
         // A bitrate the player set before a reconnect keeps automatic bitrate off, as it was.
         let manual_bitrate = connecting.plan().bitrate_before_manual.is_some();
-        let controllers_off = controllers_notice(&settings, &connecting.plan().controllers_from, self.pads.pads.len());
         let mut streaming = Streaming::new(connecting, session, facts, display);
         // Before automatic bitrate is turned on below. Another PC's off is not this stream's to wait
         // for: it stays for the app's end.
@@ -182,7 +181,7 @@ impl App {
         }
         // Controllers connected here while a settings layer has Controllers Off: said with the layer,
         // so a PC's or game's own Off is not mistaken for a controller the PC lost.
-        if let Some(off) = controllers_off {
+        if let Some(off) = streaming.controllers_off_notice(self.pads.pads.len()) {
             streaming.add_toast(off);
         }
         // Straight to the display, the pictures go on a display plane from the first one.

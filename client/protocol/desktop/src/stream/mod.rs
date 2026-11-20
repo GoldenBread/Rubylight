@@ -737,6 +737,8 @@ pub struct Streaming {
     pub host_id: u64,
     settings: Settings,
     plan: LaunchPlan,
+    /// The notice that Controllers is Off while a controller is connected, said once a stream.
+    controllers_off: crate::app::ControllersOffNotice,
     microphone: Option<microphone::Microphone>,
     /// USB forwarding, while the setting is on and the PC forwards this device's.
     pub usb: Option<crate::usb::Panel>,
@@ -1273,6 +1275,7 @@ impl Streaming {
             microphone_unavailable: false,
             microphone_busy: None,
             plan: connecting.plan,
+            controllers_off: Default::default(),
             export_statistics: false,
             statistics: VecDeque::new(),
             menu_visible: false,
@@ -1684,6 +1687,12 @@ impl Streaming {
     /// from a view-only remote monitor.
     fn sends_controllers(&self) -> bool {
         sends_controllers(&self.settings, self.facts.role)
+    }
+
+    /// The notice that Controllers is Off while `connected` controllers are on this device: once a
+    /// stream, at its start or for the first controller connected during it.
+    pub fn controllers_off_notice(&mut self, connected: usize) -> Option<String> {
+        self.controllers_off.take(&self.settings, &self.plan.controllers_from, connected)
     }
 
     pub fn mute_microphone(&mut self, muted: bool, pads: &mut Gamepads) {

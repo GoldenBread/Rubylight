@@ -74,6 +74,30 @@ public class StreamMessagesTest {
         assertEquals("After its time a message may show again", 4, ShadowToast.shownToastCount());
     }
 
+    /** Why input does nothing shows even while another message does: after it, not instead of it. */
+    @Test
+    public void aFollowingMessageShowsAfterTheCurrentOneWithoutHidingIt() {
+        StreamMessages messages = new StreamMessages(context);
+        messages.alert("This connection is metered.", Toast.LENGTH_LONG);
+        Toast metered = ShadowToast.getLatestToast();
+        messages.follow("Controllers is Off in Settings, so no controller reaches the PC.");
+        assertEquals("Shown, not dropped to the status line", 2, ShadowToast.shownToastCount());
+        assertEquals("Controllers is Off in Settings, so no controller reaches the PC.", ShadowToast.getTextOfLatestToast());
+        assertFalse("The message before it stays", shadowOf(metered).isCancelled());
+        assertTrue(messages.notes().contains("Controllers is Off in Settings, so no controller reaches the PC."));
+        messages.follow("Controllers is Off in Settings, so no controller reaches the PC.");
+        assertEquals("The same message does not repeat while it shows", 2, ShadowToast.shownToastCount());
+        // It counts as showing until both have had their time.
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(StreamMessages.LONG_MS + 1));
+        assertTrue(messages.showing());
+        Toast following = ShadowToast.getLatestToast();
+        messages.alert("The PC blocks input from this device.", Toast.LENGTH_LONG);
+        assertTrue("Something to act on replaces both", shadowOf(metered).isCancelled() && shadowOf(following).isCancelled());
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(StreamMessages.LONG_MS + 1));
+        messages.follow("Controllers is Off in Settings, so no controller reaches the PC.");
+        assertEquals("With nothing showing it shows at once", 4, ShadowToast.shownToastCount());
+    }
+
     @Test
     public void factsAppearOnceInTheStatusLine() {
         StreamMessages messages = new StreamMessages(context);

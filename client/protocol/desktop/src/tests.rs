@@ -639,6 +639,17 @@ fn controllers_off_with_one_connected_says_where_it_was_turned_off() {
     for on in [config::Settings::default(), config::Settings { multi_controller: false, ..Default::default() }] {
         assert_eq!(controllers_notice(&on, &ControllersFrom::Game, 2), None, "every connected controller is sent");
     }
+    // Once a stream: at its start, else for the first controller connected during it.
+    let mut stream = ControllersOffNotice::default();
+    assert_eq!(stream.take(&off, &ControllersFrom::Pc, 0), None, "nothing connected at the start");
+    assert!(stream.take(&off, &ControllersFrom::Pc, 1).is_some(), "the first controller connected during the stream");
+    assert_eq!(stream.take(&off, &ControllersFrom::Pc, 2), None, "a second one is not said again");
+    let mut started = ControllersOffNotice::default();
+    assert!(started.take(&off, &ControllersFrom::Game, 1).is_some(), "said at the start");
+    assert_eq!(started.take(&off, &ControllersFrom::Game, 2), None, "not again for one connected later");
+    let mut kind = ControllersOffNotice::default();
+    assert_eq!(kind.take(&off, &ControllersFrom::StreamKind, 1), None);
+    assert_eq!(kind.take(&off, &ControllersFrom::StreamKind, 2), None, "a microphone-only stream or second screen never says it");
     crate::strings::tests::with_lang(crate::strings::Lang::De, || {
         assert_eq!(controllers_notice(&off, &ControllersFrom::Profile("Reise".into()), 1).as_deref(),
             Some("„Controller“ ist im Profil Reise auf Aus gestellt, daher erreicht kein Controller den PC."));

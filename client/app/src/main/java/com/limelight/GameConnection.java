@@ -489,14 +489,14 @@ final class GameConnection {
         LimeLog.info("Controllers: " + ControllersChoice.key(game.prefConfig.sendControllers, game.prefConfig.multiController) +
                 " from main settings, " + connectedControllers + " connected, gamepad mask 0x" + Integer.toHexString(gamepadMask) +
                 (secondScreen ? " (second screen)" : ""));
-        if (!secondScreen && ControllersChoice.leavesConnectedHere(game.prefConfig.sendControllers, connectedControllers)) {
-            // Controllers connected while Controllers is Off: said, so the PC is not blamed for losing them.
-            // On the status line, and as a message only while nothing else shows, as the start's other
-            // facts: someone who keeps Controllers Off on purpose is not interrupted at every start.
-            String controllersOff = game.getString(R.string.stream_controllers_off);
-            if (game.prefConfig.disableWarnings) game.messages.note(controllersOff);
-            else game.messages.countedNotice(controllersOff);
+        // Controllers connected while Controllers is Off: said once a stream, so the PC is not blamed for
+        // losing them. It explains input that does nothing, not a quality warning, so Disable warnings
+        // keeps it, and it follows whatever message shows instead of waiting for none (Game also says
+        // it for the first controller connected later).
+        if (game.controllersOff == null) {
+            game.controllersOff = new ControllersChoice.OffNotice(game.prefConfig.sendControllers, secondScreen);
         }
+        game.sayControllersOff(connectedControllers);
 
         // Set to the optimal mode for streaming
         float displayRefreshRate = mediaStream ? game.videoOutput.prepareDisplayForRendering() :

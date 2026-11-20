@@ -115,10 +115,22 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     PcKeyboardOverlay pcKeyboard;
     final InputManager.InputDeviceListener pcKeyboardDeviceListener = new InputManager.InputDeviceListener() {
         // A keyboard plugged in or switched to another layout changes what the host should type.
-        @Override public void onInputDeviceAdded(int deviceId) { keyboardInput.reportKeyboardLayout(); }
+        @Override public void onInputDeviceAdded(int deviceId) {
+            keyboardInput.reportKeyboardLayout();
+            // A controller connected during the stream while Controllers is Off.
+            if (ControllerHandler.isController(InputDevice.getDevice(deviceId))) runOnUiThread(() -> sayControllersOff(1));
+        }
         @Override public void onInputDeviceChanged(int deviceId) { keyboardInput.reportKeyboardLayout(); }
         @Override public void onInputDeviceRemoved(int deviceId) { runOnUiThread(keyboardInput::releasePcKeyboardPads); }
     };
+    // The notice that Controllers is Off while a controller is connected, once a stream (GameConnection).
+    com.limelight.preferences.ControllersChoice.OffNotice controllersOff;
+
+    /** Says that Controllers is Off, the one time it is due with {@code connected} controllers here. */
+    void sayControllersOff(int connected) {
+        if (controllersOff != null && controllersOff.take(connected)) messages.follow(getString(R.string.stream_controllers_off));
+    }
+
     boolean desktopWindowFocused = true;
     boolean dispatchingDesktopTouch;
     // The on-screen controller, built the first time the controls are shown or their layout is edited.

@@ -27,6 +27,8 @@ public final class StreamMessages {
     private final Set<String> notes = new LinkedHashSet<>();
     private final Map<String, String> statuses = new LinkedHashMap<>();
     private Toast current;
+    // Messages shown before `current` that it follows (follow()): replaced along with it.
+    private final List<Toast> followed = new ArrayList<>();
     private CharSequence currentText;
     private long visibleUntil;
 
@@ -62,6 +64,26 @@ public final class StreamMessages {
         if (!showing()) show(text, Toast.LENGTH_LONG);
     }
 
+    /**
+     * Something the person must see that should not hide what shows, such as why their input does
+     * nothing: it joins the status line and shows now, or right after the current message (Android
+     * shows an app's messages in turn).
+     */
+    public void follow(CharSequence text) {
+        if (text == null || text.length() == 0) return;
+        note(text);
+        if (!showing()) {
+            show(text, Toast.LENGTH_LONG);
+            return;
+        }
+        if (text.toString().contentEquals(currentText)) return;
+        followed.add(current);
+        current = Toast.makeText(context, text, Toast.LENGTH_LONG);
+        currentText = text;
+        visibleUntil += LONG_MS;
+        current.show();
+    }
+
     /** A fact for the overlay's status line alone. */
     public void note(CharSequence text) {
         if (text != null && text.length() != 0) notes.add(text.toString());
@@ -88,6 +110,8 @@ public final class StreamMessages {
     }
 
     private void show(CharSequence text, int duration) {
+        for (Toast toast : followed) toast.cancel();
+        followed.clear();
         if (current != null) current.cancel();
         current = Toast.makeText(context, text, duration);
         currentText = text;

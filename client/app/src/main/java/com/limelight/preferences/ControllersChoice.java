@@ -35,6 +35,29 @@ public final class ControllersChoice {
         return !sendControllers && connected > 0;
     }
 
+    /**
+     * The notice that Controllers is Off while a controller is connected, said once a stream: at its
+     * start, else for the first controller connected during it. Never on a second screen, whose
+     * controllers belong to the first screen's stream.
+     */
+    public static final class OffNotice {
+        private final boolean sendControllers;
+        private final boolean secondScreen;
+        private boolean said;
+
+        public OffNotice(boolean sendControllers, boolean secondScreen) {
+            this.sendControllers = sendControllers;
+            this.secondScreen = secondScreen;
+        }
+
+        /** True the one time the notice is due, with {@code connected} controllers on this device. */
+        public boolean take(int connected) {
+            if (said || secondScreen || !leavesConnectedHere(sendControllers, connected)) return false;
+            said = true;
+            return true;
+        }
+    }
+
     /** The choice's name in logs, as desktop Nightjar's (Controllers::key). */
     public static String key(boolean sendControllers, boolean multiController) {
         if (!sendControllers) return "off";

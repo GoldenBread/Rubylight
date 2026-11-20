@@ -938,8 +938,26 @@ pub(crate) fn controllers_line(settings: &config::Settings, from: &ControllersFr
     format!("controllers: {} from {}, {} connected{names}, gamepad mask {mask:#x}", choice.key(), from.log_name(), connected.len())
 }
 
-/// The stream start's notice that the `connected` controllers stay on this device, as the
-/// "Controllers" choice made in `from` is Off.
+/// The notice that Controllers is Off, said once a stream: at its start when a controller is
+/// connected, else for the first controller connected during it.
+#[derive(Debug, Default)]
+pub(crate) struct ControllersOffNotice {
+    said: bool,
+}
+
+impl ControllersOffNotice {
+    pub(crate) fn take(&mut self, settings: &config::Settings, from: &ControllersFrom, connected: usize) -> Option<String> {
+        if self.said {
+            return None;
+        }
+        let text = controllers_notice(settings, from, connected)?;
+        self.said = true;
+        Some(text)
+    }
+}
+
+/// The notice that the `connected` controllers stay on this device, as the "Controllers" choice
+/// made in `from` is Off.
 pub(crate) fn controllers_notice(settings: &config::Settings, from: &ControllersFrom, connected: usize) -> Option<String> {
     let choice = nightjar_policy::controllers::Controllers::from_saved(settings.controllers, settings.multi_controller);
     choice.leaves_connected_here(connected).then(|| from.off_notice()).flatten()

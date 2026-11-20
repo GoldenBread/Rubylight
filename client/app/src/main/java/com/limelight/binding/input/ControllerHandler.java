@@ -799,6 +799,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
+    /** Whether {@code device} counts as a controller, as the launch's gamepad mask counts them. */
+    public static boolean isController(InputDevice device) {
+        return device != null && hasJoystickAxes(device);
+    }
+
     private static boolean hasJoystickAxes(InputDevice device) {
         return (device.getSources() & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK &&
                 getMotionRangeForJoystickAxis(device, MotionEvent.AXIS_X) != null &&
