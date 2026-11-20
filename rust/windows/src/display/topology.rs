@@ -461,6 +461,7 @@ impl Topology {
         }
         if changed {
             self.restore()?;
+            super::end_trace::committed("rotation", false);
         }
         Ok(())
     }
@@ -523,6 +524,7 @@ impl Topology {
             return Ok(());
         }
         let Err(exact) = self.restore() else {
+            super::end_trace::committed("clone groups", false);
             return Ok(());
         };
         // Windows can refuse to show the first member's desktop mode on the
@@ -537,6 +539,7 @@ impl Topology {
             }
         }
         if self.restore().is_ok() {
+            super::end_trace::committed("clone groups", false);
             return Ok(());
         }
         let mut loose = self.paths.clone();
@@ -546,8 +549,11 @@ impl Topology {
         }
         let flags = SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES;
         // SAFETY: The paths remain valid for the call and their mode indices have been invalidated.
-        check(unsafe { SetDisplayConfig(Some(&loose), None, flags) })
-            .with_context(|| format!("Windows refused the cloned layout (saved modes: {exact:#})"))
+        check(unsafe { SetDisplayConfig(Some(&loose), None, flags) }).with_context(|| {
+            format!("Windows refused the cloned layout (saved modes: {exact:#})")
+        })?;
+        super::end_trace::committed("clone groups, Windows' modes", false);
+        Ok(())
     }
     pub fn nodes(&self) -> Result<Vec<butterpollo_core::topology::Node>> {
         use butterpollo_core::topology::{Kind, Mode, Node, Position};
@@ -622,7 +628,9 @@ impl Topology {
             return Ok(());
         }
         self.restore()
-            .with_context(|| format!("placing {placed:?}"))
+            .with_context(|| format!("placing {placed:?}"))?;
+        super::end_trace::committed("positions", false);
+        Ok(())
     }
     pub fn query() -> Result<Self> {
         Self::query_with_flags(QDC_ONLY_ACTIVE_PATHS)
@@ -779,6 +787,7 @@ impl Topology {
             }
         }
         topology.restore()?;
+        super::end_trace::committed("mode", false);
         if applied()? {
             return Ok(());
         }
@@ -793,6 +802,7 @@ impl Topology {
         next.dmDisplayFrequency = hz;
         next.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
         apply_mode_with(&monitor.display_name, &next, CDS_TYPE(0))?;
+        super::end_trace::committed("mode from the mode list", false);
         if !applied()? {
             let current = mode(&monitor.display_name)?;
             bail!(
@@ -862,6 +872,7 @@ impl Topology {
             -1
         };
         if kept == 0 {
+            super::end_trace::committed("switch on", false);
             return Ok(());
         }
         // Windows refuses a display that changes desktop source while it is
@@ -877,6 +888,7 @@ impl Topology {
             // SAFETY: The retained paths and queried modes remain valid for the synchronous call.
             check(unsafe { SetDisplayConfig(Some(&staying), Some(&topology.modes), flags) })
                 .context("cannot switch off the displays that change desktop source")?;
+            super::end_trace::committed("switch off the displays that change source", false);
             return Self::set_active_once(ids, false);
         }
         let supplied = describe_paths(&paths);
@@ -887,7 +899,10 @@ impl Topology {
         // SAFETY: The paths remain valid for the call and their mode indices have been invalidated.
         unsafe { check(SetDisplayConfig(Some(&paths), None, flags)) }.with_context(|| {
             format!("Windows refused the display layout (with modes: {kept}; routes: {supplied})")
-        })
+        })?;
+        // Issue #129: every position and the primary are Windows' choice now.
+        super::end_trace::committed("switch on, placed by Windows", true);
+        Ok(())
     }
     pub fn monitors(&self) -> Vec<Monitor> {
         let primary = crate::capture::displays()

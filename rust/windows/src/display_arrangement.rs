@@ -582,9 +582,15 @@ fn forget_saved_layout(before: &Snapshot, target: &str, saves: bool) -> Result<(
         before,
         target,
         connected,
-        Topology::set_active,
+        |ids| {
+            crate::display::end_trace::phase("entry, displays on");
+            Topology::set_active(ids)
+        },
         || Ok(Snapshot::capture()?.nodes),
-        Snapshot::restore,
+        |layout| {
+            crate::display::end_trace::phase("entry layout");
+            layout.restore()
+        },
         || {
             if saves {
                 Topology::save_current()
@@ -2222,10 +2228,26 @@ fn end_layout(state: &State, target: &str, saved: bool) -> Result<Option<WakeEnd
     } else {
         Vec::new()
     };
+    // Issue #129: log each layout commit of the way back and the windows that moved.
+    let mut trace = (saved || restore).then(crate::display::end_trace::Trace::start);
+    let mut outcome = |step, ok| {
+        if let Some(trace) = trace.as_mut() {
+            trace.outcome(step, ok);
+        }
+    };
     if !woken.is_empty() {
         // One try each: a display dropping now fails them, and the watch tries again.
         let first = forget_saved_layout(before, target, true);
-        let restored = if restore { before.restore() } else { Ok(()) };
+        outcome("entry", first.is_ok());
+        let restored = if restore {
+            crate::display::end_trace::phase("user's layout");
+            let restored = before.restore();
+            outcome("user's layout", restored.is_ok());
+            restored
+        } else {
+            Ok(())
+        };
+        drop(trace);
         return Ok(Some(WakeEnd {
             woken,
             restore,
@@ -2233,12 +2255,24 @@ fn end_layout(state: &State, target: &str, saved: bool) -> Result<Option<WakeEnd
             restored,
         }));
     }
-    if saved && let Err(error) = settled(|| forget_saved_layout(before, target, true)) {
-        tracing::warn!(error = %format!("{error:#}"), "putting back the saved display layout failed");
+    if saved {
+        let entry = settled(|| forget_saved_layout(before, target, true));
+        outcome("entry", entry.is_ok());
+        if let Err(error) = entry {
+            tracing::warn!(error = %format!("{error:#}"), "putting back the saved display layout failed");
+        }
     }
-    if restore {
-        settled(|| before.restore())?;
-    }
+    let restored = if restore {
+        crate::display::end_trace::phase("user's layout");
+        let restored = settled(|| before.restore());
+        outcome("user's layout", restored.is_ok());
+        restored
+    } else {
+        Ok(())
+    };
+    // Logs what the windows did, before a failure returns.
+    drop(trace);
+    restored?;
     crate::display_recovery::arrangement(None)?;
     Ok(None)
 }

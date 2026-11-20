@@ -13,6 +13,7 @@ use windows::{
 
 mod color_state;
 mod driver_recovery;
+pub(crate) mod end_trace;
 mod hdr;
 mod hotplug;
 mod modes;
