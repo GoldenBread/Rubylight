@@ -99,6 +99,8 @@ final class PadPainter {
             case PILL: drawPill(canvas, control, left, top, width, height, state.pressed); break;
             case PAD: drawTrackpad(canvas, control, left, top, width, height, state); break;
             case TOUCHPAD: drawPointerPad(canvas, left, top, width, height, state); break;
+            case FACE_BUTTON: drawFaceButton(canvas, control, left, top, width, height, state.pressed); break;
+            case DPAD_ARM: drawDpadArm(canvas, control, left, top, width, height, state.pressed); break;
             default: drawRound(canvas, control, left, top, width, height, state.pressed); break;
         }
     }
@@ -267,7 +269,7 @@ final class PadPainter {
      */
     private void drawDpad(Canvas canvas, float left, float top, float width, float height, int flags) {
         float size = Math.min(width, height);
-        float arm = size * .34f, r = size * .07f;
+        float arm = size * PadInput.DPAD_ARM, r = size * PadInput.DPAD_CORNER;
         float cx = left + width / 2, cy = top + height / 2;
         // The plus as one rounded shape, then each held arm filled amber on top.
         path.reset();
@@ -351,6 +353,38 @@ final class PadPainter {
             glass(canvas, held, cx, cy, r);
             label(canvas, PadGlyphs.face(glyph, i), cx, cy, r * .95f, held);
         }
+    }
+
+    /** One face button of a split cluster: the cluster's glass button filling its box, with the glyph set's letter. */
+    private void drawFaceButton(Canvas canvas, PadLayout.Control control, float left, float top, float width,
+                                float height, boolean pressed) {
+        float cx = left + width / 2, cy = top + height / 2;
+        float rx = width / 2 - stroke.getStrokeWidth(), ry = height / 2 - stroke.getStrokeWidth();
+        glass(canvas, pressed, cx, cy, rx, ry);
+        label(canvas, PadGlyphs.face(glyph, control.memberIndex()), cx, cy, Math.min(rx, ry) * .95f, pressed);
+    }
+
+    /**
+     * One direction of a split D-pad: its arm filling the box, rounded as the D-pad's arms are, with its chevron
+     * pointing out; amber while held.
+     */
+    private void drawDpadArm(Canvas canvas, PadLayout.Control control, float left, float top, float width, float height,
+                             boolean pressed) {
+        boolean vertical = control == PadLayout.Control.DPAD_UP || control == PadLayout.Control.DPAD_DOWN;
+        float inset = stroke.getStrokeWidth();
+        rect.set(left + inset, top + inset, left + width - inset, top + height - inset);
+        float thickness = vertical ? rect.width() : rect.height();
+        float radius = Math.min(thickness * PadInput.DPAD_CORNER / PadInput.DPAD_ARM, Math.min(rect.width(), rect.height()) / 2);
+        fill.setColor(pressed ? accent : GLASS);
+        canvas.drawRoundRect(rect, radius, radius, fill);
+        if (!pressed) {
+            stroke.setColor(RIM);
+            canvas.drawRoundRect(rect, radius, radius, stroke);
+        }
+        int dx = control == PadLayout.Control.DPAD_LEFT ? -1 : control == PadLayout.Control.DPAD_RIGHT ? 1 : 0;
+        int dy = control == PadLayout.Control.DPAD_UP ? -1 : control == PadLayout.Control.DPAD_DOWN ? 1 : 0;
+        float size = Math.min(thickness, vertical ? rect.height() : rect.width());
+        chevron(canvas, rect.centerX(), rect.centerY(), dx, dy, size * .22f, pressed);
     }
 
     private void drawPill(Canvas canvas, PadLayout.Control control, float left, float top, float width, float height, boolean pressed) {

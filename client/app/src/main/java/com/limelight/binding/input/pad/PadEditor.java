@@ -45,7 +45,7 @@ final class PadEditor extends FrameLayout {
     private final Surface surface;
     private final View panel;
     private final TextView selection, sizeText, hint;
-    private final MaterialButton hide, reset, addWasd, addTouchpad, preset, glyphs, pointerMode;
+    private final MaterialButton hide, reset, addWasd, addTouchpad, preset, glyphs, pointerMode, split, join;
     private boolean compactButtons;
     private final Slider opacity;
     private final float density;
@@ -98,6 +98,10 @@ final class PadEditor extends FrameLayout {
         glyphs.setOnClickListener(v -> chooseGlyphs());
         pointerMode = panel.findViewById(R.id.pad_editor_pointer_mode);
         pointerMode.setOnClickListener(v -> togglePointerMode());
+        split = panel.findViewById(R.id.pad_editor_split);
+        split.setOnClickListener(v -> split());
+        join = panel.findViewById(R.id.pad_editor_join);
+        join.setOnClickListener(v -> join());
         hint = panel.findViewById(R.id.pad_editor_hint);
         opacity = panel.findViewById(R.id.pad_editor_opacity);
         panel.findViewById(R.id.pad_editor_smaller).setOnClickListener(v -> scaleBy(-SCALE_STEP));
@@ -251,9 +255,16 @@ final class PadEditor extends FrameLayout {
         return !controller.forcedHidden(control);
     }
 
-    /** Whether the surface draws the control and a tap can pick it: a control the default layout leaves out has no ghost while hidden. */
+    /**
+     * Whether the surface draws the control and a tap can pick it: a control the default layout leaves out has no
+     * ghost while hidden. A cluster and its members never show together: a split cluster has no ghost under its
+     * members, and a member is off the surface while its cluster shows.
+     */
     private boolean onSurface(PadLayout.Control control) {
-        return editable(control) && !(control.hiddenByDefault && draft.spec(control).hidden);
+        if (!editable(control) || (control.hiddenByDefault && draft.spec(control).hidden)) return false;
+        PadLayout.Control cluster = control.cluster();
+        if (cluster != null) return draft.spec(cluster).hidden;
+        return !draft.isSplit(control);
     }
 
     /**
@@ -293,6 +304,27 @@ final class PadEditor extends FrameLayout {
         if (selected == null) return;
         PadLayout.Spec spec = draft.spec(selected);
         spec.hidden = !spec.hidden;
+        changed();
+    }
+
+    /**
+     * Splits the picked face cluster or D-pad into four controls of their own, where its buttons were and at their
+     * sizes, and picks the first, so Join is at hand.
+     */
+    void split() {
+        if (selected == null || PadLayout.members(selected).length == 0) return;
+        PadLayout.Control cluster = selected;
+        draft.split(cluster, surfaceWidth(), surfaceHeight(), density);
+        select(PadLayout.members(cluster)[0]);
+        changed();
+    }
+
+    /** Joins the picked member's cluster again, where and as it was, and picks it. */
+    void join() {
+        if (selected == null || selected.cluster() == null) return;
+        PadLayout.Control cluster = selected.cluster();
+        draft.join(cluster);
+        select(cluster);
         changed();
     }
 
@@ -351,7 +383,8 @@ final class PadEditor extends FrameLayout {
 
     private void updatePanel() {
         PadLayout.Spec spec = reference();
-        String name = selected == null ? getContext().getString(R.string.pad_edit_all) : name(getContext(), selected);
+        String name = selected == null ? getContext().getString(R.string.pad_edit_all) :
+                name(getContext(), selected, draft.glyph());
         if (selected != null && spec.hidden) name = getContext().getString(R.string.pad_edit_hidden, name);
         selection.setText(name);
         sizeText.setText(sizeLabel(spec));
@@ -368,6 +401,9 @@ final class PadEditor extends FrameLayout {
         boolean touchpadOut = editable(PadLayout.Control.POINTER_PAD) && draft.spec(PadLayout.Control.POINTER_PAD).hidden;
         addTouchpad.setVisibility(touchpadOut ? VISIBLE : GONE);
         pointerMode.setVisibility(selected == PadLayout.Control.POINTER_PAD ? VISIBLE : GONE);
+        // Split for a shown face cluster or D-pad; Join for one of the members that stand in for it.
+        split.setVisibility(selected != null && PadLayout.members(selected).length > 0 && !spec.hidden ? VISIBLE : GONE);
+        join.setVisibility(selected != null && selected.cluster() != null ? VISIBLE : GONE);
         boolean camera = draft.pointerMode() == PadLayout.PointerMode.CAMERA;
         // The text names the mode now; the description names what pressing gives, since the button switches.
         pointerMode.setText(getContext().getString(camera ? R.string.pad_touchpad_camera : R.string.pad_touchpad_mouse));
@@ -380,7 +416,7 @@ final class PadEditor extends FrameLayout {
     static String sizeLabel(PadLayout.Spec spec) {
         int w = Math.round(spec.widthScale * 100), h = Math.round(spec.heightScale * 100);
         return w == h ? String.format(Locale.getDefault(), "%d %%", w) :
-                String.format(Locale.getDefault(), "%d × %d %%", w, h);
+                String.format(Locale.getDefault(), "%d \u00d7 %d %%", w, h);
     }
 
     private static String glyphName(Context context, PadLayout.Glyph glyph) {
@@ -412,9 +448,21 @@ final class PadEditor extends FrameLayout {
         androidx.appcompat.widget.TooltipCompat.setTooltipText(button, compactButtons ? text : null);
     }
 
-    /** The control's name for people: its label, or what it is when it has none. */
+    /** The control's name for people, with Xbox's face letters. */
     static String name(Context context, PadLayout.Control control) {
+        return name(context, control, PadLayout.Glyph.XBOX);
+    }
+
+    /** The control's name for people: its label, or what it is when it has none; a face button's in its glyph set. */
+    static String name(Context context, PadLayout.Control control, PadLayout.Glyph glyph) {
+        if (control.shape == PadLayout.Shape.FACE_BUTTON) {
+            return context.getString(R.string.pad_face_button, PadGlyphs.face(glyph, control.memberIndex()));
+        }
         switch (control) {
+            case DPAD_UP: return context.getString(R.string.pad_dpad_up);
+            case DPAD_DOWN: return context.getString(R.string.pad_dpad_down);
+            case DPAD_LEFT: return context.getString(R.string.pad_dpad_left);
+            case DPAD_RIGHT: return context.getString(R.string.pad_dpad_right);
             case LEFT_STICK: return context.getString(R.string.pad_left_stick);
             case RIGHT_STICK: return context.getString(R.string.pad_right_stick);
             case DPAD: return context.getString(R.string.pad_dpad);

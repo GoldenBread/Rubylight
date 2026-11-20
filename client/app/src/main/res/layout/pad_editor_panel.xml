@@ -172,6 +172,23 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/pad_touchpad_mouse" />
+
+        <!-- Split for the picked face cluster or D-pad, Join for one of its members. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/pad_editor_split"
+            style="@style/Widget.Nightjar.Button.Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/pad_edit_split"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/pad_editor_join"
+            style="@style/Widget.Nightjar.Button.Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/pad_edit_join"
+            android:visibility="gone" />
     </LinearLayout>
 
     <LinearLayout

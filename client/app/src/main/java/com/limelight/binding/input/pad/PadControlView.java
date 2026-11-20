@@ -24,7 +24,8 @@ import com.limelight.ui.Haptics;
  * each go to their own. Sticks follow one finger; the face cluster and the D-pad follow every finger
  * on them, so a thumb can slide from A to B or rest between them for both. A Steam Controller trackpad follows one
  * finger and sends it as a touch on that pad; a grip holds from one tap to the next. The pointer touchpad moves the
- * mouse or the camera, with tap, two-finger right-click and two-finger scroll.
+ * mouse or the camera, with tap, two-finger right-click and two-finger scroll. A split cluster's members are views of
+ * their own, and a finger that lands on one slides across all four ({@link Group}).
  */
 @SuppressLint("ViewConstructor") // Created by ModernController for one control.
 final class PadControlView extends View {
@@ -51,6 +52,8 @@ final class PadControlView extends View {
     private ModernController.TouchSink touchSink;
     /** The pressure of the touch being handled, for a trackpad. */
     private float touchPressure = 1;
+    /** The split cluster this control is a member of; null for every other control. */
+    private Group group;
 
     /** Where the pointer touchpad's mouse movement, clicks and scrolls go; it sends nothing without one. */
     private ModernController.PointerSink pointerSink;
@@ -145,6 +148,92 @@ final class PadControlView extends View {
     public void setVisibility(int visibility) {
         super.setVisibility(visibility);
         if (knobLayer != null) knobLayer.setVisibility(visibility);
+        // A hidden member takes no input, also from a finger that slid onto it from another member.
+        if (group != null && visibility != VISIBLE) group.update(null);
+    }
+
+    /**
+     * The four members of a split cluster (A, B, X and Y, or the D-pad's directions) as one group. There is no touch
+     * router: Android keeps sending a finger's moves to the view it landed on, which owns it. On every move the owner
+     * asks the group which members' boxes hold the finger, in the frame's coordinates, and holds all of them, so
+     * sliding from A to B lets go of A and presses B, and a finger where two boxes overlap holds both (a D-pad
+     * diagonal). Each member shows itself pressed while any finger holds it and sends its own button in its own slot
+     * of the gamepad report, as separate controls do.
+     */
+    static final class Group {
+        private final PadControlView[] members;
+        /** The members some finger holds, as bits in member order. */
+        private int held;
+
+        /** {@code members} in {@link PadLayout.Control#memberIndex} order; one missing is null. */
+        Group(PadControlView... members) {
+            this.members = members;
+            for (PadControlView member : members) {
+                if (member != null) member.group = this;
+            }
+        }
+
+        /** The shown members whose boxes hold the point ({@code x}, {@code y}) of the frame, as bits. */
+        int under(float x, float y) {
+            int bits = 0;
+            for (int i = 0; i < members.length; i++) {
+                PadControlView member = members[i];
+                if (member == null || member.getVisibility() != VISIBLE) continue;
+                if (x >= member.getLeft() && x < member.getRight() && y >= member.getTop() && y < member.getBottom()) {
+                    bits |= 1 << i;
+                }
+            }
+            return bits;
+        }
+
+        /**
+         * Gathers what every finger on the group holds and shows and sends it; {@code owner}'s newly held member
+         * ticks, as a newly held button does on the clusters.
+         */
+        void update(PadControlView owner) {
+            int before = held;
+            held = 0;
+            for (PadControlView member : members) {
+                if (member == null) continue;
+                for (int i = 0; i < MAX_POINTERS; i++) {
+                    if (member.pointerIds[i] >= 0) held |= member.pointerFlags[i];
+                }
+            }
+            for (int i = 0; i < members.length; i++) {
+                PadControlView member = members[i];
+                if (member == null) continue;
+                boolean on = (held & 1 << i) != 0 && member.getVisibility() == VISIBLE;
+                if (!on) held &= ~(1 << i);
+                member.hold(on);
+            }
+            if (owner != null && (held & ~before) != 0) {
+                owner.feedback(owner.control.shape == PadLayout.Shape.FACE_BUTTON ? HapticFeedbackConstants.VIRTUAL_KEY :
+                        HapticFeedbackConstants.CLOCK_TICK);
+            }
+        }
+    }
+
+    /** The group of members this view is one of, for tests; null for every other control. */
+    Group group() {
+        return group;
+    }
+
+    /** A member held or let go by the group's fingers: its look and its button follow. */
+    private void hold(boolean on) {
+        int flags = on ? PadInput.buttonFlag(control) : 0;
+        if (state.pressed == on && state.flags == flags) return;
+        state.pressed = on;
+        state.flags = flags;
+        gamepad.setButtons(slot(), flags);
+        changed();
+    }
+
+    /** A member's finger at ({@code x}, {@code y}) of this view: it holds every member under it and lets go of the rest. */
+    private void memberMove(int index, float x, float y) {
+        int under = group.under(getLeft() + x, getTop() + y);
+        if (under == pointerFlags[index]) return;
+        pointerFlags[index] = under;
+        group.update(this);
     }
 
     void configureStick(boolean floating, float deadzone) {
@@ -270,6 +359,14 @@ final class PadControlView extends View {
     }
 
     void down(int pointer, float x, float y, long time) {
+        if (group != null) {
+            int free = slotFor(-1);
+            if (free < 0) return;
+            pointerIds[free] = pointer;
+            pointerFlags[free] = 0;
+            memberMove(free, x, y);
+            return;
+        }
         switch (control.shape) {
             case STICK:
                 if (stickPointer >= 0) return;
@@ -375,6 +472,11 @@ final class PadControlView extends View {
 
     void move(int pointer, float x, float y, long eventTimeNs) {
         touchTimeNs = eventTimeNs;
+        if (group != null) {
+            int index = slotFor(pointer);
+            if (index >= 0) memberMove(index, x, y);
+            return;
+        }
         switch (control.shape) {
             case STICK:
                 if (pointer != stickPointer) return;
@@ -449,6 +551,14 @@ final class PadControlView extends View {
     }
 
     void up(int pointer, long time) {
+        if (group != null) {
+            int index = slotFor(pointer);
+            if (index < 0) return;
+            pointerIds[index] = -1;
+            pointerFlags[index] = 0;
+            group.update(this);
+            return;
+        }
         switch (control.shape) {
             case STICK:
                 if (pointer != stickPointer) return;
@@ -493,6 +603,13 @@ final class PadControlView extends View {
 
     /** Lets go of everything this control holds, as a cancelled touch does; a grip lets go too. */
     void release() {
+        if (group != null) {
+            // Its own fingers let go; a member another member's finger still holds stays held until that one lifts.
+            java.util.Arrays.fill(pointerIds, -1);
+            java.util.Arrays.fill(pointerFlags, 0);
+            group.update(null);
+            return;
+        }
         // A pointer touchpad stops at once when input is taken away; nothing can carry on.
         removeCallbacks(cameraTick);
         if (control.shape == PadLayout.Shape.TOUCHPAD) {

@@ -39,10 +39,17 @@
     <string name="summary_osc_auto_hide">Makes room on the screen when you pick up a gamepad, and brings the controls back when it disconnects. Leave it on unless you use the touch controls and a controller at once.</string>
     <string name="pad_edit_done">Done</string>
     <string name="pad_edit_move_panel">Move panel</string>
+    <string name="pad_edit_split">Split</string>
+    <string name="pad_edit_join">Join</string>
     <string name="pad_left_stick">Left stick</string>
     <string name="pad_right_stick">Right stick</string>
     <string name="pad_dpad">D-pad</string>
     <string name="pad_face">Face buttons</string>
+    <string name="pad_face_button">%1$s button</string>
+    <string name="pad_dpad_up">D-pad up</string>
+    <string name="pad_dpad_down">D-pad down</string>
+    <string name="pad_dpad_left">D-pad left</string>
+    <string name="pad_dpad_right">D-pad right</string>
     <string name="pad_view">View</string>
     <string name="pad_menu">Menu</string>
     <string name="pad_home">Home</string>

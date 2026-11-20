@@ -407,6 +407,153 @@ public class ModernControllerTest {
         assertEquals(kept.heightScale, saved.heightScale, 1e-3);
     }
 
+    /** A controller whose saved layout has the face cluster or the D-pad split into its members. */
+    private ModernController splitController(PadLayout.Control cluster) {
+        ModernController first = controller(GAME);
+        PadLayout draft = first.layout().copy();
+        draft.split(cluster, frame.getWidth(), frame.getHeight(), frame.getResources().getDisplayMetrics().density);
+        first.save(draft, false);
+        first.destroy();
+        return controller(GAME);
+    }
+
+    /** A point of the frame in {@code view}'s own coordinates, as a finger on it reports. */
+    private static float[] in(View view, float frameX, float frameY) {
+        return new float[] {frameX - view.getLeft(), frameY - view.getTop()};
+    }
+
+    /**
+     * Split, A, B, X and Y are controls of their own, and a finger slides across them as it does on the cluster: from
+     * A to B it lets go of A and presses B, though the finger still belongs to A's view, and where two boxes overlap it
+     * holds both. Each shows itself pressed while held.
+     */
+    @Test public void aSplitFaceButtonSlidesToTheNextAndAnOverlapHoldsBoth() {
+        ModernController controller = splitController(PadLayout.Control.FACE);
+        assertEquals(View.GONE, controller.view(PadLayout.Control.FACE).getVisibility());
+        for (PadLayout.Control member : PadLayout.members(PadLayout.Control.FACE)) {
+            assertEquals(member.name(), View.VISIBLE, controller.view(member).getVisibility());
+        }
+        PadControlView a = controller.view(PadLayout.Control.A), b = controller.view(PadLayout.Control.B);
+        a.down(0, a.getWidth() / 2f, a.getHeight() / 2f, 100);
+        assertEquals(ControllerPacket.A_FLAG, last()[0]);
+        assertTrue(a.state().pressed);
+
+        float[] onB = in(a, b.getLeft() + b.getWidth() / 2f, b.getTop() + b.getHeight() / 2f);
+        a.move(0, onB[0], onB[1]);
+        assertEquals("Slid onto B", ControllerPacket.B_FLAG, last()[0]);
+        assertFalse(a.state().pressed);
+        assertTrue(b.state().pressed);
+
+        int overlapLeft = Math.max(a.getLeft(), b.getLeft()), overlapTop = Math.max(a.getTop(), b.getTop());
+        assertTrue("A's and B's boxes overlap", overlapLeft < Math.min(a.getRight(), b.getRight()) &&
+                overlapTop < Math.min(a.getBottom(), b.getBottom()));
+        float[] onBoth = in(a, overlapLeft + 1, overlapTop + 1);
+        a.move(0, onBoth[0], onBoth[1]);
+        assertEquals("Where they overlap, both", ControllerPacket.A_FLAG | ControllerPacket.B_FLAG, last()[0]);
+
+        // A second finger on Y holds Y as well; the first lifting lets go of only its own.
+        PadControlView y = controller.view(PadLayout.Control.Y);
+        y.down(1, y.getWidth() / 2f, y.getHeight() / 2f, 150);
+        assertEquals(ControllerPacket.A_FLAG | ControllerPacket.B_FLAG | ControllerPacket.Y_FLAG, last()[0]);
+        a.up(0, 300);
+        assertEquals(ControllerPacket.Y_FLAG, last()[0]);
+        assertFalse(a.state().pressed || b.state().pressed);
+        // Slid off every member, nothing.
+        float[] away = in(y, y.getLeft() - 300, y.getTop() - 300);
+        y.move(1, away[0], away[1]);
+        assertEquals(0, last()[0]);
+        y.up(1, 400);
+
+        // A member a finger slid onto lets go when it hides, and a hidden member takes no input.
+        a.down(2, a.getWidth() / 2f, a.getHeight() / 2f, 500);
+        a.move(2, onB[0], onB[1]);
+        assertEquals(ControllerPacket.B_FLAG, last()[0]);
+        controller.layout().spec(PadLayout.Control.B).hidden = true;
+        controller.place();
+        assertEquals(View.GONE, b.getVisibility());
+        assertEquals(0, last()[0]);
+        a.move(2, onB[0], onB[1]);
+        assertEquals(0, last()[0]);
+        a.up(2, 600);
+        controller.destroy();
+    }
+
+    /** Split, the D-pad's arms are controls of their own; where two neighbours overlap a finger holds the diagonal. */
+    @Test public void aSplitDpadHoldsADiagonalWhereTwoArmsOverlap() {
+        ModernController controller = splitController(PadLayout.Control.DPAD);
+        PadControlView up = controller.view(PadLayout.Control.DPAD_UP), right = controller.view(PadLayout.Control.DPAD_RIGHT);
+        up.down(0, up.getWidth() / 2f, up.getHeight() / 2f, 100);
+        assertEquals(ControllerPacket.UP_FLAG, last()[0]);
+        int overlapLeft = Math.max(up.getLeft(), right.getLeft()), overlapTop = Math.max(up.getTop(), right.getTop());
+        assertTrue("Up's and right's boxes overlap", overlapLeft < Math.min(up.getRight(), right.getRight()) &&
+                overlapTop < Math.min(up.getBottom(), right.getBottom()));
+        float[] corner = in(up, overlapLeft + 1, overlapTop + 1);
+        up.move(0, corner[0], corner[1]);
+        assertEquals("The diagonal", ControllerPacket.UP_FLAG | ControllerPacket.RIGHT_FLAG, last()[0]);
+        float[] onRight = in(up, right.getLeft() + right.getWidth() - 4, right.getTop() + right.getHeight() / 2f);
+        up.move(0, onRight[0], onRight[1]);
+        assertEquals(ControllerPacket.RIGHT_FLAG, last()[0]);
+        // The middle, between the four arms, holds nothing.
+        float density = frame.getResources().getDisplayMetrics().density;
+        float[] pad = controller.layout().bounds(PadLayout.Control.DPAD, frame.getWidth(), frame.getHeight(), density,
+                new float[4]);
+        float[] middle = in(up, pad[0] + pad[2] / 2, pad[1] + pad[3] / 2);
+        up.move(0, middle[0], middle[1]);
+        assertEquals(0, last()[0]);
+        up.up(0, 300);
+        controller.destroy();
+    }
+
+    /**
+     * The editor's Split turns the picked face cluster into its four buttons, picked and named in the glyph set, and
+     * Join turns them back; Done keeps either, and the stream shows the cluster or its members, never both.
+     */
+    @Test public void theEditorSplitsAClusterAndJoinsItAgain() {
+        ModernController controller = controller(GAME);
+        controller.startEditing();
+        settle();
+        PadEditor editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        View split = editor.findViewById(com.limelight.R.id.pad_editor_split);
+        View join = editor.findViewById(com.limelight.R.id.pad_editor_join);
+        assertEquals(View.GONE, split.getVisibility());
+        editor.select(PadLayout.Control.LB);
+        assertEquals("Only the clusters split", View.GONE, split.getVisibility());
+        editor.select(PadLayout.Control.FACE);
+        assertEquals(View.VISIBLE, split.getVisibility());
+        assertEquals(View.GONE, join.getVisibility());
+        assertTrue(split.performClick());
+        assertTrue(editor.draft().isSplit(PadLayout.Control.FACE));
+        assertEquals("The first member is picked", PadLayout.Control.A, editor.selected());
+        assertEquals(View.GONE, split.getVisibility());
+        assertEquals(View.VISIBLE, join.getVisibility());
+        android.widget.TextView name = editor.findViewById(com.limelight.R.id.pad_editor_selection);
+        assertEquals("A button", name.getText().toString());
+        editor.draft().setGlyph(PadLayout.Glyph.PLAYSTATION);
+        editor.select(PadLayout.Control.B);
+        assertEquals("◯ button", name.getText().toString());
+        editor.draft().setGlyph(PadLayout.Glyph.XBOX);
+        controller.finishEditing(true);
+        layout();
+        assertEquals(View.GONE, controller.view(PadLayout.Control.FACE).getVisibility());
+        assertEquals(View.VISIBLE, controller.view(PadLayout.Control.X).getVisibility());
+
+        controller.startEditing();
+        settle();
+        editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        editor.select(PadLayout.Control.Y);
+        join = editor.findViewById(com.limelight.R.id.pad_editor_join);
+        assertTrue(join.performClick());
+        assertEquals(PadLayout.Control.FACE, editor.selected());
+        assertFalse(editor.draft().isSplit(PadLayout.Control.FACE));
+        controller.finishEditing(true);
+        layout();
+        assertEquals(View.VISIBLE, controller.view(PadLayout.Control.FACE).getVisibility());
+        for (PadLayout.Control member : PadLayout.members(PadLayout.Control.FACE)) {
+            assertEquals(member.name(), View.GONE, controller.view(member).getVisibility());
+        }
+        controller.destroy();
+    }
+
     /** Lays the frame out and lets the editor's posted panel updates run, as the next frames would. */
     private void settle() {
         for (int pass = 0; pass < 3; pass++) {

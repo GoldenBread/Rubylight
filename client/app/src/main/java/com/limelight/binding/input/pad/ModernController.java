@@ -27,7 +27,8 @@ import java.util.Map;
 /**
  * The modern on-screen controller: analog sticks that float or stay put, a D-pad, the face cluster,
  * shoulders, triggers, stick clicks and View, Menu and Home, a WASD stick and a pointer touchpad the layout
- * editor can add, and Xbox, PlayStation or Nintendo glyphs. Controls are separate views in the stream's frame
+ * editor can add, the face buttons and the D-pad's directions as separate controls when the editor splits them,
+ * and Xbox, PlayStation or Nintendo glyphs. Controls are separate views in the stream's frame
  * so touches between them reach the stream. Its input is the on-screen gamepad, the same report the classic
  * controller sends (the WASD stick sends keys, the pointer touchpad mouse input), and its layout is kept per
  * orientation for all games or for one game. With the Steam Controller controls setting it adds that
@@ -179,7 +180,7 @@ public final class ModernController {
     }
 
     boolean shows(PadLayout layout, PadLayout.Control control) {
-        return !forcedHidden(control) && !layout.spec(control).hidden;
+        return !forcedHidden(control) && layout.shown(control);
     }
 
     /** Builds the controls again from the saved layout and the settings. */
@@ -203,6 +204,13 @@ public final class ModernController {
             }
             views.put(control, view);
             frame.addView(view, new FrameLayout.LayoutParams(0, 0, Gravity.TOP | Gravity.START));
+        }
+        // A split cluster's members slide into each other: a finger that lands on one holds whichever it is over.
+        for (PadLayout.Control cluster : new PadLayout.Control[] {PadLayout.Control.FACE, PadLayout.Control.DPAD}) {
+            PadLayout.Control[] members = PadLayout.members(cluster);
+            PadControlView[] group = new PadControlView[members.length];
+            for (int i = 0; i < members.length; i++) group[i] = views.get(members[i]);
+            new PadControlView.Group(group);
         }
         // The sticks' knobs above every control, so a knob pushed past its base covers a neighbour.
         for (PadControlView view : views.values()) {

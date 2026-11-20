@@ -24,6 +24,16 @@ public final class PadLayout {
          */
         POINTER_PAD(Shape.TOUCHPAD, true),
         /**
+         * The face cluster's four buttons as controls of their own, for a player who splits the cluster to place and
+         * size each one: A bottom, B right, X left and Y top in the cluster, as {@link PadInput#FACE_CENTERS}. Left
+         * out of every layout until the editor's Split shows them in the cluster's place, and never shown together
+         * with the cluster ({@link #shown}); an older build skips their names and keeps the rest of the layout.
+         */
+        A(Shape.FACE_BUTTON, true), B(Shape.FACE_BUTTON, true), X(Shape.FACE_BUTTON, true), Y(Shape.FACE_BUTTON, true),
+        /** The D-pad's four directions as controls of their own, split as the face buttons are. */
+        DPAD_UP(Shape.DPAD_ARM, true), DPAD_DOWN(Shape.DPAD_ARM, true), DPAD_LEFT(Shape.DPAD_ARM, true),
+        DPAD_RIGHT(Shape.DPAD_ARM, true),
+        /**
          * A Steam Controller's (2026) trackpads, back buttons and grip touch, as the classic controller offers them.
          * They show only with the Steam Controller controls setting; {@link ModernController#forcedHidden} keeps them
          * off otherwise.
@@ -58,10 +68,45 @@ public final class PadLayout {
             }
             return null;
         }
+
+        /** The cluster a split member belongs to: FACE for A, B, X and Y, DPAD for its directions; null otherwise. */
+        public Control cluster() {
+            switch (shape) {
+                case FACE_BUTTON: return FACE;
+                case DPAD_ARM: return DPAD;
+                default: return null;
+            }
+        }
+
+        /**
+         * A member's place among its cluster's four: bottom, right, left and top for the face buttons, as
+         * {@link PadInput#FACE_CENTERS}; up, down, left and right for the D-pad. -1 for every other control.
+         */
+        public int memberIndex() {
+            switch (this) {
+                case A: case DPAD_UP: return 0;
+                case B: case DPAD_DOWN: return 1;
+                case X: case DPAD_LEFT: return 2;
+                case Y: case DPAD_RIGHT: return 3;
+                default: return -1;
+            }
+        }
     }
 
-    /** {@code PAD} is a Steam Controller trackpad: a rounded square. {@code TOUCHPAD} is the pointer touchpad, wider than tall. */
-    public enum Shape { STICK, DPAD, FACE, PILL, ROUND, PAD, TOUCHPAD }
+    /** The four members a cluster splits into, in {@link Control#memberIndex} order; none for any other control. */
+    public static Control[] members(Control cluster) {
+        if (cluster == Control.FACE) return new Control[] {Control.A, Control.B, Control.X, Control.Y};
+        if (cluster == Control.DPAD) {
+            return new Control[] {Control.DPAD_UP, Control.DPAD_DOWN, Control.DPAD_LEFT, Control.DPAD_RIGHT};
+        }
+        return new Control[0];
+    }
+
+    /**
+     * {@code PAD} is a Steam Controller trackpad: a rounded square. {@code TOUCHPAD} is the pointer touchpad, wider than
+     * tall. {@code FACE_BUTTON} is one face button of a split cluster, {@code DPAD_ARM} one direction of a split D-pad.
+     */
+    public enum Shape { STICK, DPAD, FACE, PILL, ROUND, PAD, TOUCHPAD, FACE_BUTTON, DPAD_ARM }
 
     /** The face letters and shoulder names printed on the controls. */
     public enum Glyph { XBOX, PLAYSTATION, NINTENDO }
@@ -195,7 +240,8 @@ public final class PadLayout {
 
     /**
      * Shows the controls a preset names, at their default places, sizes and opacity: Minimal keeps the sticks, the
-     * D-pad, the face cluster and View and Menu; Full adds every other gamepad control and the pointer touchpad. The
+     * D-pad, the face cluster and View and Menu; Full adds every other gamepad control and the pointer touchpad. Both
+     * keep the face cluster and the D-pad whole. The
      * Steam Controller controls follow their own setting and stay as they are; the WASD stick, a keyboard control,
      * stays opt-in like the pointer touchpad.
      */
@@ -226,7 +272,8 @@ public final class PadLayout {
                             control == Control.FACE || control == Control.SELECT || control == Control.START;
                     break;
                 case FULL:
-                    shown = control != Control.WASD;
+                    // Presets keep the face cluster and the D-pad whole; a split is the player's own arrangement.
+                    shown = control != Control.WASD && control.cluster() == null;
                     break;
                 default:
                     shown = !control.hiddenByDefault;
@@ -286,6 +333,94 @@ public final class PadLayout {
         setSize(control, widthScale * f, heightScale * f);
     }
 
+    /**
+     * Whether the layout shows the control, the settings aside: not hidden, and for a split member, only while its
+     * cluster is hidden, so a cluster and its members never show together.
+     */
+    public boolean shown(Control control) {
+        if (spec(control).hidden) return false;
+        Control cluster = control.cluster();
+        return cluster == null || spec(cluster).hidden;
+    }
+
+    /** Whether a cluster is split: it is hidden and at least one of its members shows in its place. */
+    public boolean isSplit(Control cluster) {
+        if (!spec(cluster).hidden) return false;
+        for (Control member : members(cluster)) {
+            if (!spec(member).hidden) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Splits the face cluster or the D-pad into its four members: the cluster hides, and each member shows where its
+     * button was in the cluster's box on this {@code width} x {@code height} surface, at that button's size (never
+     * below a full touch) and the cluster's opacity. {@link #join} undoes it.
+     */
+    public void split(Control cluster, float width, float height, float density) {
+        Control[] members = members(cluster);
+        if (members.length == 0) return;
+        float[] box = bounds(cluster, width, height, density, new float[4]);
+        float[] member = new float[4];
+        for (Control control : members) {
+            memberBox(control, box[0], box[1], box[2], box[3], density, member);
+            setBounds(control, member[0], member[1], member[2], member[3], width, height, density);
+            spec(control).opacity = spec(cluster).opacity;
+            spec(control).hidden = false;
+        }
+        spec(cluster).hidden = true;
+    }
+
+    /** Joins a split cluster again: its members hide, and the cluster shows where and as it was before the split. */
+    public void join(Control cluster) {
+        for (Control member : members(cluster)) spec(member).hidden = true;
+        spec(cluster).hidden = false;
+    }
+
+    /**
+     * Where a split member sits in its cluster's box ({@code left}, {@code top}, {@code width}, {@code height}), as
+     * left, top, width and height in {@code out}: over its button in the cluster, a face button's circle or a D-pad
+     * arm as far as its pressed amber reaches, so neighbouring D-pad arms overlap at the inner corners and a finger
+     * there holds the diagonal. A member grown to a full touch stays off the cluster's middle line, so two opposite
+     * members never overlap.
+     */
+    static void memberBox(Control member, float left, float top, float width, float height, float density, float[] out) {
+        float size = Math.min(width, height), touch = MIN_TOUCH_DP * density;
+        float cx, cy, w, h;
+        int index = member.memberIndex();
+        if (member.shape == Shape.FACE_BUTTON) {
+            cx = left + PadInput.FACE_CENTERS[index][0] * width;
+            cy = top + PadInput.FACE_CENTERS[index][1] * height;
+            w = h = 2 * PadInput.FACE_RADIUS * size;
+        } else {
+            float arm = PadInput.DPAD_ARM * size, corner = PadInput.DPAD_CORNER * size;
+            boolean vertical = member == Control.DPAD_UP || member == Control.DPAD_DOWN;
+            float length = ((vertical ? height : width) - arm) / 2 + corner;
+            w = vertical ? arm : length;
+            h = vertical ? length : arm;
+            cx = left + width / 2;
+            cy = top + height / 2;
+            if (member == Control.DPAD_UP) cy = top + length / 2;
+            else if (member == Control.DPAD_DOWN) cy = top + height - length / 2;
+            else if (member == Control.DPAD_LEFT) cx = left + length / 2;
+            else cx = left + width - length / 2;
+        }
+        w = Math.max(w, touch);
+        h = Math.max(h, touch);
+        float middleX = left + width / 2, middleY = top + height / 2;
+        boolean bottom = member == Control.A || member == Control.DPAD_DOWN;
+        boolean right = member == Control.B || member == Control.DPAD_RIGHT;
+        boolean leftSide = member == Control.X || member == Control.DPAD_LEFT;
+        if (bottom) cy = Math.max(cy, middleY + h / 2);
+        else if (right) cx = Math.max(cx, middleX + w / 2);
+        else if (leftSide) cx = Math.min(cx, middleX - w / 2);
+        else cy = Math.min(cy, middleY - h / 2);
+        out[0] = cx - w / 2;
+        out[1] = cy - h / 2;
+        out[2] = w;
+        out[3] = h;
+    }
+
     public void setOpacity(Control control, int opacity) {
         spec(control).opacity = Math.max(MIN_OPACITY, Math.min(MAX_OPACITY, opacity));
     }
@@ -312,11 +447,15 @@ public final class PadLayout {
         switch (control.shape) {
             // The WASD stick takes the right stick's size so its default place fits between the clusters.
             case STICK: return control == Control.LEFT_STICK ? .42f : .34f;
-            case DPAD: return .30f;
-            case FACE: return .40f;
+            case DPAD: return DPAD_BASE;
+            case FACE: return FACE_BASE;
             case PILL: return .25f;
             case PAD: return .22f;
             case TOUCHPAD: return .30f;
+            // A split member's box at scale 1 is its button in the default-sized cluster (memberBox).
+            case FACE_BUTTON: return FACE_BASE * 2 * PadInput.FACE_RADIUS;
+            case DPAD_ARM: return control == Control.DPAD_UP || control == Control.DPAD_DOWN ? DPAD_BASE * PadInput.DPAD_ARM :
+                    DPAD_BASE * ((1 - PadInput.DPAD_ARM) / 2 + PadInput.DPAD_CORNER);
             default: return control == Control.L3 || control == Control.R3 ? .13f : .11f;
         }
     }
@@ -324,8 +463,15 @@ public final class PadLayout {
     static float baseHeight(Control control) {
         if (control.shape == Shape.PILL) return .12f;
         if (control.shape == Shape.TOUCHPAD) return .19f;
+        if (control.shape == Shape.DPAD_ARM) {
+            return control == Control.DPAD_UP || control == Control.DPAD_DOWN ?
+                    DPAD_BASE * ((1 - PadInput.DPAD_ARM) / 2 + PadInput.DPAD_CORNER) : DPAD_BASE * PadInput.DPAD_ARM;
+        }
         return baseWidth(control);
     }
+
+    /** The D-pad's and the face cluster's side at scale 1, in units. */
+    private static final float DPAD_BASE = .30f, FACE_BASE = .40f;
 
     /**
      * Width and height of a control in pixels at {@code scale}: never below a 48 dp touch, and the
@@ -400,6 +546,19 @@ public final class PadLayout {
                 x = width / 2;
                 y = height / 2;
                 break;
+            case A: case B: case X: case Y:
+            case DPAD_UP: case DPAD_DOWN: case DPAD_LEFT: case DPAD_RIGHT: {
+                // A split member never placed (the editor's Split always places them) sits over its button in the
+                // default cluster.
+                Control cluster = control.cluster();
+                defaultCenter(cluster, width, height, u, density, out);
+                float w = width(cluster, u, density, 1), h = height(cluster, u, density, 1);
+                float[] member = new float[4];
+                memberBox(control, out[0] - w / 2, out[1] - h / 2, w, h, density, member);
+                x = member[0] + member[2] / 2;
+                y = member[1] + member[3] / 2;
+                break;
+            }
             default: {
                 // A Steam Controller control: its place comes from the arrangement the surface has room for.
                 float[] centers = steamCenters(width, height, u, density);

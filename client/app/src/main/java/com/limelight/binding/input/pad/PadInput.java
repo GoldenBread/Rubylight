@@ -12,6 +12,8 @@ public final class PadInput {
             ControllerPacket.X_FLAG, ControllerPacket.Y_FLAG};
     /** A face button's radius, how far from its center a finger still presses it, and the chord margin. */
     static final float FACE_RADIUS = .19f, FACE_REACH = .30f, FACE_CHORD = .07f, FACE_CENTER_GAP = .10f;
+    /** A D-pad arm's thickness and its corners' radius, as fractions of the D-pad's shorter side. */
+    static final float DPAD_ARM = .34f, DPAD_CORNER = .07f;
     /** A second press on a stick within this time after letting go holds the stick's click (L3 or R3). */
     public static final long STICK_CLICK_MS = 300, STICK_TAP_MS = 200;
     static final float STICK_TAP_PUSH = .5f;
@@ -92,9 +94,20 @@ public final class PadInput {
                 travelPx <= TOUCHPAD_TAP_SLOP_DP * Math.max(1, density);
     }
 
-    /** The button a simple control holds, as a gamepad flag; 0 for the sticks, the D-pad, the face cluster and the triggers. */
+    /**
+     * The button a simple control or a split cluster's member holds, as a gamepad flag; 0 for the sticks, the D-pad,
+     * the face cluster and the triggers.
+     */
     public static int buttonFlag(PadLayout.Control control) {
         switch (control) {
+            case A: return ControllerPacket.A_FLAG;
+            case B: return ControllerPacket.B_FLAG;
+            case X: return ControllerPacket.X_FLAG;
+            case Y: return ControllerPacket.Y_FLAG;
+            case DPAD_UP: return ControllerPacket.UP_FLAG;
+            case DPAD_DOWN: return ControllerPacket.DOWN_FLAG;
+            case DPAD_LEFT: return ControllerPacket.LEFT_FLAG;
+            case DPAD_RIGHT: return ControllerPacket.RIGHT_FLAG;
             case LB: return ControllerPacket.LB_FLAG;
             case RB: return ControllerPacket.RB_FLAG;
             case L3: case LEFT_STICK: return ControllerPacket.LS_CLK_FLAG;

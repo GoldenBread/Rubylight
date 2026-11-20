@@ -131,6 +131,130 @@ public class PadLayoutTest {
         assertEquals(2 * PadLayout.MIN_SCALE, face.heightScale, 1e-6);
     }
 
+    /** Every control, the split members too, holds its own slot of the on-screen gamepad report. */
+    @Test public void everyControlHasAGamepadSlotOfItsOwn() {
+        assertTrue(PadLayout.Control.values().length <= com.limelight.binding.input.TouchLayout.MAX_BUTTONS);
+    }
+
+    /** A layout from before the split members, and an untouched one, keep the face cluster and the D-pad whole. */
+    @Test public void anOldLayoutLoadsWithTheClustersWholeAndTheMembersHidden() {
+        for (PadLayout layout : new PadLayout[] {new PadLayout(), PadLayout.parse("v1|FACE,0.7083,0.5556,1.300,100,0")}) {
+            for (PadLayout.Control cluster : new PadLayout.Control[] {PadLayout.Control.FACE, PadLayout.Control.DPAD}) {
+                assertTrue(layout.shown(cluster));
+                assertFalse(layout.isSplit(cluster));
+                for (PadLayout.Control member : PadLayout.members(cluster)) {
+                    assertEquals(cluster, member.cluster());
+                    assertTrue(member.name(), member.hiddenByDefault);
+                    assertTrue(member.name(), layout.spec(member).hidden);
+                    assertFalse(member.name(), layout.shown(member));
+                }
+            }
+        }
+        assertEquals("Nothing new is written for them", "v1", new PadLayout().serialize());
+        assertEquals(0, PadLayout.members(PadLayout.Control.LB).length);
+        assertNull(PadLayout.Control.LB.cluster());
+    }
+
+    /**
+     * Split puts each member over its button in the cluster's box, at its size; the cluster hides, and the cluster and
+     * its members never show together. Join brings the cluster back as it was.
+     */
+    @Test public void splitMembersSitOverTheClustersButtonsAndJoinBringsTheClusterBack() {
+        float width = 2400, height = 1080;
+        PadLayout layout = new PadLayout();
+        layout.moveTo(PadLayout.Control.FACE, 1800, 600, width, height, DENSITY);
+        layout.setSize(PadLayout.Control.FACE, 1.2f, 1f);
+        layout.setOpacity(PadLayout.Control.FACE, 60);
+        float[] face = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
+        layout.split(PadLayout.Control.FACE, width, height, DENSITY);
+        assertTrue(layout.spec(PadLayout.Control.FACE).hidden);
+        assertTrue(layout.isSplit(PadLayout.Control.FACE));
+        float[] box = new float[4];
+        float diameter = 2 * PadInput.FACE_RADIUS * Math.min(face[2], face[3]);
+        for (PadLayout.Control member : PadLayout.members(PadLayout.Control.FACE)) {
+            assertTrue(layout.shown(member));
+            layout.bounds(member, width, height, DENSITY, box);
+            float[] center = PadInput.FACE_CENTERS[member.memberIndex()];
+            assertEquals(member.name(), face[0] + center[0] * face[2], box[0] + box[2] / 2, .5f);
+            assertEquals(member.name(), face[1] + center[1] * face[3], box[1] + box[3] / 2, .5f);
+            assertEquals(member.name(), diameter, box[2], .5f);
+            assertEquals(member.name(), diameter, box[3], .5f);
+            assertEquals("The cluster's opacity", 60, layout.spec(member).opacity);
+        }
+        // A cluster shown again hides its members, whatever their own setting says.
+        layout.spec(PadLayout.Control.FACE).hidden = false;
+        assertFalse(layout.shown(PadLayout.Control.A));
+        layout.spec(PadLayout.Control.FACE).hidden = true;
+
+        layout.join(PadLayout.Control.FACE);
+        assertTrue(layout.shown(PadLayout.Control.FACE));
+        for (PadLayout.Control member : PadLayout.members(PadLayout.Control.FACE)) assertTrue(layout.spec(member).hidden);
+        assertArrayEquals("Where and as it was", face, layout.bounds(PadLayout.Control.FACE, width, height, DENSITY,
+                new float[4]), .01f);
+
+        // The D-pad's arms reach as far as their pressed amber; neighbours overlap at the inner corners, so a finger
+        // there holds the diagonal, and the middle is in none.
+        PadLayout dpad = new PadLayout();
+        float[] pad = dpad.bounds(PadLayout.Control.DPAD, width, height, DENSITY, new float[4]);
+        dpad.split(PadLayout.Control.DPAD, width, height, DENSITY);
+        float[] up = dpad.bounds(PadLayout.Control.DPAD_UP, width, height, DENSITY, new float[4]);
+        float[] right = dpad.bounds(PadLayout.Control.DPAD_RIGHT, width, height, DENSITY, new float[4]);
+        float[] down = dpad.bounds(PadLayout.Control.DPAD_DOWN, width, height, DENSITY, new float[4]);
+        float[] left = dpad.bounds(PadLayout.Control.DPAD_LEFT, width, height, DENSITY, new float[4]);
+        float midX = pad[0] + pad[2] / 2, midY = pad[1] + pad[3] / 2;
+        assertEquals("Up sits over the top arm", midX, up[0] + up[2] / 2, .5f);
+        assertTrue(up[1] + up[3] / 2 < midY && down[1] + down[3] / 2 > midY);
+        assertTrue(left[0] + left[2] / 2 < midX && right[0] + right[2] / 2 > midX);
+        assertTrue("Up and right overlap", overlap(up, right));
+        assertTrue("Down and left overlap", overlap(down, left));
+        assertFalse("Opposite arms never overlap", overlap(up, down) || overlap(left, right));
+        for (float[] arm : new float[][] {up, right, down, left}) {
+            assertFalse("The middle holds nothing", midX > arm[0] && midX < arm[0] + arm[2] && midY > arm[1] && midY < arm[1] + arm[3]);
+            assertTrue("A full touch", Math.min(arm[2], arm[3]) >= PadLayout.MIN_TOUCH_DP * DENSITY - .01f);
+        }
+
+        // A preset keeps the clusters whole.
+        dpad.applyPreset(PadLayout.Preset.FULL);
+        assertTrue(dpad.shown(PadLayout.Control.DPAD));
+        assertFalse(dpad.shown(PadLayout.Control.DPAD_UP));
+    }
+
+    private static boolean overlap(float[] a, float[] b) {
+        return a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
+    }
+
+    /**
+     * A split layout comes back as it was. Its members' entries are of the six-field kind every version reads, so an
+     * older build skips their unknown names and keeps the rest of the layout.
+     */
+    @Test public void aSplitLayoutSurvivesSaveAndLoad() {
+        PadLayout layout = new PadLayout();
+        layout.split(PadLayout.Control.FACE, 2400, 1080, DENSITY);
+        layout.split(PadLayout.Control.DPAD, 2400, 1080, DENSITY);
+        layout.moveTo(PadLayout.Control.Y, 1200, 300, 2400, 1080, DENSITY);
+        layout.spec(PadLayout.Control.X).hidden = true;
+        String text = layout.serialize();
+        PadLayout back = PadLayout.parse(text);
+        assertEquals(text, back.serialize());
+        for (PadLayout.Control control : PadLayout.Control.values()) {
+            PadLayout.Spec a = layout.spec(control), b = back.spec(control);
+            assertEquals(control.name(), a.hidden, b.hidden);
+            assertEquals(control.name(), a.cx, b.cx, 1e-4);
+            assertEquals(control.name(), a.cy, b.cy, 1e-4);
+            assertEquals(control.name(), a.widthScale, b.widthScale, 1e-3);
+            assertEquals(control.name(), a.heightScale, b.heightScale, 1e-3);
+        }
+        assertTrue(back.isSplit(PadLayout.Control.FACE));
+        assertFalse("X hidden", back.shown(PadLayout.Control.X));
+        assertTrue(back.shown(PadLayout.Control.Y));
+        for (String part : text.split("\\|")) {
+            String[] fields = part.split(",", -1);
+            if (fields.length < 6 || PadLayout.Control.valueOf(fields[0]).cluster() == null) continue;
+            Float.parseFloat(fields[3]);
+            Integer.parseInt(fields[4]);
+        }
+    }
+
     @Test public void aResizedButUnmovedControlKeepsFollowingTheDefaultPlace() {
         PadLayout layout = new PadLayout();
         layout.setScale(PadLayout.Control.DPAD, .8f);
@@ -284,9 +408,12 @@ public class PadLayoutTest {
 
     /**
      * Two controls the default layout leaves out (or the Steam setting gates) may take the same place when both are
-     * shown, so the editor moves one rather than the default layout having to fit every combination.
+     * shown, so the editor moves one rather than the default layout having to fit every combination. A split
+     * cluster's members show only in their cluster's place, over its buttons; splitMembersSitOverTheClustersButtons
+     * checks where.
      */
     private static boolean bothOptional(PadLayout.Control a, PadLayout.Control b) {
+        if (a.cluster() != null || b.cluster() != null) return true;
         return (a.hiddenByDefault || a.steam) && (b.hiddenByDefault || b.steam);
     }
 
@@ -407,8 +534,10 @@ public class PadLayoutTest {
         full.applyPreset(PadLayout.Preset.FULL);
         for (PadLayout.Control control : PadLayout.Control.values()) {
             if (control.steam) continue;
-            // Every gamepad control and the pointer touchpad show; the WASD stick is a keyboard control and stays opt-in.
-            assertEquals(control.name(), control == PadLayout.Control.WASD, full.spec(control).hidden);
+            // Every gamepad control and the pointer touchpad show; the WASD stick is a keyboard control and stays
+            // opt-in, and the face cluster and the D-pad stay whole.
+            assertEquals(control.name(), control == PadLayout.Control.WASD || control.cluster() != null,
+                    full.spec(control).hidden);
         }
         assertFalse(full.spec(PadLayout.Control.POINTER_PAD).hidden);
 
