@@ -5,7 +5,8 @@ name: Nightjar mirror
 # (client/.github/workflows/rc.yml). Rubylight and Nightjar share their version, so the RC gets
 # the version Rubylight's RC of the same commit gets (rc.mjs plan). A push that changes only
 # files CI skips (docs, notes, client/.github) is mirrored too; rc.yml builds no RC for it.
-# Each run mirrors main as it is when the run starts, so an older run that waited adds nothing.
+# Each run mirrors main as it is when the run starts, once the CI runs of its newest client
+# changes passed, so an older run that waited adds nothing.
 # The push and the dispatch use the rubylight-pretriage-bot app, which needs Contents and
 # Workflows write on nightjar and bypasses nightjar main's owner-only ruleset.
 # tools/mirror-nightjar.ps1 stays the manual way.
@@ -38,32 +39,35 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REMOTE: https://github.com/RamazanKara/nightjar.git
     steps:
-      # Mirror only when no Nightjar CI run on main is pending and the newest of each passed.
-      - id: gate
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = push ]; then sleep 60; fi # the CI runs of this push are listed by then
-          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
-          echo "head=$head" >> "$GITHUB_OUTPUT"
-          for workflow in nightjar-android.yml nightjar-macos.yml; do
-            runs=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --branch main --event push --limit 20 --json status,conclusion)
-            if [ "$(jq '[.[] | select(.status != "completed")] | length' <<< "$runs")" != 0 ]; then
-              echo "::notice::$workflow is still running on main; the run after it mirrors"
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            last=$(jq -r '.[0].conclusion // "success"' <<< "$runs")
-            if [ "$last" != success ]; then
-              echo "::warning::the newest $workflow run on main ended $last; nothing is mirrored until it passes"
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
-      - if: steps.gate.outputs.skip != 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - id: head
+        run: echo "sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ steps.gate.outputs.head }}
+          ref: ${{ steps.head.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
+      # Mirror only when each Nightjar workflow passed on the newest commit its paths filter takes
+      # (the pathspecs below repeat the filters). A run not finished yet mirrors when it ends.
+      - id: gate
+        env:
+          HEAD: ${{ steps.head.outputs.sha }}
+        run: |
+          check() { # workflow, pathspec...
+            local workflow=$1; shift
+            local need run
+            need=$(git log -1 --format=%H "$HEAD" -- "$@")
+            [ -n "$need" ] || return 0
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$need" --event push --limit 1 --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
+            if [ "$run" != "completed success" ]; then
+              echo "::notice::$workflow on ${need:0:10}: ${run:-no run yet}; nothing is mirrored until it passes"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          }
+          check nightjar-android.yml client ':!client/*.md' ':!client/docs' ':!client/fastlane' ':!client/store-assets' \
+            ':!client/LICENSE.txt' ':!client/.github' .github/workflows/nightjar-android.yml
+          check nightjar-macos.yml client/protocol client/scripts client/app/build.gradle client/app/src/main/assets \
+            client/app/src/main/res .github/workflows/nightjar-macos.yml
       - if: steps.gate.outputs.skip != 'true'
         id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
@@ -77,25 +81,24 @@ jobs:
       - if: steps.gate.outputs.skip != 'true'
         id: push
         env:
-          HEAD: ${{ steps.gate.outputs.head }}
+          HEAD: ${{ steps.head.outputs.sha }}
           TOKEN: ${{ steps.app.outputs.token }}
         run: |
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$REMOTE.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
-          before=$(git ls-remote "$REMOTE" refs/heads/main | cut -f1)
           python3 tools/mirror_nightjar.py --remote "$REMOTE" --ref "$HEAD"
-          after=$(git ls-remote "$REMOTE" refs/heads/main | cut -f1)
-          echo "nightjar=$after" >> "$GITHUB_OUTPUT"
-          if [ "$before" != "$after" ]; then echo "pushed=true" >> "$GITHUB_OUTPUT"; fi
-      - if: steps.push.outputs.pushed == 'true'
+          echo "nightjar=$(git ls-remote "$REMOTE" refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
+      # Also after a run that pushed nothing: the dispatch of the run that pushed may have failed.
+      # rc.yml skips an RC that exists or has no app changes.
+      - if: steps.gate.outputs.skip != 'true'
         id: plan
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
           RC_REPO: RamazanKara/nightjar
-          HEAD: ${{ steps.gate.outputs.head }}
+          HEAD: ${{ steps.head.outputs.sha }}
         run: node .github/scripts/rc.mjs plan "$(sed -n 's/^ *versionName "\(.*\)"$/\1/p' client/app/build.gradle | head -n 1)" "$HEAD"
-      - if: steps.push.outputs.pushed == 'true' && steps.plan.outputs.exists != 'true'
+      - if: steps.gate.outputs.skip != 'true' && steps.plan.outputs.exists != 'true'
         name: Start the Nightjar release candidate
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}

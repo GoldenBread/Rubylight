@@ -95,9 +95,10 @@ async function plan(version, sha) {
   const match = String(version).trim().match(VERSION);
   if (!match) throw new Error(`not an X.Y.Z version: ${version}`);
   if (!sha) throw new Error("plan needs the commit");
-  // The first patch from <version> on without a release tag (the checkout's tags).
+  // The first patch from <version> on without a release tag, here or in the repo.
   let patch = +match[3];
-  while (hasCommit(`refs/tags/v${match[1]}.${match[2]}.${patch}`)) patch++;
+  const released = async (name) => hasCommit(`refs/tags/${name}`) || Boolean(await gh(`/repos/${REPO}/git/ref/tags/${name}`, { allow: [404] }));
+  while (await released(`v${match[1]}.${match[2]}.${patch}`)) patch++;
   const base = `${match[1]}.${match[2]}.${patch}`;
   let since = null;
   try {
