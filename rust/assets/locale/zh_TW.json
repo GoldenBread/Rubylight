@@ -671,7 +671,7 @@
     "notify_pre_releases": "發佈前通知",
     "notify_pre_releases_desc": "是否接收 Rubylight 的新預發佈版本通知",
     "update_check_interval": "更新檢查間隔（秒）",
-    "update_check_interval_desc": "Rubylight 自動檢查更新的頻率（依據 Git 標籤）。設為 0 可停用定期檢查。",
+    "update_check_interval_desc": "Rubylight 自動檢查更新的頻率（依據 Git 標籤）。",
     "update_check_time": "每天檢查更新的時間 (HH:MM)",
     "update_check_time_desc": "每天依這部電腦的時鐘在此時間（例如 03:00）檢查一次更新，而不是依間隔檢查。如果屆時電腦已關機、處於睡眠狀態或正在串流，將在之後盡快檢查。留空則使用間隔。",
     "origin_web_ui_allowed": "允許使用 Origin 網頁 UI",
