@@ -47,7 +47,11 @@ of real time it kept, under 99 % failing the case. Needs a host that takes windo
 --content-at X,Y: the clip window's corner (default 0,0); --ffplay: the player (default ffplay on PATH).
 
 --motion-at-rate: the same strip, minimum frame rate and trace without
-requests, the control for --recovery. BUTTERPOLLO_E2E_RUST_LOG replaces the
+requests, the control for --recovery.
+--strip-behind EVERY_MS:BURST:GAP_MS: with --motion-at-rate, a window repainted in bursts of BURST repaints GAP_MS
+apart every EVERY_MS holds the foreground in front of the strip (a terminal printing); the case fails when that
+window was seen behind another. The strip must stream as without it: the host once held each of its frames 50 ms
+behind such a window. --beside HZ: a window beside the strip, repainted HZ times a second, never in front. BUTTERPOLLO_E2E_RUST_LOG replaces the
 host's RUST_LOG; without pacing=trace in it the claim check is reported as
 not measured (host_claims null) instead of failing.
 
@@ -58,7 +62,7 @@ import argparse, json, pathlib, subprocess, sys, time
 import xml.etree.ElementTree as ET
 import requests
 import demo_content
-from e2e_result import evaluate, host_frames, strip_behind
+from e2e_result import evaluate, host_frames, not_in_front, strip_behind
 from e2e_host import installed_idle, prepare, receiver_environment
 from gpu_hang import EXIT_GPU_HANG, Guard, hang_result
 from machine_load import load_since, snapshot
@@ -77,6 +81,8 @@ parser.add_argument('--vrr', action='store_true', help='launch as a client askin
 parser.add_argument('--config', action='append', default=[], metavar='KEY=VALUE', help='an extra sunshine.conf line for the host, e.g. wgc_user_helper=true')
 parser.add_argument('--recovery', type=int, default=0, metavar='N', help='keyframe requests during the stream, with the motion strip at the stream rate')
 parser.add_argument('--motion-at-rate', action='store_true', help='the strip at the stream rate without requests: the control for --recovery')
+parser.add_argument('--strip-behind', metavar='EVERY_MS:BURST:GAP_MS', help='a window repainted in bursts holds the foreground in front of the strip')
+parser.add_argument('--beside', type=int, metavar='HZ', help='a window beside the strip repainted HZ times a second')
 parser.add_argument('--name', help='the case name, e.g. hevc-120; defaults to the codec and options')
 parser.add_argument('--hw-decoder', metavar='TYPE', help="the receiver decodes on the GPU, e.g. d3d11va; FFmpeg's software HEVC decoder takes about 14 ms a 1440p frame")
 parser.add_argument('--launch-fps', metavar='FPS', help="launch at this rate and ask for the mode's in the stream request, as Artemis's Warp frame pacing does")
@@ -102,6 +108,8 @@ quiet_wait = json.loads(args.quiet_wait.read_text()) if args.quiet_wait else Non
 RECOVERY_INTERVAL_MS = 500
 MOTION_SCRIPT_EXTRA = 30  # seconds the strip runs beyond the stream when a script is set
 at_rate = bool(args.recovery) or args.motion_at_rate
+assert at_rate or not (args.strip_behind or args.beside), '--strip-behind and --beside need --motion-at-rate or --recovery'
+assert not (args.strip_behind and args.beside), 'one repainted window at a time'
 if at_rate:
     # The default an unconfigured host has; the release streams resend at the
     # full rate, which would add repeats of their own.
@@ -184,8 +192,13 @@ try:
     motion_rate = args.motion_script or (int(fps) if at_rate else int(fps) * 2)
     strip = [str(args.noise_height), 'noise'] if args.noise_height else ['128']
     # At the stream rate the strip is the game: it runs as the foreground window, which the host paces the stream by
-    # while it animates (behind a window whose pictures come in pairs, the strip's waited the minimum frame rate's 50 ms).
+    # while it animates (6.1.0 held the strip's frames 50 ms behind a window repainting in bursts; --strip-behind).
     motion_env = dict(env, BUTTERPOLLO_TEST_MOTION_FOREGROUND='1') if at_rate else env
+    # The probe leaves the foreground to a window repainted in front of the strip.
+    if args.strip_behind:
+        motion_env['BUTTERPOLLO_TEST_MOTION_REPAINTER'] = args.strip_behind
+    elif args.beside:
+        motion_env['BUTTERPOLLO_TEST_MOTION_REPAINTER'] = f'beside:{args.beside}'
     motion = None if player else spawn([str(motion_probe), display['display_name'], fixture_seconds, str(case / 'motion.json'), str(motion_rate), *strip], 'motion.log', env=motion_env)
     time.sleep(.5)
     assert tone.poll() is None and (motion is None or motion.poll() is None), 'audio or motion fixture exited'
@@ -270,7 +283,10 @@ result = evaluate(client, rc, args.codec, args.mode, args.vrr, recovery=args.rec
                   claim_trace='pacing=trace' in env.get('RUST_LOG', ''), content=content)
 result = dict(case=name, **result, machine_load=stream_load, quiet_wait=quiet_wait, **audio_sink)
 if at_rate:
-    behind = strip_behind((case / 'motion.log').read_text(errors='replace'))
+    motion_log = (case / 'motion.log').read_text(errors='replace')
+    behind = not_in_front(motion_log, 'repainter', 'the repainted window') if args.strip_behind else strip_behind(motion_log)
+    if args.strip_behind or args.beside:
+        result['repainted'] = args.strip_behind or f'beside:{args.beside}'
     if behind:
         result['failures'].append(behind)
         result['passed'] = False

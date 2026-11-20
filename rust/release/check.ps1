@@ -126,9 +126,9 @@ Copy-Item "$fixtures\target\fixture\examples\audio_probe.exe", "$fixtures\target
     "$fixtures\target\fixture\examples\udp_shaper.exe" $fixtures
 $client = "$fixtures\moonlight-client.exe"
 
-foreach ($case in 'h264', 'hevc', 'av1', 'hevc-vrr', 'hevc-recovery', 'hevc-120', 'hevc-warp', 'pyrowave', 'pyrowave-hdr-444') {
+foreach ($case in 'h264', 'hevc', 'av1', 'hevc-vrr', 'hevc-recovery', 'hevc-behind', 'hevc-120', 'hevc-warp', 'pyrowave', 'pyrowave-hdr-444') {
     if ($SkipStreams -contains $case) { Write-Warning "stream $case skipped (-SkipStreams); recorded in VALIDATION.json"; continue }
-    $codec = $case -replace '-(vrr|recovery|120|warp)$'
+    $codec = $case -replace '-(vrr|recovery|behind|120|warp)$'
     # 12 s of streaming each: enough for the steady-rate, motion and audio checks.
     $stream = @('--package', $package, '--work', $run, '--client', $client, '--codec', $codec, '--seconds', '12')
     if ($case.EndsWith('-vrr')) { $stream += '--vrr' }
@@ -145,6 +145,10 @@ foreach ($case in 'h264', 'hevc', 'av1', 'hevc-vrr', 'hevc-recovery', 'hevc-120'
     # A client losing packets: 16 keyframe requests, one every 0.5 s, must
     # not send pictures twice or skip new frames (rc.27-rc.28 did).
     if ($case.EndsWith('-recovery')) { $stream += '--recovery', '16' }
+    # The strip at the stream rate behind the foreground window, which repaints
+    # three times 16 ms apart every 0.52 s like a terminal printing: the strip
+    # must stream as in front (6.1.0 held each of its frames 50 ms there).
+    if ($case.EndsWith('-behind')) { $stream += '--motion-at-rate', '--strip-behind', '520:3:16', '--name', $case }
     if ($codec.StartsWith('pyrowave')) {
         $stream = @('--package', $package, '--work', $run, '--client', "$fixtures\moonlight-pyrowave-client.exe",
                     '--codec', $codec, '--mode', '1920x1080x60', '--seconds', '12', '--bitrate', '400000')

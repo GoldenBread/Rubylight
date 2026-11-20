@@ -1,6 +1,6 @@
 import json, pathlib, subprocess, sys, tempfile, unittest
 from unittest.mock import patch
-from e2e_result import active_clients, evaluate, host_frames, strip_behind
+from e2e_result import active_clients, evaluate, host_frames, not_in_front, strip_behind
 
 
 GOOD = '''RESULT frames=1800 decoded_frames=1800 audio_packets=6000 failures=0
@@ -119,6 +119,10 @@ class ReleaseMeasurements(unittest.TestCase):
                 text = RECOVERY if recovery else text
                 (case / 'result.json').write_text(json.dumps(
                     evaluate(text, 0, codec, '1920x1080x60', vrr, recovery=recovery, host_log=CLAIMS)))
+            behind = work / 'e2e-hevc-behind'
+            behind.mkdir()
+            (behind / 'result.json').write_text(json.dumps(dict(
+                case='hevc-behind', repainted='520:3:16', **evaluate(GOOD, 0, 'hevc', '1920x1080x60'))))
             # The 120 FPS cases on a 60 Hz release monitor: recorded, not failed.
             for name in ('hevc-120', 'hevc-warp'):
                 skipped = work / f'e2e-{name}'
@@ -156,6 +160,14 @@ class ReleaseMeasurements(unittest.TestCase):
             run = subprocess.run(command + ['--skipped', 'hevc-recovery'], capture_output=True, text=True)
             self.assertEqual(run.returncode, 0, run.stderr)
             (work / 'held').rename(recovery)
+            # So is the stream with the strip behind a repainting window.
+            behind.rename(work / 'held-behind')
+            run = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn('repainting window', run.stderr)
+            run = subprocess.run(command + ['--skipped', 'hevc-behind'], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            (work / 'held-behind').rename(behind)
             for codec in ('pyrowave', 'pyrowave-hdr-444'):
                 path = work / f'e2e-{codec}-False-0' / 'result.json'
                 original = path.read_text()
@@ -291,6 +303,12 @@ class ReleaseMeasurements(unittest.TestCase):
         self.assertIn('not the foreground window (Orca.exe was)', refused)
         self.assertIn('(game.exe was)', strip_behind(taken + 'MOTION stage=foreground taken=false holder=game.exe\r\n'))
         self.assertIn('not the foreground window:', strip_behind(stages + 'MOTION stage=device\n'))
+        # The window repainted in front of the strip is judged by its own lines, not the strip's.
+        repainted = stages + 'MOTION stage=repainted place=in-front\nMOTION stage=repainter taken=true\n'
+        self.assertIsNone(not_in_front(repainted, 'repainter', 'the repainted window'))
+        self.assertIn('the repainted window was not the foreground window (Orca.exe was)', not_in_front(
+            repainted + 'MOTION stage=repainter taken=false holder=Orca.exe\n', 'repainter', 'the repainted window'))
+        self.assertIn('not the foreground window:', not_in_front(taken, 'repainter', 'the repainted window'))
 
     def test_pyrowave_sdr_and_hdr_records_pass_with_picture_age(self):
         for codec, hdr in (('pyrowave', 0), ('pyrowave-hdr-444', 1800)):

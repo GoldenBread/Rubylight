@@ -53,17 +53,23 @@ def host_frames(receiver):
     return None, None
 
 
-def strip_behind(motion_log):
-    """Why a strip that was to be the foreground window (motion_probe with BUTTERPOLLO_TEST_MOTION_FOREGROUND) cannot
-    be judged, or None: Windows refused it the foreground, the probe saw another window in front at some time it ran,
-    or it is too old to say. The host paces a stream by the foreground window while that window animates (two of its
-    pictures at most 50 ms apart), and another window's update then waits the minimum frame rate's period."""
-    states = re.findall(r'^MOTION stage=foreground taken=(true|false)(?: holder=([^\r\n]*))?\r?$', motion_log, re.M)
+def not_in_front(motion_log, stage='foreground', what='the motion strip'):
+    """Why a window of motion_probe that was to be the foreground window cannot be judged, or None: Windows refused it
+    the foreground, the probe saw another window in front at some time it ran, or it is too old to say. Stage
+    foreground is the strip (BUTTERPOLLO_TEST_MOTION_FOREGROUND), stage repainter the window repainted in bursts in
+    front of it (BUTTERPOLLO_TEST_MOTION_REPAINTER). The host paces a stream by the foreground window while that
+    window animates, and holds other windows' updates for its next picture then."""
+    states = re.findall(rf'^MOTION stage={stage} taken=(true|false)(?: holder=([^\r\n]*))?\r?$', motion_log, re.M)
     if states and all(taken == 'true' for taken, _ in states):
         return None
     holder = next((holder.strip() for taken, holder in states if taken == 'false' and holder.strip()), None)
-    return ('the motion strip was not the foreground window' + (f' ({holder} was)' if holder else '')
+    return (f'{what} was not the foreground window' + (f' ({holder} was)' if holder else '')
             + ': the host paces a stream by the window in front')
+
+
+def strip_behind(motion_log):
+    """not_in_front for the strip that was to be the foreground window."""
+    return not_in_front(motion_log)
 
 
 def claims(log):

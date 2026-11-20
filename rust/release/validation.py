@@ -42,6 +42,7 @@ assert required <= {key(s) for s in streams}, 'the fixed-rate, VRR, keyframe-req
 cases = {s.get('case') for s in streams + display_skips}
 assert 'hevc-120' in skipped or 'hevc-120' in cases, 'the 120 FPS stream is missing'
 assert 'hevc-warp' in skipped or 'hevc-warp' in cases, 'the Warp-style stream (launched at 60, asking for 120) is missing'
+assert 'hevc-behind' in skipped or 'hevc-behind' in cases, 'the stream with the strip behind a repainting window is missing'
 assert ({'pyrowave', 'pyrowave-hdr-444'} - skipped) <= {s['codec'] for s in streams if s.get('mode') == '1920x1080x60' and not s.get('vrr', False)}, '1080p60 SDR and HDR PyroWave results are required'
 assert all(s.get('audio_continuous') == 1 and s.get('motion_coverage', 0) >= .95 for s in streams), 'real audio and motion measurements are required'
 # A stream that failed once and passed when run again is recorded with both runs.
