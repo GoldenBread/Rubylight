@@ -15,8 +15,15 @@ use windows::{
             TOKEN_PRIVILEGES, TOKEN_QUERY,
         },
         System::{
-            Power::{GetPwrCapabilities, SYSTEM_POWER_CAPABILITIES, SetSuspendState},
+            Power::{
+                DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS, GetPwrCapabilities, HPOWERNOTIFY,
+                PowerRegisterSuspendResumeNotification, PowerUnregisterSuspendResumeNotification,
+                SYSTEM_POWER_CAPABILITIES, SetSuspendState,
+            },
             Threading::{GetCurrentThread, OpenThreadToken},
+        },
+        UI::WindowsAndMessaging::{
+            DEVICE_NOTIFY_CALLBACK, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
         },
     },
     core::{HRESULT, w},
@@ -160,6 +167,75 @@ pub fn suspend() -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A registration for the PC's resume from sleep or hibernation, removed when dropped.
+pub struct ResumeWatch {
+    registration: HPOWERNOTIFY,
+    /// The callback's context, freed after the registration is removed.
+    callback: *mut Box<dyn Fn() + Send + Sync>,
+}
+// SAFETY: the registration handle is only used to remove it, and the callback is `Send + Sync`.
+unsafe impl Send for ResumeWatch {}
+
+/// Runs `on_resume` on a system thread each time the PC resumes (`PBT_APMRESUMEAUTOMATIC` and
+/// `PBT_APMRESUMESUSPEND`), through `PowerRegisterSuspendResumeNotification`, which no clock
+/// reading can fake or miss. The callback must be quick and must not block.
+pub fn on_resume(on_resume: impl Fn() + Send + Sync + 'static) -> Result<ResumeWatch> {
+    unsafe extern "system" fn callback(
+        context: *const std::ffi::c_void,
+        kind: u32,
+        _setting: *const std::ffi::c_void,
+    ) -> u32 {
+        if kind == PBT_APMRESUMEAUTOMATIC || kind == PBT_APMRESUMESUSPEND {
+            // SAFETY: `context` is the box `on_resume` made, alive until the registration is
+            // removed, and the registration is removed before it is freed.
+            let on_resume = unsafe { &*context.cast::<Box<dyn Fn() + Send + Sync>>() };
+            on_resume();
+        }
+        ERROR_SUCCESS.0
+    }
+    let callback_context: *mut Box<dyn Fn() + Send + Sync> =
+        Box::into_raw(Box::new(Box::new(on_resume)));
+    let mut parameters = DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS {
+        Callback: Some(callback),
+        Context: callback_context.cast(),
+    };
+    let mut registration = std::ptr::null_mut();
+    // SAFETY: with `DEVICE_NOTIFY_CALLBACK` the recipient is a pointer to the parameters, which
+    // the call reads before it returns; `registration` receives the handle.
+    let status = unsafe {
+        PowerRegisterSuspendResumeNotification(
+            DEVICE_NOTIFY_CALLBACK,
+            HANDLE((&mut parameters as *mut DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS).cast()),
+            &mut registration,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        // SAFETY: the registration failed, so nothing else holds the box.
+        drop(unsafe { Box::from_raw(callback_context) });
+        bail!(
+            "registering for the resume notification failed: {}",
+            status.0
+        );
+    }
+    Ok(ResumeWatch {
+        registration: HPOWERNOTIFY(registration as isize),
+        callback: callback_context,
+    })
+}
+
+impl Drop for ResumeWatch {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from a successful registration, removed once here. The call
+        // returns after a callback in flight has, so nothing uses the context after it.
+        let status = unsafe { PowerUnregisterSuspendResumeNotification(self.registration) };
+        if status == ERROR_SUCCESS {
+            // SAFETY: the box `on_resume` made, now unreferenced.
+            drop(unsafe { Box::from_raw(self.callback) });
+        }
+        // Otherwise the callback may still run: the box is left, a few bytes.
+    }
 }
 
 /// `InitiateShutdownW`'s flags: a full shutdown or a restart, never forced

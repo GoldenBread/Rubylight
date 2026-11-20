@@ -403,23 +403,17 @@ fn wake_on_stop(stop_signal: &Arc<StopSignal>, wake: Arc<Notify>) {
 }
 /// Wakes the idle loop when the PC resumes from sleep, so a release check that fell due by the
 /// wall clock meanwhile runs within about a second, as the one-second poll did. The loop's
-/// sleeps run on the monotonic clock, which may not count the time the PC slept; the wall clock
-/// jumping ahead of it is the sign. The thread only reads two clocks each second and wakes the
-/// loop on such a jump.
-fn wake_on_resume(wake: Arc<Notify>) {
-    std::thread::spawn(move || {
-        let mut last = (Instant::now(), std::time::SystemTime::now());
-        loop {
-            std::thread::sleep(Duration::from_secs(1));
-            let now = (Instant::now(), std::time::SystemTime::now());
-            let monotonic = now.0.duration_since(last.0);
-            let wall = now.1.duration_since(last.1).unwrap_or_default();
-            if wall > monotonic + Duration::from_secs(3) {
-                wake.notify_one();
-            }
-            last = now;
+/// sleeps run on the monotonic clock, which may not count the time the PC slept; Windows's
+/// resume notification does not depend on it. The registration ends when the returned guard
+/// drops.
+fn wake_on_resume(wake: Arc<Notify>) -> Option<butterpollo_windows::power::ResumeWatch> {
+    match butterpollo_windows::power::on_resume(move || wake.notify_one()) {
+        Ok(watch) => Some(watch),
+        Err(error) => {
+            tracing::warn!("resume from sleep is not watched: {error:#}");
+            None
         }
-    });
+    }
 }
 /// Since when a library tick has been in flight, for one warning about a hung one.
 #[derive(Default)]
@@ -502,7 +496,8 @@ pub async fn maintain(
     let wake = h.maintain_wake().clone();
     let stop_signal = Arc::new(stop_signal);
     wake_on_stop(&stop_signal, wake.clone());
-    wake_on_resume(wake.clone());
+    // Held until this function returns, which removes the registration
+    let _resume_watch = wake_on_resume(wake.clone());
     let actions = actions.map(|actions| forward_actions(actions, wake.clone()));
     while !h.stop.load(Ordering::Acquire) {
         if stop_signal.requested() {
