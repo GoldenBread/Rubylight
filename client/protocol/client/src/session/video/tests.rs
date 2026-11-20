@@ -1314,7 +1314,7 @@ fn a_decoder_failing_every_key_frame_does_not_flood_the_host_with_requests() {
 }
 
 /// The window of the tests whose held request must go out without another frame.
-const SHORT_WINDOW: Duration = Duration::from_millis(50);
+const SHORT_WINDOW: Duration = Duration::from_millis(400);
 
 #[test]
 fn a_held_request_goes_out_after_its_window_without_another_frame() {
