@@ -1243,8 +1243,11 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     boolean onscreenControlsShown() {
         return prefConfig != null && com.limelight.binding.input.pad.PadVisibility.shouldShow(
                 prefConfig.onscreenController, prefConfig.oscAutoHideOnController, physicalControllerConnected,
-                prefConfig.sendControllers, touchControlsWithPad()) &&
-                (gameTouchControls == null || !gameTouchControls.isEditing());
+                prefConfig.sendControllers, touchControlsWithPad()) && !movingGameButtons();
+    }
+
+    private boolean movingGameButtons() {
+        return gameTouchControls != null && gameTouchControls.isEditing();
     }
 
     /**
@@ -1274,11 +1277,12 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         }
     }
 
-    /** Moving the game buttons started or ended: the on-screen controls leave while it lasts and come back after. */
+    /**
+     * Moving the game buttons started or ended: the on-screen controls leave while it lasts and come back after. An
+     * open editor of the modern controls stays either way; the controls show once it closes.
+     */
     void onGameButtonsEditing() {
         if (prefConfig == null || !prefConfig.onscreenController || isFinishing()) return;
-        // An open editor of the modern controls is the player's work; it hides them itself when it closes.
-        if (modernController != null && modernController.isEditing()) return;
         if (!onscreenControlsShown()) {
             hideOnscreenControllers();
         } else if (!isHidingOverlays && conn != null && conn.canSendInput()) {
@@ -1295,7 +1299,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
             virtualController.hide();
         }
         if (modernController != null) {
-            modernController.finishEditing(false);
+            // Moving the game buttons puts the controls aside only for a while: an open editor of theirs is the
+            // player's work and keeps its draft.
+            if (!movingGameButtons()) modernController.finishEditing(false);
             modernController.hide();
         }
         if (micButton != null) micButton.place();

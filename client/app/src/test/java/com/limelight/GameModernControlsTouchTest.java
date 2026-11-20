@@ -570,4 +570,136 @@ public class GameModernControlsTouchTest {
         chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
         assertEveryControlAnswers(game, "after Save");
     }
+
+    /** The modern controls' own editor, as Controller layout opens it. */
+    private static void openTheControlsEditor(Game game) {
+        game.touchInput.showControllerLayoutDialog();
+        idle();
+        assertTrue("the controls' editor is open", game.modernController.isEditing());
+    }
+
+    /**
+     * Their editor opened while the game buttons are moved, and moving them ended first (Save): the controls come back
+     * once their editor closes.
+     */
+    @Test public void theControlsComeBackWhenTheirEditorClosesAfterTheButtonsWereSaved() {
+        Game game = stream(true, false);
+        showGameButtonOver(game, largestControl(game));
+        startMovingTheButtons(game);
+        openTheControlsEditor(game);
+        chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
+        assertFalse(game.gameTouchControls.isEditing());
+        assertTrue("their editor stays open", game.modernController.isEditing());
+        game.modernController.finishEditing(true);
+        idle();
+        assertEveryControlAnswers(game, "after their editor's Done");
+    }
+
+    /** The same with a reconnect switching to the running game's buttons, and the controls' editor left by Cancel. */
+    @Test public void theControlsComeBackWhenTheirEditorClosesAfterAnotherGamesButtonsEndedTheMove() {
+        Game game = stream(true, false);
+        showGameButtonOver(game, largestControl(game));
+        startMovingTheButtons(game);
+        openTheControlsEditor(game);
+        game.gameTouchControls.setProfile(TouchLayout.profileKey(PC, null, APP));
+        idle();
+        assertFalse(game.gameTouchControls.isEditing());
+        assertTrue("their editor stays open", game.modernController.isEditing());
+        game.modernController.finishEditing(false);
+        idle();
+        assertEveryControlAnswers(game, "after their editor's Cancel");
+    }
+
+    /** The same with Hide game buttons ending the move. */
+    @Test public void theControlsComeBackWhenTheirEditorClosesAfterTheButtonsWereHidden() {
+        Game game = stream(true, false);
+        showGameButtonOver(game, largestControl(game));
+        startMovingTheButtons(game);
+        openTheControlsEditor(game);
+        chooseInGameButtonsMenu(game, SHOW_OR_HIDE);
+        assertFalse(game.gameTouchControls.isEditing());
+        assertTrue("their editor stays open", game.modernController.isEditing());
+        game.modernController.finishEditing(true);
+        idle();
+        assertEveryControlAnswers(game, "after their editor's Done");
+    }
+
+    /**
+     * An open editor of the modern controls is the player's work: neither moving the game buttons nor what happens
+     * meanwhile closes it, so its draft stays (closing without Done is what drops a draft).
+     */
+    @Test public void theControlsEditorKeepsItsDraftWhileTheButtonsAreMoved() {
+        Game game = stream(true, false);
+        showGameButtonOver(game, largestControl(game));
+        openTheControlsEditor(game);
+        startMovingTheButtons(game);
+        assertTrue("moving the buttons kept it", game.modernController.isEditing());
+        game.setPhysicalControllerConnected(true);
+        idle();
+        game.setPhysicalControllerConnected(false);
+        idle();
+        assertTrue("a controller coming and going kept it", game.modernController.isEditing());
+        // The stream menu's switch.
+        game.touchInput.setOnscreenControlsEnabled(true);
+        idle();
+        assertTrue("the controls' switch kept it", game.modernController.isEditing());
+        game.modernController.finishEditing(true);
+        idle();
+        assertTrue("away while the buttons are still moved", visibleControls(game).isEmpty());
+        chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
+        assertEveryControlAnswers(game, "after both editors closed");
+    }
+
+    /** The same with their editor opened after moving the buttons began, as the stream menu offers both. */
+    @Test public void theControlsEditorOpenedWhileTheButtonsAreMovedKeepsItsDraft() {
+        Game game = stream(true, false);
+        showGameButtonOver(game, largestControl(game));
+        startMovingTheButtons(game);
+        openTheControlsEditor(game);
+        game.setPhysicalControllerConnected(true);
+        idle();
+        game.setPhysicalControllerConnected(false);
+        idle();
+        assertTrue("a controller coming and going kept it", game.modernController.isEditing());
+        game.touchInput.setOnscreenControlsEnabled(true);
+        idle();
+        assertTrue("the controls' switch kept it", game.modernController.isEditing());
+        chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
+        assertTrue("saving the buttons kept it", game.modernController.isEditing());
+        game.modernController.finishEditing(true);
+        idle();
+        assertEveryControlAnswers(game, "after both editors closed");
+    }
+
+    private static void layOut(View root) {
+        root.measure(View.MeasureSpec.makeMeasureSpec(root.getWidth(), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(root.getHeight(), View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, root.getWidth(), root.getHeight());
+    }
+
+    /**
+     * Placing the game buttons asks for no further layout once they are in place. It asked after every layout of their
+     * overlay, so the stream screen was laid out again on every frame while they showed. Laid out by hand here: the
+     * main looper never went idle with that, so idling would hang instead of failing.
+     */
+    @Test public void shownGameButtonsLetTheLayoutSettle() {
+        Game game = stream(true, false);
+        Context context = RuntimeEnvironment.getApplication();
+        String id = UUID.randomUUID().toString();
+        TouchLayout.Button middle = new TouchLayout.Button(id, "Jump", KeyboardShortcuts.parseChord("SPACE"), 0, false,
+                .45f, .45f, .1f, .1f);
+        new TouchLayout(Collections.singletonList(middle)).save(context, BUTTONS_PROFILE);
+        TouchLayout.setEnabled(context, BUTTONS_PROFILE, true);
+        game.gameTouchControls.setProfile(BUTTONS_PROFILE);
+        View decor = game.getWindow().getDecorView();
+        // The first layout places the button; the next, as the next frame does, finds it in place.
+        layOut(decor);
+        View button = gameButton(game, id);
+        game.gameTouchControls.requestLayout();
+        layOut(decor);
+        assertTrue("placed", button.getWidth() > 1);
+        assertFalse("placing the buttons asked for another layout", button.isLayoutRequested());
+        idle();
+        assertFalse(button.isLayoutRequested());
+    }
 }
