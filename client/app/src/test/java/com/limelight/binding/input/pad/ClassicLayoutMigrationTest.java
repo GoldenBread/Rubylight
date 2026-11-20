@@ -850,16 +850,17 @@ public class ClassicLayoutMigrationTest {
         layout(frame);
         PadControlView face = controller.view(PadLayout.Control.FACE);
         // Each place of the joined cluster stands where the member sending that button stood: B at the bottom, A on
-        // the right, Y on the left, X at the top. A stands at the screen's right edge and X at its top, where the
-        // cluster's larger buttons have no room around them, so the cluster narrows to fit by a few pixels.
+        // the right, Y on the left, X at the top. A stands at the screen's right edge, where the cluster narrows to fit
+        // by a few pixels; B and X stand closer together than Split would spread them, which tells no height, so the
+        // cluster keeps the height their size gives and draws them up to 20 px nearer its middle.
         PadLayout.Control[] atPlace = {PadLayout.Control.B, PadLayout.Control.A, PadLayout.Control.Y,
                 PadLayout.Control.X};
         float[][] places = {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, {.5f, .22f}};
         for (int p = 0; p < places.length; p++) {
             float[] member = box(carried, atPlace[p]);
             float x = face.getLeft() + places[p][0] * face.getWidth(), y = face.getTop() + places[p][1] * face.getHeight();
-            assertEquals(atPlace[p] + " x", member[0] + member[2] / 2, x, 11);
-            assertEquals(atPlace[p] + " y", member[1] + member[3] / 2, y, 11);
+            assertEquals(atPlace[p] + " x", member[0] + member[2] / 2, x, 20);
+            assertEquals(atPlace[p] + " y", member[1] + member[3] / 2, y, 20);
         }
         assertTrue("on the screen", face.getLeft() >= 0 && face.getRight() <= WIDTH && face.getTop() >= 0);
         face.down(0, face.getWidth() / 2f, face.getHeight() * .78f, 100);

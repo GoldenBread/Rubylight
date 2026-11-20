@@ -869,38 +869,112 @@ public class PadLayoutTest {
         }
     }
 
-    @Test public void shrunkMembersInADiamondJoinASquareClusterAndSplitBackWhereTheyStood() {
-        float width = 2400, height = 1080, button = 132;
+    /** The face members split alone in the middle of a 2400 x 1080 surface, each then {@code button} pixels wide. */
+    private static PadLayout faceMembersInTheMiddle(float button) {
+        float width = 2400, height = 1080;
         PadLayout layout = alone(PadLayout.Control.FACE);
         float[] home = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
         layout.split(PadLayout.Control.FACE, width, height, DENSITY);
-        // In the middle, where the cluster their spacing gives has room, the player shrinks the four to a full touch.
         moveMembers(layout, PadLayout.Control.FACE, width / 2 - home[0] - home[2] / 2, height / 2 - home[1] - home[3] / 2,
                 width, height);
-        float[][] before = new float[MEMBERS_OF_FACE.length][];
-        for (int i = 0; i < MEMBERS_OF_FACE.length; i++) {
-            float[] box = layout.bounds(MEMBERS_OF_FACE[i], width, height, DENSITY, new float[4]);
+        for (PadLayout.Control member : MEMBERS_OF_FACE) {
+            float[] box = layout.bounds(member, width, height, DENSITY, new float[4]);
             float cx = box[0] + box[2] / 2, cy = box[1] + box[3] / 2;
-            layout.setBounds(MEMBERS_OF_FACE[i], cx - button / 2, cy - button / 2, button, button, width, height, DENSITY);
-            before[i] = layout.bounds(MEMBERS_OF_FACE[i], width, height, DENSITY, new float[4]);
+            layout.setBounds(member, cx - button / 2, cy - button / 2, button, button, width, height, DENSITY);
         }
+        return layout;
+    }
+
+    private static float[][] memberBoxes(PadLayout layout) {
+        float[][] boxes = new float[MEMBERS_OF_FACE.length][];
+        for (int i = 0; i < boxes.length; i++) boxes[i] = layout.bounds(MEMBERS_OF_FACE[i], 2400, 1080, DENSITY, new float[4]);
+        return boxes;
+    }
+
+    @Test public void shrunkMembersInADiamondJoinASquareClusterAndSplitBackWhereTheyStood() {
+        float width = 2400, height = 1080;
+        float[][] places = {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, {.5f, .22f}};
+        // A little smaller than Split made them (164 px here): the cluster draws each button where its member stood,
+        // square.
+        PadLayout layout = faceMembersInTheMiddle(156);
+        float[][] before = memberBoxes(layout);
         layout.join(PadLayout.Control.FACE, width, height, DENSITY);
         float[] face = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
         assertEquals("square", face[2], face[3], 1);
-        // Each button drawn where its member stood: A bottom, B right, X left, Y top.
-        float[][] places = {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, {.5f, .22f}};
         for (int i = 0; i < places.length; i++) {
             assertEquals(MEMBERS_OF_FACE[i] + " x", before[i][0] + before[i][2] / 2, face[0] + places[i][0] * face[2], 2);
             assertEquals(MEMBERS_OF_FACE[i] + " y", before[i][1] + before[i][3] / 2, face[1] + places[i][1] * face[3], 2);
         }
         layout.split(PadLayout.Control.FACE, width, height, DENSITY);
-        for (int i = 0; i < MEMBERS_OF_FACE.length; i++) {
-            assertArrayEquals(MEMBERS_OF_FACE[i].name(), before[i], layout.bounds(MEMBERS_OF_FACE[i], width, height,
-                    DENSITY, new float[4]), 2);
+        for (int i = 0; i < before.length; i++) {
+            assertArrayEquals(MEMBERS_OF_FACE[i].name(), before[i], memberBoxes(layout)[i], 2);
         }
-        // The same members joined twice give the same cluster.
         layout.join(PadLayout.Control.FACE, width, height, DENSITY);
         assertArrayEquals(face, layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]), .5f);
+
+        // Shrunk to a full touch, drawing them where they stood would make the buttons more than half again their
+        // size: the square their size gives, centred on them, and Split puts them back.
+        layout = faceMembersInTheMiddle(132);
+        before = memberBoxes(layout);
+        layout.join(PadLayout.Control.FACE, width, height, DENSITY);
+        face = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
+        assertEquals(132 / (2 * PadInput.FACE_RADIUS), face[2], 1);
+        assertEquals(face[2], face[3], 1);
+        assertEquals(width / 2, face[0] + face[2] / 2, 2);
+        layout.split(PadLayout.Control.FACE, width, height, DENSITY);
+        for (int i = 0; i < before.length; i++) {
+            assertArrayEquals(MEMBERS_OF_FACE[i].name(), before[i], memberBoxes(layout)[i], 2);
+        }
+    }
+
+    @Test public void heapedMirroredOrFarApartMembersJoinButtonsOfTheirSize() {
+        float width = 2400, height = 1080, touch = 48 * DENSITY;
+        float[][][] arrangements = {
+                // All four heaped on one spot.
+                {{1200, 540}, {1200, 540}, {1200, 540}, {1200, 540}},
+                // Mirrored: A at the top, B on the left, X on the right, Y at the bottom.
+                {{1200, 300}, {960, 540}, {1440, 540}, {1200, 780}},
+                // Spread to the four edges of the screen.
+                {{1200, 1014}, {2334, 540}, {66, 540}, {1200, 66}},
+        };
+        for (float[][] centers : arrangements) {
+            PadLayout layout = faceMembersInTheMiddle(132);
+            for (int i = 0; i < centers.length; i++) {
+                layout.moveTo(MEMBERS_OF_FACE[i], centers[i][0], centers[i][1], width, height, DENSITY);
+            }
+            layout.join(PadLayout.Control.FACE, width, height, DENSITY);
+            float[] face = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
+            float button = 2 * PadInput.FACE_RADIUS * Math.min(face[2], face[3]);
+            assertTrue("at least a full touch: " + button, button >= touch - .5f);
+            assertTrue("at most half again the members': " + button, button <= 1.5f * 132 + .5f);
+            assertTrue(face[2] > 0 && face[3] > 0);
+        }
+    }
+
+    @Test public void aSplitRightAfterJoinTakesTheClustersOpacityAndKeepsOffNeighbours() {
+        float width = 2400, height = 1080;
+        PadLayout layout = faceMembersInTheMiddle(156);
+        float[][] before = memberBoxes(layout);
+        layout.join(PadLayout.Control.FACE, width, height, DENSITY);
+        layout.setOpacity(PadLayout.Control.FACE, 40);
+        layout.split(PadLayout.Control.FACE, width, height, DENSITY);
+        for (int i = 0; i < before.length; i++) {
+            assertArrayEquals("back where it stood", before[i], memberBoxes(layout)[i], 2);
+            assertEquals("as faint as the cluster", 40, layout.spec(MEMBERS_OF_FACE[i]).opacity);
+        }
+
+        // RB moved onto where B stood while they were joined: Split keeps the members off it.
+        layout.join(PadLayout.Control.FACE, width, height, DENSITY);
+        layout.spec(PadLayout.Control.RB).hidden = false;
+        layout.moveTo(PadLayout.Control.RB, before[1][0] + before[1][2] / 2, before[1][1] + before[1][3] / 2, width,
+                height, DENSITY);
+        float[] rb = layout.bounds(PadLayout.Control.RB, width, height, DENSITY, new float[4]);
+        layout.split(PadLayout.Control.FACE, width, height, DENSITY);
+        for (float[] box : memberBoxes(layout)) {
+            boolean over = box[0] < rb[0] + rb[2] && rb[0] < box[0] + box[2] && box[1] < rb[1] + rb[3]
+                    && rb[1] < box[1] + box[3];
+            assertFalse("a member over RB", over);
+        }
     }
 
     @Test public void membersThatStandAlikeInBothArrangementsKeepTheOneTheClusterHad() {

@@ -392,10 +392,18 @@ public final class PadLayout {
         Control[] members = members(cluster);
         if (members.length == 0) return;
         if (joinedFromMembers(cluster, width, height, density)) {
-            // Joined from these members and not moved or resized since: they come back as they stood.
-            for (Control member : members) spec(member).hidden = false;
-            spec(cluster).hidden = true;
-            return;
+            // Joined from these members and not moved or resized since: they come back as they stood, as faint as
+            // the cluster, unless a control moved onto one of their places meanwhile.
+            float[][] stood = new float[members.length][];
+            for (int i = 0; i < members.length; i++) stood[i] = bounds(members[i], width, height, density, new float[4]);
+            if (clear(stood, 0, 0, neighbours(cluster, width, height, density), width, height)) {
+                for (Control member : members) {
+                    spec(member).hidden = false;
+                    spec(member).opacity = spec(cluster).opacity;
+                }
+                spec(cluster).hidden = true;
+                return;
+            }
         }
         float[][] boxes = splitBoxes(cluster, width, height, density);
         // Each place gets the button the cluster shows there, so a Nintendo arrangement stays one.
@@ -429,11 +437,7 @@ public final class PadLayout {
      * shows, do not move them, as they do not move the WASD stick ({@link #clearOfDefaults}).
      */
     private void clearOfNeighbours(Control cluster, float[][] boxes, float width, float height, float density) {
-        java.util.List<float[]> others = new java.util.ArrayList<>();
-        for (Control control : Control.values()) {
-            if (control == cluster || control.cluster() == cluster || control.steam || !shown(control)) continue;
-            others.add(bounds(control, width, height, density, new float[4]));
-        }
+        java.util.List<float[]> others = neighbours(cluster, width, height, density);
         if (clear(boxes, 0, 0, others, width, height)) return;
         // Each move puts an overlapped neighbour's edge two pixels past the member's, against rounding.
         float bestX = 0, bestY = 0, best = Float.MAX_VALUE;
@@ -457,6 +461,16 @@ public final class PadLayout {
             box[0] += bestX;
             box[1] += bestY;
         }
+    }
+
+    /** The boxes of the controls shown that a split cluster's members keep off: all but its own and Steam's. */
+    private java.util.List<float[]> neighbours(Control cluster, float width, float height, float density) {
+        java.util.List<float[]> others = new java.util.ArrayList<>();
+        for (Control control : Control.values()) {
+            if (control == cluster || control.cluster() == cluster || control.steam || !shown(control)) continue;
+            others.add(bounds(control, width, height, density, new float[4]));
+        }
+        return others;
     }
 
     /** Whether {@code boxes} moved by {@code dx}, {@code dy} stay on the surface and off every one of {@code others}. */
@@ -638,6 +652,9 @@ public final class PadLayout {
      * fits. A side the surface has no room for around the middle narrows to fit; where that would go below the size
      * the members' buttons need, the cluster is the square that size gives.
      */
+    /** How much larger than the members' a joined cluster's buttons may be drawn. */
+    private static final float MAX_JOINED_GROWTH = 1.5f;
+
     private float[] faceClusterFor(float[][] boxes, float[] now, float surfaceWidth, float surfaceHeight,
                                    float density) {
         float touch = MIN_TOUCH_DP * density, twoRadius = 2 * PadInput.FACE_RADIUS;
@@ -659,10 +676,14 @@ public final class PadLayout {
         // Places: 0 bottom, 1 right, 2 left, 3 top. Each pair's half spacing, NaN without both.
         float spreadX = places[1] != null && places[2] != null ? (centerX(places[1]) - centerX(places[2])) / 2 : Float.NaN;
         float spreadY = places[0] != null && places[3] != null ? (centerY(places[0]) - centerY(places[3])) / 2 : Float.NaN;
-        boolean drawnX = !Float.isNaN(spreadX) && Math.abs(spreadX - least) > 1.5f;
-        boolean drawnY = !Float.isNaN(spreadY) && Math.abs(spreadY - least) > 1.5f;
-        float w = drawnX ? spreadX / reach : fitting(now[2], shorter, least / reach);
-        float h = drawnY ? spreadY / reach : fitting(now[3], shorter, least / reach);
+        // Closer than Split spreads them, heaped or mirrored, a pair tells nothing a cluster could draw.
+        boolean drawnX = !Float.isNaN(spreadX) && spreadX > least + 1.5f;
+        boolean drawnY = !Float.isNaN(spreadY) && spreadY > least + 1.5f;
+        float w = Math.max(shorter, drawnX ? spreadX / reach : fitting(now[2], shorter, least / reach));
+        float h = Math.max(shorter, drawnY ? spreadY / reach : fitting(now[3], shorter, least / reach));
+        // Members spread far apart would give buttons far larger than theirs: the square their size gives instead,
+        // centred on them.
+        if (twoRadius * Math.min(w, h) > MAX_JOINED_GROWTH * size) w = h = shorter;
         // The middle, along each axis: between its pair, else one of them less its offset, else the other pair's line.
         float x = middle(places[1], places[2], places[0], places[3], true, w, h, density);
         float y = middle(places[0], places[3], places[1], places[2], false, w, h, density);
