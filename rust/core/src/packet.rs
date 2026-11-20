@@ -192,26 +192,50 @@ pub(crate) fn conventional_fec(
 fn block_parity(count: usize, percentage: usize, minimum: usize) -> (usize, usize) {
     crate::pyrowave::fec_parameters(count, percentage, minimum)
 }
+/// The conventional FEC plan for one frame: its blocks and the percentage
+/// every block carries. Computed once per frame so the block layout, the
+/// FEC-limited flag and the block fill share it instead of running
+/// [`conventional_fec`] again each.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConventionalPlan {
+    /// Data and parity shards of each block, in send order, as
+    /// [`VideoPacketizer::block_layout`] returns them.
+    pub layout: Vec<(usize, usize)>,
+    /// The percentage every block carries; below `fec_percent` when limited.
+    pub percentage: usize,
+}
+impl ConventionalPlan {
+    /// Whether parity was reduced below `fec_percent`.
+    pub fn limited(&self, fec_percent: usize) -> bool {
+        self.percentage < fec_percent
+    }
+}
 impl VideoPacketizer {
     /// Data and parity shards of each FEC block of an H.264, HEVC or AV1
     /// frame of `payload_bytes`, in send order, as `encode` frames it. A block
     /// loses the frame once more of its packets are lost than it has parity.
     pub fn block_layout(&self, payload_bytes: usize) -> Vec<(usize, usize)> {
+        self.conventional_plan(payload_bytes).layout
+    }
+    /// The conventional FEC plan of a frame of `payload_bytes`, computed once
+    /// so the block layout, the FEC-limited flag and the block fill share it.
+    pub fn conventional_plan(&self, payload_bytes: usize) -> ConventionalPlan {
         let slice = self.packet_size + 16 - 32;
         let total_shards = (payload_bytes + 8).div_ceil(slice);
         let (blocks, percentage) = conventional_fec(total_shards, self.fec_percent, self.min_fec);
         let aligned = total_shards.div_ceil(blocks.max(1));
-        (0..blocks)
+        let layout = (0..blocks)
             .map(|block| {
                 let data = total_shards.saturating_sub(block * aligned).min(aligned);
                 (data, block_parity(data, percentage, self.min_fec).0)
             })
             .filter(|(data, _)| *data > 0)
-            .collect()
+            .collect();
+        ConventionalPlan { layout, percentage }
     }
     pub fn fec_limited(&self, payload_bytes: usize) -> bool {
-        let shards = (payload_bytes + 8).div_ceil(self.packet_size - 16);
-        conventional_fec(shards, self.fec_percent, self.min_fec).1 < self.fec_percent
+        self.conventional_plan(payload_bytes)
+            .limited(self.fec_percent)
     }
     /// The largest payload that still gets the full `fec_percent` within
     /// Moonlight's four blocks ([`Self::fec_limited`] false). A larger frame
@@ -301,6 +325,7 @@ impl VideoPacketizer {
             timestamp,
             latency_us,
             Some(fec),
+            None,
         )?;
         let blocks = std::iter::from_fn(move || {
             let mut packets = pool.map(BlockPool::take).unwrap_or_default();
@@ -339,6 +364,30 @@ impl VideoPacketizer {
             timestamp,
             latency_us,
             None,
+            None,
+        )?;
+        Ok((count, next))
+    }
+    /// [`conventional_blocks`](Self::conventional_blocks) with the plan
+    /// [`conventional_plan`](Self::conventional_plan) already computed for
+    /// this frame, so the block fill does not run `conventional_fec` again.
+    pub fn conventional_blocks_planned<'a>(
+        &'a mut self,
+        payload: &'a [u8],
+        idr: bool,
+        after_invalidation: bool,
+        timestamp: u32,
+        latency_us: u64,
+        plan: &ConventionalPlan,
+    ) -> Result<(usize, impl FnMut(&mut PacketBlock) -> Result<usize> + 'a)> {
+        let (count, _, next) = self.frame_blocks(
+            payload.into(),
+            idr,
+            after_invalidation,
+            timestamp,
+            latency_us,
+            None,
+            Some(plan),
         )?;
         Ok((count, next))
     }
@@ -358,6 +407,7 @@ impl VideoPacketizer {
             timestamp,
             latency_us,
             pyrowave,
+            None,
         )?;
         let mut packets = Vec::with_capacity(count);
         loop {
@@ -377,6 +427,7 @@ impl VideoPacketizer {
         timestamp: u32,
         latency_us: u64,
         pyrowave: Option<PyrowaveFec>,
+        conventional: Option<&ConventionalPlan>,
     ) -> Result<(
         usize,
         bool,
@@ -468,6 +519,16 @@ impl VideoPacketizer {
                 pyro.detail_percentage,
                 extra,
             )?
+        } else if let Some(plan) = conventional {
+            // The precomputed plan: the block fill, block layout and
+            // FEC-limited flag share it instead of recomputing it here.
+            plan.layout
+                .iter()
+                .map(|&(data, _)| crate::pyrowave::FecBlock {
+                    data,
+                    percentage: plan.percentage,
+                })
+                .collect()
         } else {
             // Legacy PyroWave's length container still uses Moonlight's normal
             // RTP/FEC layer. Only the selective coarse/detail scheme requires

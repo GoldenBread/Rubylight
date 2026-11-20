@@ -8,7 +8,7 @@ use crate::state::{Session, Shared};
 use anyhow::{Result, bail};
 use butterpollo_core::{
     config::Config,
-    packet::{PacketBlock, VideoPacketizer},
+    packet::{ConventionalPlan, PacketBlock, VideoPacketizer},
     performance::{Claim, Claims},
 };
 use butterpollo_windows::{
@@ -539,8 +539,8 @@ impl Sender {
                 packetizer.fec_percent = s.video_fec_percent(frame.idr || frame.after_invalidation, frame.bytes.len());
                 let wire_frame = packetizer.frame;
                 s.frame_warp.tag(wire_frame, claim.as_ref().map(|claim| claim.presented));
-                let layout = packetizer.block_layout(frame.bytes.len());
-                let fec_limited = packetizer.fec_limited(frame.bytes.len());
+                let plan = packetizer.conventional_plan(frame.bytes.len());
+                let fec_limited = plan.limited(packetizer.fec_percent);
                 let wire = packetizer.clone();
                 // Punktfunk's GameStream boundary: this loop's capture/encode
                 // tick through entry to packetization, before the paced sender.
@@ -566,7 +566,7 @@ impl Sender {
                     state.whole_open
                 };
                 if early {
-                    let dropped = early::send(shared, &mut packetizer, &frame, timestamp, processing, &layout, peer, |blocks, counts, block, part, frame_wire_bytes| {
+                    let dropped = early::send(shared, &mut packetizer, &frame, timestamp, processing, &plan.layout, &plan, peer, |blocks, counts, block, part, frame_wire_bytes| {
                         details(blocks, counts, vec![block], Some(part), frame_wire_bytes)
                     });
                     if let Some(error) = dropped? {
@@ -588,12 +588,13 @@ impl Sender {
                 }
                 let mut blocks: Vec<PacketBlock> = {
                     let mut state = shared.state.lock().unwrap();
-                    (0..layout.len()).map(|_| state.take_block()).collect()
+                    (0..plan.layout.len()).map(|_| state.take_block()).collect()
                 };
-                let mut counts = Vec::with_capacity(layout.len());
+                let mut counts = Vec::with_capacity(plan.layout.len());
                 let prepared = (|| -> Result<()> {
-                    let (_, mut next) = packetizer.conventional_blocks(
+                    let (_, mut next) = packetizer.conventional_blocks_planned(
                         &frame.bytes, frame.idr, frame.after_invalidation, timestamp, processing,
+                        &plan,
                     )?;
                     loop {
                         if counts.len() == blocks.len() {
@@ -629,7 +630,7 @@ impl Sender {
                 tracing::trace!(target: "pacing", stream_id = %s.launch.id,
                     frame = wire_frame, presentation = ?frame.presentation,
                     "packetized picture");
-                shared.enqueue(details(blocks, counts, layout, None, None))?;
+                shared.enqueue(details(blocks, counts, plan.layout, None, None))?;
                 Ok(packetizer.frame)
             })
         })?;

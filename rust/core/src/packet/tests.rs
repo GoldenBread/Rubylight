@@ -204,6 +204,52 @@ fn conventional_blocks_reuse_shards_and_match_collected_packets() {
 }
 
 #[test]
+fn the_precomputed_conventional_plan_matches_the_blocks_built_on_the_fly() {
+    for key in [None, Some([42; 16])] {
+        let make = || VideoPacketizer {
+            sequence: 0xFFFFFF,
+            iv_counter: 0xFFFFFFFE,
+            frame: u32::MAX,
+            packet_size: 1392,
+            fec_percent: 20,
+            min_fec: 2,
+            key,
+        };
+        for size in [10, 1376, 264_184, 792_568, 1_300_000] {
+            let payload: Vec<u8> = (0..size).map(|i| (i * 29) as u8).collect();
+            let mut expected = make();
+            let mut actual = make();
+            let (count, mut expected_next) = expected
+                .conventional_blocks(&payload, false, true, 9000, 500)
+                .unwrap();
+            let plan = actual.conventional_plan(payload.len());
+            assert_eq!(plan.layout, expected.block_layout(payload.len()));
+            assert_eq!(
+                plan.limited(actual.fec_percent),
+                expected.fec_limited(payload.len())
+            );
+            let (planned_count, mut actual_next) = actual
+                .conventional_blocks_planned(&payload, false, true, 9000, 500, &plan)
+                .unwrap();
+            assert_eq!(planned_count, count);
+            let (mut expected_shards, mut actual_shards) = (Vec::new(), Vec::new());
+            loop {
+                let ec = expected_next(&mut expected_shards).unwrap();
+                let ac = actual_next(&mut actual_shards).unwrap();
+                assert_eq!(ec, ac);
+                if ec == 0 {
+                    break;
+                }
+                assert_eq!(&expected_shards[..ec], &actual_shards[..ac], "size {size}");
+            }
+            assert_eq!(actual.frame, expected.frame);
+            assert_eq!(actual.sequence, expected.sequence);
+            assert_eq!(actual.iv_counter, expected.iv_counter);
+        }
+    }
+}
+
+#[test]
 fn conventional_blocks_overwrite_every_byte_of_dirty_buffers() {
     // Reused shards are not cleared as a whole; stale bytes must never leak
     // into a header, a payload tail, a parity row or the envelope. 1,300,000

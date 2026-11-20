@@ -590,8 +590,8 @@ impl SessionThread<'_> {
                 let wire_frame = packetizer.frame;
                 // Frame Warp tags the frame by the number the client decodes it as.
                 s.frame_warp.tag(wire_frame, claim.as_ref().map(|claim| claim.presented));
-                let block_layout = packetizer.block_layout(frame.bytes.len());
-                let fec_limited = packetizer.fec_limited(frame.bytes.len());
+                let plan = packetizer.conventional_plan(frame.bytes.len());
+                let fec_limited = plan.limited(packetizer.fec_percent);
                 let packet_bytes = packetizer.packet_size + 16 + if packetizer.key.is_some() { 32 } else { 0 };
                 // A client that roamed takes another route.
                 if crate::video_send::recovery::new_route(&mut routed, peer) {
@@ -624,7 +624,7 @@ impl SessionThread<'_> {
                 // session.
                 let packetize_started = Instant::now();
                 let processing = micros(packetize_started.saturating_duration_since(processing_started));
-                let prepared_blocks = packetizer.conventional_blocks(&frame.bytes,frame.idr,frame.after_invalidation,timestamp,processing);
+                let prepared_blocks = packetizer.conventional_blocks_planned(&frame.bytes,frame.idr,frame.after_invalidation,timestamp,processing,&plan);
                 if let Err(error) = &prepared_blocks {
                     s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_core::session::EVENT_PERIOD);
                     s.request_host_keyframe();
@@ -660,7 +660,7 @@ impl SessionThread<'_> {
                 let mut first_send = None;
                 let mut last_send = None;
                 let mut first_sent = None;
-                let mut lost = butterpollo_core::stream_policy::SendLoss::new(block_layout);
+                let mut lost = butterpollo_core::stream_policy::SendLoss::new(plan.layout);
                 let mut abandoned = 0;
                 let mut sent_packets = 0;
                 let mut sent_bytes = 0;

@@ -22,18 +22,20 @@ pub(super) fn send(
     timestamp: u32,
     processing: u64,
     layout: &[(usize, usize)],
+    plan: &ConventionalPlan,
     peer: SocketAddr,
     part: impl Fn(Vec<PacketBlock>, Vec<usize>, (usize, usize), Part, Option<usize>) -> Prepared,
 ) -> Result<Option<anyhow::Error>> {
     let packets: usize = layout.iter().map(|(data, parity)| data + parity).sum();
     let frame_wire = packets
         * (datagram(packetizer) + network_pacing::overhead(peer.ip().to_canonical().is_ipv6()));
-    let mut next = match packetizer.conventional_blocks(
+    let mut next = match packetizer.conventional_blocks_planned(
         &frame.bytes,
         frame.idr,
         frame.after_invalidation,
         timestamp,
         processing,
+        plan,
     ) {
         Ok((_, next)) => next,
         Err(error) => return Ok(Some(error)),
