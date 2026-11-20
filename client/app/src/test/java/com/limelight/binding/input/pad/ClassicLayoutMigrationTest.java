@@ -286,6 +286,30 @@ public class ClassicLayoutMigrationTest {
         ClassicLayoutMigration.carryOverOnce(context, store, false);
         assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
         assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
+        // Dropped, not lost: it can be recovered by hand.
+        assertEquals(EARLIER, store.getString(ClassicLayoutMigration.BACKUP, null));
+    }
+
+    @Test public void aLayoutTheOlderEditorSavedYieldsToTheClassicLayoutInUseAndIsKept() {
+        // The editors from 5.4.1 up to 6.0 saved a layout for all games under the shared key, without the flag;
+        // the player then went back to the classic controller and arranged it.
+        String edited = "v1|FACE,0.2000,0.3000,1.300,100,0";
+        store.edit().putString(PadLayoutKeys.legacyKey(null), edited).commit();
+        classic.edit().putString("13", RIGHT_STICK).commit();
+        retire("classic");
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        PadLayout.Spec stick = shared().spec(PadLayout.Control.RIGHT_STICK);
+        assertEquals(1300f / WIDTH, stick.cx, .01f);
+        assertEquals(500f / HEIGHT, stick.cy, .01f);
+        assertFalse(shared().spec(PadLayout.Control.FACE).placed());
+        assertEquals(edited, store.getString(ClassicLayoutMigration.BACKUP, null));
+
+        // A player who stayed with this controller keeps it where it is.
+        store.edit().clear().putString(PadLayoutKeys.legacyKey(null), edited).commit();
+        retire("modern");
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertEquals(edited, store.getString(PadLayoutKeys.legacyKey(null), null));
+        assertFalse(store.contains(ClassicLayoutMigration.BACKUP));
     }
 
     /**
