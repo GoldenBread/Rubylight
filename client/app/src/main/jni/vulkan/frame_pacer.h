@@ -298,6 +298,11 @@ private:
     // MediaCodec's Smoothest and FPS-capped frames for their turn there too; 1 with adaptive refresh
     int heldVsyncs() const;
     static constexpr int kMaxHeldVsyncs = 4;
+    // Where frames are held for their turn, frames that wait more than a vsync and kEarlySpareNs at it
+    // for kEarlyForNs in a row move the turns a vsync earlier (onVsync()), as FramePacingPolicy's
+    // EARLY_FOR_NS and EARLY_SPARE_NS (Java) move MediaCodec's
+    static constexpr int64_t kEarlyForNs = 2'000'000'000;
+    static constexpr int64_t kEarlySpareNs = 3'000'000;
     // The most delay the current preset's buffer may hold (kLowestLatencyCapSlots)
     int64_t bufferCapNs() const;
 
@@ -318,6 +323,8 @@ private:
     int64_t vsyncIndex_ = 0;  // Vsyncs seen, counting ones whose callbacks we missed
     int64_t lastPresentVsyncNs_ = 0;
     uint64_t framesSkipped_ = 0;
+    // The vsync since which frames held for their turn came early for it (kEarlyForNs), 0 when not
+    int64_t earlySinceNs_ = 0;
 
     // HostTimed
     HostTimeline timeline_;

@@ -355,6 +355,7 @@ void FramePacer::resetPhase() {
     driftPerFrame_ = 0;
     lateNs_ = 0;
     soonerSinceNs_ = 0;
+    earlySinceNs_ = 0;
 }
 
 void FramePacer::onFrameArrived(FrameTiming& frame) {
@@ -874,7 +875,7 @@ int FramePacer::onVsync(int64_t vsyncNs, const FrameTiming* frames, size_t count
             break;
 
         case PacingMode::CapFps:
-        case PacingMode::Smoothness:
+        case PacingMode::Smoothness: {
             // Every frame in order, one a vsync. On a refresh 2 to 4 times the stream's rate (60 fps
             // on 120 Hz) a frame then went up at the next vsync after it came, so jitter left one up
             // for a vsync and the next for three, and no frame waited to cover it. There frames go up
@@ -884,23 +885,47 @@ int FramePacer::onVsync(int64_t vsyncNs, const FrameTiming* frames, size_t count
                 break;
             }
             if (heldVsyncs() <= 1) {
+                earlySinceNs_ = 0;
                 choice = 0;
                 break;
             }
-            if (vsyncNs - lastPresentVsyncNs_ < streamIntervalNs_ * 8 / 10) {
+            const int64_t turnNs = streamIntervalNs_ * 8 / 10;
+            const int64_t sinceLastNs = vsyncNs - lastPresentVsyncNs_;
+            if (sinceLastNs < turnNs) {
+                // A host whose clock runs a little ahead of the screen (60.000 fps on 119.88 Hz) brings
+                // each frame a little earlier for its turn than the one before. As MediaCodec's turns do
+                // (FramePacingPolicy.earlyForTurn), once frames have waited more than a vsync at their
+                // turn for kEarlyForNs in a row, the oldest goes up at the vsync before its turn, which
+                // leaves the frame before it up a vsync short, and the turns count from there. That
+                // takes back a vsync every two seconds at most, about 4 ms a second at 120 Hz.
+                if (sinceLastNs >= turnNs - periodNs_ && earlySinceNs_ != 0 && vsyncNs - earlySinceNs_ >= kEarlyForNs &&
+                    frames[0].arrivalNs > 0 && vsyncNs - frames[0].arrivalNs >= kEarlySpareNs) {
+                    choice = 0;
+                    earlySinceNs_ = 0;
+                }
                 break;
             }
-            // At its turn the oldest frame goes up, unless it is more than a stream frame old and a
-            // newer one waits, as the desktop drops a picture (present::Pacer::take_due). One frame a
-            // turn never catches up: a burst kept its backlog for good, and a host a little faster
-            // than the screen (60.000 fps on 119.88 Hz) added a frame every 17 s until the queue
-            // overflowed.
+            // At its turn the oldest frame goes up. Only when the one behind it is more than a stream
+            // frame old too does it give way to it: two or more frames have backed up (a burst, or a
+            // host faster than the turns take back), and the desktop likewise drops a picture more than
+            // a frame old once a newer one is due (present::Pacer::take_due). One frame a turn never
+            // caught up: a burst kept its backlog for good, and 60.000 fps on 119.88 Hz added a frame
+            // every 17 s until the queue overflowed. Skipping any frame more than a stream frame old
+            // with a newer one behind it dropped one every 17 s there instead, and steadily with frames
+            // up to 8 ms either side of their time, which often come that old with the next one there.
             choice = 0;
-            while (static_cast<size_t>(choice) + 1 < count && frames[choice].arrivalNs > 0 &&
-                   vsyncNs - frames[choice].arrivalNs > streamIntervalNs_) {
+            while (static_cast<size_t>(choice) + 1 < count && frames[choice + 1].arrivalNs > 0 &&
+                   vsyncNs - frames[choice + 1].arrivalNs > streamIntervalNs_) {
                 choice++;
             }
+            if (frames[choice].arrivalNs <= 0 || vsyncNs - frames[choice].arrivalNs < periodNs_ + kEarlySpareNs) {
+                earlySinceNs_ = 0;
+            }
+            else if (earlySinceNs_ == 0) {
+                earlySinceNs_ = vsyncNs;
+            }
             break;
+        }
 
         case PacingMode::HostTimed: {
             if (count == 0) {
