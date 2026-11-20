@@ -229,19 +229,20 @@ impl Encoder {
             let queried = Instant::now();
             output.extend(self.poll_now()?);
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                bail!("AMF GPU queue failed to drain");
-            }
             // One lock for the count and, while the driver owns every
             // input, the wait for its release notification. Output can be
             // complete while AMF still owns every input: QueryOutput then
             // returns immediately, so the release notification is the wait.
+            // At the deadline the wait is zero and only reads the count.
             let retained = self
                 .ownership
                 .wait_below(AMF_SURFACE_LIMIT, remaining.min(QUERY_TIMEOUT));
             // A completion at the deadline still frees capacity successfully.
             if self.in_flight.len() < AMF_SURFACE_LIMIT && retained < AMF_SURFACE_LIMIT {
                 break;
+            }
+            if remaining.is_zero() {
+                bail!("AMF GPU queue failed to drain");
             }
             if retained < AMF_SURFACE_LIMIT {
                 if let Some(thread) = &self.output_thread {
