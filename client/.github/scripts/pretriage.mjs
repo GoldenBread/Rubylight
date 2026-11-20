@@ -8,8 +8,10 @@
 //   expand  reads the investigation pass's JSON ($WORK/plan-answer.txt), appends the files and
 //           source searches it asked for to AGENTS.md and writes $WORK/prompt.txt for the
 //           answer pass.
-//   post    validates Hermes' JSON answer in $WORK/answer.txt and posts the comment, tagged for
-//           $MAINTAINER, and labels with the GitHub App token. DRY_RUN=true prints instead.
+//   post    validates Hermes' JSON answer in $WORK/answer.txt, renders it as the bot's comment
+//           (analysis and proposed fix, or steps for the reporter on a user error) and posts it
+//           and the labels with the GitHub App token. For a high-confidence bug whose edits check
+//           out it first opens a draft pull request with GH_APP_PR_TOKEN. DRY_RUN=true prints instead.
 //
 // The model runs with no tools, so text in an issue can't run commands or read secrets;
 // this script, not the model, decides what reaches GitHub.
@@ -326,6 +328,7 @@ async function gather() {
     return;
   }
   output("skip", "false");
+  output("is_pr", isPr);
 
   const allowedLabels = (env.LABELS || "").split(",").map((label) => label.trim()).filter(Boolean);
   const instructions = fs.readFileSync(path.join(ROOT, env.INSTRUCTIONS), "utf8");
@@ -562,6 +565,7 @@ async function expand() {
     ...plan.hypotheses.flatMap((h) => h.match(/[A-Za-z_][A-Za-z0-9_]*(?:_[A-Za-z0-9]+|[a-z][A-Z][A-Za-z0-9]*)/g) || []).map((term) => term.toLowerCase()),
   ];
   let requested = "";
+  const shown = [];
   for (const request of plan.files) {
     const excerpt = fileExcerpt(request, focus);
     if (excerpt.skipped) {
@@ -571,7 +575,9 @@ async function expand() {
     }
     if (requested.length + excerpt.text.length > REQUEST_MAX_CHARS * 0.75) break;
     requested += excerpt.text;
+    shown.push(excerpt.rel);
   }
+  fs.writeFileSync(path.join(WORK, "shown.json"), JSON.stringify(shown));
   const searches = searchSource(plan.search);
   const section = clip(
     `\n\n---\n\n# Requested source code\n\nFiles and searches you asked for in the investigation pass. Line numbers are the files' own; cite them as \`path:line\`.\n${requested}${searches ? `\n\n## Searches\n${searches}` : ""}`,
@@ -586,35 +592,194 @@ async function expand() {
   console.log(`Requested source ${section.length} chars`);
 }
 
+const KINDS = new Map([
+  ["bug", "Bug"],
+  ["enhancement", "Enhancement"],
+  ["user error", "Setup or usage"],
+  ["question", "Question"],
+  ["works as designed", "Works as designed"],
+  ["duplicate", "Duplicate"],
+  ["wrong repository", "Wrong repository"],
+  ["pull request", "Pull request"],
+  ["spam", "Spam"],
+]);
+const LINK_OK = /^https:\/\/github\.com\/RamazanKara\/(Rubylight|nightjar)([/?#]|$)/i;
+const OWNER = /^[A-Za-z0-9-]{1,39}$/.test(env.GITHUB_REPOSITORY_OWNER || "") ? env.GITHUB_REPOSITORY_OWNER : "RamazanKara";
+const OWNER_NAME = new RegExp(`(?<![\\w/.-])@?${OWNER}(?![\\w/-])`, "gi");
+const PR_MAX_FILES = 3;
+const PR_MAX_EDITS = 6;
+const PR_MAX_CHARS = 8_000;
+// Files a bot pull request may never touch: anything that builds, installs or runs in CI.
+const PR_DENY = /(^|\/)(build\.rs|[^/]*\.(toml|ps1|xml)|[^/]*\.config\.[^/]+)$/i;
+
 function parseAnswer(raw) {
   const answer = parseJsonObject(raw);
-  if (typeof answer.comment !== "string") throw new Error("answer.comment must be a string");
   if (!Array.isArray(answer.labels)) throw new Error("answer.labels must be an array");
+  if (typeof answer.comment !== "string" && typeof answer.kind !== "string") throw new Error("answer needs a kind");
   return answer;
 }
 
 function neutralize(text) {
-  return text
+  return String(text ?? "")
     .replaceAll(MARKER, "")
+    .replace(/<!--[\s\S]*?-->/g, "") // nothing hidden from readers
+    .replace(/https?:\/\/[^\s<>()[\]`"']+/gi, (url) => (LINK_OK.test(url) ? url : "(link removed)"))
+    .replace(OWNER_NAME, "the project") // the comment never names the maintainer
     .replace(/(^|[^\w`])@(?=[A-Za-z0-9])/g, "$1@​") // no notifications
+    .replace(/\b((?:fix|close|resolve)[a-z]*):?(\s+)#(?=\d)/gi, "$1$2issue #") // no closing keywords
     .trim();
+}
+
+function oneLine(text, max = 80) {
+  return neutralize(text).replace(/\s+/g, " ").slice(0, max);
+}
+
+function section(title, text) {
+  const body = neutralize(text);
+  return body ? `#### ${title}\n\n${body}` : "";
+}
+
+function kindOf(answer) {
+  return String(answer.kind || "").trim().toLowerCase();
+}
+
+function evidenceList(answer) {
+  return (Array.isArray(answer.evidence) ? answer.evidence : [])
+    .map((line) => oneLine(line, 600))
+    .filter(Boolean)
+    .slice(0, 6)
+    .map((line) => `- ${line.replace(/^[-*]\s+/, "")}`)
+    .join("\n");
+}
+
+// Renders the model's fields under fixed headings, so every comment has the same shape.
+function renderComment(answer, isPr, prNumber) {
+  if (typeof answer.kind !== "string") return neutralize(answer.comment); // older answer shape
+  const kind = kindOf(answer);
+  if (kind === "spam") return "";
+  const userSide = kind === "user error" || kind === "question";
+  const meta = [`**${KINDS.get(kind) || "Triage"}**`];
+  if (answer.area) meta.push(oneLine(answer.area));
+  if (/^(high|medium|low)$/i.test(answer.confidence || "")) meta.push(`confidence ${answer.confidence.toLowerCase()}`);
+  const duplicate = Number.isInteger(answer.duplicate_of) && answer.duplicate_of > 0 ? `Looks like a duplicate of #${answer.duplicate_of}.` : "";
+  const evidence = evidenceList(answer);
+  const fix = [neutralize(answer.fix), prNumber ? `Draft pull request with this fix: #${prNumber}` : ""].filter(Boolean).join("\n\n");
+  const parts = isPr
+    ? [section("Summary", answer.analysis), section("Issues", evidence), section("Suggested changes", answer.fix), section("Verify", answer.unknown)]
+    : [
+        userSide ? section("What you can do", answer.user_steps) : "",
+        section(userSide ? "Why it happens" : kind === "enhancement" ? "Today" : "Analysis", answer.analysis),
+        section("Evidence", evidence),
+        section(kind === "enhancement" ? "Proposal" : "Proposed fix", fix),
+        section("Also possible", answer.also_possible),
+        section("Open questions", answer.unknown),
+      ];
+  const body = parts.filter(Boolean);
+  if (!body.length) return "";
+  const thanks = isPr ? "Thanks for the pull request!" : "Thanks for reporting this!";
+  return [thanks, meta.join(" · "), duplicate, ...body].filter(Boolean).join("\n\n");
+}
+
+// The model copies `find` from numbered excerpts; drop the "123: " prefixes if it kept them.
+function numberedLines(text) {
+  return text.split("\n").every((line) => !line || /^\d+: /.test(line));
+}
+
+function unnumber(text) {
+  return text.replace(/^\d+: /gm, "");
+}
+
+// Checks the proposed edits and applies them to the checkout's files in memory. Only files the
+// answer pass was shown, inside the code folders, and never build, manifest or CI files.
+function prFiles(pr) {
+  if (!pr || typeof pr !== "object" || !Array.isArray(pr.edits) || !pr.edits.length) return null;
+  if (pr.edits.length > PR_MAX_EDITS) throw new Error(`${pr.edits.length} edits, at most ${PR_MAX_EDITS}`);
+  const shown = new Set(JSON.parse(fs.readFileSync(path.join(WORK, "shown.json"), "utf8")));
+  const files = new Map();
+  let size = 0;
+  for (const edit of pr.edits) {
+    const rel = allowedPath(edit?.path);
+    if (!rel || !shown.has(rel) || rel.startsWith("docs/") || PR_DENY.test(rel) || rel.split("/").some((part) => part.startsWith(".")))
+      throw new Error(`edit to a file that is not allowed: ${String(edit?.path).slice(0, 200)}`);
+    const rawFind = String(edit.find ?? "");
+    const rawReplace = String(edit.replace ?? "");
+    const numbered = numberedLines(rawFind);
+    const find = numbered ? unnumber(rawFind) : rawFind;
+    const replace = numbered && numberedLines(rawReplace) ? unnumber(rawReplace) : rawReplace;
+    if (!find.trim() || find === replace) throw new Error(`empty or no-op edit for ${rel}`);
+    size += find.length + replace.length;
+    const text = files.get(rel) ?? fs.readFileSync(path.join(ROOT, rel), "utf8");
+    const at = text.indexOf(find);
+    if (at < 0 || text.indexOf(find, at + 1) >= 0) throw new Error(`edit for ${rel} does not match exactly once`);
+    files.set(rel, text.slice(0, at) + replace + text.slice(at + find.length));
+  }
+  if (files.size > PR_MAX_FILES) throw new Error(`${files.size} files, at most ${PR_MAX_FILES}`);
+  if (size > PR_MAX_CHARS) throw new Error(`edits too large (${size} chars)`);
+  return files;
+}
+
+// Commits the files on top of the checked-out commit through the Git Data API and opens a draft.
+async function openPr(number, answer, files) {
+  const token = env.GH_APP_PR_TOKEN;
+  const base = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const repo = await gh(`/repos/${REPO}`, { token });
+  const baseCommit = await gh(`/repos/${REPO}/git/commits/${base}`, { token });
+  const tree = await gh(`/repos/${REPO}/git/trees`, {
+    token,
+    method: "POST",
+    body: { base_tree: baseCommit.tree.sha, tree: [...files].map(([file, content]) => ({ path: file, mode: "100644", type: "blob", content })) },
+  });
+  let title = oneLine(answer.pr.title, 72);
+  if (!/^[a-z]+(\([^)]+\))?: \S/.test(title)) title = `fix: proposed fix for #${number}`;
+  const commit = await gh(`/repos/${REPO}/git/commits`, {
+    token,
+    method: "POST",
+    body: { message: `${title}\n\nProposed by the pre-triage bot for #${number}.`, tree: tree.sha, parents: [base] },
+  });
+  const branch = `pretriage/issue-${number}-${env.GITHUB_RUN_ID || Date.now()}`;
+  await gh(`/repos/${REPO}/git/refs`, { token, method: "POST", body: { ref: `refs/heads/${branch}`, sha: commit.sha } });
+  const body = [
+    `Fixes #${number}`,
+    section("Analysis", answer.analysis),
+    section("Evidence", evidenceList(answer)),
+    section("Fix", answer.fix),
+    "---\n<sub>Draft opened by the pre-triage bot. It wasn't built or tested by the bot; CI runs on it.</sub>",
+  ].filter(Boolean).join("\n\n");
+  try {
+    const pr = await gh(`/repos/${REPO}/pulls`, { token, method: "POST", body: { title, head: branch, base: repo.default_branch, body, draft: true } });
+    return pr.number;
+  } catch (error) {
+    await gh(`/repos/${REPO}/git/refs/heads/${branch}`, { token, method: "DELETE" }).catch(() => {}); // no orphan branch
+    throw error;
+  }
 }
 
 async function post() {
   const number = Number(env.NUMBER);
   const answer = parseAnswer(fs.readFileSync(path.join(WORK, "answer.txt"), "utf8"));
+  const isPr = JSON.parse(fs.readFileSync(path.join(WORK, "meta.json"), "utf8")).isPr;
   const allowed = new Set((env.LABELS || "").split(",").map((label) => label.trim()).filter(Boolean));
-  const labels = [...new Set(answer.labels.map(String))].filter((label) => allowed.has(label));
+  const spam = kindOf(answer) === "spam";
+  const labels = spam ? [] : [...new Set(answer.labels.map(String))].filter((label) => allowed.has(label));
   const dropped = answer.labels.filter((label) => !allowed.has(String(label)));
   if (dropped.length) console.log(`Ignoring labels outside the allowed set: ${dropped.join(", ")}`);
 
-  const comment = neutralize(answer.comment);
+  // A draft pull request only for a high-confidence bug whose edits all check out.
+  let prNumber = 0;
+  if (!isPr && kindOf(answer) === "bug" && String(answer.confidence).toLowerCase() === "high" && answer.pr) {
+    try {
+      const files = prFiles(answer.pr);
+      if (files && env.DRY_RUN === "true") console.log(`DRY RUN: would open a draft pull request changing ${[...files.keys()].join(", ")}`);
+      else if (files && !env.GH_APP_PR_TOKEN) console.log("No pull request token (the app needs Contents: write); not opening a pull request");
+      else if (files) prNumber = await openPr(number, answer, files);
+    } catch (error) {
+      console.log(`Not opening a pull request: ${error.message}`);
+    }
+  }
+
+  const comment = renderComment(answer, isPr, prNumber);
   if (comment.length > COMMENT_OUT_MAX_CHARS) throw new Error(`comment too long (${comment.length} chars)`);
-  // The tag is added here, after neutralize, so the model itself can never notify anyone.
-  const maintainer = /^[A-Za-z0-9-]{1,39}$/.test(env.MAINTAINER || "") ? `@${env.MAINTAINER} ` : "";
-  const body = comment
-    ? `${MARKER}\n${maintainer}${comment}\n\n---\n<sub>Automated pre-triage by Hermes Agent for the maintainer. It can be wrong; the maintainer has the final word.</sub>`
-    : "";
+  const body = comment ? `${MARKER}\n${comment}\n\n---\n<sub>Automated pre-triage: a first look, which can be wrong.</sub>` : "";
 
   if (env.DRY_RUN === "true") {
     console.log(`DRY RUN for ${REPO}#${number}\nlabels: ${labels.join(", ") || "none"}\n\n${body || "(no comment)"}`);

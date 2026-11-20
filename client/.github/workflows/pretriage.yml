@@ -4,6 +4,7 @@ name: Pre-triage
 # (OpenCode Go) and posted by the rubylight-pretriage-bot GitHub App. The model gets no tools;
 # .github/scripts/pretriage.mjs gathers the input and decides what is posted. Pull requests are
 # read through the API only: their code is never checked out or run.
+# .github/pretriage-bot.png is the app's logo; GitHub only takes it by hand in the app's settings.
 
 on:
   issues:
@@ -35,7 +36,6 @@ concurrency:
 env:
   HERMES_TAG: v0.23.1
   HERMES_COMMIT: 3b421578588243f920886e6fe79a6faa87ea026e
-  MAINTAINER: RamazanKara
   OTHER_REPO: RamazanKara/Rubylight
   INSTRUCTIONS: .github/pretriage.md
   DOCS: docs/code-map.md,docs/TROUBLESHOOTING.md,docs/faq.md,docs/quick-start.md,docs/features.md,docs/devices.md,docs/pairing.md,docs/settings.md@headings
@@ -134,10 +134,23 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
 
+      # A second token for draft fix pull requests. It needs the app's Contents: write permission;
+      # without it this step fails quietly and the bot only comments.
+      - if: steps.gather.outputs.skip == 'false' && steps.gather.outputs.is_pr == 'false'
+        id: app_pr
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          client-id: ${{ vars.PRETRIAGE_CLIENT_ID }}
+          private-key: ${{ secrets.PRETRIAGE_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - if: steps.gather.outputs.skip == 'false'
         run: node .github/scripts/pretriage.mjs post
         env:
           GH_APP_TOKEN: ${{ steps.app.outputs.token }}
+          GH_APP_PR_TOKEN: ${{ steps.app_pr.outputs.token }}
           NUMBER: ${{ steps.gather.outputs.number }}
           DRY_RUN: ${{ inputs.dry_run }}
           WORK: ${{ runner.temp }}/pretriage
