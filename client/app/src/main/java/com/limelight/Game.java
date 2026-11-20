@@ -480,7 +480,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         }
     }
 
-    // For a hand-off to a new stream activity (reconnect, new intent): the stream is not ending.
+    // For a hand-off to a new stream activity (reconnect, new intent; GameRecovery.handOff): the stream is not ending.
     void finishNow() {
         exitFinished = true;
         super.finish();
@@ -624,6 +624,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     protected void onCreate(Bundle savedInstanceState) {
         com.limelight.ui.AppTheme.apply(this);
         super.onCreate(savedInstanceState);
+        // A hand-off in split screen starts this screen with CLEAR_TASK (GameRecovery.handOff). The copies of this
+        // intent that later starts make (the next hand-off, the second screen) must not clear a task themselves.
+        getIntent().setFlags(getIntent().getFlags() & ~Intent.FLAG_ACTIVITY_CLEAR_TASK);
         // One connection to a PC at a time: a stream ends Microphone only, whose close it then waits for.
         com.limelight.mic.MicOnlyService.stop(this);
         streamConnection.onCreate(savedInstanceState);
@@ -987,8 +990,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         // singleTask can deliver a new shortcut launch to a stream still visible in PiP.
         touchInput.setInputGrabState(false);
         streamConnection.stopConnection();
-        finishNow();
-        startActivity(new Intent(intent));
+        streamRecovery.handOff(new Intent(intent));
     }
 
     @Override

@@ -796,6 +796,123 @@ public class GameRecoveryTest {
         }
     }
 
+    // Retroid, Android 13, 2026-11-20: a shortcut's stream (alone in its task) in split screen went off with the screen.
+    // Its return and then Reconnect each finished the stream before starting the next; Android closed split screen,
+    // moved the new stream's task behind the home screen and removed it before it started. Such a stream now starts
+    // the next one in its own task first. What Android then does with the task shows only on a device.
+    @Test
+    @Config(shadows = RecoveryBridge.class, instrumentedPackages = "com.limelight.nvstream.jni")
+    public void inSplitScreenAStreamAloneInItsTaskStartsTheNextOneInThatTask() throws Exception {
+        // {alone in its task, split screen, picture-in-picture, replaced in place}
+        boolean[][] windows = {
+                {true, true, false, true},
+                {true, false, false, false},
+                {false, true, false, false},
+                {true, true, true, false},
+        };
+        for (boolean[] window : windows) {
+            String condition = "root " + window[0] + ", split " + window[1] + ", pip " + window[2];
+            Game game = establishedGame();
+            placeWindow(game, window[0], window[1], window[2]);
+            StartOrder order = new StartOrder(game);
+            try {
+                game.streamRecovery.reconnectStream();
+                assertHandOff("Reconnect, " + condition, game, order, awaitStartedActivity(game), window[3]);
+            } finally {
+                order.close();
+                cleanupRecovery(game);
+            }
+        }
+        for (boolean split : new boolean[] {true, false}) {
+            // The return after the screen was off (the user's own trip), as in that log.
+            Game game = establishedGame();
+            placeWindow(game, true, split, false);
+            StartOrder order = new StartOrder(game);
+            try {
+                game.onPause();
+                game.onStop();
+                assertNotNull(ReflectionHelpers.getField(game, "stoppedStreamResumeIntent"));
+                game.onResume();
+                assertHandOff("return, split " + split, game, order, awaitRecoveryLaunch(game, 1), split);
+            } finally {
+                order.close();
+                cleanupRecovery(game);
+            }
+        }
+    }
+
+    @Test
+    @Config(shadows = RecoveryBridge.class, instrumentedPackages = "com.limelight.nvstream.jni")
+    public void inSplitScreenThePinScreenOfAReconnectGoesOnTopOfTheStreamInItsTask() throws Exception {
+        com.limelight.pin.PinGate.resetForTests();
+        com.limelight.pin.PinStore store = new com.limelight.pin.PinStore(RuntimeEnvironment.getApplication());
+        store.setPin("2468".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        store.setMode(com.limelight.pin.PinStore.Mode.STREAMS);
+        try {
+            for (boolean split : new boolean[] {true, false}) {
+                Game game = establishedGame();
+                placeWindow(game, true, split, false);
+                StartOrder order = new StartOrder(game);
+                try {
+                    game.streamRecovery.reconnectStream(true, false);
+                    Intent started = awaitStartedActivity(game);
+                    assertEquals(com.limelight.pin.PinLockActivity.class.getName(), started.getComponent().getClassName());
+                    assertEquals("a plain start: in place it goes into this stream's task", 0,
+                            started.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+                    assertEquals("split " + split, java.util.Collections.singletonList(!split), order.finishingAtStart);
+                    Intent next = started.getParcelableExtra(com.limelight.pin.PinLockActivity.EXTRA_NEXT);
+                    assertEquals(Game.class.getName(), next.getComponent().getClassName());
+                    assertTrue(game.isFinishing());
+                } finally {
+                    order.close();
+                    cleanupRecovery(game);
+                }
+            }
+        } finally {
+            store.setMode(com.limelight.pin.PinStore.Mode.OFF);
+            com.limelight.pin.PinGate.resetForTests();
+        }
+    }
+
+    private static void placeWindow(Game game, boolean taskRoot, boolean multiWindow, boolean pictureInPicture) {
+        org.robolectric.shadows.ShadowActivity window = org.robolectric.Shadows.shadowOf(game);
+        window.setIsTaskRoot(taskRoot);
+        window.setInMultiWindowMode(multiWindow);
+        ReflectionHelpers.setField(window, "isInPictureInPictureMode", pictureInPicture);
+    }
+
+    /** In place, the next stream clears this stream's task (NEW_TASK with CLEAR_TASK) and starts before this one finishes. */
+    private static void assertHandOff(String condition, Game game, StartOrder order, Intent started, boolean inPlace) {
+        assertEquals(condition, Game.class.getName(), started.getComponent().getClassName());
+        assertEquals(condition, inPlace, (started.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_TASK) != 0);
+        assertEquals(condition, inPlace, (started.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0);
+        assertEquals(condition + ": finishing when the next one started",
+                java.util.Collections.singletonList(!inPlace), order.finishingAtStart);
+        assertTrue(condition, game.isFinishing());
+    }
+
+    /** Whether the stream screen was finishing when each activity it started was started. */
+    private static final class StartOrder {
+        final java.util.List<Boolean> finishingAtStart = new java.util.ArrayList<>();
+        private final android.app.Instrumentation instrumentation;
+        private final android.app.Instrumentation.ActivityMonitor monitor;
+
+        StartOrder(Game game) {
+            instrumentation = ReflectionHelpers.getField(game, "mInstrumentation");
+            monitor = new android.app.Instrumentation.ActivityMonitor() {
+                @Override public android.app.Instrumentation.ActivityResult onStartActivity(Intent intent) {
+                    finishingAtStart.add(game.isFinishing());
+                    return null;
+                }
+            };
+            instrumentation.addMonitor(monitor);
+        }
+
+        void close() {
+            instrumentation.removeMonitor(monitor);
+        }
+    }
+
     @Test
     @Config(shadows = RecoveryBridge.class, instrumentedPackages = "com.limelight.nvstream.jni")
     public void aRecoveryOfAJoinNeverJoinsAgain() throws Exception {

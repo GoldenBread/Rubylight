@@ -590,7 +590,41 @@ public class GameLifecycleTest {
             assertNotNull(launched);
             assertEquals("192.0.2.2", launched.getStringExtra(Game.EXTRA_HOST));
             assertEquals(42, launched.getIntExtra(Game.EXTRA_APP_ID, 0));
+            assertEquals("full screen keeps finishing first into a task of its own", 0,
+                    launched.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_TASK);
             assertTrue(controller.get().isFinishing());
+        } finally {
+            controller.destroy();
+        }
+    }
+
+    @Test
+    public void inSplitScreenANewLaunchReplacesAStreamAloneInItsTaskInThatTask() {
+        ActivityController<Game> controller = Robolectric.buildActivity(Game.class).create();
+        org.robolectric.Shadows.shadowOf(controller.get()).setIsTaskRoot(true);
+        org.robolectric.Shadows.shadowOf(controller.get()).setInMultiWindowMode(true);
+        Intent nextStream = new Intent(controller.get(), Game.class).putExtra(Game.EXTRA_APP_ID, 42);
+        try {
+            controller.newIntent(nextStream);
+            Intent launched = org.robolectric.Shadows.shadowOf(controller.get()).getNextStartedActivity();
+            assertEquals(42, launched.getIntExtra(Game.EXTRA_APP_ID, 0));
+            int inPlace = Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK;
+            assertEquals(inPlace, launched.getFlags() & inPlace);
+            assertTrue(controller.get().isFinishing());
+        } finally {
+            controller.destroy();
+        }
+    }
+
+    @Test
+    public void aStreamStartedInPlaceKeepsNoClearTaskForTheStartsItMakes() {
+        Intent start = new Intent(org.robolectric.RuntimeEnvironment.getApplication(), Game.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        ActivityController<Game> controller = Robolectric.buildActivity(Game.class, start).create();
+        try {
+            int flags = controller.get().getIntent().getFlags();
+            assertEquals(0, flags & Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            assertEquals(Intent.FLAG_ACTIVITY_NEW_TASK, flags & Intent.FLAG_ACTIVITY_NEW_TASK);
         } finally {
             controller.destroy();
         }

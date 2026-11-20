@@ -10,7 +10,9 @@ import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.utils.LaunchSource;
 import com.limelight.ui.NavigationDialogBuilder;
+import android.content.ComponentName;
 import android.content.Intent;
+import android.os.Build;
 import android.os.SystemClock;
 import android.widget.Toast;
 import java.io.IOException;
@@ -221,11 +223,49 @@ final class GameRecovery {
                         showReconnectDialog(R.string.conn_error_title, game.getString(R.string.stream_stop_timeout));
                         return;
                     }
-                    game.finishNow();
-                    game.startActivity(behindPin ? com.limelight.pin.PinLockActivity.forResume(game, retry, game.pcName) : retry);
+                    handOff(behindPin ? com.limelight.pin.PinLockActivity.forResume(game, retry, game.pcName) : retry);
                 }
             });
         }, "Stream reconnect").start();
+    }
+
+    /**
+     * Replaces this stream screen with {@code next}: a new stream, or the PIN screen in front of one. A stream alone in
+     * its task (a shortcut's or a frontend's, or one an earlier hand-off started) in split screen or another window
+     * that is not picture-in-picture starts {@code next} in that task and finishes after. Finishing first emptied the
+     * task, so Android closed split screen and put the new stream's task behind the home screen: its stream stopped as
+     * it was paused, or Android removed the task before it started, as it does with a task excluded from Recents
+     * there (Retroid, Android 13). Anywhere else this screen finishes first, as before, so the singleTask start makes a
+     * new stream rather than handing this one a new intent.
+     */
+    void handOff(Intent next) {
+        boolean multiWindow = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInMultiWindowMode();
+        boolean pictureInPicture = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInPictureInPictureMode();
+        boolean inPlace = handsOffInPlace(game.isTaskRoot(), multiWindow, pictureInPicture);
+        Intent start = handOffIntent(next, game.getComponentName(), inPlace);
+        if (inPlace) {
+            game.startActivity(start);
+            game.finishNow();
+        } else {
+            game.finishNow();
+            game.startActivity(start);
+        }
+    }
+
+    /** Whether {@link #handOff} starts the next screen in this stream's own task before this one finishes. */
+    static boolean handsOffInPlace(boolean taskRoot, boolean multiWindow, boolean pictureInPicture) {
+        return taskRoot && multiWindow && !pictureInPicture;
+    }
+
+    /**
+     * In place, a new stream clears this stream's task and becomes its root (CLEAR_TASK needs NEW_TASK; without it the
+     * singleTask start would hand this screen a new intent). The PIN screen just starts on top of this one.
+     */
+    static Intent handOffIntent(Intent next, ComponentName stream, boolean inPlace) {
+        if (inPlace && stream != null && stream.equals(next.getComponent())) {
+            next.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        }
+        return next;
     }
 
     boolean isRecoveryAttempt() {
@@ -596,8 +636,7 @@ final class GameRecovery {
                         return;
                     }
                     game.recoveryHandoffInProgress = false;
-                    game.finishNow();
-                    game.startActivity(retry);
+                    handOff(retry);
                 });
             }, "Automatic stream recovery").start();
         };
