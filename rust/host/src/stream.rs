@@ -530,24 +530,22 @@ fn restart_on_new_path(s: &Session, c: &Config) {
     rebuild_congestion(s, &stream, c);
 }
 /// The stream's video FEC at its start: the configured percentage, for every
-/// frame, unless the client chose its own with `rlFecPercentage`. With
-/// `adaptive_fec` on (off by default) it is the ceiling adaptive FEC decays
-/// from for a client that sends FEC status.
+/// frame (`fec_percentage`, PyroWave included unless it keeps a share of its
+/// own), unless the client chose its own with `rlFecPercentage`.
 fn configure_video_fec(s: &Session, c: &Config) -> Result<()> {
     let requested_fec = c.integer("fec_percentage", 20);
     if requested_fec != requested_fec.clamp(0, 100) {
         s.launch.warnings.set("network_fec_config", format!("FEC percentage {requested_fec} is outside 0-100; using {}%. Correct fec_percentage in Video settings.", requested_fec.clamp(0, 100)));
     }
     let fec_ceiling = if s.config.codec == 3 {
-        c.integer("pyrowave_critical_fec_percentage", 20)
-            .clamp(0, 255) as usize
+        c.pyrowave_fec_percentage().clamp(0, 255) as usize
     } else {
         requested_fec.clamp(0, 100) as usize
     };
     // A client's `rlFecPercentage` was checked at /launch.
     let choice = butterpollo_core::extensions::fec_choice(&s.launch.options)?;
-    let maximum = c.fec_max_percentage();
-    let start = s.configure_fec_choice(choice, c.adaptive_fec(), fec_ceiling, maximum);
+    let maximum = butterpollo_core::config::FEC_MAX_PERCENTAGE;
+    let start = s.configure_fec_choice(choice, false, fec_ceiling, maximum);
     if choice != butterpollo_core::extensions::FecChoice::Host {
         tracing::info!(
             client = %s.launch.client.name,

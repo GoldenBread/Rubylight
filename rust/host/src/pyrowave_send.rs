@@ -280,7 +280,7 @@ impl Sender {
             let mut stamper = stamper;
             let mut last_stamp = start;
             let mut fec_reported: Option<Instant> = None;
-            let requested_fec = config.integer("pyrowave_critical_fec_percentage", 20);
+            let requested_fec = config.pyrowave_fec_percentage();
             let early_blocks = config.boolean("video_send_early_blocks", true);
             if requested_fec != requested_fec.clamp(0, 255) {
                 current.launch.warnings.set("pyrowave_fec_config", format!("PyroWave critical FEC {requested_fec}% is outside 0-255; using {}%. Correct the critical FEC setting.", requested_fec.clamp(0, 255)));

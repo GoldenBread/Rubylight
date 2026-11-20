@@ -178,7 +178,7 @@ The host also takes and sends these, with the wire formats of the projects that 
 
 ## Error correction reports
 
-Moonlight's own FEC status message (`0x5502`, `SS_FRAME_FEC_STATUS` in moonlight-common-c) needs no announcement. A client that sends it for frames it had to repair or could not rebuild gets adaptive error correction where the PC has **Adapt error correction** on (`adaptive_fec`; on by default from 2.2.0, off by default since November 2026): the share of recovery packets rises with reported loss, returns to the configured `fec_percentage` when a frame could not be rebuilt, and falls slowly towards 5 % while no loss is reported. A client that never sends it keeps the configured percentage.
+Moonlight's own FEC status message (`0x5502`, `SS_FRAME_FEC_STATUS` in moonlight-common-c) needs no announcement. A client that sends it for frames it had to repair or could not rebuild gets adaptive error correction only when it asks for Automatic (`rlFecPercentage=auto`). The PC's own **Adapt error correction** (`adaptive_fec`, off by default, no longer a setting) is retired: it saved traffic but no picture bitrate. A client that does not ask keeps the configured `fec_percentage`.
 
 Reports are checked against sent frame numbers and deduplicated before they
 affect a controller.

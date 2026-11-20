@@ -576,40 +576,17 @@ const video: Setting[] = [
     label: 'Error correction',
     description:
       'Error correction (FEC): extra data that repairs lost packets. More survives a worse network but leaves less bitrate for the picture; leave it at 20% unless the picture breaks up.',
-    details: "Set as a share of each frame's data packets. PyroWave does not use it.",
+    details: "Set as a share of each frame's data packets. It applies to every codec, PyroWave included. A device such as Nightjar that chooses its own error correction may go up to 50%.",
     category: 'video',
     group: 'Bitrate and network',
     control: { kind: 'number', min: 0, max: 100, step: 1, unit: '%' },
     default: 20,
   },
   {
-    key: 'adaptive_fec',
-    label: 'Adapt error correction',
-    description:
-      'Sends less error correction (FEC) while the device reports no loss; the picture gains nothing, and the next loss costs a frame more easily. Leave it off unless the link is tight.',
-    details:
-      'The data saved is error correction only: the picture’s bitrate stays the same. A frame that cannot be repaired shows as a short stutter and costs a new keyframe. After loss, holds protection for 30 seconds, then reduces it by one percentage point every five seconds of clean reports, down to 5 %. Keyframes and repair frames always get the full percentage. Devices that send no error-correction reports keep the configured percentage. Compatible PyroWave clients use the PyroWave error-correction setting as their ceiling.',
-    category: 'video',
-    group: 'Bitrate and network',
-    control: { kind: 'toggle' },
-    default: false,
-  },
-  {
-    key: 'fec_max_percentage',
-    label: 'Most error correction a device may ask for',
-    description:
-      'The most error correction (FEC) a device such as Nightjar may choose for itself, as a percentage of the video packets. Leave it at 50%; a lower cap limits the loss it can repair.',
-    details: 'Devices that choose their own error correction, or let this PC follow their loss reports, stay at or below it. Others use Error correction above.',
-    category: 'video',
-    group: 'Bitrate and network',
-    control: { kind: 'number', min: 0, max: 255, step: 1, unit: '%' },
-    default: 50,
-  },
-  {
     key: 'pyrowave_critical_fec_percentage',
     label: 'PyroWave error correction',
     description:
-      'Error correction (FEC: extra data that repairs lost packets) for PyroWave pictures. More leaves less bitrate for the picture; leave it at 20% unless PyroWave breaks up.',
+      'Error correction for PyroWave pictures, kept from an earlier setting because it differs from Error correction. Reset it to follow Error correction.',
     details:
       'Newer clients protect the start of each frame, which holds its coarsest detail. Older clients use whole-frame protection within their packet limits. Oversized frames may receive less protection; a stream warning explains when. 0 turns it off.',
     category: 'video',
@@ -617,7 +594,10 @@ const video: Setting[] = [
     control: { kind: 'number', min: 0, max: 255, step: 1, unit: '%' },
     default: 20,
     inactiveHint: "Turn on PyroWave to use this setting. Only compatible PyroWave clients use this error correction.",
-    visibleWhen: (values) => flag(values, 'pyrowave', true),
+    visibleWhen: (values) =>
+      flag(values, 'pyrowave', true) &&
+      values.pyrowave_critical_fec_percentage != null &&
+      Number(values.pyrowave_critical_fec_percentage) !== Number(values.fec_percentage ?? 20),
   },
   {
     key: 'video_max_batch_size_kb',

@@ -695,7 +695,7 @@ impl Encoder {
         luid.luid[4..].copy_from_slice(&desc.AdapterLuid.HighPart.to_le_bytes());
         quarantined_adapters().check(luid.luid)?;
         let critical_fec_percentage = tuning
-            .integer("pyrowave_critical_fec_percentage", 20)
+            .pyrowave_fec_percentage()
             .clamp(0, 255) as u32;
         let critical_fec = config.pyrowave_records && critical_fec_percentage > 0;
         let overlap = tuning.pyrowave_encode_overlap();

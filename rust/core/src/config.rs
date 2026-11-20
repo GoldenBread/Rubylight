@@ -22,7 +22,7 @@ pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
     BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation,
-    fold_packet_pacing, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE,
+    fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE,
     PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES,
     RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting,
     SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app,
@@ -44,6 +44,10 @@ pub enum BitrateAdaptation {
     /// As `On`, and also lowered as network delay builds (congestion control).
     Delay,
 }
+
+/// The most video FEC a device may ask for (`rlFecPercentage`) or reach
+/// through its loss reports, in percent of the video packets: half of them.
+pub const FEC_MAX_PERCENTAGE: u8 = 50;
 
 /// Packet pacing ([`Config::packet_pacing`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,6 +223,15 @@ impl Config {
             self.values
                 .insert(BITRATE_ADAPTATION.to_owned(), folded.to_owned());
         }
+        // A PyroWave share equal to the error correction share is that share.
+        if let Some(value) = self.values.get(retired::PYROWAVE_FEC)
+            && retired::pyrowave_fec_is_default(
+                Some(value),
+                self.values.get("fec_percentage").map(String::as_str),
+            )
+        {
+            self.values.remove(retired::PYROWAVE_FEC);
+        }
         // The pacing rate and the two adaptive pacing switches fold into
         // Packet pacing; a value already saved under it wins.
         let rate = self.values.remove(retired::PACING_RATE);
@@ -366,13 +379,6 @@ impl Config {
     pub fn link_rate_adaptation(&self) -> bool {
         self.bitrate_adaptation() != BitrateAdaptation::Off
     }
-    /// Let video FEC fall below `fec_percentage` while the client reports a clean link (off by
-    /// default). The encoder's bitrate does not grow with the parity saved, so all it buys is
-    /// less traffic, and a loss after a quiet stretch meets 5 % parity instead of 20. No run
-    /// has measured that state: every A/B leg ended before the decay reached its floor.
-    pub fn adaptive_fec(&self) -> bool {
-        self.boolean("adaptive_fec", false)
-    }
     /// Packet-level congestion control from the client's arrival feedback: Adaptive bitrate's
     /// `delay` (not the default until the A/B decides).
     pub fn congestion_control(&self) -> bool {
@@ -501,16 +507,15 @@ impl Config {
     pub fn audio_passthrough(&self) -> bool {
         self.boolean("audio_passthrough", true)
     }
-    /// The most video FEC a device may ask for (`rlFecPercentage`) or reach
-    /// through its loss reports, in percent of the video packets
-    /// (`fec_max_percentage`, 0 to 255, 50 by default).
-    pub fn fec_max_percentage(&self) -> u8 {
-        let n = self.integer("fec_max_percentage", 50);
-        if !(0..=255).contains(&n) {
-            invalid("fec_max_percentage", self.get("fec_max_percentage", ""));
-            return 50;
+    /// The PyroWave error-correction share, in percent: `fec_percentage`, as
+    /// for every codec, unless a PyroWave value that differed from it was
+    /// kept (`pyrowave_critical_fec_percentage`, [`retired::PYROWAVE_FEC`]).
+    pub fn pyrowave_fec_percentage(&self) -> i64 {
+        if self.values.contains_key(retired::PYROWAVE_FEC) {
+            self.integer(retired::PYROWAVE_FEC, 20)
+        } else {
+            self.integer("fec_percentage", 20)
         }
-        n as u8
     }
     /// `GET /bandwidth-probe` for paired devices that time a download before
     /// they pick a bitrate (`bandwidth_probe`, on by default).
@@ -864,6 +869,15 @@ impl Config {
             // replacement, as the file would be read.
             let value = replacement(key, &value).map_or(value, str::to_owned);
             next.values.insert(key.clone(), value);
+        }
+        // A PyroWave share equal to Error correction is that share.
+        if let Some(pyrowave) = next.values.get(retired::PYROWAVE_FEC)
+            && retired::pyrowave_fec_is_default(
+                Some(pyrowave),
+                next.values.get("fec_percentage").map(String::as_str),
+            )
+        {
+            next.values.remove(retired::PYROWAVE_FEC);
         }
         // Only what changes is checked: a value the file already had (the
         // host reads it leniently) must not block every other save.

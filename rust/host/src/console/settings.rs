@@ -111,11 +111,10 @@ pub const GLOBAL: &[Setting] = settings! {
         "idd_push_fence_ring", "GPU fence transport for direct driver push (on by default; turn off to use the keyed-mutex ring)", Bool;
         "compute_queue_realtime", "Can hang the GPU driver: run that compute queue, and PyroWave's encode queue, at real-time GPU priority (an HDR stream on an RX 7900 XT ended in an AMD engine timeout; leave it off)", Bool;
         "wgc_slot_aligned_publish", "Align capture publication to frame slots", Bool;
-        "fec_percentage", "Forward error correction (%)", Number;
-        "adaptive_fec", "Adapt error correction to reported packet loss", Bool;
+        "fec_percentage", "Forward error correction (%; every codec, PyroWave included)", Number;
         "pyrowave", "Enable PyroWave for compatible devices", Bool;
         "pyrowave_encode_overlap", "Prepare the next PyroWave frame while the current one encodes", Bool;
-        "pyrowave_critical_fec_percentage", "PyroWave protection for required image data (%)", Number;
+        "pyrowave_critical_fec_percentage", "PyroWave protection for required image data (%; only shown while it differs from the error correction percentage)", Number;
         "video_max_batch_size_kb", "Video send batch limit (KiB)", Number;
         "packet_pacing", "Packet pacing (automatic, the default: adaptive pacing for a device that reports a Wi-Fi or cellular route on H.264, HEVC and AV1, route pacing for the rest; always: adaptive pacing for every stream, including PyroWave; off: route pacing only, and Slow down after video loss still applies; or a fixed rate in kbps, which takes over pacing, e.g. 120000 for 120 Mbps; reconnect after saving)", Text;
         "keyframe_loss_pacing", "Slow down after video loss (on by default; after a lost keyframe or three distinct unrecoverable frames within two seconds, video is paced at twice the bitrate, with room for error correction, for the rest of the stream (a lost first keyframe alone, or loss only the host saw while sending in a stream that has not slowed down before, is lifted after 10 clean seconds; a client that reports its own losses is not slowed by asking twice for a keyframe); disabled by a fixed pacing rate or the adaptive options)", Bool;

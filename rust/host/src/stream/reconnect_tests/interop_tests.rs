@@ -470,7 +470,7 @@ async fn nightjar_hears_the_frame_warp_model() -> Result<()> {
 }
 
 /// Nightjar's `rlFecPercentage`: `auto` keeps the host's percentage until 0x5539 reports
-/// arrive, then follows them up to `fec_max_percentage`; a fixed choice is capped by it; and
+/// arrive, then follows them up to `FEC_MAX_PERCENTAGE`; a fixed choice is capped by it; and
 /// a launch without one keeps the host's own FEC.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_chooses_the_video_fec() -> Result<()> {
@@ -478,7 +478,6 @@ async fn nightjar_chooses_the_video_fec() -> Result<()> {
         10_000,
         1,
         "fec_percentage = 20
-fec_max_percentage = 40
 ",
     )
     .await?;
@@ -521,7 +520,7 @@ fec_max_percentage = 40
     session.record_fec_report(&report(1, 540).encode()).unwrap();
     assert_eq!(
         session.video_fec_percent(true, 30_000),
-        40,
+        50,
         "25 % loss is capped"
     );
     assert!(
@@ -538,8 +537,8 @@ fec_max_percentage = 40
     assert!(session.client_fec.lock().unwrap().is_none());
     assert_eq!(
         session.video_fec_percent(true, 30_000),
-        40,
-        "capped by fec_max_percentage"
+        50,
+        "capped by FEC_MAX_PERCENTAGE"
     );
     let (_, used) = session.record_fec_report(&report(0, 108).encode()).unwrap();
     assert!(!used, "only auto acts on reports");

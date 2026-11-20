@@ -41,11 +41,11 @@ const VERSION: u8 = 1;
 /// What the client asked for with [`LAUNCH_PARAMETER`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FecChoice {
-    /// The host's own `fec_percentage` and `adaptive_fec` (also when the parameter is absent).
+    /// The host's own `fec_percentage` (also when the parameter is absent).
     Host,
     /// Statistical FEC from the client's [`FecReport`]s.
     Auto,
-    /// A fixed percentage. The host still caps it at its `fec_max_percentage`.
+    /// A fixed percentage. The host still caps it at 50 %.
     Fixed(u8),
 }
 

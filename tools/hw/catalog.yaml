@@ -396,10 +396,10 @@ cases:
     device: nuc
     title: 'A/B under loss: a fixed client FEC share inside the video budget (rlFecPercentage=20) against the host''s 20 % on top of it, NUC wifi-hi'
     command: |
-      & {{python}} rust\release\linkspeed.py run wifi-hi wifi-hi@2 wifi-hi@3 --work {{out}}\host --package {{package}} --config fec_percentage=20 --config adaptive_fec=false
+      & {{python}} rust\release\linkspeed.py run wifi-hi wifi-hi@2 wifi-hi@3 --work {{out}}\host --package {{package}} --config fec_percentage=20
       if ($LASTEXITCODE) { exit $LASTEXITCODE }
       $env:LINKSPEED_CLIENT_FEC = '20'
-      & {{python}} rust\release\linkspeed.py run wifi-hi wifi-hi@2 wifi-hi@3 --work {{out}}\split --package {{package}} --config fec_percentage=20 --config adaptive_fec=false
+      & {{python}} rust\release\linkspeed.py run wifi-hi wifi-hi@2 wifi-hi@3 --work {{out}}\split --package {{package}} --config fec_percentage=20
       if ($LASTEXITCODE) { exit $LASTEXITCODE }
       & {{python}} rust\release\linkspeed.py compare {{out}}\host {{out}}\split --repeats 3
       exit $LASTEXITCODE

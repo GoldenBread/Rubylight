@@ -656,7 +656,7 @@ impl<P, A> Session<P, A> {
     }
     /// Starts the stream's FEC as the client chose it with `rlFecPercentage`:
     /// the host's own (`adaptive` and `configured`, as [`Self::configure_fec`]),
-    /// a fixed share capped at `maximum` (`fec_max_percentage`), or statistical
+    /// a fixed share capped at `maximum` (`FEC_MAX_PERCENTAGE`), or statistical
     /// FEC up to `maximum` that keeps `configured` until the client's reports
     /// arrive. PyroWave keeps its own protection. Returns the first percentage.
     pub fn configure_fec_choice(

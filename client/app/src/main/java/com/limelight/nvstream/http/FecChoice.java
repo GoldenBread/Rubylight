@@ -19,7 +19,7 @@ public final class FecChoice {
         this.wireValue = wireValue;
     }
 
-    /** A fixed percentage, 0 to 255; the host still caps it at its fec_max_percentage. */
+    /** A fixed percentage, 0 to 255; the host still caps it at 50. */
     public static FecChoice fixed(int percentage) {
         if (percentage < 0 || percentage > 255) {
             throw new IllegalArgumentException("FEC percentage " + percentage + " is not 0-255");

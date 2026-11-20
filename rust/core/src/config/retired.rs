@@ -127,6 +127,11 @@ pub const SPLIT_KEYS: &[(&str, &[&str])] = &[
 /// devices can still carry them; the host drops them without a warning,
 /// and the next save leaves them out.
 pub const REMOVED_KEYS: &[&str] = &[
+    // Error correction is one share for every codec: the host's own share
+    // no longer decays after loss (it bought no picture quality), and the
+    // cap on a device's choice is the fixed 50 percent.
+    "adaptive_fec",
+    "fec_max_percentage",
     "frame_limiter_disable_vsync",
     "rtss_disable_vsync_ullm",
     "dd_wa_dummy_plug_hdr10",
@@ -292,6 +297,35 @@ pub fn fold_packet_pacing(layer: &mut serde_json::Map<String, serde_json::Value>
     }
     changed
 }
+/// The PyroWave error-correction share. PyroWave follows Error correction
+/// (`fec_percentage`) like every codec; only a value that differs from it
+/// stays saved, and then keeps being read.
+pub const PYROWAVE_FEC: &str = "pyrowave_critical_fec_percentage";
+/// Whether a saved PyroWave share is the Error correction share anyway, so
+/// it can go: each is `None` when its layer does not hold it, and an
+/// unreadable value counts as the earlier default of 20, as the host read it.
+pub fn pyrowave_fec_is_default(pyrowave: Option<&str>, fec: Option<&str>) -> bool {
+    let read = |value: Option<&str>| value.and_then(super::parse_integer).unwrap_or(20);
+    pyrowave.is_some() && read(pyrowave) == read(fec)
+}
+/// [`pyrowave_fec_is_default`] over a JSON layer that holds both values: a
+/// PyroWave share equal to the layer's Error correction goes. A layer
+/// without its own Error correction keeps it, as the share it differs from
+/// is in a layer below. Returns whether anything changed.
+pub fn fold_pyrowave_fec(layer: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    let text = |value: &serde_json::Value| match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let (Some(pyrowave), Some(fec)) = (layer.get(PYROWAVE_FEC), layer.get("fec_percentage")) else {
+        return false;
+    };
+    if pyrowave_fec_is_default(Some(&text(pyrowave)), Some(&text(fec))) {
+        layer.remove(PYROWAVE_FEC);
+        return true;
+    }
+    false
+}
 /// Whether `key` is a name the host no longer reads: a removed setting, or
 /// one folded into another. Neither name is used again.
 pub fn retired_name(key: &str) -> bool {
@@ -356,6 +390,7 @@ pub fn migrate_overrides(overrides: &mut serde_json::Map<String, serde_json::Val
     }
     changed |= fold_bitrate_adaptation(overrides);
     changed |= fold_packet_pacing(overrides);
+    changed |= fold_pyrowave_fec(overrides);
     let before = overrides.len();
     overrides.retain(|key, _| !removed(key));
     changed |= overrides.len() != before;

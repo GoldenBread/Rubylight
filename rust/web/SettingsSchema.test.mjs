@@ -41,13 +41,17 @@ test('disconnect restoration defaults on and the exclusive-layout delay stays av
   assert.equal(retention.visibleWhen({ dd_config_revert_on_disconnect: false }), true);
 });
 
-test('error correction stays at its percentage unless adapting is asked for', () => {
-  // Config::adaptive_fec in rust/core/src/config.rs.
-  const setting = settings.get('adaptive_fec');
-  assert.equal(setting.default, false);
-  assert.match(setting.description, /Leave it off unless/);
-  assert.equal(differsFromDefault(setting, {}, { adaptive_fec: 'disabled' }), false);
-  assert.equal(differsFromDefault(setting, {}, { adaptive_fec: 'enabled' }), true);
+test('one error correction percentage serves every codec', () => {
+  // The host's decay and the cap on a device's choice are retired; PyroWave follows Error correction.
+  assert.equal(settings.has('adaptive_fec'), false);
+  assert.equal(settings.has('fec_max_percentage'), false);
+  assert.match(settings.get('fec_percentage').details, /PyroWave included/);
+  const pyrowave = settings.get('pyrowave_critical_fec_percentage');
+  assert.equal(pyrowave.visibleWhen({}), false);
+  assert.equal(pyrowave.visibleWhen({ pyrowave_critical_fec_percentage: 20 }), false);
+  assert.equal(pyrowave.visibleWhen({ fec_percentage: 30, pyrowave_critical_fec_percentage: 30 }), false);
+  assert.equal(pyrowave.visibleWhen({ pyrowave_critical_fec_percentage: 40 }), true);
+  assert.equal(pyrowave.visibleWhen({ pyrowave: false, pyrowave_critical_fec_percentage: 40 }), false);
 });
 
 test('HDR dynamic metadata defaults on and ships HDR Vivid as a normal feature', () => {
@@ -772,8 +776,8 @@ test('PCM and Dolby Digital audio defaults on, keeps Opus for other devices and 
   assert.equal(differsFromDefault(setting, {}, { audio_passthrough: false }), true);
 });
 
-test('the FEC cap and the bandwidth test are live in the console, not pending', () => {
-  for (const [key, category, value] of [['fec_max_percentage', 'video', 50], ['bandwidth_probe', 'network', true]]) {
+test('the bandwidth test is live in the console, not pending', () => {
+  for (const [key, category, value] of [['bandwidth_probe', 'network', true]]) {
     const setting = settings.get(key);
     assert.equal(setting?.category, category, key);
     assert.equal(setting.default, value, key);
@@ -788,7 +792,7 @@ test('pending keys are unique, and Foundation ports are neither credited in the 
   for (const setting of pending) {
     assert.doesNotMatch(`${setting.label} ${setting.description} ${setting.details ?? ''}`, /Foundation|Annex/, setting.key);
   }
-  for (const key of ['hdr_dynamic_metadata', 'fec_max_percentage', 'audio_passthrough']) {
+  for (const key of ['hdr_dynamic_metadata', 'audio_passthrough']) {
     const setting = settings.get(key) ?? pending.find(candidate => candidate.key === key);
     assert.doesNotMatch(`${setting.label} ${setting.description} ${setting.details ?? ''}`, /Experimental/, key);
   }

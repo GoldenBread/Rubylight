@@ -369,7 +369,7 @@ pub(super) fn serverinfo_response(
             "PyroWaveCriticalFecPercentage",
             if paired {
                 config
-                    .integer("pyrowave_critical_fec_percentage", 20)
+                    .pyrowave_fec_percentage()
                     .clamp(0, 100)
                     .to_string()
             } else {

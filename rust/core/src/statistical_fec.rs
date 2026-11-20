@@ -10,7 +10,7 @@
 //! - Each frame gets the smallest percentage whose blocks all keep the
 //!   binomial probability of losing more shards than they have parity under
 //!   [`FRAME_FAILURE_TARGET`] (split evenly across the frame's blocks), up to
-//!   the host's `fec_max_percentage`. When none reaches it, the largest
+//!   the host's fixed cap, `FEC_MAX_PERCENTAGE`. When none reaches it, the largest
 //!   percentage the frame can still carry within the cap.
 //! - A report gap (a skipped sequence number or [`FEEDBACK_TIMEOUT`] without
 //!   one) forgets the history. Without fresh reports the host's own
@@ -129,7 +129,7 @@ pub struct StatisticalFec {
 }
 
 impl StatisticalFec {
-    /// `maximum` is `fec_max_percentage`, `fallback` the host's own
+    /// `maximum` is `FEC_MAX_PERCENTAGE`, `fallback` the host's own
     /// percentage and `minimum_parity` the client's `minRequiredFecPackets`.
     pub fn new(maximum: u8, fallback: u8, minimum_parity: usize, now: Instant) -> Self {
         Self {

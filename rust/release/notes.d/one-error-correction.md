@@ -1,0 +1,1 @@
+- **One Error correction percentage for every codec.** PyroWave now follows Error correction like H.264, HEVC and AV1; a PyroWave value you had set to something different stays and keeps showing. The settings Adapt error correction (which saved no picture bitrate) and Most error correction a device may ask for (fixed at 50%) are gone; Nightjar's Automatic still works.

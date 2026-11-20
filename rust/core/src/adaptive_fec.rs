@@ -6,8 +6,9 @@
 //! rebuild puts the percentage straight back to it; a frame it rebuilt from
 //! parity raises it quickly; thirty seconds without either let it fall slowly
 //! towards [`AdaptiveFec::FLOOR`]. A client that never reports keeps the
-//! configured percentage for the whole stream, as does a host with
-//! `adaptive_fec` off, which is the default. The floor stays above zero, so the client's minimum
+//! configured percentage for the whole stream. The host's own share no
+//! longer decays (the `adaptive_fec` setting is retired); this is the state
+//! a client-chosen share is held in. The floor stays above zero, so the client's minimum
 //! parity per block (`minRequiredFecPackets`, which the packetizer applies to
 //! every block whose percentage is not zero) keeps applying.
 use std::time::{Duration, Instant};

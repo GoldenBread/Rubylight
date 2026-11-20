@@ -227,22 +227,63 @@ fn hdr_dynamic_metadata_is_on_unless_turned_off() {
 }
 
 #[test]
-fn the_fec_cap_is_0_to_255_percent_and_50_unless_set() {
-    assert_eq!(super::Config::default().fec_max_percentage(), 50);
-    for (text, cap) in [
-        ("fec_max_percentage = 0\n", 0),
-        ("fec_max_percentage = 255\n", 255),
-        ("fec_max_percentage = 0x1e\n", 30),
-        ("fec_max_percentage = -1\n", 50),
-        ("fec_max_percentage = 256\n", 50),
-        ("fec_max_percentage = lots\n", 50),
+fn the_fec_cap_is_fixed_and_its_retired_setting_is_dropped() {
+    assert_eq!(super::FEC_MAX_PERCENTAGE, 50);
+    for key in ["fec_max_percentage", "adaptive_fec"] {
+        assert!(super::removed(key), "{key}");
+        assert!(!super::override_allowed(key), "{key}");
+        let mut layer = serde_json::json!({key: 40, "fec_percentage": 30})
+            .as_object()
+            .unwrap()
+            .clone();
+        assert!(super::migrate_overrides(&mut layer));
+        assert!(!layer.contains_key(key), "{key}");
+        assert_eq!(layer["fec_percentage"], 30);
+    }
+}
+
+/// PyroWave follows Error correction like every codec; only a PyroWave value
+/// that differs from it is kept, and then keeps being read.
+#[test]
+fn pyrowave_error_correction_follows_the_one_percentage() {
+    for (text, expected, kept) in [
+        ("", 20, false),
+        ("fec_percentage=30", 30, false),
+        ("pyrowave_critical_fec_percentage=20", 20, false),
+        ("fec_percentage=30
+pyrowave_critical_fec_percentage=30", 30, false),
+        ("fec_percentage=30
+pyrowave_critical_fec_percentage=20", 20, true),
+        ("pyrowave_critical_fec_percentage=0", 0, true),
+        ("pyrowave_critical_fec_percentage=40", 40, true),
+        ("pyrowave_critical_fec_percentage=0x14", 20, false),
+        ("pyrowave_critical_fec_percentage=lots", 20, false),
     ] {
+        let config = super::Config::parse(text).unwrap();
+        assert_eq!(config.pyrowave_fec_percentage(), expected, "{text}");
         assert_eq!(
-            super::Config::parse(text).unwrap().fec_max_percentage(),
-            cap,
+            config.text().contains("pyrowave_critical_fec_percentage"),
+            kept,
             "{text}"
         );
     }
+    // A save that makes the two equal drops the PyroWave value.
+    let mut config = super::Config::parse("pyrowave_critical_fec_percentage=40").unwrap();
+    let sent = serde_json::json!({"fec_percentage": 40});
+    config.update(sent.as_object().unwrap()).unwrap();
+    assert!(!config.text().contains("pyrowave_critical_fec_percentage"));
+    assert_eq!(config.pyrowave_fec_percentage(), 40);
+    // An app's or device's overrides.
+    for (layer, kept) in [
+        (serde_json::json!({"fec_percentage": 30, "pyrowave_critical_fec_percentage": 30}), false),
+        (serde_json::json!({"fec_percentage": 30, "pyrowave_critical_fec_percentage": 10}), true),
+        (serde_json::json!({"pyrowave_critical_fec_percentage": 10}), true),
+    ] {
+        let mut layer = layer.as_object().unwrap().clone();
+        super::migrate_overrides(&mut layer);
+        assert_eq!(layer.contains_key("pyrowave_critical_fec_percentage"), kept, "{layer:?}");
+    }
+    assert!(super::override_allowed("pyrowave_critical_fec_percentage"));
 }
 
 #[test]
@@ -692,23 +733,6 @@ fn link_rate_adaptation_is_on_unless_disabled() {
     assert!(!super::override_allowed("link_rate_adaptation"));
 }
 
-/// Video FEC stays at `fec_percentage` unless the user asks for the decay: no run measured
-/// the decayed state, and the parity it saves does not go to the picture.
-#[test]
-fn adaptive_fec_is_off_unless_set() {
-    for (text, enabled) in [
-        ("", false),
-        ("adaptive_fec=true", true),
-        ("adaptive_fec=enabled", true),
-        ("adaptive_fec=invalid", false),
-        ("adaptive_fec=false", false),
-    ] {
-        let config = super::Config::parse(text).unwrap();
-        assert_eq!(config.adaptive_fec(), enabled, "{text}");
-    }
-    assert!(super::override_allowed("adaptive_fec"));
-}
-
 #[test]
 fn congestion_control_is_off_unless_set() {
     for (text, enabled) in [
@@ -1123,8 +1147,7 @@ fn overrides_allow_stream_input_display_and_encoder_keys_but_not_host_settings()
         "hdr_dolby_vision",
         "hdr_hlg",
         "frame_limiter_fps_limit",
-        "adaptive_fec",
-        "host_adaptive_pacing",
+        "packet_pacing",
     ] {
         assert!(super::override_allowed(key), "{key}");
     }

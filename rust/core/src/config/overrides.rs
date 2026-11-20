@@ -75,7 +75,6 @@ pub fn override_allowed(key: &str) -> bool {
         "stream_preset",
         // Codec and capture
         "fec_percentage",
-        "adaptive_fec",
         "packet_pacing",
         "keyframe_loss_pacing",
         "bitrate_adaptation",
@@ -157,7 +156,6 @@ pub fn override_allowed(key: &str) -> bool {
         "hdr_dynamic_metadata",
         "hdr_dolby_vision",
         "hdr_hlg",
-        "fec_max_percentage",
         "audio_passthrough",
         "audio_surround_714",
         "keyboard_follows_focus",
