@@ -134,7 +134,7 @@ wait. Not measured: H.264, PyroWave (no AMF), other AMD GPUs, a real network.
 The thread first kept querying between frames, about 1,000 times a second; 5a299f9f1 parks it
 once the last frame is taken. Same-code pair, e31858152 (B) against 5a299f9f1 (F), AV1
 2560x1440 at 120 fps, 80 Mbps, beside a 60 fps GPU load on the RX 7900 XT, order BFFBFBBF
-(`D:\CodexArtifactsmf-poll-checkuns-thread2`): the output thread used 2.65, 2.38, 2.36
+(`D:\CodexArtifacts\amf-poll-check\runs-thread2`): the output thread used 2.65, 2.38, 2.36
 and 2.24 % of a core with B against 1.50, 1.06, 1.39 and 1.08 % with F; encode p50 was
 2.51 ms in both, and pictures published during a poll stayed at 0.1 %. The paced-claim share
 (B 26 to 75 %, F 35 to 67 %) and the long intervals (B 23 to 149, F 58 to 160) spread as
