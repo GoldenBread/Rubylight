@@ -82,8 +82,8 @@ export const DEBUG_GROUP = 'Debug switches';
 /** Where a Debug switch shows once turned off, when that is not the category it is filed under: QR pairing sits beside Allow pairing. */
 const ORIGIN_CATEGORY: Readonly<Record<string, Setting['category']>> = { qr_pairing: 'network' };
 
-/** The only groups All settings starts collapsed. */
-export const EXPERT_GROUPS: ReadonlySet<string> = new Set([
+/** The groups All settings starts collapsed and lists last in their tab. */
+export const TRAILING_GROUPS: ReadonlySet<string> = new Set([
   // Settings written as JSON, each folded under its own name.
   'Mode substitutions',
   'Key remapping',
@@ -104,7 +104,9 @@ export const EXPERT_GROUPS: ReadonlySet<string> = new Set([
  * The launcher groups are here because the Games page already carries each
  * launcher's switch and its own "Options" link. Capture and Remote monitors
  * say themselves that they are for troubleshooting or an extra screen, and
- * Steam Deck and back grips is hardware tuning in an everyday tab.
+ * Steam Deck and back grips is hardware tuning in an everyday tab. Bitrate and
+ * network, Keyboard, Mouse, pen and touch and Hardware metrics are mostly
+ * tuning whose defaults are the measured ones.
  */
 export const FOLDED_GROUPS: ReadonlySet<string> = new Set([
   'HDR',
@@ -125,6 +127,10 @@ export const FOLDED_GROUPS: ReadonlySet<string> = new Set([
   'Game folders',
   'Lossless Scaling',
   'Steam Deck and back grips',
+  'Bitrate and network',
+  'Keyboard',
+  'Mouse, pen and touch',
+  'Hardware metrics',
 ]);
 
 /** An always-on setting as All settings shows it: in Debug switches, for troubleshooting. */

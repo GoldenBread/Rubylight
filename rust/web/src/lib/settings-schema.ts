@@ -6,7 +6,7 @@ import { settings as video } from './schema/video';
 import { settings as display } from './schema/display';
 import { settings as library } from './schema/library';
 import { settings as extensions } from './schema/extensions';
-import { ALWAYS_ON, DIAGNOSTICS, EXPERT_GROUPS, DEBUG_GROUP, asDebugSwitch, asDiagnostic } from './schema/main';
+import { ALWAYS_ON, DIAGNOSTICS, TRAILING_GROUPS, DEBUG_GROUP, asDebugSwitch, asDiagnostic } from './schema/main';
 import { GAMES_PAGE_KEY_SET, tierOf } from './schema/tiers';
 
 // Topics for search: a setting is found by its topic's name too. What people
@@ -136,7 +136,7 @@ export function categoriesOf(setting: { category: CategoryId }): { id: string; l
 
 /**
  * The order of each tab's groups: the ones people look for first. Groups not
- * listed follow in the order the schema first uses them; the expert groups,
+ * listed follow in the order the schema first uses them; the trailing groups,
  * which start folded, come last, Debug switches at the very end.
  */
 const GROUP_ORDER: Record<TabId, readonly string[]> = {
@@ -162,7 +162,7 @@ const GROUP_ORDER: Record<TabId, readonly string[]> = {
 /** Sort key of a group within its tab (see GROUP_ORDER); ties keep schema order. */
 export function groupRank(tab: TabId, name: string): number {
   if (name === DEBUG_GROUP) return 3000;
-  if (EXPERT_GROUPS.has(name)) return 2000;
+  if (TRAILING_GROUPS.has(name)) return 2000;
   const at = GROUP_ORDER[tab].indexOf(name);
   return at === -1 ? 1000 : at;
 }
@@ -179,9 +179,6 @@ export function groupAnchor(name: string): string {
 
 // ---------- where a setting shows: its tier (schema/tiers.ts) placed on the tabs ----------
 
-/** The heading Advanced gives the expert settings, and the line under it. */
-export const EXPERT_HEADING = 'Expert settings';
-export const EXPERT_NOTE = 'Tuning and compatibility. The defaults are the measured ones; change these only for a reason.';
 /** The row that stands in for the launchers' option groups in the Games tab. */
 export const GAME_SOURCES = 'Game sources';
 
@@ -192,31 +189,21 @@ export const topicGroup = (setting: Pick<Setting, 'group' | 'origin'>): string =
 
 const tabLabel = (id: TabId): string => settingGroups.find((tab) => tab.id === id)?.label ?? id;
 
-/** The name of an expert setting's group in Advanced: "Picture › AMD AMF". */
-export function expertGroupName(setting: Pick<Setting, 'category' | 'group' | 'origin'>): string {
-  const group = topicGroup(setting);
-  const label = tabLabel(topicTab(setting));
-  return group ? `${label} › ${group}` : label;
-}
-
 /** Where a setting is found by default: the tab and group it shows in while it is not changed. */
-export function placeOf(setting: Setting): { tab: TabId; group: string; expert: boolean } {
+export function placeOf(setting: Setting): { tab: TabId; group: string } {
   switch (tierOf(setting.key)) {
-    case 'expert':
-      return { tab: 'advanced', group: expertGroupName(setting), expert: true };
     case 'always-on':
     case 'diagnostic':
-      return { tab: 'advanced', group: DEBUG_GROUP, expert: false };
+      return { tab: 'advanced', group: DEBUG_GROUP };
     default:
-      return { tab: topicTab(setting), group: topicGroup(setting), expert: false };
+      return { tab: topicTab(setting), group: topicGroup(setting) };
   }
 }
 
-/** Where a setting is, as one line: "Advanced › Expert settings › Picture › AMD AMF". */
+/** Where a setting is, as one line: "Picture › AMD AMF". */
 export function placeText(setting: Setting): string {
   const place = placeOf(setting);
-  const path = place.expert ? [tabLabel(place.tab), EXPERT_HEADING, place.group] : [tabLabel(place.tab), place.group];
-  return path.filter(Boolean).join(' › ');
+  return [tabLabel(place.tab), place.group].filter(Boolean).join(' › ');
 }
 
 export interface LayoutGroup {
@@ -224,24 +211,11 @@ export interface LayoutGroup {
   settings: Setting[];
 }
 
-export interface ExpertGroup extends LayoutGroup {
-  /** The topic tab the group comes from. */
-  tab: TabId;
-  rank: number;
-}
-
 export interface TabLayout {
   /** The groups of the tab itself, in page order. */
   groups: LayoutGroup[];
-  /** Advanced only: the expert settings, one collapsed group per topic group, in tab order. */
-  expertGroups: ExpertGroup[];
-  /** Settings shown in a topic tab that are not everyday: they carry the Expert mark. */
-  marked: ReadonlySet<string>;
   /** The Games tab: the launchers' groups are one link to the Games page. */
   gameSources: boolean;
-  /** A topic tab: its expert settings not shown here, and the Advanced group the first of them is in. */
-  expertCount: number;
-  expertTarget: string | undefined;
 }
 
 export interface LayoutInput {
@@ -264,53 +238,29 @@ function grouped(list: readonly Setting[], tab: TabId, name: (setting: Setting) 
   return groups.sort((a, b) => groupRank(tab, a.name) - groupRank(tab, b.name));
 }
 
-/** Every expert group, in Advanced's order: the tabs in order, then each tab's own group order. */
-function expertGroupsOf(settings: readonly Setting[], visible: (setting: Setting) => boolean): ExpertGroup[] {
-  const found = new Map<string, ExpertGroup>();
-  for (const setting of settings) {
-    if (tierOf(setting.key) !== 'expert' || !visible(setting)) continue;
-    const name = expertGroupName(setting);
-    let group = found.get(name);
-    if (!group) {
-      const tab = topicTab(setting);
-      found.set(name, (group = { name, settings: [], tab, rank: groupRank(tab, topicGroup(setting)) }));
-    }
-    group.settings.push(setting);
-  }
-  const order = (tab: TabId) => settingGroups.findIndex((candidate) => candidate.id === tab);
-  return [...found.values()].sort((a, b) => order(a.tab) - order(b.tab) || a.rank - b.rank);
-}
-
 /**
- * What a tab shows. A topic tab shows its everyday settings, and any other
- * setting of its topic that has been changed, so nothing a user changed is
- * hidden. Advanced shows the expert settings, collapsed by topic group, and
- * the Debug switches. `settings` are the described ones without those edited
+ * What a tab shows. A topic tab shows every setting of its topic, and any
+ * Debug switch or launcher option of its topic that has been changed, so
+ * nothing a user changed is hidden. Advanced shows its own settings and the
+ * Debug switches. `settings` are the described ones without those edited
  * inside another row (partOf).
  */
 export function tabLayout(tab: TabId, settings: readonly Setting[], input: LayoutInput): TabLayout {
   const visible = input.visible ?? (() => true);
   const revealed = input.revealed ?? new Set<string>();
-  const marked = new Set<string>();
-  const experts = expertGroupsOf(settings, visible);
   if (tab === 'advanced') {
     const own = settings.filter((setting) => {
       const tier = tierOf(setting.key);
       const native = topicTab(setting) === 'advanced' && (tier === 'everyday' || tier === 'home');
       return visible(setting) && (tier === 'always-on' || tier === 'diagnostic' || native);
     });
-    return { groups: grouped(own, tab, (setting) => setting.group ?? ''), expertGroups: experts, marked, gameSources: false, expertCount: 0, expertTarget: undefined };
+    return { groups: grouped(own, tab, (setting) => setting.group ?? ''), gameSources: false };
   }
   const inTopic = settings.filter((setting) => topicTab(setting) === tab);
   const shown = inTopic.filter((setting) => {
     if (!visible(setting)) return false;
     const tier = tierOf(setting.key);
-    if (tier === 'home' || tier === 'everyday') return true;
-    if (input.changed(setting)) {
-      // A launcher's option is an ordinary option that lives on the Games page, not an expert one.
-      if (tier !== 'games-page') marked.add(setting.key);
-      return true;
-    }
+    if (tier === 'home' || tier === 'everyday' || input.changed(setting)) return true;
     return tier === 'games-page' && revealed.has(topicGroup(setting));
   });
   const groups = grouped(shown, tab, topicGroup);
@@ -319,26 +269,28 @@ export function tabLayout(tab: TabId, settings: readonly Setting[], input: Layou
     groups.push({ name: GAME_SOURCES, settings: [] });
     groups.sort((a, b) => groupRank(tab, a.name) - groupRank(tab, b.name));
   }
-  const hidden = inTopic.filter((setting) => tierOf(setting.key) === 'expert' && visible(setting) && !input.changed(setting));
-  return {
-    groups,
-    expertGroups: [],
-    marked,
-    gameSources: sources,
-    expertCount: hidden.length,
-    expertTarget: hidden.length ? experts.find((group) => group.tab === tab)?.name : undefined,
-  };
+  return { groups, gameSources: sources };
 }
 
 /**
- * Where an older link to a group (/settings/picture#amd-amf) now leads: the
- * expert group in Advanced, or the Debug switches. Null while the group still
- * has everyday settings in that tab, or is a launcher group the tab can open.
+ * Where an older link to a group now leads. A topic group with only Debug
+ * switches (/settings/picture#capture-troubleshooting) leads to them; a group
+ * Advanced once gave a topic group (/settings/advanced#picture-amd-amf) leads
+ * back to its topic tab. Null for a group that is where
+ * the link says.
  */
 export function movedAnchor(tab: TabId, anchor: string): { tab: TabId; anchor: string } | null {
+  if (tab === 'advanced') {
+    const home = schema.settings.find((setting) => {
+      const tier = tierOf(setting.key);
+      if (tier === 'always-on' || tier === 'diagnostic') return false;
+      const group = topicGroup(setting);
+      const label = tabLabel(topicTab(setting));
+      return groupAnchor(group ? `${label} › ${group}` : label) === anchor;
+    });
+    if (home) return { tab: topicTab(home), anchor: groupAnchor(topicGroup(home) || tabLabel(topicTab(home))) };
+  }
   const inGroup = schema.settings.filter((setting) => topicTab(setting) === tab && groupAnchor(topicGroup(setting) || tabLabel(tab)) === anchor);
   if (inGroup.length === 0 || inGroup.some((setting) => ['home', 'everyday', 'games-page'].includes(tierOf(setting.key)))) return null;
-  const expert = inGroup.find((setting) => tierOf(setting.key) === 'expert');
-  if (expert) return { tab: 'advanced', anchor: groupAnchor(expertGroupName(expert)) };
   return { tab: 'advanced', anchor: groupAnchor(DEBUG_GROUP) };
 }

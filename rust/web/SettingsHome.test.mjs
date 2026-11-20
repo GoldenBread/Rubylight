@@ -10,7 +10,7 @@ const { searchSettings } = await server.ssrLoadModule('/src/components/settings/
 const { settings: extensions } = await server.ssrLoadModule('/src/lib/schema/extensions.ts');
 const { describeDefault } = await server.ssrLoadModule('/src/components/settings/values.ts');
 const { presets } = await server.ssrLoadModule('/src/lib/stream-presets.ts');
-const { MAIN_SECTIONS, MAIN_KEYS, MAIN_BUDGET, ALWAYS_ON, DIAGNOSTICS, EXPERT_GROUPS, DEBUG_GROUP, onHome, presetOutcome } = main;
+const { MAIN_SECTIONS, MAIN_KEYS, MAIN_BUDGET, ALWAYS_ON, DIAGNOSTICS, TRAILING_GROUPS, DEBUG_GROUP, onHome, presetOutcome } = main;
 const { VIRTUAL_DISPLAY_OS } = await server.ssrLoadModule('/src/lib/settings-types.ts');
 const settings = new Map(schema.settings.map(setting => [setting.key, setting]));
 const source = name => readFile(new URL(`./src/${name}`, import.meta.url), 'utf8');
@@ -24,7 +24,7 @@ test('every main key is a live schema setting, listed once', () => {
     // The home's top level shows it without a parent choice turning it on first.
     assert.equal(setting.visibleWhen?.({}) ?? true, true, key);
     assert.equal(ALWAYS_ON.includes(key), false, key);
-    assert.equal(EXPERT_GROUPS.has(setting.group), false, key);
+    assert.equal(TRAILING_GROUPS.has(setting.group), false, key);
   }
 });
 
@@ -161,18 +161,18 @@ test('always-on keys appear only in Debug switches, described as for troubleshoo
   assert.equal(extensions.find(setting => setting.key === 'qr_pairing').group, 'Pairing');
 });
 
-test('only the expert groups start collapsed, and each one exists', () => {
-  assert.deepEqual([...EXPERT_GROUPS].sort(), ['AMD AMF', 'Capture troubleshooting', 'Console', DEBUG_GROUP, 'Key remapping', 'Mode substitutions', 'NVIDIA NVENC', 'Ports and addresses', 'RTSS'].sort());
+test('the trailing groups start collapsed, and each one exists', () => {
+  assert.deepEqual([...TRAILING_GROUPS].sort(), ['AMD AMF', 'Capture troubleshooting', 'Console', DEBUG_GROUP, 'Key remapping', 'Mode substitutions', 'NVIDIA NVENC', 'Ports and addresses', 'RTSS'].sort());
   // A group shows in a topic tab under the name its settings came from, once one of them is changed.
   const groups = new Set(schema.settings.map(setting => (setting.origin ? setting.origin.group : setting.group)));
-  for (const group of EXPERT_GROUPS) assert.ok(groups.has(group) || group === DEBUG_GROUP, group);
+  for (const group of TRAILING_GROUPS) assert.ok(groups.has(group) || group === DEBUG_GROUP, group);
 });
 
 test('All settings has no second Advanced fold; the home owns updates and wake, All settings the detail and sign-in', async () => {
   const page = await source('pages/Settings.svelte');
   assert.doesNotMatch(page, /class="advanced"/);
   assert.doesNotMatch(page, /setting\.advanced/);
-  assert.match(page, /EXPERT_GROUPS\.has\(item\.name\)/);
+  assert.match(page, /TRAILING_GROUPS\.has\(item\.name\)/);
   // Wake detail, sign-in and the update schedule moved off the home into All settings.
   for (const panel of ['UpdatesPanel', 'PowerPanel', 'SessionsPanel', 'PasswordPanel']) {
     assert.match(page, new RegExp(`<${panel}`), panel);

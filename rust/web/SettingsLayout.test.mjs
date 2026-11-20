@@ -7,7 +7,7 @@ globalThis.location = new URL('http://localhost/');
 globalThis.window = new EventTarget();
 const server = await createTestServer();
 const { schema, settingGroups, settingsGroup, tabOf, groupRank, groupAnchor } = await server.ssrLoadModule('/src/lib/settings-schema.ts');
-const { EXPERT_GROUPS, DEBUG_GROUP, onHome } = await server.ssrLoadModule('/src/lib/schema/main.ts');
+const { TRAILING_GROUPS, DEBUG_GROUP, onHome } = await server.ssrLoadModule('/src/lib/schema/main.ts');
 const { describeDefault, numberError, textError } = await server.ssrLoadModule('/src/components/settings/values.ts');
 const { default: SettingControl } = await server.ssrLoadModule('/src/components/settings/SettingControl.svelte');
 const { default: SettingRow } = await server.ssrLoadModule('/src/components/settings/SettingRow.svelte');
@@ -42,7 +42,7 @@ test('every setting lands in one tab, under a group that tab orders or folds', (
     const tab = settingsGroup(setting.category);
     assert.ok(settingGroups.some((item) => item.id === tab), setting.key);
     const group = setting.group ?? '';
-    assert.ok(groupRank(tab, group) < 1000 || EXPERT_GROUPS.has(group), `${setting.key}: ${tab} › ${group}`);
+    assert.ok(groupRank(tab, group) < 1000 || TRAILING_GROUPS.has(group), `${setting.key}: ${tab} › ${group}`);
   }
   // Frame pacing and every video setting are part of the picture.
   for (const setting of schema.settings.filter((item) => item.group === 'Frame pacing' || item.category === 'video')) {
@@ -56,10 +56,10 @@ test('every setting lands in one tab, under a group that tab orders or folds', (
 test('the groups most people leave alone fold in place, open when customized', async () => {
   const { FOLDED_GROUPS } = await server.ssrLoadModule('/src/lib/schema/main.ts');
   assert.deepEqual([...FOLDED_GROUPS].sort(), [
-    'After a stream', 'Battle.net options', 'Capture', 'EA app options', 'Epic Games options', 'Frame limiter',
-    'Frame pacing', 'GOG options', 'Game folders', 'HDR', 'Lossless Scaling', 'Microsoft Store and Xbox options',
-    'Playnite', 'Playnite launch focus', 'Remote monitors', 'Steam Deck and back grips', 'Steam options',
-    'Ubisoft Connect options',
+    'After a stream', 'Battle.net options', 'Bitrate and network', 'Capture', 'EA app options', 'Epic Games options',
+    'Frame limiter', 'Frame pacing', 'GOG options', 'Game folders', 'HDR', 'Hardware metrics', 'Keyboard', 'Lossless Scaling',
+    'Microsoft Store and Xbox options', 'Mouse, pen and touch', 'Playnite', 'Playnite launch focus', 'Remote monitors',
+    'Steam Deck and back grips', 'Steam options', 'Ubisoft Connect options',
   ]);
   for (const group of FOLDED_GROUPS) {
     const members = schema.settings.filter((setting) => setting.group === group);
@@ -67,8 +67,8 @@ test('the groups most people leave alone fold in place, open when customized', a
     // A group name lives in one tab: its settings show together.
     const tabs = new Set(members.map((setting) => settingsGroup(setting.category)));
     assert.equal(tabs.size, 1, group);
-    // They keep their place in the tab's order instead of moving down with the expert groups.
-    assert.equal(EXPERT_GROUPS.has(group), false, group);
+    // They keep their place in the tab's order instead of moving down with the trailing groups.
+    assert.equal(TRAILING_GROUPS.has(group), false, group);
     assert.ok(groupRank([...tabs][0], group) < 1000, group);
   }
   // The launcher groups belong to Games, where each Games tile links its own options.
@@ -78,10 +78,12 @@ test('the groups most people leave alone fold in place, open when customized', a
   }
   assert.equal(settingsGroup(schema.settings.find((setting) => setting.group === 'Steam Deck and back grips').category), 'sound');
   const page = await source('pages/Settings.svelte');
-  assert.match(page, /\{:else if collapsed \|\| EXPERT_GROUPS\.has\(item\.name\) \|\| FOLDED_GROUPS\.has\(item\.name\)\}/);
+  assert.match(page, /\{:else if TRAILING_GROUPS\.has\(item\.name\) \|\| FOLDED_GROUPS\.has\(item\.name\)\}/);
   // A customized group starts open; the contents bar and a link to one of its settings open it.
   assert.match(page, /open=\{\(foldOpen\[item\.name\] \?\? fold\.customized > 0\) \|\| fold\.mustOpen\}/);
-  assert.match(page, /EXPERT_GROUPS\.has\(name\) \|\| FOLDED_GROUPS\.has\(name\) \|\| expertNames\.includes\(name\)\) foldOpen\[name\] = true;/);
+  assert.match(page, /if \(TRAILING_GROUPS\.has\(name\) \|\| FOLDED_GROUPS\.has\(name\)\) foldOpen\[name\] = true;/);
+  // No Expert section, heading, link or mark.
+  assert.doesNotMatch(page, /EXPERT|expertGroups|data-expert/);
   assert.match(page, /foldOpen\[placeOf\(picked\)\.group\] = true;/);
 });
 
@@ -172,7 +174,7 @@ test('settings written as JSON say so and fold under their own name', () => {
     const setting = settings.get(key);
     assert.equal(setting.control.kind, 'json', key);
     assert.match(setting.label, /\(JSON\)$/, key);
-    assert.ok(EXPERT_GROUPS.has(setting.group), key);
+    assert.ok(TRAILING_GROUPS.has(setting.group), key);
     assert.equal(setting.label.replace(' (JSON)', ''), setting.group, key);
   }
 });

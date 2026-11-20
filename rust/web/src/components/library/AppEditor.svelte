@@ -379,7 +379,7 @@
           {draft}
           key="exit-timeout"
           label="Exit timeout"
-          hint="How long the app gets to close by itself when Rubylight ends it, before it is ended by force: 0 to 300, and 0 ends it at once. Empty uses the default under All settings › Advanced › Expert settings › Games › App behavior."
+          hint="How long the app gets to close by itself when Rubylight ends it, before it is ended by force: 0 to 300, and 0 ends it at once. Empty uses the default under All settings › Games › App behavior."
           placeholder="Default"
           unit="s"
         />

@@ -118,7 +118,7 @@ export function reachAlternatives(reach: GuestReach, ports: string): string[] {
     'Invite them over Tailscale or another VPN: pick "This network or a VPN" and use this PC\'s VPN address.',
     reach.ipv6Listening
       ? `Over IPv6, if you both have it: allow ${ports} in to this PC in your router's IPv6 firewall, then type the PC's IPv6 address in brackets below.`
-      : 'Over IPv6, if you both have it: set IP versions to IPv4 and IPv6 (All settings › Advanced › Expert settings › Network › Ports and addresses) and restart Rubylight, so the router can open the guest ports to IPv6 guests.',
+      : 'Over IPv6, if you both have it: set IP versions to IPv4 and IPv6 (All settings › Network › Ports and addresses) and restart Rubylight, so the router can open the guest ports to IPv6 guests.',
     `Or forward ${ports} on your router by hand, then type your public address or a DNS name for it below.`,
   ];
   if (reach.internetPlay) {

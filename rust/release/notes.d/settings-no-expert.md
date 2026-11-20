@@ -1,0 +1,1 @@
+- **All settings has no Expert section any more.** Every setting is in its own topic tab, with the others in its group; groups most people leave alone start collapsed and open once one of their settings is changed. Search still finds every setting, and links to the former Expert groups lead to the topic tab.

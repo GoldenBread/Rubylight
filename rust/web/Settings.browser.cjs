@@ -400,13 +400,13 @@ test('editing a dependency does not hide unsaved child settings and review keeps
 });
 
 
-test('six tabs keep only expert settings collapsed, searchable, and customized counts visible', async t => {
+test('six tabs show every setting, fold the long groups, and keep customized counts visible', async t => {
   const { page, writes } = await fixture(t, { fec_percentage: 30, amd_usage: 'webcam', custom_setting: 'keep' });
   await page.goto(base + '/settings/video');
   await page.waitForURL(base + '/settings/picture');
   const groups = page.getByRole('navigation', { name: 'Settings tabs' });
   assert.deepEqual((await groups.getByRole('link').allInnerTexts()).map(text => text.trim()), ['This PC', 'Picture', 'Sound & controls', 'Games', 'Network', 'Advanced']);
-  // A customized expert group opens by itself; the others stay folded.
+  // A customized folded group opens by itself; the others stay folded.
   const amf = fold(page, 'AMD AMF');
   assert.equal(await amf.evaluate(node => node.open), true);
   assert.match(await amf.locator(':scope > summary').innerText(), /1 customized/);
@@ -512,7 +512,7 @@ test('long tabs list their sections in a bar that stays at the top and follows t
   // The bar marks the section at the top once the page settles.
   await page.waitForFunction(() => document.querySelector('nav.contents a[aria-current="location"]')?.textContent.trim() === 'HDR');
   assert.ok(Math.abs((await bar.boundingBox()).y) <= 1, 'the bar sticks to the top');
-  // An expert section opens when its link is followed.
+  // A folded section opens when its link is followed.
   assert.equal(await fold(page, 'Capture troubleshooting').evaluate(node => node.open), false);
   await bar.getByRole('link', { name: 'Capture troubleshooting', exact: true }).click();
   assert.equal(await fold(page, 'Capture troubleshooting').evaluate(node => node.open), true);

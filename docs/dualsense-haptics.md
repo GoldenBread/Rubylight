@@ -19,7 +19,7 @@ The host exposes Sony USB identity 054c:0ce6 with HID and audio interfaces in th
 
 ## Haptics strength
 
-**All settings → Advanced → Expert settings → Sound & controls › Controllers → DualSense haptics strength** (`dualsense_haptics_gain`, 0 to 4 times, `1` by default) scales what a game sends to the two actuators: 0.5 is half as strong, 2 twice as strong, and above 1 loud effects clip at full scale. Ordinary rumble, the lightbar, adaptive triggers and the controller speaker and headset are not scaled. A device or an app can set its own under Devices or Games; the value applies from the next connection, and **Vibration** (`forward_rumble`) turns waveform haptics off entirely. The game's own volume still decides how strong its haptics are; this multiplies that result.
+**All settings → Sound & controls › Controllers → DualSense haptics strength** (`dualsense_haptics_gain`, 0 to 4 times, `1` by default) scales what a game sends to the two actuators: 0.5 is half as strong, 2 twice as strong, and above 1 loud effects clip at full scale. Ordinary rumble, the lightbar, adaptive triggers and the controller speaker and headset are not scaled. A device or an app can set its own under Devices or Games; the value applies from the next connection, and **Vibration** (`forward_rumble`) turns waveform haptics off entirely. The game's own volume still decides how strong its haptics are; this multiplies that result.
 
 ## Reconnects
 
