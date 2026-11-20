@@ -27,12 +27,20 @@ final class CodecRecoverySteps {
          * is still to be released; false: it is released already, and no new one could be created.
          */
         void rebuild(boolean codecFailed);
+
+        /**
+         * A step threw IllegalStateException and the next, bigger one follows: the decoder failed,
+         * even in a planned restart. Not called when recreate() found no new codec, which is no
+         * failure of the decoder.
+         */
+        default void stepFailed() {}
     }
 
     /**
      * Runs the recovery from a restart, or from a reset when restart is false. recreate replaces
-     * the restart's stop() with a new codec. Returns false when the surface is gone and the stream
-     * has to stop. An IllegalStateException from rebuild means nothing recovered the decoder.
+     * the restart's stop() with a new codec. A step that fails is reported (stepFailed) before the
+     * next. Returns false when the surface is gone and the stream has to stop. An
+     * IllegalStateException from rebuild means nothing recovered the decoder.
      */
     static boolean run(boolean restart, boolean recreate, String reason, Codec codec) {
         // Released, with no new codec: there is nothing left to reset.
@@ -60,6 +68,7 @@ final class CodecRecoverySteps {
 
                 // Something went wrong during the restart, let's use a bigger hammer
                 // and try a reset instead.
+                codec.stepFailed();
             }
         }
 
@@ -81,6 +90,7 @@ final class CodecRecoverySteps {
 
                 // Something went wrong during the reset, we'll have to resort to
                 // releasing and recreating the decoder now.
+                codec.stepFailed();
             }
         }
 

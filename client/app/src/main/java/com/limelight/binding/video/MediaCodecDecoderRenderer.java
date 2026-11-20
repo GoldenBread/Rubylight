@@ -3674,6 +3674,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 throw new IllegalStateException("Decoder reset failed: " + err);
             }
         }
+
+        @Override public void stepFailed() {
+            // A planned restart that fails partway is a failure as well: the decoder did not run well
+            // after its setup without vendor keys. (A failure's own recovery has cleared this already.)
+            vendorKeyHangUnrecorded.set(false);
+        }
     };
 
     // Returns true if the exception is transient
@@ -3693,11 +3699,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
 
             LimeLog.severe(codecExc.getDiagnosticInfo());
+            // A decoder that fails after its setup without vendor keys did not run well, whether a
+            // recovery follows or the exception is swallowed (no attempt left, a recovery pending).
+            vendorKeyHangUnrecorded.set(false);
 
             // We can attempt a recovery or reset at this stage to try to start decoding again
             if (recoveryAttemptsLeft()) {
-                // A decoder that fails after its setup without vendor keys did not run well.
-                vendorKeyHangUnrecorded.set(false);
                 // If the exception is non-recoverable or we already require a reset, perform a reset.
                 // If we have no prior unrecoverable failure, we will try a restart instead.
                 if (codecExc.isRecoverable()) {
@@ -3743,9 +3750,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             // Recovery from this requires a full decoder reset.
             //
             // NB: CodecException is an IllegalStateException, so we must check for it first.
+            // As above: not running well after the setup without vendor keys, recovered or not.
+            vendorKeyHangUnrecorded.set(false);
             if (recoveryAttemptsLeft()) {
-                // As above: not running well after the setup without vendor keys.
-                vendorKeyHangUnrecorded.set(false);
                 if (codecRecoveryType.compareAndSet(CR_RECOVERY_TYPE_NONE, CR_RECOVERY_TYPE_RESET)) {
                     LimeLog.info("Decoder requires reset for IllegalStateException");
                     e.printStackTrace();

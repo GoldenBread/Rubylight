@@ -855,6 +855,45 @@ public class DecoderFailureTest {
     }
 
     @Test
+    public void aPlannedRestartThatFailsPartwayLeavesNoRecord() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        RealRebuild recovery = realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        // At 9 s a size change restarts it; its configure() fails, and a reset and configure bring it back.
+        ShadowSystemClock.advanceBy(Duration.ofMillis(9_000));
+        recovery.configureFails = new IllegalStateException("configure");
+        ReflectionHelpers.callInstanceMethod(renderer, "requestRestart",
+                ReflectionHelpers.ClassParameter.from(String.class, "size change"));
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild", "stop", "configure", "reset", "configure"),
+                recovery.steps);
+        assertTrue(terminated.isEmpty());
+        // At 10 s, 600 frames since the hang reset: it failed meanwhile, so it did not run well.
+        assertNull(recordAfter(MTK_HEVC, HEVC, 600, 1_000));
+    }
+
+    @Test
+    public void anExceptionSwallowedWhileARecoveryIsPendingLeavesNoRecord() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        RealRebuild recovery = realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        // No attempt left and a size change pending: the exception asks for no recovery of its own and
+        // is not thrown, but the decoder failed.
+        int maxTries = ReflectionHelpers.getStaticField(MediaCodecDecoderRenderer.class, "CR_MAX_TRIES");
+        ReflectionHelpers.setField(renderer, "codecRecoveryAttempts", maxTries);
+        ReflectionHelpers.callInstanceMethod(renderer, "requestRestart",
+                ReflectionHelpers.ClassParameter.from(String.class, "size change"));
+        failOnce();
+        assertFalse((boolean) ReflectionHelpers.getField(renderer, "recoveryAfterFailure"));
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild", "stop", "configure"), recovery.steps);
+        assertTrue(terminated.isEmpty());
+        assertNull(recordAfter(MTK_HEVC, HEVC, 600, 10_000));
+    }
+
+    @Test
     public void aDecoderTakingOverGetsItsOwnResetAndSetupWithoutItsVendorKeys() {
         renderer = dolbyVisionStreamWithVendorKeys();
         RealRebuild recovery = realRebuild();
@@ -1021,6 +1060,8 @@ public class DecoderFailureTest {
         private final CodecRecoverySteps.Codec real;
         // Runs before the renderer's own rebuild, on the thread running the recovery.
         volatile Runnable beforeRebuild;
+        // Thrown by the next configure(), once.
+        volatile RuntimeException configureFails;
 
         RealRebuild(CodecRecoverySteps.Codec real) {
             this.real = real;
@@ -1029,13 +1070,19 @@ public class DecoderFailureTest {
         @Override public void stop() { steps.add("stop"); }
         @Override public boolean recreate() { steps.add("recreate"); return true; }
         @Override public void reset() { steps.add("reset"); }
-        @Override public void configure() { steps.add("configure"); }
+        @Override public void configure() {
+            steps.add("configure");
+            RuntimeException fails = configureFails;
+            configureFails = null;
+            if (fails != null) throw fails;
+        }
         @Override public void rebuild(boolean codecFailed) {
             steps.add("rebuild");
             Runnable before = beforeRebuild;
             if (before != null) before.run();
             real.rebuild(codecFailed);
         }
+        @Override public void stepFailed() { real.stepFailed(); }
     }
 
     private static final class NoOpRecovery implements CodecRecoverySteps.Codec {
