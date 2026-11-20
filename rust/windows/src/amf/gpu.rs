@@ -86,17 +86,20 @@ impl Ownership {
     pub fn retained(&self) -> usize {
         self.textures.lock().unwrap().len()
     }
-    /// Wait for a native release callback without polling an idle encoder.
-    /// The predicate is checked while locked, so a release before the wait
-    /// cannot be lost. The caller bounds this wait to keep draining output.
-    pub fn wait_below(&self, limit: usize, timeout: Duration) {
-        drop(
-            self.released
-                .wait_timeout_while(self.textures.lock().unwrap(), timeout, |textures| {
-                    textures.len() >= limit
-                })
-                .unwrap(),
-        );
+    /// The number of held textures, waiting bounded by `timeout` for a
+    /// native release while `limit` or more are held. One lock covers both
+    /// the count and the wait it decides, so a release between them cannot
+    /// be missed. The caller bounds this wait to keep draining output.
+    pub fn wait_below(&self, limit: usize, timeout: Duration) -> usize {
+        let (textures, _) = self
+            .released
+            .wait_timeout_while(
+                self.textures.lock().unwrap(),
+                timeout,
+                |textures| textures.len() >= limit,
+            )
+            .unwrap();
+        textures.len()
     }
     /// Keep `owner` alive until AMF releases `surface`.
     pub(crate) fn hold(&self, surface: *mut AMFSurface, owner: Held) {

@@ -228,32 +228,32 @@ impl Encoder {
         {
             let queried = Instant::now();
             output.extend(self.poll_now()?);
-            // A completion at the deadline still frees capacity successfully.
-            let retained = self.ownership.retained();
-            if self.in_flight.len() < AMF_SURFACE_LIMIT && retained < AMF_SURFACE_LIMIT {
-                break;
-            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 bail!("AMF GPU queue failed to drain");
             }
-            if retained >= AMF_SURFACE_LIMIT {
-                // Output can be complete while AMF still owns every input.
-                // QueryOutput then returns immediately; wait on the native
-                // release notification instead of spinning on that empty poll.
-                self.ownership
-                    .wait_below(AMF_SURFACE_LIMIT, remaining.min(QUERY_TIMEOUT));
-            } else if let Some(thread) = &self.output_thread {
-                // The output thread waits in the driver; wait for what it queues.
-                thread.wait(remaining.min(QUERY_TIMEOUT));
-            } else {
-                // Some drivers ignore QueryTimeout or return REPEAT early.
-                // Bound those retries too, without extending a real driver wait.
-                let pause = QUERY_TIMEOUT
-                    .saturating_sub(queried.elapsed())
-                    .min(remaining);
-                if !pause.is_zero() {
-                    std::thread::sleep(pause);
+            // One lock for the count and, while the driver owns every
+            // input, the wait for its release notification. Output can be
+            // complete while AMF still owns every input: QueryOutput then
+            // returns immediately, so the release notification is the wait.
+            let retained = self.ownership.wait_below(AMF_SURFACE_LIMIT, remaining.min(QUERY_TIMEOUT));
+            // A completion at the deadline still frees capacity successfully.
+            if self.in_flight.len() < AMF_SURFACE_LIMIT && retained < AMF_SURFACE_LIMIT {
+                break;
+            }
+            if retained < AMF_SURFACE_LIMIT {
+                if let Some(thread) = &self.output_thread {
+                    // The output thread waits in the driver; wait for what it queues.
+                    thread.wait(remaining.min(QUERY_TIMEOUT));
+                } else {
+                    // Some drivers ignore QueryTimeout or return REPEAT early.
+                    // Bound those retries too, without extending a real driver wait.
+                    let pause = QUERY_TIMEOUT
+                        .saturating_sub(queried.elapsed())
+                        .min(remaining);
+                    if !pause.is_zero() {
+                        std::thread::sleep(pause);
+                    }
                 }
             }
         }
