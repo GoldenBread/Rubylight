@@ -526,18 +526,41 @@ public class GameQualityTest {
     }
 
     /**
-     * A stream asked for at {@code width} x {@code height} at 60 fps on this test's 1920x1080 60 Hz panel and set up
-     * at that size, before its tracking starts; whether it follows the screen is decided as the launch decides it.
+     * The real screen launched from stored settings: {@code resolution} saved with "follows the screen" on or off, at
+     * 60 fps, automatic quality on (motion) down to 360p, in settings already moved to the follow-the-screen switch
+     * (no migration turns it on).
      */
-    private static <T extends Game> T launchedGame(Class<T> type, int width, int height, boolean followsScreen) {
-        T game = Robolectric.buildActivity(type).get();
-        game.setIntent(new Intent().putExtra(Game.EXTRA_PC_UUID, "custom-size-pc"));
-        PreferenceConfiguration config = new PreferenceConfiguration();
-        config.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
-        config.adaptiveQualityMode = AdaptiveQualityController.Mode.OFF;
-        config.width = width; config.height = height; config.fps = 60;
-        config.resolutionFollowsScreen = followsScreen;
-        config.qualityMinShortEdge = 360; config.qualityMinFps = 30;
+    static <T extends Game> T launch(Class<T> type, String resolution, boolean followsScreen) {
+        Context context = org.robolectric.RuntimeEnvironment.getApplication();
+        android.preference.PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .putInt(preferenceKey("PREFS_VERSION_PREF_STRING"),
+                        ReflectionHelpers.getStaticField(PreferenceConfiguration.class, "PROFILE_NATIVE_VERSION"))
+                .putString(preferenceKey("RESOLUTION_PREF_STRING"), resolution)
+                .putBoolean(preferenceKey("RESOLUTION_FOLLOWS_SCREEN_PREF_STRING"), followsScreen)
+                .putString(preferenceKey("FPS_PREF_STRING"), "60")
+                .putString("adaptive_quality_mode", "motion")
+                .putString("adaptive_quality_min_resolution", "360")
+                .commit();
+        Intent intent = new Intent(context, type).putExtra(Game.EXTRA_HOST, "192.0.2.1")
+                .putExtra(Game.EXTRA_UNIQUEID, "device").putExtra(Game.EXTRA_APP_ID, 11)
+                .putExtra(Game.EXTRA_PC_UUID, "custom-size-pc");
+        return Robolectric.buildActivity(type, intent).create().get();
+    }
+
+    private static String preferenceKey(String constant) {
+        return ReflectionHelpers.getStaticField(PreferenceConfiguration.class, constant);
+    }
+
+    /**
+     * {@link #launch} on this test's 1920x1080 60 Hz panel, then what connecting supplies, which this test has no host
+     * for: a decoder set up at the launch size that can change size, a connected stream and its launch size.
+     */
+    private static <T extends Game> T launchedGame(Class<T> type, String resolution, boolean followsScreen) {
+        T game = launch(type, resolution, followsScreen);
+        assertEquals("the test's panel", "1920x1080", PreferenceConfiguration.nativeResolution(game));
+        PreferenceConfiguration config = ReflectionHelpers.getField(game, "prefConfig");
+        assertEquals(AdaptiveQualityController.Mode.MOTION, config.adaptiveQualityMode);
+        int width = config.width, height = config.height;
         ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
         MediaCodecDecoderRenderer renderer = new MediaCodecDecoderRenderer(game, config, null, 0,
                 false, false, "", null) {
@@ -545,24 +568,12 @@ public class GameQualityTest {
             @Override public boolean prepareForReconfigure(int w, int h) { return true; }
             @Override public int[] getStreamSize() { return new int[] {width, height}; }
         };
-        ReflectionHelpers.setField(game, "prefConfig", config);
         ReflectionHelpers.setField(game, "decoderRenderer", renderer);
         ReflectionHelpers.setField(game, "connected", true);
         ReflectionHelpers.setField(game, "foreground", true);
-        ReflectionHelpers.setField(game, "app", new NvApp("Game", 73, false));
-        ReflectionHelpers.setField(game, "conn", new NvConnection(null,
-                new ComputerDetails.AddressTuple("192.0.2.1", 47989), 47984, "test",
-                new StreamConfiguration.Builder().build(), null, null));
-        String panel = PreferenceConfiguration.nativeResolution(game);
-        assertEquals("the test's panel", "1920x1080", panel);
-        ReflectionHelpers.setField(game, "nativeResolutionStream", config.streamFollowsScreen(panel));
-        ReflectionHelpers.setField(game, "fpsFollowsDisplay", true);
         ReflectionHelpers.setField(game, "streamFps", 60);
         ReflectionHelpers.setField(game, "streamPanelHz", 60f);
-        ReflectionHelpers.setField(game, "panelMaxRefreshRate", 60f);
-        ReflectionHelpers.setField(game.videoOutput, "launchWidth", width);
-        ReflectionHelpers.setField(game.videoOutput, "launchHeight", height);
-        ReflectionHelpers.setField(game.videoOutput, "launchPanel", panel);
+        game.videoOutput.startInWindowShape(com.limelight.nvstream.http.HostCapabilities.UNKNOWN, true);
         QualityBridge.send = true;
         QualityBridge.requests = 0;
         QualityBridge.lastRate = QualityBridge.lastWidth = QualityBridge.lastHeight = 0;
@@ -577,42 +588,33 @@ public class GameQualityTest {
     @Config(shadows = PcViewLifecycleTest.NoNativeMoonBridge.class, instrumentedPackages = "com.limelight.nvstream.jni",
             qualifiers = "w1920dp-h1080dp-land-mdpi")
     public void theLaunchLetsOnlyTheScreensOwnSizeFollowTheScreen() {
-        Context context = org.robolectric.RuntimeEnvironment.getApplication();
-        android.content.SharedPreferences prefs = android.preference.PreferenceManager.getDefaultSharedPreferences(context);
-        try {
-            for (boolean followsScreen : new boolean[] {false, true}) {
-                // Settings already moved to the follow-the-screen switch, so no migration turns it on.
-                prefs.edit().putInt(preferenceKey("PREFS_VERSION_PREF_STRING"),
-                                ReflectionHelpers.getStaticField(PreferenceConfiguration.class, "PROFILE_NATIVE_VERSION"))
-                        .putString(preferenceKey("RESOLUTION_PREF_STRING"), "1600x900")
-                        .putBoolean(preferenceKey("RESOLUTION_FOLLOWS_SCREEN_PREF_STRING"), followsScreen).commit();
-                Intent intent = new Intent(context, Game.class).putExtra(Game.EXTRA_HOST, "192.0.2.1")
-                        .putExtra(Game.EXTRA_UNIQUEID, "device").putExtra(Game.EXTRA_APP_ID, 11);
-                Game game = Robolectric.buildActivity(Game.class, intent).create().get();
-                PreferenceConfiguration config = ReflectionHelpers.getField(game, "prefConfig");
-                assertEquals(followsScreen ? "1920x1080" : "1600x900", config.width + "x" + config.height);
-                assertEquals(followsScreen, ReflectionHelpers.<Boolean>getField(game, "nativeResolutionStream"));
-                game.finish();
-            }
-        } finally {
-            prefs.edit().clear().commit();
+        for (boolean followsScreen : new boolean[] {false, true}) {
+            Game game = launch(Game.class, "1600x900", followsScreen);
+            PreferenceConfiguration config = ReflectionHelpers.getField(game, "prefConfig");
+            assertEquals(followsScreen ? "1920x1080" : "1600x900", config.width + "x" + config.height);
+            assertEquals(followsScreen, ReflectionHelpers.<Boolean>getField(game, "nativeResolutionStream"));
+            game.finish();
         }
     }
 
-    private static String preferenceKey(String constant) {
-        return ReflectionHelpers.getStaticField(PreferenceConfiguration.class, constant);
-    }
-
-    /** Tracking starts as once connected, then automatic quality (motion), and the display-settling delay ends. */
+    /**
+     * Tracking starts as once connected, then automatic quality as the launch read it, and once the display-settling
+     * delay is over the check its timer runs; run directly, as the launched screen's other queued work needs services
+     * this test has not got.
+     */
     private static AdaptiveQualityController startTrackingWithQuality(Game game) {
         ReflectionHelpers.callInstanceMethod(game.videoOutput, "startReconfigureTracking");
-        PreferenceConfiguration config = ReflectionHelpers.getField(game, "prefConfig");
-        config.adaptiveQualityMode = AdaptiveQualityController.Mode.MOTION;
         ReflectionHelpers.callInstanceMethod(game.adaptation, "startAdaptiveQuality");
-        ShadowLooper.idleMainLooper(StreamReconfigureRequester.SETTLE_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        settledCheck(game);
         AdaptiveQualityController quality = ReflectionHelpers.getField(game, "adaptiveQuality");
         assertNotNull(quality);
         return quality;
+    }
+
+    // The reconfigure check its timer runs once the display-settling delay is over.
+    private static void settledCheck(Game game) {
+        ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(StreamReconfigureRequester.SETTLE_MS));
+        ReflectionHelpers.callInstanceMethod(game.videoOutput, "checkStreamReconfigure");
     }
 
     /**
@@ -623,7 +625,7 @@ public class GameQualityTest {
     @Config(shadows = QualityBridge.class, instrumentedPackages = "com.limelight.nvstream.jni",
             qualifiers = "w1920dp-h1080dp-land-mdpi")
     public void aCustomSizeIsAutomaticQualitysCeilingNotThePanel() {
-        Game game = launchedGame(Game.class, 1600, 900, false);
+        Game game = launchedGame(Game.class, "1600x900", false);
         try {
             AdaptiveQualityController quality = startTrackingWithQuality(game);
             assertEquals("nothing asked once the stream settled", 0, QualityBridge.requests);
@@ -649,13 +651,14 @@ public class GameQualityTest {
     public void inSplitScreenOnlyAStreamFollowingTheScreenTakesThePanesSize() {
         for (int[] stream : new int[][] {{1600, 900, 0}, {1280, 720, 0}, {1920, 1080, 1}}) {
             boolean followsScreen = stream[2] == 1;
-            WindowedGame game = launchedGame(WindowedGame.class, stream[0], stream[1], followsScreen);
+            WindowedGame game = launchedGame(WindowedGame.class, stream[0] + "x" + stream[1], followsScreen);
             try {
                 AdaptiveQualityController quality = startTrackingWithQuality(game);
                 assertEquals(0, QualityBridge.requests);
                 game.windowed = true;
+                // The pane laid out anew (onPaneLaidOut) asks for a check once the window settled.
                 game.findViewById(android.R.id.content).layout(0, 0, 948, 970);
-                ReflectionHelpers.callInstanceMethod(game.videoOutput, "checkStreamReconfigure");
+                settledCheck(game);
                 if (followsScreen) {
                     assertEquals(1, QualityBridge.requests);
                     assertEquals(948, QualityBridge.lastWidth);

@@ -180,12 +180,41 @@ public class CustomResolutionTest {
         assertTrue("a squarish screen's portrait entry", followsScreen(false, 1080, 1240, "1240x1080"));
     }
 
+    /**
+     * A foldable: a plain size saved as one panel's own still follows the screen when the stream starts on the other
+     * panel, as it did before; other sizes stay fixed there too.
+     */
+    @Test
+    public void onAFoldableEitherPanelsOwnSizeFollowsTheScreen() {
+        int[][] fold = PreferenceConfiguration.panelSizes(new int[][] {{1812, 2176}, {904, 2316}, {1812, 2176}});
+        assertTrue("the cover's size, started on the inner panel", followsScreen(false, 2316, 904, "2176x1812", fold));
+        assertTrue("the inner panel's size, started on the cover", followsScreen(false, 2176, 1812, "2316x904", fold));
+        assertFalse(followsScreen(false, 1600, 900, "2176x1812", fold));
+        assertFalse("the cover's size elsewhere than on a foldable", followsScreen(false, 2316, 904, "2176x1812", null));
+    }
+
+    /** A foldable's display lists both panels' modes; each panel's own size is the largest in its shape. */
+    @Test
+    public void panelSizesKeepEachPanelsOwnSizeOnly() {
+        int[][] sizes = PreferenceConfiguration.panelSizes(new int[][] {
+                {1080, 2340}, {1812, 2176}, {1440, 3120}, {904, 2316}, {1440, 3120}, {0, 0}});
+        assertEquals(3, sizes.length);
+        assertArrayEquals("a lower resolution of a panel is left out", new int[] {1440, 3120}, sizes[0]);
+        assertArrayEquals(new int[] {1812, 2176}, sizes[1]);
+        assertArrayEquals(new int[] {904, 2316}, sizes[2]);
+    }
+
     private static boolean followsScreen(boolean resolutionFollowsScreen, int width, int height, String panel) {
+        return followsScreen(resolutionFollowsScreen, width, height, panel, null);
+    }
+
+    private static boolean followsScreen(boolean resolutionFollowsScreen, int width, int height, String panel,
+                                         int[][] devicePanels) {
         PreferenceConfiguration config = new PreferenceConfiguration();
         config.resolutionFollowsScreen = resolutionFollowsScreen;
         config.width = width;
         config.height = height;
-        return config.streamFollowsScreen(panel);
+        return config.streamFollowsScreen(panel, devicePanels);
     }
 
     @Test

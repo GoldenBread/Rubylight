@@ -425,6 +425,15 @@ final class GameVideoOutput {
         return StreamResizePolicy.coveringSize(launchWidth, launchHeight, turns, panels);
     }
 
+    // A foldable's (hinge sensor) panels' own sizes, the panel not in use included; null elsewhere.
+    int[][] foldPanelSizes() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+                !game.getPackageManager().hasSystemFeature(PackageManager.FEATURE_SENSOR_HINGE_ANGLE)) {
+            return null;
+        }
+        return PreferenceConfiguration.panelSizes(foldPanels(game.getWindowManager().getDefaultDisplay()));
+    }
+
     // The panel sizes a fold or unfold may move the stream to: the video display's modes and, from
     // Android 16 QPR2, every built-in display's, the panel not in use included.
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)

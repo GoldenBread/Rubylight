@@ -86,6 +86,35 @@ public class GameFoldReconfigureTest {
         assertTrue(GameRotateReconfigureTest.ReconfigureBridge.requests.isEmpty());
     }
 
+    /**
+     * A plain size saved as the cover screen's own, as settings from before the follow-the-screen choice hold it,
+     * launched on the inner screen: it follows the screen, as it did before; a custom size keeps its size.
+     */
+    @Test
+    @Config(sdk = 30)
+    public void theCoversOwnSizeSavedEarlierFollowsTheScreenFromTheInnerScreen() {
+        Display display = ShadowDisplay.getDefaultDisplay();
+        int id = display.getMode().getModeId();
+        ShadowDisplayManager.setSupportedModes(display.getDisplayId(), mode(id, 720, 800), mode(id + 1, COVER_HEIGHT, COVER_WIDTH));
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication().getPackageManager())
+                .setSystemFeature(android.content.pm.PackageManager.FEATURE_SENSOR_HINGE_ANGLE, true);
+        Game cover = GameQualityTest.launch(Game.class, COVER_WIDTH + "x" + COVER_HEIGHT, false);
+        assertEquals("the inner screen is in use", "800x720", PreferenceConfiguration.nativeResolution(cover));
+        assertTrue(ReflectionHelpers.<Boolean>getField(cover, "nativeResolutionStream"));
+        cover.finish();
+        Game custom = GameQualityTest.launch(Game.class, "1600x900", false);
+        assertFalse(ReflectionHelpers.<Boolean>getField(custom, "nativeResolutionStream"));
+        custom.finish();
+    }
+
+    private static Display.Mode mode(int id, int width, int height) {
+        return ReflectionHelpers.callConstructor(Display.Mode.class,
+                ReflectionHelpers.ClassParameter.from(int.class, id),
+                ReflectionHelpers.ClassParameter.from(int.class, width),
+                ReflectionHelpers.ClassParameter.from(int.class, height),
+                ReflectionHelpers.ClassParameter.from(float.class, 60f));
+    }
+
     private static class Renderer extends MediaCodecDecoderRenderer {
         Renderer(Game activity, PreferenceConfiguration prefs) {
             super(activity, prefs, null, 0, false, false, "", null);

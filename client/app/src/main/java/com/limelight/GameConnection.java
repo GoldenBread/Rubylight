@@ -176,7 +176,8 @@ final class GameConnection {
             LimeLog.info("Stream settings layers: " + com.limelight.preferences.StreamLayers.describe(game.prefConfig.layers));
         }
         // Only the screen's own size follows the screen; a preset or a custom size keeps the size asked for.
-        game.nativeResolutionStream = game.prefConfig.streamFollowsScreen(PreferenceConfiguration.nativeResolution(game));
+        game.nativeResolutionStream = game.prefConfig.streamFollowsScreen(PreferenceConfiguration.nativeResolution(game),
+                game.videoOutput.foldPanelSizes());
         game.keepsRequestedShape = game.nativeResolutionStream ||
                 PreferenceConfiguration.isNativeResolution(game.prefConfig.width, game.prefConfig.height);
         game.fpsFollowsDisplay = com.limelight.binding.video.DisplayFrameRatePolicy.fpsFollowsDisplay(game.prefConfig.vrr,

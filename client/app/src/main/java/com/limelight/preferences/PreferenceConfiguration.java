@@ -598,18 +598,51 @@ public class PreferenceConfiguration {
     /**
      * Whether this stream follows the screen while it runs (a fold, a split-screen pane, the panel)
      * instead of keeping its size, on a screen whose own resolution is {@code panel} as
-     * nativeResolution gives it (null when unreadable). Following the screen does, and so does the
-     * screen's own size saved as a plain width and height (either way round, where it is no preset),
-     * as PC profiles saved before that choice existed hold it. A preset or any other custom size
-     * keeps its size, and automatic quality never goes above it.
+     * nativeResolution gives it (null when unreadable), on a device whose panels' own sizes are
+     * {@code devicePanels} (a foldable's, see panelSizes; null elsewhere). Following the screen
+     * does, and so does one of those sizes saved as a plain width and height (either way round,
+     * where it is no preset), as PC profiles saved before that choice existed hold it, also one
+     * saved on a foldable's other panel. A preset or any other custom size keeps its size, and
+     * automatic quality never goes above it.
      */
-    public boolean streamFollowsScreen(String panel) {
+    public boolean streamFollowsScreen(String panel, int[][] devicePanels) {
         if (resolutionFollowsScreen) return true;
-        if (panel == null || !isNativeResolution(width, height)) return false;
-        int panelWidth = getWidthFromResolutionString(panel);
-        int panelHeight = getHeightFromResolutionString(panel);
-        return Math.max(width, height) == Math.max(panelWidth, panelHeight) &&
-                Math.min(width, height) == Math.min(panelWidth, panelHeight);
+        if (!isNativeResolution(width, height)) return false;
+        // The trade-off: the screen's own size chosen as a fixed one (2400x1080 with "follows the screen"
+        // off) can't be told apart from an old saved value, so it follows the split-screen pane and folds too.
+        if (panel != null && hasSize(getWidthFromResolutionString(panel), getHeightFromResolutionString(panel))) {
+            return true;
+        }
+        if (devicePanels != null) {
+            for (int[] other : devicePanels) {
+                if (hasSize(other[0], other[1])) return true;
+            }
+        }
+        return false;
+    }
+
+    // This stream's size is otherWidth x otherHeight, either way round.
+    private boolean hasSize(int otherWidth, int otherHeight) {
+        return Math.max(width, height) == Math.max(otherWidth, otherHeight) &&
+                Math.min(width, height) == Math.min(otherWidth, otherHeight);
+    }
+
+    /**
+     * The panels' own sizes among display modes: the largest in each shape, as panelSize picks the
+     * panel in use. A foldable lists both panels' modes; a lower resolution of a panel is left out.
+     */
+    public static int[][] panelSizes(int[][] modes) {
+        java.util.List<int[]> sizes = new java.util.ArrayList<>();
+        for (int[] mode : modes) {
+            if (mode[0] <= 0 || mode[1] <= 0) continue;
+            int shape = -1;
+            for (int i = 0; i < sizes.size() && shape < 0; i++) {
+                if (sameShape(mode[0], mode[1], sizes.get(i)[0], sizes.get(i)[1], 0.01)) shape = i;
+            }
+            if (shape < 0) sizes.add(mode);
+            else if (area(mode) > area(sizes.get(shape))) sizes.set(shape, mode);
+        }
+        return sizes.toArray(new int[0][]);
     }
 
     // If we have a screen that has semi-square dimensions, we may want to change our behavior
