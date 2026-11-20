@@ -712,4 +712,42 @@ public class PadLayoutTest {
         assertEquals(PadLayout.Glyph.PLAYSTATION, layout.glyph());
         assertEquals(PadLayout.PointerMode.CAMERA, layout.pointerMode());
     }
+
+    @Test public void aTouchpadAddedBeforeItsPlaceMovedStaysInTheMiddle() {
+        float width = 2400, height = 1080;
+        float[] box = new float[4];
+        // The Add touchpad button of an older build showed it at its default place, then the middle, and never
+        // placed it; the layout it saved has the touchpad shown and unplaced.
+        PadLayout old = PadLayout.parse("v1|POINTER_PAD,-,-,1.000,100,0");
+        old.bounds(PadLayout.Control.POINTER_PAD, width, height, DENSITY, box);
+        assertEquals(width / 2, box[0] + box[2] / 2, 1);
+        assertEquals(height / 2, box[1] + box[3] / 2, 1);
+        // Saved again, it keeps that place.
+        PadLayout again = PadLayout.parse(old.serialize());
+        again.bounds(PadLayout.Control.POINTER_PAD, width, height, DENSITY, box);
+        assertEquals(height / 2, box[1] + box[3] / 2, 1);
+
+        // A touchpad added now shows at the new default place, below the microphone and menu buttons, and keeps it
+        // through a save; an older build ignores the marker.
+        PadLayout added = new PadLayout();
+        added.spec(PadLayout.Control.POINTER_PAD).hidden = false;
+        float[] fresh = added.bounds(PadLayout.Control.POINTER_PAD, width, height, DENSITY, new float[4]);
+        assertTrue("the new place is below the middle", fresh[1] + fresh[3] / 2 > height / 2 + 1);
+        String text = added.serialize();
+        assertEquals("v1|pad=below|POINTER_PAD,-,-,1.000,100,0", text);
+        PadLayout loaded = PadLayout.parse(text);
+        assertFalse(loaded.spec(PadLayout.Control.POINTER_PAD).placed());
+        assertArrayEquals(fresh, loaded.bounds(PadLayout.Control.POINTER_PAD, width, height, DENSITY, box), .01f);
+
+        // The Full preset shows it too, at the new place.
+        PadLayout full = new PadLayout();
+        full.applyPreset(PadLayout.Preset.FULL);
+        assertFalse(PadLayout.parse(full.serialize()).spec(PadLayout.Control.POINTER_PAD).placed());
+
+        // An older layout with the touchpad left out shows it at the new place once it is added.
+        PadLayout hidden = PadLayout.parse("v1|FACE,0.7083,0.5556,1.300,100,0");
+        assertTrue(hidden.spec(PadLayout.Control.POINTER_PAD).hidden);
+        assertFalse(hidden.spec(PadLayout.Control.POINTER_PAD).placed());
+        assertEquals("v1", new PadLayout().serialize());
+    }
 }

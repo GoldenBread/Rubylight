@@ -137,6 +137,11 @@ public final class PadLayout {
      */
     private static final String VERSION = "v1";
     private static final String VERSION_V2 = "v2";
+    /**
+     * Written with a pointer touchpad that shows at its default place, which moved below the microphone and menu
+     * buttons: a layout without it was saved when that place was the middle of the surface, and keeps it there.
+     */
+    private static final String POINTER_PAD_BELOW = "pad=below";
 
     /**
      * One control's settings. {@code cx} and {@code cy} are fractions of the surface; NaN means the default place.
@@ -815,14 +820,16 @@ public final class PadLayout {
     }
 
     /**
-     * "v1|glyph=playstation|mode=camera|ID,cx,cy,scale,opacity,hidden[,widthScale,heightScale]|..." for edits; "v1"
-     * alone for none. A control whose width and height scales differ adds them after the six fields every version
+     * "v1|glyph=playstation|mode=camera|pad=below|ID,cx,cy,scale,opacity,hidden[,widthScale,heightScale]|..." for
+     * edits; "v1" alone for none. A control whose width and height scales differ adds them after the six fields every version
      * reads, and writes the larger as its one scale, which an older build shows (up to its own limit of 2).
      */
     public String serialize() {
         StringBuilder out = new StringBuilder(VERSION);
         if (glyph != Glyph.XBOX) out.append("|glyph=").append(glyph.name().toLowerCase(Locale.ROOT));
         if (pointerMode != PointerMode.MOUSE) out.append("|mode=").append(pointerMode.name().toLowerCase(Locale.ROOT));
+        Spec pad = spec(Control.POINTER_PAD);
+        if (!pad.hidden && !pad.placed()) out.append('|').append(POINTER_PAD_BELOW);
         for (Control control : Control.values()) {
             Spec spec = spec(control);
             if (spec.isDefault()) continue;
@@ -852,8 +859,13 @@ public final class PadLayout {
         if (text == null) return layout;
         String[] parts = text.split("\\|");
         if (parts.length == 0 || (!VERSION.equals(parts[0]) && !VERSION_V2.equals(parts[0]))) return layout;
+        boolean padBelow = false;
         for (int i = 1; i < parts.length; i++) {
             String part = parts[i];
+            if (part.equals(POINTER_PAD_BELOW)) {
+                padBelow = true;
+                continue;
+            }
             if (part.startsWith("glyph=")) {
                 try {
                     layout.glyph = Glyph.valueOf(part.substring("glyph=".length()).toUpperCase(Locale.ROOT));
@@ -896,6 +908,12 @@ public final class PadLayout {
             } catch (NumberFormatException ignored) {
                 // Skip this entry and keep the rest.
             }
+        }
+        Spec pad = layout.spec(Control.POINTER_PAD);
+        if (!padBelow && !pad.hidden && !pad.placed()) {
+            // Added before its default place moved and never dragged: it stays in the middle, where it was.
+            pad.cx = .5f;
+            pad.cy = .5f;
         }
         return layout;
     }
