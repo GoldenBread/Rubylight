@@ -71,6 +71,10 @@ fn service_wait(now: Instant, enet: Option<Duration>, timers: [Option<Instant>; 
     }
     wait
 }
+/// Control socket buffers: room for the input a stall on this thread leaves queued in the kernel
+/// (receive: the host's replies and rumble; send: a burst of input and acknowledgements).
+const CONTROL_RECV_BUFFER: usize = 256 * 1024;
+const CONTROL_SEND_BUFFER: usize = 128 * 1024;
 /// Roaming datagrams set aside between services at most; the host sends one per PROBE.
 const MAX_ROAM_INBOX: usize = 8;
 /// After a failed roaming attempt, the next silence starts another this long later at the
@@ -645,7 +649,13 @@ impl rusty_enet::Socket for ControlSocket {
     type Error = io::Error;
 
     fn init(&mut self, options: rusty_enet::SocketOptions) -> io::Result<()> {
-        rusty_enet::Socket::init(&mut self.socket, options)
+        rusty_enet::Socket::init(&mut self.socket, options)?;
+        // rusty_enet's UdpSocket::init leaves the buffer sizes at the OS default (its TODO: std
+        // cannot set them), so they are set here. A refusal keeps the default.
+        let socket = socket2::SockRef::from(&self.socket);
+        let _ = socket.set_recv_buffer_size(CONTROL_RECV_BUFFER);
+        let _ = socket.set_send_buffer_size(CONTROL_SEND_BUFFER);
+        Ok(())
     }
 
     fn send(&mut self, address: SocketAddr, buffer: &[u8]) -> io::Result<usize> {
