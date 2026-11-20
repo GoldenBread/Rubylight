@@ -408,6 +408,27 @@ public final class ModernController {
                 .putBoolean("classic-migrated", true).apply();
     }
 
+    /**
+     * Where the player left the layout editor's panel in this orientation, its top-left corner in pixels; null when
+     * it was never moved. The editor keeps it on the surface, so a place from a larger screen or a fold still shows.
+     */
+    int[] panelPosition() {
+        String value = store.getString(PadLayoutKeys.panelKey(landscape), null);
+        if (value == null) return null;
+        String[] parts = value.split(",");
+        if (parts.length != 2) return null;
+        try {
+            return new int[] {Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim())};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** Remembers where the editor's panel was left, for this orientation. */
+    void savePanelPosition(int left, int top) {
+        store.edit().putString(PadLayoutKeys.panelKey(landscape), left + "," + top).apply();
+    }
+
     PadLayout layout() {
         return layout;
     }

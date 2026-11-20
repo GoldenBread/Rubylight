@@ -24,7 +24,7 @@ import java.util.Locale;
  * Edits the modern controller's layout over a dimmed stream: drag a control to move it, pinch it to
  * resize it, drag a picked control's corner handle to size its width and height on their own up to the whole
  * surface, tap it to pick it for the panel's size, opacity and hide buttons. With nothing picked
- * the panel changes every control. Done keeps the draft, for all games or only this one; Cancel and
+ * the panel changes every control; its grip moves it anywhere, and it reopens where it was left. Done keeps the draft, for all games or only this one; Cancel and
  * Back drop it. Hidden controls stay here as faint ghosts so they can be shown again, below every shown control; the
  * WASD stick, left out of the default layout, has its own Add button instead of a ghost.
  */
@@ -50,6 +50,13 @@ final class PadEditor extends FrameLayout {
     private final Slider opacity;
     private final float density;
     private boolean settingOpacity;
+    /**
+     * Whether the player has placed the panel with its grip, in this orientation now or before. Then it stays where
+     * it was put, its top-left corner at {@link #panelX}, {@link #panelY}, shown kept on the surface, and no longer
+     * moves out of the picked control's way by itself.
+     */
+    private boolean panelPlaced;
+    private float panelX, panelY, gripRawX, gripRawY, gripFromX, gripFromY;
 
     PadEditor(Context context, ModernController controller, PadPainter painter, PadLayout draft,
               boolean perGame, boolean gameAvailable) {
@@ -70,6 +77,12 @@ final class PadEditor extends FrameLayout {
         panel.setBackground(com.limelight.ui.GlassPanelDrawable.stream(context,
                 new float[] {corner, corner, corner, corner, corner, corner, corner, corner}));
         addView(panel, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        panel.findViewById(R.id.pad_editor_grip).setOnTouchListener((grip, event) -> dragPanel(event));
+        // A panel that grows or shrinks (the picked control's rows), or a surface that turns or folds, keeps a
+        // placed panel whole on the surface.
+        panel.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> showPlacedPanel());
+        int[] placed = controller.panelPosition();
+        if (placed != null) placePanel(placed[0], placed[1]);
         selection = panel.findViewById(R.id.pad_editor_selection);
         sizeText = panel.findViewById(R.id.pad_editor_size);
         hide = panel.findViewById(R.id.pad_editor_hide);
@@ -129,6 +142,89 @@ final class PadEditor extends FrameLayout {
                 keepPanelClear();
             });
         }
+        if (oldw != 0 && oldh != 0 && (w > h) != (oldw > oldh)) {
+            // Turned while editing: the panel goes where it was left in this orientation, or back to the middle.
+            post(() -> {
+                int[] placed = controller.panelPosition();
+                if (placed != null) {
+                    placePanel(placed[0], placed[1]);
+                } else {
+                    unplacePanel();
+                }
+            });
+        } else {
+            post(this::showPlacedPanel);
+        }
+    }
+
+    /** The grip: dragging it moves the panel anywhere on the surface; letting go remembers where, per orientation. */
+    private boolean dragPanel(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                // Raw coordinates: the grip moves with the panel, so its own would chase the finger.
+                gripRawX = event.getRawX();
+                gripRawY = event.getRawY();
+                gripFromX = panel.getX();
+                gripFromY = panel.getY();
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                placePanel(gripFromX + event.getRawX() - gripRawX, gripFromY + event.getRawY() - gripRawY);
+                return true;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (panelPlaced) controller.savePanelPosition(Math.round(panelX), Math.round(panelY));
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** Puts the panel's top-left corner at ({@code x}, {@code y}), kept whole on the surface, and leaves it there. */
+    private void placePanel(float x, float y) {
+        LayoutParams params = (LayoutParams) panel.getLayoutParams();
+        if (!panelPlaced || params.gravity != (Gravity.TOP | Gravity.START)) {
+            // The layout puts it in the top-left corner; its translation carries the place, so a drag lays out nothing.
+            params.gravity = Gravity.TOP | Gravity.START;
+            params.leftMargin = params.topMargin = params.rightMargin = params.bottomMargin = 0;
+            panel.setLayoutParams(params);
+        }
+        panelPlaced = true;
+        panelX = Math.max(0, Math.min(maxPanelX(), x));
+        panelY = Math.max(0, Math.min(maxPanelY(), y));
+        showPlacedPanel();
+    }
+
+    /** Shows a placed panel where it was put, moved only as far as it takes to keep it whole on the surface. */
+    private void showPlacedPanel() {
+        if (!panelPlaced) return;
+        float x = Math.max(0, Math.min(maxPanelX(), panelX)), y = Math.max(0, Math.min(maxPanelY(), panelY));
+        panel.setTranslationX(x - panel.getLeft());
+        panel.setTranslationY(y - panel.getTop());
+    }
+
+    /** Back to the panel's own place in the middle, moving out of the picked control's way by itself. */
+    private void unplacePanel() {
+        panelPlaced = false;
+        panel.setTranslationX(0);
+        panel.setTranslationY(0);
+        LayoutParams params = (LayoutParams) panel.getLayoutParams();
+        params.gravity = Gravity.CENTER;
+        params.leftMargin = params.topMargin = params.rightMargin = params.bottomMargin = 0;
+        panel.setLayoutParams(params);
+        keepPanelClear();
+    }
+
+    private float maxPanelX() {
+        return getWidth() > 0 && panel.getWidth() > 0 ? Math.max(0, getWidth() - panel.getWidth()) : Float.MAX_VALUE;
+    }
+
+    private float maxPanelY() {
+        return getHeight() > 0 && panel.getHeight() > 0 ? Math.max(0, getHeight() - panel.getHeight()) : Float.MAX_VALUE;
+    }
+
+    /** The panel, for tests. */
+    View panel() {
+        return panel;
     }
 
     PadLayout draft() {
@@ -337,9 +433,9 @@ final class PadEditor extends FrameLayout {
         }
     }
 
-    /** Moves the panel to the other half when the picked control sits under it. */
+    /** Moves the panel to the other half when the picked control sits under it, until the player places it. */
     private void keepPanelClear() {
-        if (selected == null || panel.getWidth() == 0) return;
+        if (selected == null || panel.getWidth() == 0 || panelPlaced) return;
         float[] box = draft.bounds(selected, getWidth(), getHeight(), density, new float[4]);
         RectF control = new RectF(box[0], box[1], box[0] + box[2], box[1] + box[3]);
         RectF under = new RectF(panel.getLeft(), panel.getTop(), panel.getRight(), panel.getBottom());

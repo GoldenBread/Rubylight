@@ -38,6 +38,7 @@
     <string name="title_osc_auto_hide">Hide on-screen controls while a controller is connected</string>
     <string name="summary_osc_auto_hide">Makes room on the screen when you pick up a gamepad, and brings the controls back when it disconnects. Leave it on unless you use the touch controls and a controller at once.</string>
     <string name="pad_edit_done">Done</string>
+    <string name="pad_edit_move_panel">Move panel</string>
     <string name="pad_left_stick">Left stick</string>
     <string name="pad_right_stick">Right stick</string>
     <string name="pad_dpad">D-pad</string>

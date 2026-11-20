@@ -407,6 +407,77 @@ public class ModernControllerTest {
         assertEquals(kept.heightScale, saved.heightScale, 1e-3);
     }
 
+    /** Lays the frame out and lets the editor's posted panel updates run, as the next frames would. */
+    private void settle() {
+        for (int pass = 0; pass < 3; pass++) {
+            ShadowLooper.idleMainLooper();
+            layout();
+        }
+    }
+
+    /**
+     * The editor's panel moves by its grip anywhere on the screen, then no longer moves out of a picked control's way
+     * by itself, and the editor reopens with it where it was left.
+     */
+    @Test public void theEditorPanelMovesByItsGripAndReopensWhereItWasLeft() {
+        ModernController controller = controller(GAME);
+        controller.startEditing();
+        settle();
+        PadEditor editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        View panel = editor.panel();
+        View grip = editor.findViewById(com.limelight.R.id.pad_editor_grip);
+        assertEquals(frame.getContext().getString(com.limelight.R.string.pad_edit_move_panel), grip.getContentDescription());
+        float x = panel.getX(), y = panel.getY();
+        assertTrue("The panel laid out in the middle", panel.getWidth() > 0 && x >= 300);
+
+        drag(grip, 100, 10, 100 - 300, 10 + 20);
+        assertEquals(x - 300, panel.getX(), 1);
+        assertEquals(y + 20, panel.getY(), 1);
+        settle();
+        assertEquals("Laid out again, it stays", x - 300, panel.getX(), 1);
+        assertEquals(y + 20, panel.getY(), 1);
+        // The left stick sits under it now; picking it leaves the placed panel alone.
+        editor.select(PadLayout.Control.LEFT_STICK);
+        settle();
+        assertEquals(x - 300, panel.getX(), 1);
+        assertEquals(y + 20, panel.getY(), 1);
+
+        // Dragged far past an edge, it stops there, whole.
+        drag(grip, 100, 10, 100 - 5000, 10 - 5000);
+        assertEquals(0, panel.getX(), 1);
+        assertEquals(0, panel.getY(), 1);
+        drag(grip, 100, 10, 100 + 300, 10 + 40);
+        settle();
+        float leftX = panel.getX(), leftY = panel.getY();
+        assertEquals(300, leftX, 1);
+        assertEquals(40, leftY, 1);
+
+        // Cancel or Done, the editor opens again with the panel where it was left.
+        controller.finishEditing(false);
+        controller.startEditing();
+        settle();
+        PadEditor again = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        assertNotSame(editor, again);
+        assertEquals(leftX, again.panel().getX(), 1);
+        assertEquals(leftY, again.panel().getY(), 1);
+        controller.finishEditing(true);
+    }
+
+    /** A remembered place that no longer fits (a larger screen, a fold) shows the panel whole at the nearest edge. */
+    @Test public void aRememberedPanelPlaceOffTheScreenKeepsThePanelOnIt() {
+        RuntimeEnvironment.getApplication().getSharedPreferences(ModernController.PREFS, Context.MODE_PRIVATE).edit()
+                .putString(PadLayoutKeys.panelKey(true), "5000,-300").commit();
+        ModernController controller = controller(GAME);
+        controller.startEditing();
+        settle();
+        View panel = ((PadEditor) frame.getChildAt(frame.getChildCount() - 1)).panel();
+        assertTrue(panel.getWidth() > 0);
+        assertEquals(frame.getWidth() - panel.getWidth(), panel.getX(), 1);
+        assertEquals(0, panel.getY(), 1);
+        assertTrue(panel.getY() + panel.getHeight() <= frame.getHeight());
+        controller.finishEditing(false);
+    }
+
     private static void drag(View view, float fromX, float fromY, float toX, float toY) {
         long now = android.os.SystemClock.uptimeMillis();
         MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, fromX, fromY, 0);

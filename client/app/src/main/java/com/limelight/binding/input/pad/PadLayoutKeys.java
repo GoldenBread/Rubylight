@@ -32,6 +32,14 @@ public final class PadLayoutKeys {
         return key(!landscape, gameKey);
     }
 
+    /** The prefix of where the layout editor's panel was left, one for each orientation. Not a layout. */
+    public static final String PANEL = "editor-panel";
+
+    /** The key of where the editor's panel was left in one orientation: "editor-panel:portrait" or ":landscape". */
+    public static String panelKey(boolean landscape) {
+        return PANEL + ':' + (landscape ? LANDSCAPE : PORTRAIT);
+    }
+
     /** Whether a stored key belongs to a modern layout this version writes, for clearing them all. */
     public static boolean ours(String key) {
         return key != null && (key.equals(ROOT) || key.startsWith(ROOT + ':'));

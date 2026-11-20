@@ -25,6 +25,13 @@ public class PadLayoutKeysTest {
         assertFalse(PadLayoutKeys.ours(null));
     }
 
+    /** Where the editor's panel was left is kept per orientation, apart from the layouts. */
+    @Test public void theEditorPanelsPlaceHasAKeyPerOrientationThatIsNoLayout() {
+        assertEquals("editor-panel:landscape", PadLayoutKeys.panelKey(true));
+        assertEquals("editor-panel:portrait", PadLayoutKeys.panelKey(false));
+        assertFalse(PadLayoutKeys.ours(PadLayoutKeys.panelKey(true)));
+    }
+
     @Test public void theTwoOrientationsNeverShareAKey() {
         assertNotEquals(PadLayoutKeys.key(true, "game"), PadLayoutKeys.key(false, "game"));
         assertNotEquals(PadLayoutKeys.key(true, null), PadLayoutKeys.key(false, null));
