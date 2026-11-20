@@ -823,9 +823,12 @@ public class PadLayoutTest {
     @Test public void moveJoinSplitCyclesKeepTheSize() {
         float width = 2400, height = 1080;
         for (PadLayout.Control cluster : new PadLayout.Control[] {PadLayout.Control.FACE, PadLayout.Control.DPAD}) {
-            PadLayout layout = new PadLayout();
+            // Alone and in the middle, so no move carries a member off the screen or onto a neighbour.
+            PadLayout layout = alone(cluster);
             float[] start = layout.bounds(cluster, width, height, DENSITY, new float[4]);
             layout.split(cluster, width, height, DENSITY);
+            moveMembers(layout, cluster, width / 2 - start[0] - start[2] / 2, height / 2 - start[1] - start[3] / 2, width,
+                    height);
             float[] memberStart = layout.bounds(PadLayout.members(cluster)[0], width, height, DENSITY, new float[4]);
             float[][] moves = {{-300, 0}, {0, -120}, {250, 80}, {-40, 60}, {180, -90}, {-90, 30}};
             for (int cycle = 0; cycle < moves.length; cycle++) {
@@ -866,6 +869,40 @@ public class PadLayoutTest {
         }
     }
 
+    @Test public void shrunkMembersInADiamondJoinASquareClusterAndSplitBackWhereTheyStood() {
+        float width = 2400, height = 1080, button = 132;
+        PadLayout layout = alone(PadLayout.Control.FACE);
+        float[] home = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
+        layout.split(PadLayout.Control.FACE, width, height, DENSITY);
+        // In the middle, where the cluster their spacing gives has room, the player shrinks the four to a full touch.
+        moveMembers(layout, PadLayout.Control.FACE, width / 2 - home[0] - home[2] / 2, height / 2 - home[1] - home[3] / 2,
+                width, height);
+        float[][] before = new float[MEMBERS_OF_FACE.length][];
+        for (int i = 0; i < MEMBERS_OF_FACE.length; i++) {
+            float[] box = layout.bounds(MEMBERS_OF_FACE[i], width, height, DENSITY, new float[4]);
+            float cx = box[0] + box[2] / 2, cy = box[1] + box[3] / 2;
+            layout.setBounds(MEMBERS_OF_FACE[i], cx - button / 2, cy - button / 2, button, button, width, height, DENSITY);
+            before[i] = layout.bounds(MEMBERS_OF_FACE[i], width, height, DENSITY, new float[4]);
+        }
+        layout.join(PadLayout.Control.FACE, width, height, DENSITY);
+        float[] face = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
+        assertEquals("square", face[2], face[3], 1);
+        // Each button drawn where its member stood: A bottom, B right, X left, Y top.
+        float[][] places = {{.5f, .78f}, {.78f, .5f}, {.22f, .5f}, {.5f, .22f}};
+        for (int i = 0; i < places.length; i++) {
+            assertEquals(MEMBERS_OF_FACE[i] + " x", before[i][0] + before[i][2] / 2, face[0] + places[i][0] * face[2], 2);
+            assertEquals(MEMBERS_OF_FACE[i] + " y", before[i][1] + before[i][3] / 2, face[1] + places[i][1] * face[3], 2);
+        }
+        layout.split(PadLayout.Control.FACE, width, height, DENSITY);
+        for (int i = 0; i < MEMBERS_OF_FACE.length; i++) {
+            assertArrayEquals(MEMBERS_OF_FACE[i].name(), before[i], layout.bounds(MEMBERS_OF_FACE[i], width, height,
+                    DENSITY, new float[4]), 2);
+        }
+        // The same members joined twice give the same cluster.
+        layout.join(PadLayout.Control.FACE, width, height, DENSITY);
+        assertArrayEquals(face, layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]), .5f);
+    }
+
     @Test public void membersThatStandAlikeInBothArrangementsKeepTheOneTheClusterHad() {
         float[][] ax = {{.5f, .78f}, null, {.22f, .5f}, null};
         float[][] by = {null, {.78f, .5f}, null, {.5f, .22f}};
@@ -893,7 +930,15 @@ public class PadLayoutTest {
             layout.applyPreset(preset);
             assertTrue(preset + ": B at the bottom", layout.facesSwapped());
         }
-        // All four hidden, the cluster shown again: from where they were.
+        // All four hidden, then a preset, or the cluster added back: from where they were.
+        for (PadLayout.Preset preset : PadLayout.Preset.values()) {
+            PadLayout hidden = PadLayout.parse(ClassicLayoutMigration.swappedDefaults(width, height, DENSITY)
+                    .serialize().replace("|faces=swapped", ""));
+            for (PadLayout.Control member : MEMBERS_OF_FACE) hidden.spec(member).hidden = true;
+            assertFalse(hidden.isSplit(PadLayout.Control.FACE));
+            hidden.applyPreset(preset);
+            assertTrue(preset + ", all four hidden: B at the bottom", hidden.facesSwapped());
+        }
         PadLayout layout = PadLayout.parse(ClassicLayoutMigration.swappedDefaults(width, height, DENSITY)
                 .serialize().replace("|faces=swapped", ""));
         for (PadLayout.Control member : MEMBERS_OF_FACE) layout.spec(member).hidden = true;

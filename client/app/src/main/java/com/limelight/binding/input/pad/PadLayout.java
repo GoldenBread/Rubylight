@@ -277,8 +277,8 @@ public final class PadLayout {
         // player's other choices and stay as they are, so the editor's buttons do not visibly revert.
         Glyph keptGlyph = glyph;
         PointerMode keptPointerMode = pointerMode;
-        // Presets show the face cluster whole: in the arrangement its split members stand in, if they tell.
-        if (isSplit(Control.FACE)) takeFaceArrangement();
+        // Presets show the face cluster whole: in the arrangement its members stand in, split or all four hidden.
+        if (spec(Control.FACE).hidden) takeFaceArrangement();
         boolean keptFacesSwapped = facesSwapped;
         Spec[] keptSteam = new Spec[specs.length];
         for (Control control : Control.values()) {
@@ -391,6 +391,12 @@ public final class PadLayout {
     public void split(Control cluster, float width, float height, float density) {
         Control[] members = members(cluster);
         if (members.length == 0) return;
+        if (joinedFromMembers(cluster, width, height, density)) {
+            // Joined from these members and not moved or resized since: they come back as they stood.
+            for (Control member : members) spec(member).hidden = false;
+            spec(cluster).hidden = true;
+            return;
+        }
         float[][] boxes = splitBoxes(cluster, width, height, density);
         // Each place gets the button the cluster shows there, so a Nintendo arrangement stays one.
         int[] order = order(cluster);
@@ -492,7 +498,8 @@ public final class PadLayout {
         if (any && width > 0 && height > 0) {
             if (cluster == Control.FACE) facesSwapped = arrangement(centers(boxes), facesSwapped);
             if (!whereSplitPutThem(cluster, boxes, width, height, density)) {
-                float[] box = clusterFor(cluster, boxes, bounds(cluster, width, height, density, new float[4]), density);
+                float[] box = clusterFor(cluster, boxes, bounds(cluster, width, height, density, new float[4]), width,
+                        height, density);
                 setBounds(cluster, box[0], box[1], box[2], box[3], width, height, density);
             }
         }
@@ -567,89 +574,51 @@ public final class PadLayout {
     }
 
     /**
-     * The cluster box ({left, top, width, height}) from which {@link #split} lays out members as they stand in
-     * {@code boxes} (null where hidden), inverting {@link #memberBox}: the members' size gives the cluster's shorter
-     * side, a pair spread further apart than their size requires gives that side, and its centre is where the members'
-     * offsets from it put it. Where a side is not told by the members, it is the shorter side. Members at a full
-     * touch, the least they get, tell only that the cluster was no larger: the cluster's own shorter side ({@code now})
-     * stays where it fits that.
+     * The cluster box ({left, top, width, height}) for members standing in {@code boxes} (null where hidden) on a
+     * {@code surfaceWidth} x {@code surfaceHeight} surface. The face cluster: {@link #faceClusterFor}. The D-pad inverts
+     * {@link #memberBox}: the arms' reach gives each side (the shorter reach the shorter side), else their thickness
+     * the shorter side, and the middle is where the arms' offsets from it put it. Arms at a full touch, the least they
+     * get, tell only that the cluster was no larger: the cluster's own size ({@code now}) stays where it fits that.
      */
-    private float[] clusterFor(Control cluster, float[][] boxes, float[] now, float density) {
+    private float[] clusterFor(Control cluster, float[][] boxes, float[] now, float surfaceWidth, float surfaceHeight,
+                               float density) {
+        if (cluster == Control.FACE) return faceClusterFor(boxes, now, surfaceWidth, surfaceHeight, density);
         float touch = MIN_TOUCH_DP * density;
-        int[] order = order(cluster);
-        float w, h;
-        if (cluster == Control.FACE) {
-            // A member's button is 2 * FACE_RADIUS of the shorter side, at least a full touch.
-            float size = 0;
-            int count = 0;
-            float[][] places = new float[boxes.length][];
-            for (int i = 0; i < boxes.length; i++) {
-                if (boxes[i] == null) continue;
-                size += (boxes[i][2] + boxes[i][3]) / 2;
-                count++;
-                places[order[i]] = boxes[i];
-            }
-            size = Math.max(size / count, touch);
-            float shorter = size / (2 * PadInput.FACE_RADIUS), least = size + 2;
-            float nowShorter = Math.min(now[2], now[3]);
-            if (size <= touch + .5f && 2 * PadInput.FACE_RADIUS * nowShorter <= touch + .5f) shorter = nowShorter;
-            // Right and left from the middle by .28 of the width, or by the least that keeps them apart.
-            float spreadX = places[1] != null && places[2] != null ? (centerX(places[1]) - centerX(places[2])) / 2 : 0;
-            float spreadY = places[0] != null && places[3] != null ? (centerY(places[0]) - centerY(places[3])) / 2 : 0;
-            float reach = PadInput.FACE_CENTERS[1][0] - .5f;
-            // A pair no further apart than their size requires tells only that its side was at most least / reach:
-            // the cluster's own side stays where it fits that, as a Split from it gives the same members.
-            w = spreadX > least + .5f ? spreadX / reach : fitting(now[2], shorter, least / reach);
-            h = spreadY > least + .5f ? spreadY / reach : fitting(now[3], shorter, least / reach);
-            // The shorter side sets the buttons' size; a cluster spread both ways keeps the size and the wider spread.
-            if (Math.min(w, h) > shorter) {
-                if (w / shorter < h / shorter) w = shorter;
-                else h = shorter;
-            }
-        } else {
-            // An arm is DPAD_ARM of the shorter side thick (at least a touch) and reaches (side - arm) / 2 + corner.
-            float thick = 0, alongV = 0, alongH = 0;
-            int countT = 0;
-            for (int i = 0; i < boxes.length; i++) {
-                if (boxes[i] == null) continue;
-                boolean vertical = i < 2;
-                thick += vertical ? boxes[i][2] : boxes[i][3];
-                countT++;
-                if (vertical) alongV = Math.max(alongV, boxes[i][3]);
-                else alongH = Math.max(alongH, boxes[i][2]);
-            }
-            thick /= countT;
-            // The shorter reach belongs to the shorter side.
-            float along = alongV > 0 && alongH > 0 ? Math.min(alongV, alongH) : Math.max(alongV, alongH);
-            // Square, the arm reaches (1 - DPAD_ARM) / 2 + DPAD_CORNER of the side.
-            float reachSquare = (1 - PadInput.DPAD_ARM) / 2 + PadInput.DPAD_CORNER;
-            float shorter;
-            if (thick > touch + .5f) {
-                shorter = thick / PadInput.DPAD_ARM;
-            } else if (along > touch + .5f) {
-                shorter = along / reachSquare;
-            } else {
-                // Arms at a full touch both ways: the cluster's own size where it gives them that, else the least.
-                float nowShorter = Math.min(now[2], now[3]);
-                shorter = nowShorter * reachSquare <= touch + .5f ? nowShorter : touch / reachSquare;
-            }
-            float arm = PadInput.DPAD_ARM * shorter, corner = PadInput.DPAD_CORNER * shorter;
-            h = alongV > touch + .5f ? 2 * (alongV - corner) + arm : shorter;
-            w = alongH > touch + .5f ? 2 * (alongH - corner) + arm : shorter;
-            if (Math.min(w, h) > shorter * 1.001f) {
-                if (w < h) w = shorter;
-                else h = shorter;
-            }
+        float thick = 0, alongV = 0, alongH = 0;
+        int countT = 0;
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] == null) continue;
+            boolean vertical = i < 2;
+            thick += vertical ? boxes[i][2] : boxes[i][3];
+            countT++;
+            if (vertical) alongV = Math.max(alongV, boxes[i][3]);
+            else alongH = Math.max(alongH, boxes[i][2]);
         }
-        // The middle: each member shown, less its offset from the middle of a cluster this size.
+        thick /= countT;
+        // Square, an arm reaches (1 - DPAD_ARM) / 2 + DPAD_CORNER of the side; the shorter reach is the shorter side's.
+        float reachSquare = (1 - PadInput.DPAD_ARM) / 2 + PadInput.DPAD_CORNER;
+        boolean byV = alongV > touch + .5f, byH = alongH > touch + .5f;
+        float shorter;
+        if (byV || byH) {
+            shorter = (byV && byH ? Math.min(alongV, alongH) : byV ? alongV : alongH) / reachSquare;
+        } else if (thick > touch + .5f) {
+            shorter = thick / PadInput.DPAD_ARM;
+        } else {
+            float nowShorter = Math.min(now[2], now[3]);
+            shorter = nowShorter * reachSquare <= touch + .5f ? nowShorter : touch / reachSquare;
+        }
+        float arm = PadInput.DPAD_ARM * shorter, corner = PadInput.DPAD_CORNER * shorter;
+        // Each side from its own arms' reach, so the shorter one is the shorter side and the other no shorter.
+        float h = byV ? Math.max(shorter, 2 * (alongV - corner) + arm) : shorter;
+        float w = byH ? Math.max(shorter, 2 * (alongH - corner) + arm) : shorter;
+        // The middle: each arm shown, less its offset from the middle of a D-pad this size.
         float x = 0, y = 0;
         int count = 0;
         float[] relative = new float[4];
         Control[] members = members(cluster);
         for (int i = 0; i < boxes.length; i++) {
             if (boxes[i] == null) continue;
-            // The member at place order[i] sits where memberBox puts that place's member.
-            memberBox(members[order[i]], 0, 0, w, h, density, relative);
+            memberBox(members[i], 0, 0, w, h, density, relative);
             x += centerX(boxes[i]) - (relative[0] + relative[2] / 2 - w / 2);
             y += centerY(boxes[i]) - (relative[1] + relative[3] / 2 - h / 2);
             count++;
@@ -657,6 +626,79 @@ public final class PadLayout {
         x /= count;
         y /= count;
         return new float[] {x - w / 2, y - h / 2, w, h};
+    }
+
+    /**
+     * The face cluster box for members standing in {@code boxes}: each button of the cluster drawn where its member
+     * stands. Each side comes from its own pair's spacing, as the cluster draws its buttons .28 of the side from the
+     * middle, so a symmetric diamond gives a square cluster; its buttons may come out larger than the members were.
+     * A pair exactly as far apart as {@link #split} spreads members of their size came from a split, so that side is
+     * the one their size gives ({@link #memberBox}), and a Split gives the same members back. A side no pair tells
+     * is the one their size gives too, and members at a full touch keep the cluster's own size ({@code now}) where it
+     * fits. A side the surface has no room for around the middle narrows to fit; where that would go below the size
+     * the members' buttons need, the cluster is the square that size gives.
+     */
+    private float[] faceClusterFor(float[][] boxes, float[] now, float surfaceWidth, float surfaceHeight,
+                                   float density) {
+        float touch = MIN_TOUCH_DP * density, twoRadius = 2 * PadInput.FACE_RADIUS;
+        float reach = PadInput.FACE_CENTERS[1][0] - .5f;
+        int[] order = order(Control.FACE);
+        float size = 0;
+        int count = 0;
+        float[][] places = new float[boxes.length][];
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] == null) continue;
+            size += (boxes[i][2] + boxes[i][3]) / 2;
+            count++;
+            places[order[i]] = boxes[i];
+        }
+        size = Math.max(size / count, touch);
+        float shorter = size / twoRadius, least = size + 2;
+        float nowShorter = Math.min(now[2], now[3]);
+        if (size <= touch + .5f && twoRadius * nowShorter <= touch + .5f) shorter = nowShorter;
+        // Places: 0 bottom, 1 right, 2 left, 3 top. Each pair's half spacing, NaN without both.
+        float spreadX = places[1] != null && places[2] != null ? (centerX(places[1]) - centerX(places[2])) / 2 : Float.NaN;
+        float spreadY = places[0] != null && places[3] != null ? (centerY(places[0]) - centerY(places[3])) / 2 : Float.NaN;
+        boolean drawnX = !Float.isNaN(spreadX) && Math.abs(spreadX - least) > 1.5f;
+        boolean drawnY = !Float.isNaN(spreadY) && Math.abs(spreadY - least) > 1.5f;
+        float w = drawnX ? spreadX / reach : fitting(now[2], shorter, least / reach);
+        float h = drawnY ? spreadY / reach : fitting(now[3], shorter, least / reach);
+        // The middle, along each axis: between its pair, else one of them less its offset, else the other pair's line.
+        float x = middle(places[1], places[2], places[0], places[3], true, w, h, density);
+        float y = middle(places[0], places[3], places[1], places[2], false, w, h, density);
+        float roomX = 2 * Math.min(x, surfaceWidth - x), roomY = 2 * Math.min(y, surfaceHeight - y);
+        if (w > roomX || h > roomY) {
+            w = Math.min(w, roomX);
+            h = Math.min(h, roomY);
+            if (Math.min(w, h) < shorter) w = h = shorter;
+        }
+        return new float[] {x - w / 2, y - h / 2, w, h};
+    }
+
+    /**
+     * The face cluster's middle along one axis ({@code horizontal}: x): between {@code plus} (right or bottom) and
+     * {@code minus}; from one of them less the offset Split gives a cluster {@code w} x {@code h}; else on the line of
+     * the other pair, which stands on the middle along this axis.
+     */
+    private static float middle(float[] plus, float[] minus, float[] across1, float[] across2, boolean horizontal,
+                                float w, float h, float density) {
+        if (plus != null && minus != null) return horizontal ? (centerX(plus) + centerX(minus)) / 2 :
+                (centerY(plus) + centerY(minus)) / 2;
+        if (plus != null || minus != null) {
+            float button = Math.max(2 * PadInput.FACE_RADIUS * Math.min(w, h), MIN_TOUCH_DP * density);
+            float offset = Math.max((PadInput.FACE_CENTERS[1][0] - .5f) * (horizontal ? w : h), button + 2);
+            float[] one = plus != null ? plus : minus;
+            float at = horizontal ? centerX(one) : centerY(one);
+            return plus != null ? at - offset : at + offset;
+        }
+        float sum = 0;
+        int n = 0;
+        for (float[] box : new float[][] {across1, across2}) {
+            if (box == null) continue;
+            sum += horizontal ? centerX(box) : centerY(box);
+            n++;
+        }
+        return sum / n;
     }
 
     /** {@code side} where it lies from {@code least} to {@code most}, else {@code least}. */
@@ -670,6 +712,29 @@ public final class PadLayout {
 
     private static float centerY(float[] box) {
         return box[1] + box[3] / 2;
+    }
+
+    /**
+     * Whether the cluster is the one {@link #join} made from its four members as they still stand: all four placed,
+     * and the cluster they give is the cluster as it stands, to the pixel.
+     */
+    private boolean joinedFromMembers(Control cluster, float width, float height, float density) {
+        if (width <= 0 || height <= 0 || !spec(cluster).placed()) return false;
+        Control[] members = members(cluster);
+        float[][] boxes = new float[members.length][];
+        for (int i = 0; i < members.length; i++) {
+            if (!spec(members[i]).placed()) return false;
+            boxes[i] = bounds(members[i], width, height, density, new float[4]);
+        }
+        float[] now = bounds(cluster, width, height, density, new float[4]);
+        PadLayout joined = copy();
+        float[] box = joined.clusterFor(cluster, boxes, now, width, height, density);
+        joined.setBounds(cluster, box[0], box[1], box[2], box[3], width, height, density);
+        float[] would = joined.bounds(cluster, width, height, density, new float[4]);
+        for (int k = 0; k < 4; k++) {
+            if (Math.abs(would[k] - now[k]) > 1) return false;
+        }
+        return true;
     }
 
     /** Whether the shown members' {@code boxes} are where splitting the cluster as it stands puts them. */
