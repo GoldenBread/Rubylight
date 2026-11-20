@@ -4584,10 +4584,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * the next refresh, each frame in turn: on a screen at the stream's rate a frame that comes early
      * waits in the display's queue, a frame each refresh. On a screen at 2 to 4 times the stream's rate
      * that showed each frame as it came: jitter left one frame up for a refresh and the next for three,
-     * and no frame stayed queued to cover it. There each frame waits for its own turn instead, however
-     * early it comes (FramePacingPolicy.heldTargetNs with everyFrame), whatever Fractional V-Sync says,
-     * and the phase report aims at the turns as with that setting. Elsewhere (VRR, a screen that sets its
-     * own refresh, any other refresh, no vsync yet) it is 0 as before.
+     * and no frame stayed queued to cover it. There a frame that comes early waits for its own turn
+     * instead, up to a stream frame past the first refresh it can make (FramePacingPolicy.heldTargetNs
+     * with everyFrame), whatever Fractional V-Sync says, and the phase report aims at the turns as with
+     * that setting. Elsewhere (VRR, a screen that sets its own refresh, any other refresh, no vsync yet)
+     * it is 0 as before.
      */
     private long smoothDisplayNs(long releaseNs) {
         return holdStampNs(releaseNs, heldRefreshes(true), true);

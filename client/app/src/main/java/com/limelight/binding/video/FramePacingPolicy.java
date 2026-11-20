@@ -195,12 +195,13 @@ public final class FramePacingPolicy {
 
     /**
      * As above; with {@code everyFrame} (Smoothest video and Balanced with FPS limit, which keep every
-     * frame) a frame always takes its own turn, however early it comes. The cap above would give a frame
-     * that comes while the one before still waits that one's refresh, where the compositor shows only
-     * the newer. A burst instead waits in the display's queue, a turn each, as it does a refresh each
-     * on a screen at the stream's rate. The delay it adds stays until the turns move earlier
-     * ({@link #earlyForTurn}, a refresh at a time) or a frame is dropped and the next takes its turn
-     * (the catch-up of {@link #shouldDrainOutput}, DecoderQueuePolicy.Debt).
+     * frame they can) a frame waits up to a whole stream frame past the first refresh it can make, a
+     * refresh longer: jitter up to a frame keeps every frame on its own turn, and the delay stays near a
+     * frame. A deeper backlog, as a burst brings, puts a frame on the refresh of the one before it, where
+     * the compositor shows the newer; the desktop likewise drops a picture more than a frame old once a
+     * newer one is due (present::Pacer::take_due). Unbounded, a burst's delay stayed until the turns
+     * moved back a refresh every two seconds, as outputs released for later refreshes no longer age where
+     * the catch-up of {@link #shouldDrainOutput} and DecoderQueuePolicy.Debt look.
      */
     static long heldTargetNs(long earliestNs, long lastTargetNs, long vsyncNs, long intervalNs, int refreshes,
                              boolean everyFrame) {
@@ -208,8 +209,7 @@ public final class FramePacingPolicy {
         long turnNs = lastTargetNs + refreshes * intervalNs;
         long offsetNs = turnNs - vsyncNs;
         turnNs = vsyncNs + Math.floorDiv(offsetNs + intervalNs / 2, intervalNs) * intervalNs;
-        if (everyFrame) return Math.max(earliestNs, turnNs);
-        long latestNs = earliestNs + (refreshes - 1) * intervalNs;
+        long latestNs = earliestNs + (everyFrame ? refreshes : refreshes - 1) * intervalNs;
         return Math.max(earliestNs, Math.min(turnNs, latestNs));
     }
 

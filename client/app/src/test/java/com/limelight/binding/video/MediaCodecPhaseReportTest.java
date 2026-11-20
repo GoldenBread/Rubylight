@@ -171,11 +171,11 @@ public class MediaCodecPhaseReportTest {
 
     /**
      * Smoothest video and Balanced with FPS limit at 60 fps on 120 Hz, Fractional V-Sync off: each frame is
-     * stamped half a refresh ahead of its own turn, a burst a turn each, while Lowest latency's hold follows
-     * the setting and releases at once. At the stream's rate, with VRR or before a vsync they are released with
-     * no time, which the compositor never drops, as before.
+     * stamped half a refresh ahead of its own turn, up to a stream frame past the first refresh it can make,
+     * while Lowest latency's hold follows the setting and releases at once. At the stream's rate, with VRR or
+     * before a vsync they are released with no time, which the compositor never drops, as before.
      */
-    @Test public void smoothPacingHoldsEveryFrameForItsTurnWhateverFractionalVsyncSays() {
+    @Test public void smoothPacingHoldsAnEarlyFrameForItsTurnWhateverFractionalVsyncSays() {
         long interval = 8_333_333L;
         try (ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).create()) {
             for (int mode : new int[] {PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS,
@@ -194,7 +194,8 @@ public class MediaCodecPhaseReportTest {
                 long earliest = MediaCodecDecoderRenderer.nextVsyncTimeNs(release, VSYNC_NS, interval, DEADLINE_NS);
                 assertEquals(name, earliest - interval / 2, smoothDisplayNs(renderer, release));
                 assertEquals(name, earliest + 2 * interval - interval / 2, smoothDisplayNs(renderer, release + 1_000_000L));
-                assertEquals(name, earliest + 4 * interval - interval / 2, smoothDisplayNs(renderer, release + 2_000_000L));
+                assertEquals(name + ": the third of a burst takes the second's refresh",
+                        earliest + 2 * interval - interval / 2, smoothDisplayNs(renderer, release + 2_000_000L));
                 assertEquals("the phase report aims at the turns", 2,
                         ReflectionHelpers.<Integer>getField(renderer, "heldAnchorRefreshes").intValue());
                 long lowest = ReflectionHelpers.callInstanceMethod(renderer, "heldDisplayNs",
@@ -260,6 +261,85 @@ public class MediaCodecPhaseReportTest {
                 }
             }
         }
+    }
+
+    /**
+     * A burst settles back: at 60 fps on 120 Hz frames 10 and 11 come late with 12. The third of them takes the
+     * second's refresh, where the compositor shows it; the next frames keep a frame of delay, which the turns
+     * give back a refresh at a time (FramePacingPolicy.earlyForTurn). No frame waits more than a stream frame
+     * past the first refresh it can make, and no other frame is replaced.
+     */
+    @Test public void smoothPacingKeepsAFrameOfABurstAndGivesItBack() {
+        long interval = 8_333_333L, frame = 16_666_667L;
+        try (ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).create()) {
+            MediaCodecDecoderRenderer renderer = smoothRenderer(controller.get(), interval);
+            int frames = 13 + 400;
+            long[] releases = new long[frames];
+            for (int j = 0; j < frames; j++) releases[j] = VSYNC_NS + 3_000_000L + j * frame;
+            releases[10] = releases[12];
+            releases[11] = releases[12] + 500_000L;
+            releases[12] += 1_000_000L;
+            long[][] turns = smoothTurns(renderer, interval, releases);
+            for (int j = 0; j < frames; j++) {
+                long delay = turns[j][1] - turns[j][0];
+                assertTrue("frame " + j + " held " + delay, delay >= 0 && delay <= 2 * interval);
+                if (j == 12) {
+                    assertEquals("the third of the burst takes the second's refresh", turns[11][1], turns[12][1]);
+                } else if (j > 0) {
+                    assertTrue("frame " + j + " has a refresh of its own", turns[j][1] > turns[j - 1][1]);
+                }
+            }
+            assertEquals("a frame of the burst kept", 2 * interval, turns[13][1] - turns[13][0]);
+            assertEquals("and given back", 0, turns[frames - 1][1] - turns[frames - 1][0]);
+        }
+    }
+
+    /**
+     * A PC slightly faster than the screen settles too: 60.000 fps on 119.88 Hz brings 0.12 refreshes a second
+     * more than turns of two refreshes show. The turns move a refresh earlier now and then (one frame up for a
+     * refresh, about 14 in two minutes), so no frame is replaced and none waits more than a stream frame.
+     */
+    @Test public void smoothPacingKeepsUpWithAPcSlightlyFasterThanTheScreen() {
+        long interval = 8_341_675L, frame = 16_666_667L;
+        try (ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).create()) {
+            MediaCodecDecoderRenderer renderer = smoothRenderer(controller.get(), interval);
+            int frames = 7200;
+            long[] releases = new long[frames];
+            for (int j = 0; j < frames; j++) releases[j] = VSYNC_NS + 3_000_000L + j * frame;
+            long[][] turns = smoothTurns(renderer, interval, releases);
+            int shortened = 0;
+            for (int j = 0; j < frames; j++) {
+                long delay = turns[j][1] - turns[j][0];
+                assertTrue("frame " + j + " held " + delay, delay >= 0 && delay <= 2 * interval);
+                if (j == 0) continue;
+                long gap = turns[j][1] - turns[j - 1][1];
+                assertTrue("frame " + j + " after " + gap, gap == interval || gap == 2 * interval);
+                if (gap == interval) shortened++;
+            }
+            assertTrue("frames up for one refresh: " + shortened, shortened >= 12 && shortened <= 17);
+        }
+    }
+
+    private static MediaCodecDecoderRenderer smoothRenderer(Activity activity, long interval) {
+        MediaCodecDecoderRenderer renderer = renderer(activity, false);
+        PreferenceConfiguration prefs = ReflectionHelpers.getField(renderer, "prefs");
+        prefs.framePacing = PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS;
+        renderer.setStreamFrameRateMilliHz(60_000);
+        ReflectionHelpers.setField(renderer, "outputHasArrSupport", false);
+        ReflectionHelpers.setField(renderer, "vsyncTimeNs", VSYNC_NS);
+        ReflectionHelpers.setField(renderer, "vsyncIntervalNs", interval);
+        ReflectionHelpers.setField(renderer, "vsyncPresentationDeadlineNs", DEADLINE_NS);
+        return renderer;
+    }
+
+    /** Each release through smoothDisplayNs: {the first refresh it can make, the refresh it is stamped for}. */
+    private static long[][] smoothTurns(MediaCodecDecoderRenderer renderer, long interval, long[] releasesNs) {
+        long[][] turns = new long[releasesNs.length][];
+        for (int j = 0; j < releasesNs.length; j++) {
+            long earliest = MediaCodecDecoderRenderer.nextVsyncTimeNs(releasesNs[j], VSYNC_NS, interval, DEADLINE_NS);
+            turns[j] = new long[] {earliest, smoothDisplayNs(renderer, releasesNs[j]) + interval / 2};
+        }
+        return turns;
     }
 
     private static long smoothDisplayNs(MediaCodecDecoderRenderer renderer, long releaseNs) {

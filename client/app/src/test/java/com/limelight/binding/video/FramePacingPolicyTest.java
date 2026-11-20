@@ -344,10 +344,11 @@ public class FramePacingPolicyTest {
     }
 
     /**
-     * Smoothest video and Balanced with FPS limit keep every frame: the same burst waits in the display's
-     * queue a turn each, where the cap would put two frames on one refresh and the compositor show one.
+     * Smoothest video and Balanced with FPS limit: a frame waits for its turn up to a stream frame past the
+     * first refresh it can make, a refresh longer than with the cap above. The same burst keeps one of its
+     * frames waiting, and its third frame takes the second's refresh, where the compositor shows the third.
      */
-    @Test public void whereEveryFrameIsKeptABurstWaitsATurnEach() {
+    @Test public void whereEveryFrameIsKeptAFrameWaitsAtMostAStreamFrame() {
         long interval = 8_333_333L, vsync = 1_000_000_000L;
         long last = vsync + 10 * interval;
         long earliest = last + 6 * interval;
@@ -356,12 +357,14 @@ public class FramePacingPolicyTest {
         long c = FramePacingPolicy.heldTargetNs(earliest, b, vsync, interval, 2, true);
         assertEquals("late: the first refresh it can make", earliest, a);
         assertEquals(earliest + 2 * interval, b);
-        assertEquals(earliest + 4 * interval, c);
-        // The next frame, 16.7 ms on, takes its own turn after them.
-        assertEquals(earliest + 6 * interval,
+        assertEquals("the later frame replaces the earlier one at that refresh", b, c);
+        // The next frame, 16.7 ms on: its turn, a stream frame past the first refresh it can make.
+        assertEquals(earliest + 4 * interval,
                 FramePacingPolicy.heldTargetNs(earliest + 2 * interval, c, vsync, interval, 2, true));
-        // However early a frame comes it waits for its turn; a late one counts the turns from itself.
-        assertEquals(last + 2 * interval, FramePacingPolicy.heldTargetNs(last - 5 * interval, last, vsync, interval, 2, true));
+        // A frame that could make the last frame's refresh waits its whole turn; a frame early by more waits
+        // a stream frame past its first refresh; a late one counts the turns from itself.
+        assertEquals(last + 2 * interval, FramePacingPolicy.heldTargetNs(last, last, vsync, interval, 2, true));
+        assertEquals(last - 3 * interval, FramePacingPolicy.heldTargetNs(last - 5 * interval, last, vsync, interval, 2, true));
         assertEquals(last + 5 * interval, FramePacingPolicy.heldTargetNs(last + 5 * interval, last, vsync, interval, 2, true));
         // A turn off the grid by a rounded interval goes back onto it.
         assertEquals(last + 2 * interval, FramePacingPolicy.heldTargetNs(last + interval, last + 3_000, vsync, interval, 2, true));
