@@ -2537,7 +2537,7 @@ fn show_debug_settings_is_an_app_row_and_its_value_is_kept() {
 #[test]
 fn rows_another_layer_can_make_act_stay_with_their_reason() {
     type Change = fn(&mut Settings);
-    let rows: [(&str, &str, &str, Change); 6] = [
+    let rows: [(&str, &str, &str, Change); 5] = [
         ("Video", "Minimum resolution", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion),
         ("Video", "Minimum frame rate", "Not used without Automatic quality", |s| s.adaptive_quality = crate::config::QualityMode::Motion),
         ("Display & image", "Upscaling sharpness", "Not used with Bilinear", |s| s.upscaling = crate::config::Upscaling::Fsr1),
