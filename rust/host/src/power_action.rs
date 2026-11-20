@@ -5,7 +5,7 @@
 //! `butterpollo_core::power_action`; this module holds the lifecycle gate
 //! (`launch_transition`) from the idle check through the suspend, so a
 //! racing launch waits, and suspends only once the 202 left the host: the
-//! answer closes its connection, and hyper finished writing and closing it.
+//! answer closes its connection, and hyper wrote and flushed it.
 use crate::{
     state::Shared,
     tls::{Connection, ConnectionEnd},
@@ -27,8 +27,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How long an accepted request waits for its connection to close cleanly
-/// after the answer before it gives up without suspending.
+/// How long an accepted request waits for its connection to end after the
+/// answer before it gives up without suspending.
 const DELIVERY_WAIT: Duration = Duration::from_secs(2);
 /// How long `GET /power` reports a device's last refusal.
 pub(crate) const REFUSAL_KEPT: Duration = Duration::from_secs(10 * 60);
@@ -344,9 +344,10 @@ fn sleep_blocking(
     };
     tracing::warn!(client, %peer, "Sleep PC request accepted");
     // Watched before the answer goes out, so its end cannot be missed. The
-    // answer says `Connection: close`: hyper ends the connection cleanly
-    // only after writing and flushing it, and a client gone before that
-    // ends it with an error.
+    // answer says `Connection: close`: hyper ends the connection once it
+    // wrote and flushed it, and a client gone before that ends it with an
+    // error. A client that read it and closed at once may fail the host's
+    // own close: the answer had left (`ConnectionEnd`).
     let delivery = end.watch();
     if respond
         .send(reply(&answer, Body::from(answer.xml())))

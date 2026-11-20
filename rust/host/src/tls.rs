@@ -44,22 +44,106 @@ pub struct Connection {
     /// `nvhttp::router`, never by a connection.
     pub second_screen: bool,
 }
-/// How a connection ended, for a handler that may act only once its answer
-/// has left: `true` once hyper wrote every response and closed the
-/// connection without an error, `false` on an error. A watcher whose
-/// connection task was dropped sees its channel disconnect instead.
+/// Whether a connection's answer left the host, told when the connection
+/// ends, for a handler that may act only once its answer has: `true` if
+/// hyper closed the connection without an error, or if it wrote bytes after
+/// the watch began and had flushed every byte it wrote to the socket when
+/// the connection failed; `false` otherwise. A client that read its answer
+/// and closed at once can fail the host's own close (its reset arrives
+/// before the host's close_notify or a read); its answer had left. A
+/// watcher whose connection task was dropped sees its channel disconnect.
 #[derive(Clone, Default)]
-pub struct ConnectionEnd(Arc<Mutex<Vec<mpsc::SyncSender<bool>>>>);
+pub struct ConnectionEnd(Arc<Mutex<EndState>>);
+#[derive(Default)]
+struct EndState {
+    /// Each watcher, with the bytes written when it began.
+    watchers: Vec<(mpsc::SyncSender<bool>, u64)>,
+    /// Bytes hyper wrote, and how many of them a flush pushed to the socket.
+    written: u64,
+    flushed: u64,
+    /// A write or a flush failed.
+    failed: bool,
+}
 impl ConnectionEnd {
     pub fn watch(&self) -> mpsc::Receiver<bool> {
         let (sender, receiver) = mpsc::sync_channel(1);
-        self.0.lock().unwrap().push(sender);
+        let mut state = self.0.lock().unwrap();
+        let written = state.written;
+        state.watchers.push((sender, written));
         receiver
     }
+    /// Tells the watchers how the connection ended; `clean` without an error.
     pub fn finish(&self, clean: bool) {
-        for watcher in self.0.lock().unwrap().drain(..) {
-            let _ = watcher.try_send(clean);
+        let mut state = self.0.lock().unwrap();
+        let flushed = !state.failed && state.flushed == state.written;
+        let written = state.written;
+        for (watcher, since) in state.watchers.drain(..) {
+            let _ = watcher.try_send(clean || (flushed && written > since));
         }
+    }
+    fn wrote(&self, written: &Poll<std::io::Result<usize>>) {
+        match written {
+            Poll::Ready(Ok(n)) => self.0.lock().unwrap().written += *n as u64,
+            Poll::Ready(Err(_)) => self.0.lock().unwrap().failed = true,
+            Poll::Pending => {}
+        }
+    }
+    fn flushed(&self, flushed: &Poll<std::io::Result<()>>) {
+        match flushed {
+            Poll::Ready(Ok(())) => {
+                let mut state = self.0.lock().unwrap();
+                state.flushed = state.written;
+            }
+            Poll::Ready(Err(_)) => self.0.lock().unwrap().failed = true,
+            Poll::Pending => {}
+        }
+    }
+}
+/// A connection's stream as hyper sees it, above any TLS: counts what hyper
+/// wrote and flushed for its [`ConnectionEnd`]. Over TLS, a flush wrote
+/// every record to the socket.
+struct Delivery<S> {
+    inner: S,
+    end: ConnectionEnd,
+}
+impl<S: AsyncRead + Unpin> AsyncRead for Delivery<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+impl<S: AsyncWrite + Unpin> AsyncWrite for Delivery<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let written = Pin::new(&mut self.inner).poll_write(cx, buf);
+        self.end.wrote(&written);
+        written
+    }
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        let written = Pin::new(&mut self.inner).poll_write_vectored(cx, bufs);
+        self.end.wrote(&written);
+        written
+    }
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let flushed = Pin::new(&mut self.inner).poll_flush(cx);
+        self.end.flushed(&flushed);
+        flushed
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 /// TLS proves possession of any presented key. Protected HTTP routes additionally
@@ -422,6 +506,10 @@ async fn serve_connection_with<S>(
                 .layer(Extension(end.clone())),
             bodies,
         ));
+        let stream = Delivery {
+            inner: stream,
+            end: end.clone(),
+        };
         builder
             .serve_connection(TokioIo::new(stream), service)
             .with_upgrades()
@@ -439,6 +527,10 @@ async fn serve_connection_with<S>(
                 .layer(Extension(end.clone())),
             bodies,
         ));
+        let socket = Delivery {
+            inner: socket,
+            end: end.clone(),
+        };
         builder
             .serve_connection(TokioIo::new(socket), service)
             .with_upgrades()

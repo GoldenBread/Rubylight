@@ -410,15 +410,68 @@ async fn a_connection_that_never_closes_does_not_suspend() {
     assert_eq!(fake.suspends.load(Ordering::SeqCst), 0);
 }
 
+/// The host's end of the pipe. With `reset`, closing it fails as a socket
+/// does when the client's reset arrived first: the client read its answer
+/// and closed before the host's close_notify and shutdown.
+struct HostEnd {
+    pipe: tokio::io::DuplexStream,
+    reset: bool,
+}
+impl tokio::io::AsyncRead for HostEnd {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.pipe).poll_read(cx, buf)
+    }
+}
+impl tokio::io::AsyncWrite for HostEnd {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.pipe).poll_write(cx, buf)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.pipe).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.reset {
+            return std::task::Poll::Ready(Err(std::io::ErrorKind::ConnectionReset.into()));
+        }
+        std::pin::Pin::new(&mut self.pipe).poll_shutdown(cx)
+    }
+}
+
 /// One request over a real TLS connection, served as the HTTPS port does.
 /// The 64-byte pipe holds the answer back until the client reads it.
 async fn over_tls(f: &Fixture, token: &str, read_answer: bool) -> Vec<u8> {
+    over_tls_ending(f, token, read_answer, false).await
+}
+/// [`over_tls`]; with `reset_at_close`, see [`HostEnd`].
+async fn over_tls_ending(
+    f: &Fixture,
+    token: &str,
+    read_answer: bool,
+    reset_at_close: bool,
+) -> Vec<u8> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let acceptor = crate::tls::acceptor(&f.host.identity, true).unwrap();
     let (near, far) = tokio::io::duplex(64);
     let connection = f.connection(true);
     let server = tokio::spawn(crate::tls::serve_connection(
-        far,
+        HostEnd {
+            pipe: far,
+            reset: reset_at_close,
+        },
         connection.peer,
         connection.local,
         crate::nvhttp::router(f.host.clone(), true),
@@ -479,6 +532,29 @@ async fn a_client_reset_before_the_answer_is_flushed_does_not_suspend() {
         "{}",
         String::from_utf8_lossy(&received)
     );
+    wait_for_gate(&f);
+    assert_eq!(fake.suspends.load(Ordering::SeqCst), 1);
+}
+
+/// The client read its 202 and closed at once, and its reset reached the
+/// host before the host's own close finished (CI run 44640083261): the
+/// answer had left, so the PC sleeps, once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reset_after_the_answer_left_still_suspends_once() {
+    let f = Fixture::new();
+    let fake = fake(&f);
+    device(&f, true);
+    let token = capabilities(&f).await.field("SleepToken");
+    let received = over_tls_ending(&f, &token, true, true).await;
+    assert!(
+        received.starts_with(b"HTTP/1.1 202 "),
+        "{}",
+        String::from_utf8_lossy(&received)
+    );
+    wait_for_gate(&f);
+    assert_eq!(fake.suspends.load(Ordering::SeqCst), 1);
+    // The token is spent: a replay is refused and does not suspend again.
+    assert_eq!(sleep(&f, &token).await.status, StatusCode::CONFLICT);
     wait_for_gate(&f);
     assert_eq!(fake.suspends.load(Ordering::SeqCst), 1);
 }

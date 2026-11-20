@@ -189,7 +189,7 @@ fn power_blocking(
     // The device's earlier refusal is over; a new one is this request's.
     h.power.set_last_refusal(&client.uuid, None);
     // As Sleep PC: the answer closes its connection, and the PC goes down only
-    // once hyper wrote and closed it.
+    // once hyper wrote and flushed it.
     let delivery = end.watch();
     let answer = (
         StatusCode::ACCEPTED,
