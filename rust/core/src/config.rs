@@ -600,15 +600,19 @@ impl Config {
     /// yet, judged by the fastest encode it has returned, and waits instead where a fresh capture
     /// can still be claimed (`amd_output_prediction`). Off by default: the November 8 A/B under
     /// GPU load measured no consistent gain over the blocking 1 ms query (rust/PERFORMANCE.md).
+    /// It applies only with `amd_output_thread` off.
     pub fn amd_output_prediction(&self) -> bool {
         self.boolean("amd_output_prediction", false)
     }
     /// Whether a thread of its own waits in AMF's output query and hands finished frames to the
-    /// stream thread, which then never blocks in it (`amd_output_thread`). Off by default: the
-    /// November 8 A/B under GPU load measured shorter tails but a later median and more CPU
-    /// (rust/PERFORMANCE.md). It takes precedence over `amd_output_prediction`.
+    /// stream thread, which then never blocks in it (`amd_output_thread`). On by default since
+    /// the November 20 A/B (AV1 and HEVC under GPU load, rust/PERFORMANCE.md): without it 0.7
+    /// to 7 % of captured pictures waited up to 2.2 ms behind a blocking query before encoding,
+    /// and the encode tail was longer. It costs about 3 % of one core; end to end did not
+    /// improve (its p99 ran 0.5 to 2.4 ms later, within run-to-run spread). It takes precedence
+    /// over `amd_output_prediction`.
     pub fn amd_output_thread(&self) -> bool {
-        self.boolean("amd_output_thread", false)
+        self.boolean("amd_output_thread", true)
     }
     /// Whether the stream thread also wakes on NVENC's D3D12 output fence instead of only on its
     /// 100 µs output poll, which stays as the bound (`nvenc_output_event = false` turns it off).

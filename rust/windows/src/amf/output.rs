@@ -116,6 +116,13 @@ impl Encoder {
             }
         }
     }
+    /// After a poll that returned nothing, waits up to one query timeout for the output
+    /// thread's next frame; without the thread that poll already waited in the driver.
+    pub(super) fn wait_after_empty_poll(&self) {
+        if let Some(thread) = &self.output_thread {
+            thread.wait(QUERY_TIMEOUT);
+        }
+    }
     fn poll_once(&mut self) -> Result<Vec<Encoded>> {
         if let Some(input) = &mut self.compute {
             input.converter.release_completed();

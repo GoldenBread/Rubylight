@@ -128,16 +128,16 @@ fn webrtc_rtx_is_on_and_datagram_loss_is_off_until_set() {
 fn encoder_output_switches_keep_the_measured_paths_until_set() {
     let mut config = super::Config::default();
     assert!(!config.amd_output_prediction());
-    assert!(!config.amd_output_thread());
+    assert!(config.amd_output_thread());
     assert!(config.nvenc_output_event());
     let saved = serde_json::json!({
         "amd_output_prediction": "true",
-        "amd_output_thread": "true",
+        "amd_output_thread": "false",
         "nvenc_output_event": "false",
     });
     config.update(saved.as_object().unwrap()).unwrap();
     assert!(config.amd_output_prediction());
-    assert!(config.amd_output_thread());
+    assert!(!config.amd_output_thread());
     assert!(!config.nvenc_output_event());
 }
 

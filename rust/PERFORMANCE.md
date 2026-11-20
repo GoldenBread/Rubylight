@@ -6,6 +6,7 @@ This is the dated measurement record. For a guided comparison, start with the [p
 
 | Find a result | Recorded evidence |
 | --- | --- |
+| AMF output collected on a thread of its own, now the default: how often the blocking output query held a finished picture, the encode tail, end to end and CPU, AV1 and HEVC beside a 60 fps and an uncapped GPU load, 6.1.0's release package with the thread off and on | [November 20, AMF output on a thread of its own](#november-20-amf-output-on-a-thread-of-its-own-by-default) |
 | The window in front counts as moving only after half a second: a strip behind a window repainting in bursts (the real one and a fixture), the October case of a 240 Hz window beside a VRR game, a hitching game beside it, and a window in front repainting for over half a second, 6.1.0's host against the fix | [November 20, the window in front counts as moving after half a second](#november-20-the-window-in-front-counts-as-moving-after-half-a-second) |
 | A picture that is not the foreground window, behind a window that repaints: the 50 ms holds that failed the check's keyframe-request case on 6.1.0 and 6.0.1, in the host's claim trace, with the strip behind and in front, and in a Retroid run (the check's strip now runs in front; the host's rule is unchanged) | [November 20, a picture behind a window that repaints](#november-20-a-picture-behind-a-window-that-repaints-is-held-50-ms-at-a-time) |
 | A game that sets its own display mode under the automatic frame cap (#133): frame intervals with a cap beside V-Sync at the display's rate, with V-Sync alone, at 1000 Hz with the cap and with an uncapped source; the display slowed mid-stream with RTSS as the cap, 6.0.0 against the cap that switches off; the default bitrate controller cutting on loss in a calm picture; congestion control cutting a light picture's bitrate on a clean link; why Adapt error correction is off by default | [November 19, a frame cap beside V-Sync at the display's own rate](#november-19-a-frame-cap-beside-v-sync-at-the-displays-own-rate-133-and-two-defaults) |
@@ -83,6 +84,52 @@ This is the dated measurement record. For a guided comparison, start with the [p
 | PyroWave encode overlap, send buffer, Nightjar receive path | [November 10, PyroWave at 1.4 Gbps](#november-10-pyrowave-at-14-gbps-to-a-780m-laptop) |
 | Temporal upscaler for Nightjar (SGSR 2 adaptation), not landed | [November 16, temporal upscaler](#november-16-a-temporal-upscaler-for-nightjar-measured-offline-not-landed) |
 | A capped path and a busy PC | [November 17, a capped path holds its learned rate](#november-17-a-capped-path-holds-its-learned-rate-and-a-busy-pc-is-not-the-network) |
+
+## November 20: AMF output on a thread of its own by default
+
+Whether AMF's output query on the stream thread holds finished pictures, and what
+`amd_output_thread` changes; it is now on by default. RX 7900 XT, the Rubylight 6.1.0
+release package, isolated test host on loopback, the independent receiver with D3D11VA,
+80 Mbps, `e2e.py --record --skip-first 5 --motion-at-rate` (claim trace on), 45 s per
+run. O = the query on the stream thread (6.1.0's default, up to 1 ms per query), T =
+`amd_output_thread`. Held = a fresh picture published while the stream thread was inside
+a query, until the query returned and the stream thread took it (`QueryTrace`). Times in ms; end to end ends when the
+receiver's decode ends. Host CPU is the test host's CPU time in % of one core, sampled
+once a second (the idle installed host, which has the same name, included).
+
+| Fixture | Arm | Runs | Held | Held p95 / max | In queries per frame | Encode p50 / p95 / p99 | End to end p50 / p95 / p99 | fps | Host CPU |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AV1 1440p120, `gpu_load` at 60 fps | O | 3 | 0.7 % | 0.93 / 1.02 | 1.32 | 2.59 / 2.99 / 3.34 | 6.99 / 10.07 / 13.34 | 105, 114, 114 | |
+| | T | 3 | 0.04 % | 0.00 / 0.01 | 0.02 | 2.54 / 2.79 / 2.93 | 6.53 / 12.43 / 15.69 | 111, 103, 104 | |
+| AV1, the same with CPU sampled | O | 2 | 1.9 % | 0.95 / 1.05 | 1.26 | 2.56 / 3.01 / 3.28 | 6.78 / 12.21 / 14.90 | 103, 94 | 20, 22 |
+| | T | 2 | 0.03 % | 0.01 / 0.01 | 0.02 | 2.54 / 2.79 / 2.89 | 6.22 / 11.16 / 15.35 | 97, 96 | 24, 23 |
+| HEVC 1440p120, `gpu_load` at 60 fps | O | 3 | 2.0 % | 0.92 / 1.05 | 1.43 | 2.79 / 3.15 / 3.42 | 7.31 / 11.45 / 14.02 | 100, 104, 115 | 24, 22, 20 |
+| | T | 3 | 0.06 % | 0.03 / 0.03 | 0.02 | 2.77 / 2.91 / 3.00 | 7.46 / 11.70 / 15.06 | 111, 101, 116 | 26, 25, 24 |
+| AV1 1440p120, `gpu_load` uncapped | O | 2 | 3.9 % | 1.37 / 1.80 | 1.44 | 2.57 / 3.47 / 5.42 | not comparable | 32 to 56 | |
+| | T | 2 | 0.0 % | | 0.02 | 2.45 / 3.32 / 3.65 | | | |
+| AV1 4K120, `gpu_load` uncapped | O | 2 | 7.1 % | 1.39 / 2.18 | 3.51 | 5.26 / 7.25 / 8.27 | | | |
+| | T | 2 | 0.3 % | 0.06 max | 0.03 | 5.21 / 7.03 / 7.46 | | | |
+
+Runs alternated OTTOOT (OTTO for the pairs). The time in queries is mostly the encode
+itself: encode is stamped when the stream thread collects, and its medians agree within
+0.05 ms beside the 60 fps load (0.12 ms uncapped). What the query on the stream thread costs is the held pictures and the encode
+tail, p99 0.4 ms later beside the 60 fps load and up to 1.8 ms later beside the uncapped
+one. The largest sums in one claim under the uncapped load (157 and 208 ms) were 144 and
+190 one-millisecond queries in a row while the saturated GPU's output was late, not a
+driver stall; no query took 50 ms in either arm.
+
+End to end did not improve. Its p99 was later with T in all three sets (AV1 2.4 and 0.5 ms,
+HEVC 1.0 ms); AV1's median was 0.5 ms earlier, its p95 later in the first set and earlier in
+the second. The first set's lower T frame rates
+came from elsewhere on the PC: the test app itself lost frames in the first 20 s of all
+three T runs, at 73 to 79 % machine CPU against 43 to 59 %; in the sampled pair it
+rendered 120 fps throughout in every run, the extra load was Defender, Orca and system
+services, and the host differed by 2 to 3 % of a core. HEVC: the median 0.15 ms and p99
+1 ms later, inside run-to-run spreads of 1.9 and 3 ms; November 8's later median (0.8 to
+1.7 ms) did not recur on the current code. The thread costs 2 to 4 % of a core, as on
+November 8. The receiver's host processing figure reads 0.0 ms with the thread against
+0.21 to 0.37 ms mean without: it starts before the output query, so it held that query's
+wait. Not measured: H.264, PyroWave (no AMF), other AMD GPUs, a real network.
 
 ## November 20: the window in front counts as moving after half a second
 

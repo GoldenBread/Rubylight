@@ -833,7 +833,11 @@ impl Encoder {
                     started.elapsed() < Duration::from_secs(2),
                     "focus probe frame {frame} was not encoded within two seconds"
                 );
-                idr |= self.poll_now()?.iter().any(|encoded| encoded.idr);
+                let polled = self.poll_now()?;
+                if polled.is_empty() {
+                    self.wait_after_empty_poll();
+                }
+                idr |= polled.iter().any(|encoded| encoded.idr);
             }
             anyhow::ensure!(
                 !idr || frame == 0,
@@ -903,7 +907,11 @@ impl Encoder {
                         started.elapsed() < Duration::from_secs(2),
                         "focus diag frame {frame} was not encoded within two seconds"
                     );
-                    for encoded in self.poll_now()? {
+                    let polled = self.poll_now()?;
+                    if polled.is_empty() {
+                        self.wait_after_empty_poll();
+                    }
+                    for encoded in polled {
                         size += encoded.bytes.len();
                         idr |= encoded.idr;
                     }
