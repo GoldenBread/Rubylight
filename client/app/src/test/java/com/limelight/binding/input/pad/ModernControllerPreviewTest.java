@@ -153,7 +153,8 @@ public class ModernControllerPreviewTest {
 
         // What the look adds beyond the default layout: PlayStation's coloured glyphs on a split face cluster and the
         // pointer touchpad in Camera mode, pressed: the circle button, the D-pad up and right, a shoulder, each with its
-        // halo, and the pad with its trail.
+        // halo, and the pad with its trail. The split members and the pad at its default overlap nothing, the
+        // microphone button included.
         PadLayout extras = controller.layout().copy();
         extras.setGlyph(PadLayout.Glyph.PLAYSTATION);
         extras.spec(PadLayout.Control.POINTER_PAD).hidden = false;
@@ -162,6 +163,10 @@ public class ModernControllerPreviewTest {
         controller.save(extras, false);
         controller.refreshLayout();
         layout(frame, width, height);
+        mic.rowBottom = controller.topRowBottom();
+        button.place();
+        layout(frame, width, height);
+        sane(controller, button, frame, metrics.density, problems);
         PadControlView circle = controller.view(PadLayout.Control.B);
         circle.down(0, circle.getWidth() / 2f, circle.getHeight() / 2f, 100);
         PadControlView dpad = controller.view(PadLayout.Control.DPAD);

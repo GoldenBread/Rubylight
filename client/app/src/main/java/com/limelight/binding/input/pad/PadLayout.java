@@ -353,22 +353,79 @@ public final class PadLayout {
     }
 
     /**
-     * Splits the face cluster or the D-pad into its four members: the cluster hides, and each member shows where its
-     * button was in the cluster's box on this {@code width} x {@code height} surface, at that button's size (never
-     * below a full touch) and the cluster's opacity. {@link #join} undoes it.
+     * Splits the face cluster or the D-pad into its four members: the cluster hides, and each member shows in its
+     * button's direction from the cluster's centre on this {@code width} x {@code height} surface ({@link #memberBox}),
+     * at that button's size (never below a full touch) and the cluster's opacity. {@link #join} undoes it.
      */
     public void split(Control cluster, float width, float height, float density) {
         Control[] members = members(cluster);
         if (members.length == 0) return;
         float[] box = bounds(cluster, width, height, density, new float[4]);
-        float[] member = new float[4];
-        for (Control control : members) {
-            memberBox(control, box[0], box[1], box[2], box[3], density, member);
-            setBounds(control, member[0], member[1], member[2], member[3], width, height, density);
+        float[][] boxes = memberBoxes(cluster, box[0], box[1], box[2], box[3], width, height, density);
+        clearOfNeighbours(cluster, boxes, width, height, density);
+        for (int i = 0; i < members.length; i++) {
+            Control control = members[i];
+            setBounds(control, boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3], width, height, density);
             spec(control).opacity = spec(cluster).opacity;
             spec(control).hidden = false;
         }
         spec(cluster).hidden = true;
+    }
+
+    /**
+     * Moves a split cluster's member boxes together off the other controls shown, where spreading them carried one
+     * over a neighbour: by the least move that clears every neighbour and keeps them on this {@code width} x
+     * {@code height} surface. Where no single move does, they stay. The Steam Controller controls, which a setting
+     * shows, do not move them, as they do not move the WASD stick ({@link #clearOfDefaults}).
+     */
+    private void clearOfNeighbours(Control cluster, float[][] boxes, float width, float height, float density) {
+        java.util.List<float[]> others = new java.util.ArrayList<>();
+        for (Control control : Control.values()) {
+            if (control == cluster || control.cluster() == cluster || control.steam || !shown(control)) continue;
+            others.add(bounds(control, width, height, density, new float[4]));
+        }
+        if (clear(boxes, 0, 0, others, width, height)) return;
+        // Each move puts an overlapped neighbour's edge two pixels past the member's, against rounding.
+        float bestX = 0, bestY = 0, best = Float.MAX_VALUE;
+        for (float[] box : boxes) {
+            for (float[] other : others) {
+                if (!overlaps(box, 0, 0, other)) continue;
+                float[][] moves = {{other[0] + other[2] - box[0] + 2, 0}, {other[0] - box[0] - box[2] - 2, 0},
+                        {0, other[1] + other[3] - box[1] + 2}, {0, other[1] - box[1] - box[3] - 2}};
+                for (float[] move : moves) {
+                    float length = Math.abs(move[0]) + Math.abs(move[1]);
+                    if (length < best && clear(boxes, move[0], move[1], others, width, height)) {
+                        best = length;
+                        bestX = move[0];
+                        bestY = move[1];
+                    }
+                }
+            }
+        }
+        if (best == Float.MAX_VALUE) return;
+        for (float[] box : boxes) {
+            box[0] += bestX;
+            box[1] += bestY;
+        }
+    }
+
+    /** Whether {@code boxes} moved by {@code dx}, {@code dy} stay on the surface and off every one of {@code others}. */
+    private static boolean clear(float[][] boxes, float dx, float dy, java.util.List<float[]> others, float width,
+                                 float height) {
+        for (float[] box : boxes) {
+            if (box[0] + dx < 0 || box[1] + dy < 0 || box[0] + dx + box[2] > width || box[1] + dy + box[3] > height) {
+                return false;
+            }
+            for (float[] other : others) {
+                if (overlaps(box, dx, dy, other)) return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean overlaps(float[] box, float dx, float dy, float[] other) {
+        return box[0] + dx < other[0] + other[2] && other[0] < box[0] + dx + box[2]
+                && box[1] + dy < other[1] + other[3] && other[1] < box[1] + dy + box[3];
     }
 
     /** Joins a split cluster again: its members hide, and the cluster shows where and as it was before the split. */
@@ -378,47 +435,77 @@ public final class PadLayout {
     }
 
     /**
-     * Where a split member sits in its cluster's box ({@code left}, {@code top}, {@code width}, {@code height}), as
-     * left, top, width and height in {@code out}: over its button in the cluster, a face button's circle or a D-pad
-     * arm as far as its pressed amber reaches, so neighbouring D-pad arms overlap at the inner corners and a finger
-     * there holds the diagonal. A member grown to a full touch stays off the cluster's middle line, so two opposite
-     * members never overlap.
+     * Where a split member sits around its cluster's box ({@code left}, {@code top}, {@code width}, {@code height}),
+     * as left, top, width and height in {@code out}: in its button's direction from the cluster's centre, a face
+     * button's circle or a D-pad arm as far as its pressed amber reaches, at that size but never below a full touch.
+     * The members spread outward from the centre as far as they must so that no two face buttons overlap, since one
+     * finger would press both where they did: each sits at least its whole size, and two pixels against rounding, off
+     * the centre lines. D-pad neighbours keep only their inner corner in common, in the cluster's proportions to the
+     * arm's thickness, so a finger there holds the diagonal; opposite arms never meet, and the middle holds nothing.
+     * {@link #memberBoxes} keeps the four on the surface together.
      */
     static void memberBox(Control member, float left, float top, float width, float height, float density, float[] out) {
         float size = Math.min(width, height), touch = MIN_TOUCH_DP * density;
-        float cx, cy, w, h;
-        int index = member.memberIndex();
+        float middleX = left + width / 2, middleY = top + height / 2;
+        float cx = middleX, cy = middleY, w, h;
         if (member.shape == Shape.FACE_BUTTON) {
-            cx = left + PadInput.FACE_CENTERS[index][0] * width;
-            cy = top + PadInput.FACE_CENTERS[index][1] * height;
-            w = h = 2 * PadInput.FACE_RADIUS * size;
+            w = h = Math.max(2 * PadInput.FACE_RADIUS * size, touch);
+            float[] center = PadInput.FACE_CENTERS[member.memberIndex()];
+            float dx = (center[0] - .5f) * width, dy = (center[1] - .5f) * height, least = w + 2;
+            if (dx != 0) cx += Math.signum(dx) * Math.max(Math.abs(dx), least);
+            if (dy != 0) cy += Math.signum(dy) * Math.max(Math.abs(dy), least);
         } else {
             float arm = PadInput.DPAD_ARM * size, corner = PadInput.DPAD_CORNER * size;
             boolean vertical = member == Control.DPAD_UP || member == Control.DPAD_DOWN;
             float length = ((vertical ? height : width) - arm) / 2 + corner;
-            w = vertical ? arm : length;
-            h = vertical ? length : arm;
-            cx = left + width / 2;
-            cy = top + height / 2;
-            if (member == Control.DPAD_UP) cy = top + length / 2;
-            else if (member == Control.DPAD_DOWN) cy = top + height - length / 2;
-            else if (member == Control.DPAD_LEFT) cx = left + length / 2;
-            else cx = left + width - length / 2;
+            float thick = Math.max(arm, touch), along = Math.max(length, touch);
+            // The inner end reaches past the crossing arm's edge by the corner, grown with the arm.
+            float inner = thick / 2 - corner * thick / Math.max(1e-6f, arm);
+            w = vertical ? thick : along;
+            h = vertical ? along : thick;
+            if (member == Control.DPAD_UP) cy = middleY - inner - along / 2;
+            else if (member == Control.DPAD_DOWN) cy = middleY + inner + along / 2;
+            else if (member == Control.DPAD_LEFT) cx = middleX - inner - along / 2;
+            else cx = middleX + inner + along / 2;
         }
-        w = Math.max(w, touch);
-        h = Math.max(h, touch);
-        float middleX = left + width / 2, middleY = top + height / 2;
-        boolean bottom = member == Control.A || member == Control.DPAD_DOWN;
-        boolean right = member == Control.B || member == Control.DPAD_RIGHT;
-        boolean leftSide = member == Control.X || member == Control.DPAD_LEFT;
-        if (bottom) cy = Math.max(cy, middleY + h / 2);
-        else if (right) cx = Math.max(cx, middleX + w / 2);
-        else if (leftSide) cx = Math.min(cx, middleX - w / 2);
-        else cy = Math.min(cy, middleY - h / 2);
         out[0] = cx - w / 2;
         out[1] = cy - h / 2;
         out[2] = w;
         out[3] = h;
+    }
+
+    /**
+     * The boxes of {@code cluster}'s members ({@link #memberBox}) in {@link #members} order, moved together where
+     * spreading them would carry one off this {@code surfaceWidth} x {@code surfaceHeight} surface, so they keep their
+     * arrangement.
+     */
+    static float[][] memberBoxes(Control cluster, float left, float top, float width, float height, float surfaceWidth,
+                                 float surfaceHeight, float density) {
+        Control[] members = members(cluster);
+        float[][] boxes = new float[members.length][4];
+        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+        for (int i = 0; i < members.length; i++) {
+            float[] box = boxes[i];
+            memberBox(members[i], left, top, width, height, density, box);
+            minX = Math.min(minX, box[0]);
+            minY = Math.min(minY, box[1]);
+            maxX = Math.max(maxX, box[0] + box[2]);
+            maxY = Math.max(maxY, box[1] + box[3]);
+        }
+        float dx = onto(minX, maxX, surfaceWidth), dy = onto(minY, maxY, surfaceHeight);
+        for (float[] box : boxes) {
+            box[0] += dx;
+            box[1] += dy;
+        }
+        return boxes;
+    }
+
+    /** How far to move a span from {@code min} to {@code max} onto 0 to {@code size}: centred if it is longer. */
+    private static float onto(float min, float max, float size) {
+        if (size <= 0) return 0;
+        if (max - min >= size) return (size - min - max) / 2;
+        if (min < 0) return -min;
+        return max > size ? size - max : 0;
     }
 
     public void setOpacity(Control control, int opacity) {
@@ -540,21 +627,31 @@ public final class PadLayout {
             }
             case TOUCHPAD: x = width / 2; y = .035f * u + round + Math.max(.02f * u, 8 * density) + pillH / 2; break;
             case HOME: x = width / 2; y = .035f * u + round / 2; break;
-            case POINTER_PAD:
-                // The middle of the surface, where a phone held in two hands leaves the thumb room. Both it and the
-                // WASD stick are left out of the default layout; with both added, one gets moved.
+            case POINTER_PAD: {
+                // The middle of the surface, where a phone held in two hands leaves the thumb room, but never under the
+                // stream's microphone and menu buttons, which sit below the top row: on a short surface (a phone in
+                // landscape) it moves down below them, as far as it stays on the surface. Both it and the WASD stick
+                // are left out of the default layout; with both added, one gets moved.
+                float touchpadBottom = .035f * u + round + Math.max(.02f * u, 8 * density) + pillH;
+                float buttonsBottom = touchpadBottom + TOP_BUTTONS_DP * density;
+                float size = height(control, u, density, 1);
                 x = width / 2;
-                y = height / 2;
+                y = Math.min(Math.max(height / 2, buttonsBottom + 8 * density + size / 2), height - size / 2);
                 break;
+            }
             case A: case B: case X: case Y:
             case DPAD_UP: case DPAD_DOWN: case DPAD_LEFT: case DPAD_RIGHT: {
-                // A split member never placed (the editor's Split always places them) sits over its button in the
-                // default cluster.
+                // A split member never placed (the editor's Split always places them) sits where Split puts it from
+                // the default cluster.
                 Control cluster = control.cluster();
                 defaultCenter(cluster, width, height, u, density, out);
                 float w = width(cluster, u, density, 1), h = height(cluster, u, density, 1);
-                float[] member = new float[4];
-                memberBox(control, out[0] - w / 2, out[1] - h / 2, w, h, density, member);
+                float[][] boxes = memberBoxes(cluster, out[0] - w / 2, out[1] - h / 2, w, h, width, height, density);
+                Control[] members = members(cluster);
+                float[] member = boxes[0];
+                for (int i = 0; i < members.length; i++) {
+                    if (members[i] == control) member = boxes[i];
+                }
                 x = member[0] + member[2] / 2;
                 y = member[1] + member[3] / 2;
                 break;

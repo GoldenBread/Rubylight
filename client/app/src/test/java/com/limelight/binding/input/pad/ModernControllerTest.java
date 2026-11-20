@@ -436,10 +436,10 @@ public class ModernControllerTest {
 
     /**
      * Split, A, B, X and Y are controls of their own, and a finger slides across them as it does on the cluster: from
-     * A to B it lets go of A and presses B, though the finger still belongs to A's view, and where two boxes overlap it
-     * holds both. Each shows itself pressed while held.
+     * A to B it lets go of A and presses B, though the finger still belongs to A's view. Their boxes never overlap, so
+     * one finger never holds two, and between two it holds neither. Each shows itself pressed while held.
      */
-    @Test public void aSplitFaceButtonSlidesToTheNextAndAnOverlapHoldsBoth() {
+    @Test public void aSplitFaceButtonSlidesToTheNextAndNeverHoldsTwo() {
         ModernController controller = splitController(PadLayout.Control.FACE);
         assertEquals(View.GONE, controller.view(PadLayout.Control.FACE).getVisibility());
         for (PadLayout.Control member : PadLayout.members(PadLayout.Control.FACE)) {
@@ -456,17 +456,17 @@ public class ModernControllerTest {
         assertFalse(a.state().pressed);
         assertTrue(b.state().pressed);
 
-        int overlapLeft = Math.max(a.getLeft(), b.getLeft()), overlapTop = Math.max(a.getTop(), b.getTop());
-        assertTrue("A's and B's boxes overlap", overlapLeft < Math.min(a.getRight(), b.getRight()) &&
-                overlapTop < Math.min(a.getBottom(), b.getBottom()));
-        float[] onBoth = in(a, overlapLeft + 1, overlapTop + 1);
-        a.move(0, onBoth[0], onBoth[1]);
-        assertEquals("Where they overlap, both", ControllerPacket.A_FLAG | ControllerPacket.B_FLAG, last()[0]);
+        assertTrue("A, below the middle, is clear of B beside it", a.getTop() >= b.getBottom() && a.getRight() <= b.getLeft());
+        float[] between = in(a, b.getLeft() + 1, a.getTop() + 1);
+        a.move(0, between[0], between[1]);
+        assertEquals("Between them, neither", 0, last()[0]);
+        a.move(0, onB[0], onB[1]);
+        assertEquals(ControllerPacket.B_FLAG, last()[0]);
 
         // A second finger on Y holds Y as well; the first lifting lets go of only its own.
         PadControlView y = controller.view(PadLayout.Control.Y);
         y.down(1, y.getWidth() / 2f, y.getHeight() / 2f, 150);
-        assertEquals(ControllerPacket.A_FLAG | ControllerPacket.B_FLAG | ControllerPacket.Y_FLAG, last()[0]);
+        assertEquals(ControllerPacket.B_FLAG | ControllerPacket.Y_FLAG, last()[0]);
         a.up(0, 300);
         assertEquals(ControllerPacket.Y_FLAG, last()[0]);
         assertFalse(a.state().pressed || b.state().pressed);
@@ -506,10 +506,8 @@ public class ModernControllerTest {
         up.move(0, onRight[0], onRight[1]);
         assertEquals(ControllerPacket.RIGHT_FLAG, last()[0]);
         // The middle, between the four arms, holds nothing.
-        float density = frame.getResources().getDisplayMetrics().density;
-        float[] pad = controller.layout().bounds(PadLayout.Control.DPAD, frame.getWidth(), frame.getHeight(), density,
-                new float[4]);
-        float[] middle = in(up, pad[0] + pad[2] / 2, pad[1] + pad[3] / 2);
+        PadControlView left = controller.view(PadLayout.Control.DPAD_LEFT);
+        float[] middle = in(up, (up.getLeft() + up.getRight()) / 2f, (left.getTop() + left.getBottom()) / 2f);
         up.move(0, middle[0], middle[1]);
         assertEquals(0, last()[0]);
         up.up(0, 300);

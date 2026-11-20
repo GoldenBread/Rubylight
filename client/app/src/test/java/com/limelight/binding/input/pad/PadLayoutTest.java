@@ -156,27 +156,37 @@ public class PadLayoutTest {
     }
 
     /**
-     * Split puts each member over its button in the cluster's box, at its size; the cluster hides, and the cluster and
-     * its members never show together. Join brings the cluster back as it was.
+     * Split puts each member in its button's direction from the cluster's centre, at its size, spread outward until no
+     * two overlap; the cluster hides, and the cluster and its members never show together. Join brings the cluster
+     * back as it was.
      */
-    @Test public void splitMembersSitOverTheClustersButtonsAndJoinBringsTheClusterBack() {
+    @Test public void splitMembersKeepTheClustersArrangementAndJoinBringsTheClusterBack() {
         float width = 2400, height = 1080;
         PadLayout layout = new PadLayout();
         layout.moveTo(PadLayout.Control.FACE, 1800, 600, width, height, DENSITY);
         layout.setSize(PadLayout.Control.FACE, 1.2f, 1f);
         layout.setOpacity(PadLayout.Control.FACE, 60);
+        // Nothing else shown, so no neighbour moves the members off the cluster's centre.
+        for (PadLayout.Control other : PadLayout.Control.values()) {
+            if (other != PadLayout.Control.FACE) layout.spec(other).hidden = true;
+        }
         float[] face = layout.bounds(PadLayout.Control.FACE, width, height, DENSITY, new float[4]);
         layout.split(PadLayout.Control.FACE, width, height, DENSITY);
         assertTrue(layout.spec(PadLayout.Control.FACE).hidden);
         assertTrue(layout.isSplit(PadLayout.Control.FACE));
         float[] box = new float[4];
         float diameter = 2 * PadInput.FACE_RADIUS * Math.min(face[2], face[3]);
+        float midX = face[0] + face[2] / 2, midY = face[1] + face[3] / 2;
         for (PadLayout.Control member : PadLayout.members(PadLayout.Control.FACE)) {
             assertTrue(layout.shown(member));
             layout.bounds(member, width, height, DENSITY, box);
             float[] center = PadInput.FACE_CENTERS[member.memberIndex()];
-            assertEquals(member.name(), face[0] + center[0] * face[2], box[0] + box[2] / 2, .5f);
-            assertEquals(member.name(), face[1] + center[1] * face[3], box[1] + box[3] / 2, .5f);
+            // Its button's direction from the middle, at least its whole size and two pixels out, so none overlap.
+            float dx = (center[0] - .5f) * face[2], dy = (center[1] - .5f) * face[3];
+            float wantX = midX + (dx == 0 ? 0 : Math.signum(dx) * Math.max(Math.abs(dx), diameter + 2));
+            float wantY = midY + (dy == 0 ? 0 : Math.signum(dy) * Math.max(Math.abs(dy), diameter + 2));
+            assertEquals(member.name(), wantX, box[0] + box[2] / 2, .5f);
+            assertEquals(member.name(), wantY, box[1] + box[3] / 2, .5f);
             assertEquals(member.name(), diameter, box[2], .5f);
             assertEquals(member.name(), diameter, box[3], .5f);
             assertEquals("The cluster's opacity", 60, layout.spec(member).opacity);
@@ -201,15 +211,15 @@ public class PadLayoutTest {
         float[] right = dpad.bounds(PadLayout.Control.DPAD_RIGHT, width, height, DENSITY, new float[4]);
         float[] down = dpad.bounds(PadLayout.Control.DPAD_DOWN, width, height, DENSITY, new float[4]);
         float[] left = dpad.bounds(PadLayout.Control.DPAD_LEFT, width, height, DENSITY, new float[4]);
-        float midX = pad[0] + pad[2] / 2, midY = pad[1] + pad[3] / 2;
-        assertEquals("Up sits over the top arm", midX, up[0] + up[2] / 2, .5f);
-        assertTrue(up[1] + up[3] / 2 < midY && down[1] + down[3] / 2 > midY);
-        assertTrue(left[0] + left[2] / 2 < midX && right[0] + right[2] / 2 > midX);
+        float padX = pad[0] + pad[2] / 2, padY = pad[1] + pad[3] / 2;
+        assertEquals("Up sits over the top arm", padX, up[0] + up[2] / 2, .5f);
+        assertTrue(up[1] + up[3] / 2 < padY && down[1] + down[3] / 2 > padY);
+        assertTrue(left[0] + left[2] / 2 < padX && right[0] + right[2] / 2 > padX);
         assertTrue("Up and right overlap", overlap(up, right));
         assertTrue("Down and left overlap", overlap(down, left));
         assertFalse("Opposite arms never overlap", overlap(up, down) || overlap(left, right));
         for (float[] arm : new float[][] {up, right, down, left}) {
-            assertFalse("The middle holds nothing", midX > arm[0] && midX < arm[0] + arm[2] && midY > arm[1] && midY < arm[1] + arm[3]);
+            assertFalse("The middle holds nothing", padX > arm[0] && padX < arm[0] + arm[2] && padY > arm[1] && padY < arm[1] + arm[3]);
             assertTrue("A full touch", Math.min(arm[2], arm[3]) >= PadLayout.MIN_TOUCH_DP * DENSITY - .01f);
         }
 
@@ -217,6 +227,119 @@ public class PadLayoutTest {
         dpad.applyPreset(PadLayout.Preset.FULL);
         assertTrue(dpad.shown(PadLayout.Control.DPAD));
         assertFalse(dpad.shown(PadLayout.Control.DPAD_UP));
+    }
+
+    /** The preview test's surfaces and the Galaxy Z Fold7's inner screen both ways: width, height and density. */
+    private static final float[][] SURFACES = {{1600, 720, 2}, {720, 1600, 2}, {1280, 800, 1}, {2184, 1968, 2.625f},
+            {1968, 2184, 2.625f}};
+
+    /**
+     * No two split members overlap, so one finger never presses two, on every surface above at the default size and the
+     * smallest: face buttons share no pixel, also once placed in whole pixels; D-pad neighbours share only their inner
+     * corner, which holds the diagonal, and opposite arms nothing. Every member stays on the surface and off the
+     * default layout's other controls.
+     */
+    @Test public void splitMembersNeverOverlapAndStayOnTheSurface() {
+        for (float[] surface : SURFACES) {
+            float width = surface[0], height = surface[1], density = surface[2];
+            for (float scale : new float[] {1, PadLayout.MIN_SCALE}) {
+                PadLayout layout = new PadLayout();
+                for (PadLayout.Control cluster : new PadLayout.Control[] {PadLayout.Control.FACE, PadLayout.Control.DPAD}) {
+                    layout.setSize(cluster, scale, scale);
+                    layout.split(cluster, width, height, density);
+                    PadLayout.Control[] members = PadLayout.members(cluster);
+                    float[][] boxes = new float[members.length][];
+                    for (int i = 0; i < members.length; i++) {
+                        boxes[i] = layout.bounds(members[i], width, height, density, new float[4]);
+                        float[] b = boxes[i];
+                        String where = members[i] + " at " + width + "x" + height + ", scale " + scale;
+                        assertTrue(where + " on the surface", b[0] >= -.01f && b[1] >= -.01f && b[0] + b[2] <= width + .01f
+                                && b[1] + b[3] <= height + .01f);
+                    }
+                    // Nor over a neighbour: moved together off one, where spreading carried a member onto it.
+                    for (int i = 0; i < members.length; i++) {
+                        for (PadLayout.Control other : PadLayout.Control.values()) {
+                            if (other == cluster || other.cluster() == cluster || other.steam || !layout.shown(other)) continue;
+                            assertFalse(members[i] + " over " + other + " at " + width + "x" + height + ", scale " + scale,
+                                    overlap(boxes[i], layout.bounds(other, width, height, density, new float[4])));
+                        }
+                    }
+                    float[] up = layout.bounds(PadLayout.Control.DPAD_UP, width, height, density, new float[4]);
+                    float corner = PadInput.DPAD_CORNER / PadInput.DPAD_ARM * up[2] + 1;
+                    for (int i = 0; i < members.length; i++) {
+                        for (int j = i + 1; j < members.length; j++) {
+                            String pair = members[i] + " and " + members[j] + " at " + width + "x" + height + ", scale " + scale;
+                            boolean opposite = opposite(members[i], members[j]);
+                            if (cluster == PadLayout.Control.FACE || opposite) {
+                                assertFalse(pair + " overlap", overlap(boxes[i], boxes[j]));
+                                assertFalse(pair + " overlap in whole pixels", overlap(pixels(boxes[i]), pixels(boxes[j])));
+                            } else {
+                                assertTrue(pair + " share the diagonal's corner", overlap(boxes[i], boxes[j]));
+                                float across = Math.min(boxes[i][0] + boxes[i][2], boxes[j][0] + boxes[j][2])
+                                        - Math.max(boxes[i][0], boxes[j][0]);
+                                float down = Math.min(boxes[i][1] + boxes[i][3], boxes[j][1] + boxes[j][3])
+                                        - Math.max(boxes[i][1], boxes[j][1]);
+                                assertTrue(pair + " share only the corner: " + across + "x" + down,
+                                        across <= corner && down <= corner);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean opposite(PadLayout.Control a, PadLayout.Control b) {
+        java.util.List<PadLayout.Control> pair = java.util.Arrays.asList(a, b);
+        return pair.containsAll(java.util.Arrays.asList(PadLayout.Control.A, PadLayout.Control.Y))
+                || pair.containsAll(java.util.Arrays.asList(PadLayout.Control.B, PadLayout.Control.X))
+                || pair.containsAll(java.util.Arrays.asList(PadLayout.Control.DPAD_UP, PadLayout.Control.DPAD_DOWN))
+                || pair.containsAll(java.util.Arrays.asList(PadLayout.Control.DPAD_LEFT, PadLayout.Control.DPAD_RIGHT));
+    }
+
+    /** The box a view gets from a float box: whole pixels, as the controller places it. */
+    private static float[] pixels(float[] box) {
+        return new float[] {Math.round(box[0]), Math.round(box[1]), Math.round(box[2]), Math.round(box[3])};
+    }
+
+    /**
+     * The pointer touchpad's default place is clear of the stream's microphone and menu buttons, which sit below the
+     * top row, and of every control of the default layout, on every surface above; where there is room it keeps the
+     * middle of the surface.
+     */
+    @Test public void thePointerTouchpadsDefaultIsClearOfTheMicrophoneAndMenuButtons() {
+        for (float[] surface : SURFACES) {
+            float width = surface[0], height = surface[1], density = surface[2];
+            String where = width + "x" + height;
+            PadLayout layout = new PadLayout();
+            float[] pad = layout.bounds(PadLayout.Control.POINTER_PAD, width, height, density, new float[4]);
+            assertTrue(where + " on the surface", pad[0] >= 0 && pad[1] >= 0 && pad[0] + pad[2] <= width + .01f
+                    && pad[1] + pad[3] <= height + .01f);
+            // Where the controller puts the buttons: centred below the top row's bottom, the menu button beside it.
+            float rowBottom = 0;
+            for (PadLayout.Control row : new PadLayout.Control[] {PadLayout.Control.SELECT, PadLayout.Control.HOME,
+                    PadLayout.Control.START, PadLayout.Control.TOUCHPAD}) {
+                float[] box = layout.bounds(row, width, height, density, new float[4]);
+                rowBottom = Math.max(rowBottom, box[1] + box[3]);
+            }
+            float size = com.limelight.ui.MicButton.SIZE_DP * density, margin = 12 * density;
+            float[] mic = com.limelight.ui.MicButton.Placement.center(Float.NaN, Float.NaN, width, height, size, margin,
+                    rowBottom);
+            float[] menu = com.limelight.ui.MenuButton.Placement.center(Float.NaN, Float.NaN, width, height, size, margin,
+                    rowBottom);
+            for (float[] button : new float[][] {mic, menu}) {
+                float[] box = {button[0] - size / 2, button[1] - size / 2, size, size};
+                assertFalse(where + ": under a stream button", overlap(pad, box));
+            }
+            for (PadLayout.Control control : PadLayout.Control.values()) {
+                if (control == PadLayout.Control.POINTER_PAD || control.steam || !layout.shown(control)) continue;
+                float[] box = layout.bounds(control, width, height, density, new float[4]);
+                assertFalse(where + ": over " + control, overlap(pad, box));
+            }
+            if (height / 2 - pad[3] / 2 > rowBottom + (PadLayout.TOP_BUTTONS_DP + 8) * density) {
+                assertEquals(where + ": the middle where there is room", height / 2, pad[1] + pad[3] / 2, .5f);
+            }
+        }
     }
 
     private static boolean overlap(float[] a, float[] b) {
