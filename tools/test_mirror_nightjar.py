@@ -121,7 +121,9 @@ class MirrorTest(unittest.TestCase):
         other.commit('x.txt', 'x', 'unrelated')
         self.mono.git('fetch', '-q', '--no-tags', other.path, 'main')
         self.assertNotEqual(self.mono.git('rev-parse', 'FETCH_HEAD'), pub)
-        self.assertEqual(self.mono.git('rev-parse', 'refs/mirror/nightjar-main'), pub)
+        # the private ref was read before that and is gone again
+        self.assertEqual(self.mono.git('for-each-ref', 'refs/mirror/'), '')
+        self.assertEqual(m.fetch_published(self.git, self.nj.path, 'main'), pub)
 
     def test_default_ref_is_fetched_origin_main_not_local_head(self):
         origin = os.path.join(self.tmp.name, 'origin.git')

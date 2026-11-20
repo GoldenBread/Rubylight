@@ -7,7 +7,8 @@ param(
     [string] $Remote = 'https://github.com/RamazanKara/nightjar.git',
     [string] $Branch = 'main',
     # The monorepo commit to publish. Default: origin/main after a fetch of
-    # origin (never the local HEAD, which may be stale); main after its CI is green.
+    # origin (never the local HEAD, which may be stale). The default does not check
+    # CI: pass the commit whose main CI passed.
     [string] $Ref = '',
     [switch] $DryRun
 )

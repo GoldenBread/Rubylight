@@ -18,9 +18,11 @@ Nightjar commits merged back with `git subtree pull` keep their own ids. The
 push only ever fast-forwards nightjar main; anything else stops before pushing.
     python tools/mirror_nightjar.py --dry-run    # split, check, push --dry-run
     python tools/mirror_nightjar.py              # the real push
---ref defaults to origin/main after a fetch of origin, not the local HEAD.
+--ref defaults to origin/main after a fetch of origin, not the local HEAD; that
+default does not check CI, so pass --ref <sha> of the commit whose main CI passed.
 """
 import argparse
+import os
 import subprocess
 import sys
 
@@ -157,11 +159,16 @@ def rewrite(git, commit, tree, parents):
 def fetch_published(git, remote, branch):
     """Fetches the remote branch into a private ref and returns its commit.
 
-    FETCH_HEAD is shared by every fetch in the checkout; a ref of our own is not.
+    FETCH_HEAD is shared by every fetch in the checkout and its worktrees; a ref
+    named after this process is not, so neither a `git fetch` nor a second mirror
+    run can change what is read. The ref is deleted again once read.
     """
-    ref = f'refs/mirror/nightjar-{branch}'
-    git.run('fetch', '--quiet', '--no-tags', remote, f'+refs/heads/{branch}:{ref}')
-    return git.out('rev-parse', '--verify', f'{ref}^{{commit}}')
+    ref = f'refs/mirror/nightjar-{branch}-{os.getpid()}'
+    try:
+        git.run('fetch', '--quiet', '--no-tags', remote, f'+refs/heads/{branch}:{ref}')
+        return git.out('rev-parse', '--verify', f'{ref}^{{commit}}')
+    finally:
+        git.run('update-ref', '-d', ref, check=False)
 
 
 def main(argv=None):
@@ -169,7 +176,7 @@ def main(argv=None):
     ap.add_argument('--remote', default=REMOTE)
     ap.add_argument('--branch', default='main')
     ap.add_argument('--ref', default=None,
-                    help='monorepo commit to publish (default: origin/main after fetching origin)')
+                    help='monorepo commit to publish; pass the one whose main CI passed (default: origin/main after fetching origin, unchecked)')
     ap.add_argument('--repo', default=None)
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args(argv)
