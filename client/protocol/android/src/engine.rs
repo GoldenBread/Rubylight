@@ -2,7 +2,7 @@
 //! reports, the microphone encoder and the present clock. The JNI entry points in `lib.rs`
 //! are thin wrappers over these functions.
 
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -66,6 +66,9 @@ struct Engine {
     /// renderer starts. The session is stored only after every stage ran, and the renderer's
     /// `start` already asks what the host supports (to run the clock sync for the timing CSV).
     host_messages: Mutex<Vec<u16>>,
+    /// Whether `host_messages` has the phase lock report (0x5530), kept with it so the per-frame
+    /// report skips the locks when the host does not take it.
+    phase_lock_supported: AtomicBool,
     /// The packed 4:4:4 modes the host's DESCRIBE offered, -1 until the handshake has them.
     /// Set with `host_messages`, so the video setup can read it before the session is stored.
     host_packed444_modes: AtomicI32,
@@ -87,6 +90,7 @@ static ENGINE: LazyLock<Engine> = LazyLock::new(|| Engine {
     present_clock: Mutex::new(None),
     video_gauges: Mutex::new(None),
     host_messages: Mutex::new(Vec::new()),
+    phase_lock_supported: AtomicBool::new(false),
     host_packed444_modes: AtomicI32::new(-1),
     announced_hdr_format: AtomicI32::new(0),
     clipboard: Mutex::new(None),
@@ -327,7 +331,12 @@ pub fn interrupt() {
 
 /// Records the control messages the host announced (`Listener::host_control_messages`).
 pub fn set_host_messages(messages: &[u16]) {
-    *lock(&ENGINE.host_messages) = messages.to_vec();
+    let mut kept = lock(&ENGINE.host_messages);
+    *kept = messages.to_vec();
+    ENGINE.phase_lock_supported.store(
+        kept.contains(&rubylight_protocol::phase_lock::REPORT_MESSAGE_TYPE),
+        Ordering::SeqCst,
+    );
 }
 
 /// The listener's side of [`host_packed444_modes`]: like [`announce_host_messages`], nothing is
@@ -379,7 +388,7 @@ pub fn host_supports(message_type: u16) -> bool {
 }
 
 pub fn report_frame_slack(slack_ns: i64, period_ns: i64) -> bool {
-    if !host_supports(rubylight_protocol::phase_lock::REPORT_MESSAGE_TYPE) {
+    if !ENGINE.phase_lock_supported.load(Ordering::SeqCst) {
         return false;
     }
     let mut reports = lock(&ENGINE.phase_lock);
@@ -760,6 +769,18 @@ mod tests {
         assert!(!host_supports(0x5531));
         set_host_messages(&[]);
         assert!(!host_supports(CLOCK_SYNC));
+    }
+
+    #[test]
+    fn the_phase_lock_report_follows_the_announced_messages_without_their_lock() {
+        let _serial = lock(&ENGINE_TESTS);
+        set_host_messages(&[]);
+        assert!(!report_frame_slack(1_000, 8_333_333), "not announced: refused");
+        set_host_messages(&[0x5530]);
+        assert!(ENGINE.phase_lock_supported.load(Ordering::SeqCst));
+        set_host_messages(&[0x5531]);
+        assert!(!ENGINE.phase_lock_supported.load(Ordering::SeqCst));
+        set_host_messages(&[]);
     }
 
     #[test]

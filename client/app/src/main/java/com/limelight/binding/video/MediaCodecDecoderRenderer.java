@@ -3884,7 +3884,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      */
     private void reportPhaseSlack(long readyNs) {
         // Adaptive refresh has no fixed latch; an upscaled frame is not display-ready yet.
-        if (stopping || !outputVsyncAvailable) return;
+        // hostPhaseLock is read once at the stream start: with the host not taking reports, the
+        // rest, and the bridge's locks, would only run to be turned down
+        if (stopping || !outputVsyncAvailable || !hostPhaseLock) return;
         if (upscaler != null) {
             phaseLockOff = "upscaling";
             return;
