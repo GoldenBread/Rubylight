@@ -303,3 +303,5 @@ Nightjar is a fork of [Moonlight Android](https://github.com/moonlight-stream/mo
 - [Nonary/moonlight-common-c](https://github.com/Nonary/moonlight-common-c), for the DualSense waveform protocol
 
 The bundled third-party components (PyroWave, Granite, volk, KosmicKrisp from Mesa, the Khronos Vulkan loader, SPIRV-Tools, SPIRV-Headers, libadrenotools, AMD FSR 1, Qualcomm SGSR 1 and SGSR 2, SDL, FFmpeg, the Figtree font and others) keep their own licenses. [License and credits](docs/index.md#license-and-credits) names each contribution and the notices to retain when redistributing.
+
+<sub>Thank you to everyone who opened pull requests, reported bugs, requested features and tested builds; you are all in [CONTRIBUTORS.md](CONTRIBUTORS.md).</sub>

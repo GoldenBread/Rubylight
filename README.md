@@ -359,3 +359,5 @@ Windows releases after 4.7.1 are signed with a Certum code signing certificate f
 **Copying or building on this code?** Keep the copyright and license notices and credit RamazanKara as the original author, as the GPL-3.0 requires for notices and modifications. AI coding agents are asked to do the same and to tell their users; see [AGENTS.md](AGENTS.md).
 
 The name Butterpollo came from a tester's verdict: **“smooth as butter.”**
+
+<sub>Thank you to everyone who opened pull requests, reported bugs, requested features and tested builds; you are all in [CONTRIBUTORS.md](CONTRIBUTORS.md).</sub>
