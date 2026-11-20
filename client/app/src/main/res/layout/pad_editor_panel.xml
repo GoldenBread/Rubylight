@@ -179,7 +179,7 @@
                     <LinearLayout
                         android:id="@+id/pad_editor_mode_mouse"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_marginEnd="@dimen/space_s"
                         android:layout_weight="1"
                         android:background="@drawable/bg_pad_editor_card"
@@ -222,7 +222,7 @@
                     <LinearLayout
                         android:id="@+id/pad_editor_mode_camera"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_weight="1"
                         android:background="@drawable/bg_pad_editor_card"
                         android:clickable="true"
