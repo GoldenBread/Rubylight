@@ -656,9 +656,21 @@ dd_config_revert_delay=500",
         ("dd_config_revert_delay=0", Some(0), Some(0)),
         ("dd_config_revert_delay=-1", Some(0), Some(0)),
         // The two earlier settings fold in: turning restoring off keeps the display.
-        ("dd_config_revert_on_disconnect=false", Some(7_200_000), Some(7_200_000)),
-        ("dd_config_revert_on_disconnect=true", Some(3000), Some(3000)),
-        ("dd_config_revert_on_disconnect=invalid", Some(3000), Some(3000)),
+        (
+            "dd_config_revert_on_disconnect=false",
+            Some(7_200_000),
+            Some(7_200_000),
+        ),
+        (
+            "dd_config_revert_on_disconnect=true",
+            Some(3000),
+            Some(3000),
+        ),
+        (
+            "dd_config_revert_on_disconnect=invalid",
+            Some(3000),
+            Some(3000),
+        ),
         // Keeping monitors off while paused changed nothing while restoring.
         ("dd_hold_layout_while_paused=true", Some(3000), Some(3000)),
         (
@@ -836,15 +848,25 @@ fn the_bitrate_switches_fold_into_adaptive_bitrate() {
         (Some("false"), Some("true"), "delay"),
         (Some("\"false\""), Some("\"no\""), "off"),
     ] {
-        assert_eq!(fold(link, congestion), Some(folded), "{link:?} {congestion:?}");
+        assert_eq!(
+            fold(link, congestion),
+            Some(folded),
+            "{link:?} {congestion:?}"
+        );
     }
     // The configuration file.
     for (text, expected) in [
         ("", A::On),
         ("link_rate_adaptation=false", A::Off),
-        ("link_rate_adaptation=false\ncongestion_control=false", A::Off),
+        (
+            "link_rate_adaptation=false\ncongestion_control=false",
+            A::Off,
+        ),
         ("congestion_control=true", A::Delay),
-        ("link_rate_adaptation=false\ncongestion_control=true", A::Delay),
+        (
+            "link_rate_adaptation=false\ncongestion_control=true",
+            A::Delay,
+        ),
         ("link_rate_adaptation=true\ncongestion_control=false", A::On),
         ("bitrate_adaptation=off\nlink_rate_adaptation=true", A::Off),
     ] {
@@ -867,17 +889,34 @@ fn the_bitrate_switches_fold_into_adaptive_bitrate() {
     assert_eq!(config.bitrate_adaptation(), A::Off);
     // An app's or device's overrides.
     for (layer, expected) in [
-        (serde_json::json!({"link_rate_adaptation": false}), Some("off")),
-        (serde_json::json!({"link_rate_adaptation": "false", "congestion_control": "false"}), Some("off")),
-        (serde_json::json!({"congestion_control": true}), Some("delay")),
-        (serde_json::json!({"link_rate_adaptation": true}), Some("on")),
-        (serde_json::json!({"congestion_control": true, "bitrate_adaptation": "on"}), Some("on")),
+        (
+            serde_json::json!({"link_rate_adaptation": false}),
+            Some("off"),
+        ),
+        (
+            serde_json::json!({"link_rate_adaptation": "false", "congestion_control": "false"}),
+            Some("off"),
+        ),
+        (
+            serde_json::json!({"congestion_control": true}),
+            Some("delay"),
+        ),
+        (
+            serde_json::json!({"link_rate_adaptation": true}),
+            Some("on"),
+        ),
+        (
+            serde_json::json!({"congestion_control": true, "bitrate_adaptation": "on"}),
+            Some("on"),
+        ),
         (serde_json::json!({"fec_percentage": 20}), None),
     ] {
         let mut layer = layer.as_object().unwrap().clone();
         super::migrate_overrides(&mut layer);
         assert_eq!(
-            layer.get("bitrate_adaptation").and_then(serde_json::Value::as_str),
+            layer
+                .get("bitrate_adaptation")
+                .and_then(serde_json::Value::as_str),
             expected,
             "{layer:?}"
         );
@@ -2169,7 +2208,8 @@ fn the_phase_lock_hold_setting_is_dropped() {
     assert!(removed("phase_lock_hold_at_stream_rate"));
     assert!(!override_allowed("phase_lock_hold_at_stream_rate"));
     // An app's or a device's overrides lose it and keep the rest.
-    let mut layer = serde_json::json!({"phase_lock_hold_at_stream_rate": true, "max_bitrate": 50000});
+    let mut layer =
+        serde_json::json!({"phase_lock_hold_at_stream_rate": true, "max_bitrate": 50000});
     assert!(migrate_overrides(layer.as_object_mut().unwrap()));
     assert_eq!(layer, serde_json::json!({"max_bitrate": 50000}));
 }
@@ -2252,30 +2292,47 @@ fn the_remote_monitor_switches_fold_into_remove_remote_monitor() {
         (Some("invalid"), None, "never"),
         (Some("\"true\""), Some("\"no\""), "stream_end"),
     ] {
-        assert_eq!(fold(end, disconnect), Some(folded), "{end:?} {disconnect:?}");
+        assert_eq!(
+            fold(end, disconnect),
+            Some(folded),
+            "{end:?} {disconnect:?}"
+        );
     }
     for (text, expected) in [
         ("", R::Never),
         ("remote_monitor_disconnect_on_stream_end=true", R::StreamEnd),
-        ("remote_monitor_disconnect_on_client_disconnect=true", R::Disconnect),
+        (
+            "remote_monitor_disconnect_on_client_disconnect=true",
+            R::Disconnect,
+        ),
         (
             "remote_monitor_disconnect_on_stream_end=true
 remote_monitor_disconnect_on_client_disconnect=true",
             R::Disconnect,
         ),
-        ("remove_remote_monitor=stream_end
-remote_monitor_disconnect_on_client_disconnect=true", R::StreamEnd),
+        (
+            "remove_remote_monitor=stream_end
+remote_monitor_disconnect_on_client_disconnect=true",
+            R::StreamEnd,
+        ),
     ] {
         let config = Config::parse(text).unwrap();
         assert_eq!(config.remove_remote_monitor(), expected, "{text}");
-        assert!(!config.text().contains("remote_monitor_disconnect_on"), "{text}");
+        assert!(
+            !config.text().contains("remote_monitor_disconnect_on"),
+            "{text}"
+        );
     }
     let mut config = Config::default();
     let sent = serde_json::json!({"remote_monitor_disconnect_on_stream_end": true});
     config.update(sent.as_object().unwrap()).unwrap();
     assert_eq!(config.remove_remote_monitor(), R::StreamEnd);
-    assert!(super::retired_name("remote_monitor_disconnect_on_stream_end"));
-    assert!(super::retired_name("remote_monitor_disconnect_on_client_disconnect"));
+    assert!(super::retired_name(
+        "remote_monitor_disconnect_on_stream_end"
+    ));
+    assert!(super::retired_name(
+        "remote_monitor_disconnect_on_client_disconnect"
+    ));
 }
 
 #[test]
@@ -2292,8 +2349,14 @@ fn the_disconnect_settings_fold_in_every_layer() {
     assert!(config.keeps_display_while_paused());
     assert!(!config.text().contains("dd_config_revert_on_disconnect"));
     for (layer, expected) in [
-        (serde_json::json!({"dd_config_revert_on_disconnect": "false"}), Some("keep_while_paused")),
-        (serde_json::json!({"dd_hold_layout_while_paused": true}), Some("restore")),
+        (
+            serde_json::json!({"dd_config_revert_on_disconnect": "false"}),
+            Some("keep_while_paused"),
+        ),
+        (
+            serde_json::json!({"dd_hold_layout_while_paused": true}),
+            Some("restore"),
+        ),
         (
             serde_json::json!({"dd_config_revert_on_disconnect": false, "dd_disconnect_behavior": "restore"}),
             Some("restore"),
@@ -2303,7 +2366,9 @@ fn the_disconnect_settings_fold_in_every_layer() {
         let mut layer = layer.as_object().unwrap().clone();
         super::migrate_overrides(&mut layer);
         assert_eq!(
-            layer.get("dd_disconnect_behavior").and_then(serde_json::Value::as_str),
+            layer
+                .get("dd_disconnect_behavior")
+                .and_then(serde_json::Value::as_str),
             expected,
             "{layer:?}"
         );

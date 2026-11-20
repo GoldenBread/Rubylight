@@ -485,10 +485,7 @@ impl Media {
                             drop(h.usb.end_session(&p.id));
                             if let Some(session) = session
                                 && session.launch.role == Role::RemoteMonitor
-                                && h.config
-                                    .read()
-                                    .unwrap()
-                                    .remove_remote_monitor()
+                                && h.config.read().unwrap().remove_remote_monitor()
                                     == butterpollo_core::config::RemoveRemoteMonitor::Disconnect
                             {
                                 // Laying the displays out again takes long enough to hold up

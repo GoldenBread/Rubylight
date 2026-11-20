@@ -204,7 +204,15 @@ pub const FOLDED_KEYS: &[&str] = &[
     WIRELESS_PACING,
 ];
 /// [`BITRATE_ADAPTATION`], [`REMOVE_REMOTE_MONITOR`]).
-pub const FOLDED_KEYS: &[&str] = &[HDR_REQUEST, LINK_RATE, CONGESTION, REMOTE_STREAM_END, REMOTE_CLIENT_DISCONNECT, DD_REVERT_ON_DISCONNECT, DD_HOLD_LAYOUT];
+pub const FOLDED_KEYS: &[&str] = &[
+    HDR_REQUEST,
+    LINK_RATE,
+    CONGESTION,
+    REMOTE_STREAM_END,
+    REMOTE_CLIENT_DISCONNECT,
+    DD_REVERT_ON_DISCONNECT,
+    DD_HOLD_LAYOUT,
+];
 
 /// When a remote monitor is removed from Windows (`never`, `stream_end`,
 /// `disconnect`), which holds what the two switches held before: Remove
@@ -248,7 +256,8 @@ pub fn fold_remove_remote_monitor(layer: &mut serde_json::Map<String, serde_json
     let stream_end = layer.remove(REMOTE_STREAM_END);
     let client_disconnect = layer.remove(REMOTE_CLIENT_DISCONNECT);
     let changed = stream_end.is_some() || client_disconnect.is_some();
-    let (stream_end, client_disconnect) = (stream_end.and_then(text), client_disconnect.and_then(text));
+    let (stream_end, client_disconnect) =
+        (stream_end.and_then(text), client_disconnect.and_then(text));
     if let Some(folded) =
         folded_remove_remote_monitor(stream_end.as_deref(), client_disconnect.as_deref())
         && !layer.contains_key(REMOVE_REMOTE_MONITOR)
@@ -263,14 +272,15 @@ pub fn fold_remove_remote_monitor(layer: &mut serde_json::Map<String, serde_json
 /// adaptation; link-rate adaptation off on its own is `off`; anything else
 /// `on`. `None` when the layer holds neither. An unreadable value counts as
 /// its default, as the host read it.
-pub fn folded_bitrate_adaptation(link: Option<&str>, congestion: Option<&str>) -> Option<&'static str> {
+pub fn folded_bitrate_adaptation(
+    link: Option<&str>,
+    congestion: Option<&str>,
+) -> Option<&'static str> {
     if link.is_none() && congestion.is_none() {
         return None;
     }
     let read = |value: Option<&str>, default: bool| {
-        value
-            .and_then(super::parse_boolean)
-            .unwrap_or(default)
+        value.and_then(super::parse_boolean).unwrap_or(default)
     };
     Some(if read(congestion, false) {
         "delay"
@@ -407,7 +417,11 @@ pub fn folded_disconnect_behavior(
     let revert = revert_on_disconnect
         .and_then(super::parse_boolean)
         .unwrap_or(true);
-    Some(if revert { "restore" } else { "keep_while_paused" })
+    Some(if revert {
+        "restore"
+    } else {
+        "keep_while_paused"
+    })
 }
 /// [`folded_disconnect_behavior`] over a JSON layer: removes both settings
 /// and, unless the layer already holds the disconnect behavior, sets it.

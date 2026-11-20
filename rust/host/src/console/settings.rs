@@ -451,12 +451,20 @@ pub fn render(prefix: &str, schema: &[Setting], values: &Value) -> String {
                             "per_client" => "One for each device",
                             "shared" => "One shared by all devices",
                             "game-provided" => "Provided by the game",
-                            "delay" if setting.key == "bitrate_adaptation" => "On, and react to network delay",
-                            "restore" if setting.key == "dd_disconnect_behavior" => "Restore after the delay",
+                            "delay" if setting.key == "bitrate_adaptation" => {
+                                "On, and react to network delay"
+                            }
+                            "restore" if setting.key == "dd_disconnect_behavior" => {
+                                "Restore after the delay"
+                            }
                             "keep_while_paused" => "Keep while paused",
                             "never" if setting.key == "remove_remote_monitor" => "Never",
-                            "stream_end" if setting.key == "remove_remote_monitor" => "When its stream ends",
-                            "disconnect" if setting.key == "remove_remote_monitor" => "As soon as the device disconnects",
+                            "stream_end" if setting.key == "remove_remote_monitor" => {
+                                "When its stream ends"
+                            }
+                            "disconnect" if setting.key == "remove_remote_monitor" => {
+                                "As soon as the device disconnects"
+                            }
                             _ if setting.key == "locale" => i18n::language_name(choice),
                             _ => choice,
                         },
