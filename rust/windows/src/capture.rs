@@ -1006,13 +1006,10 @@ impl Duplication {
         // beside a game it delivered fewer pictures, later, than polling
         // (`examples/ddx_arrival_probe.rs`).
         if !self.owned.has_capacity()
-            && self
-                .last_desktop
-                .as_ref()
-                .is_some_and(|image| {
-                    std::sync::Arc::strong_count(image) == 1
-                        && std::sync::Arc::strong_count(&image.texture) == 2
-                })
+            && self.last_desktop.as_ref().is_some_and(|image| {
+                std::sync::Arc::strong_count(image) == 1
+                    && std::sync::Arc::strong_count(&image.texture) == 2
+            })
         {
             // The cache can be the last reader of a snapshot. Let that slot
             // return before deciding whether a new desktop can be acquired.
@@ -1423,7 +1420,8 @@ impl GpuPool {
                 // The old shape's frame-pool, ring or helper textures need
                 // not stay pinned by the description cache.
                 let current = source.as_raw();
-                self.sources.retain(|(texture, _)| texture.as_raw() == current);
+                self.sources
+                    .retain(|(texture, _)| texture.as_raw() == current);
             }
             let free = self
                 .textures
