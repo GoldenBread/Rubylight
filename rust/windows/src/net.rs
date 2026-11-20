@@ -11,7 +11,8 @@ use std::{
     },
 };
 use windows::Win32::NetworkManagement::IpHelper::{
-    CancelMibChangeNotify2, MIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE, NotifyIpInterfaceChange,
+    CancelMibChangeNotify2, MIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE, MIB_UNICASTIPADDRESS_ROW,
+    NotifyIpInterfaceChange, NotifyUnicastIpAddressChange,
 };
 use windows::Win32::Networking::WinSock::*;
 /// The PC's DNS host name, which Vibepollo shows to clients by default.
@@ -2123,12 +2124,13 @@ fn last_error() -> std::io::Error {
     // SAFETY: WSAGetLastError only reads this thread's last Winsock error.
     std::io::Error::from_raw_os_error(unsafe { WSAGetLastError() }.0)
 }
-/// Windows telling this PC's IP interfaces changed: one came or went, or a parameter of one
-/// (its state among them) moved. A watcher re-reads the interfaces on a change instead of on a
-/// short timer, so the reading runs only when there was one.
+/// Windows telling this PC's IP interfaces or addresses changed: an interface came or went, a
+/// parameter of one (its state among them) moved, or an address was added, removed or changed
+/// (the interface notification does not report addresses). A watcher re-reads the interfaces on
+/// a change instead of on a short timer, so the reading runs only when there was one.
 pub struct InterfaceChanges {
-    /// The registration `CancelMibChangeNotify2` takes.
-    handle: windows::Win32::Foundation::HANDLE,
+    /// The registrations `CancelMibChangeNotify2` takes: interfaces, then unicast addresses.
+    handles: Vec<windows::Win32::Foundation::HANDLE>,
     /// The context the OS callback signals, kept alive until after the cancel: a callback that
     /// races it finds its context valid.
     context: std::sync::Arc<Signal>,
@@ -2175,34 +2177,65 @@ impl InterfaceChanges {
     ) -> Option<Self> {
         use windows::Win32::Foundation::ERROR_SUCCESS;
         let context = std::sync::Arc::new(Signal::default());
-        let mut handle = windows::Win32::Foundation::HANDLE::default();
-        // SAFETY: `context` outlives the registration, as Drop cancels it before the field
-        // drops, and `handle` is a live out-pointer for the call.
+        let pointer = std::sync::Arc::as_ptr(&context) as *const core::ffi::c_void;
+        let mut interfaces = windows::Win32::Foundation::HANDLE::default();
+        // SAFETY: `context` outlives the registration, as Drop (or the cancel below) cancels it
+        // before the field drops, and `interfaces` is a live out-pointer for the call.
         let registered = unsafe {
             NotifyIpInterfaceChange(
                 AF_UNSPEC,
                 Some(interface_changed),
-                Some(std::sync::Arc::as_ptr(&context) as *const core::ffi::c_void),
+                Some(pointer),
                 initial,
-                &mut handle,
+                &mut interfaces,
             )
         };
         if registered != ERROR_SUCCESS {
             return None;
         }
+        let mut addresses = windows::Win32::Foundation::HANDLE::default();
+        // SAFETY: As above, for the address registration.
+        let registered = unsafe {
+            NotifyUnicastIpAddressChange(
+                AF_UNSPEC,
+                Some(address_changed),
+                Some(pointer),
+                initial,
+                &mut addresses,
+            )
+        };
+        if registered != ERROR_SUCCESS {
+            cancel(&[interfaces]);
+            return None;
+        }
+        let handles = vec![interfaces, addresses];
         let signal = context.clone();
         let worker = std::thread::Builder::new()
             .name("interface-watch".into())
-            .spawn(move || watch_interfaces(signal, changed, quiet))
-            .ok()?;
+            .spawn(move || watch_interfaces(signal, changed, quiet));
+        let Ok(worker) = worker else {
+            // No callback may outlive the context it signals.
+            cancel(&handles);
+            return None;
+        };
         Some(Self {
-            handle,
+            handles,
             context,
             worker: Some(worker),
         })
     }
 }
-/// The OS callback: note the change, wake the worker, nothing else.
+/// Cancel registrations; each cancel waits for a callback still running.
+fn cancel(handles: &[windows::Win32::Foundation::HANDLE]) {
+    for handle in handles {
+        // SAFETY: each handle is a registration the Notify calls returned and nothing has
+        // cancelled yet.
+        unsafe {
+            let _ = CancelMibChangeNotify2(*handle);
+        }
+    }
+}
+/// The interface callback: note the change, wake the worker, nothing else.
 unsafe extern "system" fn interface_changed(
     context: *const core::ffi::c_void,
     _row: *const MIB_IPINTERFACE_ROW,
@@ -2210,6 +2243,21 @@ unsafe extern "system" fn interface_changed(
 ) {
     // SAFETY: the context is the `Signal` of the live registration, valid until its cancel
     // returns, and the callback runs no longer than this function.
+    unsafe { note_change(context) }
+}
+/// The address callback: the same as `interface_changed`, for an address row.
+unsafe extern "system" fn address_changed(
+    context: *const core::ffi::c_void,
+    _row: *const MIB_UNICASTIPADDRESS_ROW,
+    _kind: MIB_NOTIFICATION_TYPE,
+) {
+    // SAFETY: as in `interface_changed`.
+    unsafe { note_change(context) }
+}
+/// # Safety
+/// `context` is the `Signal` of a live registration.
+unsafe fn note_change(context: *const core::ffi::c_void) {
+    // SAFETY: the caller's contract.
     let signal = unsafe { &*(context as *const Signal) };
     let mut state = signal.state.lock().unwrap_or_else(PoisonError::into_inner);
     state.changed = true;
@@ -2275,12 +2323,9 @@ fn watch_interfaces(signal: std::sync::Arc<Signal>, changed: impl Fn(), quiet: i
 }
 impl Drop for InterfaceChanges {
     fn drop(&mut self) {
-        // SAFETY: `handle` is the registration NotifyIpInterfaceChange returned. The cancel
-        // waits for a callback still running and Windows calls no more once it returns, so the
-        // context below stays valid for every callback there may be.
-        unsafe {
-            let _ = CancelMibChangeNotify2(self.handle);
-        }
+        // Each cancel waits for a callback still running and Windows calls no more once it
+        // returns, so the context below stays valid for every callback there may be.
+        cancel(&self.handles);
         {
             let mut state = self
                 .context

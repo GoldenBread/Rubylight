@@ -424,10 +424,10 @@ fn per_connection(error: &std::io::Error) -> bool {
         ConnectionReset | ConnectionAborted | ConnectionRefused | Interrupted | WouldBlock
     )
 }
-/// How often mdns-sd re-reads this PC's interfaces on its own: a fallback for the interface
-/// change notification below, which has them re-read within a second of a change instead, and
-/// covers a notification that could not be registered or missed one.
-const DISCOVERY_FALLBACK: u32 = 300;
+/// How often mdns-sd re-reads this PC's interfaces on its own: a fallback for the interface and
+/// address change notifications below, which have them re-read within a second of a change
+/// instead, and covers a notification that could not be registered or missed one.
+const DISCOVERY_FALLBACK: u32 = 30;
 /// How soon after a change the notification has mdns-sd re-read the interfaces.
 const DISCOVERY_SOON: u32 = 1;
 pub struct Discovery {
@@ -486,9 +486,9 @@ impl Discovery {
             let _ = daemon.shutdown();
             return Err(error);
         }
-        // Windows tells the daemon when an interface changed, and the daemon re-reads them
+        // Windows tells the daemon when an interface or address changed, and it re-reads them
         // within a second of that; the interval set above stays only the fallback. A refused
-        // registration leaves the fallback alone, five minutes instead of thirty seconds.
+        // registration leaves the fallback, thirty seconds, as before.
         let watch = butterpollo_windows::net::InterfaceChanges::register(
             {
                 let daemon = daemon.clone();
@@ -505,7 +505,7 @@ impl Discovery {
         );
         if watch.is_none() {
             tracing::warn!(
-                "interface change notifications are unavailable; Moonlight discovery re-reads the interfaces every five minutes instead"
+                "interface change notifications are unavailable; Moonlight discovery re-reads the interfaces on its own timer instead"
             );
         }
         Ok(Some(Self { watch, daemon }))
