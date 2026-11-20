@@ -1278,16 +1278,18 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     }
 
     /**
-     * Moving the game buttons started or ended: the on-screen controls leave while it lasts and come back after. An
-     * open editor of the modern controls stays either way; the controls show once it closes.
+     * Moving the game buttons started or ended: the on-screen controls leave while it lasts and come back after, if the
+     * settings show them. An open editor of the modern controls stays either way; the controls show once it closes.
      */
     void onGameButtonsEditing() {
         if (prefConfig == null || !prefConfig.onscreenController || isFinishing()) return;
-        if (!onscreenControlsShown()) {
+        if (movingGameButtons()) {
             hideOnscreenControllers();
-        } else if (!isHidingOverlays && conn != null && conn.canSendInput()) {
+        } else if (onscreenControlsShown() && !isHidingOverlays && conn != null && conn.canSendInput()) {
             showOnscreenController();
         }
+        // Ending while the settings keep the controls away, as a pad in hand does, leaves them as they are: they went
+        // when the moving began, and hiding them now would close their open editor and drop its draft.
     }
 
     void hideOnscreenControllers() {

@@ -671,6 +671,48 @@ public class GameModernControlsTouchTest {
         assertEveryControlAnswers(game, "after both editors closed");
     }
 
+    /**
+     * A pad in hand keeps the controls off the screen (Hide while a controller is connected), yet their editor opens
+     * on purpose. Moving the game buttons and saving them leaves that editor open, and its Done keeps the drag.
+     */
+    @Test public void withAPadInHandTheControlsEditorKeepsItsDraftAfterTheButtonsAreSaved() {
+        Game game = stream(true, false);
+        Rect control = largestControl(game);
+        showGameButtonOver(game, control);
+        game.setPhysicalControllerConnected(true);
+        idle();
+        assertTrue("a pad keeps the controls away", visibleControls(game).isEmpty());
+        openTheControlsEditor(game);
+        // The player drags that control toward the middle of the screen.
+        ViewGroup frame = frame(game);
+        float density = game.getResources().getDisplayMetrics().density;
+        float dx = control.exactCenterX() < frame.getWidth() / 2f ? 40 * density : -40 * density;
+        float dy = control.exactCenterY() < frame.getHeight() / 2f ? 40 * density : -40 * density;
+        float[] from = middle(game, control);
+        float[] to = {from[0] + dx, from[1] + dy};
+        long now = SystemClock.uptimeMillis();
+        dispatch(game, touch(now, now, MotionEvent.ACTION_DOWN, from));
+        dispatch(game, touch(now, now + 50, MotionEvent.ACTION_MOVE, to));
+        dispatch(game, touch(now, now + 100, MotionEvent.ACTION_UP, to));
+        idle();
+        startMovingTheButtons(game);
+        chooseInGameButtonsMenu(game, MOVE_OR_SAVE);
+        assertFalse(game.gameTouchControls.isEditing());
+        assertTrue("saving the buttons kept their editor open", game.modernController.isEditing());
+        game.modernController.finishEditing(true);
+        idle();
+        game.setPhysicalControllerConnected(false);
+        idle();
+        // Where the drag left it, give or take the editor's grid.
+        boolean moved = false;
+        for (Rect rect : visibleControls(game)) {
+            moved |= Math.abs(rect.width() - control.width()) <= 2 && Math.abs(rect.height() - control.height()) <= 2
+                    && Math.abs(rect.exactCenterX() - control.exactCenterX() - dx) <= 16 * density
+                    && Math.abs(rect.exactCenterY() - control.exactCenterY() - dy) <= 16 * density;
+        }
+        assertTrue("the drag made in the editor was kept: " + control + " -> " + visibleControls(game), moved);
+    }
+
     private static void layOut(View root) {
         root.measure(View.MeasureSpec.makeMeasureSpec(root.getWidth(), View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(root.getHeight(), View.MeasureSpec.EXACTLY));
