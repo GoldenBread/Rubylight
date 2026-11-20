@@ -608,7 +608,7 @@ impl Config {
     /// stream thread, which then never blocks in it (`amd_output_thread`). On by default since
     /// the November 20 A/B (AV1 and HEVC under GPU load, rust/PERFORMANCE.md): without it 0.7
     /// to 7 % of captured pictures waited up to 2.2 ms behind a blocking query before encoding,
-    /// and the encode tail was longer. It costs about 3 % of one core; end to end did not
+    /// and the encode tail was longer. It costs about 1 to 1.5 % of one core; end to end did not
     /// improve (its p99 ran 0.5 to 2.4 ms later, within run-to-run spread). It takes precedence
     /// over `amd_output_prediction`.
     pub fn amd_output_thread(&self) -> bool {
