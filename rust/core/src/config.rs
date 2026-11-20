@@ -21,7 +21,7 @@ pub use folders::{SharedFolderConfig, valid_folder_id, valid_folder_root};
 pub use overrides::override_allowed;
 use retired::retirement;
 pub use retired::{
-    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE, PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, fold_remove_remote_monitor, folded_remove_remote_monitor, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR, DD_DISCONNECT_BEHAVIOR, DD_HOLD_LAYOUT, DD_REVERT_ON_DISCONNECT, fold_disconnect_behavior, folded_disconnect_behavior, RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting, SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app, migrate_overrides, removed, replace_retired, replacement, retired_name, retired_warning, AUTO_UPDATE, MIN_QP, MIN_QP_SWITCH, UPDATE_CHECK_INTERVAL, UPDATES, fold_min_qp, fold_updates, folded_updates, min_qp_switch_on,
+    BITRATE_ADAPTATION, FOLDED_KEYS, fold_bitrate_adaptation, folded_bitrate_adaptation, fold_packet_pacing, fold_pyrowave_fec, folded_packet_pacing, HDR_OPTION, HDR_REQUEST, HOST_PACING, LINK_RATE, PACKET_PACING, PACING_RATE, REMOVED_APP_KEYS, REMOVED_KEYS, REMOVED_PREFIXES, fold_remove_remote_monitor, folded_remove_remote_monitor, REMOTE_CLIENT_DISCONNECT, REMOTE_STREAM_END, REMOVE_REMOTE_MONITOR, DD_DISCONNECT_BEHAVIOR, DD_HOLD_LAYOUT, DD_REVERT_ON_DISCONNECT, fold_disconnect_behavior, folded_disconnect_behavior, RENAMED_APP_SWITCHES, RENAMED_KEYS, RETIRED_SETTINGS, RETIRED_VALUES, Retired, RetiredSetting, SPLIT_KEYS, WIRELESS_PACING, current_name, folded_hdr, folded_in_layer, migrate_app, migrate_overrides, removed, replace_retired, replacement, retired_name, retired_warning, AUTO_UPDATE, MIN_QP, MIN_QP_SWITCH, UPDATE_CHECK_INTERVAL, UPDATES, fold_min_qp, fold_updates, folded_updates, min_qp_switch_on, fold_library_sync, LIBRARY_SYNC_OPTIONS,
 };
 use text::{bracket_depth, decode, strip_comment};
 pub use values::{
@@ -213,15 +213,9 @@ impl Config {
                 self.values.insert(new.to_owned(), value);
             }
         }
-        for &(old, split) in SPLIT_KEYS {
-            if let Some(value) = self.values.remove(old) {
-                for key in split {
-                    self.values
-                        .entry((*key).to_owned())
-                        .or_insert_with(|| value.clone());
-                }
-            }
-        }
+        // Each launcher's sync options fold into the shared Library sync
+        // settings; a launcher that differs keeps its key as an override.
+        fold_library_sync(&mut self.values);
         if let Some(request) = self.values.remove(HDR_REQUEST)
             && let Some(folded) = folded_in_layer(
                 self.values.get(HDR_OPTION).map_or("auto", String::as_str),
@@ -916,15 +910,6 @@ impl Config {
                 object.insert(new.to_owned(), value);
             }
         }
-        for &(old, split) in SPLIT_KEYS {
-            if let Some(value) = object.remove(old) {
-                for key in split {
-                    object
-                        .entry((*key).to_owned())
-                        .or_insert_with(|| value.clone());
-                }
-            }
-        }
         // The retired HDR request folds into Display HDR as it is sent with
         // it, or else over the Display HDR held: the configuration's own, or
         // for an app's or device's overrides the layers below them. An empty
@@ -1006,6 +991,34 @@ impl Config {
         // Only what changes is checked: a value the file already had (the
         // host reads it leniently) must not block every other save.
         let changed = |key: &str| object.contains_key(key) && next.values.contains_key(key);
+        // Changing a shared Library sync setting re-decides it for every
+        // launcher: the per-launcher keys of earlier releases go. A save that
+        // leaves the shared value as held (or unsent) keeps a launcher's
+        // override, so saving another setting does not change a launcher that
+        // differed.
+        for &(option, default, prefixes) in LIBRARY_SYNC_OPTIONS {
+            let shared = format!("library_{option}");
+            let Some(sent) = object.get(&shared) else {
+                continue;
+            };
+            let sent = match sent {
+                serde_json::Value::String(text) => text.clone(),
+                serde_json::Value::Null => String::new(),
+                other => other.to_string(),
+            };
+            let held = self
+                .values
+                .get(&shared)
+                .map(String::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(default);
+            if held == sent {
+                continue;
+            }
+            for prefix in prefixes {
+                next.values.remove(&format!("{prefix}_{option}"));
+            }
+        }
         if changed("port") && !PORTS.contains(&next.integer("port", 0)) {
             bail!("port must be between 1029 and 65514");
         }

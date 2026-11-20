@@ -69,9 +69,9 @@ impl Source {
     }
 }
 
-/// The sources the launcher sync keeps in step, each with Steam's options under its own keys
-/// ([`Options`]): every launcher but Steam, which keeps its own sync (`crate::steam`), and the
-/// game folders.
+/// The sources the launcher sync keeps in step, each with Steam's options from the shared
+/// Library sync group and its own switch ([`Options`]): every launcher but Steam, which keeps
+/// its own sync (`crate::steam`), and the game folders.
 pub const SYNCED: [Source; 7] = [
     Source::Epic,
     Source::Battlenet,
@@ -100,11 +100,12 @@ impl Source {
 }
 
 /// One source's sync options, Steam's (`steam_*`) under the launcher's own key: a launcher's
-/// switch is `library_<launcher>_enabled` and the rest are `<launcher>_auto_sync`,
-/// `<launcher>_autosync_remove_uninstalled`, `<launcher>_exclude_games` and, for a launcher that
-/// keeps a play history, `<launcher>_sync_all_installed`, `<launcher>_recent_games` and
-/// `<launcher>_recent_max_age_days`. Defaults are Steam's. The game folders are on while there
-/// are some and leave folders out with `library_local_exclude` instead.
+/// switch is `library_<launcher>_enabled` and games to leave out are `<launcher>_exclude_games`.
+/// The rest is the one shared Library sync group (`library_auto_sync`,
+/// `library_autosync_remove_uninstalled`, `library_sync_all_installed`, `library_recent_games`
+/// and `library_recent_max_age_days`); a launcher whose earlier `<launcher>_*` key is still set
+/// keeps it as an override of the shared value. Defaults are Steam's. The game folders are on
+/// while there are some and leave folders out with `library_local_exclude` instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Options {
     /// The scan reads the launcher and the sync keeps its games.
@@ -130,15 +131,30 @@ impl Options {
         let count =
             |option: &str, default: i64| config.integer(&name(option), default).max(0) as u64;
         let local = source == Source::Local;
+        // The shared Library sync value, which a launcher's own key of earlier
+        // releases overrides (kept when the launcher differed at the fold).
+        let shared_boolean =
+            |option: &str, default: bool| config.boolean(&format!("library_{option}"), default);
+        let shared_count =
+            |option: &str, default: i64| config.integer(&format!("library_{option}"), default);
         Self {
             // Game folders: on while there are some ([`Settings::from_config`]).
             enabled: local || config.boolean(&format!("library_{prefix}_enabled"), true),
-            auto_sync: config.boolean(&name("auto_sync"), true),
-            remove_uninstalled: config.boolean(&name("autosync_remove_uninstalled"), true),
+            auto_sync: config.boolean(&name("auto_sync"), shared_boolean("auto_sync", true)),
+            remove_uninstalled: config.boolean(
+                &name("autosync_remove_uninstalled"),
+                shared_boolean("autosync_remove_uninstalled", true),
+            ),
             sync_all_installed: !source.keeps_play_history()
-                || config.boolean(&name("sync_all_installed"), true),
-            recent_games: count("recent_games", 10) as usize,
-            recent_max_age_days: count("recent_max_age_days", 30),
+                || config.boolean(
+                    &name("sync_all_installed"),
+                    shared_boolean("sync_all_installed", true),
+                ),
+            recent_games: count("recent_games", shared_count("recent_games", 10)) as usize,
+            recent_max_age_days: count(
+                "recent_max_age_days",
+                shared_count("recent_max_age_days", 30),
+            ),
             exclusions: if local {
                 vec![]
             } else {

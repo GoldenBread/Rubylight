@@ -31,9 +31,9 @@ test('each launcher’s Options opens its own group on All settings › Games', 
   assert.equal(sources.optionsHref('epic'), '/settings/games#epic-games-options');
   assert.equal(sources.optionsHref('local'), '/settings/games#game-folders');
   assert.equal(sources.optionsHref('playnite'), '/settings/games#playnite');
-  // Every launcher that syncs by itself has its own Sync automatically, as Steam does.
+  // Every launcher syncs by itself under the shared Library sync switch.
   const keys = new Set(schema.settings.map((setting) => setting.key));
-  for (const key of Object.values(sources.AUTO_SYNC_KEYS)) assert.ok(keys.has(key), key);
+  assert.ok(keys.has('library_auto_sync'));
 });
 
 // Nightjar issue 7: Steam turned off here came back on after a reload while Steam library stayed

@@ -1416,6 +1416,7 @@ fn a_device_couch_menu_override_beats_the_host_and_a_bad_one_is_refused() {
     assert!(!config.values.contains_key("couch_menu_corner_hold_ms"));
 }
 use super::*;
+use std::collections::BTreeMap;
 /// A change saved to sunshine.conf, as the settings API does it.
 fn change(config: &mut Config, key: &str, value: &str) -> Result<()> {
     let mut object = serde_json::Map::new();
@@ -1692,38 +1693,61 @@ fn settings_under_an_earlier_name_are_read_under_the_current_one() {
     assert_eq!(current_name("port"), "port");
 }
 #[test]
-fn the_launcher_syncs_shared_switches_become_each_launchers_own() {
-    // An earlier profile turned the sync off for every launcher at once: each
-    // launcher and the game folders keep that, and a launcher's own value wins.
-    let c = Config::parse(
-        "library_auto_sync = false\nlibrary_autosync_remove_uninstalled = false\nepic_auto_sync = true\n",
+fn the_launchers_sync_options_fold_into_the_shared_library_sync_ones() {
+    // Every launcher agreeing takes its value as the shared one; the
+    // per-launcher keys go.
+    let agreed = Config::parse(
+        "steam_auto_sync = false\nepic_auto_sync = false\nbattlenet_auto_sync = false\nmicrosoft_auto_sync = false\nea_auto_sync = false\nubisoft_auto_sync = false\ngog_auto_sync = false\nlibrary_local_auto_sync = false\nplaynite_auto_sync = false\n",
     )
     .unwrap();
-    for (old, split) in SPLIT_KEYS {
-        assert!(!c.values.contains_key(*old), "{old}");
-        for key in *split {
-            // Off from the shared key, except Epic's own `true`. The default
-            // passed is the opposite, so only a stored value passes.
-            let expected = *key == "epic_auto_sync";
-            assert_eq!(c.boolean(key, !expected), expected, "{key}");
-            assert!(c.values.contains_key(*key), "{key}");
-        }
+    assert_eq!(agreed.get("library_auto_sync", ""), "false");
+    for prefix in super::retired::LIBRARY_PREFIXES {
+        assert!(
+            !agreed.values.contains_key(&format!("{prefix}_auto_sync")),
+            "{prefix}"
+        );
     }
-    assert_eq!(c.get("epic_auto_sync", ""), "true");
-    // Saved, the file holds each launcher's own keys.
-    let text = c.text();
-    assert!(!text.contains("library_auto_sync ="), "{text}");
-    assert!(text.contains("gog_auto_sync = false"), "{text}");
-    // A client sending the earlier key sets every launcher's, but not one sent too.
-    let mut config = Config::default();
+    // Agreeing on the default writes nothing at all.
+    let defaults = Config::parse("steam_auto_sync = true\nepic_auto_sync = true\n").unwrap();
+    assert_eq!(defaults.values, BTreeMap::new());
+    // One launcher differs: it keeps its key as an override, the shared key
+    // stays unset (the default), and the fold survives a save.
+    let one = Config::parse("gog_auto_sync = false\n").unwrap();
+    assert!(!one.values.contains_key("library_auto_sync"));
+    assert_eq!(one.get("gog_auto_sync", ""), "false");
+    assert_eq!(one.boolean("library_auto_sync", true), true);
+    assert_eq!(Config::parse(&one.text()).unwrap().values, one.values);
+    // The recent-games options fold over the launchers that keep a play
+    // history, and a value already saved under the shared name wins.
+    let mixed = Config::parse(
+        "battlenet_sync_all_installed = false\nbattlenet_recent_games = 3\nlibrary_recent_max_age_days = 0\nsteam_recent_max_age_days = 30\nplaynite_recent_max_age_days = 30\n",
+    )
+    .unwrap();
+    assert_eq!(mixed.boolean("library_sync_all_installed", true), true);
+    assert_eq!(mixed.get("battlenet_sync_all_installed", ""), "false");
+    assert_eq!(mixed.integer("library_recent_games", 0), 10);
+    assert_eq!(mixed.integer("library_recent_max_age_days", 0), 0);
+    assert_eq!(mixed.integer("steam_recent_max_age_days", 0), 30);
+    assert_eq!(mixed.integer("playnite_recent_max_age_days", 0), 30);
+}
+#[test]
+fn saving_the_shared_library_sync_setting_redecides_every_launcher() {
+    // A save that leaves the shared value as held keeps a launcher's
+    // override, so saving another setting does not change that launcher.
+    let mut config = Config::parse("gog_auto_sync = false\n").unwrap();
+    let mut object = serde_json::Map::new();
+    object.insert("library_auto_sync".into(), true.into());
+    object.insert("sunshine_name".into(), "Pegasus".into());
+    config.update(&object).unwrap();
+    assert_eq!(config.get("gog_auto_sync", ""), "false");
+    assert_eq!(config.get("library_auto_sync", ""), "true");
+    // Changing the shared value re-decides it for every launcher: the
+    // override goes, as resetting the shared key does.
     let mut object = serde_json::Map::new();
     object.insert("library_auto_sync".into(), false.into());
-    object.insert("ea_auto_sync".into(), true.into());
     config.update(&object).unwrap();
-    assert_eq!(config.get("ubisoft_auto_sync", ""), "false");
-    assert_eq!(config.get("library_local_auto_sync", ""), "false");
-    assert_eq!(config.get("ea_auto_sync", ""), "true");
-    assert!(!config.values.contains_key("library_auto_sync"));
+    assert_eq!(config.get("library_auto_sync", ""), "false");
+    assert!(!config.values.contains_key("gog_auto_sync"));
 }
 #[test]
 fn a_saved_configuration_holds_settings_under_their_current_names() {

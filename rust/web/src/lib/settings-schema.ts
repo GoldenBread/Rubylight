@@ -66,11 +66,10 @@ const basicKeys = new Set([
   'usb_forwarding',
   'origin_web_ui_allowed',
   'playnite_enabled',
-  'playnite_auto_sync',
+  'library_auto_sync',
   'playnite_sync_categories',
   'playnite_fullscreen_entry_enabled',
   'steam_enabled',
-  'steam_auto_sync',
 ]);
 
 export const schema: Schema = {

@@ -14,22 +14,19 @@ import { ALWAYS_ON, DIAGNOSTICS, MAIN_KEYS } from './main';
 /** The launchers' option groups: the Games page links to each, so the Games tab keeps them out of the way. */
 export const GAMES_PAGE_KEYS: readonly string[] = [
   // Games › Steam options
-  'steam_enabled', 'steam_auto_sync', 'steam_sync_all_installed', 'steam_recent_games', 'steam_recent_max_age_days',
-  'steam_autosync_remove_uninstalled', 'steam_include_tools', 'steam_exclude_games',
+  'steam_enabled', 'steam_include_tools', 'steam_exclude_games',
   // Games › Epic Games options
-  'library_epic_enabled', 'epic_auto_sync', 'epic_autosync_remove_uninstalled', 'epic_exclude_games',
+  'library_epic_enabled', 'epic_exclude_games',
   // Games › Battle.net options
-  'library_battlenet_enabled', 'battlenet_auto_sync', 'battlenet_sync_all_installed', 'battlenet_recent_games',
-  'battlenet_recent_max_age_days', 'battlenet_autosync_remove_uninstalled', 'battlenet_exclude_games',
+  'library_battlenet_enabled', 'battlenet_exclude_games',
   // Games › Microsoft Store and Xbox options
-  'library_microsoft_enabled', 'microsoft_auto_sync', 'microsoft_autosync_remove_uninstalled',
-  'microsoft_exclude_games',
+  'library_microsoft_enabled', 'microsoft_exclude_games',
   // Games › EA app options
-  'library_ea_enabled', 'ea_auto_sync', 'ea_autosync_remove_uninstalled', 'ea_exclude_games',
+  'library_ea_enabled', 'ea_exclude_games',
   // Games › Ubisoft Connect options
-  'library_ubisoft_enabled', 'ubisoft_auto_sync', 'ubisoft_autosync_remove_uninstalled', 'ubisoft_exclude_games',
+  'library_ubisoft_enabled', 'ubisoft_exclude_games',
   // Games › GOG options
-  'library_gog_enabled', 'gog_auto_sync', 'gog_autosync_remove_uninstalled', 'gog_exclude_games',
+  'library_gog_enabled', 'gog_exclude_games',
 ];
 
 export const GAMES_PAGE_KEY_SET: ReadonlySet<string> = new Set(GAMES_PAGE_KEYS);

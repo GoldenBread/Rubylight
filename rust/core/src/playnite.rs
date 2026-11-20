@@ -264,7 +264,8 @@ pub fn format_time(seconds: i64) -> String {
     )
 }
 
-/// The `playnite_*` settings, with Vibepollo's defaults.
+/// The Playnite settings, with Vibepollo's defaults: the sync options are the shared Library
+/// sync group, overridden by a `playnite_*` key of earlier releases where Playnite differed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub enabled: bool,
@@ -315,12 +316,30 @@ impl Settings {
         };
         Self {
             enabled: config.boolean("playnite_enabled", true),
-            auto_sync: config.boolean("playnite_auto_sync", true),
-            sync_all_installed: config.boolean("playnite_sync_all_installed", true),
-            recent_games: count("playnite_recent_games", 10) as usize,
-            recent_max_age_days: count("playnite_recent_max_age_days", 30),
+            // The sync options are the shared Library sync group; a
+            // `playnite_*` key of earlier releases overrides one Playnite
+            // differed at the fold.
+            auto_sync: config.boolean(
+                "playnite_auto_sync",
+                config.boolean("library_auto_sync", true),
+            ),
+            sync_all_installed: config.boolean(
+                "playnite_sync_all_installed",
+                config.boolean("library_sync_all_installed", true),
+            ),
+            recent_games: count(
+                "playnite_recent_games",
+                config.integer("library_recent_games", 10),
+            ) as usize,
+            recent_max_age_days: count(
+                "playnite_recent_max_age_days",
+                config.integer("library_recent_max_age_days", 30),
+            ),
             delete_after_days: count("playnite_autosync_delete_after_days", 14),
-            remove_uninstalled: config.boolean("playnite_autosync_remove_uninstalled", true),
+            remove_uninstalled: config.boolean(
+                "playnite_autosync_remove_uninstalled",
+                config.boolean("library_autosync_remove_uninstalled", true),
+            ),
             require_replacement: config.boolean("playnite_autosync_require_replacement", true),
             sync_categories: list("playnite_sync_categories", true),
             exclude_categories: list("playnite_exclude_categories", true),

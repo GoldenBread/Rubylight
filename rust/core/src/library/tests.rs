@@ -1127,6 +1127,36 @@ fn every_launcher_is_on_and_synced_by_default_like_steam() {
 }
 
 #[test]
+fn a_launchers_own_sync_key_overrides_the_shared_library_sync() {
+    // The shared Library sync value applies to every launcher; one whose own
+    // key of earlier releases is still set reads that instead.
+    let settings = sync_settings("library_auto_sync = false\ngog_auto_sync = true\n");
+    assert!(!settings.options(Source::Epic).unwrap().auto_sync);
+    assert!(settings.options(Source::Gog).unwrap().auto_sync);
+    // Steam and Playnite read the shared value through their own settings.
+    let steam = crate::steam::Settings::from_config(
+        &crate::config::Config::parse("library_auto_sync = false\n").unwrap(),
+    );
+    assert!(!steam.auto_sync);
+    let playnite = crate::playnite::Settings::from_config(
+        &crate::config::Config::parse("library_auto_sync = false\nplaynite_auto_sync = true\n")
+            .unwrap(),
+    );
+    assert!(playnite.auto_sync);
+    // The recent-games options are shared too, and the shared remove switch
+    // reaches the launchers.
+    let recent = sync_settings(
+        "library_sync_all_installed = false\nlibrary_recent_games = 2\nlibrary_recent_max_age_days = 0\nlibrary_autosync_remove_uninstalled = false\n",
+    );
+    let options = recent.options(Source::Battlenet).unwrap();
+    assert!(!options.sync_all_installed);
+    assert_eq!(options.recent_games, 2);
+    assert_eq!(options.recent_max_age_days, 0);
+    assert!(!options.remove_uninstalled);
+    assert!(!recent.options(Source::Epic).unwrap().remove_uninstalled);
+}
+
+#[test]
 fn a_launchers_games_to_leave_out_are_never_added_and_their_synced_apps_go() {
     let settings = sync_settings(
         "ubisoft_exclude_games = [{\"name\": \"MIRAGE\"}]\nepic_exclude_games = [\"namespace-1:item-2:Orion\"]\n",

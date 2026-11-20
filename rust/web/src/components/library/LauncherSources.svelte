@@ -15,7 +15,7 @@
     // Game folders are on when there are folders to read.
     local: null,
   };
-  /** The setting that keeps each launcher in step by itself, as Steam's does. */
+  /** A launcher's own sync switch of earlier releases, kept as an override of the shared Library sync one (`library_auto_sync`) where it differed. */
   export const AUTO_SYNC_KEYS: Record<LibrarySource, string> = {
     steam: 'steam_auto_sync',
     epic: 'epic_auto_sync',
@@ -97,7 +97,7 @@
   };
   /** Every launcher that is on keeps itself in step; one that does not syncs with Sync now. */
   const automatic = $derived(
-    rows.every((source) => source.state === 'disabled' || flag(AUTO_SYNC_KEYS[source.source], true)),
+    rows.every((source) => source.state === 'disabled' || flag(AUTO_SYNC_KEYS[source.source], flag('library_auto_sync', true))),
   );
 
   async function load() {

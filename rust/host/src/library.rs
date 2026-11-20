@@ -392,7 +392,7 @@ pub fn sync(h: &Shared) -> Result<Value> {
     sync_with(h, false)
 }
 /// [`sync`], or with `automatic` the automatic sync, which keeps only the launchers that sync
-/// automatically (`<launcher>_auto_sync`).
+/// automatically (Library sync › Sync automatically).
 fn sync_with(h: &Shared, automatic: bool) -> Result<Value> {
     sync_discovering(h, automatic, |settings| {
         let discovery = butterpollo_windows::library::in_background(|| {

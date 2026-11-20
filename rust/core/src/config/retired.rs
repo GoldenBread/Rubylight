@@ -1,6 +1,7 @@
 //! Settings and values earlier releases and other hosts saved that the
 //! host no longer reads, and what replaces each.
 use super::unquote;
+use std::collections::BTreeMap;
 
 /// Setting values Rubylight no longer offers, and what replaces each:
 /// the ViGEmBus controllers, which Sunshine, Apollo, Vibepollo and earlier
@@ -91,36 +92,86 @@ pub const RENAMED_KEYS: &[(&str, &str)] = &[
     // Full chroma shipped on by default; it is no experiment.
     ("experimental_packed_444", "packed_444"),
 ];
-/// Settings that earlier releases kept once for several things and that became
-/// one setting for each, which takes the earlier value unless it is set itself:
-/// the launcher sync's two switches, now each launcher's own as Steam's are,
-/// and the game folders'.
-pub const SPLIT_KEYS: &[(&str, &[&str])] = &[
-    (
-        "library_auto_sync",
-        &[
-            "epic_auto_sync",
-            "battlenet_auto_sync",
-            "ea_auto_sync",
-            "ubisoft_auto_sync",
-            "gog_auto_sync",
-            "microsoft_auto_sync",
-            "library_local_auto_sync",
-        ],
-    ),
-    (
-        "library_autosync_remove_uninstalled",
-        &[
-            "epic_autosync_remove_uninstalled",
-            "battlenet_autosync_remove_uninstalled",
-            "ea_autosync_remove_uninstalled",
-            "ubisoft_autosync_remove_uninstalled",
-            "gog_autosync_remove_uninstalled",
-            "microsoft_autosync_remove_uninstalled",
-            "library_local_autosync_remove_uninstalled",
-        ],
-    ),
+/// The launchers whose sync options earlier releases kept each under its own
+/// keys: Steam's `steam_*`, the launcher sync's `<launcher>_*`, the game
+/// folders' `library_local_*` and Playnite's `playnite_*`.
+pub const LIBRARY_PREFIXES: &[&str] = &[
+    "steam",
+    "epic",
+    "battlenet",
+    "microsoft",
+    "ea",
+    "ubisoft",
+    "gog",
+    "library_local",
+    "playnite",
 ];
+/// The launchers that record when a game was played, the ones whose sync has
+/// the `sync_all_installed`, `recent_games` and `recent_max_age_days` options.
+pub const LIBRARY_HISTORY_PREFIXES: &[&str] = &["steam", "battlenet", "playnite"];
+/// Each Library sync option that became one shared setting for every launcher:
+/// its name (the shared key is `library_<name>`), its default and the
+/// launchers that had their own.
+pub const LIBRARY_SYNC_OPTIONS: &[(&str, &str, &[&str])] = &[
+    ("auto_sync", "true", LIBRARY_PREFIXES),
+    ("autosync_remove_uninstalled", "true", LIBRARY_PREFIXES),
+    ("sync_all_installed", "true", LIBRARY_HISTORY_PREFIXES),
+    ("recent_games", "10", LIBRARY_HISTORY_PREFIXES),
+    ("recent_max_age_days", "30", LIBRARY_HISTORY_PREFIXES),
+];
+/// Fold the launchers' `<launcher>_<option>` settings into the shared
+/// `library_<option>` one ([`LIBRARY_SYNC_OPTIONS`]). The shared value is the
+/// one every launcher agrees on; while they differ it is the default, and a
+/// launcher whose value differs keeps its own key, which the sync still reads
+/// as an override. A value already saved under the shared name wins, and a
+/// launcher's key equal to the shared value goes. Returns whether anything
+/// changed.
+pub fn fold_library_sync(values: &mut BTreeMap<String, String>) -> bool {
+    let mut changed = false;
+    for &(option, default, prefixes) in LIBRARY_SYNC_OPTIONS {
+        let shared = format!("library_{option}");
+        let keys: Vec<(String, String)> = prefixes
+            .iter()
+            .filter_map(|prefix| {
+                let key = format!("{prefix}_{option}");
+                values.get(&key).map(|value| (key, value.clone()))
+            })
+            .collect();
+        if keys.is_empty() {
+            continue;
+        }
+        // The value every launcher agrees on counts the ones not set as the
+        // default, which is what they read.
+        let effective: Vec<String> = prefixes
+            .iter()
+            .map(|prefix| {
+                values
+                    .get(&format!("{prefix}_{option}"))
+                    .cloned()
+                    .unwrap_or_else(|| default.to_owned())
+            })
+            .collect();
+        let agreed = effective
+            .iter()
+            .all(|value| value == &effective[0])
+            .then(|| effective[0].clone());
+        let shared_value = values
+            .get(&shared)
+            .cloned()
+            .unwrap_or_else(|| agreed.unwrap_or_else(|| default.to_owned()));
+        if shared_value != default && !values.contains_key(&shared) {
+            values.insert(shared, shared_value.clone());
+            changed = true;
+        }
+        for (key, value) in &keys {
+            if value == &shared_value {
+                values.remove(key);
+                changed = true;
+            }
+        }
+    }
+    changed
+}
 /// Settings of features Rubylight removed: the
 /// NVIDIA driver's VSYNC override (all the dummy plug workaround still
 /// did), and the software encoders' settings. Saved profiles, apps and

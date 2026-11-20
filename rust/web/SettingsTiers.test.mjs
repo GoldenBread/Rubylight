@@ -35,7 +35,7 @@ test('every key in the tier lists is a setting, and no key has two tiers', () =>
       assert.equal(tierOf(key), name, key);
     }
   }
-  assert.deepEqual([GAMES_PAGE_KEYS.length, ALWAYS_ON.length, DIAGNOSTICS.length], [35, 20, 3]);
+  assert.deepEqual([GAMES_PAGE_KEYS.length, ALWAYS_ON.length, DIAGNOSTICS.length], [15, 20, 3]);
   // No expert tier: those settings are everyday ones in their topic tab.
   assert.equal('EXPERT_KEYS' in tiers, false);
   assert.equal(tierOf('amd_preanalysis'), 'everyday');
@@ -136,7 +136,7 @@ test('a setting is found where it shows: links, older anchors and the quick swit
   assert.equal(settingHref(amf), '/settings/picture?setting=amd_preanalysis');
   assert.equal(settingLink('amd_preanalysis'), '/settings/picture?setting=amd_preanalysis');
   assert.equal(settingHref(byKey.get('stream_preset')), '/settings/picture?setting=stream_preset');
-  assert.equal(settingHref(byKey.get('steam_auto_sync')), '/settings/games?setting=steam_auto_sync');
+  assert.equal(settingHref(byKey.get('steam_enabled')), '/settings/games?setting=steam_enabled');
   assert.equal(placeText(byKey.get('frame_warp')), 'Advanced › Debug switches');
   assert.equal(placeText(byKey.get('stream_preset')), 'Picture › Preset');
   const found = results(amf.label, { apps: [], clients: [] }).find((group) => group.id === 'settings');

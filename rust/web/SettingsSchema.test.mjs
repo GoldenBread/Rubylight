@@ -504,8 +504,7 @@ test('activating a virtual display is offered only where it changes the stream',
 test('library counts and time limits reject fractions instead of saving values the host would ignore', () => {
   // These are Config::integer inputs in core/src/steam.rs and core/src/playnite.rs.
   for (const key of [
-    'steam_recent_games', 'steam_recent_max_age_days',
-    'playnite_recent_games', 'playnite_recent_max_age_days', 'playnite_autosync_delete_after_days',
+    'library_recent_games', 'library_recent_max_age_days', 'playnite_autosync_delete_after_days',
     'playnite_focus_attempts', 'playnite_focus_timeout_secs', 'playnite_exit_wait_secs',
   ]) {
     const setting = settings.get(key);
@@ -535,54 +534,41 @@ test('Epic and GOG scans default on, game folders default empty and their exclus
   }
 });
 
-test('every launcher has Steam’s options in a group of its own, with Steam’s defaults', () => {
+test('every launcher has its switch and games to leave out in a group of its own, and the sync options are one shared group', () => {
   // The host's defaults: library::Options::from_config (core/src/library.rs) and core/src/steam.rs.
   const names = { epic: 'Epic Games', battlenet: 'Battle.net', microsoft: 'Microsoft Store and Xbox', ea: 'EA app', ubisoft: 'Ubisoft Connect', gog: 'GOG' };
-  const steam = (key) => settings.get(`steam_${key}`);
   for (const [id, name] of Object.entries(names)) {
     const group = `${name} options`;
     const enabled = settings.get(`library_${id}_enabled`);
     assert.equal(enabled.label, `${name} library`);
     assert.match(enabled.description, /^Adds the games installed with .+ to the library/, id);
-    for (const option of ['auto_sync', 'autosync_remove_uninstalled', 'exclude_games']) {
-      const setting = settings.get(`${id}_${option}`);
-      assert.ok(setting, `${id}_${option}`);
-      assert.equal(setting.group, group, setting.key);
-      assert.equal(setting.label, steam(option).label, setting.key);
-      assert.deepEqual(setting.default, steam(option).default, setting.key);
-      assert.equal(setting.control.kind, steam(option).control.kind, setting.key);
-      // Shown while the launcher is on, as Steam's options are while Steam is.
-      assert.equal(setting.visibleWhen({}), true, setting.key);
-      assert.equal(setting.visibleWhen({ [`library_${id}_enabled`]: false }), false, setting.key);
-    }
     assert.equal(enabled.group, group, id);
     assert.equal(enabled.default, true, id);
-    // Only Battle.net records when its games were played, so only it can keep the recent ones.
-    const recent = ['sync_all_installed', 'recent_games', 'recent_max_age_days'];
-    for (const option of recent) {
-      const setting = settings.get(`${id}_${option}`);
-      if (id !== 'battlenet') {
-        assert.equal(setting, undefined, `${id}_${option}`);
-        continue;
-      }
-      assert.equal(setting.label, steam(option).label, setting.key);
-      assert.deepEqual(setting.default, steam(option).default, setting.key);
+    const exclude = settings.get(`${id}_exclude_games`);
+    assert.equal(exclude.group, group, id);
+    assert.equal(exclude.visibleWhen({}), true, id);
+    assert.equal(exclude.visibleWhen({ [`library_${id}_enabled`]: false }), false, id);
+    // The sync options are the shared Library sync group now (config/retired.rs fold_library_sync).
+    for (const option of ['auto_sync', 'autosync_remove_uninstalled', 'sync_all_installed', 'recent_games', 'recent_max_age_days']) {
+      assert.equal(settings.get(`${id}_${option}`), undefined, `${id}_${option}`);
     }
   }
-  const recent = settings.get('battlenet_recent_games');
-  assert.equal(recent.visibleWhen({}), false);
-  assert.equal(recent.visibleWhen({ battlenet_sync_all_installed: false }), true);
-  // The shared switches of earlier releases are each launcher's now (config/retired.rs SPLIT_KEYS).
-  assert.equal(settings.get('library_auto_sync'), undefined);
-  assert.equal(settings.get('library_autosync_remove_uninstalled'), undefined);
-  for (const key of ['library_local_auto_sync', 'library_local_autosync_remove_uninstalled']) {
-    const setting = settings.get(key);
-    assert.equal(setting.group, 'Game folders', key);
-    assert.equal(setting.default, true, key);
-    assert.equal(setting.visibleWhen({}), false, key);
-    assert.equal(setting.visibleWhen({ library_local_folders: ['D:\\Games'] }), true, key);
+  for (const option of ['auto_sync', 'autosync_remove_uninstalled', 'sync_all_installed', 'recent_games', 'recent_max_age_days']) {
+    assert.equal(settings.get(`steam_${option}`), undefined, `steam_${option}`);
+    assert.equal(settings.get(`playnite_${option}`), undefined, `playnite_${option}`);
+    assert.equal(settings.get(`library_local_${option}`), undefined, `library_local_${option}`);
+    assert.equal(settings.get(`library_${option}`).group, 'Library sync', option);
   }
-  for (const key of ['steam_enabled', 'steam_auto_sync']) assert.equal(settings.get(key).default, true, key);
+  assert.equal(settings.get('library_auto_sync').default, true);
+  assert.equal(settings.get('library_autosync_remove_uninstalled').default, true);
+  assert.equal(settings.get('library_sync_all_installed').default, true);
+  assert.equal(settings.get('library_recent_games').default, 10);
+  assert.equal(settings.get('library_recent_max_age_days').default, 30);
+  const recent = settings.get('library_recent_games');
+  assert.equal(recent.visibleWhen({}), false);
+  assert.equal(recent.visibleWhen({ library_sync_all_installed: false }), true);
+  assert.equal(settings.get('library_recent_max_age_days').visibleWhen({ library_sync_all_installed: false }), true);
+  assert.equal(settings.get('steam_enabled').default, true);
 });
 
 test('integer tuning steps reject fractions without forcing multiples of the arrow increment', () => {
@@ -834,16 +820,12 @@ test('haptics from game audio are off by default, unlabelled, and their options 
   assert.deepEqual(computeChanges(settings, draft, sent), {});
 });
 
-test('Steam and Playnite add every installed game unless set to false, and fold their recent-games mode', () => {
-  for (const prefix of ['steam', 'playnite']) {
-    const all = settings.get(`${prefix}_sync_all_installed`);
-    assert.equal(all.default, true, prefix);
-    assert.equal(all.advanced, true, prefix);
-    const recent = settings.get(`${prefix}_recent_games`);
-    assert.equal(recent.advanced, true, prefix);
-    assert.equal(recent.visibleWhen({}), false, `${prefix}: an absent key means every installed game`);
-    assert.equal(recent.visibleWhen({ [`${prefix}_sync_all_installed`]: false }), true, prefix);
-  }
+test('every launcher adds every installed game unless the shared setting is false, and folds the recent-games mode', () => {
+  const all = settings.get('library_sync_all_installed');
+  assert.equal(all.default, true);
+  const recent = settings.get('library_recent_games');
+  assert.equal(recent.visibleWhen({}), false, 'an absent key means every installed game');
+  assert.equal(recent.visibleWhen({ library_sync_all_installed: false }), true);
   assert.equal(settings.get('steam_exclude_games').advanced, true);
   assert.equal(settings.get('steam_enabled').group, 'Steam options');
 });
@@ -1132,6 +1114,13 @@ test('a row that does nothing in the current setup says why', () => {
       { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: false }],
     ['playnite_sync_plugins', { playnite_enabled: true, playnite_auto_sync: true },
       { playnite_enabled: true, playnite_auto_sync: true, playnite_sync_all_installed: false }],
+    ['host_adaptive_pacing', { pacing_max_bitrate_kbps: 50000 }, {}],
+    ['wireless_adaptive_pacing', { pacing_max_bitrate_kbps: 50000 }, {}],
+    ['keyframe_loss_pacing', { host_adaptive_pacing: true }, {}],
+    ['playnite_sync_categories', { playnite_enabled: true, library_auto_sync: true, library_sync_all_installed: true },
+      { playnite_enabled: true, library_auto_sync: true, library_sync_all_installed: false }],
+    ['playnite_sync_plugins', { playnite_enabled: true, library_auto_sync: true },
+      { playnite_enabled: true, library_auto_sync: true, library_sync_all_installed: false }],
     ['playnite_focus_exit_on_first', { playnite_enabled: true, playnite_focus_attempts: 0 }, { playnite_enabled: true }],
     ['playnite_focus_exit_on_first', { playnite_enabled: true, playnite_focus_timeout_secs: 0 }, { playnite_enabled: true }],
     ['dd_virtual_display_scale', { [VIRTUAL_DISPLAY_OS]: false }, { [VIRTUAL_DISPLAY_OS]: true }],

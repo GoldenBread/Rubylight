@@ -1078,7 +1078,9 @@ pub fn hashed_store_portrait_url(appid: u32, local: &Path) -> Option<String> {
     })
 }
 
-/// The Steam settings (`steam_*` keys, Vibepollo's defaults).
+/// The Steam settings: its switch and games to leave out are Steam's own; the rest is the
+/// shared Library sync group (`library_*` keys), which a `steam_*` key of earlier releases
+/// overrides when Steam differed at the fold. Vibepollo's defaults.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub enabled: bool,
@@ -1093,13 +1095,24 @@ pub struct Settings {
 impl Settings {
     pub fn from_config(config: &Config) -> Self {
         let count = |key: &str, default: i64| config.integer(key, default).max(0) as u64;
+        let shared_count =
+            |option: &str, default: i64| config.integer(&format!("library_{option}"), default);
         Self {
             enabled: config.boolean("steam_enabled", true),
-            auto_sync: config.boolean("steam_auto_sync", true),
-            sync_all_installed: config.boolean("steam_sync_all_installed", true),
-            recent_games: count("steam_recent_games", 10) as usize,
-            recent_max_age_days: count("steam_recent_max_age_days", 30),
-            remove_uninstalled: config.boolean("steam_autosync_remove_uninstalled", true),
+            auto_sync: config.boolean("steam_auto_sync", config.boolean("library_auto_sync", true)),
+            sync_all_installed: config.boolean(
+                "steam_sync_all_installed",
+                config.boolean("library_sync_all_installed", true),
+            ),
+            recent_games: count("steam_recent_games", shared_count("recent_games", 10)) as usize,
+            recent_max_age_days: count(
+                "steam_recent_max_age_days",
+                shared_count("recent_max_age_days", 30),
+            ),
+            remove_uninstalled: config.boolean(
+                "steam_autosync_remove_uninstalled",
+                config.boolean("library_autosync_remove_uninstalled", true),
+            ),
             include_tools: config.boolean("steam_include_tools", false),
             exclusions: id_names(config.get("steam_exclude_games", "")),
         }

@@ -1,0 +1,2 @@
+# Library sync
+- **One Library sync group for every launcher.** The Games page had the same five options for each launcher (Sync automatically, Remove uninstalled games, Every installed game, Recent games, Played within). They are now one Library sync group, and each launcher keeps only its on/off switch and Games to leave out. Your saved choices carry over: the value all your launchers agreed on becomes the shared one, and a launcher you had set differently keeps its own value.

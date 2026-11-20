@@ -72,7 +72,13 @@ test('the groups most people leave alone fold in place, open when customized', a
     assert.ok(groupRank([...tabs][0], group) < 1000, group);
   }
   // The launcher groups belong to Games, where each Games tile links its own options.
-  for (const group of ['Steam options', 'Playnite', 'Game folders', 'Lossless Scaling']) {
+  // One shared Library sync group, open, in the Games tab with the five sync options.
+  assert.equal(FOLDED_GROUPS.has('Library sync'), false);
+  assert.deepEqual(
+    schema.settings.filter((setting) => setting.group === 'Library sync').map((setting) => setting.key),
+    ['library_auto_sync', 'library_autosync_remove_uninstalled', 'library_sync_all_installed', 'library_recent_games', 'library_recent_max_age_days'],
+  );
+  for (const group of ['Library sync', 'Steam options', 'Playnite', 'Game folders', 'Lossless Scaling']) {
     const member = schema.settings.find((setting) => setting.group === group);
     assert.equal(settingsGroup(member.category), 'games', group);
   }

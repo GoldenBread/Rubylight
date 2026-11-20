@@ -16,11 +16,14 @@ function on(values: Values, key: string, fallback: boolean): boolean {
 }
 
 const steam = (values: Values) => on(values, 'steam_enabled', true);
-const recent = (values: Values) => steam(values) && !on(values, 'steam_sync_all_installed', true);
 const folders = (values: Values) => toList(values.library_local_folders).some((folder) => folder.trim() !== '');
 const playnite = (values: Values) => on(values, 'playnite_enabled', true);
-const playniteSync = (values: Values) => playnite(values) && on(values, 'playnite_auto_sync', true);
-const playniteRecent = (values: Values) => playniteSync(values) && !on(values, 'playnite_sync_all_installed', true);
+/** The shared Library sync switches, which every launcher reads (core/src/library.rs). */
+const sync = (values: Values) => on(values, 'library_auto_sync', true);
+const syncAll = (values: Values) => on(values, 'library_sync_all_installed', true);
+const recent = (values: Values) => !syncAll(values);
+const playniteSync = (values: Values) => playnite(values) && sync(values);
+const playniteRecent = (values: Values) => playniteSync(values) && !syncAll(values);
 
 const playniteSettings: Setting[] = [
   {
@@ -36,54 +39,6 @@ const playniteSettings: Setting[] = [
     default: true,
   },
   {
-    key: 'playnite_auto_sync',
-    label: 'Add games automatically',
-    description:
-      'While Playnite runs, adds the games chosen below and removes them when they no longer qualify. Off, no game is added or removed; Sync now only updates those already there.',
-    details:
-      'While this is on and the Rubylight plugin is installed, the games of every launcher come through Playnite, and Steam’s and the other launchers’ own syncs stand aside so no game is added twice. It syncs when Playnite starts, when these settings change and every ten minutes. Off, Sync now on the Games page still brings the name and cover of the games already added up to date.',
-    category: 'library',
-    group: 'Playnite',
-    control: { kind: 'toggle' },
-    default: true,
-    inactiveHint: "Turn on Playnite to use this setting. The Rubylight plugin must be installed in Playnite.",
-    visibleWhen: playnite,
-  },
-  {
-    key: 'playnite_sync_all_installed',
-    label: 'Every installed game',
-    description:
-      'Adds every installed game in Playnite, as every launcher does. Turn it off for a shorter list: only recently played games and the categories and libraries below are added.',
-    category: 'library',
-    group: 'Playnite',
-    control: { kind: 'toggle' },
-    default: true,
-    inactiveHint: "Turn on Playnite and Add games automatically to use this setting.",
-    visibleWhen: playniteSync,
-  },
-  {
-    key: 'playnite_recent_games',
-    label: 'Recent games',
-    description: 'How many of the most recently played games to add. 0 adds none.',
-    category: 'library',
-    group: 'Playnite',
-    control: { kind: 'number', min: 0, max: 200, step: 1 },
-    default: 10,
-    inactiveHint: "Turn on Playnite and Add games automatically, then turn off Every installed game to configure recent games.",
-    visibleWhen: playniteRecent,
-  },
-  {
-    key: 'playnite_recent_max_age_days',
-    label: 'Played within',
-    description: 'Recent games must have been played within this many days. 0 counts any game, played or not.',
-    category: 'library',
-    group: 'Playnite',
-    control: { kind: 'number', min: 0, max: 3650, step: 1, unit: 'days' },
-    default: 30,
-    inactiveHint: "Turn on Playnite and Add games automatically, then turn off Every installed game to configure recent games.",
-    visibleWhen: playniteRecent,
-  },
-  {
     key: 'playnite_sync_categories',
     label: 'Categories to add',
     description:
@@ -92,7 +47,7 @@ const playniteSettings: Setting[] = [
     group: 'Playnite',
     control: { kind: 'json' },
     default: [],
-    inactiveHint: "Every installed game already adds them all. Turn on Playnite and Add games automatically, then turn off Every installed game, to use this setting.",
+    inactiveHint: "Every installed game already adds them all. Turn on Playnite and Sync automatically, then turn off Every installed game, to use this setting.",
     visibleWhen: playniteRecent,
   },
   {
@@ -104,7 +59,7 @@ const playniteSettings: Setting[] = [
     group: 'Playnite',
     control: { kind: 'json' },
     default: [],
-    inactiveHint: "Every installed game already adds them all. Turn on Playnite and Add games automatically, then turn off Every installed game, to use this setting.",
+    inactiveHint: "Every installed game already adds them all. Turn on Playnite and Sync automatically, then turn off Every installed game, to use this setting.",
     visibleWhen: playniteRecent,
     advanced: true,
   },
@@ -117,7 +72,7 @@ const playniteSettings: Setting[] = [
     group: 'Playnite',
     control: { kind: 'json' },
     default: [],
-    inactiveHint: "Turn on Playnite and Add games automatically to use this setting.",
+    inactiveHint: "Turn on Playnite and Sync automatically to use this setting.",
     visibleWhen: playniteSync,
   },
   {
@@ -128,7 +83,7 @@ const playniteSettings: Setting[] = [
     group: 'Playnite',
     control: { kind: 'json' },
     default: [],
-    inactiveHint: "Turn on Playnite and Add games automatically to use this setting.",
+    inactiveHint: "Turn on Playnite and Sync automatically to use this setting.",
     visibleWhen: playniteSync,
     advanced: true,
   },
@@ -140,7 +95,7 @@ const playniteSettings: Setting[] = [
     group: 'Playnite',
     control: { kind: 'json' },
     default: [],
-    inactiveHint: "Turn on Playnite and Add games automatically to use this setting.",
+    inactiveHint: "Turn on Playnite and Sync automatically to use this setting.",
     visibleWhen: playniteSync,
     advanced: true,
   },
@@ -152,7 +107,7 @@ const playniteSettings: Setting[] = [
     group: 'Playnite',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Turn on Playnite and Add games automatically to use this setting.",
+    inactiveHint: "Turn on Playnite and Sync automatically to use this setting.",
     visibleWhen: playniteSync,
   },
   {
@@ -163,7 +118,7 @@ const playniteSettings: Setting[] = [
     group: 'Playnite',
     control: { kind: 'number', min: 0, max: 3650, step: 1, unit: 'days' },
     default: 14,
-    inactiveHint: "Turn on Playnite and Add games automatically to use this setting.",
+    inactiveHint: "Turn on Playnite and Sync automatically to use this setting.",
     visibleWhen: playniteSync,
   },
   {
@@ -175,7 +130,7 @@ const playniteSettings: Setting[] = [
     group: 'Playnite',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Turn on Playnite and Add games automatically, then turn off Every installed game to configure recent games.",
+    inactiveHint: "Turn on Playnite and Sync automatically, then turn off Every installed game to configure recent games.",
     visibleWhen: playniteRecent,
     advanced: true,
   },
@@ -286,15 +241,13 @@ export const LAUNCHER_GROUPS: Record<string, string> = {
   playnite: 'Playnite',
 };
 
-/** Steam's options for one launcher: its switch, automatic sync, removal, recent games where it keeps a play history, and games to leave out. */
+/** One launcher's options: its switch and games to leave out. The sync options are the shared Library sync group. */
 function launcherSettings(launcher: Launcher): Setting[] {
   const { id, name } = launcher;
   const group = LAUNCHER_GROUPS[id]!;
   const enabled = (values: Values) => on(values, `library_${id}_enabled`, true);
-  const recentOnly = (values: Values) => enabled(values) && !on(values, `${id}_sync_all_installed`, true);
   const inactiveHint = `Turn on ${name} library to use this setting.`;
-  const recentHint = `Turn on ${name} library and turn off Every installed game to configure the recent-games list.`;
-  const rows: Setting[] = [
+  return [
     {
       key: `library_${id}_enabled`,
       label: `${name} library`,
@@ -303,70 +256,6 @@ function launcherSettings(launcher: Launcher): Setting[] {
       group,
       control: { kind: 'toggle' },
       default: true,
-    },
-    {
-      key: `${id}_auto_sync`,
-      label: 'Sync automatically',
-      description: `Checks every five minutes for games installed${launcher.history ? ', removed or played' : ' or removed'}, and updates the library. Off, the list changes only when you press Sync now on the Games page.`,
-      details:
-        'While Playnite is on with Add games automatically and its Rubylight plugin installed, this launcher’s games come through Playnite and this sync stands aside, so no game is added twice.',
-      category: 'library',
-      group,
-      control: { kind: 'toggle' },
-      default: true,
-      inactiveHint,
-      visibleWhen: enabled,
-    },
-  ];
-  if (launcher.history) {
-    rows.push(
-      {
-        key: `${id}_sync_all_installed`,
-        label: 'Every installed game',
-        description:
-          'Adds every installed game, as every launcher does. Turn it off for a shorter list: only the most recently played games are added, and others the sync added are removed.',
-        category: 'library',
-        group,
-        control: { kind: 'toggle' },
-        default: true,
-        inactiveHint,
-        visibleWhen: enabled,
-      },
-      {
-        key: `${id}_recent_games`,
-        label: 'Recent games',
-        description: 'How many of the most recently played games to add.',
-        category: 'library',
-        group,
-        control: { kind: 'number', min: 0, max: 100, step: 1 },
-        default: 10,
-        inactiveHint: recentHint,
-        visibleWhen: recentOnly,
-      },
-      {
-        key: `${id}_recent_max_age_days`,
-        label: 'Played within',
-        description: 'Leaves out games not played for this many days. 0 adds them however long ago they were played.',
-        category: 'library',
-        group,
-        control: { kind: 'number', min: 0, max: 3650, step: 1, unit: 'days' },
-        default: 30,
-        inactiveHint: recentHint,
-        visibleWhen: recentOnly,
-      },
-    );
-  }
-  rows.push(
-    {
-      key: `${id}_autosync_remove_uninstalled`,
-      label: 'Remove uninstalled games',
-      description: `Removes a game’s app when the game is uninstalled; off, it stays in the list.${launcher.history ? ' With recent games only, apps that fall out of the list are always removed.' : ' Games you added by hand always stay.'}`,
-      category: 'library',
-      group,
-      control: { kind: 'toggle' },
-      default: true,
-      inactiveHint,
-      visibleWhen: enabled,
     },
     {
       key: `${id}_exclude_games`,
@@ -380,8 +269,7 @@ function launcherSettings(launcher: Launcher): Setting[] {
       inactiveHint,
       visibleWhen: enabled,
     },
-  );
-  return rows;
+  ];
 }
 
 export const settings: Setting[] = [
@@ -427,64 +315,58 @@ export const settings: Setting[] = [
     default: true,
   },
   {
-    key: 'steam_auto_sync',
+    key: 'library_auto_sync',
     label: 'Sync automatically',
     description:
-      'Checks Steam every 30 seconds and updates the Steam apps when games are installed, removed or played. Off, the list changes only when you press Sync now on the Games page.',
+      'Checks every launcher every few minutes (Steam every 30 seconds) and updates the library when games are installed, removed or played. Off, the list changes only when you press Sync now on the Games page.',
     details:
-      'While Playnite is on with Add games automatically and its Rubylight plugin installed, the Steam games come through Playnite and this sync stands aside, so no game is added twice.',
+      'Applies to every launcher and to the game folders. While Playnite is on with Sync automatically and its Rubylight plugin installed, the games come through Playnite and the launchers’ own syncs stand aside, so no game is added twice.',
     category: 'library',
-    group: 'Steam options',
+    group: 'Library sync',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Turn on Steam library to use this setting. Sync now on the Games page applies it without automatic syncing.",
-    visibleWhen: steam,
   },
   {
-    key: 'steam_sync_all_installed',
-    label: 'Every installed game',
-    description:
-      'Adds every installed game, as every launcher does. Turn it off for a shorter list: only the most recently played games are added, and others the sync added are removed.',
-    category: 'library',
-    group: 'Steam options',
-    control: { kind: 'toggle' },
-    default: true,
-    inactiveHint: "Turn on Steam library to use this setting. Sync now on the Games page applies it without automatic syncing.",
-    visibleWhen: steam,
-  },
-  {
-    key: 'steam_recent_games',
-    label: 'Recent games',
-    description: 'How many of the most recently played games to add.',
-    category: 'library',
-    group: 'Steam options',
-    control: { kind: 'number', min: 0, max: 100, step: 1 },
-    default: 10,
-    inactiveHint: "Turn on Steam library and turn off Every installed game to configure the recent-games list.",
-    visibleWhen: recent,
-  },
-  {
-    key: 'steam_recent_max_age_days',
-    label: 'Played within',
-    description: 'Leaves out games not played for this many days. 0 adds them however long ago they were played.',
-    category: 'library',
-    group: 'Steam options',
-    control: { kind: 'number', min: 0, max: 3650, step: 1, unit: 'days' },
-    default: 30,
-    inactiveHint: "Turn on Steam library and turn off Every installed game to configure the recent-games list.",
-    visibleWhen: recent,
-  },
-  {
-    key: 'steam_autosync_remove_uninstalled',
+    key: 'library_autosync_remove_uninstalled',
     label: 'Remove uninstalled games',
     description:
-      'Removes a Steam app when its game is uninstalled; off, it stays in the list. With recent games only, apps that fall out of the list are always removed.',
+      'Removes a game’s app when the game is uninstalled; off, it stays in the list. With recent games only, apps that fall out of the list are always removed. Games you added by hand always stay.',
     category: 'library',
-    group: 'Steam options',
+    group: 'Library sync',
     control: { kind: 'toggle' },
     default: true,
-    inactiveHint: "Turn on Steam library to use this setting. Sync now on the Games page applies it without automatic syncing.",
-    visibleWhen: steam,
+  },
+  {
+    key: 'library_sync_all_installed',
+    label: 'Every installed game',
+    description:
+      'Adds every installed game, as every launcher does. Turn it off for a shorter list: only the most recently played games are added, and others the sync added are removed. Applies to Steam, Battle.net and Playnite.',
+    category: 'library',
+    group: 'Library sync',
+    control: { kind: 'toggle' },
+    default: true,
+  },
+  {
+    key: 'library_recent_games',
+    label: 'Recent games',
+    description: 'How many of the most recently played games to add. 0 adds none.',
+    category: 'library',
+    group: 'Library sync',
+    control: { kind: 'number', min: 0, max: 200, step: 1 },
+    default: 10,
+    inactiveHint: 'Turn off Every installed game to configure the recent-games list.',
+    visibleWhen: recent,
+  },
+  {
+    key: 'library_recent_max_age_days',
+    label: 'Played within',
+    description: 'Recent games must have been played within this many days. 0 counts any game, played or not.',
+    category: 'library',
+    group: 'Library sync',
+    control: { kind: 'number', min: 0, max: 3650, step: 1, unit: 'days' },
+    default: 30,
+    inactiveHint: 'Turn off Every installed game to configure the recent-games list.',
+    visibleWhen: recent,
   },
   {
     key: 'steam_include_tools',
@@ -526,31 +408,6 @@ export const settings: Setting[] = [
     group: 'Game folders',
     control: { kind: 'list', placeholder: 'D:\\Games' },
     default: [],
-  },
-  {
-    key: 'library_local_auto_sync',
-    label: 'Sync automatically',
-    description:
-      'Checks the game folders every five minutes and updates their games when they are added or removed. Off, the list changes only when you press Sync now on the Games page.',
-    details:
-      'While Playnite is on with Add games automatically and its Rubylight plugin installed, this sync stands aside, as every launcher’s does.',
-    category: 'library',
-    group: 'Game folders',
-    control: { kind: 'toggle' },
-    default: true,
-    inactiveHint: 'Add a game folder to use this setting.',
-    visibleWhen: folders,
-  },
-  {
-    key: 'library_local_autosync_remove_uninstalled',
-    label: 'Remove deleted games',
-    description: 'Removes a game folder’s app when its folder is deleted; off, it stays in the list. Games you added by hand always stay.',
-    category: 'library',
-    group: 'Game folders',
-    control: { kind: 'toggle' },
-    default: true,
-    inactiveHint: 'Add a game folder to use this setting.',
-    visibleWhen: folders,
   },
   {
     key: 'library_local_exclude',

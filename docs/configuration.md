@@ -1316,14 +1316,14 @@ Every setting in the console, with its key and the default an unset key uses, in
 | **App behavior: Close the app when the last device disconnects** | `terminate_on_pause` | `false` | Closes the running app when its last streaming device disconnects; unsaved progress may be lost. Leave it off to keep the game running so you can reconnect and carry on. |
 | App behavior: Quit the game on the first request | `remote_monitor_terminate_on_first_request` | `false` | Lets another device quit the running game with its first request. Leave it off: it must then ask again within 60 seconds, and the device that started the game is never asked twice. |
 | App behavior: Exit timeout | `exit_timeout` | `10` s | How long an app gets to close by itself when Rubylight ends it, before it is ended by force; 0 ends it at once. Raise it if a game needs longer to shut down cleanly. |
+| Library sync: Sync automatically | `library_auto_sync` | `true` | Checks every launcher every few minutes (Steam every 30 seconds) and updates the library when games are installed, removed or played. Off, the list changes only when you press Sync now on the Games page. |
+| Library sync: Remove uninstalled games | `library_autosync_remove_uninstalled` | `true` | Removes a game’s app when the game is uninstalled; off, it stays in the list. With recent games only, apps that fall out of the list are always removed. Games you added by hand always stay. |
+| Library sync: Every installed game | `library_sync_all_installed` | `true` | Adds every installed game, as every launcher does. Turn it off for a shorter list: only the most recently played games are added, and others the sync added are removed. Applies to Steam, Battle.net and Playnite. |
+| Library sync: Recent games | `library_recent_games` | `10` | How many of the most recently played games to add. 0 adds none. |
+| Library sync: Played within | `library_recent_max_age_days` | `30` days | Recent games must have been played within this many days. 0 counts any game, played or not. |
 | Playnite: Playnite | `playnite_enabled` | `true` | Adds your Playnite games, starts them through Playnite and ends the stream when the game closes. Needs the Rubylight plugin in Playnite; off, the games it added no longer start. |
-| Playnite: Add games automatically | `playnite_auto_sync` | `true` | While Playnite runs, adds the games chosen below and removes them when they no longer qualify. Off, no game is added or removed; Sync now only updates those already there. |
-| Playnite: Every installed game | `playnite_sync_all_installed` | `true` | Adds every installed game in Playnite, as every launcher does. Turn it off for a shorter list: only recently played games and the categories and libraries below are added. |
-| Playnite: Recent games | `playnite_recent_games` | `10` | How many of the most recently played games to add. 0 adds none. |
-| Playnite: Played within | `playnite_recent_max_age_days` | `30` days | Recent games must have been played within this many days. 0 counts any game, played or not. |
 | Playnite: Categories to add | `playnite_sync_categories` | none | Also adds the installed games in these Playnite categories, as a JSON list of names: ["Couch", "Racing"]. |
 | Playnite: Games to leave out | `playnite_exclude_games` | none | A JSON list of Playnite game IDs the sync never adds. Deleting a game on the Games page keeps it out too, with no list to write. |
-| Playnite: Remove uninstalled games | `playnite_autosync_remove_uninstalled` | `true` | Removes an added app when its game is uninstalled. |
 | Playnite: Remove unplayed after | `playnite_autosync_delete_after_days` | `14` days | Removes an added app not played within this many days of being added. 0 keeps it. |
 | Playnite: Playnite fullscreen app | `playnite_fullscreen_entry_enabled` | `false` | Adds a “Playnite (Fullscreen)” app that opens Playnite’s fullscreen mode, for choosing a game on the device. |
 | Playnite: Libraries to add | `playnite_sync_plugins` | none | Also adds the installed games that come from these Playnite library plugins, as a JSON list of plugin IDs. |
@@ -1332,8 +1332,6 @@ Every setting in the console, with its key and the default an unset key uses, in
 | Playnite: Replace older recent games | `playnite_autosync_require_replacement` | `true` | When newer recent games are added, removes as many older added games, so the list keeps its size. Off, the older ones stay and the list grows. |
 | Playnite: Wait after a game closes | `playnite_exit_wait_secs` | `15` s | After a game closes, the stream shows the desktop this long, then ends. Lower it to leave sooner; too low can end it while a game restarts itself or starts through a launcher. |
 | Game folders: Game folders | `library_local_folders` | none | Folders that hold one game per subfolder, such as D:\Games, for games no launcher lists. Each subfolder joins the library with the program that starts it. |
-| Game folders: Sync automatically | `library_local_auto_sync` | `true` | Checks the game folders every five minutes and updates their games when they are added or removed. When off, Sync now in Games still adds them. |
-| Game folders: Remove deleted games | `library_local_autosync_remove_uninstalled` | `true` | Removes a game folder’s app when its folder is deleted; off, it stays in the list. Games you added by hand always stay. |
 | Game folders: Folders to leave out | `library_local_exclude` | none | Subfolders to skip in your game folders, by name (Tools) or full path (D:\Games\Tools). They are never added, and Add games never lists them. |
 | Covers: SteamGridDB API key | `steamgriddb_api_key` | none | Fetches a SteamGridDB cover for each app without one, shown in Moonlight and every app; the key and those apps’ names go to SteamGridDB. Set it if apps show a blank cover. |
 | Play together: Nucleus Co-op folder | `nucleus_path` | empty | The folder you unpacked Nucleus Co-op 2.4.2 into, under C:\Program Files; co-op and background streaming need it. Empty uses an earlier Rubylight's install, if any. |
@@ -1349,7 +1347,7 @@ Every setting in the console, with its key and the default an unset key uses, in
 | Playnite launch focus: Stop focusing after | `playnite_focus_timeout_secs` | `15` s | The longest Rubylight keeps bringing a launched game or Playnite menu to the front. Raise it if a slow launch leaves the game behind another window; 0 leaves focus alone. |
 | Playnite launch focus: Stop after the first focus confirmation | `playnite_focus_exit_on_first` | `false` | Stops focusing the game or Playnite menu once it was confirmed in front. Turn it on if launches keep interrupting your window; a launcher or splash screen may then take focus back. |
 
-Earlier releases had one Sync automatically (`library_auto_sync`) and one Remove uninstalled games (`library_autosync_remove_uninstalled`) for every launcher. Rubylight gives each launcher and the game folders that value when it loads a configuration that sets them, unless the launcher's own key is set.
+Earlier releases kept these five options once for each launcher, under `<launcher>_auto_sync`, `<launcher>_autosync_remove_uninstalled`, `<launcher>_sync_all_installed`, `<launcher>_recent_games` and `<launcher>_recent_max_age_days` (`steam`, `epic`, `battlenet`, `microsoft`, `ea`, `ubisoft`, `gog`, `library_local` and `playnite`). Rubylight folds them into the shared settings when it loads a configuration: the shared value is the one every launcher agreed on, and a launcher whose value differed keeps its own key, which the sync still reads in place of the shared value. Saving a different value for a shared setting applies it to every launcher again.
 
 #### Launcher options (on the Games page)
 
@@ -1358,39 +1356,19 @@ The Games tab lists these as one row, Game sources, with a link to the Games pag
 | Setting | Key | Default | What it does |
 | --- | --- | --- | --- |
 | Steam options: Steam library | `steam_enabled` | `true` | Adds your Steam games to the library, with their covers, and ends a stream when the game it started exits. Off adds no more games; added ones stay. |
-| Steam options: Sync automatically | `steam_auto_sync` | `true` | Checks Steam every 30 seconds and updates the Steam apps when games are installed, removed or played. Off, the list changes only when you press Sync now on the Games page. |
-| Steam options: Every installed game | `steam_sync_all_installed` | `true` | Adds every installed game, as every launcher does. Turn it off for a shorter list: only the most recently played games are added, and others the sync added are removed. |
-| Steam options: Recent games | `steam_recent_games` | `10` | How many of the most recently played games to add. |
-| Steam options: Played within | `steam_recent_max_age_days` | `30` days | Leaves out games not played for this many days. 0 adds them however long ago they were played. |
-| Steam options: Remove uninstalled games | `steam_autosync_remove_uninstalled` | `true` | Removes a Steam app when its game is uninstalled; off, it stays in the list. With recent games only, apps that fall out of the list are always removed. |
 | Steam options: Include tools | `steam_include_tools` | `false` | Also adds what Steam lists as installed besides games: tools, runtimes, redistributables and DLC. Leave it off unless you want to start one of them from a device. |
 | Steam options: Games to leave out | `steam_exclude_games` | none | A JSON list of games the sync never adds, by Steam app ID or name: ["570", {"name": "Dota 2"}]. Their Steam apps are removed. |
 | Epic Games options: Epic Games library | `library_epic_enabled` | `true` | Adds the games installed with the Epic Games Launcher to the library, with their covers, and ends a stream when the game exits. Off adds no more games; added ones stay. |
-| Epic Games options: Sync automatically | `epic_auto_sync` | `true` | Checks every five minutes for games installed or removed, and updates the library. When off, Sync now in Games still adds them. |
-| Epic Games options: Remove uninstalled games | `epic_autosync_remove_uninstalled` | `true` | Removes a game’s app when the game is uninstalled; off, it stays in the list. Games you added by hand always stay. |
 | Epic Games options: Games to leave out | `epic_exclude_games` | none | A JSON list of games the sync never adds, by name or Epic Games ID: [{"name": "Fortnite"}]. Apps already added for them are removed. |
 | Battle.net options: Battle.net library | `library_battlenet_enabled` | `true` | Adds the games installed with Battle.net to the library, and ends a stream when the game exits. Off adds no more games; added ones stay. |
-| Battle.net options: Sync automatically | `battlenet_auto_sync` | `true` | Checks every five minutes for games installed, removed or played, and updates the library. When off, Sync now in Games still adds them. |
-| Battle.net options: Every installed game | `battlenet_sync_all_installed` | `true` | Adds every installed game, as every launcher does. Turn it off for a shorter list: only the most recently played games are added, and others the sync added are removed. |
-| Battle.net options: Recent games | `battlenet_recent_games` | `10` | How many of the most recently played games to add. |
-| Battle.net options: Played within | `battlenet_recent_max_age_days` | `30` days | Leaves out games not played for this many days. 0 adds them however long ago they were played. |
-| Battle.net options: Remove uninstalled games | `battlenet_autosync_remove_uninstalled` | `true` | Removes a game’s app when the game is uninstalled; off, it stays in the list. With recent games only, apps that fall out of the list are always removed. |
 | Battle.net options: Games to leave out | `battlenet_exclude_games` | none | A JSON list of games the sync never adds, by name or Battle.net ID: [{"name": "Overwatch 2"}]. Apps already added for them are removed. |
 | Microsoft Store and Xbox options: Microsoft Store and Xbox library | `library_microsoft_enabled` | `true` | Adds the games installed with the Xbox app or the Microsoft Store to the library, with their icons, and ends a stream when the game exits. Off adds no more games; added ones stay. |
-| Microsoft Store and Xbox options: Sync automatically | `microsoft_auto_sync` | `true` | Checks every five minutes for games installed or removed, and updates the library. When off, Sync now in Games still adds them. |
-| Microsoft Store and Xbox options: Remove uninstalled games | `microsoft_autosync_remove_uninstalled` | `true` | Removes a game’s app when the game is uninstalled; off, it stays in the list. Games you added by hand always stay. |
 | Microsoft Store and Xbox options: Games to leave out | `microsoft_exclude_games` | none | A JSON list of games the sync never adds, by name or Microsoft Store and Xbox ID: [{"name": "Halo Infinite"}]. Apps already added for them are removed. |
 | EA app options: EA app library | `library_ea_enabled` | `true` | Adds the games installed with the EA app to the library, and ends a stream when the game exits. Off adds no more games; added ones stay. |
-| EA app options: Sync automatically | `ea_auto_sync` | `true` | Checks every five minutes for games installed or removed, and updates the library. When off, Sync now in Games still adds them. |
-| EA app options: Remove uninstalled games | `ea_autosync_remove_uninstalled` | `true` | Removes a game’s app when the game is uninstalled; off, it stays in the list. Games you added by hand always stay. |
 | EA app options: Games to leave out | `ea_exclude_games` | none | A JSON list of games the sync never adds, by name or EA app ID: [{"name": "Apex Legends"}]. Apps already added for them are removed. |
 | Ubisoft Connect options: Ubisoft Connect library | `library_ubisoft_enabled` | `true` | Adds the games installed with Ubisoft Connect to the library, and ends a stream when the game exits. Off adds no more games; added ones stay. |
-| Ubisoft Connect options: Sync automatically | `ubisoft_auto_sync` | `true` | Checks every five minutes for games installed or removed, and updates the library. When off, Sync now in Games still adds them. |
-| Ubisoft Connect options: Remove uninstalled games | `ubisoft_autosync_remove_uninstalled` | `true` | Removes a game’s app when the game is uninstalled; off, it stays in the list. Games you added by hand always stay. |
 | Ubisoft Connect options: Games to leave out | `ubisoft_exclude_games` | none | A JSON list of games the sync never adds, by name or Ubisoft Connect ID: [{"name": "Assassin's Creed Mirage"}]. Apps already added for them are removed. |
 | GOG options: GOG library | `library_gog_enabled` | `true` | Adds the games installed with GOG Galaxy or the GOG installer to the library, with their icons, and ends a stream when the game exits. Off adds no more games; added ones stay. |
-| GOG options: Sync automatically | `gog_auto_sync` | `true` | Checks every five minutes for games installed or removed, and updates the library. When off, Sync now in Games still adds them. |
-| GOG options: Remove uninstalled games | `gog_autosync_remove_uninstalled` | `true` | Removes a game’s app when the game is uninstalled; off, it stays in the list. Games you added by hand always stay. |
 | GOG options: Games to leave out | `gog_exclude_games` | none | A JSON list of games the sync never adds, by name or GOG ID: [{"name": "Cyberpunk 2077"}]. Apps already added for them are removed. |
 
 ### Network
