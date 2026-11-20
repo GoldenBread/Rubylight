@@ -586,6 +586,9 @@ struct Session {
     block_stats: bool,
     /// The QP delta map for the next submission, left off a keyframe.
     next_map: Option<Vec<i8>>,
+    /// The buffer the next delta map is filled into, taken back from the
+    /// slot whose last frame carried one.
+    map_scratch: Vec<i8>,
     /// The next submission's block QP statistics are read.
     measure_next: bool,
     stats_buffer: Vec<NV_ENC_OUTPUT_STATS_BLOCK>,
@@ -759,6 +762,7 @@ impl Session {
             qp_map: false,
             block_stats: false,
             next_map: None,
+            map_scratch: Vec::new(),
             measure_next: false,
             stats_buffer: Vec::new(),
             qp_grids: VecDeque::new(),
@@ -1765,12 +1769,21 @@ impl Session {
         }
         // Encoder focus: the map the encoder set for this frame, never on a
         // keyframe or a frame encoded again.
-        let map = self
-            .next_map
-            .take()
-            .filter(|_| self.qp_map && !idr && again.is_none());
+        let map = self.next_map.take();
+        let map = if self.qp_map && !idr && again.is_none() {
+            map
+        } else {
+            // A map left over from a frame that cannot carry one keeps its
+            // buffer for the next that does.
+            if let Some(map) = map {
+                self.map_scratch = map;
+            }
+            None
+        };
         if let Some(map) = map {
-            self.slots[slot].deltas = map;
+            // The slot's last frame is complete, so its map's buffer
+            // becomes the next map's scratch.
+            self.map_scratch = std::mem::replace(&mut self.slots[slot].deltas, map);
             picture.qpDeltaMap = self.slots[slot].deltas.as_mut_ptr();
             picture.qpDeltaMapSize = self.slots[slot].deltas.len() as u32;
         }
@@ -3282,7 +3295,8 @@ impl Encoder {
         if let Some(fixed) = &self.focus.fixed
             && encoder_focus::attach_for(idr, recover, first, false)
         {
-            let mut deltas = Vec::new();
+            // The last map's buffer, refilled.
+            let mut deltas = std::mem::take(&mut self.session.map_scratch);
             match butterpollo_core::nvenc::focus_deltas(
                 self.config.codec,
                 (self.session.stream.width, self.session.stream.height),
@@ -3291,7 +3305,10 @@ impl Encoder {
                 &mut deltas,
             ) {
                 Ok(()) => self.session.next_map = Some(deltas),
-                Err(error) => tracing::warn!(%error, "encoder focus probe map refused"),
+                Err(error) => {
+                    self.session.map_scratch = deltas;
+                    tracing::warn!(%error, "encoder focus probe map refused");
+                }
             }
         }
         if self.probing {
@@ -3329,16 +3346,21 @@ impl Encoder {
         let Some(view) = view.filter(|_| picked == Some(crate::amf::focus::Pick::Attach)) else {
             return Ok(());
         };
-        let mut deltas = Vec::new();
-        butterpollo_core::nvenc::focus_deltas(
+        // The last map's buffer, refilled.
+        let mut deltas = std::mem::take(&mut self.session.map_scratch);
+        match butterpollo_core::nvenc::focus_deltas(
             self.config.codec,
             (self.session.stream.width, self.session.stream.height),
             view.rows,
             (view.width, view.height),
             &mut deltas,
-        )
-        .map_err(anyhow::Error::msg)?;
-        self.session.next_map = Some(deltas);
+        ) {
+            Ok(()) => self.session.next_map = Some(deltas),
+            Err(error) => {
+                self.session.map_scratch = deltas;
+                return Err(anyhow::Error::msg(error));
+            }
+        }
         let Some(every) = self.focus.verify.filter(|_| self.session.block_stats) else {
             return Ok(());
         };

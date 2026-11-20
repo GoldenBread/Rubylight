@@ -2743,6 +2743,44 @@ fn a_focus_map_rides_on_inter_frames_and_turns_on_without_a_reset() -> Result<()
     Ok(())
 }
 #[test]
+fn a_focus_maps_buffer_is_taken_back_and_refilled_for_the_next_map() -> Result<()> {
+    reset();
+    let mut encoder = session(&Negotiated::default(), ApiVersion(13, 0))?;
+    encoder.enable_qp_map()?;
+    let slot = input(&mut encoder, 17)?;
+    // A map left over from a frame that cannot carry one keeps its buffer.
+    encoder.next_map = Some(vec![7]);
+    encoder.submit(slot, None, true, Instant::now())?;
+    encoder.poll()?;
+    assert!(encoder.map_scratch.capacity() >= 1, "the refused map's buffer was dropped");
+    // Two inter frames carry maps; the second's is filled into the buffer
+    // the first's slot handed back, so the maps ride one allocation.
+    let mut address = None;
+    for _ in 0..2 {
+        let mut deltas = std::mem::take(&mut encoder.map_scratch);
+        deltas.extend([-3, 3]);
+        address.get_or_insert_with(|| deltas.as_ptr());
+        encoder.next_map = Some(deltas);
+        encoder.submit(slot, None, false, Instant::now())?;
+        encoder.poll()?;
+    }
+    assert!(std::ptr::eq(
+        encoder.map_scratch.as_ptr(),
+        address.unwrap(),
+        "the first map's buffer did not come back from its slot"
+    ));
+    state(|d| {
+        assert_eq!(
+            d.maps,
+            [None, Some(vec![-3, 3]), Some(vec![-3, 3])],
+            "the recycled buffer carries the same values"
+        )
+    });
+    drop(encoder);
+    assert_clean();
+    Ok(())
+}
+#[test]
 fn block_statistics_are_read_for_measured_frames_from_api_12_1() -> Result<()> {
     reset();
     let stream = Negotiated::default();
