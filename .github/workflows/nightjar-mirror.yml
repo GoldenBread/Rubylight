@@ -47,17 +47,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Mirror only when each Nightjar workflow passed on the newest commit its paths filter takes
-      # (the pathspecs below repeat the filters). A run not finished yet mirrors when it ends.
+      # (the pathspecs below repeat the filters). GitHub runs a push's last commit only, so the
+      # run that tested that commit is the oldest one on a commit containing it. A run not
+      # finished yet mirrors when it ends.
       - id: gate
         env:
           HEAD: ${{ steps.head.outputs.sha }}
         run: |
           check() { # workflow, pathspec...
             local workflow=$1; shift
-            local need run
+            local need run="" sha status conclusion
             need=$(git log -1 --format=%H "$HEAD" -- "$@")
             [ -n "$need" ] || return 0
-            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$need" --event push --limit 1 --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
+            while read -r sha status conclusion; do # newest first
+              if git merge-base --is-ancestor "$need" "$sha" 2> /dev/null; then run="$status $conclusion"; fi
+            done < <(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --branch main --event push --limit 40 \
+              --json headSha,status,conclusion --jq '.[] | "\(.headSha) \(.status) \(.conclusion)"')
             if [ "$run" != "completed success" ]; then
               echo "::notice::$workflow on ${need:0:10}: ${run:-no run yet}; nothing is mirrored until it passes"
               echo "skip=true" >> "$GITHUB_OUTPUT"
