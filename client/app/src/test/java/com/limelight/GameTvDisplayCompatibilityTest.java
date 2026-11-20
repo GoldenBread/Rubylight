@@ -1,12 +1,16 @@
 package com.limelight;
 
 import android.app.Application;
+import android.content.ComponentName;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.view.View;
 import android.view.ViewGroup;
 
+import com.limelight.binding.input.ControllerHandler;
+import com.limelight.binding.video.MediaCodecDecoderRenderer;
+import com.limelight.binding.video.MediaCodecHelper;
 import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.StreamConfiguration;
 import com.limelight.nvstream.http.ComputerDetails;
@@ -56,10 +60,20 @@ public class GameTvDisplayCompatibilityTest {
         game.prefConfig = PreferenceConfiguration.readPreferences(game);
         NvApp app = new NvApp("Desktop", 73, false);
         ReflectionHelpers.setField(game, "app", app);
-        ReflectionHelpers.setField(game, "conn", new NvConnection(null, new ComputerDetails.AddressTuple("192.0.2.1", 47989),
+        NvConnection conn = new NvConnection(null, new ComputerDetails.AddressTuple("192.0.2.1", 47989),
                 47984, "test", new StreamConfiguration.Builder().setApp(app).build(), null, null) {
             @Override public void stop() {}
-        });
+        };
+        ReflectionHelpers.setField(game, "conn", conn);
+        // The start announces the controllers again, of which this screen has none, and starts the
+        // bitrate from the decoder's format. No Shield controller service answers here.
+        shadowOf(game.getApplication()).declareComponentUnbindable(
+                new ComponentName("com.nvidia.blakepairing", "com.nvidia.blakepairing.AccessoryService"));
+        game.controllerHandler = new ControllerHandler(game, conn, game, game.prefConfig) {
+            @Override public synchronized void resendControllerArrivals() {}
+        };
+        ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
+        game.decoderRenderer = new MediaCodecDecoderRenderer(game, game.prefConfig, null, 0, false, false, "", null);
         // As on a real start, the screen is resumed before the stream connects.
         game.foreground = true;
         game.videoOutput.updateCompositorHeartbeat();
@@ -67,15 +81,11 @@ public class GameTvDisplayCompatibilityTest {
         return game;
     }
 
-    /** The real start: GameConnection.connectionStarted, as the engine calls it. */
+    /** The real start: GameConnection.connectionStarted, as the engine calls it. Whatever it throws fails the test. */
     private static void start(Game game) {
         game.connecting = true;
-        try {
-            game.streamConnection.connectionStarted();
-        } catch (NullPointerException later) {
-            // Past the start of the heartbeat the start goes on to the controllers, which this screen has none of.
-            assertTrue(later.getMessage(), later.getMessage().contains("controllerHandler"));
-        }
+        game.streamConnection.connectionStarted();
+        assertFalse("the start ran past its checks", game.connecting);
         shadowOf(Looper.getMainLooper()).idle();
     }
 
