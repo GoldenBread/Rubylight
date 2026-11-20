@@ -482,7 +482,13 @@ fn an_av1_dolby_vision_frame_without_hdr10_plus_or_a_place_says_so() {
     // A temporal unit with no frame OBU has no place: it goes out as AMF
     // wrote it, counted, and the RPU is not appended after it.
     let bare = frame[..5].to_vec();
-    let (bytes, cap) = output(Some(&mut dynamic), Unit::Whole, bare.clone(), Some(5000), false);
+    let (bytes, cap) = output(
+        Some(&mut dynamic),
+        Unit::Whole,
+        bare.clone(),
+        Some(5000),
+        false,
+    );
     assert_eq!((bytes, cap), (bare, Some(5000)));
     assert_eq!(dynamic.report.no_insertion, 1);
     assert!(dynamic.rpu.is_empty());
@@ -544,13 +550,7 @@ fn a_dolby_vision_8_4_frame_carries_hdr_vivid_for_hlg_and_an_8_4_rpu() {
     let rpu = rpus.frame(false).nal();
     let frame = keyframe();
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
-    let (bytes, cap) = output(
-        Some(dynamic),
-        Unit::Whole,
-        frame.clone(),
-        Some(5000),
-        false,
-    );
+    let (bytes, cap) = output(Some(dynamic), Unit::Whole, frame.clone(), Some(5000), false);
     assert_eq!(bytes, [&frame[..at], &units, &frame[at..], &rpu].concat());
     assert_eq!(cap, Some(5000 + (units.len() + rpu.len()) as u64));
     assert!(warnings.snapshot().is_empty());
@@ -612,7 +612,13 @@ fn every_dolby_vision_frame_ends_with_an_rpu_counted_in_its_cap() {
     assert_eq!(dynamic.report.unmeasured_rpus, 2);
     // An empty output gets no RPU.
     assert_eq!(
-        output(Some(&mut dynamic), Unit::Whole, Vec::new(), Some(5000), false),
+        output(
+            Some(&mut dynamic),
+            Unit::Whole,
+            Vec::new(),
+            Some(5000),
+            false
+        ),
         (Vec::<u8>::new(), Some(5000))
     );
 }
@@ -638,13 +644,7 @@ fn dolby_vision_takes_each_sample_and_hdr10_plus_goes_first() {
     let rpu = rpus.frame(false).nal();
     let frame = keyframe();
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
-    let (bytes, cap) = output(
-        Some(dynamic),
-        Unit::Whole,
-        frame.clone(),
-        Some(5000),
-        false,
-    );
+    let (bytes, cap) = output(Some(dynamic), Unit::Whole, frame.clone(), Some(5000), false);
     assert_eq!(bytes, [&frame[..at], &units, &frame[at..], &rpu].concat());
     assert_eq!(cap, Some(5000 + (units.len() + rpu.len()) as u64));
     assert_eq!(dynamic.report.unmeasured_rpus, 0);

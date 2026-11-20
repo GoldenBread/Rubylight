@@ -1813,9 +1813,8 @@ impl Session {
         let started = again.map_or(submitted, |again| again.started);
         // SAFETY: `self.picture` points at the slot's mapped input, output buffer, boxed metadata
         // and delta map, which all stay alive while the slot is in `pending`.
-        let status = unsafe {
-            (self.functions.nvEncEncodePicture.unwrap())(self.raw, &mut self.picture)
-        };
+        let status =
+            unsafe { (self.functions.nvEncEncodePicture.unwrap())(self.raw, &mut self.picture) };
         if status != SUCCESS && status != _NVENCSTATUS_NV_ENC_ERR_NEED_MORE_INPUT {
             self.force_idr |= idr;
             // The input stays registered; only this frame's mapping goes.

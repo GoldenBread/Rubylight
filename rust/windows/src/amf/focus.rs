@@ -715,7 +715,17 @@ impl Encoder {
         };
         check_grid(codec, self.config.coded_size(), (view.width, view.height))?;
         // SAFETY: Per this function's contract.
-        unsafe { attach(context, &mut self.focus.map, surface, codec, view.rows, view.width, view.height)? };
+        unsafe {
+            attach(
+                context,
+                &mut self.focus.map,
+                surface,
+                codec,
+                view.rows,
+                view.width,
+                view.height,
+            )?
+        };
         let Some(every) = self.focus.verify else {
             return Ok(());
         };

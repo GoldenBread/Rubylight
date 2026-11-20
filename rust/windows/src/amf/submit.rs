@@ -236,7 +236,9 @@ impl Encoder {
             // input, the wait for its release notification. Output can be
             // complete while AMF still owns every input: QueryOutput then
             // returns immediately, so the release notification is the wait.
-            let retained = self.ownership.wait_below(AMF_SURFACE_LIMIT, remaining.min(QUERY_TIMEOUT));
+            let retained = self
+                .ownership
+                .wait_below(AMF_SURFACE_LIMIT, remaining.min(QUERY_TIMEOUT));
             // A completion at the deadline still frees capacity successfully.
             if self.in_flight.len() < AMF_SURFACE_LIMIT && retained < AMF_SURFACE_LIMIT {
                 break;

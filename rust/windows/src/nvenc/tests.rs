@@ -2756,7 +2756,10 @@ fn a_focus_maps_buffer_is_taken_back_and_refilled_for_the_next_map() -> Result<(
     encoder.next_map = Some(vec![7]);
     encoder.submit(slot, None, true, Instant::now())?;
     encoder.poll()?;
-    assert!(encoder.map_scratch.capacity() >= 1, "the refused map's buffer was dropped");
+    assert!(
+        encoder.map_scratch.capacity() >= 1,
+        "the refused map's buffer was dropped"
+    );
     // Two inter frames carry maps; the second's is filled into the buffer
     // the first's slot handed back, so the maps ride one allocation.
     let mut address = None;

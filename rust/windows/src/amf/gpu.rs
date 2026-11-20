@@ -93,11 +93,9 @@ impl Ownership {
     pub fn wait_below(&self, limit: usize, timeout: Duration) -> usize {
         let (textures, _) = self
             .released
-            .wait_timeout_while(
-                self.textures.lock().unwrap(),
-                timeout,
-                |textures| textures.len() >= limit,
-            )
+            .wait_timeout_while(self.textures.lock().unwrap(), timeout, |textures| {
+                textures.len() >= limit
+            })
             .unwrap();
         textures.len()
     }
