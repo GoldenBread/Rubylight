@@ -879,7 +879,7 @@ int FramePacer::onVsync(int64_t vsyncNs, const FrameTiming* frames, size_t count
             // on 120 Hz) a frame then went up at the next vsync after it came, so jitter left one up
             // for a vsync and the next for three, and no frame waited to cover it. There frames go up
             // no more often than the stream's rate, as in Balanced: an early one waits for its turn,
-            // and every frame stays the same number of vsyncs.
+            // and frames that come in time stay the same number of vsyncs.
             if (count == 0) {
                 break;
             }

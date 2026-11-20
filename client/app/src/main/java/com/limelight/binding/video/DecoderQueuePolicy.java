@@ -341,7 +341,7 @@ final class DecoderQueuePolicy {
      * is in the decoder behind it, the renderer waits up to [WAIT_US] for that frame to come out and
      * drops the held output only if it does; with nothing behind it, the held output is dropped
      * and the screen keeps the previous frame one refresh longer, which frees the extra buffer. On a
-     * screen at 2 to 4 times the stream's rate, where each frame waits for its own turn
+     * screen at 2 to 4 times the stream's rate, where a frame that comes early waits for its turn
      * (MediaCodecDecoderRenderer.smoothDisplayNs), the next frame takes the dropped one's turn
      * instead, and the previous frame stays longer only by what that frame then comes late. The
      * turns release each output as it comes out, stamped for its refresh, so they leave the
