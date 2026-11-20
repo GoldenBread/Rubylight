@@ -85,17 +85,39 @@ public final class ClassicLayoutMigration {
         if (free) {
             if (stale) edit.remove(shared);
             Map<Integer, float[]> boxes = boxes(context.getSharedPreferences(CLASSIC_PREFS, Context.MODE_PRIVATE));
-            if (!boxes.isEmpty()) {
+            // The classic controller followed the Nintendo button layout on screen even before it was arranged: its
+            // own defaults put B at the bottom. This controller never did, so only a classic player gets it.
+            boolean swappedDefaults = boxes.isEmpty() && classicStyle && swapFaces;
+            if (!boxes.isEmpty() || swappedDefaults) {
                 DisplayMetrics metrics = context.getResources().getDisplayMetrics();
                 // The classic layout is arranged in landscape pixels; a first start in portrait must map it with the
                 // same dimensions, because the shared key it is stored under is used in both orientations.
                 float width = Math.max(metrics.widthPixels, metrics.heightPixels);
                 float height = Math.min(metrics.widthPixels, metrics.heightPixels);
-                PadLayout migrated = migrate(boxes, width, height, metrics.density, swapFaces);
+                PadLayout migrated = swappedDefaults ? swappedDefaults(width, height, metrics.density) :
+                        migrate(boxes, width, height, metrics.density, swapFaces);
                 if (!migrated.isDefault()) edit.putString(shared, migrated.serialize());
             }
         }
         edit.apply();
+    }
+
+    /**
+     * The default layout as the classic controller showed it with the Nintendo button layout on: the face cluster
+     * split, each place holding the member that sends what the classic button there sent (B at the bottom, A on the
+     * right, Y on the left, X at the top), so every place still sends it.
+     */
+    static PadLayout swappedDefaults(float width, float height, float density) {
+        PadLayout layout = new PadLayout();
+        layout.split(PadLayout.Control.FACE, width, height, density);
+        PadLayout.Control[] members = PadLayout.members(PadLayout.Control.FACE);
+        float[][] places = new float[members.length][];
+        for (int i = 0; i < members.length; i++) places[i] = layout.bounds(members[i], width, height, density, new float[4]);
+        for (int i = 0; i < members.length; i++) {
+            float[] place = places[i];
+            layout.setBounds(members[SWAPPED[i]], place[0], place[1], place[2], place[3], width, height, density);
+        }
+        return layout;
     }
 
     /**

@@ -191,6 +191,56 @@ public class ClassicLayoutMigrationTest {
         assertEquals(EARLIER, store.getString(PadLayoutKeys.legacyKey(null), null));
     }
 
+    @Test public void aClassicPlayerWithTheNintendoLayoutKeepsBAtTheBottomOfTheDefaults() {
+        // Nothing classic was arranged: the classic defaults sent B from the bottom, A from the right, Y from the
+        // left and X from the top.
+        retire("classic");
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        PadLayout layout = shared();
+        assertTrue(layout.isSplit(PadLayout.Control.FACE));
+        PadLayout plain = new PadLayout();
+        plain.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
+        assertBox("bottom sends B", box(plain, PadLayout.Control.A), box(layout, PadLayout.Control.B));
+        assertBox("right sends A", box(plain, PadLayout.Control.B), box(layout, PadLayout.Control.A));
+        assertBox("left sends Y", box(plain, PadLayout.Control.X), box(layout, PadLayout.Control.Y));
+        assertBox("top sends X", box(plain, PadLayout.Control.Y), box(layout, PadLayout.Control.X));
+        assertEquals(PadLayout.Glyph.XBOX, layout.glyph());
+        assertFalse(store.contains(ClassicLayoutMigration.CLASSIC_STYLE));
+    }
+
+    @Test public void theNintendoLayoutLeavesTheDefaultsOfEveryoneElseAlone() {
+        // A player who had picked this controller: it never swapped its buttons on screen.
+        retire("modern");
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        // No stored style, as on a fresh install: nothing tells a classic player, so the defaults stay.
+        store.edit().clear().commit();
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        // A classic player without the setting keeps the plain defaults.
+        store.edit().clear().commit();
+        retire("classic");
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+    }
+
+    @Test public void aMigratedNintendoDefaultSendsBFromTheBottom() {
+        retire("classic");
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        prefs.flipFaceButtons = true;
+        ModernController controller = controller(frame(), prefs);
+        PadControlView bottom = controller.view(PadLayout.Control.B);
+        PadLayout plain = new PadLayout();
+        plain.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
+        float[] place = box(plain, PadLayout.Control.A);
+        assertEquals(place[0] + place[2] / 2, bottom.getLeft() + bottom.getWidth() / 2f, 2);
+        assertEquals(place[1] + place[3] / 2, bottom.getTop() + bottom.getHeight() / 2f, 2);
+        bottom.down(0, bottom.getWidth() / 2f, bottom.getHeight() / 2f, 100);
+        assertEquals(ControllerPacket.B_FLAG, (int) buttons.get(buttons.size() - 1));
+        bottom.up(0, 200);
+        controller.destroy();
+    }
+
     @Test public void aClassicPlayerWhoResetTheClassicLayoutGetsTheDefaults() {
         store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true)
                 .putString(PadLayoutKeys.legacyKey(null), EARLIER).commit();
