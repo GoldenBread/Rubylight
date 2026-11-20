@@ -60,11 +60,14 @@ public class DecoderFailureTest {
     private final List<Integer> terminated = new CopyOnWriteArrayList<>();
     private final List<Throwable> uncaught = new CopyOnWriteArrayList<>();
     private final List<Exception> crashes = new CopyOnWriteArrayList<>();
-    // The stream log's lines (LimeLog) while a test runs.
+    // The stream log's lines (LimeLog) while a test runs, and a test's hook run with each as it is logged.
     private final List<String> log = new CopyOnWriteArrayList<>();
+    private volatile java.util.function.Consumer<String> onLogLine;
     private final java.util.logging.Handler logLines = new java.util.logging.Handler() {
         @Override public void publish(java.util.logging.LogRecord record) {
             log.add(record.getMessage());
+            java.util.function.Consumer<String> hook = onLogLine;
+            if (hook != null) hook.accept(record.getMessage());
         }
         @Override public void flush() {}
         @Override public void close() {}
@@ -544,7 +547,7 @@ public class DecoderFailureTest {
         MediaFormat keyless = ReflectionHelpers.getField(renderer, "configuredFormat");
         assertEquals(Collections.emptyList(), vendorKeys(keyless));
         assertEquals("Android's own flag stays", 1, keyless.getInteger(MediaFormat.KEY_LOW_LATENCY));
-        List<String> dropped = ReflectionHelpers.getField(renderer, "lowLatencyKeysHung");
+        List<String> dropped = hungKeys(MTK_HEVC, HEVC);
         List<String> droppedNames = new ArrayList<>();
         for (String key : dropped) droppedNames.add(key.substring(0, key.indexOf('=')));
         assertTrue(dropped.toString(), droppedNames.containsAll(tuned));
@@ -632,7 +635,7 @@ public class DecoderFailureTest {
         assertFalse(fetch());
         recoverOnTheInputThread();
         assertEquals(Arrays.asList("reset", "configure", "reset", "configure"), recovery.steps);
-        assertNull(ReflectionHelpers.getField(renderer, "vendorKeysHung"));
+        assertNull(hungKeys(MTK_HEVC, HEVC));
         assertFalse(((List<?>) ReflectionHelpers.getField(renderer, "lowLatencyKeysVendor")).isEmpty());
         assertTrue(terminated.isEmpty());
     }
@@ -804,6 +807,98 @@ public class DecoderFailureTest {
         FailingCodec.duringDequeue = null;
         ReflectionHelpers.callInstanceMethod(renderer, "recordVendorKeyHang");
         assertNull(VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(MTK_HEVC, HEVC)));
+    }
+
+    @Test
+    public void aWaitAsLongAsAHangLeavesNoRecordBeforeTheHangCheckTimesIt() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        // 600 frames, then no input from 5 s on: the wait ends at the 10 s mark. The latency thread looks
+        // after the wait stopped showing, as the stall line is logged, before the hang check runs.
+        ReflectionHelpers.setField(renderer, "numFramesOut", 600);
+        ShadowSystemClock.advanceBy(Duration.ofMillis(5_000));
+        List<Boolean> looked = new CopyOnWriteArrayList<>();
+        onLogLine = line -> {
+            if (line.startsWith("Decoder input waits over 20 ms") && looked.isEmpty()) {
+                looked.add(true);
+                assertEquals(-1L, (long) ReflectionHelpers.getField(renderer, "inputWaitSinceMs"));
+                ReflectionHelpers.callInstanceMethod(renderer, "recordVendorKeyHang");
+            }
+        };
+        assertFalse(fetch());
+        onLogLine = null;
+        assertEquals(Collections.singletonList(true), looked);
+        assertNull(VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(MTK_HEVC, HEVC)));
+        ReflectionHelpers.callInstanceMethod(renderer, "recordVendorKeyHang");
+        assertNull(VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(MTK_HEVC, HEVC)));
+        assertTrue(terminated.isEmpty());
+    }
+
+    @Test
+    public void plannedRestartsAfterTheSetupWithoutTheVendorKeysStillLetItBeRecorded() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        RealRebuild recovery = realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        // A size change and HDR metadata missing from the output restart it as planned, not as failures.
+        for (String reason : Arrays.asList("size change", "HDR metadata missing from the output")) {
+            ReflectionHelpers.callInstanceMethod(renderer, "requestRestart",
+                    ReflectionHelpers.ClassParameter.from(String.class, reason));
+            recoverOnTheInputThread();
+        }
+        assertEquals(Arrays.asList("reset", "configure", "rebuild", "stop", "configure", "stop", "configure"),
+                recovery.steps);
+        assertTrue(terminated.isEmpty());
+        assertNotNull(recordAfter(MTK_HEVC, HEVC, 600, 10_000));
+    }
+
+    @Test
+    public void aDecoderTakingOverGetsItsOwnResetAndSetupWithoutItsVendorKeys() {
+        renderer = dolbyVisionStreamWithVendorKeys();
+        RealRebuild recovery = realRebuild();
+        hangTwice();
+        // The Dolby Vision decoder refuses its setup without the keys; HEVC takes the stream, with its own.
+        FailingCodec.refuseName = MTK_DV;
+        recoverOnTheInputThread();
+        assertTrue((boolean) ReflectionHelpers.getField(renderer, "dolbyVisionFailed"));
+        assertFalse(vendorKeys(ReflectionHelpers.getField(renderer, "configuredFormat")).isEmpty());
+        assertNotNull(hungKeys(MTK_DV, HdrFormatPolicy.MIME_DOLBY_VISION));
+        assertNull(hungKeys(MTK_HEVC, HEVC));
+
+        // A few frames, then HEVC hangs: the reset with its keys any decoder's first hang gets...
+        ReflectionHelpers.setField(renderer, "numFramesOut", 3);
+        assertFalse(fetch());
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild", "reset", "configure"), recovery.steps);
+        assertNull(hungKeys(MTK_HEVC, HEVC));
+        // ...and hanging again before it ran well, its own setup without them.
+        ReflectionHelpers.setField(renderer, "numFramesOut", 5);
+        assertFalse(fetch());
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild", "reset", "configure", "rebuild"), recovery.steps);
+        assertTrue(terminated.isEmpty());
+        MediaFormat keyless = ReflectionHelpers.getField(renderer, "configuredFormat");
+        assertEquals(HEVC, keyless.getString(MediaFormat.KEY_MIME));
+        assertEquals(Collections.emptyList(), vendorKeys(keyless));
+        assertNotNull(hungKeys(MTK_HEVC, HEVC));
+        // Once HEVC ran well so, it is recorded; the Dolby Vision decoder never ran without its keys.
+        assertNotNull(recordAfter(MTK_HEVC, HEVC, 600, 10_000));
+        assertNull(VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(MTK_DV, HdrFormatPolicy.MIME_DOLBY_VISION)));
+        // Nothing left to drop: a later hang is reset as any decoder's, never set up without keys again.
+        assertFalse(fetch());
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild", "reset", "configure", "rebuild", "reset", "configure"),
+                recovery.steps);
+        assertTrue(terminated.isEmpty());
+    }
+
+    // The vendor keys this decoder took no input with, which it runs without, or null.
+    private List<String> hungKeys(String decoderName, String mime) {
+        Object hung = ((java.util.Map<?, ?>) ReflectionHelpers.getField(renderer, "hungKeys"))
+                .get(VendorKeyHangs.key(decoderName, mime));
+        return hung == null ? null : ReflectionHelpers.getField(hung, "keys");
     }
 
     // The first hang and its reset with the same keys, then the second: the setup without them is due.
