@@ -656,8 +656,8 @@ final class GameAdaptation {
     /**
      * The bitrate dialog's Keep my bitrate, stored as the performance overlay's switch is (GameOverlays.
      * togglePerformanceOverlay): only Lower bitrate's own keys go to the main settings through DualScreen.saveSettings,
-     * as choosing Never or The PC decides in Settings writes them; nothing else stored is touched (a PC's own choice of
-     * the busy controller stays; Never governs over it, bitrateHeld). On
+     * as choosing Never or The PC decides in Settings writes it, and this PC's own Lower bitrate gives way to it; nothing
+     * else stored is touched. On
      * sends the bitrate the player last chose in this stream, else the stream's own, as one bitrate change (nothing
      * when the PC already keeps it) and stops this device's own lowering. Off sends nothing: the PC has no message
      * that takes the bitrate back, so this stream keeps it and the notice says so.
@@ -694,6 +694,10 @@ final class GameAdaptation {
         if (!DualScreen.saveSettings(game, editor -> AutoBitrateChoice.storeKeepBitrate(editor, on))) {
             // The second screen keeps its settings as they were at its start; the change holds for its own stream.
             LimeLog.info("Keep my bitrate: the second screen's stream keeps the choice in memory only");
+        } else {
+            // Lower bitrate is one value: this PC's own choice gives way to the one just saved for every PC.
+            AutoBitrateChoice.setForPc(game, game.getIntent().getStringExtra(Game.EXTRA_PC_UUID),
+                    on ? AutoBitrateChoice.KEEP : AutoBitrateChoice.PC);
         }
     }
 
@@ -747,7 +751,7 @@ final class GameAdaptation {
         return game.connected && game.app != null && game.app.getRole() == NvApp.Role.STREAM &&
                 details.caps.family() != HostCapabilities.Family.RUBYLIGHT &&
                 !details.caps.has(HostCapabilities.Feature.RUNTIME_BITRATE) &&
-                AutoBitrateChoice.isOn(game, adaptiveBitratePreferences(), game.getIntent().getStringExtra(Game.EXTRA_PC_UUID));
+                AutoBitrateChoice.isOn(game, game.getIntent().getStringExtra(Game.EXTRA_PC_UUID));
     }
 
     private void startFoundationAbr() {
@@ -1029,23 +1033,19 @@ final class GameAdaptation {
         return game.adaptiveBitrate != null || game.pyroWaveBitrate != null;
     }
 
-    private String adaptiveBitratePreferences() {
-        return (game.decoderRenderer.getActiveVideoFormat() & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0 ?
-                AutoBitrateChoice.PYROWAVE_STORE : AutoBitrateChoice.CODEC_STORE;
-    }
-
-    /** Whether the stream starts with automatic bitrate: this PC's choice, else the Settings switch. */
+    /** Whether the stream starts with automatic bitrate: Lower it sooner, this PC's choice or else the Settings value. */
     boolean autoBitrateAtStart() {
         return supportsAdaptiveBitrate() &&
-                AutoBitrateChoice.isOn(game, adaptiveBitratePreferences(), game.getIntent().getStringExtra(Game.EXTRA_PC_UUID));
+                AutoBitrateChoice.isOn(game, game.getIntent().getStringExtra(Game.EXTRA_PC_UUID));
     }
 
     private void setAdaptiveBitrateEnabled(boolean enabled, boolean remember) {
         // Automatic bitrate on again: a reconnect starts from the saved bitrate with it.
         if (enabled) game.sessionManualBitrate = 0;
         if (remember) {
-            AutoBitrateChoice.setForPc(game, adaptiveBitratePreferences(),
-                    game.getIntent().getStringExtra(Game.EXTRA_PC_UUID), enabled);
+            // This PC's Lower bitrate: Lower it sooner while on, The PC decides when turned off.
+            AutoBitrateChoice.setForPc(game, game.getIntent().getStringExtra(Game.EXTRA_PC_UUID),
+                    enabled ? AutoBitrateChoice.SOONER : AutoBitrateChoice.PC);
             // The person chose it themselves; Automatic quality no longer owns it.
             game.qualityAutoBitrate = false;
         }

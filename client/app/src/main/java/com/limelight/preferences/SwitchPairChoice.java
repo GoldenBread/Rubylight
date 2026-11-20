@@ -12,32 +12,6 @@ import com.limelight.R;
  * first switch.
  */
 enum SwitchPairChoice {
-    /**
-     * The PC decides (both switches off), When the network is busy, Lower it sooner (what was When frames are lost),
-     * Never: keep my bitrate (a third key, keep_bitrate, that wins over the two switches and leaves them stored). The
-     * row lists them in the order of {@link #displayOrder}, When the network is busy only while it is stored. Frame loss took the place of the busy network wherever the
-     * PC took its rate changes, so either pair with it on reads as Lower it sooner; choosing that keeps the busy
-     * controller on for a PC that takes no rate changes (GameAdaptation.startStreamBitrate). Choosing Never leaves the
-     * two switches as they are; any other choice writes them and clears keep_bitrate.
-     */
-    LOWER_BITRATE(AutoBitrateChoice.SETTINGS_KEY, R.string.title_lower_bitrate, R.string.summary_lower_bitrate,
-            R.array.lower_bitrate_names, AutoBitrateChoice.SETTINGS_KEY, false,
-            PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false) {
-        @Override int choice(boolean busy, boolean lost) { return lost ? 2 : busy ? 1 : 0; }
-        @Override boolean first(int choice) { return choice != 0; }
-        @Override boolean second(int choice) { return choice == 2; }
-        @Override int read(SharedPreferences prefs) {
-            return prefs.getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false) ? KEEP : super.read(prefs);
-        }
-        @Override void save(SharedPreferences.Editor editor, int choice) {
-            editor.putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, choice == KEEP);
-            if (choice != KEEP) super.save(editor, choice);
-        }
-        // When the network is busy is listed only while it is the stored choice: Lower it sooner keeps its
-        // controller for a PC that takes no rate changes.
-        @Override int offered(Context context, SharedPreferences prefs) { return read(prefs) == 1 ? 4 : 3; }
-        @Override int[] displayOrder(int offered) { return offered == 4 ? new int[] {0, 2, 1, 3} : new int[] {0, 2, 3}; }
-    },
     /** Back, Stream menu, Guide. With both switches on the menu won (GameKeyboardInput.handlePhysicalBackMenuKey). */
     BACK_BUTTON("back_button", R.string.title_back_button, R.string.summary_back_button, R.array.back_button_names,
             PreferenceConfiguration.BACK_OPENS_MENU_PREF_STRING, false, PreferenceConfiguration.BACK_AS_GUIDE_PREF_STRING, false) {
@@ -79,9 +53,6 @@ enum SwitchPairChoice {
         this.secondKey = secondKey;
         this.secondDefault = secondDefault;
     }
-
-    /** Lower bitrate's choice that is no pair of switches: Never, keep my bitrate. */
-    static final int KEEP = 3;
 
     /** The choice, as its index in {@link #names}, that the two switches make. */
     abstract int choice(boolean first, boolean second);

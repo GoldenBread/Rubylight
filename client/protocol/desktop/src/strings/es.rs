@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "Búfer de recepción: el sistema concedi�
     ("Installed in the game’s folder, release {}.", "Instalado en la carpeta del juego, versión {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Añadido al mod de escalado de la carpeta del juego, versión {}."),
     ("Lower bitrate", "Bajar la tasa de bits"),
-    ("When the network is busy", "Si la red está saturada"),
     ("The PC decides", "El PC decide"),
     ("Lower it sooner", "Bajarla antes"),
     ("Never: keep my bitrate", "Nunca: mantener mi tasa de bits"),

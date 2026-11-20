@@ -140,7 +140,7 @@ public class SimpleProfileTest {
         // Picture quality changes the bitrate and codec and leaves the pacing as the first choice made it.
         assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "save-data"));
         assertEquals("auto", prefs.getString(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, null));
-        assertTrue(prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
+        assertEquals(AutoBitrateChoice.SOONER, prefs.getString(AutoBitrateChoice.SETTINGS_KEY, null));
         assertEquals("battery", prefs.getString("adaptive_quality_mode", null));
         assertEquals("save-data", prefs.getString(SimpleProfile.PICTURE, null));
         assertEquals("smoothest", prefs.getString(SimpleProfile.SMOOTHNESS, null));
@@ -150,14 +150,22 @@ public class SimpleProfileTest {
 
     @Test
     public void neverSurvivesEveryChoiceButSaveData() {
-        prefs.edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true).commit();
+        prefs.edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.KEEP).commit();
         assertTrue(SimpleProfile.apply(context, SimpleProfile.SMOOTHNESS, "smoothest"));
         assertTrue(SimpleProfile.apply(context, SimpleProfile.HDR, "off"));
         assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "auto"));
         assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "best"));
-        assertTrue("the page does not show that row", prefs.getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
+        assertEquals("the page does not show that row", AutoBitrateChoice.KEEP, prefs.getString(AutoBitrateChoice.SETTINGS_KEY, null));
         assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "save-data"));
-        assertFalse("Save data turns Nightjar's own lowering on", prefs.getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true));
+        assertEquals("Save data turns Nightjar's own lowering on", AutoBitrateChoice.SOONER,
+                prefs.getString(AutoBitrateChoice.SETTINGS_KEY, null));
+        // Leaving Save data takes back the lowering it turned on.
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "auto"));
+        assertEquals(AutoBitrateChoice.PC, prefs.getString(AutoBitrateChoice.SETTINGS_KEY, null));
+        // A Lower it sooner the player chose survives a choice other than Save data.
+        prefs.edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.SOONER).commit();
+        assertTrue(SimpleProfile.apply(context, SimpleProfile.PICTURE, "best"));
+        assertEquals(AutoBitrateChoice.SOONER, prefs.getString(AutoBitrateChoice.SETTINGS_KEY, null));
     }
 
     @Test

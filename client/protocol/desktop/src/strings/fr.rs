@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "Tampon de réception : le système a acco
     ("Installed in the game’s folder, release {}.", "Installé dans le dossier du jeu, version {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Ajouté au mod de mise à l’échelle dans le dossier du jeu, version {}."),
     ("Lower bitrate", "Baisser le débit"),
-    ("When the network is busy", "Si le réseau est chargé"),
     ("The PC decides", "Le PC décide"),
     ("Lower it sooner", "Baisser plus tôt"),
     ("Never: keep my bitrate", "Jamais : garder mon débit"),

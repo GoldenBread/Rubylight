@@ -308,22 +308,22 @@ public class GameLifecycleTest {
             ReflectionHelpers.setField(activity, "streamFps", 60);
             ReflectionHelpers.setField(activity, "conn", connection);
             ReflectionHelpers.setField(activity, "connected", true);
-            String store = pyroWave ? "PyroWaveBitrate" : "AdaptiveBitrate";
             android.preference.PreferenceManager.getDefaultSharedPreferences(activity).edit()
-                    .putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();
-            // The Settings switch is the default; the menu's toggle then chooses for this PC alone.
-            assertTrue(AutoBitrateChoice.isOn(activity, store, "pc"));
+                    .putString(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, com.limelight.preferences.AutoBitrateChoice.SOONER).commit();
+            // The Settings value is the default; the menu's toggle then chooses for this PC alone, for every codec.
+            assertTrue(AutoBitrateChoice.isOn(activity, "pc"));
             try {
                 ReflectionHelpers.callInstanceMethod(activity.adaptation, "setAdaptiveBitrateEnabled",
                         ReflectionHelpers.ClassParameter.from(boolean.class, false),
                         ReflectionHelpers.ClassParameter.from(boolean.class, true));
-                assertFalse(AutoBitrateChoice.isOn(activity, store, "pc"));
-                assertTrue(AutoBitrateChoice.isOn(activity, store, "other"));
+                assertFalse(AutoBitrateChoice.isOn(activity, "pc"));
+                assertEquals(com.limelight.preferences.AutoBitrateChoice.PC, AutoBitrateChoice.forPc(activity, "pc"));
+                assertTrue(AutoBitrateChoice.isOn(activity, "other"));
                 ReflectionHelpers.callInstanceMethod(activity.adaptation, "setAdaptiveBitrateEnabled",
                         ReflectionHelpers.ClassParameter.from(boolean.class, true),
                         ReflectionHelpers.ClassParameter.from(boolean.class, true));
                 awaitBitrateRequest(activity);
-                assertTrue(AutoBitrateChoice.isOn(activity, store, "pc"));
+                assertTrue(AutoBitrateChoice.isOn(activity, "pc"));
             } finally {
                 ReflectionHelpers.callInstanceMethod(activity.adaptation, "setAdaptiveBitrateEnabled",
                         ReflectionHelpers.ClassParameter.from(boolean.class, false),
@@ -357,28 +357,25 @@ public class GameLifecycleTest {
             ReflectionHelpers.setField(activity, "app", new com.limelight.nvstream.http.NvApp());
             ReflectionHelpers.setField(activity, "conn", connection);
             ReflectionHelpers.setField(activity, "decoderRenderer", renderer);
-            String store = pyroWave ? "PyroWaveBitrate" : "AdaptiveBitrate";
-            String other = pyroWave ? "AdaptiveBitrate" : "PyroWaveBitrate";
+            android.content.SharedPreferences own =
+                    activity.getSharedPreferences(com.limelight.preferences.AutoBitrateChoice.PC_STORE, Context.MODE_PRIVATE);
             android.content.SharedPreferences settings =
                     android.preference.PreferenceManager.getDefaultSharedPreferences(activity);
             try {
                 assertFalse("off by default", activity.adaptation.autoBitrateAtStart());
-                settings.edit().putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();
-                assertTrue("the switch is the default", activity.adaptation.autoBitrateAtStart());
-                // This PC chose off in the stream menu.
-                activity.getSharedPreferences(store, Context.MODE_PRIVATE).edit().putBoolean("pc", false).commit();
+                settings.edit().putString(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, com.limelight.preferences.AutoBitrateChoice.SOONER).commit();
+                assertTrue("the Settings value is the default", activity.adaptation.autoBitrateAtStart());
+                // This PC chose The PC decides in the stream menu.
+                own.edit().putString("pc", com.limelight.preferences.AutoBitrateChoice.PC).commit();
                 assertFalse("the PC's own choice wins", activity.adaptation.autoBitrateAtStart());
-                // Only the store of the stream's codec counts.
-                activity.getSharedPreferences(store, Context.MODE_PRIVATE).edit().clear().commit();
-                activity.getSharedPreferences(other, Context.MODE_PRIVATE).edit().putBoolean("pc", false).commit();
+                own.edit().clear().commit();
                 assertTrue(activity.adaptation.autoBitrateAtStart());
                 // A host without runtime bitrate support never starts it.
                 details.encoderBitrateSupported = false;
                 assertFalse(activity.adaptation.autoBitrateAtStart());
             } finally {
                 settings.edit().clear().commit();
-                activity.getSharedPreferences("AdaptiveBitrate", Context.MODE_PRIVATE).edit().clear().commit();
-                activity.getSharedPreferences("PyroWaveBitrate", Context.MODE_PRIVATE).edit().clear().commit();
+                own.edit().clear().commit();
             }
         }
     }
@@ -407,7 +404,7 @@ public class GameLifecycleTest {
                 new com.limelight.nvstream.AdaptiveBitrateController(20000, 20000, 60, 0));
         android.content.SharedPreferences settings =
                 android.preference.PreferenceManager.getDefaultSharedPreferences(activity);
-        settings.edit().putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();
+        settings.edit().putString(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, com.limelight.preferences.AutoBitrateChoice.SOONER).commit();
         ReflectionHelpers.callInstanceMethod(activity.adaptation, "showBitrateDialog");
         androidx.appcompat.app.AlertDialog dialog = ReflectionHelpers.getField(activity, "streamMenu");
         try {
@@ -429,7 +426,7 @@ public class GameLifecycleTest {
             awaitBitrateRequest(activity);
             assertEquals(30000, connection.lastWrite);
             assertNull("automatic bitrate stops for this session", ReflectionHelpers.getField(activity, "adaptiveBitrate"));
-            assertTrue("the choice stays on", AutoBitrateChoice.isOn(activity, "AdaptiveBitrate", "pc"));
+            assertTrue("the choice stays on", AutoBitrateChoice.isOn(activity, "pc"));
         } finally {
             dialog.dismiss();
             settings.edit().clear().commit();

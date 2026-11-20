@@ -98,56 +98,65 @@ impl Roaming {
     }
 }
 
-/// "Lower bitrate": whether this stream's bitrate drops while the connection struggles, and from
-/// what. Saved as "Lower bitrate when the network is busy" (desktop `adaptive_bitrate`, Android
-/// `adaptive_bitrate`) and "Lower bitrate when frames are lost" (`client_hint_bitrate`, Android
-/// `checkbox_rate_change_bitrate`), and "Never: keep my bitrate" (`keep_bitrate` on both). The
-/// second takes the place of the first on a PC that takes its rate changes; on a PC that doesn't,
-/// the first still runs if it is on. While `keep_bitrate` is set the two others count as off for
-/// the stream and stay stored as they were.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// "Lower bitrate", the one adaptive bitrate setting: whether this stream's bitrate drops while
+/// the connection struggles, and from what. Saved as `lower_bitrate` (`pc`, `sooner`, `keep`) on
+/// both apps. Earlier versions saved it as three switches: "Lower bitrate when the network is busy"
+/// (desktop `adaptive_bitrate`, Android `adaptive_bitrate`), "Lower bitrate when frames are lost"
+/// (`client_hint_bitrate`, Android `checkbox_rate_change_bitrate`) and "Never: keep my bitrate"
+/// (`keep_bitrate` on both); [`LowerBitrate::from_saved`] reads them once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LowerBitrate {
     /// The PC lowers it when frames are lost that it cannot repair, and raises it again after.
+    #[default]
+    #[serde(rename = "pc")]
     Off,
     /// This device lowers it as soon as frames go missing, on a PC that takes its rate changes;
-    /// elsewhere it is lowered while the connection falls behind.
+    /// elsewhere this device lowers it while the connection falls behind.
+    #[serde(rename = "sooner")]
     WhenFramesLost,
-    /// The PC (or this device) lowers it while the connection falls behind.
-    WhenBusy,
     /// This stream keeps the bitrate it was set to: the device sends it to the PC, which stops
     /// lowering it, and this device's own lowering is off.
+    #[serde(rename = "keep")]
     Keep,
 }
 
 impl LowerBitrate {
     /// The row's order.
-    pub const ALL: [Self; 4] = [Self::Off, Self::WhenFramesLost, Self::WhenBusy, Self::Keep];
+    pub const ALL: [Self; 3] = [Self::Off, Self::WhenFramesLost, Self::Keep];
 
+    /// The choice the three switches of earlier versions made: Never won; either of the others on
+    /// lowered the bitrate before the PC did ("When the network is busy" alone, an earlier choice,
+    /// is "Lower it sooner" now); otherwise the PC decided.
     pub fn from_saved(when_busy: bool, when_lost: bool, keep: bool) -> Self {
-        match (keep, when_busy, when_lost) {
-            (true, _, _) => Self::Keep,
-            (_, _, true) => Self::WhenFramesLost,
-            (_, true, false) => Self::WhenBusy,
-            (_, false, false) => Self::Off,
+        match (keep, when_busy || when_lost) {
+            (true, _) => Self::Keep,
+            (false, true) => Self::WhenFramesLost,
+            (false, false) => Self::Off,
         }
     }
 
-    /// What to save for this choice, as (when busy, when frames are lost, keep), given the two
-    /// switches as they are: "Never" leaves them, every other choice writes them and clears the
-    /// third. "When frames are lost" keeps the busy controller on, for a PC that takes no rate
-    /// changes.
-    pub fn to_saved(self, busy: bool, lost: bool) -> (bool, bool, bool) {
+    /// The stored value.
+    pub fn as_str(self) -> &'static str {
         match self {
-            Self::Off => (false, false, false),
-            Self::WhenBusy => (true, false, false),
-            Self::WhenFramesLost => (true, true, false),
-            Self::Keep => (busy, lost, true),
+            Self::Off => "pc",
+            Self::WhenFramesLost => "sooner",
+            Self::Keep => "keep",
         }
     }
 
-    /// The two switches the stream acts on: both off while "Never" is chosen.
-    pub fn effective(when_busy: bool, when_lost: bool, keep: bool) -> (bool, bool) {
-        if keep { (false, false) } else { (when_busy, when_lost) }
+    /// Whether this device's busy-network controller runs, on a PC that takes no rate changes.
+    pub fn busy_controller(self) -> bool {
+        self == Self::WhenFramesLost
+    }
+
+    /// Whether this device steers the bitrate from its own loss over rate changes.
+    pub fn client_hints(self) -> bool {
+        self == Self::WhenFramesLost
+    }
+
+    /// Whether the stream keeps its bitrate ("Never: keep my bitrate").
+    pub fn keeps(self) -> bool {
+        self == Self::Keep
     }
 }
 
@@ -156,8 +165,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lower_bitrate_reads_every_saved_switch_combination() {
+        for busy in [false, true] {
+            for lost in [false, true] {
+                for keep in [false, true] {
+                    let expected = if keep {
+                        LowerBitrate::Keep
+                    } else if busy || lost {
+                        LowerBitrate::WhenFramesLost
+                    } else {
+                        LowerBitrate::Off
+                    };
+                    assert_eq!(
+                        LowerBitrate::from_saved(busy, lost, keep),
+                        expected,
+                        "{busy} {lost} {keep}"
+                    );
+                }
+            }
+        }
+        assert_eq!(LowerBitrate::default(), LowerBitrate::Off);
+    }
+
+    #[test]
+    fn lower_bitrate_drives_what_the_three_switches_did() {
+        assert!(
+            !LowerBitrate::Off.busy_controller()
+                && !LowerBitrate::Off.client_hints()
+                && !LowerBitrate::Off.keeps()
+        );
+        let sooner = LowerBitrate::WhenFramesLost;
+        assert!(sooner.busy_controller() && sooner.client_hints() && !sooner.keeps());
+        let keep = LowerBitrate::Keep;
+        assert!(!keep.busy_controller() && !keep.client_hints() && keep.keeps());
+        for choice in LowerBitrate::ALL {
+            let json = serde_json::to_value(choice).unwrap();
+            assert_eq!(json, serde_json::Value::from(choice.as_str()));
+            assert_eq!(
+                serde_json::from_value::<LowerBitrate>(json).unwrap(),
+                choice
+            );
+        }
+    }
+
+    #[test]
     fn back_reads_as_the_stream_used_it() {
-        assert_eq!(BackButton::from_saved(false, false), BackButton::Back, "both defaults");
+        assert_eq!(
+            BackButton::from_saved(false, false),
+            BackButton::Back,
+            "both defaults"
+        );
         assert_eq!(BackButton::from_saved(true, false), BackButton::StreamMenu);
         assert_eq!(BackButton::from_saved(false, true), BackButton::Guide);
         // The menu won over Guide (gamepad.rs, GameKeyboardInput.handlePhysicalBackMenuKey).
@@ -166,7 +223,11 @@ mod tests {
 
     #[test]
     fn system_keys_read_as_the_stream_used_them() {
-        assert_eq!(SystemKeys::from_saved(true, false), SystemKeys::Always, "both defaults");
+        assert_eq!(
+            SystemKeys::from_saved(true, false),
+            SystemKeys::Always,
+            "both defaults"
+        );
         assert_eq!(SystemKeys::from_saved(true, true), SystemKeys::FullScreen);
         // Full screen only did nothing while the keys were not sent.
         assert_eq!(SystemKeys::from_saved(false, true), SystemKeys::Off);
@@ -175,26 +236,15 @@ mod tests {
 
     #[test]
     fn roaming_reads_as_the_stream_used_it() {
-        assert_eq!(Roaming::from_saved(true, false), Roaming::NotMetered, "both defaults");
+        assert_eq!(
+            Roaming::from_saved(true, false),
+            Roaming::NotMetered,
+            "both defaults"
+        );
         assert_eq!(Roaming::from_saved(true, true), Roaming::AnyNetwork);
         // Mobile data did nothing while roaming was off (roaming_config).
         assert_eq!(Roaming::from_saved(false, true), Roaming::Off);
         assert_eq!(Roaming::from_saved(false, false), Roaming::Off);
-    }
-
-    #[test]
-    fn lower_bitrate_reads_as_the_stream_used_it() {
-        assert_eq!(LowerBitrate::from_saved(false, false, false), LowerBitrate::Off, "all defaults");
-        assert_eq!(LowerBitrate::from_saved(true, false, false), LowerBitrate::WhenBusy);
-        // Frame loss took the place of the busy controller wherever the PC took rate changes.
-        assert_eq!(LowerBitrate::from_saved(false, true, false), LowerBitrate::WhenFramesLost);
-        assert_eq!(LowerBitrate::from_saved(true, true, false), LowerBitrate::WhenFramesLost);
-        // "Never" wins over the two switches, whatever they hold.
-        for (busy, lost) in [(false, false), (true, false), (false, true), (true, true)] {
-            assert_eq!(LowerBitrate::from_saved(busy, lost, true), LowerBitrate::Keep);
-            assert_eq!(LowerBitrate::effective(busy, lost, true), (false, false));
-            assert_eq!(LowerBitrate::effective(busy, lost, false), (busy, lost));
-        }
     }
 
     #[test]
@@ -211,14 +261,5 @@ mod tests {
             let (a, b) = choice.to_saved();
             assert_eq!(Roaming::from_saved(a, b), choice);
         }
-        for choice in LowerBitrate::ALL {
-            for (busy, lost) in [(false, false), (true, false), (false, true), (true, true)] {
-                let (a, b, c) = choice.to_saved(busy, lost);
-                assert_eq!(LowerBitrate::from_saved(a, b, c), choice);
-            }
-        }
-        // "Never" leaves the stored pair as it was; the others clear it.
-        assert_eq!(LowerBitrate::Keep.to_saved(true, false), (true, false, true));
-        assert_eq!(LowerBitrate::Off.to_saved(true, true), (false, false, false));
     }
 }

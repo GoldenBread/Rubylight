@@ -111,7 +111,7 @@ Android needs no scan-line check: SurfaceFlinger never flips mid-scan.
 | Feature | Android | Windows | Linux | Notes |
 | --- | --- | --- | --- | --- |
 | Automatic bitrate (follows resolution, frame rate and codec) | Yes | Yes | Yes | On until the bitrate is set by hand. |
-| Lower bitrate: The PC decides, Lower it sooner, When the network is busy, Never: keep my bitrate | Yes | Yes | Yes | The PC decides by default. The same controllers, PyroWave's included: Rust `nightjar-policy` on the desktop, the Java originals it is kept equal to on Android. |
+| Lower bitrate: The PC decides, Lower it sooner, Never: keep my bitrate | Yes | Yes | Yes | The PC decides by default. The same controllers, PyroWave's included: Rust `nightjar-policy` on the desktop, the Java originals it is kept equal to on Android. |
 | Automatic resolution and frame rate | Yes | Yes | Yes | |
 | Change bitrate / frame rate during a stream | Yes | Yes | Yes | |
 | Error correction choice and the loss report | Yes | Yes | Yes | Under **Settings → Debug** on both; the PC's setting by default. |

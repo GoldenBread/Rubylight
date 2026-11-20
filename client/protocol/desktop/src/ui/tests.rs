@@ -817,7 +817,7 @@ fn settings_main_rows_are_androids_tiers() {
         assert!(preferences.contains(&format!("android:key=\"{control}\"")), "{desktop} matches Android's {android}, which exists");
         assert!(!DESKTOP_MAIN.contains(&desktop), "{desktop}: Android decides its tier");
     }
-    assert!(main_row("adaptive_bitrate") && main_row("auto_reconnect") && main_row("window_mode") && main_row("connection_test"));
+    assert!(main_row("lower_bitrate") && main_row("auto_reconnect") && main_row("window_mode") && main_row("connection_test"));
     assert!(main_row("vrr") && main_row("mouse_mode") && main_row("controllers") && main_row("controller_test") && main_row("open_on_start"));
     assert!(!main_row("ui_zoom") && !main_row("usb_forwarding") && !main_row("swap_face_buttons") && !main_row("pyrowave_pace"));
 }

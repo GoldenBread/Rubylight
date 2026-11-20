@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "Alma arabelleği: sistem istenen {1} KiB'
     ("Installed in the game’s folder, release {}.", "Oyunun klasörüne kuruldu, sürüm {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Oyunun klasöründeki ölçeklendirme moduna eklendi, sürüm {}."),
     ("Lower bitrate", "Bit hızını düşür"),
-    ("When the network is busy", "Ağ yoğunken"),
     ("The PC decides", "PC karar verir"),
     ("Lower it sooner", "Daha erken düşür"),
     ("Never: keep my bitrate", "Asla: bit hızımı koru"),

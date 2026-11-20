@@ -85,12 +85,15 @@
             seekbar:presets="@array/bitrate_presets_kbps"
             android:text="@string/suffix_seekbar_bitrate_mbps"
             android:title="@string/title_seekbar_bitrate" />
-        <!-- The PC decides, Lower it sooner, When the network is busy (only while stored) or Never: keep my
-             bitrate: writes adaptive_bitrate, checkbox_rate_change_bitrate and keep_bitrate (SwitchPairChoice). The
-             choice made here holds for every PC; the stream menu's toggle saves a choice for one PC
-             (AutoBitrateChoice). -->
-        <Preference android:key="adaptive_bitrate" android:title="@string/title_lower_bitrate"
-            android:dialogMessage="@string/summary_lower_bitrate" android:persistent="false" />
+        <!-- The one adaptive bitrate setting: The PC decides, Lower it sooner or Never: keep my bitrate. The choice
+             made here holds for every PC; the stream menu saves a choice for one PC (AutoBitrateChoice). -->
+        <com.limelight.preferences.MaterialListPreference
+            android:key="lower_bitrate"
+            android:title="@string/title_lower_bitrate"
+            android:dialogMessage="@string/summary_lower_bitrate"
+            android:entries="@array/lower_bitrate_names"
+            android:entryValues="@array/lower_bitrate_values"
+            android:defaultValue="pc" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_mobile_bitrate_kbps"
             android:title="@string/title_mobile_bitrate"

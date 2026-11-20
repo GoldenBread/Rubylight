@@ -278,6 +278,9 @@ public final class SimpleProfile {
         boolean optIn = prefs.contains(VRR_OPT_IN) ? prefs.getBoolean(VRR_OPT_IN, false) : lastWritten;
         if (currentVrr != lastWritten) optIn = currentVrr;
         boolean writeVrr = values.vrr && DisplayFrameRatePolicy.vrrOffered(context);
+        // Lower it sooner that Save data wrote, before this choice replaces it.
+        boolean saveDataLowering = "save-data".equals(prefs.getString(PICTURE, null))
+                && AutoBitrateChoice.SOONER.equals(AutoBitrateChoice.read(prefs));
         SharedPreferences.Editor editor = prefs.edit()
                 .putString(SMOOTHNESS, smoothness)
                 .putString(PICTURE, picture)
@@ -298,11 +301,16 @@ public final class SimpleProfile {
                 .putString(PreferenceConfiguration.VIDEO_FORMAT_PREF_STRING, codec(values.codec))
                 .putBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING,
                         hdrSwitch != null ? hdrSwitch : values.hdr)
-                .putBoolean(AutoBitrateChoice.SETTINGS_KEY, values.adaptiveBitrate)
                 .putString("adaptive_quality_mode", "save-power".equals(values.adaptiveQuality) ? "battery" : "off");
-        // Only a choice that turns Nightjar's own lowering on (Save data) clears an earlier "Never: keep my bitrate";
-        // the page does not show that row, so every other choice leaves it.
-        if (values.adaptiveBitrate) editor.putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false);
+        // A choice that turns Nightjar's own lowering on (Save data) sets Lower bitrate to Lower it sooner, and one
+        // that leaves Save data takes that back to The PC decides. The page does not show that row, so every other
+        // choice leaves it (an earlier Never: keep my bitrate too).
+        if (values.adaptiveBitrate || saveDataLowering) {
+            editor.putString(AutoBitrateChoice.SETTINGS_KEY,
+                            values.adaptiveBitrate ? AutoBitrateChoice.SOONER : AutoBitrateChoice.PC)
+                    .remove(AutoBitrateChoice.RETIRED_BUSY).remove(AutoBitrateChoice.RETIRED_LOST)
+                    .remove(AutoBitrateChoice.RETIRED_KEEP);
+        }
         if (values.realVrr != null) editor.putBoolean(PreferenceConfiguration.REAL_VRR_PREF_STRING, values.realVrr);
         if (values.latencySwitches) {
             for (String switchKey : StreamPreset.LATENCY_SWITCHES) {
@@ -380,8 +388,7 @@ public final class SimpleProfile {
                 prefs.getBoolean("checkbox_reduce_refresh_rate", false),
                 prefs.getBoolean(PreferenceConfiguration.CONTENT_RATE_FRAME_RATE_PREF_STRING, false),
                 bitrateMilli, codec, hdr,
-                SwitchPairChoice.LOWER_BITRATE.read(prefs) != SwitchPairChoice.KEEP
-                        && prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false), quality,
+                AutoBitrateChoice.SOONER.equals(AutoBitrateChoice.read(prefs)), quality,
                 read(prefs, SMOOTHNESS), read(prefs, PICTURE), read(prefs, HDR));
     }
 

@@ -1085,19 +1085,19 @@ impl Streaming {
             },
         };
         let rate_change = facts.rate_change.then(|| {
-            let hint = settings.client_hint_bitrate && !settings.keep_bitrate;
+            let hint = settings.lower_bitrate.client_hints();
             let mut rates = rate_change::RateChange::new(
                 bitrate_kbps, facts.fps.max(1) as u32 * 1000, hint, connecting.plan.bitrate_limit_kbps, 0);
             // A reconnect is a new session on the PC, whose controllers lower the bitrate again: Never,
             // and a bitrate the player chose before it, are sent once more.
-            if rate_change::takeover_at_start(settings.keep_bitrate, connecting.plan.bitrate_before_manual.is_some(), hint) { rates.keep_bitrate(); }
+            if rate_change::takeover_at_start(settings.lower_bitrate.keeps(), connecting.plan.bitrate_before_manual.is_some(), hint) { rates.keep_bitrate(); }
             // The player's bitrate came from this PC's answers: Keep my bitrate keeps it, whatever the query answers.
             if connecting.plan.bitrate_before_manual.is_some() { rates.chosen_before(bitrate_kbps); }
             // After an automatic reconnect the client-hint controller returns to the rate it had cut to.
             if let Some(kbps) = connecting.plan.resume_bitrate_kbps { rates.resume_hint(kbps); }
             rates
         });
-        if settings.keep_bitrate && rate_change.is_none() {
+        if settings.lower_bitrate.keeps() && rate_change.is_none() {
             eprintln!("nightjar: Never: keep my bitrate is chosen, but this PC takes no bitrate changes from the device; the stream runs as The PC decides");
         }
         let backlog = connecting.shared.pacer_backlog.clone();
@@ -1490,11 +1490,11 @@ impl Streaming {
     }
 
     /// A bitrate the player set in the stream menu: every reconnect of this stream starts at it,
-    /// with automatic bitrate off as it is now (Android's `GameRecovery.putSessionBitrate`).
+    /// with automatic bitrate off as it is now (Android's `GameRecovery.putSessionBitrate`): a
+    /// chosen bitrate keeps this device's own lowering off at the start (`own_lowering_at_start`).
     pub(super) fn keep_manual_bitrate(&mut self, kbps: u32) {
         self.plan.bitrate_before_manual.get_or_insert(self.settings.bitrate_kbps);
         self.settings.bitrate_kbps = kbps;
-        self.settings.adaptive_bitrate = false;
         self.plan.settings = self.settings.clone();
     }
 
@@ -1502,7 +1502,9 @@ impl Streaming {
     fn forget_manual_bitrate(&mut self) {
         if let Some(kbps) = self.plan.bitrate_before_manual.take() {
             self.settings.bitrate_kbps = kbps;
-            self.settings.adaptive_bitrate = true;
+            if !self.settings.lower_bitrate.keeps() {
+                self.settings.lower_bitrate = nightjar_policy::choices::LowerBitrate::WhenFramesLost;
+            }
             self.plan.settings = self.settings.clone();
         }
     }
@@ -1537,7 +1539,7 @@ impl Streaming {
                     return;
                 }
             }
-            if !self.adaptive_bitrate && !self.bitrate_busy && !self.settings.keep_bitrate { self.enable_adaptive_bitrate(true); }
+            if !self.adaptive_bitrate && !self.bitrate_busy && !self.settings.lower_bitrate.keeps() { self.enable_adaptive_bitrate(true); }
         }
     }
 
@@ -2086,9 +2088,9 @@ impl Streaming {
             eprintln!("nightjar: keep my bitrate turned off in the stream menu: The PC decides from the next stream; this stream keeps its bitrate");
             self.show_toast(tr("The PC decides from the next stream; this stream keeps its bitrate."));
         }
-        self.settings.keep_bitrate = keep;
+        rate_change::store_keep(&mut self.settings, keep);
         // A reconnect starts from the plan: it sends the takeover again on the PC's new session.
-        self.plan.settings.keep_bitrate = keep;
+        rate_change::store_keep(&mut self.plan.settings, keep);
         self.keep_change = Some(keep);
     }
 

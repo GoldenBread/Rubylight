@@ -4,6 +4,7 @@
 use super::*;
 use crate::ui::settings::{simple_apply, simple_caps, simple_state};
 use nightjar_policy::simple_profile as simple;
+use nightjar_policy::choices::LowerBitrate;
 use crate::config::FramePacing;
 use nightjar_policy::presets::{self, Preset};
 
@@ -1101,7 +1102,7 @@ fn never_survives_every_recommended_choice_but_save_data() {
     let display = Display { width: 2560, height: 1440, refresh_hz: 120.0, refresh_reported: true };
     let caps = simple_caps(&display, false, true);
     let recommended = simple::recommended(&caps);
-    let mut s = Settings { keep_bitrate: true, ..Settings::default() };
+    let mut s = Settings { lower_bitrate: LowerBitrate::Keep, ..Settings::default() };
     for choices in [
         simple::Choices { smoothness: simple::Smoothness::Smoothest, ..recommended },
         simple::Choices { hdr: simple::Hdr::Off, ..recommended },
@@ -1109,29 +1110,30 @@ fn never_survives_every_recommended_choice_but_save_data() {
         simple::Choices { picture: simple::Picture::Best, ..recommended },
     ].into_iter().enumerate() {
         simple_apply(&mut s, &display, &caps, choices.1);
-        assert!(s.keep_bitrate, "choice {}", choices.0);
+        assert_eq!(s.lower_bitrate, LowerBitrate::Keep, "choice {}", choices.0);
     }
     simple_apply(&mut s, &display, &caps, simple::Choices { picture: simple::Picture::SaveData, ..recommended });
-    assert!(!s.keep_bitrate && s.adaptive_bitrate);
+    assert_eq!(s.lower_bitrate, LowerBitrate::WhenFramesLost);
+    // Leaving Save data takes back the lowering it turned on.
+    simple_apply(&mut s, &display, &caps, simple::Choices { picture: simple::Picture::Auto, ..recommended });
+    assert_eq!(s.lower_bitrate, LowerBitrate::Off);
 }
 
-/// A PC's, game's or profile's Lower bitrate saved before Never existed holds only its two
-/// switches: over a main Never it reads as its own choice.
+/// A PC's, game's or profile's Lower bitrate saved as the old switches (an imported profile too)
+/// reads as its own choice over a main Never.
 #[test]
-fn a_two_key_override_over_never_reads_as_its_own_choice() {
-    use nightjar_policy::choices::LowerBitrate;
-    let never = Settings { keep_bitrate: true, ..Settings::default() };
-    for (json, choice) in [(r#"{"adaptive_bitrate":true}"#, LowerBitrate::WhenBusy), (r#"{"adaptive_bitrate":false,"client_hint_bitrate":false}"#, LowerBitrate::Off),
+fn an_old_switch_override_over_never_reads_as_its_own_choice() {
+    let never = Settings { lower_bitrate: LowerBitrate::Keep, ..Settings::default() };
+    for (json, choice) in [(r#"{"adaptive_bitrate":true}"#, LowerBitrate::WhenFramesLost), (r#"{"adaptive_bitrate":false,"client_hint_bitrate":false}"#, LowerBitrate::Off),
         (r#"{"client_hint_bitrate":true}"#, LowerBitrate::WhenFramesLost)] {
         let layer: Overrides = serde_json::from_str(json).unwrap();
-        let s = layer.apply(&never);
-        assert_eq!(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate), choice, "{json}");
+        assert_eq!(layer.apply(&never).lower_bitrate, choice, "{json}");
     }
     // A layer without the row leaves the main Never; one saved with Never keeps it.
     let other: Overrides = serde_json::from_str(r#"{"fps":60}"#).unwrap();
-    assert!(other.apply(&never).keep_bitrate);
+    assert_eq!(other.apply(&never).lower_bitrate, LowerBitrate::Keep);
     let kept: Overrides = serde_json::from_str(r#"{"adaptive_bitrate":false,"client_hint_bitrate":false,"keep_bitrate":true}"#).unwrap();
-    assert!(kept.apply(&Settings::default()).keep_bitrate);
+    assert_eq!(kept.apply(&Settings::default()).lower_bitrate, LowerBitrate::Keep);
 }
 
 /// Lower bitrate's list open on the Video section, at 1920x1080:
@@ -1154,7 +1156,7 @@ fn lower_bitrate_open_screenshot() {
     f.click_at(at, egui::PointerButton::Primary);
     f.settle();
     assert!(f.placed.iter().any(|(t, ..)| t == "Never: keep my bitrate"), "the list is open");
-    assert!(!f.placed.iter().any(|(t, ..)| t == "When the network is busy"), "only while it is stored");
+    assert!(!f.placed.iter().any(|(t, ..)| t == "When the network is busy"), "no longer a choice");
     f.shoot(&dir, "settings-lower-bitrate-open-1920x1080");
 }
 
@@ -1592,21 +1594,15 @@ fn paired_switches_read_as_one_choice() {
     assert_eq!(value("{}", "client_roaming"), "Except mobile data");
     assert_eq!(value(r#"{"roaming_metered":true}"#, "roaming_metered"), "Any network");
     assert_eq!(value(r#"{"client_roaming":false,"roaming_metered":true}"#, "client_roaming"), "Off");
-    assert_eq!(value("{}", "adaptive_bitrate"), "The PC decides");
-    assert_eq!(value(r#"{"adaptive_bitrate":true}"#, "adaptive_bitrate"), "When the network is busy");
-    assert_eq!(value(r#"{"adaptive_bitrate":true,"client_hint_bitrate":true}"#, "client_hint_bitrate"), "Lower it sooner");
-    assert_eq!(value(r#"{"client_hint_bitrate":true}"#, "adaptive_bitrate"), "Lower it sooner");
-    // "Never" wins over the stored pair, and the row reads the same from any of its keys.
-    assert_eq!(value(r#"{"keep_bitrate":true}"#, "adaptive_bitrate"), "Never: keep my bitrate");
-    assert_eq!(value(r#"{"keep_bitrate":true,"client_hint_bitrate":true,"adaptive_bitrate":true}"#, "keep_bitrate"), "Never: keep my bitrate");
-    // A PC's own value carries the key like the pair.
+    assert_eq!(value("{}", "lower_bitrate"), "The PC decides");
+    assert_eq!(value(r#"{"lower_bitrate":"sooner"}"#, "lower_bitrate"), "Lower it sooner");
+    assert_eq!(value(r#"{"lower_bitrate":"keep"}"#, "lower_bitrate"), "Never: keep my bitrate");
+    // A PC's own value carries the key.
     let mut own_rate = Overrides::default();
-    own_rate.capture(&Settings { keep_bitrate: true, ..Settings::default() }, &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"]);
-    assert!(own_rate.apply(&Settings::default()).keep_bitrate, "Never for this PC over the main setting");
+    own_rate.capture(&Settings { lower_bitrate: LowerBitrate::Keep, ..Settings::default() }, &["lower_bitrate"]);
+    assert_eq!(own_rate.apply(&Settings::default()).lower_bitrate, LowerBitrate::Keep, "Never for this PC over the main setting");
     let json = serde_json::to_string(&own_rate).unwrap();
-    assert!(serde_json::from_str::<Overrides>(&json).unwrap().apply(&Settings::default()).keep_bitrate);
-    // An older file without the key reads as off.
-    assert!(!serde_json::from_str::<Settings>(r#"{"adaptive_bitrate":true,"client_hint_bitrate":true}"#).unwrap().keep_bitrate);
+    assert_eq!(serde_json::from_str::<Overrides>(&json).unwrap().apply(&Settings::default()).lower_bitrate, LowerBitrate::Keep);
 
     // A PC's own value keeps both switches of its choice, so the layer reads whole.
     let mut own = Overrides::default();
@@ -1616,7 +1612,7 @@ fn paired_switches_read_as_one_choice() {
     let applied = own.apply(&main);
     assert!(!applied.back_opens_menu && applied.back_as_guide, "Guide for this PC over the main Stream menu");
     // The old rows are gone from every section.
-    for gone in ["back_as_guide", "system_keys_fullscreen_only", "roaming_metered", "client_hint_bitrate"] {
+    for gone in ["back_as_guide", "system_keys_fullscreen_only", "roaming_metered", "adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"] {
         assert!(SECTION_KEYS.iter().all(|rows| rows.iter().all(|keys| keys[0] != gone)), "{gone} names no row");
     }
 }
@@ -2296,10 +2292,10 @@ fn the_simple_layer_writes_and_reads_the_settings_it_stands_for() {
     s.frame_pacing = FramePacing::CapFps;
     assert!(simple_state(&s, &display, &caps, true).1);
     // Save data lowers the bitrate and lets it fall when the link struggles, whatever "Never" was.
-    s.keep_bitrate = true;
+    s.lower_bitrate = LowerBitrate::Keep;
     simple_apply(&mut s, &display, &caps, simple::Choices { picture: simple::Picture::SaveData, ..recommended });
-    assert!(s.adaptive_bitrate && s.adaptive_quality == crate::config::QualityMode::Battery);
-    assert!(!s.keep_bitrate, "Save data is never overridden by an old Never");
+    assert!(s.lower_bitrate == LowerBitrate::WhenFramesLost && s.adaptive_quality == crate::config::QualityMode::Battery,
+        "Save data is never overridden by an old Never");
     assert!(s.bitrate_kbps > 0 && s.bitrate_kbps < stream_mode(&Settings::default(), display).3);
     let (choices, custom) = simple_state(&s, &display, &caps, true);
     assert!(!custom && choices.picture == simple::Picture::SaveData);

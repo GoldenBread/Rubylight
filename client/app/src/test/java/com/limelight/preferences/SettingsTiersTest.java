@@ -347,19 +347,13 @@ public class SettingsTiersTest {
             StreamSettings screen = controller.get();
             String line = "The PC decides";
             StreamSettings.SettingsFragment video = openFolded(screen, "video");
-            Preference lower = video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
-            assertEquals(line, String.valueOf(lower.getSummary()));
-            assertEquals(line, rowSummary(video, AutoBitrateChoice.SETTINGS_KEY));
-            PreferenceManager.getDefaultSharedPreferences(context()).edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true).commit();
-            org.robolectric.shadows.ShadowLooper.idleMainLooper();
-            assertEquals("When the network is busy", String.valueOf(lower.getSummary()));
-            PreferenceManager.getDefaultSharedPreferences(context()).edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, false).commit();
-            org.robolectric.shadows.ShadowLooper.idleMainLooper();
+            android.preference.ListPreference lower =
+                    (android.preference.ListPreference) video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
+            assertEquals(line, String.valueOf(lower.getEntry()));
 
             Preference result = search(screen, "Lower bitrate").getPreferenceScreen()
                     .findPreference("search_result_" + AutoBitrateChoice.SETTINGS_KEY);
             assertNotNull(result);
-            assertEquals(line, String.valueOf(result.getSummary()));
         }
     }
 
@@ -369,7 +363,7 @@ public class SettingsTiersTest {
             StreamSettings screen = controller.get();
             assertNull("the loss-based switch left Debug",
                     SettingsStructureTest.open(screen, "debug").findPreference("checkbox_rate_change_bitrate"));
-            assertArrayEquals(new String[] {"The PC decides", "When the network is busy", "Lower it sooner", "Never: keep my bitrate"},
+            assertArrayEquals(new String[] {"The PC decides", "Lower it sooner", "Never: keep my bitrate"},
                     screen.getResources().getStringArray(R.array.lower_bitrate_names));
             PreferenceScreen results = search(screen, "bitrate").getPreferenceScreen();
             Preference lower = results.findPreference("search_result_" + AutoBitrateChoice.SETTINGS_KEY);

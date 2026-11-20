@@ -2,7 +2,6 @@
 <resources>
     <string name="title_lower_bitrate">Riduci il bitrate</string>
     <string name="lower_bitrate_pc">Decide il PC</string>
-    <string name="lower_bitrate_busy">Se la rete è congestionata</string>
     <string name="lower_bitrate_lost">Riducilo prima</string>
     <string name="lower_bitrate_keep">Mai: mantieni il mio bitrate</string>
     <string name="summary_lower_bitrate">«Mai: mantieni il mio bitrate» può bloccare o frammentare l’immagine su una connessione che non regge quel bitrate, e funziona solo con un PC che accetta cambi di bitrate; sceglilo quando l’immagine diventa morbida su una connessione che regge di più. Di norma il PC riduce il bitrate quando si perdono fotogrammi che non riesce a riparare e lo rialza dopo; «Riducilo prima» lo riduce prima, a costo di un’immagine più morbida.</string>

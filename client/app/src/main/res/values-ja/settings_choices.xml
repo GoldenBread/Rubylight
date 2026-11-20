@@ -2,7 +2,6 @@
 <resources>
     <string name="title_lower_bitrate">ビットレートを下げる</string>
     <string name="lower_bitrate_pc">PC に任せる</string>
-    <string name="lower_bitrate_busy">ネットワーク混雑時</string>
     <string name="lower_bitrate_lost">早めに下げる</string>
     <string name="lower_bitrate_keep">下げない: ビットレートを維持</string>
     <string name="summary_lower_bitrate">「下げない: ビットレートを維持」にすると、回線がそのビットレートに耐えられない場合に映像が止まったり乱れたりすることがあり、ビットレート変更を受け付ける PC でのみ機能します。もっと耐えられる回線なのに映像がぼやけるときに選んでください。標準では、PC が修復できないフレーム欠落を検出するとビットレートを下げ、その後に元へ戻します。「早めに下げる」はより早く下げ、代わりに画質は柔らかくなります。</string>

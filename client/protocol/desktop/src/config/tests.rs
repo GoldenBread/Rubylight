@@ -1057,15 +1057,49 @@ fn telling_the_host_the_link_speed_is_on_by_default_and_in_old_files() {
     assert!(!off.tell_host_link_speed);
 }
 
+/// Lower bitrate's three switches fold into its one value once, in the main settings and in every
+/// override layer: a player who had it off keeps it off, and the old keys are never written again.
 #[test]
-fn client_hint_bitrate_is_off_by_default_and_in_old_files() {
-    assert!(!Settings::default().client_hint_bitrate);
-    let old: Settings = serde_json::from_str(r#"{"fps":60,"adaptive_bitrate":true}"#).unwrap();
-    assert!(!old.client_hint_bitrate);
-    let on: Settings = serde_json::from_str(r#"{"client_hint_bitrate":true}"#).unwrap();
-    assert!(on.client_hint_bitrate);
-    let back: Settings = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
-    assert!(back.client_hint_bitrate);
+fn the_three_bitrate_switches_fold_into_lower_bitrate_once() {
+    use nightjar_policy::choices::LowerBitrate;
+    assert_eq!(Settings::default().lower_bitrate, LowerBitrate::Off);
+    let key = |name: &str, value: Option<bool>| value.map(|v| format!(r#""{name}":{v},"#)).unwrap_or_default();
+    for busy in [None, Some(false), Some(true)] {
+        for lost in [None, Some(false), Some(true)] {
+            for keep in [None, Some(false), Some(true)] {
+                let fields = format!("{}{}{}", key("adaptive_bitrate", busy), key("client_hint_bitrate", lost), key("keep_bitrate", keep));
+                let expected = if keep == Some(true) {
+                    LowerBitrate::Keep
+                } else if busy == Some(true) || lost == Some(true) {
+                    LowerBitrate::WhenFramesLost
+                } else {
+                    LowerBitrate::Off
+                };
+                let mut s: Settings = serde_json::from_str(&format!("{{{fields}\"fps\":60}}")).unwrap();
+                s.migrate();
+                assert_eq!(s.lower_bitrate, expected, "{fields}");
+                let saved = serde_json::to_string(&s).unwrap();
+                assert!(!saved.contains("adaptive_bitrate") && !saved.contains("client_hint_bitrate") && !saved.contains("keep_bitrate"), "{saved}");
+                assert!(saved.contains(&format!(r#""lower_bitrate":"{}""#, expected.as_str())), "{saved}");
+                // Migrating again changes nothing.
+                let mut again: Settings = serde_json::from_str(&saved).unwrap();
+                again.migrate();
+                assert_eq!(again, s);
+
+                // An override layer holds the choice as its own, over a main Never.
+                let layer: Overrides = serde_json::from_str(&format!("{{{fields}\"fps\":60}}")).unwrap();
+                let never = Settings { lower_bitrate: LowerBitrate::Keep, ..Settings::default() };
+                let applied = layer.apply(&never);
+                let layered = if busy.is_none() && lost.is_none() && keep.is_none() { LowerBitrate::Keep } else { expected };
+                assert_eq!(applied.lower_bitrate, layered, "layer {fields}");
+                let json = serde_json::to_string(&layer).unwrap();
+                assert!(!json.contains("adaptive_bitrate") && !json.contains("keep_bitrate"), "{json}");
+            }
+        }
+    }
+    // A layer saved under the new key keeps it.
+    let both: Overrides = serde_json::from_str(r#"{"keep_bitrate":true,"lower_bitrate":"sooner"}"#).unwrap();
+    assert_eq!(both.apply(&Settings::default()).lower_bitrate, LowerBitrate::WhenFramesLost);
 }
 
 #[test]

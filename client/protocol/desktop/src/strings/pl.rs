@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bufor odbioru: system przydzielił {0} Ki
     ("Installed in the game’s folder, release {}.", "Zainstalowane w folderze gry, wydanie {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Dodane do moda skalowania w folderze gry, wydanie {}."),
     ("Lower bitrate", "Obniżaj szybkość transmisji"),
-    ("When the network is busy", "Przy obciążonej sieci"),
     ("The PC decides", "Decyduje komputer"),
     ("Lower it sooner", "Obniżaj wcześniej"),
     ("Never: keep my bitrate", "Nigdy: zachowaj moją szybkość transmisji"),

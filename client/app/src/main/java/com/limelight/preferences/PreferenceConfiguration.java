@@ -53,10 +53,6 @@ public class PreferenceConfiguration {
     // Set only when the user picks a bitrate; defaults keep following resolution and frame rate.
     static final String BITRATE_USER_SET_PREF_STRING = "bitrate_user_set";
     static final String MOBILE_BITRATE_PREF_STRING = "list_mobile_bitrate_kbps";
-    // Client-hint automatic bitrate over 0x553C rate changes, for a host that offers them.
-    static final String RATE_CHANGE_BITRATE_PREF_STRING = "checkbox_rate_change_bitrate";
-    /** "Never: keep my bitrate" of Lower bitrate: while on, the two switches of that row count as off. */
-    public static final String KEEP_BITRATE_PREF_STRING = "keep_bitrate";
     // Removed settings: the slider is the ceiling and the built-in floor is the minimum.
     static final String[] REMOVED_AUTO_BITRATE_LIMIT_PREFS = {"list_auto_bitrate_min_kbps", "list_auto_bitrate_max_kbps"};
     static final String PREFS_VERSION_PREF_STRING = "prefs_version";
@@ -405,8 +401,9 @@ public class PreferenceConfiguration {
     public boolean thermalProtection;
     /** Automatic bitrate for PCs without a choice of their own; see {@link AutoBitrateChoice}. */
     /**
-     * A snapshot of the Settings switch, read for the settings-keys test. Production code must use
-     * {@link AutoBitrateChoice#isOn}, which also honours a PC's own choice.
+     * Lower bitrate's Lower it sooner, as the busy controller for a PC that takes no rate changes. Production code
+     * must use {@link AutoBitrateChoice#isOn}, which also honours a PC's own choice; {@link #applyLowerBitrate} sets
+     * the three fields for one PC.
      */
     public boolean autoBitrate;
     /**
@@ -417,6 +414,16 @@ public class PreferenceConfiguration {
     /** Automatic bitrate decided on this device and sent as 0x553C rate changes, in place of the one above. */
     public boolean rateChangeBitrate;
     public volatile boolean enablePerfOverlay;
+
+    /**
+     * Lower bitrate's choice (AutoBitrateChoice) as the stream acts on it: Lower it sooner turns on this device's
+     * loss reports over rate changes and, for a PC that takes none, its busy controller; Never keeps the bitrate;
+     * The PC decides turns all three off.
+     */
+    public void applyLowerBitrate(String choice) {
+        keepBitrate = AutoBitrateChoice.KEEP.equals(choice);
+        autoBitrate = rateChangeBitrate = AutoBitrateChoice.SOONER.equals(choice);
+    }
     /** The corner the performance overlay prefers: top_left, top_right, bottom_left or bottom_right. */
     public volatile String overlayPosition = "top_left";
     public boolean enableLatencyToast;
@@ -1118,6 +1125,8 @@ public class PreferenceConfiguration {
     public static PreferenceConfiguration readPreferences(Context context, String hostUuid, HostCapabilities caps,
                                                           String appUuid, int appId, StreamLayers.Network network) {
         PreferenceConfiguration config = readPreferences(context);
+        // Lower bitrate: this PC's own choice from the stream menu wins over the Settings value.
+        if (hostUuid != null) config.applyLowerBitrate(AutoBitrateChoice.forPc(context, hostUuid));
         FormatOption allPcsFormat = config.videoFormat;
         migratePcProfilesToOverrides(context);
         config.hostDisplay = hostUuid == null ? null : HostDisplayChoice.load(context, hostUuid);
@@ -1575,7 +1584,7 @@ public class PreferenceConfiguration {
     // Settings stored under a name that is gone: {old, new}. Retired names never come back (SettingsKeysTest).
     static final String[][] RENAMED_PREFS = {
             // Lower bitrate when the network is busy, named as on desktop; it read as Automatic bitrate.
-            {"checkbox_auto_bitrate", AutoBitrateChoice.SETTINGS_KEY},
+            {"checkbox_auto_bitrate", AutoBitrateChoice.RETIRED_BUSY},
     };
 
     /**
@@ -1841,9 +1850,8 @@ public class PreferenceConfiguration {
         config.qualityMinFps = listChoice(prefs.getString("adaptive_quality_min_fps", "30"), QUALITY_MIN_FPS, 30);
         config.thermalProtection = prefs.getBoolean(THERMAL_PROTECTION_PREF_STRING, false);
         dropAutoBitrateLimits(prefs);
-        config.keepBitrate = prefs.getBoolean(KEEP_BITRATE_PREF_STRING, false);
-        config.autoBitrate = !config.keepBitrate && prefs.getBoolean(AutoBitrateChoice.SETTINGS_KEY, false);
-        config.rateChangeBitrate = !config.keepBitrate && prefs.getBoolean(RATE_CHANGE_BITRATE_PREF_STRING, false);
+        AutoBitrateChoice.migrate(context);
+        config.applyLowerBitrate(AutoBitrateChoice.read(prefs));
         config.enablePerfOverlay = prefs.getBoolean(ENABLE_PERF_OVERLAY_STRING, DEFAULT_ENABLE_PERF_OVERLAY);
         config.overlayPosition = com.limelight.ui.OverlayPlacement.Corner.parse(
                 prefs.getString(OVERLAY_POSITION_PREF_STRING, null)).key;

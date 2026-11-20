@@ -2,7 +2,6 @@
 <resources>
     <string name="title_lower_bitrate">Baisser le débit</string>
     <string name="lower_bitrate_pc">Le PC décide</string>
-    <string name="lower_bitrate_busy">Si le réseau est chargé</string>
     <string name="lower_bitrate_lost">Baisser plus tôt</string>
     <string name="lower_bitrate_keep">Jamais : garder mon débit</string>
     <string name="summary_lower_bitrate">« Jamais : garder mon débit » peut figer ou déformer l’image sur une connexion qui ne supporte pas ce débit, et ne fonctionne qu’avec un PC qui accepte les changements de débit ; choisissez-le quand l’image devient floue sur une connexion qui supporte davantage. Par défaut, le PC baisse le débit quand des images perdues ne peuvent pas être réparées, puis le remonte ensuite ; « Baisser plus tôt » le baisse plus tôt, au prix d’une image plus douce.</string>

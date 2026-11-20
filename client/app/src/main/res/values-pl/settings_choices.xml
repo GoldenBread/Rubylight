@@ -2,7 +2,6 @@
 <resources>
     <string name="title_lower_bitrate">Obniżaj szybkość transmisji</string>
     <string name="lower_bitrate_pc">Decyduje komputer</string>
-    <string name="lower_bitrate_busy">Przy obciążonej sieci</string>
     <string name="lower_bitrate_lost">Obniżaj wcześniej</string>
     <string name="lower_bitrate_keep">Nigdy: zachowaj moją szybkość transmisji</string>
     <string name="summary_lower_bitrate">„Nigdy: zachowaj moją szybkość transmisji” może zawieszać lub rozbijać obraz na łączu, które jej nie uniesie, i działa tylko z komputerem, który przyjmuje zmiany szybkości transmisji; wybierz to, gdy obraz robi się miękki na łączu, które uniesie więcej. Domyślnie komputer obniża szybkość transmisji, gdy tracone są klatki, których nie da się naprawić, a potem ją podnosi; „Obniżaj wcześniej” robi to wcześniej, kosztem łagodniejszego obrazu.</string>

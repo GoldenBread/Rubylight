@@ -3,6 +3,7 @@ package com.limelight.preferences;
 import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.preference.ListPreference;
 import android.preference.Preference;
 import android.preference.PreferenceGroup;
 import android.preference.PreferenceManager;
@@ -35,16 +36,24 @@ public class AutoBitrateSettingTest {
         return PreferenceManager.getDefaultSharedPreferences(app());
     }
 
-    private static boolean on(String store, String pc) {
-        return AutoBitrateChoice.isOn(app(), store, pc);
+    private static boolean on(String pc) {
+        return AutoBitrateChoice.isOn(app(), pc);
+    }
+
+    private static SharedPreferences pcStore() {
+        return app().getSharedPreferences(AutoBitrateChoice.PC_STORE, Context.MODE_PRIVATE);
+    }
+
+    private static SharedPreferences retiredStore(int index) {
+        return app().getSharedPreferences(AutoBitrateChoice.RETIRED_STORES[index], Context.MODE_PRIVATE);
     }
 
     @After
     public void clear() {
         prefs().edit().clear().commit();
-        for (String store : new String[] {AutoBitrateChoice.CODEC_STORE, AutoBitrateChoice.PYROWAVE_STORE}) {
-            app().getSharedPreferences(store, Context.MODE_PRIVATE).edit().clear().commit();
-        }
+        pcStore().edit().clear().commit();
+        retiredStore(0).edit().clear().commit();
+        retiredStore(1).edit().clear().commit();
     }
 
     @Test
@@ -79,7 +88,7 @@ public class AutoBitrateSettingTest {
             Preference lower = video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
             assertNotNull(lower);
             assertEquals(app().getString(R.string.title_lower_bitrate), lower.getTitle().toString());
-            assertEquals(app().getString(R.string.lower_bitrate_pc), String.valueOf(lower.getSummary()));
+            assertEquals(app().getString(R.string.lower_bitrate_pc), String.valueOf(((ListPreference) lower).getEntry()));
             Preference slider = video.findPreference("seekbar_bitrate_kbps");
             PreferenceGroup group = (PreferenceGroup) video.getPreferenceScreen().getPreference(0);
             int at = -1;
@@ -132,112 +141,162 @@ public class AutoBitrateSettingTest {
     }
 
     @Test
-    public void thePcsFollowTheSwitchUntilTheStreamMenuChoosesForOne() {
-        assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
-        assertFalse("No PC id: the default", on(AutoBitrateChoice.CODEC_STORE, null));
-        prefs().edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true).commit();
-        assertTrue(on(AutoBitrateChoice.CODEC_STORE, "a"));
-        assertTrue(on(AutoBitrateChoice.PYROWAVE_STORE, "a"));
-        assertTrue(PreferenceConfiguration.readPreferences(app()).autoBitrate);
+    public void thePcsFollowTheSettingUntilTheStreamMenuChoosesForOne() {
+        assertFalse(on("a"));
+        assertFalse("No PC id: the default", on(null));
+        prefs().edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.SOONER).commit();
+        assertTrue(on("a"));
+        PreferenceConfiguration config = PreferenceConfiguration.readPreferences(app());
+        assertTrue(config.autoBitrate);
+        assertTrue(config.rateChangeBitrate);
+        assertFalse(config.keepBitrate);
 
-        // The stream menu turns it off for A only, in the store of the stream's codec.
-        AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", false);
-        assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
-        assertTrue(on(AutoBitrateChoice.PYROWAVE_STORE, "a"));
-        assertTrue(on(AutoBitrateChoice.CODEC_STORE, "b"));
+        // The stream menu chooses The PC decides for A only; a stream from A acts on it.
+        AutoBitrateChoice.setForPc(app(), "a", AutoBitrateChoice.PC);
+        assertFalse(on("a"));
+        assertTrue(on("b"));
+        PreferenceConfiguration forA = PreferenceConfiguration.readPreferences(app(), "a");
+        assertFalse(forA.autoBitrate);
+        assertFalse(forA.rateChangeBitrate);
+        assertTrue(PreferenceConfiguration.readPreferences(app(), "b").rateChangeBitrate);
+    }
+
+    @Test
+    public void theOneValueDrivesWhatTheThreeSwitchesDid() {
+        PreferenceConfiguration config = new PreferenceConfiguration();
+        config.applyLowerBitrate(AutoBitrateChoice.PC);
+        assertFalse(config.autoBitrate || config.rateChangeBitrate || config.keepBitrate);
+        config.applyLowerBitrate(AutoBitrateChoice.SOONER);
+        assertTrue(config.autoBitrate && config.rateChangeBitrate);
+        assertFalse(config.keepBitrate);
+        config.applyLowerBitrate(AutoBitrateChoice.KEEP);
+        assertTrue(config.keepBitrate);
+        assertFalse(config.autoBitrate || config.rateChangeBitrate);
+        // An unknown stored value reads as the default.
+        prefs().edit().putString(AutoBitrateChoice.SETTINGS_KEY, "busy").commit();
+        assertEquals(AutoBitrateChoice.PC, AutoBitrateChoice.read(prefs()));
     }
 
     @Test
     public void choosingInSettingsMakesEveryPcFollowItAgain() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings.SettingsFragment video = open(controller.get(), "video");
-            Preference lower = video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
-            AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", true);
-            AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.PYROWAVE_STORE, "b", true);
-            assertTrue(on(AutoBitrateChoice.CODEC_STORE, "a"));
+            ListPreference lower = (ListPreference) video.findPreference(AutoBitrateChoice.SETTINGS_KEY);
+            // Three choices: The PC decides, Lower it sooner, Never: keep my bitrate.
+            assertArrayEquals(new CharSequence[] {AutoBitrateChoice.PC, AutoBitrateChoice.SOONER, AutoBitrateChoice.KEEP},
+                    lower.getEntryValues());
+            assertEquals(3, lower.getEntries().length);
+            AutoBitrateChoice.setForPc(app(), "a", AutoBitrateChoice.SOONER);
+            AutoBitrateChoice.setForPc(app(), "b", AutoBitrateChoice.KEEP);
+            assertTrue(on("a"));
 
-            // Off in Settings: the PCs the stream menu had switched on follow it.
-            pick(lower, 0);
-            assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
-            assertFalse(on(AutoBitrateChoice.PYROWAVE_STORE, "b"));
-
-            // The list offers When the network is busy only while it is stored: The PC decides, Lower it sooner, Never.
-            assertTrue(lower.getOnPreferenceClickListener().onPreferenceClick(lower));
-            assertEquals(3, ((androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog())
-                    .getListView().getAdapter().getCount());
-            ((androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog()).dismiss();
-            // A stored When the network is busy, then off again for one PC from the stream menu.
-            prefs().edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true)
-                    .putBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false).commit();
-            assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
-            assertFalse(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, true));
-            assertTrue(on(AutoBitrateChoice.CODEC_STORE, "a"));
-            assertTrue(on(AutoBitrateChoice.PYROWAVE_STORE, "b"));
-            AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", false);
-            assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
-            assertTrue(on(AutoBitrateChoice.CODEC_STORE, "b"));
-
-            // Lower it sooner (the second entry of four while When the network is busy is stored) keeps the busy network's controller for a PC without rate changes.
-            pick(lower, 1);
-            assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
-            assertTrue(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false));
-            assertFalse(prefs().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true));
-            assertEquals(app().getString(R.string.lower_bitrate_lost), String.valueOf(lower.getSummary()));
-
-            // Never: keep my bitrate leaves the two switches as they are, wins over them, and every PC follows it.
-            AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", true);
-            pick(lower, 2);
-            assertTrue(prefs().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
-            assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
-            assertTrue(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, false));
-            assertEquals(app().getString(R.string.lower_bitrate_keep), String.valueOf(lower.getSummary()));
-            assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
+            pick(lower, AutoBitrateChoice.KEEP);
+            assertEquals(AutoBitrateChoice.KEEP, prefs().getString(AutoBitrateChoice.SETTINGS_KEY, null));
+            assertEquals(app().getString(R.string.lower_bitrate_keep), String.valueOf(lower.getEntry()));
+            assertFalse("A follows Settings again", on("a"));
+            assertFalse(pcStore().contains("a"));
+            assertFalse(pcStore().contains("b"));
             PreferenceConfiguration config = PreferenceConfiguration.readPreferences(app());
             assertTrue(config.keepBitrate);
             assertFalse(config.autoBitrate);
             assertFalse(config.rateChangeBitrate);
 
-            // Any other choice writes the pair as before and clears it.
-            pick(lower, 0);
-            assertFalse(prefs().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true));
-            assertFalse(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, true));
-            assertFalse(prefs().getBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, true));
+            pick(lower, AutoBitrateChoice.SOONER);
+            assertEquals(app().getString(R.string.lower_bitrate_lost), String.valueOf(lower.getEntry()));
+            assertTrue(on("a"));
         }
     }
 
-    /** Opens the row's picker and picks the choice at index. */
-    private static void pick(Preference row, int index) {
-        assertTrue(row.getOnPreferenceClickListener().onPreferenceClick(row));
-        androidx.appcompat.app.AlertDialog dialog = (androidx.appcompat.app.AlertDialog) org.robolectric.shadows.ShadowDialog.getLatestDialog();
-        dialog.getListView().performItemClick(null, index, 0);
+    /** Chooses a value in the row, as its list does. */
+    private static void pick(ListPreference row, String value) {
+        assertTrue(row.getOnPreferenceChangeListener().onPreferenceChange(row, value));
+        row.setValue(value);
         ShadowLooper.idleMainLooper();
     }
 
     @Test
     public void aRemovedPcLeavesNoChoiceBehind() {
-        prefs().edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true).commit();
-        AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", false);
-        AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.PYROWAVE_STORE, "a", false);
-        assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
+        prefs().edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.SOONER).commit();
+        AutoBitrateChoice.setForPc(app(), "a", AutoBitrateChoice.PC);
+        assertFalse(on("a"));
         AutoBitrateChoice.forget(app(), "a");
-        assertTrue(on(AutoBitrateChoice.CODEC_STORE, "a"));
-        assertTrue(on(AutoBitrateChoice.PYROWAVE_STORE, "a"));
+        assertTrue(on("a"));
     }
 
     @Test
-    public void onlyAChoiceThatDiffersFromTheSettingsSwitchIsStored() {
-        SharedPreferences codec = app().getSharedPreferences(AutoBitrateChoice.CODEC_STORE, Context.MODE_PRIVATE);
-        // Switch off: turning it on for a PC is an override, turning it off again is not.
-        AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", true);
-        assertTrue(codec.contains("a"));
-        AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", false);
-        assertFalse(codec.contains("a"));
-        // Switch on: the other way round.
-        prefs().edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true).commit();
-        AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", true);
-        assertFalse(codec.contains("a"));
-        AutoBitrateChoice.setForPc(app(), AutoBitrateChoice.CODEC_STORE, "a", false);
-        assertTrue(codec.contains("a"));
-        assertFalse(on(AutoBitrateChoice.CODEC_STORE, "a"));
+    public void onlyAChoiceThatDiffersFromTheSettingIsStored() {
+        // The PC decides in Settings: Lower it sooner for a PC is its own choice, The PC decides again is not.
+        AutoBitrateChoice.setForPc(app(), "a", AutoBitrateChoice.SOONER);
+        assertEquals(AutoBitrateChoice.SOONER, pcStore().getString("a", null));
+        AutoBitrateChoice.setForPc(app(), "a", AutoBitrateChoice.PC);
+        assertFalse(pcStore().contains("a"));
+        // Lower it sooner in Settings: the other way round.
+        prefs().edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.SOONER).commit();
+        AutoBitrateChoice.setForPc(app(), "a", AutoBitrateChoice.SOONER);
+        assertFalse(pcStore().contains("a"));
+        AutoBitrateChoice.setForPc(app(), "a", AutoBitrateChoice.PC);
+        assertEquals(AutoBitrateChoice.PC, pcStore().getString("a", null));
+        assertFalse(on("a"));
+    }
+
+    /** Every combination of the three switches earlier versions stored, and what Lower bitrate holds after. */
+    @Test
+    public void theThreeSwitchesMoveIntoOneValueOnce() {
+        for (int bits = 0; bits < 27; bits++) {
+            prefs().edit().clear().commit();
+            // Each switch absent, off or on.
+            Boolean busy = state(bits % 3), lost = state(bits / 3 % 3), keep = state(bits / 9);
+            SharedPreferences.Editor editor = prefs().edit();
+            if (busy != null) editor.putBoolean(AutoBitrateChoice.RETIRED_BUSY, busy);
+            if (lost != null) editor.putBoolean(AutoBitrateChoice.RETIRED_LOST, lost);
+            if (keep != null) editor.putBoolean(AutoBitrateChoice.RETIRED_KEEP, keep);
+            editor.commit();
+            String expected = Boolean.TRUE.equals(keep) ? AutoBitrateChoice.KEEP
+                    : Boolean.TRUE.equals(busy) || Boolean.TRUE.equals(lost) ? AutoBitrateChoice.SOONER : AutoBitrateChoice.PC;
+            String label = busy + " " + lost + " " + keep;
+            boolean anyStored = busy != null || lost != null || keep != null;
+            assertEquals(label, expected, AutoBitrateChoice.read(prefs()));
+            PreferenceConfiguration config = PreferenceConfiguration.readPreferences(app());
+            assertEquals(label, anyStored ? expected : null, prefs().getString(AutoBitrateChoice.SETTINGS_KEY, null));
+            assertFalse(label, prefs().contains(AutoBitrateChoice.RETIRED_BUSY));
+            assertFalse(label, prefs().contains(AutoBitrateChoice.RETIRED_LOST));
+            assertFalse(label, prefs().contains(AutoBitrateChoice.RETIRED_KEEP));
+            assertEquals(label, AutoBitrateChoice.KEEP.equals(expected), config.keepBitrate);
+            assertEquals(label, AutoBitrateChoice.SOONER.equals(expected), config.rateChangeBitrate);
+            assertEquals(label, AutoBitrateChoice.SOONER.equals(expected), config.autoBitrate);
+            // A second read changes nothing.
+            PreferenceConfiguration.readPreferences(app());
+            assertEquals(label, anyStored ? expected : null, prefs().getString(AutoBitrateChoice.SETTINGS_KEY, null));
+        }
+    }
+
+    private static Boolean state(int index) {
+        return index == 0 ? null : index == 2;
+    }
+
+    @Test
+    public void aPcsOwnChoiceOfTheBusyControllerBecomesItsOwnLowerBitrate() {
+        // The PC decides in Settings. A: on for conventional codecs, off for PyroWave (the codecs' choice wins).
+        // B: on for PyroWave only. C: off, as Settings is, so nothing of its own. D: already moved, stays.
+        retiredStore(0).edit().putBoolean("a", true).putBoolean("c", false).putBoolean("d", false).commit();
+        retiredStore(1).edit().putBoolean("a", false).putBoolean("b", true).commit();
+        pcStore().edit().putString("d", AutoBitrateChoice.KEEP).commit();
+        AutoBitrateChoice.migrate(app());
+        assertEquals(AutoBitrateChoice.SOONER, pcStore().getString("a", null));
+        assertEquals(AutoBitrateChoice.SOONER, pcStore().getString("b", null));
+        assertFalse(pcStore().contains("c"));
+        assertEquals(AutoBitrateChoice.KEEP, pcStore().getString("d", null));
+        assertTrue(retiredStore(0).getAll().isEmpty());
+        assertTrue(retiredStore(1).getAll().isEmpty());
+
+        // Lower it sooner in Settings (from its switches): a PC switched off gets The PC decides of its own.
+        prefs().edit().putBoolean(AutoBitrateChoice.RETIRED_BUSY, true).commit();
+        retiredStore(0).edit().putBoolean("e", false).putBoolean("f", true).commit();
+        AutoBitrateChoice.migrate(app());
+        assertEquals(AutoBitrateChoice.SOONER, prefs().getString(AutoBitrateChoice.SETTINGS_KEY, null));
+        assertEquals(AutoBitrateChoice.PC, pcStore().getString("e", null));
+        assertFalse(pcStore().contains("f"));
+        assertFalse(on("e"));
+        assertTrue(on("f"));
     }
 }

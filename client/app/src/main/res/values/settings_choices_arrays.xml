@@ -3,9 +3,14 @@
 <resources>
     <string-array name="lower_bitrate_names" translatable="false">
         <item>@string/lower_bitrate_pc</item>
-        <item>@string/lower_bitrate_busy</item>
         <item>@string/lower_bitrate_lost</item>
         <item>@string/lower_bitrate_keep</item>
+    </string-array>
+    <!-- AutoBitrateChoice.PC, SOONER and KEEP. -->
+    <string-array name="lower_bitrate_values" translatable="false">
+        <item>pc</item>
+        <item>sooner</item>
+        <item>keep</item>
     </string-array>
     <string-array name="back_button_names" translatable="false">
         <item>@string/back_button_back</item>

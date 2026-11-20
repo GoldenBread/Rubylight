@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "Буфер приймання: систе
     ("Installed in the game’s folder, release {}.", "Встановлено в теку гри, випуск {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Додано до моду масштабування в теці гри, випуск {}."),
     ("Lower bitrate", "Знижувати бітрейт"),
-    ("When the network is busy", "Коли мережа завантажена"),
     ("The PC decides", "ПК вирішує"),
     ("Lower it sooner", "Знижувати раніше"),
     ("Never: keep my bitrate", "Ніколи: зберігати мій бітрейт"),

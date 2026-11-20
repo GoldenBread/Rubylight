@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "수신 버퍼: 시스템이 요청한 {1}
     ("Installed in the game’s folder, release {}.", "게임 폴더에 설치됨, 릴리스 {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "게임 폴더의 업스케일러 모드에 추가됨, 릴리스 {}."),
     ("Lower bitrate", "비트레이트 낮추기"),
-    ("When the network is busy", "네트워크 혼잡 시"),
     ("The PC decides", "PC가 결정"),
     ("Lower it sooner", "더 일찍 낮추기"),
     ("Never: keep my bitrate", "안 함: 내 비트레이트 유지"),

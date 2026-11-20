@@ -1,6 +1,6 @@
 //! Mid-stream bitrate and frame-rate changes over 0x553C, on a stream whose DESCRIBE lists
 //! them: the stream menu's requests, the client-hint bitrate controller's
-//! (`Settings::client_hint_bitrate`, ticked once a second), and what the host answered.
+//! (Lower bitrate's Lower it sooner, ticked once a second), and what the host answered.
 //! Time is session-relative milliseconds.
 
 use nightjar_core::http::AppRole;
@@ -487,8 +487,7 @@ pub fn keep_switch(rates: Option<&RateChange>, adaptive_bitrate: bool) -> Option
 /// Keep my bitrate as the main settings keep it: Lower bitrate's Never when on, The PC decides
 /// when off, stored as choosing them in Settings stores them.
 pub fn store_keep(settings: &mut crate::config::Settings, keep: bool) {
-    let choice = if keep { LowerBitrate::Keep } else { LowerBitrate::Off };
-    (settings.adaptive_bitrate, settings.client_hint_bitrate, settings.keep_bitrate) = choice.to_saved(settings.adaptive_bitrate, settings.client_hint_bitrate);
+    settings.lower_bitrate = if keep { LowerBitrate::Keep } else { LowerBitrate::Off };
 }
 
 fn fps_text(fps_millihz: u32) -> String {
@@ -1016,12 +1015,11 @@ mod tests {
 
     #[test]
     fn keep_my_bitrate_is_stored_as_settings_stores_never_and_the_pc_decides() {
-        let mut s = crate::config::Settings { adaptive_bitrate: true, client_hint_bitrate: true, ..Default::default() };
+        let mut s = crate::config::Settings { lower_bitrate: LowerBitrate::WhenFramesLost, ..Default::default() };
         store_keep(&mut s, true);
-        assert!(s.keep_bitrate && s.adaptive_bitrate && s.client_hint_bitrate, "Never leaves the pair as it was");
-        assert_eq!(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate), LowerBitrate::Keep);
+        assert_eq!(s.lower_bitrate, LowerBitrate::Keep);
         store_keep(&mut s, false);
-        assert!(!s.keep_bitrate && !s.adaptive_bitrate && !s.client_hint_bitrate, "the old default");
+        assert_eq!(s.lower_bitrate, LowerBitrate::Off, "the default");
     }
 
     #[test]

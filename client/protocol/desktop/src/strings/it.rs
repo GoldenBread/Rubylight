@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "Buffer di ricezione: il sistema ha conces
     ("Installed in the game’s folder, release {}.", "Installata nella cartella del gioco, versione {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Aggiunta alla mod di upscaling nella cartella del gioco, versione {}."),
     ("Lower bitrate", "Riduci il bitrate"),
-    ("When the network is busy", "Se la rete è congestionata"),
     ("The PC decides", "Decide il PC"),
     ("Lower it sooner", "Riducilo prima"),
     ("Never: keep my bitrate", "Mai: mantieni il mio bitrate"),

@@ -97,7 +97,6 @@ public class SettingsKeysTest {
             "checkbox_virtual_display", // Display arrangement's Virtual display choice (DisplayArrangementChoice)
             "checkbox_content_rate_frame_rate", // Lower refresh rate's "On, matched to the game" (LowerRefreshChoice)
             // The second switch of each row that was two (SwitchPairChoice).
-            "checkbox_rate_change_bitrate", "keep_bitrate", // Lower bitrate's Never, keep my bitrate (SwitchPairChoice)
             "checkbox_back_opens_menu", "checkbox_back_as_guide",
             "checkbox_system_keys_fullscreen_only", "checkbox_roaming_metered",
             com.limelight.console.HomeSettings.PREF_KEY)); // When Nightjar opens
@@ -184,6 +183,8 @@ public class SettingsKeysTest {
     private static final Set<String> RETIRED = new HashSet<>(Arrays.asList(
             "checkbox_gl_render", // "Render through OpenGL", replaced by Render through Vulkan
             "checkbox_auto_bitrate", // renamed adaptive_bitrate (PreferenceConfiguration.RENAMED_PREFS)
+            // Lower bitrate's three switches, one value now (AutoBitrateChoice.SETTINGS_KEY).
+            "adaptive_bitrate", "checkbox_rate_change_bitrate", "keep_bitrate",
             "checkbox_trackpad_acceleration", // moved to _v2 with the new on default (see the migration)
             "checkbox_always_dark", "checkbox_oled_black", // the theme's switches, one value now (AppTheme.THEME)
             "list_osc_style")); // "Controller style", gone with the classic on-screen controller (retireOscStyle)
@@ -210,15 +211,18 @@ public class SettingsKeysTest {
         for (String[] rename : PreferenceConfiguration.RENAMED_PREFS) {
             assertTrue(rename[0], RETIRED.contains(rename[0]));
         }
-        prefs().edit().putBoolean("checkbox_auto_bitrate", true).putBoolean(AutoBitrateChoice.SETTINGS_KEY, false).commit();
+        // The oldest name of Lower bitrate's busy switch moves on into Lower bitrate's one value.
+        prefs().edit().putBoolean("checkbox_auto_bitrate", true).putBoolean("adaptive_bitrate", false).commit();
         assertTrue(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).autoBitrate);
         assertFalse(prefs().contains("checkbox_auto_bitrate"));
-        assertTrue(prefs().getBoolean(AutoBitrateChoice.SETTINGS_KEY, false));
+        assertFalse(prefs().contains("adaptive_bitrate"));
+        assertEquals(AutoBitrateChoice.SOONER, prefs().getString(AutoBitrateChoice.SETTINGS_KEY, null));
         // A second read changes nothing; an off value moves too.
         assertTrue(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).autoBitrate);
         prefs().edit().putBoolean("checkbox_auto_bitrate", false).commit();
         assertFalse(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).autoBitrate);
         assertFalse(prefs().contains("checkbox_auto_bitrate"));
+        assertEquals(AutoBitrateChoice.PC, prefs().getString(AutoBitrateChoice.SETTINGS_KEY, null));
     }
 
     @Test
@@ -369,9 +373,7 @@ public class SettingsKeysTest {
         reads.put("adaptive_quality_min_resolution", new Read("720", "360", c -> c.qualityMinShortEdge));
         reads.put("adaptive_quality_min_fps", new Read("30", "60", c -> c.qualityMinFps));
         reads.put("checkbox_thermal_protection", new Read(false, true, c -> c.thermalProtection));
-        reads.put(AutoBitrateChoice.SETTINGS_KEY, new Read(false, true, c -> c.autoBitrate));
-        reads.put("checkbox_rate_change_bitrate", new Read(false, true, c -> c.rateChangeBitrate));
-        reads.put("keep_bitrate", new Read(false, true, c -> c.keepBitrate));
+        reads.put(AutoBitrateChoice.SETTINGS_KEY, new Read("pc", "keep", c -> c.keepBitrate));
         reads.put("checkbox_enable_hdr", new Read(false, true, c -> c.enableHdr));
         reads.put("checkbox_enable_sdr_10bit", new Read(false, true, c -> c.enableSdr10Bit));
         reads.put("checkbox_vrr", new Read(false, true, c -> c.vrr));

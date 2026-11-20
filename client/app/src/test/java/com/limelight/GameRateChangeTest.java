@@ -488,7 +488,7 @@ public class GameRateChangeTest {
         assertNull("no bitrate dialog, so no switch", ShadowDialog.getLatestDialog());
         game.adaptation.keepBitrateFromMenu(true);
         assertTrue(sent.isEmpty());
-        assertFalse(stored().contains(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING));
+        assertFalse(stored().contains(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY));
         assertFalse(game.adaptation.keepBitrateShown());
     }
 
@@ -504,9 +504,8 @@ public class GameRateChangeTest {
         assertEquals("the stream's bitrate", 50_000, sent.get(0)[1]);
         assertEquals("only the bitrate", 0, sent.get(0)[2]);
         assertTrue(dialog.isShowing());
-        // Stored as choosing Never in Settings: its own key, the pair left as it was.
-        assertTrue(stored().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
-        assertFalse(stored().contains(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY));
+        // Stored as choosing Never in Settings.
+        assertEquals(com.limelight.preferences.AutoBitrateChoice.KEEP, stored().getString(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, null));
         assertTrue(prefs.keepBitrate);
         assertTrue(PreferenceConfiguration.readPreferences(game).keepBitrate);
         // Its answer shows nothing, and the switch stays on when the dialog opens again; nothing more goes out.
@@ -564,8 +563,7 @@ public class GameRateChangeTest {
 
     @Test
     public void turningKeepMyBitrateOffStoresThePcDecidesAndSendsNothing() {
-        stored().edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true)
-                .putBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true).commit();
+        stored().edit().putString(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, com.limelight.preferences.AutoBitrateChoice.KEEP).commit();
         prefs.keepBitrate = true;
         startStream(recording());
         runFor(1);
@@ -574,9 +572,7 @@ public class GameRateChangeTest {
         keep.setChecked(false);
         ShadowLooper.idleMainLooper();
         assertEquals("nothing goes out", 1, sent.size());
-        assertFalse(stored().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true));
-        assertFalse(stored().getBoolean(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, true));
-        assertFalse(stored().getBoolean("checkbox_rate_change_bitrate", true));
+        assertEquals(com.limelight.preferences.AutoBitrateChoice.PC, stored().getString(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, null));
         assertFalse(prefs.keepBitrate);
         assertEquals(game.getString(R.string.stream_keep_bitrate_off), ShadowToast.getTextOfLatestToast());
         runFor(5);
@@ -585,8 +581,7 @@ public class GameRateChangeTest {
 
     @Test
     public void neverRunsNoBitrateControllerOfNightjarsEvenWhereAPcsStoredChoiceIsBusy() {
-        com.limelight.preferences.AutoBitrateChoice.setForPc(game, com.limelight.preferences.AutoBitrateChoice.CODEC_STORE,
-                "rate-change-pc", true);
+        com.limelight.preferences.AutoBitrateChoice.setForPc(game, "rate-change-pc", com.limelight.preferences.AutoBitrateChoice.SOONER);
         prefs.keepBitrate = true;
         startStream(recording());
         assertFalse(game.adaptation.isAdaptiveBitrateEnabled());
@@ -660,14 +655,13 @@ public class GameRateChangeTest {
 
     @Test
     public void theSwitchStoresOnlyLowerBitratesKeysAsTheOverlaysSwitchDoes() {
-        com.limelight.preferences.AutoBitrateChoice.setForPc(game, com.limelight.preferences.AutoBitrateChoice.CODEC_STORE,
-                "another-pc", true);
+        com.limelight.preferences.AutoBitrateChoice.setForPc(game, "another-pc", com.limelight.preferences.AutoBitrateChoice.SOONER);
         startStream(recording());
         keepSwitch(openDialog()).setChecked(true);
         ShadowLooper.idleMainLooper();
-        assertTrue("another PC's own choice stays", game.getSharedPreferences(
-                com.limelight.preferences.AutoBitrateChoice.CODEC_STORE, android.content.Context.MODE_PRIVATE).contains("another-pc"));
-        assertTrue(stored().getBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false));
+        assertEquals("another PC's own choice stays", com.limelight.preferences.AutoBitrateChoice.SOONER, game.getSharedPreferences(
+                com.limelight.preferences.AutoBitrateChoice.PC_STORE, android.content.Context.MODE_PRIVATE).getString("another-pc", null));
+        assertEquals(com.limelight.preferences.AutoBitrateChoice.KEEP, stored().getString(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY, null));
     }
 
     @Test
@@ -678,7 +672,7 @@ public class GameRateChangeTest {
         ShadowLooper.idleMainLooper();
         assertEquals(1, sent.size());
         assertTrue(prefs.keepBitrate);
-        assertFalse(stored().contains(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING));
+        assertFalse(stored().contains(com.limelight.preferences.AutoBitrateChoice.SETTINGS_KEY));
     }
 
     @Test

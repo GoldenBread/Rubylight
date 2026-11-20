@@ -2,7 +2,6 @@
 <resources>
     <string name="title_lower_bitrate">Reduzir a taxa de bits</string>
     <string name="lower_bitrate_pc">O PC decide</string>
-    <string name="lower_bitrate_busy">Quando a rede estiver congestionada</string>
     <string name="lower_bitrate_lost">Reduzir mais cedo</string>
     <string name="lower_bitrate_keep">Nunca: manter minha taxa de bits</string>
     <string name="summary_lower_bitrate">“Nunca: manter minha taxa de bits” pode travar ou quebrar a imagem em uma conexão que não suporte essa taxa, e só funciona com um PC que aceite mudanças de taxa de bits; escolha quando a imagem ficar suave em uma conexão que suporte mais. Por padrão, o PC reduz a taxa de bits quando perde quadros que não consegue reparar e a aumenta de novo depois; “Reduzir mais cedo” reduz antes, ao custo de uma imagem mais suave.</string>

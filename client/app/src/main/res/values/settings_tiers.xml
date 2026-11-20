@@ -21,7 +21,7 @@
         <item>list_fps</item>
         <item>automatic_bitrate</item>
         <item>seekbar_bitrate_kbps</item>
-        <item>adaptive_bitrate</item>
+        <item>lower_bitrate</item>
         <item>list_mobile_bitrate_kbps</item>
         <item>video_format</item>
         <item>checkbox_enable_hdr</item>

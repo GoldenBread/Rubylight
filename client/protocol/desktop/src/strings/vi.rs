@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "Bộ đệm nhận: hệ thống chỉ c�
     ("Installed in the game’s folder, release {}.", "Đã cài vào thư mục của trò chơi, bản phát hành {}."),
     ("Added to the upscaler mod in the game’s folder, release {}.", "Đã thêm vào bản mod nâng độ phân giải trong thư mục của trò chơi, bản phát hành {}."),
     ("Lower bitrate", "Giảm tốc độ bit"),
-    ("When the network is busy", "Khi mạng bận"),
     ("The PC decides", "PC quyết định"),
     ("Lower it sooner", "Giảm sớm hơn"),
     ("Never: keep my bitrate", "Không bao giờ: giữ tốc độ bit của tôi"),

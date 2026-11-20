@@ -369,14 +369,19 @@ pub struct Settings {
     pub fps: u32,
     /// 0 picks a bitrate for the resolution and rate.
     pub bitrate_kbps: u32,
-    pub adaptive_bitrate: bool,
-    /// Steers the bitrate from this client's loss over mid-stream rate changes (0x553C), on a
-    /// PC that takes them, in place of `adaptive_bitrate`. Off by default.
-    pub client_hint_bitrate: bool,
-    /// "Never: keep my bitrate": while set, `adaptive_bitrate` and `client_hint_bitrate` count as
-    /// off for the stream (they stay stored), and a PC that takes rate changes is told once to
-    /// hold the stream's own bitrate. Off by default; an older file without it reads as off.
-    pub keep_bitrate: bool,
+    /// "Lower bitrate", the one adaptive bitrate setting: The PC decides (default), Lower it sooner
+    /// (this device's busy-network controller, or its loss over mid-stream rate changes (0x553C) on
+    /// a PC that takes them) or Never: keep my bitrate (a PC that takes rate changes is told once to
+    /// hold the stream's own bitrate).
+    pub lower_bitrate: nightjar_policy::choices::LowerBitrate,
+    /// The three switches Lower bitrate was saved as before 2026-11-20; [`Settings::migrate`] folds
+    /// them into `lower_bitrate` once and they are never written again.
+    #[serde(rename = "adaptive_bitrate", skip_serializing)]
+    pub(crate) retired_busy_bitrate: Option<bool>,
+    #[serde(rename = "client_hint_bitrate", skip_serializing)]
+    pub(crate) retired_lost_bitrate: Option<bool>,
+    #[serde(rename = "keep_bitrate", skip_serializing)]
+    pub(crate) retired_keep_bitrate: Option<bool>,
     pub adaptive_quality: QualityMode,
     pub quality_min_short_edge: u32,
     pub quality_min_fps: u32,
@@ -1050,7 +1055,30 @@ impl Settings {
         if !self.real_vrr_default_on {
             (self.present_at_host_times, self.real_vrr_default_on) = (true, true);
         }
+        // Lower bitrate's three switches become its one value: a player who had it off keeps it off.
+        let switches = (self.retired_busy_bitrate.take(), self.retired_lost_bitrate.take(), self.retired_keep_bitrate.take());
+        if let Some(choice) = folded_lower_bitrate(switches) {
+            self.lower_bitrate = choice;
+        }
         normalize_values(&mut SettingsValues(self));
+    }
+}
+
+/// The Lower bitrate the three switches of earlier versions chose, a missing one read as off; `None`
+/// when none was saved.
+fn folded_lower_bitrate(switches: (Option<bool>, Option<bool>, Option<bool>)) -> Option<nightjar_policy::choices::LowerBitrate> {
+    let (busy, lost, keep) = switches;
+    (busy.is_some() || lost.is_some() || keep.is_some())
+        .then(|| nightjar_policy::choices::LowerBitrate::from_saved(busy.unwrap_or(false), lost.unwrap_or(false), keep.unwrap_or(false)))
+}
+
+/// A PC's, game's or profile's layer (an import too) saved with Lower bitrate's three switches holds
+/// that choice as its own `lower_bitrate`; a value saved under the new key wins.
+pub(crate) fn fold_lower_bitrate(values: &mut serde_json::Map<String, serde_json::Value>) {
+    let mut take = |key: &str| values.remove(key).and_then(|value| value.as_bool());
+    let switches = (take("adaptive_bitrate"), take("client_hint_bitrate"), take("keep_bitrate"));
+    if let Some(choice) = folded_lower_bitrate(switches) {
+        values.entry("lower_bitrate").or_insert_with(|| serde_json::Value::from(choice.as_str()));
     }
 }
 
@@ -1165,9 +1193,10 @@ impl Default for Settings {
             height: 0,
             fps: 0,
             bitrate_kbps: 0,
-            adaptive_bitrate: false,
-            client_hint_bitrate: false,
-            keep_bitrate: false,
+            lower_bitrate: nightjar_policy::choices::LowerBitrate::Off,
+            retired_busy_bitrate: None,
+            retired_lost_bitrate: None,
+            retired_keep_bitrate: None,
             adaptive_quality: QualityMode::Off,
             quality_min_short_edge: 720,
             quality_min_fps: 30,
@@ -1546,11 +1575,7 @@ impl<'de> Deserialize<'de> for Overrides {
         let mut values = serde_json::Map::deserialize(deserializer)?;
         serde_json::from_value::<Settings>(serde_json::Value::Object(values.clone())).map_err(serde::de::Error::custom)?;
         normalize_values(&mut values);
-        // Lower bitrate saved before Never existed holds only its two switches: that choice is the
-        // layer's own, so it does not read as a Never of the settings below.
-        if (values.contains_key("adaptive_bitrate") || values.contains_key("client_hint_bitrate")) && !values.contains_key("keep_bitrate") {
-            values.insert("keep_bitrate".to_owned(), serde_json::Value::Bool(false));
-        }
+        fold_lower_bitrate(&mut values);
         Ok(Self(values))
     }
 }

@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "接收緩衝區：系統只分配了所�
     ("Installed in the game’s folder, release {}.", "已安裝到遊戲資料夾，版本 {}。"),
     ("Added to the upscaler mod in the game’s folder, release {}.", "已新增到遊戲資料夾中的超解析度模組，版本 {}。"),
     ("Lower bitrate", "降低位元速率"),
-    ("When the network is busy", "網路忙碌時"),
     ("The PC decides", "由電腦決定"),
     ("Lower it sooner", "更早降低"),
     ("Never: keep my bitrate", "從不：保持我的位元速率"),

@@ -954,8 +954,10 @@ public class StreamSettings extends NightjarActivity {
                 .remove(PreferenceConfiguration.BACK_AS_GUIDE_PREF_STRING)
                 .remove(PreferenceConfiguration.SYSTEM_KEYS_FULLSCREEN_ONLY_PREF_STRING)
                 .remove(PreferenceConfiguration.ROAMING_METERED_PREF_STRING)
-                .remove(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING)
-                .remove(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING)
+                // Lower bitrate's switches before it was one value (AutoBitrateChoice).
+                .remove(AutoBitrateChoice.RETIRED_BUSY)
+                .remove(AutoBitrateChoice.RETIRED_LOST)
+                .remove(AutoBitrateChoice.RETIRED_KEEP)
                 .remove(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING)
                 .remove(PreferenceConfiguration.BITRATE_PREF_OLD_STRING)
                 .remove(PreferenceConfiguration.PREFS_VERSION_PREF_STRING)
@@ -1332,7 +1334,7 @@ public class StreamSettings extends NightjarActivity {
         String key = preference.getKey();
         return TouchMode.PREF.equals(key) || VideoScaling.PREF.equals(key)
                 || OverlayChoice.ENABLED_KEY.equals(key) || AppTheme.THEME.equals(key) || "gpu_driver".equals(key)
-                || (SwitchPairChoice.forKey(key) != null && SwitchPairChoice.forKey(key) != SwitchPairChoice.LOWER_BITRATE);
+                || SwitchPairChoice.forKey(key) != null;
     }
 
     private static void stylePreferences(PreferenceGroup group, int categoryLayout) {
@@ -2820,6 +2822,14 @@ public class StreamSettings extends NightjarActivity {
                 PreferenceConfiguration.setLowLatencyDecoding(getPreferenceManager().getSharedPreferences(), (Boolean) value);
                 return true;
             });
+            Preference lowerBitrate = findPreference(AutoBitrateChoice.SETTINGS_KEY);
+            if (lowerBitrate != null) {
+                lowerBitrate.setOnPreferenceChangeListener((preference, value) -> {
+                    // Every PC follows the choice again, including PCs that chose otherwise in the stream menu.
+                    AutoBitrateChoice.clearPcChoices(getActivity());
+                    return true;
+                });
+            }
             for (SwitchPairChoice pair : SwitchPairChoice.values()) {
                 Preference row = findPreference(pair.key);
                 if (row == null) continue;
@@ -2837,8 +2847,6 @@ public class StreamSettings extends NightjarActivity {
                         SharedPreferences.Editor editor = prefs.edit();
                         pair.save(editor, order[which]);
                         editor.apply();
-                        // Every PC follows the choice again, including PCs that chose otherwise in the stream menu.
-                        if (pair == SwitchPairChoice.LOWER_BITRATE) AutoBitrateChoice.clearPcChoices(getActivity());
                     });
                     return true;
                 });

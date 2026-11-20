@@ -1580,7 +1580,6 @@ sudo sysctl -w net.core.rmem_max={}", "受信バッファー：システムは�
     ("Installed in the game’s folder, release {}.", "ゲームのフォルダーにインストール済み、リリース {}。"),
     ("Added to the upscaler mod in the game’s folder, release {}.", "ゲームのフォルダーのアップスケーラー Mod に追加済み、リリース {}。"),
     ("Lower bitrate", "ビットレートを下げる"),
-    ("When the network is busy", "ネットワーク混雑時"),
     ("The PC decides", "PC に任せる"),
     ("Lower it sooner", "早めに下げる"),
     ("Never: keep my bitrate", "下げない: ビットレートを維持"),

@@ -2,7 +2,6 @@
 <resources>
     <string name="title_lower_bitrate">Giảm tốc độ bit</string>
     <string name="lower_bitrate_pc">PC quyết định</string>
-    <string name="lower_bitrate_busy">Khi mạng bận</string>
     <string name="lower_bitrate_lost">Giảm sớm hơn</string>
     <string name="lower_bitrate_keep">Không bao giờ: giữ tốc độ bit của tôi</string>
     <string name="summary_lower_bitrate">“Không bao giờ: giữ tốc độ bit của tôi” có thể làm hình đứng hoặc vỡ trên kết nối không tải nổi, và chỉ hoạt động với PC chấp nhận thay đổi tốc độ bit; hãy chọn khi hình bị mềm trên kết nối tải được nhiều hơn. Mặc định, PC giảm tốc độ bit khi mất những khung hình mà nó không thể phục hồi rồi tăng lại sau đó; “Giảm sớm hơn” giảm sớm hơn, đổi lại hình mềm hơn.</string>

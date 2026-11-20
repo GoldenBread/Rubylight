@@ -48,11 +48,11 @@ public class UnusedSettingTagsTest {
     @Test
     public void neverSaysItNeedsTheNewStreamingEngine() {
         assertNull(reason(AutoBitrateChoice.SETTINGS_KEY));
-        prefs.edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, true).commit();
+        prefs.edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.KEEP).commit();
         assertNull("the new engine is on by default", reason(AutoBitrateChoice.SETTINGS_KEY));
         prefs.edit().putBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, false).commit();
         assertEquals("Not used without New streaming engine", reason(AutoBitrateChoice.SETTINGS_KEY));
-        prefs.edit().putBoolean(PreferenceConfiguration.KEEP_BITRATE_PREF_STRING, false).commit();
+        prefs.edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.SOONER).commit();
         assertNull("only Never needs it here", reason(AutoBitrateChoice.SETTINGS_KEY));
     }
 
@@ -60,10 +60,8 @@ public class UnusedSettingTagsTest {
     public void thermalProtectionNamesTheThreeItActsThrough() {
         assertEquals("Not used without Lower bitrate, Automatic quality or Boost GPU performance for PyroWave",
                 reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
-        prefs.edit().putBoolean(AutoBitrateChoice.SETTINGS_KEY, true).commit();
-        assertNull(reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
         // Lower it sooner: its controller follows no heat on a PC that takes rate changes.
-        prefs.edit().putBoolean(PreferenceConfiguration.RATE_CHANGE_BITRATE_PREF_STRING, true).commit();
+        prefs.edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.SOONER).commit();
         assertEquals("Not used with Lower it sooner on a PC that takes bitrate changes",
                 reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
         prefs.edit().clear().putString("adaptive_quality_mode", "motion").commit();

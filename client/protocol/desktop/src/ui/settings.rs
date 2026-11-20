@@ -54,7 +54,7 @@ pub(super) fn debug_listed(s: &Settings, layer: Option<&Overrides>) -> bool {
 /// page draws.
 pub(super) const SECTION_KEYS: [&[&[&str]]; 9] = [
     &[&["simple_smoothness"], &["simple_picture"], &["simple_hdr"]],
-    &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"], &["codec"], &["hdr"],
+    &[&["width", "height"], &["fps"], &["bitrate_kbps"], &["lower_bitrate"], &["codec"], &["hdr"],
         &["prefer_yuv444", "experimental_packed_444"], &["sdr_10bit"], &["frame_warp"], &["adaptive_quality"], &["quality_min_short_edge"], &["quality_min_fps"],
         &["hdr_desktop_brightness"], &["rtx_hdr"], &["rtx_video"]],
     &[&["window_mode"], &["video_scaling"], &["vrr", "present_at_host_times", "vrr_tear_free"], &["vrr_wait"],
@@ -303,7 +303,7 @@ pub(crate) fn simple_current(s: &Settings, display: &Display, _caps: &simple::Ca
         bitrate_milli,
         codec,
         hdr: s.hdr,
-        adaptive_bitrate: { let (busy, lost) = LowerBitrate::effective(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate); busy || lost },
+        adaptive_bitrate: s.lower_bitrate.busy_controller(),
         adaptive_quality: match s.adaptive_quality {
             crate::config::QualityMode::Off => Some(simple::AdaptiveQuality::Off),
             crate::config::QualityMode::Battery => Some(simple::AdaptiveQuality::SavePower),
@@ -356,10 +356,13 @@ pub(crate) fn simple_apply(s: &mut Settings, display: &Display, caps: &simple::C
         simple::Bitrate::Default => 0,
         simple::Bitrate::Factor(milli) => (u64::from(default_kbps) * u64::from(milli) / 1000) as u32,
     };
-    s.adaptive_bitrate = values.adaptive_bitrate;
-    s.client_hint_bitrate = false;
-    // Only Save data, which turns Nightjar's own lowering on, clears an earlier Never; the page does not show that row.
-    if values.adaptive_bitrate { s.keep_bitrate = false; }
+    // Save data turns Nightjar's own lowering on, over an earlier Never; leaving it takes back that
+    // lowering. Any other choice leaves Lower bitrate as it was; the page does not show that row.
+    if values.adaptive_bitrate {
+        s.lower_bitrate = LowerBitrate::WhenFramesLost;
+    } else if s.lower_bitrate == LowerBitrate::WhenFramesLost {
+        s.lower_bitrate = LowerBitrate::Off;
+    }
     s.adaptive_quality = match values.adaptive_quality {
         simple::AdaptiveQuality::Off => crate::config::QualityMode::Off,
         simple::AdaptiveQuality::SavePower => crate::config::QualityMode::Battery,
@@ -1164,20 +1167,13 @@ impl Launcher {
                     r
                 });
             }
-            setting_row(ui, s, &mut rows, &["adaptive_bitrate", "client_hint_bitrate", "keep_bitrate"], "Lower bitrate", "Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it, and works only with a PC that accepts bitrate changes; choose it when the picture turns soft on a link that can carry more. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner lowers it earlier, with a softer picture as the cost.", |ui, s| {
-                let current = LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate);
-                let mut choice = current;
-                let response = Combo::from_id_salt("lower-bitrate").selected_text(tr(lower_bitrate_name(current))).show_ui(ui, |ui| {
-                    // When the network is busy only while it is stored: Lower it sooner keeps its controller
-                    // for a PC that takes no rate changes.
-                    for each in LowerBitrate::ALL.into_iter().filter(|&each| each != LowerBitrate::WhenBusy || current == LowerBitrate::WhenBusy) {
-                        ui.selectable_value(&mut choice, each, tr(lower_bitrate_name(each)));
+            setting_row(ui, s, &mut rows, &["lower_bitrate"], "Lower bitrate", "Never: keep my bitrate can freeze or break up the picture on a link that cannot carry it, and works only with a PC that accepts bitrate changes; choose it when the picture turns soft on a link that can carry more. By default the PC lowers the bitrate when frames are lost that it cannot repair and raises it again afterwards; Lower it sooner lowers it earlier, with a softer picture as the cost.", |ui, s| {
+                let current = s.lower_bitrate;
+                Combo::from_id_salt("lower-bitrate").selected_text(tr(lower_bitrate_name(current))).show_ui(ui, |ui| {
+                    for each in LowerBitrate::ALL {
+                        ui.selectable_value(&mut s.lower_bitrate, each, tr(lower_bitrate_name(each)));
                     }
-                }).response;
-                if choice != current {
-                    (s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate) = choice.to_saved(s.adaptive_bitrate, s.client_hint_bitrate);
-                }
-                response
+                }).response
             });
             if mobile_shown {
                 rows.action("mobile_bitrate");
@@ -2507,7 +2503,6 @@ fn lower_bitrate_name(choice: LowerBitrate) -> &'static str {
     match choice {
         LowerBitrate::Off => en("The PC decides"),
         LowerBitrate::WhenFramesLost => en("Lower it sooner"),
-        LowerBitrate::WhenBusy => en("When the network is busy"),
         LowerBitrate::Keep => en("Never: keep my bitrate"),
     }
 }
@@ -2906,7 +2901,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "simple_picture" => tr(simple_picture_name(s.simple_picture)).to_owned(),
         "simple_hdr" => tr(simple_hdr_name(simple_effective_hdr(s))).to_owned(),
         "controllers" | "multi_controller" => tr(controllers_name(Controllers::from_saved(s.controllers, s.multi_controller))).to_owned(),
-        "adaptive_bitrate" | "client_hint_bitrate" | "keep_bitrate" => tr(lower_bitrate_name(LowerBitrate::from_saved(s.adaptive_bitrate, s.client_hint_bitrate, s.keep_bitrate))).to_owned(),
+        "lower_bitrate" => tr(lower_bitrate_name(s.lower_bitrate)).to_owned(),
         "back_opens_menu" | "back_as_guide" => tr(back_button_name(BackButton::from_saved(s.back_opens_menu, s.back_as_guide))).to_owned(),
         "capture_system_keys" | "system_keys_fullscreen_only" => tr(system_keys_name(SystemKeys::from_saved(s.capture_system_keys, s.system_keys_fullscreen_only))).to_owned(),
         "client_roaming" | "roaming_metered" => tr(roaming_name(Roaming::from_saved(s.client_roaming, s.roaming_metered))).to_owned(),
@@ -2978,7 +2973,7 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
 /// by Android preference key, in `SETTINGS_SECTIONS` order. A test keeps the two equal.
 pub(super) const MAIN_KEYS: [(&str, &[&str]); 9] = [
     ("simple", &["simple_smoothness", "simple_picture", "simple_screen", "simple_hdr", "checkbox_console_home", "simple_back_to_recommended"]),
-    ("video", &["list_resolution", "list_fps", "automatic_bitrate", "seekbar_bitrate_kbps", "adaptive_bitrate", "list_mobile_bitrate_kbps", "video_format", "checkbox_enable_hdr"]),
+    ("video", &["list_resolution", "list_fps", "automatic_bitrate", "seekbar_bitrate_kbps", "lower_bitrate", "list_mobile_bitrate_kbps", "video_format", "checkbox_enable_hdr"]),
     ("display", &["video_scaling", "stream_orientation", "checkbox_vrr", "frame_pacing"]),
     ("input", &["touch_mode", "checkbox_absolute_mouse_mode", "controllers", "controller_button_mapping", "controller_test", "checkbox_show_onscreen_controls", "checkbox_keyboard_follows_text_fields", "checkbox_clipboard_sync"]),
     ("audio", &["list_audio_config", "checkbox_host_audio", "checkbox_enable_mic", "checkbox_mic_button"]),
@@ -2998,7 +2993,7 @@ pub(super) const ANDROID_KEYS: &[(&str, &str)] = &[
     ("simple_console", "checkbox_console_home"), ("simple_screen", "simple_screen"), ("simple_back", "simple_back_to_recommended"),
     // Video
     ("width", "list_resolution"), ("fps", "list_fps"), ("bitrate_kbps", "seekbar_bitrate_kbps"),
-    ("adaptive_bitrate", "adaptive_bitrate"), ("mobile_bitrate", "list_mobile_bitrate_kbps"), ("codec", "video_format"),
+    ("lower_bitrate", "lower_bitrate"), ("mobile_bitrate", "list_mobile_bitrate_kbps"), ("codec", "video_format"),
     ("hdr", "checkbox_enable_hdr"), ("prefer_yuv444", "sharp_color"), ("sdr_10bit", "checkbox_enable_sdr_10bit"),
     ("frame_warp", "checkbox_frame_warp"),
     ("adaptive_quality", "adaptive_quality_mode"), ("quality_min_short_edge", "adaptive_quality_min_resolution"),
