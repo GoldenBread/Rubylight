@@ -233,21 +233,14 @@ public class SettingsHideTest {
     }
 
     private static final List<Row> ROWS = Arrays.asList(
-            new Row("list_rumble_feel", "input", on("checkbox_disable_rumble"), (e, d) -> e.putBoolean("checkbox_disable_rumble", false),
-                    (e, d) -> { e.putBoolean("checkbox_disable_rumble", true); e.putString("list_rumble_feel", "strong"); }),
             new Row("seekbar_mouse_speed", "input", true, NOTHING, (e, d) -> d.mouse = true, number("seekbar_mouse_speed", 150)),
             new Row("checkbox_mouse_nav_buttons", "input", true, NOTHING, (e, d) -> d.mouse = true, on("checkbox_mouse_nav_buttons")),
             // The touch rows act in any touch mode (an external display, the stream menu, the second screen): only a
             // device without a touch screen leaves them out.
             new Row("seekbar_trackpad_speed", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(number("seekbar_trackpad_speed", 150))),
             new Row("seekbar_local_cursor_speed", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(number("seekbar_local_cursor_speed", 150))),
-            new Row("checkbox_trackpad_acceleration_v2", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN,
-                    untouchable((e, d) -> e.putBoolean("checkbox_trackpad_acceleration_v2", false))),
             new Row(SettingRules.ACCELERATION_CURVE, "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(set(SettingRules.ACCELERATION_CURVE, "strong"))),
-            new Row("checkbox_trackpad_momentum", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(on("checkbox_trackpad_momentum"))),
-            new Row(SettingRules.MOMENTUM_GLIDE, "input", true, untouchable(on("checkbox_trackpad_momentum")),
-                    (e, d) -> { d.touchscreen = true; e.putBoolean("checkbox_trackpad_momentum", true); },
-                    untouchable((e, d) -> { e.putBoolean("checkbox_trackpad_momentum", true); e.putString(SettingRules.MOMENTUM_GLIDE, "long"); })),
+            new Row(SettingRules.MOMENTUM_GLIDE, "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(set(SettingRules.MOMENTUM_GLIDE, "long"))),
             new Row("list_trackpad_area", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(set("list_trackpad_area", "right"))),
             new Row("checkbox_multi_touch_finger_taps", "input", true, NO_TOUCH_SCREEN, TOUCH_SCREEN, untouchable(on("checkbox_multi_touch_finger_taps"))),
             new Row("seekbar_trackpad_sensitivity_x", "input", true, NOTHING, (e, d) -> d.touchpad = true, number("seekbar_trackpad_sensitivity_x", 150)),
@@ -362,28 +355,24 @@ public class SettingsHideTest {
     }
 
     @Test
-    public void aSwitchsOwnRowLeavesWithTheSwitchUnlessItIsChanged() {
+    public void theFoldedTrackpadRowsLeaveWithoutATouchScreenUnlessChanged() {
         try (ActivityController<StreamSettings> controller = start()) {
             StreamSettings screen = controller.get();
-            // Every touch mode keeps them: Direct is not a reason to leave them out.
-            reset((e, d) -> { TouchMode.save(e, TouchMode.DIRECT); e.putBoolean("checkbox_trackpad_momentum", true); });
+            // Trackpad acceleration and Glide after a flick are one row each, Off among their values.
+            reset((e, d) -> TouchMode.save(e, TouchMode.DIRECT));
             StreamSettings.SettingsFragment fragment = open(screen, "input");
-            assertTrue(visible(fragment).containsAll(Arrays.asList(PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING,
-                    SettingRules.ACCELERATION_CURVE, "seekbar_trackpad_speed", SettingRules.MOMENTUM_GLIDE)));
-            // No touch screen: Trackpad acceleration leaves, and its strength with it; Glide length, changed, stays though
-            // its switch, also changed, stays too.
+            assertTrue(visible(fragment).containsAll(Arrays.asList(SettingRules.ACCELERATION_CURVE,
+                    "seekbar_trackpad_speed", SettingRules.MOMENTUM_GLIDE)));
+            // No touch screen: both leave, unless changed; a changed Glide stays, saying why.
             prefs().edit().putString(SettingRules.MOMENTUM_GLIDE, "long").commit();
             devices.touchscreen = false;
             fragment.devicesChanged();
             settle(screen);
             List<String> rows = visible(fragment);
-            assertFalse(rows.contains(PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING));
-            assertFalse("no strength without its switch", rows.contains(SettingRules.ACCELERATION_CURVE));
+            assertFalse(rows.contains(SettingRules.ACCELERATION_CURVE));
             assertTrue("changed, so it stays", rows.contains(SettingRules.MOMENTUM_GLIDE));
-            assertTrue(String.valueOf(fragment.findPreference(SettingRules.MOMENTUM_GLIDE).getSummary()),
-                    String.valueOf(fragment.findPreference(SettingRules.MOMENTUM_GLIDE).getSummary())
-                            .contains(context().getString(R.string.tag_unused_no_touchscreen)));
-            // A changed strength stays as well, with its reason.
+            assertTrue(String.valueOf(fragment.findPreference(SettingRules.MOMENTUM_GLIDE).getSummary())
+                    .contains(context().getString(R.string.tag_unused_no_touchscreen)));
             prefs().edit().putString(SettingRules.ACCELERATION_CURVE, "strong").commit();
             settle(screen);
             assertTrue(visible(fragment).contains(SettingRules.ACCELERATION_CURVE));

@@ -958,6 +958,11 @@ public class StreamSettings extends NightjarActivity {
                 .remove(AutoBitrateChoice.RETIRED_BUSY)
                 .remove(AutoBitrateChoice.RETIRED_LOST)
                 .remove(AutoBitrateChoice.RETIRED_KEEP)
+                // The switches Vibration, Trackpad acceleration and Glide after a flick folded into their lists (FoldedChoice).
+                .remove(FoldedChoice.VIBRATION.switchKey)
+                .remove(FoldedChoice.ACCELERATION.switchKey)
+                .remove(FoldedChoice.MOMENTUM.switchKey)
+                .remove(FoldedChoice.RETIRED_ACCELERATION_V1)
                 .remove(PreferenceConfiguration.BITRATE_USER_SET_PREF_STRING)
                 .remove(PreferenceConfiguration.BITRATE_PREF_OLD_STRING)
                 .remove(PreferenceConfiguration.PREFS_VERSION_PREF_STRING)
@@ -976,6 +981,7 @@ public class StreamSettings extends NightjarActivity {
                 .commit();
         PreferenceManager.setDefaultValues(context, R.xml.preferences, true);
         PreferenceConfiguration.migrateToNativeDefaults(context);
+        FoldedChoice.migrate(prefs);
         // The XML default just came back: where Android's low-latency mode can corrupt the picture it starts off again.
         PreferenceConfiguration.migrateCodecLowLatencyCorruption(prefs);
     }
@@ -1993,11 +1999,6 @@ public class StreamSettings extends NightjarActivity {
                     idle.add(key);
                 }
             }
-            // A switch's own row follows it; it is a row of WHEN_ROWS too, left out with its switch unless it is changed.
-            setShown(SettingRules.ACCELERATION_CURVE, prefs.getBoolean(
-                    PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING,
-                    PreferenceConfiguration.DEFAULT_TRACKPAD_ACCELERATION));
-            setShown(SettingRules.MOMENTUM_GLIDE, prefs.getBoolean("checkbox_trackpad_momentum", false));
             setShown(PreferenceConfiguration.CLIENT_ROAMING_PREF_STRING, SettingRules.clientRoamingApplies(prefs));
             setShown(PreferenceConfiguration.RECEIVE_COALESCING_PREF_STRING, SettingRules.receiveCoalescingApplies(prefs));
             setShown(PreferenceConfiguration.AUDIO_PASSTHROUGH_PREF_STRING,

@@ -386,7 +386,7 @@ final class SettingRules {
 
     /** Rows hidden while Controllers is Off (Controls › Controllers and the stream menu's controller rows). */
     static final String[] CONTROLLER_ROWS = {"checkbox_flip_face_buttons", "list_gamepad_quit_combo", "seekbar_deadzone",
-            "seekbar_trigger_deadzone", "checkbox_gamepad_motion_sensors", "gyro_mapping_profiles", "checkbox_disable_rumble", "list_rumble_feel", "checkbox_mouse_emulation",
+            "seekbar_trigger_deadzone", "checkbox_gamepad_motion_sensors", "gyro_mapping_profiles", "list_rumble_feel", "checkbox_mouse_emulation",
             "checkbox_gamepad_touchpad_as_mouse", "list_guide_menu_hold", "back_button",
             "list_stream_menu_button_y", "list_stream_menu_button_x", "list_stream_menu_button_lb", "list_stream_menu_button_rb"};
     /** Rows hidden while the on-screen controls are not shown. */
@@ -413,7 +413,6 @@ final class SettingRules {
 
     static final String TRACKPAD_SPEED = "seekbar_trackpad_speed";
     static final String LOCAL_CURSOR_SPEED = "seekbar_local_cursor_speed";
-    static final String TRACKPAD_MOMENTUM = "checkbox_trackpad_momentum";
     static final String TRACKPAD_AREA = "list_trackpad_area";
     /** Acceleration strength and Glide length: shown while their switch is on, and left out with it (whenApplies). */
     static final String ACCELERATION_CURVE = "list_trackpad_acceleration_curve";
@@ -434,7 +433,6 @@ final class SettingRules {
     static final String OVERLAY_POSITION = "performance_overlay_position";
     static final String VIBRATE_STRENGTH = "seekbar_vibrate_fallback_strength";
     static final String SCREEN2_RESOLUTION = "list_resolution_screen2";
-    static final String RUMBLE_FEEL = "list_rumble_feel";
 
     /**
      * The rows shown only while some stream on this device can use them, decided by what no stream can change: this
@@ -446,9 +444,9 @@ final class SettingRules {
      * protection, which a PC's or one stream's Automatic bitrate lets act, is always shown with its own tag.
      */
     static final java.util.List<String> WHEN_ROWS = java.util.Arrays.asList(
-            RUMBLE_FEEL, VIBRATE_STRENGTH, MOUSE_SPEED, MOUSE_NAV_BUTTONS,
-            TRACKPAD_SPEED, LOCAL_CURSOR_SPEED, PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING, ACCELERATION_CURVE,
-            TRACKPAD_MOMENTUM, MOMENTUM_GLIDE, TRACKPAD_AREA, FINGER_TAPS, TRACKPAD_SENSITIVITY_X, TRACKPAD_SENSITIVITY_Y, TRACKPAD_SWAP_AXIS, NATIVE_TOUCHPAD,
+            VIBRATE_STRENGTH, MOUSE_SPEED, MOUSE_NAV_BUTTONS,
+            TRACKPAD_SPEED, LOCAL_CURSOR_SPEED, ACCELERATION_CURVE,
+            MOMENTUM_GLIDE, TRACKPAD_AREA, FINGER_TAPS, TRACKPAD_SENSITIVITY_X, TRACKPAD_SENSITIVITY_Y, TRACKPAD_SWAP_AXIS, NATIVE_TOUCHPAD,
             BACK_AS_META, OVERLAY_POSITION, SCREEN2_RESOLUTION, COVERING_DECODER_SIZE, CHIPSET_TUNING, TV_DISPLAY_COMPATIBILITY, IGDB_SECRET);
 
     /**
@@ -477,9 +475,6 @@ final class SettingRules {
                 return qualityLimitsApply(prefs);
             case PreferenceConfiguration.UPSCALING_SHARPNESS_PREF_STRING:
                 return upscalingUsesSharpness(prefs);
-            case RUMBLE_FEEL:
-                // RumblePolicy.allows: Turn off vibration stops every rumble the feel would shape.
-                return !prefs.getBoolean("checkbox_disable_rumble", false);
             case VIBRATE_STRENGTH:
                 return prefs.getBoolean("checkbox_vibrate_fallback", false);
             case MOUSE_SPEED:
@@ -489,9 +484,7 @@ final class SettingRules {
                 return devices.mouse();
             case TRACKPAD_SPEED:
             case LOCAL_CURSOR_SPEED:
-            case PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING:
             case ACCELERATION_CURVE:
-            case TRACKPAD_MOMENTUM:
             case MOMENTUM_GLIDE:
             case TRACKPAD_AREA:
             case FINGER_TAPS:
@@ -545,8 +538,6 @@ final class SettingRules {
                 return context.getString(R.string.tag_unused_with,
                         StreamSettings.entryFor(context, R.array.upscaling_names, R.array.upscaling_values, mode));
             }
-            case RUMBLE_FEEL:
-                return unusedWith(context, R.string.title_checkbox_disable_rumble);
             case VIBRATE_STRENGTH:
                 return context.getString(R.string.tag_unused_without, context.getString(R.string.title_checkbox_vibrate_fallback));
             case MOUSE_SPEED:
@@ -555,9 +546,7 @@ final class SettingRules {
                 return context.getString(R.string.tag_unused_no_mouse);
             case TRACKPAD_SPEED:
             case LOCAL_CURSOR_SPEED:
-            case PreferenceConfiguration.TRACKPAD_ACCELERATION_PREF_STRING:
             case ACCELERATION_CURVE:
-            case TRACKPAD_MOMENTUM:
             case MOMENTUM_GLIDE:
             case TRACKPAD_AREA:
             case FINGER_TAPS:

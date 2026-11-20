@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_rumble_feel">震動手感</string>
+    <string name="title_list_rumble_feel">震動</string>
     <string name="summary_list_rumble_feel">「強」會把微弱的震動加強到小型馬達也能表現出來；「柔和」會限制強震動並減弱微弱震動。兩者都會改變遊戲設定的弱震動與強震動之間的平衡，除非震動太弱或太生硬，否則請保持「標準」。</string>
     <string name="rumble_feel_standard">標準</string>
     <string name="rumble_feel_strong">強</string>

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_rumble_feel">Ощущение вибрации</string>
+    <string name="title_list_rumble_feel">Вибрация</string>
     <string name="summary_list_rumble_feel">«Сильная» усиливает слабую вибрацию настолько, чтобы её показал маленький мотор; «Мягкая» ограничивает сильную вибрацию и смягчает слабую. Любой из режимов меняет соотношение слабой и сильной вибрации, заданное игрой, поэтому оставьте «Стандартная», если вибрация не слишком слабая и не слишком резкая.</string>
     <string name="rumble_feel_standard">Стандартная</string>
     <string name="rumble_feel_strong">Сильная</string>

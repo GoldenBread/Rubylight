@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">Langsame Fingerbewegungen zielen präzise, schnelle Wischbewegungen reichen weiter. Lass sie an, außer wenn du möchtest, dass der Mauszeiger deinem Finger eins zu eins folgt; „Trackpad“ und „Lokaler Mauszeiger“ wenden sie ab dem nächsten Stream an.</string>
     <string name="title_trackpad_acceleration_curve">Stärke der Beschleunigung</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>Sanft</item>
         <item>Mittel</item>
         <item>Stark</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">Nach einem schnellen Wischen bewegt sich der Mauszeiger weiter und wird langsamer; eine Berührung des Bildschirms stoppt ihn sofort. Touch-Modi „Trackpad“ und „Lokaler Mauszeiger“.</string>
     <string name="title_trackpad_momentum_glide">Gleitweg</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>Kurz</item>
         <item>Mittel</item>
         <item>Lang</item>

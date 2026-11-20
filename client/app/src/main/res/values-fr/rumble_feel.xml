@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_rumble_feel">Ressenti des vibrations</string>
+    <string name="title_list_rumble_feel">Vibration</string>
     <string name="summary_list_rumble_feel">Fort rend les vibrations faibles assez marquées pour qu’un petit moteur les restitue ; Doux plafonne les vibrations fortes et adoucit les faibles. L’un comme l’autre modifie l’équilibre entre vibrations faibles et fortes voulu par le jeu : laissez Standard, sauf si les vibrations sont trop faibles ou trop brusques.</string>
     <string name="rumble_feel_standard">Standard</string>
     <string name="rumble_feel_strong">Fort</string>

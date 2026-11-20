@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_rumble_feel">Cảm giác rung</string>
+    <string name="title_list_rumble_feel">Rung</string>
     <string name="summary_list_rumble_feel">Mạnh làm rung yếu đủ mạnh để một động cơ nhỏ thể hiện được; Nhẹ giới hạn rung mạnh và làm dịu rung yếu. Cả hai đều thay đổi cân bằng giữa rung yếu và rung mạnh mà game chọn, nên hãy để Tiêu chuẩn trừ khi rung quá yếu hoặc quá gắt.</string>
     <string name="rumble_feel_standard">Tiêu chuẩn</string>
     <string name="rumble_feel_strong">Mạnh</string>

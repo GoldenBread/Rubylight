@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_rumble_feel">Sensação da vibração</string>
+    <string name="title_list_rumble_feel">Vibração</string>
     <string name="summary_list_rumble_feel">Forte deixa a vibração fraca intensa o bastante para um motor pequeno mostrá-la; Suave limita a vibração forte e suaviza a fraca. Qualquer uma muda o equilíbrio entre vibração fraca e forte escolhido pelo jogo, então deixe em Padrão, a menos que a vibração esteja fraca ou brusca demais.</string>
     <string name="rumble_feel_standard">Padrão</string>
     <string name="rumble_feel_strong">Forte</string>

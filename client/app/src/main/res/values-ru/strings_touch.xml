@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">Медленные движения пальца дают точное наведение, а быстрые свайпы проходят дальше. Оставьте включённым, если не хотите, чтобы указатель следовал за пальцем один к одному; режимы «Трекпад» и «Локальный курсор» применяют его со следующей трансляции.</string>
     <string name="title_trackpad_acceleration_curve">Сила ускорения</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>Слабая</item>
         <item>Средняя</item>
         <item>Сильная</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">После быстрого жеста указатель продолжает двигаться, замедляясь; касание экрана сразу его останавливает. Сенсорные режимы «Трекпад» и «Локальный курсор».</string>
     <string name="title_trackpad_momentum_glide">Дальность инерции</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>Короткая</item>
         <item>Средняя</item>
         <item>Длинная</item>

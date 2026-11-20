@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">Slow finger movement aims precisely and fast swipes cover more distance. Leave it on unless you prefer the pointer to follow your finger one to one; Trackpad and Local cursor apply it from the next stream.</string>
     <string name="title_trackpad_acceleration_curve">Acceleration strength</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>Gentle</item>
         <item>Medium</item>
         <item>Strong</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">After a quick flick the pointer keeps moving and slows down; touching the screen stops it at once. Trackpad and Local cursor touch modes.</string>
     <string name="title_trackpad_momentum_glide">Glide distance</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>Short</item>
         <item>Medium</item>
         <item>Long</item>
@@ -38,11 +40,13 @@
     </string-array>
 
     <string-array name="trackpad_acceleration_curve_values" translatable="false">
+        <item>off</item>
         <item>gentle</item>
         <item>medium</item>
         <item>strong</item>
     </string-array>
     <string-array name="trackpad_momentum_glide_values" translatable="false">
+        <item>off</item>
         <item>short</item>
         <item>medium</item>
         <item>long</item>

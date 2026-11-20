@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">手指慢速移動時可精確瞄準，快速滑動則移動得更遠。除非你希望指標與手指一比一移動，否則請保持開啟；適用於「觸控板」和「本機游標」觸控模式，從下次串流開始套用。</string>
     <string name="title_trackpad_acceleration_curve">加速強度</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>輕</item>
         <item>中</item>
         <item>強</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">快速滑動後，指標會繼續移動並逐漸減速；觸碰螢幕會讓它立即停下。適用於「觸控板」和「本機游標」觸控模式。</string>
     <string name="title_trackpad_momentum_glide">滑行距離</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>短</item>
         <item>中</item>
         <item>長</item>

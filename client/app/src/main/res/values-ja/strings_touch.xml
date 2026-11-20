@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">指をゆっくり動かすと正確に狙え、速くスワイプすると遠くまで動きます。指とポインタを1対1で動かしたい場合を除き、オンのままにしてください。タッチモード「トラックパッド」と「ローカルカーソル」で、次回のストリームから適用されます。</string>
     <string name="title_trackpad_acceleration_curve">加速の強さ</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>弱</item>
         <item>中</item>
         <item>強</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">素早くフリックした後もポインタが動き続け、徐々に遅くなります。画面に触れるとすぐに止まります。タッチモード「トラックパッド」と「ローカルカーソル」で使われます。</string>
     <string name="title_trackpad_momentum_glide">慣性の距離</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>短い</item>
         <item>中</item>
         <item>長い</item>

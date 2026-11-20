@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">I movimenti lenti del dito mirano con precisione e gli scorrimenti rapidi arrivano più lontano. Lasciala attiva a meno che tu non preferisca che il puntatore segua il dito uno a uno; Trackpad e Cursore locale la applicano dal prossimo stream.</string>
     <string name="title_trackpad_acceleration_curve">Intensità dell’accelerazione</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>Leggera</item>
         <item>Media</item>
         <item>Forte</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">Dopo uno scatto rapido il puntatore continua a muoversi e rallenta; toccando lo schermo si ferma subito. Modalità touch Trackpad e Cursore locale.</string>
     <string name="title_trackpad_momentum_glide">Distanza di scivolamento</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>Corta</item>
         <item>Media</item>
         <item>Lunga</item>

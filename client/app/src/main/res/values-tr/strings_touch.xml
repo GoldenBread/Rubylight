@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">Yavaş parmak hareketi hassas nişan alır, hızlı kaydırmalar daha uzağa gider. İmlecin parmağınızı bire bir izlemesini istemiyorsanız açık bırakın; “Trackpad” ve “Yerel imleç” dokunma modlarında sonraki yayından itibaren geçerli olur.</string>
     <string name="title_trackpad_acceleration_curve">İvme gücü</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>Hafif</item>
         <item>Orta</item>
         <item>Güçlü</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">Hızlı bir kaydırmadan sonra imleç yavaşlayarak hareket etmeye devam eder; ekrana dokunmak onu hemen durdurur. “Trackpad” ve “Yerel imleç” dokunma modları için.</string>
     <string name="title_trackpad_momentum_glide">Kayma mesafesi</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>Kısa</item>
         <item>Orta</item>
         <item>Uzun</item>

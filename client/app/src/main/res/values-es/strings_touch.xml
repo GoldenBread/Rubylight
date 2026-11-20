@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">Los movimientos lentos del dedo apuntan con precisión y los deslizamientos rápidos llegan más lejos. Déjala activada salvo que prefieras que el puntero siga el dedo uno a uno; Trackpad y Cursor local la aplican desde la próxima transmisión.</string>
     <string name="title_trackpad_acceleration_curve">Intensidad de la aceleración</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>Suave</item>
         <item>Media</item>
         <item>Fuerte</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">Tras un deslizamiento rápido, el puntero sigue moviéndose y se va frenando; tocar la pantalla lo detiene al instante. Modos táctiles Trackpad y Cursor local.</string>
     <string name="title_trackpad_momentum_glide">Distancia de deslizamiento</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>Corta</item>
         <item>Media</item>
         <item>Larga</item>

@@ -186,6 +186,8 @@ public class SettingsKeysTest {
             // Lower bitrate's three switches, one value now (AutoBitrateChoice.SETTINGS_KEY).
             "adaptive_bitrate", "checkbox_rate_change_bitrate", "keep_bitrate",
             "checkbox_trackpad_acceleration", // moved to _v2 with the new on default (see the migration)
+            // Vibration, Trackpad acceleration and Glide after a flick: their switches folded into the lists (FoldedChoice).
+            "checkbox_disable_rumble", "checkbox_trackpad_acceleration_v2", "checkbox_trackpad_momentum",
             "checkbox_always_dark", "checkbox_oled_black", // the theme's switches, one value now (AppTheme.THEME)
             "list_osc_style")); // "Controller style", gone with the classic on-screen controller (retireOscStyle)
 
@@ -403,10 +405,9 @@ public class SettingsKeysTest {
         reads.put("checkbox_mouse_emulation", new Read(true, false, c -> c.mouseEmulation));
         reads.put("analog_scrolling", new Read("right", "left", c -> c.analogStickForScrolling));
         reads.put("checkbox_mouse_emulation_fixed_step", new Read(false, true, c -> c.mouseEmulationFixedStep));
-        reads.put("checkbox_disable_rumble", new Read(false, true, c -> c.disableRumble));
         reads.put("checkbox_back_as_meta", new Read(false, true, c -> c.backAsMeta));
         reads.put("checkbox_back_opens_menu", new Read(false, true, c -> c.backOpensMenu));
-        reads.put("list_rumble_feel", new Read("standard", "strong", c -> c.rumbleFeel));
+        reads.put("list_rumble_feel", new Read("standard", "strong", c -> c.disableRumble ? "off" : c.rumbleFeel));
         reads.put("list_gamepad_quit_combo", new Read("off", "lb_rb_a_b", c -> c.gamepadQuitCombo));
         reads.put("checkbox_back_as_guide", new Read(false, true, c -> c.backAsGuide));
         reads.put("list_guide_menu_hold", new Read("0", "1500", c -> c.guideMenuHoldMs));
@@ -430,10 +431,8 @@ public class SettingsKeysTest {
         reads.put(com.limelight.binding.input.touch.TouchMode.PREF, new Read("trackpad", "local_cursor", c -> c.touchMode));
         reads.put("seekbar_trackpad_speed", new Read(100, 200, c -> c.trackpadSpeed));
         reads.put("seekbar_local_cursor_speed", new Read(100, 200, c -> c.localCursorSpeed));
-        reads.put("checkbox_trackpad_acceleration_v2", new Read(false, true, c -> c.trackpadAcceleration));
-        reads.put("list_trackpad_acceleration_curve", new Read("medium", "strong", c -> c.trackpadAccelerationCurve));
-        reads.put("checkbox_trackpad_momentum", new Read(false, true, c -> c.trackpadMomentum));
-        reads.put("list_trackpad_momentum_glide", new Read("medium", "long", c -> c.trackpadMomentumGlide));
+        reads.put("list_trackpad_acceleration_curve", new Read("medium", "strong", c -> c.trackpadAcceleration ? c.trackpadAccelerationCurve : "off"));
+        reads.put("list_trackpad_momentum_glide", new Read("off", "long", c -> c.trackpadMomentum ? c.trackpadMomentumGlide : "off"));
         reads.put("list_trackpad_area", new Read("full", "right_half", c -> c.trackpadArea));
         reads.put("list_three_finger_tap", new Read("keyboard", "middle_click", c -> c.threeFingerTap));
         reads.put("list_four_finger_tap", new Read("none", "desktop_controls", c -> c.fourFingerTap));

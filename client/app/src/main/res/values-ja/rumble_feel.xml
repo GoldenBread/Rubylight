@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_rumble_feel">振動の感触</string>
+    <string name="title_list_rumble_feel">振動</string>
     <string name="summary_list_rumble_feel">「強め」は、弱い振動を小さなモーターでも感じられる強さに引き上げます。「控えめ」は、強い振動に上限を設け、弱い振動をやわらげます。どちらもゲームが決めた弱い振動と強い振動のバランスを変えるため、振動が弱すぎる、または強すぎる場合を除き「標準」のままにしてください。</string>
     <string name="rumble_feel_standard">標準</string>
     <string name="rumble_feel_strong">強め</string>

@@ -359,11 +359,6 @@
             android:title="@string/title_gyro_mapping"
             android:summary="@string/summary_gyro_mapping"
             android:persistent="false" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_disable_rumble"
-            android:title="@string/title_checkbox_disable_rumble"
-            android:dialogMessage="@string/summary_checkbox_disable_rumble"
-            android:defaultValue="false" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_rumble_feel"
             android:title="@string/title_list_rumble_feel"
@@ -484,30 +479,20 @@
             seekbar:min="25"
             android:max="400"
             android:text="%" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_trackpad_acceleration_v2"
-            android:title="@string/title_trackpad_acceleration"
-            android:dialogMessage="@string/summary_trackpad_acceleration"
-            android:defaultValue="true" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_trackpad_acceleration_curve"
-            android:title="@string/title_trackpad_acceleration_curve"
-            android:dialogMessage="@string/hint_trackpad_acceleration_curve"
+            android:title="@string/title_trackpad_acceleration"
+            android:dialogMessage="@string/summary_trackpad_acceleration"
             android:entries="@array/trackpad_acceleration_curve_names"
             android:entryValues="@array/trackpad_acceleration_curve_values"
             android:defaultValue="medium" />
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_trackpad_momentum"
-            android:title="@string/title_trackpad_momentum"
-            android:dialogMessage="@string/summary_trackpad_momentum"
-            android:defaultValue="false" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_trackpad_momentum_glide"
-            android:title="@string/title_trackpad_momentum_glide"
-            android:dialogMessage="@string/hint_trackpad_momentum_glide"
+            android:title="@string/title_trackpad_momentum"
+            android:dialogMessage="@string/summary_trackpad_momentum"
             android:entries="@array/trackpad_momentum_glide_names"
             android:entryValues="@array/trackpad_momentum_glide_values"
-            android:defaultValue="medium" />
+            android:defaultValue="off" />
         <com.limelight.preferences.MaterialListPreference
             android:key="list_trackpad_area"
             android:title="@string/title_trackpad_area"

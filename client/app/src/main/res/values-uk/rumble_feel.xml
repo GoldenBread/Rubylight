@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="title_list_rumble_feel">Відчуття вібрації</string>
+    <string name="title_list_rumble_feel">Вібрація</string>
     <string name="summary_list_rumble_feel">«Сильна» підсилює слабку вібрацію настільки, щоб її показав малий мотор; «М’яка» обмежує сильну вібрацію та пом’якшує слабку. Обидва режими змінюють співвідношення слабкої й сильної вібрації, яке обрала гра, тому залиште «Стандартна», якщо вібрація не надто слабка й не надто різка.</string>
     <string name="rumble_feel_standard">Стандартна</string>
     <string name="rumble_feel_strong">Сильна</string>

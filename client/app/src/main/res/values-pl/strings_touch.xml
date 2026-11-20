@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">Wolny ruch palca pozwala celować precyzyjnie, a szybkie przesunięcia sięgają dalej. Zostaw je włączone, chyba że wolisz, aby wskaźnik podążał za palcem jeden do jednego; tryby „Touchpad” i „Kursor lokalny” stosują je od następnego strumienia.</string>
     <string name="title_trackpad_acceleration_curve">Siła przyspieszenia</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>Łagodna</item>
         <item>Średnia</item>
         <item>Mocna</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">Po szybkim ruchu wskaźnik porusza się dalej i zwalnia; dotknięcie ekranu od razu go zatrzymuje. Tryby dotyku „Touchpad” i „Kursor lokalny”.</string>
     <string name="title_trackpad_momentum_glide">Długość ślizgu</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>Krótki</item>
         <item>Średni</item>
         <item>Długi</item>

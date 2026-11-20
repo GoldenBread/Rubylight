@@ -6,6 +6,7 @@
     <string name="summary_trackpad_acceleration">Un mouvement lent du doigt vise avec précision et les balayages rapides vont plus loin. Laisse-la activée sauf si tu préfères que le pointeur suive ton doigt au plus près ; les modes « Pavé tactile » et « Curseur local » l’appliquent à partir du prochain stream.</string>
     <string name="title_trackpad_acceleration_curve">Intensité de l’accélération</string>
     <string-array name="trackpad_acceleration_curve_names">
+        <item>@string/settings_choice_off</item>
         <item>Douce</item>
         <item>Moyenne</item>
         <item>Forte</item>
@@ -14,6 +15,7 @@
     <string name="summary_trackpad_momentum">Après un geste vif, le pointeur continue sur sa lancée puis ralentit ; toucher l’écran l’arrête aussitôt. Modes tactiles « Pavé tactile » et « Curseur local ».</string>
     <string name="title_trackpad_momentum_glide">Distance de glisse</string>
     <string-array name="trackpad_momentum_glide_names">
+        <item>@string/settings_choice_off</item>
         <item>Courte</item>
         <item>Moyenne</item>
         <item>Longue</item>
