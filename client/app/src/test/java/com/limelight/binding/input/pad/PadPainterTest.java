@@ -91,6 +91,34 @@ public class PadPainterTest {
         assertEquals("At opacity 0, none", 0, Color.alpha(halo(painter, state, 0, size, margin).getPixel(outside, middle)));
     }
 
+    /**
+     * PlayStation's face shapes are drawn in the labels' one neutral colour, never green, red, blue or pink, so the
+     * cluster at rest has no coloured pixel; Xbox's letters keep their colours.
+     */
+    @Test public void playStationShapesAreNeutralAndXboxLettersKeepTheirColours() {
+        PadPainter painter = new PadPainter(RuntimeEnvironment.getApplication());
+        painter.setGlyph(PadLayout.Glyph.PLAYSTATION);
+        assertEquals("PlayStation", 0, coloured(painter));
+        painter.setGlyph(PadLayout.Glyph.XBOX);
+        assertTrue("Xbox", coloured(painter) > 0);
+    }
+
+    /** How many pixels of a face cluster at rest are clearly coloured rather than grey. */
+    private static int coloured(PadPainter painter) {
+        int size = 300;
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        painter.draw(new Canvas(bitmap), PadLayout.Control.FACE, 0, 0, size, size, new PadPainter.State());
+        int[] pixels = new int[size * size];
+        bitmap.getPixels(pixels, 0, size, 0, 0, size, size);
+        int count = 0;
+        for (int pixel : pixels) {
+            if (Color.alpha(pixel) < 40) continue;
+            int r = Color.red(pixel), g = Color.green(pixel), b = Color.blue(pixel);
+            if (Math.max(r, Math.max(g, b)) - Math.min(r, Math.min(g, b)) > 24) count++;
+        }
+        return count;
+    }
+
     private static Bitmap halo(PadPainter painter, PadPainter.State state, float alpha, int size, int margin) {
         Bitmap bitmap = Bitmap.createBitmap(size + 2 * margin, size + 2 * margin, Bitmap.Config.ARGB_8888);
         painter.drawHalo(new Canvas(bitmap), PadLayout.Control.START, margin, margin, size, size, state, alpha, 0);

@@ -107,10 +107,13 @@ final class PadPainter {
 
     private static final int GLASS = 0x520A0D12, GLASS_HELD = 0x7A0A0D12, RIM = 0x8CFFFFFF, RIM_PRESSED = 0x40FFFFFF,
             LABEL = 0xF2FFFFFF, SHADOW = 0x38000000, SHADOW_SOFT = 0x1A000000, DOTS = 0x33FFFFFF;
-    /** The face glyphs' colours per controller family, in {@link PadInput#FACE_CENTERS} order; null for plain white. */
+    /**
+     * The face glyphs' colours per controller family, in {@link PadInput#FACE_CENTERS} order; null for the labels'
+     * one neutral colour. PlayStation's shapes stay neutral, so they never take on the look of Sony's coloured mark.
+     */
     private static final int[][] FACE_COLORS = {
             {0xFF7DD45E, 0xFFFF6B63, 0xFF5AAEFF, 0xFFFFD54F}, // Xbox: A green, B red, X blue, Y yellow
-            {0xFF86AEF5, 0xFFFF7684, 0xFFEC93DA, 0xFF4ED6B6}, // PlayStation: cross, circle, square, triangle
+            null,                                              // PlayStation: neutral, as the other labels
             null,                                              // Nintendo: white, as on its pads
     };
     /**
@@ -842,7 +845,8 @@ final class PadPainter {
 
     /**
      * The glyph on the face button at {@code index} of radius {@code r}: the family's letter, or PlayStation's shapes
-     * drawn as lines so they stay crisp at any size; in the family's colour, dark on amber while pressed.
+     * drawn as lines so they stay crisp at any size; in the family's colour (PlayStation's neutral), dark on amber
+     * while pressed.
      */
     private void faceGlyph(Canvas canvas, int index, float cx, float cy, float r, float level) {
         int[] colors = FACE_COLORS[glyph.ordinal()];
