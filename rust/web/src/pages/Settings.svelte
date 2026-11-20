@@ -208,6 +208,10 @@
   const dailyPart = (setting: Setting): Setting | undefined =>
     setting.control.kind === 'number' && setting.control.daily ? defaults.get(setting.control.daily.key) : undefined;
 
+  /** The setting a row's select reveals for its fixed choice (Setting.partOf). */
+  const fixedPart = (setting: Setting): Setting | undefined =>
+    setting.control.kind === 'select' && setting.control.fixed ? defaults.get(setting.control.fixed.key) : undefined;
+
   const asked = (setting: Setting) => askedFor(setting, edits, config, pending);
   // Keep a pending control reachable if editing its parent makes it inactive.
   const reachable = (setting: Setting) => visible(setting) || pending.has(setting.key);
@@ -590,7 +594,8 @@
 </script>
 
 {#snippet row(setting: Setting, inactive: boolean)}
-  {@const part = dailyPart(setting)}
+  {@const fixedSetting = fixedPart(setting)}
+  {@const part = dailyPart(setting) ?? fixedSetting}
   <SettingRow
     {setting}
     value={normalise(setting, effective(setting, edits, config))}
@@ -598,7 +603,17 @@
     changed={has(changes, setting.key) || (!!part && has(changes, part.key))}
     resetting={edits[setting.key] === null && has(config, setting.key)}
     differs={differsFromDefault(setting, edits, config) || (!!part && differsFromDefault(part, edits, config))}
-    daily={part
+    fixed={fixedSetting
+      ? {
+          setting: fixedSetting,
+          value: normalise(fixedSetting, effective(fixedSetting, edits, config)),
+          missing: missing(fixedSetting),
+          invalidText: invalid[fixedSetting.key],
+          onchange: (value) => edit(fixedSetting.key, value),
+          oninvalid: (text) => setInvalid(fixedSetting.key, text),
+        }
+      : undefined}
+    daily={part && part === dailyPart(setting)
       ? {
           value: toText(normalise(part, effective(part, edits, config))),
           onchange: (value) => (value === null ? reset(part.key) : edit(part.key, value)),

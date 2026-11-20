@@ -1180,3 +1180,17 @@ test('removed and renamed settings are gone from the console under their old nam
   assert.equal(type.cautionWhen({ rtss_frame_limit_type: 'nvidia reflex', [NATIVE_ENCODERS]: ['nvenc'] }), undefined);
   assert.equal(type.cautionWhen({ rtss_frame_limit_type: 'async', [NATIVE_ENCODERS]: ['amf'] }), undefined);
 });
+
+test('a select with a fixed choice reveals its value inside its own row', () => {
+  for (const [key, fixed] of [
+    ['dd_resolution_option', 'dd_manual_resolution'],
+    ['dd_refresh_rate_option', 'dd_manual_refresh_rate'],
+    ['dd_rotation_option', 'dd_manual_rotation'],
+  ]) {
+    const select = settings.get(key);
+    assert.deepEqual(select.control.fixed, { value: 'manual', key: fixed }, key);
+    assert(select.control.options.some(option => option.value === 'manual'), key);
+    // The value keeps its own key and rules, but has no row of its own.
+    assert.equal(settings.get(fixed).partOf, key, fixed);
+  }
+});

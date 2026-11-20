@@ -33,7 +33,11 @@ export interface NumberPreset {
 
 export type Control =
   | { kind: 'toggle' }
-  | { kind: 'select'; options: Option[] }
+  /**
+   * `fixed`: choosing the option `value` reveals the setting `key` (a setting
+   * that is `partOf` this one) inside this row, for its fixed value.
+   */
+  | { kind: 'select'; options: Option[]; fixed?: { value: string; key: string } }
   /**
    * `presets`: named values in a menu, with Custom for any other value in `unit`.
    * `daily` adds `label` to that menu: a time of day kept in the setting `key`

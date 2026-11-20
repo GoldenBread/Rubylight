@@ -24,6 +24,7 @@
     onundo,
     oninvalid,
     daily,
+    fixed,
   }: {
     setting: Setting;
     /** The effective value, normalised for the control. */
@@ -55,6 +56,15 @@
     oninvalid: (text: string | null) => void;
     /** The daily time its control's `daily` choice keeps in another setting (SettingControl). */
     daily?: { value: string; onchange: (value: string | null) => void };
+    /** The value a select's `fixed` choice reveals, edited under the select (Setting.partOf). */
+    fixed?: {
+      setting: Setting;
+      value: ConfigValue;
+      missing: boolean;
+      invalidText?: string;
+      onchange: (value: ConfigValue) => void;
+      oninvalid: (text: string | null) => void;
+    };
   } = $props();
 
   const uid = $props.id();
@@ -119,6 +129,21 @@
           describedby={setting.description ? `${uid}-description` : undefined}
         />
       {/if}
+      {#if fixed && setting.control.kind === 'select' && setting.control.fixed && String(value) === setting.control.fixed.value}
+        <div class="fixed" data-fixed={fixed.setting.key}>
+          <SettingControl
+            setting={fixed.setting}
+            id="{id}-fixed"
+            value={fixed.value}
+            onchange={fixed.onchange}
+            invalidText={fixed.invalidText}
+            oninvalid={fixed.oninvalid}
+          />
+          {#if fixed.missing && fixed.invalidText === undefined}
+            <p class="required">Required: streams fail until this has a value.</p>
+          {/if}
+        </div>
+      {/if}
       {#if missing && invalidText === undefined}
         <p class="required">Required: streams fail until this has a value.</p>
       {/if}
@@ -154,6 +179,9 @@
 </div>
 
 <style>
+  .fixed {
+    margin-top: 0.5rem;
+  }
   .setting {
     container: setting / inline-size;
     min-width: 0;

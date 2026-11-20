@@ -112,7 +112,7 @@ export const settings: Setting[] = [
       "Match the device makes a device's own virtual display in the stream's shape, and turns a monitor to it. A monitor turns back after the stream, or after a crash when Rubylight starts again, and needs Windows Graphics Capture while it is turned: Desktop Duplication refuses a turned monitor with an error.",
     category: 'display',
     group: 'Streamed display',
-    control: { kind: 'select', options: adjust },
+    control: { kind: 'select', options: adjust, fixed: { value: 'manual', key: 'dd_manual_rotation' } },
     default: 'disabled',
   },
   {
@@ -126,6 +126,7 @@ export const settings: Setting[] = [
       options: [0, 90, 180, 270].map((degrees) => ({ value: String(degrees), label: `${degrees}°` })),
     },
     default: 0,
+    partOf: 'dd_rotation_option',
     inactiveHint: 'Set Rotate the display to Choose below to apply this angle.',
     visibleWhen: (values) => String(values.dd_rotation_option ?? '').trim() === 'manual',
   },
