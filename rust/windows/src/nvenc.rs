@@ -589,6 +589,10 @@ struct Session {
     /// The buffer the next delta map is filled into, taken back from the
     /// slot whose last frame carried one.
     map_scratch: Vec<i8>,
+    /// The picture parameters every submission resets into and reuses,
+    /// zeroed once at open: the reserved areas NV_ENC_PIC_PARAMS requires
+    /// to stay zero are never written at all.
+    picture: NV_ENC_PIC_PARAMS,
     /// The next submission's block QP statistics are read.
     measure_next: bool,
     stats_buffer: Vec<NV_ENC_OUTPUT_STATS_BLOCK>,
@@ -763,6 +767,7 @@ impl Session {
             block_stats: false,
             next_map: None,
             map_scratch: Vec::new(),
+            picture: Self::picture(api, stream),
             measure_next: false,
             stats_buffer: Vec::new(),
             qp_grids: VecDeque::new(),
@@ -841,6 +846,17 @@ impl Session {
             bail!("the NVENC session is closed");
         }
         self.cuda.as_ref().map(|ctx| ctx.enter()).transpose()
+    }
+    /// The session's picture parameters, zeroed once with the fields every
+    /// picture shares; each submission resets the rest.
+    fn picture(api: ApiVersion, stream: &Negotiated) -> NV_ENC_PIC_PARAMS {
+        NV_ENC_PIC_PARAMS {
+            version: api.picture(),
+            inputWidth: stream.width,
+            inputHeight: stream.height,
+            pictureStruct: _NV_ENC_PIC_STRUCT_NV_ENC_PIC_STRUCT_FRAME,
+            ..Default::default()
+        }
     }
     fn check(&self, status: NVENCSTATUS, operation: &'static str) -> Result<()> {
         check_raw(status, operation, &self.functions, self.raw)
@@ -1730,39 +1746,43 @@ impl Session {
         }
         let metadata = self.encoded_metadata();
         let idr = self.keyframe(idr);
-        let mut picture = NV_ENC_PIC_PARAMS {
-            version: self.api.picture(),
-            inputWidth: self.stream.width,
-            inputHeight: self.stream.height,
-            inputPitch: self.slots[slot].input.pitch,
-            frameIdx: frame as u32,
-            inputTimeStamp: frame,
-            inputBuffer: input,
-            outputBitstream: self.slots[slot].output,
-            completionEvent: self.slots[slot].event.0,
-            bufferFmt: map.mappedBufferFmt,
-            pictureStruct: _NV_ENC_PIC_STRUCT_NV_ENC_PIC_STRUCT_FRAME,
-            encodePicFlags: if idr {
-                _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_FORCEIDR
-                    | _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_OUTPUT_SPSPPS
-            } else {
-                0
-            },
-            ..Default::default()
+        // The session's picture parameters, zeroed once at open: this resets
+        // the fields that change per frame and leaves the rest -- the
+        // reserved areas NV_ENC_PIC_PARAMS requires to stay zero included --
+        // as they are.
+        let (pitch, output, event) = (
+            self.slots[slot].input.pitch,
+            self.slots[slot].output,
+            self.slots[slot].event.0,
+        );
+        self.picture.inputPitch = pitch;
+        self.picture.frameIdx = frame as u32;
+        self.picture.inputTimeStamp = frame;
+        self.picture.inputBuffer = input;
+        self.picture.outputBitstream = output;
+        self.picture.completionEvent = event;
+        self.picture.bufferFmt = map.mappedBufferFmt;
+        self.picture.encodePicFlags = if idr {
+            _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_FORCEIDR
+                | _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_OUTPUT_SPSPPS
+        } else {
+            0
         };
+        self.picture.qpDeltaMap = ptr::null_mut();
+        self.picture.qpDeltaMapSize = 0;
         if self.stream.hdr && self.api >= ApiVersion(13, 0) {
             *self.slots[slot].metadata.mastering = *self.metadata.mastering;
             *self.slots[slot].metadata.light = *self.metadata.light;
             {
                 if self.stream.codec == 1 {
-                    picture.codecPicParams.hevcPicParams.pMasteringDisplay =
+                    self.picture.codecPicParams.hevcPicParams.pMasteringDisplay =
                         self.slots[slot].metadata.mastering.as_mut();
-                    picture.codecPicParams.hevcPicParams.pMaxCll =
+                    self.picture.codecPicParams.hevcPicParams.pMaxCll =
                         self.slots[slot].metadata.light.as_mut();
                 } else if self.stream.codec == 2 {
-                    picture.codecPicParams.av1PicParams.pMasteringDisplay =
+                    self.picture.codecPicParams.av1PicParams.pMasteringDisplay =
                         self.slots[slot].metadata.mastering.as_mut();
-                    picture.codecPicParams.av1PicParams.pMaxCll =
+                    self.picture.codecPicParams.av1PicParams.pMaxCll =
                         self.slots[slot].metadata.light.as_mut();
                 }
             }
@@ -1784,17 +1804,18 @@ impl Session {
             // The slot's last frame is complete, so its map's buffer
             // becomes the next map's scratch.
             self.map_scratch = std::mem::replace(&mut self.slots[slot].deltas, map);
-            picture.qpDeltaMap = self.slots[slot].deltas.as_mut_ptr();
-            picture.qpDeltaMapSize = self.slots[slot].deltas.len() as u32;
+            self.picture.qpDeltaMap = self.slots[slot].deltas.as_mut_ptr();
+            self.picture.qpDeltaMapSize = self.slots[slot].deltas.len() as u32;
         }
         let measured =
             std::mem::take(&mut self.measure_next) && self.block_stats && again.is_none();
         let submitted = Instant::now();
         let started = again.map_or(submitted, |again| again.started);
-        // SAFETY: `picture` points at the slot's mapped input, output buffer, boxed metadata and
-        // delta map, which all stay alive while the slot is in `pending`.
-        let status =
-            unsafe { (self.functions.nvEncEncodePicture.unwrap())(self.raw, &mut picture) };
+        // SAFETY: `self.picture` points at the slot's mapped input, output buffer, boxed metadata
+        // and delta map, which all stay alive while the slot is in `pending`.
+        let status = unsafe {
+            (self.functions.nvEncEncodePicture.unwrap())(self.raw, &mut self.picture)
+        };
         if status != SUCCESS && status != _NVENCSTATUS_NV_ENC_ERR_NEED_MORE_INPUT {
             self.force_idr |= idr;
             // The input stays registered; only this frame's mapping goes.

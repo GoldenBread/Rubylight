@@ -91,6 +91,8 @@ struct Driver {
     removed: bool,
     /// Each picture's QP delta map.
     maps: Vec<Option<Vec<i8>>>,
+    /// Each picture submission's parameters, as passed.
+    pictures: Vec<NV_ENC_PIC_PARAMS>,
 }
 /// The D3D12 output fence, whose value the fake driver keeps.
 struct FakeFence;
@@ -458,6 +460,8 @@ unsafe extern "C" fn encode(raw: *mut c_void, parameters: *mut NV_ENC_PIC_PARAMS
     // SAFETY: `raw` is a live handle that `open` boxed and `destroy` has not freed.
     let api = unsafe { handle(raw) };
     state(|d| {
+        // SAFETY: The parameters are plain old data; this copy outlives the call.
+        d.pictures.push(unsafe { std::ptr::read(p) });
         let mut input = p.inputBuffer;
         let mut signal = None;
         if d.d3d12 {
@@ -2775,6 +2779,69 @@ fn a_focus_maps_buffer_is_taken_back_and_refilled_for_the_next_map() -> Result<(
             [None, Some(vec![-3, 3]), Some(vec![-3, 3])],
             "the recycled buffer carries the same values"
         )
+    });
+    drop(encoder);
+    assert_clean();
+    Ok(())
+}
+#[test]
+fn each_pictures_parameters_are_reset_not_left_from_the_frame_before() -> Result<()> {
+    reset();
+    let stream = Negotiated::default();
+    let mut encoder = session(&stream, ApiVersion(13, 0))?;
+    let slot = input(&mut encoder, 17)?;
+    encoder.enable_qp_map()?;
+    // A keyframe, an inter frame that carries a delta map, then one without.
+    encoder.submit(slot, None, true, Instant::now())?;
+    encoder.poll()?;
+    encoder.next_map = Some(vec![-3, 3]);
+    encoder.submit(slot, None, false, Instant::now())?;
+    encoder.poll()?;
+    encoder.submit(slot, None, false, Instant::now())?;
+    encoder.poll()?;
+    state(|d| assert_eq!(d.maps, [None, Some(vec![-3, 3]), None]));
+    state(|d| {
+        let as_bytes = |p: &NV_ENC_PIC_PARAMS| {
+            // SAFETY: The parameters are plain old data; the bytes are only compared.
+            unsafe {
+                std::slice::from_raw_parts(
+                    (p as *const NV_ENC_PIC_PARAMS).cast::<u8>(),
+                    std::mem::size_of::<NV_ENC_PIC_PARAMS>(),
+                )
+            }
+        };
+        for (frame, p) in d.pictures.iter().enumerate() {
+            // What one submission may set; everything else must be exactly
+            // the zeroed block the session opened with, not what the frame
+            // before left behind. The slot's pointers are per-slot state
+            // the session writes the same each frame, so they are read from
+            // the capture.
+            let mut expected = NV_ENC_PIC_PARAMS {
+                version: ApiVersion(13, 0).picture(),
+                inputWidth: stream.width,
+                inputHeight: stream.height,
+                inputPitch: p.inputPitch,
+                frameIdx: frame as u32 + 1,
+                inputTimeStamp: frame as u64 + 1,
+                inputBuffer: p.inputBuffer,
+                outputBitstream: p.outputBitstream,
+                completionEvent: p.completionEvent,
+                bufferFmt: p.bufferFmt,
+                pictureStruct: _NV_ENC_PIC_STRUCT_NV_ENC_PIC_STRUCT_FRAME,
+                encodePicFlags: if frame == 0 {
+                    _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_FORCEIDR
+                        | _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_OUTPUT_SPSPPS
+                } else {
+                    0
+                },
+                ..Default::default()
+            };
+            if frame == 1 {
+                expected.qpDeltaMap = p.qpDeltaMap;
+                expected.qpDeltaMapSize = 2;
+            }
+            assert_eq!(as_bytes(p), as_bytes(&expected), "picture {frame}");
+        }
     });
     drop(encoder);
     assert_clean();
