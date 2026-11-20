@@ -55,6 +55,7 @@ public class DecoderFailureTest {
 
     private static final String HEVC = "video/hevc";
     private static final String MTK_HEVC = "c2.mtk.hevc.decoder";
+    private static final String MTK_DV = "c2.mtk.dvhe.st.decoder";
 
     private final List<Integer> terminated = new CopyOnWriteArrayList<>();
     private final List<Throwable> uncaught = new CopyOnWriteArrayList<>();
@@ -91,6 +92,8 @@ public class DecoderFailureTest {
         renderer = new MediaCodecDecoderRenderer(activity.get(), new PreferenceConfiguration(), crashes::add, 0,
                 false, false, "", null);
         FailingCodec.released = true;
+        FailingCodec.refuseName = null;
+        FailingCodec.duringDequeue = null;
         codec = MediaCodec.createDecoderByType("video/hevc");
         ReflectionHelpers.setField(renderer, "videoDecoder", codec);
         ReflectionHelpers.setField(renderer, "activeDecoderName", "c2.mtk.hevc.decoder");
@@ -109,6 +112,8 @@ public class DecoderFailureTest {
         ReflectionHelpers.setStaticField(MoonBridge.class, "connectionListener", null);
         Thread.setDefaultUncaughtExceptionHandler(previousHandler);
         FailingCodec.released = true;
+        FailingCodec.refuseName = null;
+        FailingCodec.duringDequeue = null;
         // A decoder a test set up through setup's ladder (streamWithVendorKeys).
         MediaCodec own = ReflectionHelpers.getField(renderer, "videoDecoder");
         if (own != null && own != codec) own.release();
@@ -649,6 +654,177 @@ public class DecoderFailureTest {
     }
 
     @Test
+    public void aDecoderThatCannotBeSetUpWithoutItsVendorKeysEndsTheStream() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        RealRebuild recovery = realRebuild();
+        hangTwice();
+        // No codec of that name can be created any more: every try of the ladder fails.
+        FailingCodec.refuseName = MTK_HEVC;
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild"), recovery.steps);
+        assertEquals(Collections.singletonList(MoonBridge.CLIENT_ERROR_DECODER), terminated);
+        String failure = renderer.getDecoderFailure();
+        assertTrue(failure, failure.startsWith(MTK_HEVC + " could not be set up again after it failed (") &&
+                failure.contains("no free decoder"));
+        assertEquals(1, crashes.size());
+        assertNull(recordAfter(MTK_HEVC, HEVC, 600, 10_000));
+    }
+
+    @Test
+    public void aSetupWithoutTheVendorKeysThatHangsItselfEndsTheStream() throws Exception {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        RealRebuild recovery = realRebuild();
+        FailingCodec.released = false;
+        assertFalse(fetch());
+        recoverOnTheInputThread();
+        // The setup without the keys hangs inside MediaCodec, holding the recovery monitor, until released.
+        java.util.concurrent.CountDownLatch inSetup = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        recovery.beforeRebuild = () -> {
+            inSetup.countDown();
+            try {
+                release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        ReflectionHelpers.setField(renderer, "hangResetTimeoutMs", 1000L);
+        assertFalse(fetch());
+        List<Throwable> failed = new CopyOnWriteArrayList<>();
+        Thread setup = new Thread(() -> {
+            try {
+                recoverOnTheInputThread();
+            } catch (Throwable e) {
+                failed.add(e);
+            }
+        });
+        setup.setDaemon(true);
+        setup.start();
+        try {
+            assertTrue("the setup began", inSetup.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            long deadline = System.nanoTime() + 10_000_000_000L;
+            while (terminated.isEmpty() && System.nanoTime() < deadline) Thread.sleep(5);
+            assertEquals(Collections.singletonList(MoonBridge.CLIENT_ERROR_DECODER), terminated);
+            String failure = renderer.getDecoderFailure();
+            assertTrue(failure, failure.startsWith(MTK_HEVC + " took no input for ") && failure.endsWith(
+                    " ms, and its setup without vendor low-latency keys did not finish within 1000 ms"));
+        } finally {
+            release.countDown();
+            setup.join(10_000);
+        }
+        assertFalse("the setup never finished", setup.isAlive());
+        assertEquals(Collections.emptyList(), failed);
+        assertEquals(1, crashes.size());
+        // The stream ended: the setup finishing afterwards records nothing.
+        assertNull(recordAfter(MTK_HEVC, HEVC, 600, 10_000));
+    }
+
+    @Test
+    public void aDolbyVisionDecoderIsSetUpAgainWithoutItsVendorKeysRatherThanDropped() {
+        renderer = dolbyVisionStreamWithVendorKeys();
+        assertTrue((boolean) ReflectionHelpers.getField(renderer, "dolbyVisionActive"));
+        assertFalse(vendorKeys(ReflectionHelpers.getField(renderer, "configuredFormat")).isEmpty());
+        RealRebuild recovery = realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild"), recovery.steps);
+        assertFalse("the Dolby Vision decoder is what is tried without the keys",
+                (boolean) ReflectionHelpers.getField(renderer, "dolbyVisionFailed"));
+        MediaFormat keyless = ReflectionHelpers.getField(renderer, "configuredFormat");
+        assertEquals(HdrFormatPolicy.MIME_DOLBY_VISION, keyless.getString(MediaFormat.KEY_MIME));
+        assertEquals(Collections.emptyList(), vendorKeys(keyless));
+        assertTrue(terminated.isEmpty());
+        assertNotNull(recordAfter(MTK_DV, HdrFormatPolicy.MIME_DOLBY_VISION, 600, 10_000));
+        assertNull(VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(MTK_HEVC, HEVC)));
+    }
+
+    @Test
+    public void anotherDecoderTakingOverFromTheOneThatHungLeavesNoRecord() {
+        renderer = dolbyVisionStreamWithVendorKeys();
+        realRebuild();
+        hangTwice();
+        // The Dolby Vision decoder refuses its setup without the keys; HEVC takes the stream, with its own.
+        FailingCodec.refuseName = MTK_DV;
+        recoverOnTheInputThread();
+        assertTrue(terminated.isEmpty());
+        assertTrue((boolean) ReflectionHelpers.getField(renderer, "dolbyVisionFailed"));
+        MediaFormat taken = ReflectionHelpers.getField(renderer, "configuredFormat");
+        assertEquals(HEVC, taken.getString(MediaFormat.KEY_MIME));
+        assertFalse(vendorKeys(taken).isEmpty());
+        // However well HEVC runs, it shows nothing about the Dolby Vision decoder without its keys.
+        assertNull(recordAfter(MTK_DV, HdrFormatPolicy.MIME_DOLBY_VISION, 600, 10_000));
+        assertNull(VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(MTK_HEVC, HEVC)));
+    }
+
+    @Test
+    public void sixHundredFramesInUnderTenSecondsAreNotYetRunningWell() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        assertNull(recordAfter(MTK_HEVC, HEVC, 600, 9_999));
+        assertNotNull(recordAfter(MTK_HEVC, HEVC, 600, 1));
+    }
+
+    @Test
+    public void aRecoveryAfterTheSetupWithoutTheVendorKeysLeavesNoRecord() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        RealRebuild recovery = realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        // It fails again without a hang, and a reset recovers it: still failing, not running well.
+        failOnce();
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild", "reset", "configure"), recovery.steps);
+        assertTrue(terminated.isEmpty());
+        assertNull(recordAfter(MTK_HEVC, HEVC, 600, 10_000));
+    }
+
+    @Test
+    public void aStallRightAtTheTenSecondMarkLeavesNoRecord() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        // 600 frames (5 s at 120 FPS), then no input: the latency thread looks at the 10 s mark, a second
+        // into the wait, 4 s before the hang check would time it.
+        ReflectionHelpers.setField(renderer, "numFramesOut", 600);
+        ShadowSystemClock.advanceBy(Duration.ofMillis(9_000));
+        List<Boolean> looked = new CopyOnWriteArrayList<>();
+        FailingCodec.duringDequeue = () -> {
+            if (looked.isEmpty()) {
+                looked.add(true);
+                ReflectionHelpers.callInstanceMethod(renderer, "recordVendorKeyHang");
+            }
+        };
+        assertFalse(fetch());
+        assertEquals(Collections.singletonList(true), looked);
+        assertNull(VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(MTK_HEVC, HEVC)));
+        // The hang it was then cleared the record for good.
+        FailingCodec.duringDequeue = null;
+        ReflectionHelpers.callInstanceMethod(renderer, "recordVendorKeyHang");
+        assertNull(VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(MTK_HEVC, HEVC)));
+    }
+
+    // The first hang and its reset with the same keys, then the second: the setup without them is due.
+    private void hangTwice() {
+        FailingCodec.released = false;
+        assertFalse(fetch());
+        recoverOnTheInputThread();
+        assertFalse(fetch());
+        assertTrue((boolean) ReflectionHelpers.getField(renderer, "restartWithoutVendorKeys"));
+    }
+
+    // This many frames since the last hang reset, the given time on; then the latency thread looks.
+    private List<String> recordAfter(String decoderName, String mime, int frames, long ms) {
+        int base = ReflectionHelpers.getField(renderer, "framesOutAtHangReset");
+        ReflectionHelpers.setField(renderer, "numFramesOut", base + frames);
+        ShadowSystemClock.advanceBy(Duration.ofMillis(ms));
+        ReflectionHelpers.callInstanceMethod(renderer, "recordVendorKeyHang");
+        return VendorKeyHangs.recorded(activity.get(), VendorKeyHangs.key(decoderName, mime));
+    }
+
+    @Test
     public void theNextStreamStartsThatDecoderWithoutItsVendorKeysAndNoOtherOne() {
         List<String> hung = Arrays.asList("vendor.mtk.vdec.low-latency.mode=1", "operating-rate=32767");
         VendorKeyHangs.record(activity.get(), VendorKeyHangs.key(MTK_HEVC, HEVC), hung);
@@ -681,13 +857,28 @@ public class DecoderFailureTest {
     // A stream of this decoder set up by setup's own ladder with the vendor keys on (the setting's
     // default), as a stream starts.
     private MediaCodecDecoderRenderer streamWithVendorKeys(String decoderName, String mime) {
+        boolean av1 = "video/av01".equals(mime);
+        return streamWithVendorKeys(av1 ? MoonBridge.VIDEO_FORMAT_AV1_MAIN8 : MoonBridge.VIDEO_FORMAT_H265,
+                stream -> ReflectionHelpers.setField(stream, av1 ? "av1Decoder" : "hevcDecoder", decoder(decoderName, mime)));
+    }
+
+    // A Dolby Vision profile 8 stream on MediaTek's decoder, with its HEVC decoder to fall back to.
+    private MediaCodecDecoderRenderer dolbyVisionStreamWithVendorKeys() {
+        return streamWithVendorKeys(MoonBridge.VIDEO_FORMAT_H265_MAIN10, stream -> {
+            ReflectionHelpers.setField(stream, "announcedHdrFormat", HdrFormatPolicy.DOLBY_VISION_HEVC);
+            ReflectionHelpers.setField(stream, "dolbyVisionDecoder", decoder(MTK_DV, HdrFormatPolicy.MIME_DOLBY_VISION));
+            ReflectionHelpers.setField(stream, "hevcDecoder", decoder(MTK_HEVC, HEVC));
+        });
+    }
+
+    private MediaCodecDecoderRenderer streamWithVendorKeys(int videoFormat,
+                                                           java.util.function.Consumer<MediaCodecDecoderRenderer> decoders) {
         PreferenceConfiguration prefs = new PreferenceConfiguration();
         prefs.codecLowLatency = prefs.vendorLowLatency = prefs.codecPerformance = true;
         MediaCodecDecoderRenderer stream = new MediaCodecDecoderRenderer(activity.get(), prefs, crashes::add, 0,
                 false, false, "", null);
-        boolean av1 = "video/av01".equals(mime);
-        ReflectionHelpers.setField(stream, "videoFormat", av1 ? MoonBridge.VIDEO_FORMAT_AV1_MAIN8 : MoonBridge.VIDEO_FORMAT_H265);
-        ReflectionHelpers.setField(stream, av1 ? "av1Decoder" : "hevcDecoder", decoder(decoderName, mime));
+        ReflectionHelpers.setField(stream, "videoFormat", videoFormat);
+        decoders.accept(stream);
         ReflectionHelpers.setField(stream, "initialWidth", 3840);
         ReflectionHelpers.setField(stream, "initialHeight", 2160);
         ReflectionHelpers.setField(stream, "refreshRate", 60);
@@ -731,8 +922,10 @@ public class DecoderFailureTest {
     }
 
     private static final class RealRebuild implements CodecRecoverySteps.Codec {
-        final List<String> steps = new ArrayList<>();
+        final List<String> steps = new CopyOnWriteArrayList<>();
         private final CodecRecoverySteps.Codec real;
+        // Runs before the renderer's own rebuild, on the thread running the recovery.
+        volatile Runnable beforeRebuild;
 
         RealRebuild(CodecRecoverySteps.Codec real) {
             this.real = real;
@@ -744,6 +937,8 @@ public class DecoderFailureTest {
         @Override public void configure() { steps.add("configure"); }
         @Override public void rebuild(boolean codecFailed) {
             steps.add("rebuild");
+            Runnable before = beforeRebuild;
+            if (before != null) before.run();
             real.rebuild(codecFailed);
         }
     }
@@ -767,14 +962,27 @@ public class DecoderFailureTest {
         @Override public void rebuild(boolean codecFailed) { throw new IllegalArgumentException("configure refused"); }
     }
 
-    /** Released: every call throws, like a codec the platform let go. Otherwise it never has input. */
+    /**
+     * Released: every call throws, like a codec the platform let go. Otherwise it never has input;
+     * duringDequeue runs inside each wait for it, a second into it. A codec named refuseName cannot be
+     * created, as when no decoder of that name is free.
+     */
     @Implements(MediaCodec.class)
     public static class FailingCodec extends ShadowMediaCodec {
         static volatile boolean released;
+        static volatile String refuseName;
+        static volatile Runnable duringDequeue;
+
+        @Implementation protected void __constructor__(String name, boolean nameIsType, boolean encoder) {
+            if (name.equals(refuseName)) throw new IllegalStateException("no free decoder");
+            super.__constructor__(name, nameIsType, encoder);
+        }
 
         @Implementation public int dequeueInputBuffer(long timeoutUs) {
             if (released) throw new IllegalStateException(RELEASED);
             ShadowSystemClock.advanceBy(Duration.ofMillis(1000));
+            Runnable hook = duringDequeue;
+            if (hook != null) hook.run();
             return MediaCodec.INFO_TRY_AGAIN_LATER;
         }
 

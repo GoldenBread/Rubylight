@@ -27,7 +27,11 @@ final class VendorKeyHangs {
 
     private VendorKeyHangs() {}
 
-    /** The record's name: the decoder and the MIME type it decodes. */
+    /**
+     * The record's name: the decoder and the MIME type it decodes, not the stream's depth or HDR. A
+     * hang in an HDR Main10 stream drops the keys for SDR on that decoder too: the TCL C6K hung in both,
+     * and the user is spared a second hang.
+     */
     static String key(String decoderName, String mimeType) {
         return decoderName + "|" + mimeType;
     }
