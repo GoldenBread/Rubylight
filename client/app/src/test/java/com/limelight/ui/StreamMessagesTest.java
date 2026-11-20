@@ -93,9 +93,38 @@ public class StreamMessagesTest {
         Toast following = ShadowToast.getLatestToast();
         messages.alert("The PC blocks input from this device.", Toast.LENGTH_LONG);
         assertTrue("Something to act on replaces both", shadowOf(metered).isCancelled() && shadowOf(following).isCancelled());
-        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(StreamMessages.LONG_MS + 1));
+        assertEquals("The following one, cut short, comes again after it", 4, ShadowToast.shownToastCount());
+        assertEquals("Controllers is Off in Settings, so no controller reaches the PC.", ShadowToast.getTextOfLatestToast());
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(2 * StreamMessages.LONG_MS + 1));
+        assertFalse(messages.showing());
         messages.follow("Controllers is Off in Settings, so no controller reaches the PC.");
-        assertEquals("With nothing showing it shows at once", 4, ShadowToast.shownToastCount());
+        assertEquals("With nothing showing it shows at once", 5, ShadowToast.shownToastCount());
+    }
+
+    /**
+     * The device check of #125: the Controllers Off notice showed at once, and the update notice that
+     * came 0.4 s later replaced it, so it was never read. It comes again after the update notice.
+     */
+    @Test
+    public void anUpdateNoticeRightAfterTheControllersOffNoticeDoesNotHideIt() {
+        StreamMessages messages = new StreamMessages(context);
+        String off = "Controllers is Off in Settings, so no controller reaches the PC.";
+        String update = "Rubylight 6.1.0 is available. Update it in Rubylight’s Maintenance tab.";
+        messages.follow(off);
+        Toast first = ShadowToast.getLatestToast();
+        assertEquals("Shown at once with nothing else up", 1, ShadowToast.shownToastCount());
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(400));
+        messages.alert(update, Toast.LENGTH_LONG);
+        assertTrue(shadowOf(first).isCancelled());
+        assertEquals("The update notice, then the Off notice again", 3, ShadowToast.shownToastCount());
+        assertTrue(ShadowToast.showedToast(update));
+        assertEquals(off, ShadowToast.getTextOfLatestToast());
+        assertFalse("The Off notice is not cut off", shadowOf(ShadowToast.getLatestToast()).isCancelled());
+        // Both have their whole time: the Off notice is still up after the update notice's.
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(StreamMessages.LONG_MS + 1));
+        assertTrue(messages.showing());
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(StreamMessages.LONG_MS));
+        assertFalse(messages.showing());
     }
 
     /** A message that replaces one waiting to follow is followed by it: a notice said once is never lost. */
@@ -111,8 +140,8 @@ public class StreamMessagesTest {
         assertEquals("Controllers is Off.", ShadowToast.getTextOfLatestToast());
         assertTrue(messages.showing());
 
-        // One that already had its turn is not shown again.
-        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(StreamMessages.LONG_MS + 1));
+        // One that already had its whole time is not shown again.
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(2 * StreamMessages.LONG_MS + 1));
         messages.alert("Microphone muted.", Toast.LENGTH_LONG);
         assertEquals(5, ShadowToast.shownToastCount());
         assertEquals("Microphone muted.", ShadowToast.getTextOfLatestToast());

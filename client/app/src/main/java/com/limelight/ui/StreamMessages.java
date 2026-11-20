@@ -34,7 +34,8 @@ public final class StreamMessages {
         final CharSequence text;
         // When Android shows it (after the messages before it) and when it is gone.
         final long from, until;
-        // A follow(): it must be seen, so a message that replaces it before it shows hands it on.
+        // A follow(): it must be seen in full, so a message that replaces it before its time is up
+        // hands it on.
         final boolean follows;
 
         Message(Toast toast, CharSequence text, long from, long until, boolean follows) {
@@ -81,13 +82,14 @@ public final class StreamMessages {
     /**
      * Something the person must see that should not hide what shows, such as why their input does
      * nothing: it joins the status line and shows now, or right after the current message (Android
-     * shows an app's messages in turn). A message that replaces it before it shows is followed by it.
+     * shows an app's messages in turn). A message that replaces it before its time is up is followed
+     * by it again, in full: the person may not have read it.
      */
     public void follow(CharSequence text) {
         if (text == null || text.length() == 0) return;
         note(text);
         if (!showing()) {
-            show(text, Toast.LENGTH_LONG);
+            show(text, Toast.LENGTH_LONG, true);
             return;
         }
         if (text.toString().contentEquals(newest().text)) return;
@@ -134,16 +136,24 @@ public final class StreamMessages {
         return shown.get(shown.size() - 1);
     }
 
-    /** Shows `text` now in place of every message handed over; a follow() that had not shown yet comes after it. */
     private void show(CharSequence text, int duration) {
+        show(text, duration, false);
+    }
+
+    /**
+     * Shows `text` now in place of every message handed over. A follow() whose time is not up, shown
+     * or still waiting, comes after it again: a stream start's alert (an update, a metered connection)
+     * would otherwise cut it off before it could be read.
+     */
+    private void show(CharSequence text, int duration, boolean follows) {
         long now = SystemClock.uptimeMillis();
         List<CharSequence> waiting = new ArrayList<>();
         for (Message message : shown) {
-            if (message.follows && message.from > now) waiting.add(message.text);
+            if (message.follows && message.until > now) waiting.add(message.text);
             message.toast.cancel();
         }
         shown.clear();
-        hand(text, duration, now, false);
+        hand(text, duration, now, follows);
         for (CharSequence follow : waiting) {
             if (!follow.toString().contentEquals(newest().text)) hand(follow, Toast.LENGTH_LONG, newest().until, true);
         }
