@@ -115,11 +115,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     PcKeyboardOverlay pcKeyboard;
     final InputManager.InputDeviceListener pcKeyboardDeviceListener = new InputManager.InputDeviceListener() {
         // A keyboard plugged in or switched to another layout changes what the host should type.
-        @Override public void onInputDeviceAdded(int deviceId) {
-            keyboardInput.reportKeyboardLayout();
-            // A controller connected during the stream while Controllers is Off.
-            if (ControllerHandler.isController(InputDevice.getDevice(deviceId))) runOnUiThread(() -> sayControllersOff(1));
-        }
+        @Override public void onInputDeviceAdded(int deviceId) { keyboardInput.reportKeyboardLayout(); }
         @Override public void onInputDeviceChanged(int deviceId) { keyboardInput.reportKeyboardLayout(); }
         @Override public void onInputDeviceRemoved(int deviceId) { runOnUiThread(keyboardInput::releasePcKeyboardPads); }
     };
@@ -128,7 +124,9 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
 
     /** Says that Controllers is Off, the one time it is due with {@code connected} controllers here. */
     void sayControllersOff(int connected) {
-        if (controllersOff != null && controllersOff.take(connected)) messages.follow(getString(R.string.stream_controllers_off));
+        if (controllersOff != null && !isFinishing() && controllersOff.take(connected)) {
+            messages.follow(getString(R.string.stream_controllers_off));
+        }
     }
 
     boolean desktopWindowFocused = true;
@@ -935,6 +933,8 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         // A staged exit still waiting on the display ends here with the activity.
         exitHandler.removeCallbacksAndMessages(null);
         exitFinished = true;
+        // A message still waiting for its turn would show over the screen after the stream.
+        messages.dropWaiting();
         streamConnection.stopConnection();
         // Nothing of TV display compatibility outlives the screen, the stream ended or not.
         if (videoOutput.compositorHeartbeat != null) {

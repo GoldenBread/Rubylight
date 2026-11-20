@@ -98,6 +98,42 @@ public class StreamMessagesTest {
         assertEquals("With nothing showing it shows at once", 4, ShadowToast.shownToastCount());
     }
 
+    /** A message that replaces one waiting to follow is followed by it: a notice said once is never lost. */
+    @Test
+    public void aFollowingMessageNotShownYetComesAfterTheOneThatReplacesIt() {
+        StreamMessages messages = new StreamMessages(context);
+        messages.alert("This connection is metered.", Toast.LENGTH_LONG);
+        messages.follow("Controllers is Off.");
+        Toast waiting = ShadowToast.getLatestToast();
+        messages.alert("The PC blocks input from this device.", Toast.LENGTH_LONG);
+        assertTrue(shadowOf(waiting).isCancelled());
+        assertEquals("Handed on after the new message", 4, ShadowToast.shownToastCount());
+        assertEquals("Controllers is Off.", ShadowToast.getTextOfLatestToast());
+        assertTrue(messages.showing());
+
+        // One that already had its turn is not shown again.
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(StreamMessages.LONG_MS + 1));
+        messages.alert("Microphone muted.", Toast.LENGTH_LONG);
+        assertEquals(5, ShadowToast.shownToastCount());
+        assertEquals("Microphone muted.", ShadowToast.getTextOfLatestToast());
+    }
+
+    /** Leaving the stream drops what waits for its turn, and keeps what shows. */
+    @Test
+    public void leavingTheStreamDropsWaitingMessages() {
+        StreamMessages messages = new StreamMessages(context);
+        messages.alert("The stream ended.", Toast.LENGTH_LONG);
+        Toast last = ShadowToast.getLatestToast();
+        messages.follow("Controllers is Off.");
+        Toast waiting = ShadowToast.getLatestToast();
+        messages.dropWaiting();
+        assertTrue("it would show over the screen after the stream", shadowOf(waiting).isCancelled());
+        assertFalse("the stream's last word keeps its time", shadowOf(last).isCancelled());
+        assertTrue(messages.showing());
+        messages.follow("Controllers is Off.");
+        assertEquals("After dropping it, it can be handed again", 3, ShadowToast.shownToastCount());
+    }
+
     @Test
     public void factsAppearOnceInTheStatusLine() {
         StreamMessages messages = new StreamMessages(context);

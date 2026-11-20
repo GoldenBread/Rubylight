@@ -491,8 +491,8 @@ final class GameConnection {
                 (secondScreen ? " (second screen)" : ""));
         // Controllers connected while Controllers is Off: said once a stream, so the PC is not blamed for
         // losing them. It explains input that does nothing, not a quality warning, so Disable warnings
-        // keeps it, and it follows whatever message shows instead of waiting for none (Game also says
-        // it for the first controller connected later).
+        // keeps it, and it follows whatever message shows instead of waiting for none (the controller
+        // handler's listener says it for the first controller connected later).
         if (game.controllersOff == null) {
             game.controllersOff = new ControllersChoice.OffNotice(game.prefConfig.sendControllers, secondScreen);
         }
@@ -590,6 +590,8 @@ final class GameConnection {
         game.streamRecovery.restoreMicrophoneMute();
         game.conn.setMicrophoneNoticeListener(() -> game.runOnUiThread(game.menuActions::showMicrophoneNotice));
         game.controllerHandler = new ControllerHandler(game, game.conn, game, game.prefConfig);
+        // A controller connected during the stream, as an input device or claimed by the USB driver.
+        game.controllerHandler.setControllerAddedListener(() -> game.sayControllersOff(1));
         // With Hide while a controller is connected, the on-screen controls step aside for a physical one.
         game.controllerHandler.setPresenceListener(game::setPhysicalControllerConnected);
         // Only noted here: the on-screen controls are built below, after the game's touch controls.

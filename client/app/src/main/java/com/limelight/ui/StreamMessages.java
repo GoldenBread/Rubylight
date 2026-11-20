@@ -26,11 +26,25 @@ public final class StreamMessages {
     private final Context context;
     private final Set<String> notes = new LinkedHashSet<>();
     private final Map<String, String> statuses = new LinkedHashMap<>();
-    private Toast current;
-    // Messages shown before `current` that it follows (follow()): replaced along with it.
-    private final List<Toast> followed = new ArrayList<>();
-    private CharSequence currentText;
-    private long visibleUntil;
+    // The messages handed to Android, in the order it shows them; the last is the newest.
+    private final List<Message> shown = new ArrayList<>();
+
+    private static final class Message {
+        final Toast toast;
+        final CharSequence text;
+        // When Android shows it (after the messages before it) and when it is gone.
+        final long from, until;
+        // A follow(): it must be seen, so a message that replaces it before it shows hands it on.
+        final boolean follows;
+
+        Message(Toast toast, CharSequence text, long from, long until, boolean follows) {
+            this.toast = toast;
+            this.text = text;
+            this.from = from;
+            this.until = until;
+            this.follows = follows;
+        }
+    }
 
     public StreamMessages(Context context) {
         this.context = context;
@@ -39,7 +53,7 @@ public final class StreamMessages {
     /** Something to act on, or a failure: shown now in place of what shows, unless it already shows. */
     public void alert(CharSequence text, int duration) {
         if (text == null || text.length() == 0) return;
-        if (showing() && text.toString().contentEquals(currentText)) return;
+        if (showing() && text.toString().contentEquals(newest().text)) return;
         show(text, duration);
     }
 
@@ -67,7 +81,7 @@ public final class StreamMessages {
     /**
      * Something the person must see that should not hide what shows, such as why their input does
      * nothing: it joins the status line and shows now, or right after the current message (Android
-     * shows an app's messages in turn).
+     * shows an app's messages in turn). A message that replaces it before it shows is followed by it.
      */
     public void follow(CharSequence text) {
         if (text == null || text.length() == 0) return;
@@ -76,12 +90,19 @@ public final class StreamMessages {
             show(text, Toast.LENGTH_LONG);
             return;
         }
-        if (text.toString().contentEquals(currentText)) return;
-        followed.add(current);
-        current = Toast.makeText(context, text, Toast.LENGTH_LONG);
-        currentText = text;
-        visibleUntil += LONG_MS;
-        current.show();
+        if (text.toString().contentEquals(newest().text)) return;
+        hand(text, Toast.LENGTH_LONG, newest().until, true);
+    }
+
+    /**
+     * The stream screen is going: messages still waiting for their turn are dropped, so none shows
+     * over the screen after it. One showing keeps its time, as a stream's last word may be in it.
+     */
+    public void dropWaiting() {
+        long now = SystemClock.uptimeMillis();
+        for (int i = shown.size() - 1; i >= 0; i--) {
+            if (shown.get(i).from > now) shown.remove(i).toast.cancel();
+        }
     }
 
     /** A fact for the overlay's status line alone. */
@@ -106,16 +127,32 @@ public final class StreamMessages {
     }
 
     public boolean showing() {
-        return current != null && SystemClock.uptimeMillis() < visibleUntil;
+        return !shown.isEmpty() && SystemClock.uptimeMillis() < newest().until;
     }
 
+    private Message newest() {
+        return shown.get(shown.size() - 1);
+    }
+
+    /** Shows `text` now in place of every message handed over; a follow() that had not shown yet comes after it. */
     private void show(CharSequence text, int duration) {
-        for (Toast toast : followed) toast.cancel();
-        followed.clear();
-        if (current != null) current.cancel();
-        current = Toast.makeText(context, text, duration);
-        currentText = text;
-        visibleUntil = SystemClock.uptimeMillis() + (duration == Toast.LENGTH_LONG ? LONG_MS : SHORT_MS);
-        current.show();
+        long now = SystemClock.uptimeMillis();
+        List<CharSequence> waiting = new ArrayList<>();
+        for (Message message : shown) {
+            if (message.follows && message.from > now) waiting.add(message.text);
+            message.toast.cancel();
+        }
+        shown.clear();
+        hand(text, duration, now, false);
+        for (CharSequence follow : waiting) {
+            if (!follow.toString().contentEquals(newest().text)) hand(follow, Toast.LENGTH_LONG, newest().until, true);
+        }
+    }
+
+    /** Hands a message to Android, which shows it at `from`, after those handed before it. */
+    private void hand(CharSequence text, int duration, long from, boolean follows) {
+        Toast toast = Toast.makeText(context, text, duration);
+        shown.add(new Message(toast, text, from, from + (duration == Toast.LENGTH_LONG ? LONG_MS : SHORT_MS), follows));
+        toast.show();
     }
 }

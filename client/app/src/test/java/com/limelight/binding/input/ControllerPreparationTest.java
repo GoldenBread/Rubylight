@@ -281,6 +281,27 @@ public class ControllerPreparationTest {
         } finally { handler.destroy(); }
     }
 
+    /** A controller connected during the stream is reported, also one the USB driver claims (Controllers Off notice). */
+    @Test public void aControllerConnectedLaterIsReportedAlsoFromTheUsbDriver() {
+        try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
+            addInputDevice(activity.get(), 2, true, JOYPAD);
+            addInputDevice(activity.get(), 9, true, InputDevice.SOURCE_DPAD);
+            PreferenceConfiguration prefs = new PreferenceConfiguration();
+            prefs.sendControllers = false;
+            ControllerHandler handler = new ControllerHandler(activity.get(), new Connection(73), null, prefs);
+            try {
+                int[] added = {0};
+                handler.setControllerAddedListener(() -> added[0]++);
+                handler.onInputDeviceAdded(9);
+                assertEquals("a remote's D-pad is no controller", 0, added[0]);
+                handler.onInputDeviceAdded(2);
+                assertEquals(1, added[0]);
+                handler.deviceAdded(new Pad(42, (short) 0));
+                assertEquals("the USB driver's controller is no input device, and is reported too", 2, added[0]);
+            } finally { handler.destroy(); }
+        }
+    }
+
     @Test public void controllersOffLaunchAnnouncesNoPhysicalPad() {
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             addInputDevice(activity.get(), 2, true, JOYPAD);

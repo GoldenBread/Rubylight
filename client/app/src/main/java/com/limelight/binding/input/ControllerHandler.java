@@ -334,6 +334,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             if (context != null) sendControllerInputPacket(context);
         }
         announcePresence();
+        if (!stopped && isController(inputManager.getInputDevice(deviceId))) controllerAdded();
     }
 
     @Override
@@ -799,9 +800,31 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
-    /** Whether {@code device} counts as a controller, as the launch's gamepad mask counts them. */
-    public static boolean isController(InputDevice device) {
+    /**
+     * Whether Android input device {@code device} counts as a controller, as the launch's gamepad mask
+     * counts them. The controllers this app's USB driver claims are not input devices: the mask counts
+     * them apart, and {@link #deviceAdded} reports them.
+     */
+    static boolean isController(InputDevice device) {
         return device != null && hasJoystickAxes(device);
+    }
+
+    private Runnable controllerAddedListener;
+
+    /**
+     * Runs {@code listener} on the main thread for each controller connected while this handler
+     * lives: an input device that counts as one, or one this app's USB driver claims.
+     */
+    public synchronized void setControllerAddedListener(Runnable listener) {
+        controllerAddedListener = listener;
+    }
+
+    private void controllerAdded() {
+        Runnable listener = controllerAddedListener;
+        if (listener == null) return;
+        // Input devices are reported on the main thread; the USB driver reports from its own.
+        if (Looper.myLooper() == Looper.getMainLooper()) listener.run();
+        else mainThreadHandler.post(listener);
     }
 
     private static boolean hasJoystickAxes(InputDevice device) {
@@ -4947,6 +4970,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         usbDeviceContexts.put(controller.getControllerId(), context);
         if (connectionStarted && conn.canSendControllerInput()) sendControllerInputPacket(context);
         announcePresence();
+        controllerAdded();
     }
 
     class GenericControllerContext {
