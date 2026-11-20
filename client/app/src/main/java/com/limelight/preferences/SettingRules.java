@@ -162,8 +162,9 @@ final class SettingRules {
     /**
      * Fractional V-Sync holds Lowest latency frames for their turn. Balanced shows a stream at a half
      * to a quarter of the refresh from the vsync callback, at that cadence already, where no phase
-     * report is sent (FramePacingPolicy.balancedPacesOnVsync); Smoothest and FPS-capped pacing, the
-     * PC's frame times and adaptive refresh show frames without it.
+     * report is sent (FramePacingPolicy.balancedPacesOnVsync); Smoothest and FPS-capped pacing hold
+     * every frame for its turn without it (MediaCodecDecoderRenderer.smoothDisplayNs), and the PC's
+     * frame times and adaptive refresh show frames without it.
      */
     static boolean fractionalVsyncApplies(Context context, SharedPreferences prefs) {
         return framePacingApplies(context, prefs) && FramePacingChoice.LATENCY.equals(FramePacingChoice.read(prefs));

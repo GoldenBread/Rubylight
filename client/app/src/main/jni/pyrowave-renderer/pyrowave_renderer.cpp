@@ -928,6 +928,7 @@ namespace {
             const int64_t periodNs = displayRefreshRate > 1.0f && displayRefreshRate <= 1000.0f ?
                     int64_t(1'000'000'000.0 / displayRefreshRate) : 16'666'667;
             presentTiming.configure(static_cast<PyroWavePresentTiming::Mode>(framePacingMode), periodNs);
+            presentTiming.setStreamInterval(1'000'000'000LL / frameRateHz);
             width = uint32_t(streamWidth);
             height = uint32_t(streamHeight);
             records = PyroWaveRecords(width, height, chroma444);

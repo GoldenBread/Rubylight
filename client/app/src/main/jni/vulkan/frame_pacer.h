@@ -289,6 +289,11 @@ private:
     void scheduleFrom(FrameTiming& frame, int64_t measuredPtsNs, bool onLine, int64_t scheduledPtsNs);
     void resetPhase();
     int64_t slotPeriodNs() const { return slotVsyncs_ * periodNs_; }
+    // The vsyncs each frame stays on a refresh 2 to 4 times the stream's rate (2 for 60 fps on
+    // 120 Hz), else 1, by the rule of FramePacingPolicy.refreshesPerFrame (Java), which holds
+    // MediaCodec's Smoothest and FPS-capped frames for their turn there too
+    int heldVsyncs() const;
+    static constexpr int kMaxHeldVsyncs = 4;
     // The most delay the current preset's buffer may hold (kLowestLatencyCapSlots)
     int64_t bufferCapNs() const;
 

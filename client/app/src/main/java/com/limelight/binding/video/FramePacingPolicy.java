@@ -158,7 +158,9 @@ public final class FramePacingPolicy {
     /**
      * Fractional V-Sync: the refreshes each frame stays on a display that refreshes at a whole
      * multiple of the stream's rate (2 for 60 fps on 120 Hz), else 1. VRR and the setting off take
-     * 1 too. Java port of nightjar_policy::vsync::refreshes_per_frame (client/protocol/policy).
+     * 1 too; Smoothest video and Balanced with FPS limit pass fractional true whatever the setting
+     * (MediaCodecDecoderRenderer.smoothDisplayNs). Java port of nightjar_policy::vsync::refreshes_per_frame
+     * (client/protocol/policy).
      */
     public static int refreshesPerFrame(double refreshHz, double fps, boolean vrr, boolean fractional) {
         if (!fractional || vrr || !(refreshHz > 0) || !(fps > 0)) return 1;
@@ -180,15 +182,30 @@ public final class FramePacingPolicy {
      * A frame waits at most {@code refreshes - 1} refreshes past the first it can make, as long as a
      * frame that comes right after the last one was shown would: frames a burst brings a few ms
      * apart would otherwise each take the next turn, and the compositor, which never drops a frame
-     * stamped for a later refresh, would keep that backlog for good (3 frames at 60 fps on 120 Hz:
-     * about 33 ms more delay). A later frame of the burst takes the same refresh and replaces the
-     * earlier one there.
+     * stamped for a later refresh, would keep that backlog (3 frames at 60 fps on 120 Hz: about 33 ms
+     * more delay) until {@link #earlyForTurn} took it back, a refresh every two seconds. A later frame
+     * of the burst takes the same refresh and replaces the earlier one there.
      */
     static long heldTargetNs(long earliestNs, long lastTargetNs, long vsyncNs, long intervalNs, int refreshes) {
+        return heldTargetNs(earliestNs, lastTargetNs, vsyncNs, intervalNs, refreshes, false);
+    }
+
+    /**
+     * As above; with {@code everyFrame} (Smoothest video and Balanced with FPS limit, which keep every
+     * frame) a frame always takes its own turn, however early it comes. The cap above would give a frame
+     * that comes while the one before still waits that one's refresh, where the compositor shows only
+     * the newer. A burst instead waits in the display's queue, a turn each, as it does a refresh each
+     * on a screen at the stream's rate. The delay it adds stays until the turns move earlier
+     * ({@link #earlyForTurn}, a refresh at a time) or a frame is dropped and the next takes its turn
+     * (the catch-up of {@link #shouldDrainOutput}, DecoderQueuePolicy.Debt).
+     */
+    static long heldTargetNs(long earliestNs, long lastTargetNs, long vsyncNs, long intervalNs, int refreshes,
+                             boolean everyFrame) {
         if (refreshes <= 1 || intervalNs <= 0 || lastTargetNs == 0) return earliestNs;
         long turnNs = lastTargetNs + refreshes * intervalNs;
         long offsetNs = turnNs - vsyncNs;
         turnNs = vsyncNs + Math.floorDiv(offsetNs + intervalNs / 2, intervalNs) * intervalNs;
+        if (everyFrame) return Math.max(earliestNs, turnNs);
         long latestNs = earliestNs + (refreshes - 1) * intervalNs;
         return Math.max(earliestNs, Math.min(turnNs, latestNs));
     }

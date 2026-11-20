@@ -169,6 +169,104 @@ public class MediaCodecPhaseReportTest {
         }
     }
 
+    /**
+     * Smoothest video and Balanced with FPS limit at 60 fps on 120 Hz, Fractional V-Sync off: each frame is
+     * stamped half a refresh ahead of its own turn, a burst a turn each, while Lowest latency's hold follows
+     * the setting and releases at once. At the stream's rate, with VRR or before a vsync they are released with
+     * no time, which the compositor never drops, as before.
+     */
+    @Test public void smoothPacingHoldsEveryFrameForItsTurnWhateverFractionalVsyncSays() {
+        long interval = 8_333_333L;
+        try (ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).create()) {
+            for (int mode : new int[] {PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS,
+                    PreferenceConfiguration.FRAME_PACING_CAP_FPS}) {
+                String name = "mode " + mode;
+                MediaCodecDecoderRenderer renderer = renderer(controller.get(), false);
+                PreferenceConfiguration prefs = ReflectionHelpers.getField(renderer, "prefs");
+                prefs.framePacing = mode;
+                prefs.fractionalVsync = false;
+                renderer.setStreamFrameRateMilliHz(60_000);
+                ReflectionHelpers.setField(renderer, "outputHasArrSupport", false);
+                ReflectionHelpers.setField(renderer, "vsyncTimeNs", VSYNC_NS);
+                ReflectionHelpers.setField(renderer, "vsyncIntervalNs", interval);
+                ReflectionHelpers.setField(renderer, "vsyncPresentationDeadlineNs", DEADLINE_NS);
+                long release = VSYNC_NS + 3 * interval + 1_000_000L;
+                long earliest = MediaCodecDecoderRenderer.nextVsyncTimeNs(release, VSYNC_NS, interval, DEADLINE_NS);
+                assertEquals(name, earliest - interval / 2, smoothDisplayNs(renderer, release));
+                assertEquals(name, earliest + 2 * interval - interval / 2, smoothDisplayNs(renderer, release + 1_000_000L));
+                assertEquals(name, earliest + 4 * interval - interval / 2, smoothDisplayNs(renderer, release + 2_000_000L));
+                assertEquals("the phase report aims at the turns", 2,
+                        ReflectionHelpers.<Integer>getField(renderer, "heldAnchorRefreshes").intValue());
+                long lowest = ReflectionHelpers.callInstanceMethod(renderer, "heldDisplayNs",
+                        ReflectionHelpers.ClassParameter.from(long.class, release));
+                assertEquals(name + ": Lowest latency's hold follows the setting", release, lowest);
+
+                ReflectionHelpers.setField(renderer, "vsyncIntervalNs", 16_666_667L);
+                assertEquals(name + " at 60 Hz", 0L, smoothDisplayNs(renderer, release));
+                ReflectionHelpers.setField(renderer, "vsyncIntervalNs", interval);
+                prefs.vrr = true;
+                assertEquals(name + " with VRR", 0L, smoothDisplayNs(renderer, release));
+                prefs.vrr = false;
+                ReflectionHelpers.setField(renderer, "vsyncTimeNs", 0L);
+                assertEquals(name + " before a vsync", 0L, smoothDisplayNs(renderer, release));
+            }
+        }
+    }
+
+    /** The release path stamps a Smoothest frame on a screen at twice the stream's rate, and none at its rate. */
+    @Test public void smoothestReleasesTheFrameStampedForItsTurn() {
+        long interval = 8_333_333L;
+        try (ActivityController<Activity> controller = Robolectric.buildActivity(Activity.class).create()) {
+            for (int fps : new int[] {60, 120}) {
+                MediaCodecDecoderRenderer renderer = renderer(controller.get(), false);
+                PreferenceConfiguration prefs = ReflectionHelpers.getField(renderer, "prefs");
+                prefs.framePacing = PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS;
+                renderer.setStreamFrameRateMilliHz(fps * 1000);
+                ReflectionHelpers.setField(renderer, "outputHasArrSupport", false);
+                long vsyncNs = System.nanoTime();
+                ReflectionHelpers.setField(renderer, "vsyncTimeNs", vsyncNs);
+                ReflectionHelpers.setField(renderer, "vsyncIntervalNs", interval);
+                ReflectionHelpers.setField(renderer, "vsyncPresentationDeadlineNs", DEADLINE_NS);
+                OneFrameCodec.renderer = renderer;
+                OneFrameCodec.stats = ReflectionHelpers.getField(renderer, "frameLatencyStats");
+                OneFrameCodec.dequeues = OneFrameCodec.dropped = 0;
+                OneFrameCodec.releasedAtNs = OneFrameCodec.dueNs = -1;
+                MediaCodec codec;
+                try {
+                    codec = MediaCodec.createDecoderByType("video/avc");
+                } catch (java.io.IOException e) {
+                    throw new AssertionError(e);
+                }
+                try {
+                    ReflectionHelpers.setField(renderer, "videoDecoder", codec);
+                    ReflectionHelpers.callInstanceMethod(renderer, "releaseNewestOutput",
+                            ReflectionHelpers.ClassParameter.from(int.class, 0),
+                            ReflectionHelpers.ClassParameter.from(long.class, 1L),
+                            ReflectionHelpers.ClassParameter.from(MediaCodec.BufferInfo.class, new MediaCodec.BufferInfo()),
+                            ReflectionHelpers.ClassParameter.from(long.class, android.os.SystemClock.elapsedRealtimeNanos()));
+                    assertEquals(0, OneFrameCodec.dropped);
+                    if (fps == 120) {
+                        assertEquals("at the screen's rate: no time", 0L, OneFrameCodec.dueNs);
+                    } else {
+                        long dueNs = OneFrameCodec.dueNs;
+                        assertTrue("stamped " + dueNs, dueNs > 0);
+                        assertEquals("half a refresh ahead of a refresh", 0,
+                                Math.floorMod(dueNs + interval / 2 - vsyncNs, interval));
+                        assertTrue("for a refresh to come", dueNs + interval / 2 > OneFrameCodec.releasedAtNs);
+                    }
+                } finally {
+                    ReflectionHelpers.setField(renderer, "stopping", true);
+                    codec.release();
+                }
+            }
+        }
+    }
+
+    private static long smoothDisplayNs(MediaCodecDecoderRenderer renderer, long releaseNs) {
+        return ReflectionHelpers.callInstanceMethod(renderer, "smoothDisplayNs",
+                ReflectionHelpers.ClassParameter.from(long.class, releaseNs));
+    }
+
     private static int heldRefreshes(MediaCodecDecoderRenderer renderer) {
         return ReflectionHelpers.callInstanceMethod(renderer, "heldRefreshes");
     }

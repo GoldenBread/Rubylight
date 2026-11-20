@@ -340,7 +340,12 @@ final class DecoderQueuePolicy {
      * the outputs of the last [WINDOW_NS] were over, the held output gives way: while a newer frame
      * is in the decoder behind it, the renderer waits up to [WAIT_US] for that frame to come out and
      * drops the held output only if it does; with nothing behind it, the held output is dropped
-     * and the screen keeps the previous frame one refresh longer, which frees the extra buffer.
+     * and the screen keeps the previous frame one refresh longer, which frees the extra buffer. On a
+     * screen at 2 to 4 times the stream's rate, where each frame waits for its own turn
+     * (MediaCodecDecoderRenderer.smoothDisplayNs), the next frame takes the dropped one's turn
+     * instead, and the previous frame stays longer only by what that frame then comes late. The
+     * turns release each output as it comes out, stamped for its refresh, so they leave the
+     * decoder's times alone until the display's queue runs out of buffers, as at the stream's rate.
      * One drop at a time: the next [SETTLE] outputs are measured after each, and recovery stops
      * once their median is under the threshold again. Healthy streams stay under the threshold
      * (in the Shield captures 1-4 ms above the floor, and never half a frame for 80% of a window),

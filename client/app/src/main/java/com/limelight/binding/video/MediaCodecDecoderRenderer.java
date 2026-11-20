@@ -900,12 +900,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int pacingFrameRateMilliHz;
     // Fractional V-Sync: the refresh the last frame held for several was stamped for (decoder
     // thread), and the refresh grid the phase report aims at with the refreshes a frame is held
-    // for (0 and 1 without a hold), set where a frame is released as it comes out (heldDisplayNs).
+    // for (0 and 1 without a hold), set where a frame is released as it comes out (holdStampNs).
     private long heldTargetNs;
     /** Since when frames came a refresh early for their turn (FramePacingPolicy.earlyForTurn), 0 when not. */
     private long heldEarlySinceNs;
     private volatile long heldAnchorNs;
     private volatile int heldAnchorRefreshes = 1;
+    /** The refreshes smoothDisplayNs last logged holding each frame for, 1 before it held any. Decoder thread. */
+    private int smoothHoldLogged = 1;
     // Balanced at the panel's own rate, released as outputs come out: the refresh each output is
     // shown at, one per refresh (RefreshSlots). Decoder thread; reset when the display changes.
     private final RefreshSlots refreshSlots = new RefreshSlots();
@@ -4401,7 +4403,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 DecoderQueuePolicy.depth(numFramesIn, numFramesOut, decoderDepthBase) == 0) {
             // Sustained debt with nothing behind the held output: the display's queue holds a
             // buffer too many. Drop the held output so the screen keeps the previous frame one
-            // refresh longer and the queue gives the buffer back (a catch-up above already did).
+            // refresh longer, or where frames wait for their turn the next takes this one's
+            // (smoothDisplayNs), and the queue gives the buffer back (a catch-up above already did).
             // No keyframe is requested.
             frameLatencyStats.onDropReason(lastIndex, "debt");
             frameLatencyStats.onOutputReleased(lastIndex, System.nanoTime(), false, reportsRenderTimes());
@@ -4453,9 +4456,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             long displayAtNs;
             if (prefs.framePacing == PreferenceConfiguration.FRAME_PACING_MAX_SMOOTHNESS ||
                     prefs.framePacing == PreferenceConfiguration.FRAME_PACING_CAP_FPS) {
-                // Retain the ordinary smooth-mode presentation behavior after
-                // replacing any stale decoded outputs above.
-                displayAtNs = 0;
+                // Every frame in turn, after any stale decoded outputs above were replaced: at the
+                // next refresh, or on a screen at 2 to 4 times the stream's rate at the refresh its
+                // own turn comes (smoothDisplayNs).
+                displayAtNs = smoothDisplayNs(releaseNs);
             }
             else if (hostFrameTimes) {
                 // Held until the host's frame time plus the jitter delay; the
@@ -4536,9 +4540,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * Fractional V-Sync: the refreshes each frame stays on this display, from its refresh and the
      * stream's rate (FramePacingPolicy.refreshesPerFrame). A display that refreshes when a frame
      * comes (Android 16 ARR, unless timed as fixed: adaptiveInUse) holds nothing, nor does a stream
-     * with VRR chosen (vrrForHolds).
+     * with VRR chosen (vrrForHolds). The setting decides for Lowest latency; the pacings that keep
+     * every frame hold whatever it says (heldRefreshes(true), smoothDisplayNs).
      */
     private int heldRefreshes() {
+        return heldRefreshes(prefs.fractionalVsync);
+    }
+
+    private int heldRefreshes(boolean fractional) {
         long intervalNs;
         boolean arr;
         synchronized (vsyncMonitor) {
@@ -4547,7 +4556,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
         if (intervalNs <= 0) return 1;
         return FramePacingPolicy.refreshesPerFrame(1e9 / intervalNs, streamFrameRateMilliHz / 1000.0,
-                vrrForHolds(arr), prefs.fractionalVsync);
+                vrrForHolds(arr), fractional);
     }
 
     /**
@@ -4565,7 +4574,32 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * so the compositor never rounds it to the next. The phase report then aims at that grid.
      */
     private long heldDisplayNs(long releaseNs) {
-        int refreshes = heldRefreshes();
+        long stampNs = holdStampNs(releaseNs, heldRefreshes(), false);
+        return stampNs != 0 ? stampNs : releaseNs;
+    }
+
+    /**
+     * When a frame of Smoothest video or Balanced with FPS limit, which keep every frame, released at
+     * releaseNs is to be shown. Released with no time (0) the compositor never drops it and shows it at
+     * the next refresh, each frame in turn: on a screen at the stream's rate a frame that comes early
+     * waits in the display's queue, a frame each refresh. On a screen at 2 to 4 times the stream's rate
+     * that showed each frame as it came: jitter left one frame up for a refresh and the next for three,
+     * and no frame stayed queued to cover it. There each frame waits for its own turn instead, however
+     * early it comes (FramePacingPolicy.heldTargetNs with everyFrame), whatever Fractional V-Sync says,
+     * and the phase report aims at the turns as with that setting. Elsewhere (VRR, a screen that sets its
+     * own refresh, any other refresh, no vsync yet) it is 0 as before.
+     */
+    private long smoothDisplayNs(long releaseNs) {
+        return holdStampNs(releaseNs, heldRefreshes(true), true);
+    }
+
+    /**
+     * The time to stamp a frame released at releaseNs with, each frame held for refreshes refreshes:
+     * half a refresh ahead of the refresh its turn comes (FramePacingPolicy.heldTargetNs, everyFrame as
+     * there), so the compositor never rounds it to the next. 0 where nothing is held (a refresh a frame,
+     * no vsync yet, another display), which starts the turns over.
+     */
+    private long holdStampNs(long releaseNs, int refreshes, boolean everyFrame) {
         long vsyncNs, intervalNs, deadlineNs;
         synchronized (vsyncMonitor) {
             vsyncNs = vsyncTimeNs;
@@ -4576,10 +4610,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             heldTargetNs = 0;
             heldEarlySinceNs = 0;
             heldAnchorRefreshes = 1;
-            return releaseNs;
+            return 0;
+        }
+        if (everyFrame && refreshes != smoothHoldLogged) {
+            smoothHoldLogged = refreshes;
+            LimeLog.info(String.format(Locale.US,
+                    "Smooth pacing: each frame waits for its turn, %d refreshes of %.2f ms", refreshes, intervalNs / 1e6));
         }
         long earliestNs = nextVsyncTimeNs(releaseNs, vsyncNs, intervalNs, deadlineNs);
-        long targetNs = FramePacingPolicy.heldTargetNs(earliestNs, heldTargetNs, vsyncNs, intervalNs, refreshes);
+        long targetNs = FramePacingPolicy.heldTargetNs(earliestNs, heldTargetNs, vsyncNs, intervalNs, refreshes,
+                everyFrame);
         if (FramePacingPolicy.earlyForTurn(releaseNs, targetNs, intervalNs, deadlineNs)) {
             if (heldEarlySinceNs == 0) {
                 heldEarlySinceNs = releaseNs;
@@ -5114,6 +5154,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 (refreshSlots.planned() > 0 ? ", refreshes claimed " + refreshSlots.planned() +
                         ", shared " + refreshSlots.shared() : "") +
                 (vulkanOutputs > 0 ? ", Vulkan renderer " + vulkanOutputs + " outputs" : "") +
+                // Fractional V-Sync, or Smoothest and the FPS limit at a whole multiple (smoothDisplayNs).
+                (heldAnchorRefreshes > 1 ? ", each frame held " + heldAnchorRefreshes + " refreshes" : "") +
                 ", PC frame times " + onOff(hostFrameTimes) +
                 ", " + timedToScreen() +
                 ", ARR screen " + onOff(outputHasArrSupport) + ", fixed timing " + onOff(prefs.arrFixedTiming) +

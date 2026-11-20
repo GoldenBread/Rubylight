@@ -303,6 +303,21 @@ void FramePacer::trackVsync(int64_t vsyncNs) {
     }
 }
 
+int FramePacer::heldVsyncs() const {
+    // FramePacingPolicy.refreshesPerFrame's rule: a whole multiple to within half a hertz per multiple
+    if (periodNs_ <= 0 || streamIntervalNs_ <= 0) {
+        return 1;
+    }
+    const double refreshHz = 1e9 / static_cast<double>(periodNs_);
+    const double fps = 1e9 / static_cast<double>(streamIntervalNs_);
+    for (int k = 1; k <= kMaxHeldVsyncs; k++) {
+        if (std::fabs(refreshHz - fps * k) <= 0.5 * k) {
+            return k;
+        }
+    }
+    return 1;
+}
+
 size_t FramePacer::maxQueued() const {
     switch (mode_) {
         case PacingMode::MinLatency:
@@ -859,7 +874,14 @@ int FramePacer::onVsync(int64_t vsyncNs, const FrameTiming* frames, size_t count
 
         case PacingMode::CapFps:
         case PacingMode::Smoothness:
-            choice = count > 0 ? 0 : -1;
+            // Every frame in order, one a vsync. On a refresh 2 to 4 times the stream's rate (60 fps
+            // on 120 Hz) a frame then went up at the next vsync after it came, so jitter left one up
+            // for a vsync and the next for three, and no frame waited to cover it. There frames go up
+            // no more often than the stream's rate, as in Balanced: an early one waits for its turn,
+            // and every frame stays the same number of vsyncs.
+            if (count > 0 && (heldVsyncs() <= 1 || vsyncNs - lastPresentVsyncNs_ >= streamIntervalNs_ * 8 / 10)) {
+                choice = 0;
+            }
             break;
 
         case PacingMode::HostTimed: {

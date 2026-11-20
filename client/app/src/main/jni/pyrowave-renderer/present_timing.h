@@ -40,6 +40,12 @@ public:
         clearTimeline();
     }
 
+    // The stream's frame interval: Smoothest video and Balanced with FPS limit keep a frame of
+    // jitter in hand (cushionNs). Unknown (0) keeps a refresh.
+    void setStreamInterval(int64_t streamIntervalNs) {
+        streamIntervalNs_ = validPeriod(streamIntervalNs) ? streamIntervalNs : 0;
+    }
+
     // A stream/swapchain change invalidates the host mapping and old feedback.
     // Keep the selected mode and measured display period.
     void reset() {
@@ -217,7 +223,15 @@ private:
     }
     int64_t maximumLeadNs() const { return std::min<int64_t>(periodNs_ * 2, 50'000'000); }
     int64_t pauseGapNs() const { return std::max<int64_t>(100'000'000, periodNs_ * 3); }
-    int64_t maximumAheadNs() const { return std::max<int64_t>(periodNs_ * 4, 50'000'000); }
+    int64_t maximumAheadNs() const { return std::max<int64_t>({periodNs_ * 4, cushionNs() * 4, 50'000'000}); }
+    // Smoothest video and Balanced with FPS limit plan each frame a stream frame past the lead, so
+    // a frame up to that late still makes its refresh on any screen, as on one at the stream's rate,
+    // where that is a refresh. One refresh would keep only half a frame at 60 fps on 120 Hz.
+    // Balanced keeps none.
+    int64_t cushionNs() const {
+        if (mode_ != Mode::Smoothness && mode_ != Mode::CapFps) return 0;
+        return std::max(periodNs_, streamIntervalNs_);
+    }
     int64_t nextVsync(int64_t timeNs) const {
         if (phaseNs_ == 0) return timeNs;
         const int64_t delta = timeNs - phaseNs_;
@@ -253,9 +267,7 @@ private:
     // Eight consecutive early frames distinguish sustained improvement from a
     // short burst. Remove only the smallest excess common to that run.
     void recoverEarlyTimeline(int64_t readyNs, int64_t &idealNs) {
-        const int64_t cushionNs =
-                (mode_ == Mode::Smoothness || mode_ == Mode::CapFps) ? periodNs_ : 0;
-        const int64_t excessNs = idealNs - readyNs - leadNs_ - cushionNs;
+        const int64_t excessNs = idealNs - readyNs - leadNs_ - cushionNs();
         if (excessNs <= periodNs_) {
             earlyCount_ = 0;
             minimumEarlyNs_ = 0;
@@ -289,14 +301,14 @@ private:
         clearLearning();
         anchored_ = true;
         anchorHostUs_ = hostUs;
-        anchorLocalNs_ = readyNs + leadNs_ +
-                ((mode_ == Mode::Smoothness || mode_ == Mode::CapFps) ? periodNs_ : 0);
+        anchorLocalNs_ = readyNs + leadNs_ + cushionNs();
     }
 
     Mode mode_ = Mode::Immediate;
     HostSchedule hostSchedule_ = nullptr;
     void *hostContext_ = nullptr;
     int64_t periodNs_ = 16'666'667;
+    int64_t streamIntervalNs_ = 0;
     int64_t leadNs_ = kInitialLeadNs;
     int64_t phaseNs_ = 0;
     int64_t feedbackPhaseNs_ = 0;

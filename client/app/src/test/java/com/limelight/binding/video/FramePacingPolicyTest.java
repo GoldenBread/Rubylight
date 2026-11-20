@@ -331,6 +331,36 @@ public class FramePacingPolicyTest {
         assertEquals(earliest + 2 * interval, FramePacingPolicy.heldTargetNs(earliest, held3, vsync, interval, 3));
     }
 
+    /**
+     * Smoothest video and Balanced with FPS limit keep every frame: the same burst waits in the display's
+     * queue a turn each, where the cap would put two frames on one refresh and the compositor show one.
+     */
+    @Test public void whereEveryFrameIsKeptABurstWaitsATurnEach() {
+        long interval = 8_333_333L, vsync = 1_000_000_000L;
+        long last = vsync + 10 * interval;
+        long earliest = last + 6 * interval;
+        long a = FramePacingPolicy.heldTargetNs(earliest, last, vsync, interval, 2, true);
+        long b = FramePacingPolicy.heldTargetNs(earliest, a, vsync, interval, 2, true);
+        long c = FramePacingPolicy.heldTargetNs(earliest, b, vsync, interval, 2, true);
+        assertEquals("late: the first refresh it can make", earliest, a);
+        assertEquals(earliest + 2 * interval, b);
+        assertEquals(earliest + 4 * interval, c);
+        // The next frame, 16.7 ms on, takes its own turn after them.
+        assertEquals(earliest + 6 * interval,
+                FramePacingPolicy.heldTargetNs(earliest + 2 * interval, c, vsync, interval, 2, true));
+        // However early a frame comes it waits for its turn; a late one counts the turns from itself.
+        assertEquals(last + 2 * interval, FramePacingPolicy.heldTargetNs(last - 5 * interval, last, vsync, interval, 2, true));
+        assertEquals(last + 5 * interval, FramePacingPolicy.heldTargetNs(last + 5 * interval, last, vsync, interval, 2, true));
+        // A turn off the grid by a rounded interval goes back onto it.
+        assertEquals(last + 2 * interval, FramePacingPolicy.heldTargetNs(last + interval, last + 3_000, vsync, interval, 2, true));
+        // Held 3 (40 fps on 120 Hz) and 4 (30 fps on 120 Hz).
+        assertEquals(earliest + 3 * interval, FramePacingPolicy.heldTargetNs(earliest, earliest, vsync, interval, 3, true));
+        assertEquals(earliest + 4 * interval, FramePacingPolicy.heldTargetNs(earliest, earliest, vsync, interval, 4, true));
+        // No hold, or no frame shown yet.
+        assertEquals(earliest, FramePacingPolicy.heldTargetNs(earliest, last, vsync, interval, 1, true));
+        assertEquals(earliest, FramePacingPolicy.heldTargetNs(earliest, 0, vsync, interval, 2, true));
+    }
+
     @Test public void theHeldPhaseReportCountsOverTheHoldFromAPastRefreshOfTheGrid() {
         long interval = 8_333_333L;
         assertArrayEquals(new long[] {500, interval}, FramePacingPolicy.heldReportGrid(500, interval, 9_000_000_000L, 1));

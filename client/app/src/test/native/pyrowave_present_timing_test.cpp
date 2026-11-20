@@ -48,6 +48,46 @@ static void testModesAndMissingHostClock() {
     }
 }
 
+// Smoothest video and Balanced with FPS limit keep a stream frame of jitter in hand, not a refresh:
+// at 50 fps on a 100 Hz screen a frame 18 ms late still makes the refresh its host time gives, two
+// after the frame before. With a refresh's cushion that frame was up for three refreshes and the
+// late one for one. Balanced keeps none.
+static void testSmoothModesKeepAStreamFrameOfJitter() {
+    for (auto mode : {Timing::Mode::CapFps, Timing::Mode::Smoothness}) {
+        Timing timing;
+        timing.configure(mode, 10 * ms);
+        timing.setStreamInterval(20 * ms);
+        timing.observeVsync(epoch);
+        const auto first = timing.plan(1'000'000, epoch + ms);
+        assert(first.targetNs == epoch + 30 * ms);
+        const auto late = timing.plan(1'020'000, epoch + 21 * ms + 18 * ms);
+        assert(late.targetNs - first.targetNs == 20 * ms);
+
+        // 25 fps on 100 Hz: a frame 15 ms early keeps the host's cadence instead of starting the
+        // timeline again, as its wait is under four cushions.
+        Timing slow;
+        slow.configure(mode, 10 * ms);
+        slow.setStreamInterval(40 * ms);
+        slow.observeVsync(epoch);
+        const auto start = slow.plan(1'000'000, epoch + ms);
+        assert(start.targetNs == epoch + 50 * ms);
+        const auto early = slow.plan(1'040'000, epoch + 41 * ms - 15 * ms);
+        assert(early.targetNs - start.targetNs == 40 * ms);
+    }
+    Timing balanced;
+    balanced.configure(Timing::Mode::Balanced, 10 * ms);
+    balanced.setStreamInterval(20 * ms);
+    balanced.observeVsync(epoch);
+    assert(balanced.plan(1'000'000, epoch + ms).targetNs == epoch + 10 * ms);
+
+    // An interval no stream has keeps a refresh, as before one was given.
+    Timing unknown;
+    unknown.configure(Timing::Mode::Smoothness, 10 * ms);
+    unknown.setStreamInterval(0);
+    unknown.observeVsync(epoch);
+    assert(unknown.plan(1'000'000, epoch + ms).targetNs == epoch + 20 * ms);
+}
+
 static void testFractionalCadenceDoesNotAccumulateRounding() {
     Timing timing;
     constexpr int64_t period = 8'333'333;
@@ -505,6 +545,7 @@ int main() {
     testRecoveryKeepsPresentationThroughput();
     testHostCadenceAndIdempotence();
     testModesAndMissingHostClock();
+    testSmoothModesKeepAStreamFrameOfJitter();
     testFractionalCadenceDoesNotAccumulateRounding();
     testPauseReversalAndLateRecovery();
     testFeedbackAdaptsLeadAndRejectsAnIsolatedStall();
