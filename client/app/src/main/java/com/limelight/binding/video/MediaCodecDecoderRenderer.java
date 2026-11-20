@@ -257,9 +257,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // stream or an earlier one, with those keys: it runs without them, and gets that setup only once.
     private final Map<String, HungKeys> hungKeys = new ConcurrentHashMap<>();
     // Whether the configured decoder is still to be recorded for the next streams once it ran well
-    // without them: set when it was set up so, cleared by a later hang or failure recovery and by
-    // another decoder or MIME type taking over (planned restarts leave it), and taken atomically.
+    // without them, taken atomically. Set when it was set up so; cleared by every recovery, hang and
+    // non-transient exception and by another decoder or MIME type taking over. A planned restart done
+    // at its first step on the same decoder sets it back to what it was (doCodecRecoveryIfRequired).
     private final AtomicBoolean vendorKeyHangUnrecorded = new AtomicBoolean();
+    // Whether the running recovery went past its first step (CodecRecoverySteps.Codec.escalated).
+    private boolean recoveryEscalated;
     // Guards decoderFailure; never held while waiting for codecRecoveryMonitor
     private final Object decoderFailureLock = new Object();
     // Recoveries in a row that bring no frame wait longer each time, then end the stream
@@ -3462,6 +3465,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
             // This is the final thread to quiesce, so let's perform the codec recovery now.
             if (codecRecoveryThreadQuiescedFlags == CR_FLAG_ALL) {
+                // Any recovery leaves the decoder unrecorded (recordVendorKeyHang) unless it ends as one
+                // of two that set the flag again below: the setup without vendor keys succeeding on the
+                // decoder that hung, or a planned restart done at its first step on the same decoder.
+                boolean unrecordedBefore = vendorKeyHangUnrecorded.getAndSet(false);
                 if (upscaler != null) {
                     // A flush can strand frames in the texture queue. Restart onto direct output.
                     if (packing == null) upscalingPolicy.fail(UpscalingPolicy.Reason.GPU_ERROR);
@@ -3503,8 +3510,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         // and try a reset instead.
                         restartReason = "failed flush";
                         recoveryAfterFailure = true;
-                        // A decoder that fails after its setup without vendor keys did not run well.
-                        vendorKeyHangUnrecorded.set(false);
                         codecRecoveryType.set(CR_RECOVERY_TYPE_RESTART);
                     }
                 }
@@ -3526,12 +3531,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                     uncheckedHdrStaticInfo = null;
                     // A decoder that hung with its vendor keys is set up anew without them (resetHungDecoder).
                     boolean withoutKeys = restartWithoutVendorKeys;
-                    String hungDecoder = lowLatencyKeysDecoder;
+                    String decoderBefore = lowLatencyKeysDecoder;
+                    // Planned (size, HDR, input buffer growth): a restart no failure asked for.
+                    boolean planned = !recoveryAfterFailure && codecRecoveryType.get() == CR_RECOVERY_TYPE_RESTART;
+                    recoveryEscalated = false;
                     try {
-                        if (!(withoutKeys ?
+                        boolean recovered = withoutKeys ?
                                 CodecRecoverySteps.rebuild("it took no input with its vendor low-latency keys", recoveryCodec) :
                                 CodecRecoverySteps.run(codecRecoveryType.get() == CR_RECOVERY_TYPE_RESTART,
-                                        restartRecreates, restartReason, recoveryCodec))) {
+                                        restartRecreates, restartReason, recoveryCodec);
+                        if (!recovered) {
                             if (renderTarget != null && renderTarget.isValid()) {
                                 // The surface is fine: the decoder refused its configuration.
                                 failDecoder(decoderName() + " refused its configuration after a recovery", null);
@@ -3543,11 +3552,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         codecRecoveryType.set(CR_RECOVERY_TYPE_NONE);
                         recoveryAfterFailure = false;
                         hangResetPending = false;
+                        boolean sameDecoder = decoderBefore != null && decoderBefore.equals(lowLatencyKeysDecoder);
                         if (withoutKeys) {
                             restartWithoutVendorKeys = false;
                             // Only the decoder and MIME type that hung: a refused setup may have handed
                             // the stream to another (a Dolby Vision decoder to HEVC or AV1).
-                            vendorKeyHangUnrecorded.set(hungDecoder != null && hungDecoder.equals(lowLatencyKeysDecoder));
+                            vendorKeyHangUnrecorded.set(sameDecoder);
+                        } else if (planned && recovered && !recoveryEscalated && sameDecoder) {
+                            // Done at its first step (stop or a new codec, then configure and start):
+                            // nothing failed, so the flag is what it was before the restart.
+                            vendorKeyHangUnrecorded.set(unrecordedBefore);
                         }
                     } catch (IllegalStateException e) {
                         // Not even a decoder set up from scratch works: end the stream.
@@ -3675,10 +3689,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
         }
 
-        @Override public void stepFailed() {
-            // A planned restart that fails partway is a failure as well: the decoder did not run well
-            // after its setup without vendor keys. (A failure's own recovery has cleared this already.)
-            vendorKeyHangUnrecorded.set(false);
+        @Override public void escalated() {
+            // A planned restart that went past its first step failed: it does not set the flag back.
+            recoveryEscalated = true;
         }
     };
 
@@ -4857,11 +4870,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     // Once the decoder set up without its vendor keys after a hang ran well, the next streams start it
     // without them (VendorKeyHangs). Only the decoder and MIME type that hung in this stream, while it
-    // runs without the keys; never after a later hang or failure recovery (they clear the flag; planned
-    // restarts, as for a size or HDR change, do not), nor while an input wait of RECORD_INPUT_WAIT_MS or
-    // more runs, which may be a hang the 5 s check has yet to time. The flag is taken last and
-    // atomically: a hang or failure clearing it first leaves the record unwritten. On the latency
-    // thread, which never waits for codecRecoveryMonitor (a recovery can hang holding it).
+    // runs without the keys; never after a later hang, non-transient exception or recovery (they clear
+    // the flag; only a planned restart, as for a size or HDR change, done at its first step sets it
+    // back), nor while an input wait of RECORD_INPUT_WAIT_MS or more runs, which may be a hang the 5 s
+    // check has yet to time. The flag is taken last and atomically: a hang, exception or recovery
+    // clearing it first leaves the record unwritten. On the latency thread, which never waits for
+    // codecRecoveryMonitor (a recovery can hang holding it).
     private void recordVendorKeyHang() {
         String decoder = lowLatencyKeysDecoder;
         HungKeys hung = decoder == null ? null : hungKeys.get(decoder);

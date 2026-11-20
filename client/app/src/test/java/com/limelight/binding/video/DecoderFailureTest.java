@@ -894,6 +894,21 @@ public class DecoderFailureTest {
     }
 
     @Test
+    public void aRecoveryAskedForByAnyOtherPathLeavesNoRecord() {
+        renderer = streamWithVendorKeys(MTK_HEVC, HEVC);
+        RealRebuild recovery = realRebuild();
+        hangTwice();
+        recoverOnTheInputThread();
+        // A reset asked for by no path that clears the flag itself: the recovery clears it all the same.
+        int reset = ReflectionHelpers.getStaticField(MediaCodecDecoderRenderer.class, "CR_RECOVERY_TYPE_RESET");
+        ((AtomicInteger) ReflectionHelpers.getField(renderer, "codecRecoveryType")).set(reset);
+        recoverOnTheInputThread();
+        assertEquals(Arrays.asList("reset", "configure", "rebuild", "reset", "configure"), recovery.steps);
+        assertTrue(terminated.isEmpty());
+        assertNull(recordAfter(MTK_HEVC, HEVC, 600, 10_000));
+    }
+
+    @Test
     public void aDecoderTakingOverGetsItsOwnResetAndSetupWithoutItsVendorKeys() {
         renderer = dolbyVisionStreamWithVendorKeys();
         RealRebuild recovery = realRebuild();
@@ -1082,7 +1097,7 @@ public class DecoderFailureTest {
             if (before != null) before.run();
             real.rebuild(codecFailed);
         }
-        @Override public void stepFailed() { real.stepFailed(); }
+        @Override public void escalated() { real.escalated(); }
     }
 
     private static final class NoOpRecovery implements CodecRecoverySteps.Codec {

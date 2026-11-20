@@ -10,7 +10,7 @@ import java.util.List;
 
 public class CodecRecoveryStepsTest {
     /**
-     * Records the steps, and each failed step reported (stepFailed); the named ones throw, and
+     * Records the steps, and each escalation reported (escalated); the named ones throw, and
      * recreate() fails when created is false.
      */
     private static final class FakeCodec implements CodecRecoverySteps.Codec {
@@ -47,8 +47,8 @@ public class CodecRecoveryStepsTest {
             if (rebuildFails != null) throw rebuildFails;
         }
 
-        @Override public void stepFailed() {
-            steps.add("stepFailed");
+        @Override public void escalated() {
+            steps.add("escalated");
         }
     }
 
@@ -59,13 +59,13 @@ public class CodecRecoveryStepsTest {
         assertEquals(Arrays.asList("stop", "configure"), codec.steps);
     }
 
-    // A planned restart that fails partway is a failure of the decoder, reported before the reset.
+    // A planned restart that fails partway escalates, reported before the reset.
     @Test
     public void aPlannedRestartWhoseConfigureFailsIsReportedBeforeItsReset() {
         FakeCodec codec = new FakeCodec();
         codec.configureFails.add(new IllegalStateException("configure"));
         assertTrue(CodecRecoverySteps.run(true, false, "size change", codec));
-        assertEquals(Arrays.asList("stop", "configure", "stepFailed", "reset", "configure"), codec.steps);
+        assertEquals(Arrays.asList("stop", "configure", "escalated", "reset", "configure"), codec.steps);
     }
 
     @Test
@@ -81,7 +81,7 @@ public class CodecRecoveryStepsTest {
         FakeCodec codec = new FakeCodec();
         codec.created = false;
         assertTrue(CodecRecoverySteps.run(true, true, "HDR on", codec));
-        assertEquals(Arrays.asList("recreate", "rebuild (released)"), codec.steps);
+        assertEquals(Arrays.asList("recreate", "escalated", "rebuild (released)"), codec.steps);
     }
 
     @Test
@@ -89,13 +89,13 @@ public class CodecRecoveryStepsTest {
         FakeCodec codec = new FakeCodec();
         codec.configureFails.add(new IllegalStateException("configure"));
         assertTrue(CodecRecoverySteps.run(true, true, "HDR on", codec));
-        assertEquals(Arrays.asList("recreate", "configure", "stepFailed", "reset", "configure"), codec.steps);
+        assertEquals(Arrays.asList("recreate", "configure", "escalated", "reset", "configure"), codec.steps);
 
         codec = new FakeCodec();
         codec.configureFails.add(new IllegalStateException("configure"));
         codec.resetFails = new IllegalStateException("reset");
         assertTrue(CodecRecoverySteps.run(true, true, "HDR on", codec));
-        assertEquals(Arrays.asList("recreate", "configure", "stepFailed", "reset", "stepFailed", "rebuild"),
+        assertEquals(Arrays.asList("recreate", "configure", "escalated", "reset", "escalated", "rebuild"),
                 codec.steps);
     }
 
@@ -114,13 +114,13 @@ public class CodecRecoveryStepsTest {
         FakeCodec codec = new FakeCodec();
         codec.stopFails = new IllegalStateException("stop");
         assertTrue(CodecRecoverySteps.run(true, false, "CodecException", codec));
-        assertEquals(Arrays.asList("stop", "stepFailed", "reset", "configure"), codec.steps);
+        assertEquals(Arrays.asList("stop", "escalated", "reset", "configure"), codec.steps);
 
         codec = new FakeCodec();
         codec.stopFails = new IllegalStateException("stop");
         codec.resetFails = new IllegalStateException("reset");
         assertTrue(CodecRecoverySteps.run(true, false, "CodecException", codec));
-        assertEquals(Arrays.asList("stop", "stepFailed", "reset", "stepFailed", "rebuild"), codec.steps);
+        assertEquals(Arrays.asList("stop", "escalated", "reset", "escalated", "rebuild"), codec.steps);
     }
 
     @Test
@@ -139,7 +139,7 @@ public class CodecRecoveryStepsTest {
         rebuild.created = false;
         rebuild.rebuildFails = new IllegalArgumentException("surface");
         assertFalse(CodecRecoverySteps.run(true, true, "HDR on", rebuild));
-        assertEquals(Arrays.asList("recreate", "rebuild (released)"), rebuild.steps);
+        assertEquals(Arrays.asList("recreate", "escalated", "rebuild (released)"), rebuild.steps);
     }
 
     @Test
@@ -153,7 +153,7 @@ public class CodecRecoveryStepsTest {
         } catch (IllegalStateException e) {
             assertSame(codec.rebuildFails, e);
         }
-        assertEquals(Arrays.asList("reset", "stepFailed", "rebuild"), codec.steps);
+        assertEquals(Arrays.asList("reset", "escalated", "rebuild"), codec.steps);
     }
 
     // A decoder that took no input with its vendor keys: its restart and reset would keep its format.

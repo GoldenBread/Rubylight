@@ -29,17 +29,16 @@ final class CodecRecoverySteps {
         void rebuild(boolean codecFailed);
 
         /**
-         * A step threw IllegalStateException and the next, bigger one follows: the decoder failed,
-         * even in a planned restart. Not called when recreate() found no new codec, which is no
-         * failure of the decoder.
+         * The recovery goes past its first step: a bigger one follows (a reset after the restart, a
+         * rebuild after the reset or when recreate() found no new codec).
          */
-        default void stepFailed() {}
+        default void escalated() {}
     }
 
     /**
      * Runs the recovery from a restart, or from a reset when restart is false. recreate replaces
-     * the restart's stop() with a new codec. A step that fails is reported (stepFailed) before the
-     * next. Returns false when the surface is gone and the stream has to stop. An
+     * the restart's stop() with a new codec. Going past its first step is reported (escalated)
+     * before the next. Returns false when the surface is gone and the stream has to stop. An
      * IllegalStateException from rebuild means nothing recovered the decoder.
      */
     static boolean run(boolean restart, boolean recreate, String reason, Codec codec) {
@@ -68,8 +67,9 @@ final class CodecRecoverySteps {
 
                 // Something went wrong during the restart, let's use a bigger hammer
                 // and try a reset instead.
-                codec.stepFailed();
             }
+            // The restart failed, or left no codec: a bigger step follows.
+            codec.escalated();
         }
 
         // For "non-recoverable" exceptions on L+, we can call reset() to recover
@@ -90,7 +90,7 @@ final class CodecRecoverySteps {
 
                 // Something went wrong during the reset, we'll have to resort to
                 // releasing and recreating the decoder now.
-                codec.stepFailed();
+                codec.escalated();
             }
         }
 
