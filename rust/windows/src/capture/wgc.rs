@@ -490,7 +490,7 @@ impl Wgc {
         else {
             return Ok(None);
         };
-        let result = (|| {
+        let result: anyhow::Result<_> = (|| {
             let surface = frame.Surface()?;
             let access: IDirect3DDxgiInterfaceAccess = surface.cast()?;
             // SAFETY: `access` is the surface of `frame`, which is closed only after this closure.

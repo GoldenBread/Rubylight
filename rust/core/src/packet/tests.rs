@@ -1093,7 +1093,7 @@ fn audio_packets_reused_across_calls_are_the_allocated_ones_byte_for_byte() {
         let mut parity = 0;
         for size in 1..13u8 {
             let opus: Vec<u8> = (0..usize::from(size) * 23 % 251 + 1)
-                .map(|i| (i.wrapping_mul(31) ^ size) as u8)
+                .map(|i| (i.wrapping_mul(31) ^ usize::from(size)) as u8)
                 .collect();
             let want = fresh.encode(&opus).unwrap();
             pooled.encode_into(&opus, &mut kept).unwrap();

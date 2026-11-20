@@ -2751,16 +2751,14 @@ fn readback_size(stream: &Negotiated) -> u32 {
 /// ([`crate::amf::dynamic::output`]): before the first slice, the Dolby
 /// Vision RPU after the last.
 fn splice(dynamic: Option<&mut crate::amf::dynamic::Dynamic>, frame: &mut Encoded) {
-    let (spliced, cap) = crate::amf::dynamic::output(
+    let (bytes, cap) = crate::amf::dynamic::output(
         dynamic,
         frame.unit,
-        &frame.bytes,
+        std::mem::take(&mut frame.bytes),
         frame.frame_cap_bytes,
         frame.idr,
     );
-    if let Some(bytes) = spliced {
-        frame.bytes = bytes;
-    }
+    frame.bytes = bytes;
     frame.frame_cap_bytes = cap;
 }
 

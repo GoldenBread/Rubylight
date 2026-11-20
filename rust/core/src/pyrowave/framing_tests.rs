@@ -214,8 +214,12 @@ fn records_and_layout_read_from_the_pieces_match_the_buffer() {
                     .collect()
             };
             assert_eq!(
-                fields(records_in(&mut Payload::from(framed).reader()).unwrap()),
-                fields(records(&expected).unwrap())
+                fields(
+                    records_in(&mut Payload::from(framed).reader())
+                        .unwrap()
+                        .to_vec()
+                ),
+                fields(records(&expected).unwrap().to_vec())
             );
             let pieces = layout(framed, payload).unwrap();
             let bytes = layout(&expected, payload).unwrap();

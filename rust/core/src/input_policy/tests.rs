@@ -602,7 +602,7 @@ fn touchpad_packets_need_the_mouse_and_native_touchpad() {
             id: 0,
             x: 0.,
             y: 0.,
-        }],
+        }; 5],
         contacts_len: 0,
     };
     assert!(

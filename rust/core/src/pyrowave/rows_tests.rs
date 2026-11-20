@@ -287,7 +287,8 @@ fn a_band_is_complete_no_later_than_one_packet_after_a_plain_sequential_packing(
         // opens the next packet, a record over a packet runs on.
         let mut fine: Vec<_> = records(&frame)
             .unwrap()
-            .into_iter()
+            .iter()
+            .cloned()
             .filter(|r| r.index >= coarse)
             .collect();
         fine.sort_by_key(|r| (steps[r.index as usize], r.index));

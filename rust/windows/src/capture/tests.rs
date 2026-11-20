@@ -1125,7 +1125,7 @@ fn a_source_description_is_read_once_and_keeps_working_across_sizes() -> Result<
             &Image {
                 width,
                 height,
-                stride: width * 4,
+                stride: (width * 4) as usize,
                 bytes: vec![0u8; (width * height * 4) as usize],
                 captured: Instant::now(),
                 pixel: Pixel::Bgra8,

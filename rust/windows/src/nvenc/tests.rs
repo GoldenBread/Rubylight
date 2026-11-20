@@ -2771,11 +2771,10 @@ fn a_focus_maps_buffer_is_taken_back_and_refilled_for_the_next_map() -> Result<(
         encoder.submit(slot, None, false, Instant::now())?;
         encoder.poll()?;
     }
-    assert!(std::ptr::eq(
-        encoder.map_scratch.as_ptr(),
-        address.unwrap(),
+    assert!(
+        std::ptr::eq(encoder.map_scratch.as_ptr(), address.unwrap()),
         "the first map's buffer did not come back from its slot"
-    ));
+    );
     state(|d| {
         assert_eq!(
             d.maps,

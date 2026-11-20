@@ -1030,7 +1030,7 @@ impl Duplication {
         };
         let shown = self.cursor.shown();
         let desktop_updated = info.LastPresentTime != 0;
-        let result = (|| {
+        let result: Result<_> = (|| {
             self.cursor.update(&self.gpu, &self.duplicate, &info)?;
             // A pointer-only update while the pointer stays hidden (mouse-look
             // in a game) changes nothing on screen. Publishing the picture

@@ -569,7 +569,7 @@ fn frame_into<S: Sink>(
     out.clear();
     if payload == 0 {
         out.copy(bitstream, 0, bitstream.len());
-        return Ok(());
+        return Ok(all);
     }
     let coarse = coarse_count(word(bitstream, 0));
     let steps = rows.then(|| cached_row_steps(bitstream));
@@ -737,7 +737,7 @@ pub fn layout<'a>(frame: impl Into<Payload<'a>>, payload: usize) -> Result<Layou
     }
     Ok(layout)
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FecBlock {
     pub data: usize,
     pub percentage: usize,
@@ -1000,7 +1000,7 @@ impl DetailFec {
         let records: &[Record] = match records {
             Some(records) => records,
             None => {
-                parsed = records(frame)?;
+                parsed = self::records(frame)?;
                 &parsed
             }
         };

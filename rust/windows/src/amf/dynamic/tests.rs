@@ -109,7 +109,7 @@ fn frames_before_the_first_sample_carry_the_static_stand_in() {
     let units = frame_units(Codec::Hevc, &sample.frame_stats().unwrap()).unwrap();
     dynamic.take(Ok(Some(sample)), Instant::now());
     assert_eq!(
-        dynamic.first_unit(frame),
+        dynamic.first_unit(frame.clone()),
         [&frame[..at], &units, &frame[at..]].concat()
     );
     assert_eq!((dynamic.report.spliced, dynamic.report.stand_in), (4, 3));
@@ -147,7 +147,7 @@ fn a_sample_is_spliced_into_every_frame_until_the_next() {
     dynamic.take(Ok(Some(dark)), Instant::now());
     let units = frame_units(Codec::Hevc, &dark_stats).unwrap();
     assert_eq!(
-        dynamic.first_unit(frame),
+        dynamic.first_unit(frame.clone()),
         [&frame[..at], &units, &frame[at..]].concat()
     );
     assert_eq!(dynamic.report.scene_cuts, 2);
@@ -894,7 +894,7 @@ fn the_receivers_display_peak_leaves_the_units() {
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
     let units = frame_units(Codec::Hevc, &stats).unwrap();
     assert_eq!(
-        dynamic.first_unit(frame),
+        dynamic.first_unit(frame.clone()),
         [&frame[..at], &units, &frame[at..]].concat()
     );
 }
