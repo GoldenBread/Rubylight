@@ -879,8 +879,25 @@ int FramePacer::onVsync(int64_t vsyncNs, const FrameTiming* frames, size_t count
             // for a vsync and the next for three, and no frame waited to cover it. There frames go up
             // no more often than the stream's rate, as in Balanced: an early one waits for its turn,
             // and every frame stays the same number of vsyncs.
-            if (count > 0 && (heldVsyncs() <= 1 || vsyncNs - lastPresentVsyncNs_ >= streamIntervalNs_ * 8 / 10)) {
+            if (count == 0) {
+                break;
+            }
+            if (heldVsyncs() <= 1) {
                 choice = 0;
+                break;
+            }
+            if (vsyncNs - lastPresentVsyncNs_ < streamIntervalNs_ * 8 / 10) {
+                break;
+            }
+            // At its turn the oldest frame goes up, unless it is more than a stream frame old and a
+            // newer one waits, as the desktop drops a picture (present::Pacer::take_due). One frame a
+            // turn never catches up: a burst kept its backlog for good, and a host a little faster
+            // than the screen (60.000 fps on 119.88 Hz) added a frame every 17 s until the queue
+            // overflowed.
+            choice = 0;
+            while (static_cast<size_t>(choice) + 1 < count && frames[choice].arrivalNs > 0 &&
+                   vsyncNs - frames[choice].arrivalNs > streamIntervalNs_) {
+                choice++;
             }
             break;
 
