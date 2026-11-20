@@ -199,6 +199,7 @@ impl Loopback {
                     bits: f.wBitsPerSample,
                     float,
                     resampler,
+                    identity: butterpollo_core::audio::mix_is_identity(&matrix),
                     matrix,
                     input: vec![0.; f.nChannels as usize],
                     output: vec![0.; output_channels],
@@ -281,6 +282,7 @@ impl Loopback {
                     bits: 32,
                     float: true,
                     resampler,
+                    identity: butterpollo_core::audio::mix_is_identity(&matrix),
                     matrix,
                     input: vec![0.; 2],
                     output: vec![0.; output_channels],
@@ -426,6 +428,10 @@ struct CaptureSamples {
     float: bool,
     resampler: butterpollo_core::audio::Resampler,
     matrix: Vec<Vec<f32>>,
+    /// Whether the matrix only copies each channel to its own output, decided
+    /// once here rather than per sample: such a capture queues its converted
+    /// samples without the mix, and they are clamped already.
+    identity: bool,
     input: Vec<f32>,
     output: Vec<f32>,
     /// Frames, at the resampler's input rate, this host discarded from the queue since
@@ -484,10 +490,16 @@ impl CaptureSamples {
                     0.
                 };
             }
-            for (dest, row) in self.output.iter_mut().zip(&self.matrix) {
-                *dest = self.input.iter().zip(row).map(|(v, gain)| v * gain).sum();
+            if self.identity {
+                // The converted samples are the mix's result, clamped already:
+                // queue them without copying them through the matrix.
+                self.trimmed += self.resampler.push_clamped(&self.input) as u64;
+            } else {
+                for (dest, row) in self.output.iter_mut().zip(&self.matrix) {
+                    *dest = self.input.iter().zip(row).map(|(v, gain)| v * gain).sum();
+                }
+                self.trimmed += self.resampler.push(&self.output) as u64;
             }
-            self.trimmed += self.resampler.push(&self.output) as u64;
         }
     }
     #[cfg(test)]

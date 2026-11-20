@@ -167,6 +167,24 @@ fn seven_one_four_capture_keeps_every_speaker_and_invents_no_heights() {
     assert!(Resampler::new(48000, 10).is_err());
 }
 #[test]
+fn a_matrix_that_only_copies_each_channel_says_so() {
+    // The common captures: stereo to stereo, surround to surround, and a
+    // 7.1.4 endpoint already in Moonlight's order.
+    assert!(mix_is_identity(&mix_matrix(2, 3, 2).unwrap()));
+    assert!(mix_is_identity(&mix_matrix(6, 0x3f, 6).unwrap()));
+    assert!(mix_is_identity(
+        &mix_matrix(12, audio_ext::CHANNEL_MASK_714, 12).unwrap()
+    ));
+    // Everything that moves, folds or invents a channel still mixes.
+    assert!(!mix_is_identity(&mix_matrix(1, 0, 2).unwrap()));
+    assert!(!mix_is_identity(&mix_matrix(2, 3, 6).unwrap()));
+    assert!(!mix_is_identity(&mix_matrix(8, 0x63f, 12).unwrap()));
+    // A channel swap or a scaled copy is not the identity either.
+    assert!(!mix_is_identity(&[vec![0., 1.], vec![1., 0.]]));
+    assert!(!mix_is_identity(&[vec![0.5, 0.], vec![0., 0.5]]));
+    assert!(mix_is_identity(&[vec![1., 0.], vec![0., 1.]]));
+}
+#[test]
 fn a_48_khz_resampler_at_phase_zero_returns_the_queued_prefix() {
     let mut r = Resampler::new(48000, 2).unwrap();
     for i in 0..100 {

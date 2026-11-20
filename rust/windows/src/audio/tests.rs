@@ -35,17 +35,23 @@ fn an_endpoint_capture_keeps_delivering_through_silence() {
     );
 }
 
-fn capture_samples(rate: u32) -> CaptureSamples {
+fn capture_samples_with(rate: u32, matrix: Vec<Vec<f32>>) -> CaptureSamples {
+    let channels = matrix.len();
     CaptureSamples {
         channels: 2,
         bits: 32,
         float: true,
-        resampler: butterpollo_core::audio::Resampler::new(rate, 2).unwrap(),
-        matrix: butterpollo_core::audio::mix_matrix(2, 3, 2).unwrap(),
+        resampler: butterpollo_core::audio::Resampler::new(rate, channels).unwrap(),
+        identity: butterpollo_core::audio::mix_is_identity(&matrix),
+        matrix,
         input: vec![0.; 2],
-        output: vec![0.; 2],
+        output: vec![0.; channels],
         trimmed: 0,
     }
+}
+
+fn capture_samples(rate: u32) -> CaptureSamples {
+    capture_samples_with(rate, butterpollo_core::audio::mix_matrix(2, 3, 2).unwrap())
 }
 
 fn captured(samples: &mut CaptureSamples, values: &[f32], flags: u32) {
@@ -56,6 +62,53 @@ fn captured(samples: &mut CaptureSamples, values: &[f32], flags: u32) {
     assert!(values.len().is_multiple_of(2));
     // SAFETY: values contains complete float stereo frames and outlives the call.
     unsafe { samples.push_packet(values.as_ptr().cast(), values.len() / 2, flags) };
+}
+
+/// What the capture path queued before the identity shortcut: the conversion
+/// clamps, the matrix mixes, and the queue clamps again. `silent` frames of
+/// zero follow the raw ones.
+fn mixed_queue(raw: &[f32], matrix: &[Vec<f32>], silent: usize) -> Vec<f32> {
+    let clamp = |v: f32| if v.is_finite() { v.clamp(-1., 1.) } else { 0. };
+    let mut queued = Vec::new();
+    for frame in raw.chunks(2) {
+        let input: Vec<f32> = frame.iter().copied().map(clamp).collect();
+        for row in matrix {
+            let mixed: f32 = input.iter().zip(row).map(|(v, gain)| v * gain).sum();
+            queued.push(clamp(mixed));
+        }
+    }
+    queued.extend(std::iter::repeat(0.).take(silent * matrix.len()));
+    queued
+}
+
+#[test]
+fn an_identity_capture_queues_what_a_mixing_one_queues() {
+    // Samples beyond full scale, non-finite ones and a silent packet: the
+    // identity path's single clamp must land every sample where the mix
+    // path's two clamps did.
+    let raw = [
+        0.25,
+        -0.75,
+        1.5,
+        -1.5,
+        f32::INFINITY,
+        f32::NAN,
+        -0.0,
+        1.0,
+        1.0,
+        -1.0,
+    ];
+    let identity = butterpollo_core::audio::mix_matrix(2, 3, 2).unwrap();
+    let mixing = butterpollo_core::audio::mix_matrix(2, 3, 6).unwrap();
+    for (name, matrix) in [("identity", identity), ("mixing", mixing)] {
+        let mut samples = capture_samples_with(48_000, matrix.clone());
+        // SAFETY: raw contains complete float stereo frames and outlives the call.
+        unsafe { samples.push_packet(raw.as_ptr().cast(), raw.len() / 2, 0) };
+        // SAFETY: Silent packets do not read the null data pointer.
+        unsafe { samples.push_packet(std::ptr::null(), 3, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) };
+        let want = mixed_queue(&raw, &matrix, 3);
+        assert_eq!(samples.read(8).unwrap(), want, "{name} matrix");
+    }
 }
 
 #[test]

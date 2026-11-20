@@ -113,6 +113,18 @@ impl Resampler {
                 .iter()
                 .map(|v| if v.is_finite() { v.clamp(-1., 1.) } else { 0. }),
         );
+        self.cap()
+    }
+    /// Queues one frame the caller has already clamped to [-1, 1] (a capture's
+    /// converted samples, or an identity mix of them): the same cap, without
+    /// clamping every sample a second time.
+    pub fn push_clamped(&mut self, frame: &[f32]) -> usize {
+        debug_assert_eq!(frame.len(), self.channels);
+        self.queue.extend(frame.iter().copied());
+        self.cap()
+    }
+    /// What both queueing paths do with a frame already on the queue.
+    fn cap(&mut self) -> usize {
         let limit = (self.rate as usize / 10).max(2) * self.channels;
         if self.queue.len() > limit {
             let excess = self.queue.len() - limit;
@@ -446,6 +458,21 @@ pub fn mix_matrix(
         }
     }
     Ok(matrix)
+}
+
+/// Whether `matrix` copies each input channel to its own output, a square
+/// matrix of a one on the diagonal and zeros elsewhere. A capture with such a
+/// matrix needs no mix: its samples can go straight to the queue, already
+/// clamped by their conversion.
+pub fn mix_is_identity(matrix: &[Vec<f32>]) -> bool {
+    let width = matrix.first().map_or(0, Vec::len);
+    matrix.len() == width
+        && matrix.iter().enumerate().all(|(dest, row)| {
+            row.len() == width
+                && row.iter().enumerate().all(|(source, &gain)| {
+                    (source == dest && gain == 1.) || (source != dest && gain == 0.)
+                })
+        })
 }
 #[cfg(test)]
 mod tests;
