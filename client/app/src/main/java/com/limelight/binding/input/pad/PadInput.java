@@ -131,6 +131,16 @@ public final class PadInput {
         return control == PadLayout.Control.LEFT_GRIP || control == PadLayout.Control.RIGHT_GRIP;
     }
 
+    /**
+     * The Steam Controller's stick-touch flag for an analog stick, held while a finger is on it as that controller's
+     * capacitive sticks report it; 0 for every other control, the WASD stick included.
+     */
+    static int stickTouchFlag(PadLayout.Control control) {
+        if (control == PadLayout.Control.LEFT_STICK) return SteamControls.LEFT_STICK_TOUCH_FLAG;
+        if (control == PadLayout.Control.RIGHT_STICK) return SteamControls.RIGHT_STICK_TOUCH_FLAG;
+        return 0;
+    }
+
     /** The Steam Controller pad a trackpad control touches, as {@link SteamControls#LEFT_PAD} or {@link SteamControls#RIGHT_PAD}. */
     public static int steamPad(PadLayout.Control control) {
         return control == PadLayout.Control.LEFT_PAD ? SteamControls.LEFT_PAD : SteamControls.RIGHT_PAD;

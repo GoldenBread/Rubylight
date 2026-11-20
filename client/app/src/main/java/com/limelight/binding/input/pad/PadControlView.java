@@ -44,7 +44,7 @@ final class PadControlView extends View {
     // A stick tap (short, barely pushed) arms its click for the next touch; a flick does not.
     private long stickReleasedAt, stickDownAt;
     private float stickPush;
-    private boolean stickClick, haptics = true;
+    private boolean stickClick, haptics = true, stickTouch;
     private float restingAlpha = 1;
     /** A stick's knob, drawn in a larger view of its own; null for every other control. */
     private final KnobLayer knobLayer;
@@ -293,6 +293,11 @@ final class PadControlView extends View {
 
     void configureStick(boolean floating, float deadzone) {
         stick = new LayoutStick(floating, Math.max(0, Math.min(.9f, deadzone)));
+    }
+
+    /** With the Steam Controller controls, a finger on an analog stick also touches that controller's stick. */
+    void setStickTouch(boolean stickTouch) {
+        this.stickTouch = stickTouch;
     }
 
     void setHaptics(boolean haptics) {
@@ -907,7 +912,9 @@ final class PadControlView extends View {
         if (flags != state.flags && flags != 0) feedback(HapticFeedbackConstants.LONG_PRESS);
         boolean flagsChanged = flags != state.flags;
         state.flags = flags;
-        gamepad.setButtons(slot(), flags);
+        // The touch is held, not pressed: it neither shows nor vibrates, and it goes when the finger lifts.
+        int touch = stickTouch && stickPointer >= 0 ? PadInput.stickTouchFlag(control) : 0;
+        gamepad.setButtons(slot(), flags | touch);
         stickMoved(flagsChanged, arcWasDrawn);
     }
 

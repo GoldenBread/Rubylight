@@ -91,7 +91,7 @@ public final class ModernController {
         resize = (v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) place();
         };
-        ClassicLayoutMigration.carryOverOnce(context, store);
+        ClassicLayoutMigration.carryOverOnce(context, store, prefs.flipFaceButtons);
         load();
     }
 
@@ -163,6 +163,7 @@ public final class ModernController {
             view.setHaloLayer(halo);
             view.configureStick(prefs.oscFloatingSticks, prefs.oscStickDeadzone / 100f);
             view.setHaptics(prefs.vibrateOsc);
+            view.setStickTouch(prefs.oscSteamControls);
             view.setTouchSink(this::touch);
             view.setPointerSink(pointerSink);
             if (control == PadLayout.Control.POINTER_PAD) {

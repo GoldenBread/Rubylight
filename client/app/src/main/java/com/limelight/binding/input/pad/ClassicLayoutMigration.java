@@ -12,14 +12,16 @@ import java.util.Map;
 
 /**
  * Carries the layout of the classic on-screen controller, which earlier versions offered (and started with) beside
- * this one, over to this controller once, so a player who arranged the old controls finds them roughly where they
- * were instead of at the defaults. The classic controller kept one layout for all games and both orientations: each
- * control's box in pixels of the landscape screen, in the {@link #CLASSIC_PREFS} preferences. This maps those boxes
- * onto this controller's places and sizes. Controls the classic layout does not have (the WASD and pointer touchpads)
- * keep their default place.
+ * this one, over to this controller once, so a player who arranged the old controls finds them where they were
+ * instead of at the defaults. The classic controller kept one layout for all games and both orientations: each
+ * control's box in pixels of the landscape screen and its own opacity, in the {@link #CLASSIC_PREFS} preferences.
+ * Each box becomes the control's place and its free width and height, up to the whole screen, so a layout of
+ * controls stretched over the screen comes out the same. Controls the classic layout does not have (the WASD and
+ * pointer touchpads) keep their default place.
  *
- * <p>An approximate mapping on purpose: the face cluster is one control where the classic had four buttons, and widths
- * are relative to this controller's unit, so the result is a starting point the editor can adjust.
+ * <p>The classic A, B, X and Y were four buttons. Standing as the classic controller placed them, they become the
+ * face cluster; moved, resized or faded apart, they become the cluster's four split members, each where the player
+ * put it. The classic D-pad was one control and stays one.
  */
 public final class ClassicLayoutMigration {
     /** The classic controller's saved layout: one JSON box per control, keyed by its element id. */
@@ -35,6 +37,17 @@ public final class ClassicLayoutMigration {
             BACK = 10, START = 11, LS = 12, RS = 13, LSB = 14, RSB = 15, GUIDE = 16, TOUCHPAD = 17,
             L4 = 18, R4 = 19, L5 = 20, R5 = 21, LEFT_PAD = 22, RIGHT_PAD = 23, LEFT_GRIP = 24, RIGHT_GRIP = 25;
     private static final int LAST_ID = RIGHT_GRIP;
+    /** A classic box: left, top, width and height in pixels, then the control's own opacity in percent. */
+    static final int LEFT = 0, TOP = 1, WIDTH = 2, HEIGHT = 3, OPACITY = 4;
+    /** The classic face buttons in {@link PadLayout.Control#memberIndex} order: bottom, right, left, top. */
+    private static final int[] FACE_IDS = {A, B, X, Y};
+    /**
+     * With the Nintendo button layout on, the classic face buttons sent B at the bottom, A on the right, Y on the left
+     * and X at the top: the member that sends what each position sent, by position.
+     */
+    private static final int[] SWAPPED = {1, 0, 3, 2};
+    /** How far the classic face buttons may stand from their diamond and still be the cluster, in button sizes. */
+    private static final float DIAMOND_SLACK = .25f, SIZE_SLACK = .2f;
 
     private ClassicLayoutMigration() {
     }
@@ -46,8 +59,9 @@ public final class ClassicLayoutMigration {
      * is never read.
      *
      * @param store the controller's own preferences ({@link ModernController#PREFS})
+     * @param swapFaces the Nintendo button layout setting, which the classic face buttons followed
      */
-    static void carryOverOnce(Context context, SharedPreferences store) {
+    static void carryOverOnce(Context context, SharedPreferences store, boolean swapFaces) {
         if (store.getBoolean(MIGRATED, false)) return;
         SharedPreferences.Editor edit = store.edit().putBoolean(MIGRATED, true);
         // The older shared key is both orientations' fallback (PadLayoutKeys); it is free only while no shared layout
@@ -62,7 +76,7 @@ public final class ClassicLayoutMigration {
             // dimensions, because the shared key it is stored under is used in both orientations.
             float width = Math.max(metrics.widthPixels, metrics.heightPixels);
             float height = Math.min(metrics.widthPixels, metrics.heightPixels);
-            PadLayout migrated = migrate(boxes, width, height, metrics.density);
+            PadLayout migrated = migrate(boxes, width, height, metrics.density, swapFaces);
             if (!migrated.isDefault()) edit.putString(PadLayoutKeys.legacyKey(null), migrated.serialize());
         }
         edit.apply();
@@ -77,7 +91,10 @@ public final class ClassicLayoutMigration {
                 .putBoolean(MIGRATED, true).apply();
     }
 
-    /** The classic controls' saved boxes; a corrupt control is simply not carried over. */
+    /**
+     * The classic controls' saved boxes, each {left, top, width, height, opacity}; a layout saved before per-control
+     * opacity is fully opaque, and a corrupt control is simply not carried over.
+     */
     static Map<Integer, float[]> boxes(SharedPreferences classic) {
         Map<Integer, float[]> boxes = new HashMap<>();
         Map<String, ?> saved = classic.getAll();
@@ -87,7 +104,8 @@ public final class ClassicLayoutMigration {
             try {
                 JSONObject config = new JSONObject((String) json);
                 boxes.put(id, new float[] {config.getInt("LEFT"), config.getInt("TOP"),
-                        config.getInt("WIDTH"), config.getInt("HEIGHT")});
+                        config.getInt("WIDTH"), config.getInt("HEIGHT"),
+                        config.optInt("OPACITY", PadLayout.MAX_OPACITY)});
             } catch (JSONException ignored) {
                 // Not carried over.
             }
@@ -95,27 +113,32 @@ public final class ClassicLayoutMigration {
         return boxes;
     }
 
+    /** {@link #migrate(Map, float, float, float, boolean)} with the face buttons as they stand. */
+    public static PadLayout migrate(Map<Integer, float[]> boxes, float width, float height, float density) {
+        return migrate(boxes, width, height, density, false);
+    }
+
     /**
      * The layout that stands in for the classic one.
      *
-     * @param boxes classic element id to {left, top, width, height} in pixels of the saved screen
+     * @param boxes classic element id to {left, top, width, height[, opacity]} in pixels of the saved screen
      * @param width  the saved screen's width in pixels
      * @param height the saved screen's height in pixels
      * @param density the display's density, for the controls' minimum touch
+     * @param swapFaces the Nintendo button layout was on, so each classic face button sent the other letter of its
+     *                  pair; the button that sends that letter takes its place, so every place sends what it sent
      */
-    public static PadLayout migrate(Map<Integer, float[]> boxes, float width, float height, float density) {
+    public static PadLayout migrate(Map<Integer, float[]> boxes, float width, float height, float density,
+                                    boolean swapFaces) {
         PadLayout layout = new PadLayout();
         if (boxes == null || width <= 0 || height <= 0) return layout;
         for (Map.Entry<Integer, float[]> entry : boxes.entrySet()) {
             PadLayout.Control control = control(entry.getKey());
-            float[] box = entry.getValue();
-            if (control == null || box == null || box.length < 4 || !(box[2] > 0) || !(box[3] > 0)) continue;
-            place(layout, control, box[0] + box[2] / 2, box[1] + box[3] / 2, box[2], box[3],
-                    width, height, density);
-            // A control the default leaves out is shown when the classic layout had it.
-            layout.spec(control).hidden = false;
+            if (control != null && valid(entry.getValue())) {
+                carry(layout, control, entry.getValue(), width, height, density);
+            }
         }
-        faceCluster(layout, boxes, width, height, density);
+        faces(layout, boxes, width, height, density, swapFaces);
         return layout;
     }
 
@@ -143,41 +166,95 @@ public final class ClassicLayoutMigration {
             case RIGHT_PAD: return PadLayout.Control.RIGHT_PAD;
             case LEFT_GRIP: return PadLayout.Control.LEFT_GRIP;
             case RIGHT_GRIP: return PadLayout.Control.RIGHT_GRIP;
-            // The four face buttons are one cluster; faceCluster handles them.
+            // The four face buttons become the cluster or its members; faces handles them.
             case A: case B: case X: case Y: return null;
             default: return null;
         }
     }
 
-    /**
-     * The four classic face buttons become the cluster: its center is theirs, and its size spans their outermost
-     * edges, so a hand that knew the old spacing finds the cluster the same size.
-     */
-    private static void faceCluster(PadLayout layout, Map<Integer, float[]> boxes, float width, float height,
-                                    float density) {
-        float left = Float.MAX_VALUE, top = Float.MAX_VALUE, right = -1, bottom = -1;
-        for (int id : new int[] {A, B, X, Y}) {
-            float[] box = boxes.get(id);
-            if (box == null || box.length < 4 || !(box[2] > 0) || !(box[3] > 0)) continue;
-            left = Math.min(left, box[0]);
-            top = Math.min(top, box[1]);
-            right = Math.max(right, box[0] + box[2]);
-            bottom = Math.max(bottom, box[1] + box[3]);
-        }
-        if (right <= left || bottom <= top) return;
-        float u = PadLayout.unit(width, height, density);
-        float base = Math.max(PadLayout.width(PadLayout.Control.FACE, u, density, 1), 1);
-        float scale = Math.max(right - left, bottom - top) / base;
-        place(layout, PadLayout.Control.FACE, (left + right) / 2, (top + bottom) / 2,
-                right - left, bottom - top, width, height, density);
-        layout.setScale(PadLayout.Control.FACE, scale);
+    private static boolean valid(float[] box) {
+        return box != null && box.length >= 4 && box[WIDTH] > 0 && box[HEIGHT] > 0;
     }
 
-    private static void place(PadLayout layout, PadLayout.Control control, float x, float y, float w, float h,
-                              float width, float height, float density) {
-        float u = PadLayout.unit(width, height, density);
-        float base = Math.max(PadLayout.width(control, u, density, 1), 1);
-        layout.setScale(control, Math.max(w, h) / base);
-        layout.moveTo(control, x, y, width, height, density);
+    private static int opacity(float[] box) {
+        return box.length > OPACITY ? Math.round(box[OPACITY]) : PadLayout.MAX_OPACITY;
+    }
+
+    /** The control takes the classic box as its place and size, the classic opacity, and shows. */
+    private static void carry(PadLayout layout, PadLayout.Control control, float[] box, float width, float height,
+                              float density) {
+        layout.setBounds(control, box[LEFT], box[TOP], box[WIDTH], box[HEIGHT], width, height, density);
+        layout.setOpacity(control, opacity(box));
+        // A control the default leaves out is shown when the classic layout had it.
+        layout.spec(control).hidden = false;
+    }
+
+    /**
+     * The four classic face buttons. As the classic controller placed them (with the Nintendo button layout off), they
+     * become the cluster over the box they span, so a hand that knew the old spacing finds it the same size. Otherwise
+     * the cluster splits and each member takes its own button's box and opacity; a member whose button was not saved
+     * sits over its place in the default cluster, as the classic controller showed an unsaved button at its default.
+     */
+    private static void faces(PadLayout layout, Map<Integer, float[]> boxes, float width, float height, float density,
+                              boolean swap) {
+        float[][] face = new float[FACE_IDS.length][];
+        boolean any = false, all = true;
+        for (int i = 0; i < FACE_IDS.length; i++) {
+            float[] box = boxes.get(FACE_IDS[i]);
+            face[i] = valid(box) ? box : null;
+            any |= face[i] != null;
+            all &= face[i] != null;
+        }
+        if (!any) return;
+        if (all && !swap && classicDiamond(face)) {
+            float left = Float.MAX_VALUE, top = Float.MAX_VALUE, right = -Float.MAX_VALUE, bottom = -Float.MAX_VALUE;
+            for (float[] box : face) {
+                left = Math.min(left, box[LEFT]);
+                top = Math.min(top, box[TOP]);
+                right = Math.max(right, box[LEFT] + box[WIDTH]);
+                bottom = Math.max(bottom, box[TOP] + box[HEIGHT]);
+            }
+            carry(layout, PadLayout.Control.FACE, new float[] {left, top, right - left, bottom - top, opacity(face[0])},
+                    width, height, density);
+            return;
+        }
+        PadLayout.Control[] members = PadLayout.members(PadLayout.Control.FACE);
+        for (int i = 0; i < face.length; i++) {
+            PadLayout.Control member = members[swap ? SWAPPED[i] : i];
+            if (face[i] != null) carry(layout, member, face[i], width, height, density);
+            else layout.spec(member).hidden = false;
+        }
+        layout.spec(PadLayout.Control.FACE).hidden = true;
+    }
+
+    /**
+     * Whether the four face buttons (bottom, right, left, top) still stand as the classic controller placed them: four
+     * equal squares in a diamond, Y above A and X left of B, each one button's size from their common center, give or
+     * take a quarter button, all at one opacity.
+     */
+    static boolean classicDiamond(float[][] face) {
+        float size = 0;
+        for (float[] box : face) size += box[WIDTH] + box[HEIGHT];
+        size /= 2 * face.length;
+        if (!(size > 0)) return false;
+        float cx = 0, cy = 0;
+        for (float[] box : face) {
+            if (Math.abs(box[WIDTH] - size) > SIZE_SLACK * size || Math.abs(box[HEIGHT] - size) > SIZE_SLACK * size) {
+                return false;
+            }
+            if (opacity(box) != opacity(face[0])) return false;
+            cx += box[LEFT] + box[WIDTH] / 2;
+            cy += box[TOP] + box[HEIGHT] / 2;
+        }
+        cx /= face.length;
+        cy /= face.length;
+        // Bottom, right, left and top of the common center, one button apart.
+        float[][] offsets = {{0, 1}, {1, 0}, {-1, 0}, {0, -1}};
+        for (int i = 0; i < face.length; i++) {
+            float dx = face[i][LEFT] + face[i][WIDTH] / 2 - (cx + offsets[i][0] * size);
+            float dy = face[i][TOP] + face[i][HEIGHT] / 2 - (cy + offsets[i][1] * size);
+            if (Math.hypot(dx, dy) > DIAMOND_SLACK * size) return false;
+        }
+        return true;
     }
 }

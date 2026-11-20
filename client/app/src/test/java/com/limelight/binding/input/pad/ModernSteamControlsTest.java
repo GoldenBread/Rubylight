@@ -7,6 +7,7 @@ import android.widget.FrameLayout;
 
 import com.limelight.binding.input.HeldInputState;
 import com.limelight.binding.input.SteamControls;
+import com.limelight.nvstream.input.ControllerPacket;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.ui.UiNavigationTest;
@@ -115,6 +116,41 @@ public class ModernSteamControlsTest {
             view.up(0, 150);
             assertEquals(0, last());
         }
+    }
+
+    @Test public void aTouchedStickHoldsItsTouchFlagUntilTheFingerLifts() {
+        ModernController controller = controller();
+        PadControlView left = controller.view(PadLayout.Control.LEFT_STICK);
+        PadControlView right = controller.view(PadLayout.Control.RIGHT_STICK);
+        left.down(0, left.getWidth() / 2f, left.getHeight() / 2f, 1000);
+        assertEquals(SteamControls.LEFT_STICK_TOUCH_FLAG, last());
+        right.down(1, right.getWidth() / 2f, right.getHeight() / 2f, 1000);
+        assertEquals(SteamControls.LEFT_STICK_TOUCH_FLAG | SteamControls.RIGHT_STICK_TOUCH_FLAG, last());
+        right.up(1, 1050);
+        assertEquals(SteamControls.LEFT_STICK_TOUCH_FLAG, last());
+        left.up(0, 1050);
+        assertEquals(0, last());
+
+        // A tap and a touch held is the stick's click; the touch stays with it.
+        left.down(0, left.getWidth() / 2f, left.getHeight() / 2f, 2000);
+        left.up(0, 2050);
+        left.down(0, left.getWidth() / 2f, left.getHeight() / 2f, 2150);
+        assertEquals(ControllerPacket.LS_CLK_FLAG | SteamControls.LEFT_STICK_TOUCH_FLAG, last());
+        left.up(0, 2300);
+        assertEquals(0, last());
+        controller.destroy();
+
+        // Without the Steam controls a touched stick sends nothing but where it points.
+        prefs.oscSteamControls = false;
+        buttons.clear();
+        controller = controller();
+        left = controller.view(PadLayout.Control.LEFT_STICK);
+        left.down(0, left.getWidth() / 2f, left.getHeight() / 2f, 3000);
+        assertTrue(buttons.isEmpty() || last() == 0);
+        left.up(0, 3050);
+        controller.destroy();
+        assertEquals(0, PadInput.stickTouchFlag(PadLayout.Control.WASD));
+        assertEquals(0, PadInput.stickTouchFlag(PadLayout.Control.L3));
     }
 
     @Test public void aGripHoldsFromOneTapToTheNextAndLetsGoWhenTheControlsDo() {
