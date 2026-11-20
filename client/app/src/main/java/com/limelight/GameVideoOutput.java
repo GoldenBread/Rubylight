@@ -941,6 +941,7 @@ final class GameVideoOutput {
         game.decoderRenderer.setStreamFrameRateMilliHz(fpsMillihz);
         if (game.adaptiveBitrate != null) game.adaptiveBitrate.setFrameRate(fps);
         refreshSurfaceFrameRateVote();
+        game.menuActions.refreshStreamMenu();
     }
 
     // What this phone offers a stream that follows it, {width, height, fps in millihertz}, given
@@ -1065,7 +1066,12 @@ final class GameVideoOutput {
     void applyStreamSize(int width, int height) {
         game.streamWidth = width;
         game.streamHeight = height;
-        if (game.isFinishing() || game.isDestroyed() || (width == game.prefConfig.width && height == game.prefConfig.height)) {
+        if (game.isFinishing() || game.isDestroyed()) {
+            return;
+        }
+        // A stream menu left open names the new size in its header.
+        game.menuActions.refreshStreamMenu();
+        if (width == game.prefConfig.width && height == game.prefConfig.height) {
             return;
         }
         LimeLog.info("Stream now " + width + "x" + height + " (was " + game.prefConfig.width + "x" + game.prefConfig.height + ")");

@@ -310,6 +310,32 @@ public class GameStreamMenuTest {
         assertEquals(1440, options.streamHeight);
     }
 
+    /**
+     * A reconfigure while the menu is open: split screen made a 1600x900 stream 948x970 and the open menu's header
+     * still said 900p. The header names the size, and the rate, the stream has now.
+     */
+    @Test
+    public void theOpenMenusHeaderFollowsAReconfigure() {
+        Game game = streamingGame("rubylight-serverinfo.xml");
+        PreferenceConfiguration prefs = ReflectionHelpers.getField(game, "prefConfig");
+        prefs.width = 1600;
+        prefs.height = 900;
+        ReflectionHelpers.setField(game, "streamWidth", 1600);
+        ReflectionHelpers.setField(game, "streamHeight", 900);
+        ReflectionHelpers.setField(game, "streamFps", 60);
+        StreamMenu menu = open(game);
+        assertTrue(menu.sheet().subtitle().getText().toString(),
+                menu.sheet().subtitle().getText().toString().startsWith("900p · 60 FPS"));
+        // As the window already shows it, so only the size the frames come in changes.
+        prefs.width = 948;
+        prefs.height = 970;
+        game.videoOutput.applyStreamSize(948, 970);
+        assertTrue(menu.sheet().subtitle().getText().toString(),
+                menu.sheet().subtitle().getText().toString().startsWith("948p · 60 FPS"));
+        menu.sheet().dismiss();
+        idle();
+    }
+
     // The chosen item runs once the menu is gone and the stream has focus: give it that focus.
     private static void runMenuAction(Game game) {
         idle();

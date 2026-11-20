@@ -179,6 +179,11 @@ final class GameMenuActions {
         }
     }
 
+    // The stream's size or rate changed: a menu left open names the new ones in its header. UI thread.
+    void refreshStreamMenu() {
+        if (streamMenuSheet != null) streamMenuSheet.refresh();
+    }
+
     private void showHostAudio(com.limelight.nativeapi.NativeAudio audio, int generation) {
         if (generation != game.foregroundGeneration || game.isFinishing()) return;
         hostAudio = audio;

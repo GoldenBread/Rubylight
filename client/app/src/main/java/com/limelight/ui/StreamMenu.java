@@ -1241,16 +1241,27 @@ public final class StreamMenu {
     }
 
     /**
-     * Shows what changed while the menu is open, such as the host's answer about its audio: the switches in
-     * place, or the page again when items came or went.
+     * Shows what changed while the menu is open, such as the host's answer about its audio or the stream's new size:
+     * the switches and the first page's header in place, or the page again when items came or went.
      */
     public void refresh() {
         if ((page != Page.MAIN && page != Page.MORE) || !sheet.isShowing()) return;
         Options o = options.get();
         List<Item> now = items(page == Page.MAIN ? offered(o) : moreEntries(o));
         boolean noted = page == Page.MAIN && o.role == NvApp.Role.STREAM && o.hostAudioUnread;
-        if (now.equals(offeredItems) && noted == (audioNote != null)) refreshToggles();
-        else render(page, o, null);
+        if (now.equals(offeredItems) && noted == (audioNote != null)) {
+            refreshToggles();
+            if (page == Page.MAIN) showHeader(o);
+        } else {
+            render(page, o, null);
+        }
+    }
+
+    // The first page's title and mode line as render sets them; the title is set again only when it changed.
+    private void showHeader(Options o) {
+        String[] header = header(o);
+        if (!android.text.TextUtils.equals(sheet.heading(), header[0])) sheet.setHeading(header[0]);
+        sheet.setSubtitle(header[1]);
     }
 
     /** The line saying the host's audio settings could not be read, or null when the page has none. */
