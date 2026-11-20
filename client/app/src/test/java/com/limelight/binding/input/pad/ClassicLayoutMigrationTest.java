@@ -154,6 +154,21 @@ public class ClassicLayoutMigrationTest {
         PreferenceConfiguration.readPreferences(context);
     }
 
+    /** A classic player's layout for all games in one orientation. */
+    private PadLayout general(boolean landscape) {
+        return PadLayout.parse(store.getString(PadLayoutKeys.key(landscape, null), null));
+    }
+
+    private String backup(String key) {
+        return store.getString(key + ClassicLayoutMigration.BACKUP_SUFFIX, null);
+    }
+
+    private void assertRightStickAt1300x500(PadLayout layout) {
+        PadLayout.Spec stick = layout.spec(PadLayout.Control.RIGHT_STICK);
+        assertEquals(1300f / WIDTH, stick.cx, .01f);
+        assertEquals(500f / HEIGHT, stick.cy, .01f);
+    }
+
     @Test public void aPlayerWhoWentBackToTheClassicControllerGetsTheLayoutTheyKeptArranging() {
         // They tried this controller once, which carried the classic layout over and set the flag, then went back
         // to the classic controller and moved its right stick to (1300, 500).
@@ -162,40 +177,50 @@ public class ClassicLayoutMigrationTest {
         classic.edit().putString("13", RIGHT_STICK).commit();
         retire("classic");
         ClassicLayoutMigration.carryOverOnce(context, store, false);
-        PadLayout.Spec stick = shared().spec(PadLayout.Control.RIGHT_STICK);
-        assertEquals(1300f / WIDTH, stick.cx, .01f);
-        assertEquals(500f / HEIGHT, stick.cy, .01f);
+        // The classic controller had one layout for both orientations.
+        assertRightStickAt1300x500(general(true));
+        assertRightStickAt1300x500(general(false));
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
         assertTrue(store.getBoolean(ClassicLayoutMigration.MIGRATED, false));
         assertFalse(store.contains(ClassicLayoutMigration.CLASSIC_STYLE));
 
         // Still only once: the classic layout moved later is never read.
-        String carried = store.getString(PadLayoutKeys.legacyKey(null), null);
+        String carried = store.getString(PadLayoutKeys.key(true, null), null);
         classic.edit().putString("13", "{\"LEFT\":0,\"TOP\":0,\"WIDTH\":200,\"HEIGHT\":200}").commit();
         ClassicLayoutMigration.carryOverOnce(context, store, false);
-        assertEquals(carried, store.getString(PadLayoutKeys.legacyKey(null), null));
+        assertEquals(carried, store.getString(PadLayoutKeys.key(true, null), null));
     }
 
-    @Test public void goingBackToTheClassicControllerKeepsWhatThePlayerArrangedHere() {
-        store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true)
-                .putString(PadLayoutKeys.legacyKey(null), EARLIER).commit();
-        classic.edit().putString("13", RIGHT_STICK).commit();
-        // A layout arranged in this controller for both orientations: the earlier carry-over can reach nobody, and
-        // what the player arranged stays.
+    @Test public void aClassicPlayersLayoutsForAllGamesGiveWayToTheClassicArrangementAndAreKept() {
+        // They tried this controller and saved layouts for all games in both orientations, then went back to the
+        // classic controller and arranged it: the classic arrangement is the one they were using.
         String mine = "v1|FACE,0.7083,0.5556,1.300,100,0";
-        store.edit().putString(PadLayoutKeys.key(true, null), mine).putString(PadLayoutKeys.key(false, null), mine)
-                .commit();
+        store.edit().putBoolean(ClassicLayoutMigration.MIGRATED, true)
+                .putString(PadLayoutKeys.legacyKey(null), EARLIER)
+                .putString(PadLayoutKeys.key(true, null), mine).putString(PadLayoutKeys.key(false, null), mine).commit();
+        classic.edit().putString("13", RIGHT_STICK).commit();
         retire("classic");
         ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertRightStickAt1300x500(general(true));
+        assertRightStickAt1300x500(general(false));
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
+        // Each one replaced is kept under its own backup key.
+        assertEquals(mine, backup(PadLayoutKeys.key(true, null)));
+        assertEquals(mine, backup(PadLayoutKeys.key(false, null)));
+        assertEquals(EARLIER, store.getString(ClassicLayoutMigration.BACKUP, null));
+
+        // A player who stayed with this controller keeps every layout as it was, and gets no backups.
+        store.edit().clear().putBoolean(ClassicLayoutMigration.MIGRATED, true)
+                .putString(PadLayoutKeys.legacyKey(null), EARLIER)
+                .putString(PadLayoutKeys.key(true, null), mine).putString(PadLayoutKeys.key(false, null), mine).commit();
+        retire("modern", true);
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+        assertEquals(EARLIER, store.getString(PadLayoutKeys.legacyKey(null), null));
         assertEquals(mine, store.getString(PadLayoutKeys.key(true, null), null));
         assertEquals(mine, store.getString(PadLayoutKeys.key(false, null), null));
-        assertEquals(EARLIER, store.getString(PadLayoutKeys.legacyKey(null), null));
-
-        // A player who stayed with this controller keeps the earlier carry-over: it is the layout they play with.
-        store.edit().clear().putBoolean(ClassicLayoutMigration.MIGRATED, true)
-                .putString(PadLayoutKeys.legacyKey(null), EARLIER).commit();
-        retire("modern");
-        ClassicLayoutMigration.carryOverOnce(context, store, false);
-        assertEquals(EARLIER, store.getString(PadLayoutKeys.legacyKey(null), null));
+        for (String key : store.getAll().keySet()) {
+            assertFalse(key, key.endsWith(ClassicLayoutMigration.BACKUP_SUFFIX));
+        }
     }
 
     @Test public void aClassicPlayerWithTheNintendoLayoutKeepsBAtTheBottomOfTheDefaults() {
@@ -280,13 +305,114 @@ public class ClassicLayoutMigrationTest {
         assertTrue("portrait has its own places",
                 Math.abs(landscapeA.cx - portraitB.cx) > .01f || Math.abs(landscapeA.cy - portraitB.cy) > .01f);
 
-        // An orientation with a layout of this controller's own keeps it; the other gets the swapped defaults.
+        // A layout for all games the player saved in this controller gives way too, and is kept.
         String mine = "v1|FACE,0.5000,0.8000,1.000,100,0";
         store.edit().clear().putString(PadLayoutKeys.key(false, null), mine).commit();
         retire("classic", true);
         ClassicLayoutMigration.carryOverOnce(context, store, true);
-        assertEquals(mine, store.getString(PadLayoutKeys.key(false, null), null));
-        assertSwappedDefaults(PadLayout.parse(store.getString(PadLayoutKeys.key(true, null), null)), WIDTH, HEIGHT);
+        assertSwappedDefaults();
+        assertEquals(mine, backup(PadLayoutKeys.key(false, null)));
+        assertNull(backup(PadLayoutKeys.key(true, null)));
+    }
+
+    private static final String GAME = "pc-1/app-7";
+
+    @Test public void aClassicPlayersLayoutsForOneGameKeepTheirPlacesWithTheButtonsSwapped() {
+        // A whole cluster in the game's landscape layout, a split one in its older layout for both orientations,
+        // hidden face buttons in its portrait layout.
+        String whole = "v1|FACE,0.6000,0.5000,1.000,100,0";
+        PadLayout split = new PadLayout();
+        split.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
+        split.setBounds(PadLayout.Control.A, 100, 300, 120, 120, WIDTH, HEIGHT, DENSITY);
+        split.setOpacity(PadLayout.Control.A, 40);
+        String splitText = split.serialize();
+        String hidden = "v1|FACE,-,-,1.000,100,1";
+        store.edit().putString(PadLayoutKeys.key(true, GAME), whole).putString(PadLayoutKeys.legacyKey(GAME), splitText)
+                .putString(PadLayoutKeys.key(false, GAME), hidden).commit();
+        retire("classic", true);
+        ClassicLayoutMigration.carryOverOnce(context, store, true);
+
+        // The whole cluster is split where it stood, each place holding what the classic button there sent.
+        PadLayout landscape = PadLayout.parse(store.getString(PadLayoutKeys.key(true, GAME), null));
+        PadLayout before = PadLayout.parse(whole);
+        before.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
+        assertTrue(landscape.isSplit(PadLayout.Control.FACE));
+        assertBox("bottom sends B", box(before, PadLayout.Control.A), box(landscape, PadLayout.Control.B));
+        assertBox("right sends A", box(before, PadLayout.Control.B), box(landscape, PadLayout.Control.A));
+        assertBox("left sends Y", box(before, PadLayout.Control.X), box(landscape, PadLayout.Control.Y));
+        assertBox("top sends X", box(before, PadLayout.Control.Y), box(landscape, PadLayout.Control.X));
+        assertEquals(whole, backup(PadLayoutKeys.key(true, GAME)));
+        // Split members trade their whole specs: place, size and opacity.
+        PadLayout older = PadLayout.parse(store.getString(PadLayoutKeys.legacyKey(GAME), null));
+        assertBox("B where A was", box(split, PadLayout.Control.A), box(older, PadLayout.Control.B));
+        assertBox("A where B was", box(split, PadLayout.Control.B), box(older, PadLayout.Control.A));
+        assertEquals(40, older.spec(PadLayout.Control.B).opacity);
+        assertEquals(splitText, backup(PadLayoutKeys.legacyKey(GAME)));
+        // Hidden face buttons have nothing to swap.
+        assertEquals(hidden, store.getString(PadLayoutKeys.key(false, GAME), null));
+        assertNull(backup(PadLayoutKeys.key(false, GAME)));
+
+        // In the game, the bottom of where the cluster stood sends B.
+        PreferenceConfiguration prefs = new PreferenceConfiguration();
+        prefs.flipFaceButtons = true;
+        ModernController controller = controller(frame(), prefs, GAME);
+        PadControlView bottom = controller.view(PadLayout.Control.B);
+        float[] place = box(before, PadLayout.Control.A);
+        assertEquals(place[0] + place[2] / 2, bottom.getLeft() + bottom.getWidth() / 2f, 2);
+        assertEquals(place[1] + place[3] / 2, bottom.getTop() + bottom.getHeight() / 2f, 2);
+        bottom.down(0, bottom.getWidth() / 2f, bottom.getHeight() / 2f, 100);
+        assertEquals(ControllerPacket.B_FLAG, (int) buttons.get(buttons.size() - 1));
+        bottom.up(0, 200);
+        controller.destroy();
+    }
+
+    @Test public void withoutTheNintendoLayoutAClassicPlayerGetsTheClassicArrangementAndKeepsTheirGames() {
+        String mine = "v1|FACE,0.7083,0.5556,1.300,100,0", game = "v1|FACE,0.6000,0.5000,1.000,100,0";
+        store.edit().putString(PadLayoutKeys.key(true, null), mine).putString(PadLayoutKeys.key(true, GAME), game)
+                .commit();
+        classic.edit().putString("13", RIGHT_STICK).commit();
+        retire("classic", false);
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertRightStickAt1300x500(general(true));
+        assertRightStickAt1300x500(general(false));
+        assertFalse(general(true).spec(PadLayout.Control.FACE).placed());
+        assertEquals(mine, backup(PadLayoutKeys.key(true, null)));
+        assertEquals(game, store.getString(PadLayoutKeys.key(true, GAME), null));
+        assertNull(backup(PadLayoutKeys.key(true, GAME)));
+
+        // With nothing classic arranged, the plain defaults: the layouts for all games go, kept as backups.
+        store.edit().clear().putString(PadLayoutKeys.key(true, null), mine).commit();
+        classic.edit().clear().commit();
+        retire("classic", false);
+        ClassicLayoutMigration.carryOverOnce(context, store, false);
+        assertFalse(store.contains(PadLayoutKeys.key(true, null)));
+        assertEquals(mine, backup(PadLayoutKeys.key(true, null)));
+    }
+
+    @Test public void aClassicPlayerWithTheNintendoLayoutAndLayoutsForAllGamesGetsBAtTheBottom() {
+        // Saved in both orientations, then only in landscape: either way the classic arrangement shows.
+        String mine = "v1|FACE,0.7083,0.5556,1.300,100,0";
+        for (boolean both : new boolean[] {true, false}) {
+            store.edit().clear().putString(PadLayoutKeys.key(true, null), mine).commit();
+            if (both) store.edit().putString(PadLayoutKeys.key(false, null), mine).commit();
+            retire("classic", true);
+            PreferenceConfiguration prefs = new PreferenceConfiguration();
+            prefs.flipFaceButtons = true;
+            buttons.clear();
+            ModernController controller = controller(frame(), prefs);
+            assertSwappedDefaults();
+            assertEquals(mine, backup(PadLayoutKeys.key(true, null)));
+            assertEquals(both ? mine : null, backup(PadLayoutKeys.key(false, null)));
+            PadControlView bottom = controller.view(PadLayout.Control.B);
+            PadLayout plain = new PadLayout();
+            plain.split(PadLayout.Control.FACE, WIDTH, HEIGHT, DENSITY);
+            float[] place = box(plain, PadLayout.Control.A);
+            assertEquals(place[1] + place[3] / 2, bottom.getTop() + bottom.getHeight() / 2f, 2);
+            bottom.down(0, bottom.getWidth() / 2f, bottom.getHeight() / 2f, 100);
+            assertEquals(ControllerPacket.B_FLAG, (int) buttons.get(buttons.size() - 1));
+            bottom.up(0, 200);
+            controller.destroy();
+        }
     }
 
     @Test public void theNintendoLayoutLeavesTheDefaultsOfEveryoneElseAlone() {
@@ -337,10 +463,9 @@ public class ClassicLayoutMigrationTest {
         classic.edit().putString("13", RIGHT_STICK).commit();
         retire("classic");
         ClassicLayoutMigration.carryOverOnce(context, store, false);
-        PadLayout.Spec stick = shared().spec(PadLayout.Control.RIGHT_STICK);
-        assertEquals(1300f / WIDTH, stick.cx, .01f);
-        assertEquals(500f / HEIGHT, stick.cy, .01f);
-        assertFalse(shared().spec(PadLayout.Control.FACE).placed());
+        assertRightStickAt1300x500(general(true));
+        assertFalse(general(true).spec(PadLayout.Control.FACE).placed());
+        assertFalse(store.contains(PadLayoutKeys.legacyKey(null)));
         assertEquals(edited, store.getString(ClassicLayoutMigration.BACKUP, null));
 
         // A player who stayed with this controller keeps it where it is.
@@ -531,13 +656,17 @@ public class ClassicLayoutMigrationTest {
     }
 
     private ModernController controller(FrameLayout frame, PreferenceConfiguration prefs) {
+        return controller(frame, prefs, null);
+    }
+
+    private ModernController controller(FrameLayout frame, PreferenceConfiguration prefs, String gameKey) {
         ModernController controller = new ModernController(frame.getContext(), frame, new HeldInputState.Sink() {
             @Override public void key(int key, boolean down) { }
             @Override public void mouse(int button, boolean down) { }
             @Override public void gamepad(int b, short lx, short ly, short rx, short ry, byte lt, byte rt) {
                 buttons.add(b);
             }
-        }, prefs, null);
+        }, prefs, gameKey);
         controller.refreshLayout();
         controller.show();
         layout(frame);

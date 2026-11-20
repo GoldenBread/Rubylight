@@ -44,10 +44,13 @@ public final class ClassicLayoutMigration {
      */
     static final String STYLE_RETIRED = "style-retired";
     /**
-     * Where the carry-over keeps the layout for all games it replaced or dropped from the older shared key. Nothing
-     * reads it back: it exists only so that layout can be recovered by hand.
+     * Added to a layout's key for where a classic player's carry-over keeps the layout it replaced, dropped or swapped
+     * ("layout-before-carry-over", "layout:landscape:pc-1/app-7-before-carry-over"). Nothing reads these back: they
+     * exist only so those layouts can be recovered by hand. A reset of the layouts clears them with the rest.
      */
-    static final String BACKUP = "layout-before-carry-over";
+    static final String BACKUP_SUFFIX = "-before-carry-over";
+    /** Where the layout for all games under the older shared key goes when it is replaced or dropped. */
+    static final String BACKUP = PadLayoutKeys.ROOT + BACKUP_SUFFIX;
 
     // The classic controller's element ids (its VirtualControllerElement.EID_*), as its preferences stored them.
     private static final int DPAD = 1, LT = 2, RT = 3, LB = 4, RB = 5, A = 6, B = 7, X = 8, Y = 9,
@@ -70,17 +73,20 @@ public final class ClassicLayoutMigration {
     }
 
     /**
-     * Runs once per install, when the controller is first built: the classic layout becomes the layout for all games
-     * in every orientation that has no layout for all games yet, so a layout the player arranged in this controller
-     * always wins. It is marked done whatever it found, so it never runs again, and a classic layout written later
-     * is never read.
+     * Runs once per install, when the controller is first built, and is marked done whatever it found, so a classic
+     * layout written later is never read and a reset of the layouts ({@link ModernController#clearLayouts}) gives
+     * the defaults.
      *
-     * <p>For a player who was still using the classic controller ({@link #CLASSIC_STYLE}) the classic layout is the
-     * one in use, so it replaces what the older shared key holds. That key is both orientations' fallback
-     * (PadLayoutKeys), and it holds either a layout an earlier carry-over wrote the first time the player tried this
-     * controller (which set {@link #MIGRATED} with it) or one the editors from Nightjar 5.4.1 up to 6.0 saved for all
-     * games. Either is older than the classic layout the player went back to. What it held is kept under
-     * {@link #BACKUP}. The layouts for all games saved per orientation since 6.0 are this controller's own and win.
+     * <p>A player still on the classic controller ({@link #CLASSIC_STYLE}) gets the arrangement they were using: the
+     * classic layout (their boxes, or the defaults, with the face buttons swapped as the Nintendo button layout had
+     * them) becomes the layout for all games in both orientations. It replaces every layout for all games this
+     * controller holds, which they saved when they tried it: the older shared key (an earlier carry-over's, or one the
+     * editors from Nightjar 5.4.1 up to 6.0 saved) and the per-orientation keys since 6.0. A layout they saved for one
+     * game stays theirs; with the Nintendo button layout its face buttons are swapped, as the classic controller sent
+     * them. Each layout replaced, dropped or swapped is kept under its key with {@link #BACKUP_SUFFIX}.
+     *
+     * <p>Any other first run (no retired style was read) carries the classic layout over only into an orientation
+     * without a layout for all games, so a layout arranged in this controller wins.
      *
      * @param store the controller's own preferences ({@link ModernController#PREFS})
      * @param swapFaces the Nintendo button layout setting, which the classic face buttons followed
@@ -92,57 +98,111 @@ public final class ClassicLayoutMigration {
         if (classicStyle) swapFaces = store.getBoolean(CLASSIC_FLIP, swapFaces);
         SharedPreferences.Editor edit = store.edit().putBoolean(MIGRATED, true).remove(CLASSIC_STYLE)
                 .remove(CLASSIC_FLIP);
-        String shared = PadLayoutKeys.legacyKey(null);
-        String landscapeKey = PadLayoutKeys.key(true, null), portraitKey = PadLayoutKeys.key(false, null);
-        boolean ownLandscape = store.contains(landscapeKey), ownPortrait = store.contains(portraitKey);
-        // With a layout of this controller's own in both orientations, the shared key reaches nobody.
-        if (ownLandscape && ownPortrait || !classicStyle && store.contains(shared)) {
-            edit.apply();
-            return;
-        }
         Map<Integer, float[]> boxes = boxes(context.getSharedPreferences(CLASSIC_PREFS, Context.MODE_PRIVATE));
-        if (classicStyle && store.contains(shared)) {
-            // Replaced or dropped, never lost.
-            if (!store.contains(BACKUP)) edit.putString(BACKUP, store.getString(shared, null));
-            edit.remove(shared);
-        }
         DisplayMetrics metrics = context.getResources().getDisplayMetrics();
         float longSide = Math.max(metrics.widthPixels, metrics.heightPixels);
         float shortSide = Math.min(metrics.widthPixels, metrics.heightPixels);
-        if (!boxes.isEmpty()) {
-            // The classic layout is arranged in landscape pixels; a first start in portrait must map it with the
-            // same dimensions, because the shared key it is stored under is used in both orientations.
-            PadLayout migrated = migrate(boxes, longSide, shortSide, metrics.density, swapFaces);
-            if (!migrated.isDefault()) edit.putString(shared, migrated.serialize());
-        } else if (classicStyle && swapFaces && shortSide > 0) {
-            // The classic controller followed the Nintendo button layout on screen even before it was arranged: its
-            // own defaults put B at the bottom. This controller never did, so only a classic player gets it. Each
-            // orientation has default places of its own, so each gets its layout, where it has none of its own.
-            if (!ownLandscape) {
-                edit.putString(landscapeKey, swappedDefaults(longSide, shortSide, metrics.density).serialize());
-            }
-            if (!ownPortrait) {
-                edit.putString(portraitKey, swappedDefaults(shortSide, longSide, metrics.density).serialize());
+        if (classicStyle) {
+            classicPlayer(store, edit, boxes, swapFaces, longSide, shortSide, metrics.density);
+        } else {
+            String shared = PadLayoutKeys.legacyKey(null);
+            boolean free = !store.contains(shared) &&
+                    !(store.contains(PadLayoutKeys.key(true, null)) && store.contains(PadLayoutKeys.key(false, null)));
+            if (free && !boxes.isEmpty()) {
+                // The classic layout is arranged in landscape pixels; a first start in portrait must map it with the
+                // same dimensions, because the shared key it is stored under is used in both orientations.
+                PadLayout migrated = migrate(boxes, longSide, shortSide, metrics.density, swapFaces);
+                if (!migrated.isDefault()) edit.putString(shared, migrated.serialize());
             }
         }
         edit.apply();
     }
 
+    /** The carry-over for a player still on the classic controller ({@link #carryOverOnce}). */
+    private static void classicPlayer(SharedPreferences store, SharedPreferences.Editor edit, Map<Integer, float[]> boxes,
+                                      boolean swapFaces, float longSide, float shortSide, float density) {
+        String landscapeKey = PadLayoutKeys.key(true, null), portraitKey = PadLayoutKeys.key(false, null);
+        Map<String, ?> saved = store.getAll();
+        for (String key : new String[] {PadLayoutKeys.legacyKey(null), landscapeKey, portraitKey}) {
+            backUp(saved, edit, key);
+            edit.remove(key);
+        }
+        if (shortSide <= 0) return;
+        if (!boxes.isEmpty()) {
+            // The classic controller had one layout, in landscape pixels, for both orientations.
+            PadLayout migrated = migrate(boxes, longSide, shortSide, density, swapFaces);
+            if (!migrated.isDefault()) {
+                edit.putString(landscapeKey, migrated.serialize()).putString(portraitKey, migrated.serialize());
+            }
+        } else if (swapFaces) {
+            // The classic controller followed the Nintendo button layout on screen even before it was arranged: its
+            // own defaults put B at the bottom. Each orientation has default places of its own.
+            edit.putString(landscapeKey, swappedDefaults(longSide, shortSide, density).serialize());
+            edit.putString(portraitKey, swappedDefaults(shortSide, longSide, density).serialize());
+        }
+        if (!swapFaces) return;
+        // A layout for one game: its face buttons send what the classic ones there sent.
+        String portraitGames = portraitKey + ':';
+        for (Map.Entry<String, ?> entry : saved.entrySet()) {
+            String key = entry.getKey();
+            if (!(entry.getValue() instanceof String) || !key.startsWith(PadLayoutKeys.ROOT + ':') ||
+                    key.equals(landscapeKey) || key.equals(portraitKey) || key.endsWith(BACKUP_SUFFIX)) continue;
+            PadLayout layout = PadLayout.parse((String) entry.getValue());
+            // A game's portrait layout has portrait places; its landscape one, and the older layout for both
+            // orientations, which landscape reads first, landscape places.
+            boolean portrait = key.startsWith(portraitGames);
+            float width = portrait ? shortSide : longSide, height = portrait ? longSide : shortSide;
+            if (!swapFaceButtons(layout, width, height, density)) continue;
+            backUp(saved, edit, key);
+            edit.putString(key, layout.serialize());
+        }
+    }
+
+    /** Keeps what {@code key} holds under its backup key, unless an earlier backup is there. */
+    private static void backUp(Map<String, ?> saved, SharedPreferences.Editor edit, String key) {
+        Object value = saved.get(key);
+        if (value instanceof String && !saved.containsKey(key + BACKUP_SUFFIX)) {
+            edit.putString(key + BACKUP_SUFFIX, (String) value);
+        }
+    }
+
     /**
-     * The default layout as the classic controller showed it with the Nintendo button layout on, on a surface this
-     * size: the face cluster split, each place holding the member that sends what the classic button there sent (B at
-     * the bottom, A on the right, Y on the left, X at the top), so every place still sends it.
+     * Swaps the face buttons as the classic controller's were with the Nintendo button layout on, on a surface this
+     * size: each place holds the member that sends what the classic button there sent (B at the bottom, A on the
+     * right, Y on the left, X at the top). A whole cluster is split where it stands; split members trade places.
+     *
+     * @return false when the face buttons are hidden, so there is nothing to swap
      */
-    static PadLayout swappedDefaults(float width, float height, float density) {
-        PadLayout layout = new PadLayout();
-        layout.split(PadLayout.Control.FACE, width, height, density);
+    static boolean swapFaceButtons(PadLayout layout, float width, float height, float density) {
         PadLayout.Control[] members = PadLayout.members(PadLayout.Control.FACE);
+        if (layout.isSplit(PadLayout.Control.FACE)) {
+            // SWAPPED trades A with B and X with Y, so each pair swaps its whole spec.
+            for (int i = 0; i < members.length; i++) {
+                int other = SWAPPED[i];
+                if (other < i) continue;
+                PadLayout.Spec a = layout.spec(members[i]), b = layout.spec(members[other]);
+                PadLayout.Spec held = new PadLayout.Spec();
+                held.copyFrom(a);
+                a.copyFrom(b);
+                b.copyFrom(held);
+            }
+            return true;
+        }
+        if (layout.spec(PadLayout.Control.FACE).hidden) return false;
+        layout.split(PadLayout.Control.FACE, width, height, density);
         float[][] places = new float[members.length][];
         for (int i = 0; i < members.length; i++) places[i] = layout.bounds(members[i], width, height, density, new float[4]);
         for (int i = 0; i < members.length; i++) {
             float[] place = places[i];
             layout.setBounds(members[SWAPPED[i]], place[0], place[1], place[2], place[3], width, height, density);
         }
+        return true;
+    }
+
+    /** The default layout as the classic controller showed it with the Nintendo button layout on, on this surface. */
+    static PadLayout swappedDefaults(float width, float height, float density) {
+        PadLayout layout = new PadLayout();
+        swapFaceButtons(layout, width, height, density);
         return layout;
     }
 
@@ -150,9 +210,9 @@ public final class ClassicLayoutMigration {
      * Takes the retired Controller style into account once, at the first reading of the settings by this version.
      * A player who had picked this controller keeps the layouts they have, or its defaults, rather than an older
      * classic one: the carry-over is marked done without it. Any other player used the classic controller, which was
-     * also the style of an install that never stored one: their classic layout is carried over when the controller
-     * is next built, replacing what an earlier carry-over left, with the face buttons as the Nintendo button layout
-     * set them now. A fresh install reads its settings before anyone can turn that setting on, so it keeps this
+     * also the style of an install that never stored one: when the controller is next built, their classic
+     * arrangement replaces the layouts for all games they saved when they tried this one, with the face buttons as
+     * the Nintendo button layout set them now, which also swaps them in their layouts for one game. A fresh install reads its settings before anyone can turn that setting on, so it keeps this
      * controller's plain defaults.
      *
      * @param modern whether the stored style was this controller

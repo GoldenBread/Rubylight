@@ -1561,8 +1561,8 @@ public class PreferenceConfiguration {
      * "Controller style" is gone with the classic on-screen controller: there is one controller now. A player who had
      * picked Modern keeps the layouts they have. Any other choice, and no stored choice at all (Classic was the
      * default), means the classic controller was in use: the controller carries its layout over when it is first
-     * built, with the Nintendo button layout as it is now, and replaces one an earlier carry-over left when the
-     * player tried Modern. ClassicLayoutMigration.retireStyle takes the decision once, at the first reading; the stored
+     * built, with the Nintendo button layout as it is now, in place of the layouts for all games the player saved
+     * when they tried Modern (kept as backups). ClassicLayoutMigration.retireStyle takes the decision once, at the first reading; the stored
      * choice is dropped either way.
      */
     static void retireOscStyle(Context context, SharedPreferences prefs) {
