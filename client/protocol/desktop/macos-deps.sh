@@ -79,15 +79,17 @@ EOF
   ffmpeg_cross=(--enable-cross-compile --target-os=darwin "--arch=$cpu" --cc=clang)
 fi
 cmake_library() {
+  # The build folder must not start with the source folder's path: SDL's source_group check
+  # compares strings, and CMake 4.5 rejects SDL-build/include-revision as outside the SDL tree.
   local name=$1
   shift
-  cmake -S "$work/$name" -B "$work/$name-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  cmake -S "$work/$name" -B "$work/build-$name" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     "-DCMAKE_C_FLAGS=-ffile-prefix-map=\"$work\"=/nightjar-media" \
     -DCMAKE_OSX_ARCHITECTURES="$arch" ${cmake_cross[@]+"${cmake_cross[@]}"} \
     -DCMAKE_INSTALL_PREFIX="$prefix" -DCMAKE_INSTALL_LIBDIR=lib \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" -DCMAKE_INSTALL_NAME_DIR="$prefix/lib" "$@"
-  cmake --build "$work/$name-build" --parallel "$jobs"
-  cmake --install "$work/$name-build"
+  cmake --build "$work/build-$name" --parallel "$jobs"
+  cmake --install "$work/build-$name"
 }
 cmake_library SDL -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_FRAMEWORK=OFF -DSDL_TEST_LIBRARY=OFF \
   -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
