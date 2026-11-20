@@ -56,6 +56,8 @@ public final class ModernController {
     private final PadPainter painter;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<PadLayout.Control, PadControlView> views = new EnumMap<>(PadLayout.Control.class);
+    /** The press halos past the controls' edges, under every control; null while there are no controls. */
+    private PadControlView.HaloLayer halo;
     private final Runnable resend;
     private final View.OnLayoutChangeListener resize;
     private PadLayout layout;
@@ -194,7 +196,14 @@ public final class ModernController {
         String curve = prefs.trackpadAcceleration ? prefs.trackpadAccelerationCurve : PointerAcceleration.LINEAR;
         for (PadLayout.Control control : PadLayout.Control.values()) {
             if (forcedHidden(control)) continue;
+            if (halo == null) {
+                // Under the controls, so a halo never covers a neighbour's glyph.
+                halo = new PadControlView.HaloLayer(context, painter, views.values());
+                frame.addView(halo, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
+            }
             PadControlView view = new PadControlView(context, control, painter, gamepad, this::changed, keys);
+            view.setHaloLayer(halo);
             view.configureStick(prefs.oscFloatingSticks, prefs.oscStickDeadzone / 100f);
             view.setHaptics(prefs.vibrateOsc);
             view.setTouchSink(this::touch);
@@ -315,6 +324,8 @@ public final class ModernController {
             if (view.knobLayer() != null) frame.removeView(view.knobLayer());
         }
         views.clear();
+        if (halo != null) frame.removeView(halo);
+        halo = null;
     }
 
     /** Removes the controls and any open editor for good. */

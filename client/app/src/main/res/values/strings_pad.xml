@@ -29,8 +29,8 @@
     <string name="pad_pointer_touchpad">Pointer touchpad</string>
     <string name="pad_touchpad_mouse">Mouse</string>
     <string name="pad_touchpad_camera">Camera</string>
-    <string name="pad_touchpad_mode_mouse">Touchpad: Mouse</string>
-    <string name="pad_touchpad_mode_camera">Touchpad: Camera</string>
+    <string name="pad_touchpad_mouse_summary">Moves the pointer</string>
+    <string name="pad_touchpad_camera_summary">Turns the view</string>
     <string name="pad_edit_hint_camera">Camera: swipes move the right stick, faster swipes turn further.</string>
     <string name="pad_preset_default">Default</string>
     <string name="pad_preset_minimal">Minimal</string>
@@ -44,6 +44,11 @@
     <string name="pad_edit_move_panel">Move panel</string>
     <string name="pad_edit_split">Split</string>
     <string name="pad_edit_join">Join</string>
+    <string name="pad_edit_add">Add</string>
+    <string name="pad_edit_add_control">Add %1$s</string>
+    <string name="pad_edit_group_gamepad">Gamepad</string>
+    <string name="pad_edit_group_keyboard_mouse">Keyboard &amp; mouse</string>
+    <string name="pad_edit_group_extras">Extras</string>
     <string name="pad_left_stick">Left stick</string>
     <string name="pad_right_stick">Right stick</string>
     <string name="pad_dpad">D-pad</string>

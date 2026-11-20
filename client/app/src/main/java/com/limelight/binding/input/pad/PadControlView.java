@@ -7,6 +7,7 @@ import android.os.Build;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.animation.AnimationUtils;
 
 import com.limelight.binding.input.LayoutGamepad;
 import com.limelight.binding.input.LayoutStick;
@@ -25,7 +26,8 @@ import com.limelight.ui.Haptics;
  * on them, so a thumb can slide from A to B or rest between them for both. A Steam Controller trackpad follows one
  * finger and sends it as a touch on that pad; a grip holds from one tap to the next. The pointer touchpad moves the
  * mouse or the camera, with tap, two-finger right-click and two-finger scroll. A split cluster's members are views of
- * their own, and a finger that lands on one slides across all four ({@link Group}).
+ * their own, and a finger that lands on one slides across all four ({@link Group}). A press shows at once; let go, it
+ * eases back over {@link PadPainter#RELEASE_MS}, and its halo past the control's edge draws in the {@link HaloLayer}.
  */
 @SuppressLint("ViewConstructor") // Created by ModernController for one control.
 final class PadControlView extends View {
@@ -54,6 +56,12 @@ final class PadControlView extends View {
     private float touchPressure = 1;
     /** The split cluster this control is a member of; null for every other control. */
     private Group group;
+    /** The layer under the controls that draws a press's halo past this control's edge; null without one. */
+    private View haloLayer;
+    /** The parts held at the last look ({@link PadPainter#heldParts}), and when each let go while easing back, else 0. */
+    private int heldParts;
+    private final long[] releasedAt = new long[PadPainter.PARTS];
+    private final Runnable easing = this::ease;
 
     /** Where the pointer touchpad's mouse movement, clicks and scrolls go; it sends nothing without one. */
     private ModernController.PointerSink pointerSink;
@@ -134,6 +142,52 @@ final class PadControlView extends View {
         }
     }
 
+    /**
+     * Draws the press cue that reaches past the controls' edges ({@link PadPainter#drawHalo}), so a thumb covering a
+     * small button still sees it answer: one view under every control, the size of the frame, taking no touches. It
+     * draws only around a held or easing part, never for a control at opacity 0, and a control asks it to redraw when
+     * its press changes; its own frames run only while a press ring does.
+     */
+    @SuppressLint("ViewConstructor")
+    static final class HaloLayer extends View {
+        private final PadPainter painter;
+        private final java.util.Collection<PadControlView> controls;
+
+        /** {@code controls} is read on every draw, so the layer follows the controller's controls as they change. */
+        HaloLayer(Context context, PadPainter painter, java.util.Collection<PadControlView> controls) {
+            super(context);
+            this.painter = painter;
+            this.controls = controls;
+            setFocusable(false);
+            setClickable(false);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            long now = AnimationUtils.currentAnimationTimeMillis();
+            boolean running = false;
+            for (PadControlView view : controls) {
+                if (view.getVisibility() != VISIBLE || view.restingAlpha <= 0) continue;
+                // The controls are this layer's siblings, laid out in the same frame.
+                running |= painter.drawHalo(canvas, view.control, view.getLeft() - getLeft(), view.getTop() - getTop(),
+                        view.getWidth(), view.getHeight(), view.state, view.getAlpha(), now);
+            }
+            if (running) postInvalidateOnAnimation();
+        }
+
+        @SuppressLint("ClickableViewAccessibility") // Draws only; touches fall through to what is below.
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            return false;
+        }
+    }
+
+    /** Where this control's press halo draws ({@link HaloLayer}). */
+    void setHaloLayer(View haloLayer) {
+        this.haloLayer = haloLayer;
+    }
+
     /** The knob's own view for a stick, to add above the controls; null for other controls. */
     View knobLayer() {
         return knobLayer;
@@ -150,6 +204,7 @@ final class PadControlView extends View {
         if (knobLayer != null) knobLayer.setVisibility(visibility);
         // A hidden member takes no input, also from a finger that slid onto it from another member.
         if (group != null && visibility != VISIBLE) group.update(null);
+        if (haloLayer != null) haloLayer.invalidate();
     }
 
     /**
@@ -277,17 +332,104 @@ final class PadControlView extends View {
     /** The alpha a press raises a faint, but visible, control to. */
     static final float PRESSED_ALPHA = .6f;
 
-    /** The alpha for a control at rest at {@code resting}, while pressed or not. */
-    static float alpha(float resting, boolean active) {
+    /**
+     * The alpha for a control at rest at {@code resting}, pressed in by {@code level}: 1 while held, easing back to 0
+     * once let go, so a faint control fades back with its press.
+     */
+    static float alpha(float resting, float level) {
         if (resting <= 0) return 0;
-        return active ? Math.max(resting, PRESSED_ALPHA) : resting;
+        return resting + (Math.max(resting, PRESSED_ALPHA) - resting) * Math.max(0, Math.min(1, level));
     }
 
     private void applyAlpha() {
+        trackPress();
+        showAlpha();
+    }
+
+    private void showAlpha() {
         boolean active = state.flags != 0 || state.pressed || state.stickActive;
-        float alpha = alpha(restingAlpha, active);
+        float alpha = alpha(restingAlpha, active ? 1 : easingLevel());
         setAlpha(alpha);
         if (knobLayer != null) knobLayer.setAlpha(alpha);
+    }
+
+    /** The deepest press still easing back, or 0. */
+    private float easingLevel() {
+        float level = 0;
+        for (int i = 0; i < PadPainter.PARTS; i++) {
+            if (releasedAt[i] != 0) level = Math.max(level, state.press[i]);
+        }
+        return level;
+    }
+
+    /**
+     * Follows which parts are held: a part going down shows pressed at once and rings, a part let go eases back over
+     * the next frames ({@link #ease}). At opacity 0 a part only goes in and out, as nothing of it is drawn.
+     */
+    private void trackPress() {
+        int held = PadPainter.heldParts(control, state);
+        if (held == heldParts) return;
+        long now = AnimationUtils.currentAnimationTimeMillis();
+        boolean visible = restingAlpha > 0, letGo = false;
+        for (int i = 0; i < PadPainter.PARTS; i++) {
+            boolean on = (held & 1 << i) != 0, was = (heldParts & 1 << i) != 0;
+            if (on) {
+                state.press[i] = 1;
+                releasedAt[i] = 0;
+                if (!was) state.pressedAt[i] = visible ? now : 0;
+            } else if (was && visible) {
+                releasedAt[i] = now;
+                letGo = true;
+            } else if (was) {
+                state.press[i] = 0;
+            }
+        }
+        heldParts = held;
+        if (letGo) {
+            removeCallbacks(easing);
+            postOnAnimation(easing);
+        }
+        if (haloLayer != null) haloLayer.invalidate();
+    }
+
+    /** One frame of the let-go parts easing back; it comes again until all of them are out. */
+    private void ease() {
+        long now = AnimationUtils.currentAnimationTimeMillis();
+        boolean running = false;
+        for (int i = 0; i < PadPainter.PARTS; i++) {
+            if (releasedAt[i] == 0) continue;
+            float level = PadPainter.easeBack(now - releasedAt[i]);
+            state.press[i] = level;
+            if (level <= 0) {
+                releasedAt[i] = 0;
+            } else {
+                running = true;
+            }
+        }
+        showAlpha();
+        redraw();
+        if (haloLayer != null) haloLayer.invalidate();
+        if (running) postOnAnimation(easing);
+    }
+
+    /** Drops every easing press at once: input was taken away, so nothing lingers. What is still held stays. */
+    private void stopEasing() {
+        removeCallbacks(easing);
+        java.util.Arrays.fill(releasedAt, 0);
+        heldParts = PadPainter.heldParts(control, state);
+        for (int i = 0; i < PadPainter.PARTS; i++) {
+            boolean on = (heldParts & 1 << i) != 0;
+            state.press[i] = on ? 1 : 0;
+            if (!on) state.pressedAt[i] = 0;
+        }
+        showAlpha();
+        if (haloLayer != null) haloLayer.invalidate();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        removeCallbacks(easing);
     }
 
     private void redraw() {
@@ -305,11 +447,22 @@ final class PadControlView extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
+        state.now = AnimationUtils.currentAnimationTimeMillis();
         if (knobLayer != null) {
             painter.drawStickBase(canvas, control, 0, 0, getWidth(), getHeight(), state);
         } else {
             painter.draw(canvas, control, 0, 0, getWidth(), getHeight(), state);
         }
+        // A touchpad's trail fades over the next frames, also once the finger lifts.
+        if (restingAlpha > 0 && state.trailShows(state.now)) postInvalidateOnAnimation();
+    }
+
+    /** A touchpad finger at ({@code x}, {@code y}); {@code first} starts a new trail behind it. */
+    private void touchAt(float x, float y, boolean first) {
+        state.touchX = x;
+        state.touchY = y;
+        if (first) state.trailStart = state.trailCount = 0;
+        if (restingAlpha > 0) state.trail(x, y, AnimationUtils.currentAnimationTimeMillis());
     }
 
     @SuppressLint("ClickableViewAccessibility") // A gamepad control, not a click target.
@@ -413,8 +566,7 @@ final class PadControlView extends View {
                     pointerLastY[0] = y;
                     if (pointerMotion != null) pointerMotion.reset();
                     removeCallbacks(cameraTick);
-                    state.touchX = x;
-                    state.touchY = y;
+                    touchAt(x, y, true);
                     applyAlpha();
                     redraw();
                 } else if (pointerIds[1] < 0) {
@@ -527,8 +679,7 @@ final class PadControlView extends View {
                     if (pointerScrolled) scrollBy(dx, dy);
                     redraw();
                 } else if (pointerSlot == 0) {
-                    state.touchX = x;
-                    state.touchY = y;
+                    touchAt(x, y, false);
                     if (pointerMotion != null) {
                         pointerMotion.move(dx, dy, touchTimeNs, density, pointerDelta);
                         if (pointerCamera) {
@@ -608,6 +759,8 @@ final class PadControlView extends View {
             java.util.Arrays.fill(pointerIds, -1);
             java.util.Arrays.fill(pointerFlags, 0);
             group.update(null);
+            stopEasing();
+            redraw();
             return;
         }
         // A pointer touchpad stops at once when input is taken away; nothing can carry on.
@@ -632,6 +785,7 @@ final class PadControlView extends View {
         stick.release();
         boolean was = state.flags != 0 || state.pressed || state.stickActive;
         state.clear();
+        stopEasing();
         if (wasd == null) gamepad.setButtons(slot(), 0);
         if (control.shape == PadLayout.Shape.STICK && wasd == null) {
             gamepad.setStick(slot(), control == PadLayout.Control.LEFT_STICK ? TouchLayout.LEFT : TouchLayout.RIGHT, 0, 0);
@@ -706,8 +860,12 @@ final class PadControlView extends View {
 
     /** Sends a finger at ({@code x}, {@code y}) on this trackpad as a touch on its Steam Controller pad. */
     private void padTouch(byte type, float x, float y, float pressure) {
-        state.touchX = x;
-        state.touchY = y;
+        if (type == MoonBridge.LI_TOUCH_EVENT_DOWN || type == MoonBridge.LI_TOUCH_EVENT_MOVE) {
+            touchAt(x, y, type == MoonBridge.LI_TOUCH_EVENT_DOWN);
+        } else {
+            state.touchX = x;
+            state.touchY = y;
+        }
         if (touchSink == null) return;
         int pad = PadInput.steamPad(control);
         touchSink.touch(type, SteamControls.pointerId(pad), SteamControls.touchX(pad, fraction(x, getWidth())),

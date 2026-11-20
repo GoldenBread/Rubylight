@@ -5,28 +5,49 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.text.TextPaint;
+import android.text.TextUtils;
+import android.transition.ChangeBounds;
+import android.transition.Fade;
+import android.transition.Transition;
+import android.transition.TransitionManager;
+import android.transition.TransitionSet;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.animation.Interpolator;
+import android.view.animation.PathInterpolator;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import androidx.core.content.ContextCompat;
+import androidx.core.widget.TextViewCompat;
+
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.chip.Chip;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.Slider;
 import com.limelight.R;
 import com.limelight.ui.NavigationDialogBuilder;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 
 /**
- * Edits the modern controller's layout over a dimmed stream: drag a control to move it, pinch it to
- * resize it, drag a picked control's corner handle to size its width and height on their own up to the whole
- * surface, tap it to pick it for the panel's size, opacity and hide buttons. With nothing picked
- * the panel changes every control; its grip moves it anywhere, and it reopens where it was left. Done keeps the draft, for all games or only this one; Cancel and
- * Back drop it. Hidden controls stay here as faint ghosts so they can be shown again, below every shown control; the
- * WASD stick, left out of the default layout, has its own Add button instead of a ghost.
+ * Edits the modern controller's layout over a dimmed stream: drag a control to move it, pinch it to resize it, drag a
+ * picked control's round corner handle to size its width and height on their own up to the whole surface, tap it to
+ * pick it. A dragged control lines up with another's centre or edge when it comes near, and a guide shows the line.
+ * The glass panel shows the picked control (its size, opacity, Split or Join, Hide, and the pointer touchpad's Mouse
+ * and Camera) or, with nothing picked, every control's size and opacity, the Add tiles of the controls the layout leaves
+ * out, the preset and glyphs and whether Done saves for this game only; it changes between them smoothly. Its grip
+ * moves it anywhere, and it reopens where it was left. Done keeps the draft; Cancel and Back drop it. A hidden control
+ * leaves the surface for the Add tiles.
  */
 @SuppressLint("ViewConstructor") // Created by ModernController.
 final class PadEditor extends FrameLayout {
@@ -35,6 +56,20 @@ final class PadEditor extends FrameLayout {
     /** The bits of a corner handle: 0 is the top-left one. */
     static final int RIGHT_CORNER = 1, BOTTOM_CORNER = 2;
     private static final float SCALE_STEP = .1f, PANEL_WIDTH_DP = 400, PANEL_MARGIN_DP = 16, SHORT_SURFACE_DP = 480;
+    /**
+     * On a short surface the panel is wider and lower: the preset, glyphs and game choice sit beside the Add tiles, or
+     * in one row below them when the tiles need the width.
+     */
+    private static final float SHORT_PANEL_WIDTH_DP = 480;
+    /** An Add tile's size, the gap between tiles and between groups of them, in dp. */
+    static final float TILE_WIDTH_DP = 84, TILE_HEIGHT_DP = 68, TILE_GAP_DP = 8, GROUP_GAP_DP = 20;
+    /** The Add groups, in the order the panel shows them. */
+    static final int GAMEPAD = 0, KEYBOARD_MOUSE = 1, EXTRAS = 2;
+    /** How long the panel takes to come in and to change between the picked control and the layout. */
+    private static final long PANEL_MS = 200;
+    private static final Interpolator EASE = new PathInterpolator(.2f, 0, 0, 1);
+    /** Whether the editor animates; tests and previews turn it off to see each state as it settles. */
+    static boolean transitions = true;
 
     private final ModernController controller;
     private final PadPainter painter;
@@ -43,13 +78,21 @@ final class PadEditor extends FrameLayout {
     private boolean perGame;
     private PadLayout.Control selected;
     private final Surface surface;
-    private final View panel;
+    private final View panel, controlSection, pointerMode, mouseCard, cameraCard, thisGame;
+    private final LinearLayout layoutSection, options;
+    /** The Add groups side by side, for measuring whether they fit beside the options. */
+    private TileFlow groups;
+    private final LinearLayout addSection;
     private final TextView selection, sizeText, hint;
-    private final MaterialButton hide, reset, addWasd, addTouchpad, preset, glyphs, pointerMode, split, join;
+    private final MaterialButton hide, reset, split, join;
+    private final Chip glyphs;
     private boolean compactButtons, shortSurface;
     private final Slider opacity;
     private final float density;
     private boolean settingOpacity;
+    /** The controls the Add tiles show, so they are built again only when that changes. */
+    private String addShown = "";
+    private final List<Tile> tiles = new ArrayList<>();
     /**
      * Whether the player has placed the panel with its grip, in this orientation now or before. Then it stays where
      * it was put, its top-left corner at {@link #panelX}, {@link #panelY}, shown kept on the surface, and no longer
@@ -57,6 +100,20 @@ final class PadEditor extends FrameLayout {
      */
     private boolean panelPlaced;
     private float panelX, panelY, gripRawX, gripRawY, gripFromX, gripFromY;
+    /** Once a change of the panel has played, it moves out of the picked control's way with its final size. */
+    private final Transition.TransitionListener settled = new Transition.TransitionListener() {
+        @Override public void onTransitionEnd(Transition transition) {
+            keepPanelClear();
+        }
+
+        @Override public void onTransitionStart(Transition transition) { }
+
+        @Override public void onTransitionCancel(Transition transition) { }
+
+        @Override public void onTransitionPause(Transition transition) { }
+
+        @Override public void onTransitionResume(Transition transition) { }
+    };
 
     PadEditor(Context context, ModernController controller, PadPainter painter, PadLayout draft,
               boolean perGame, boolean gameAvailable) {
@@ -85,19 +142,22 @@ final class PadEditor extends FrameLayout {
         if (placed != null) placePanel(placed[0], placed[1]);
         selection = panel.findViewById(R.id.pad_editor_selection);
         sizeText = panel.findViewById(R.id.pad_editor_size);
+        controlSection = panel.findViewById(R.id.pad_editor_control);
+        layoutSection = panel.findViewById(R.id.pad_editor_layout);
+        addSection = panel.findViewById(R.id.pad_editor_add);
+        options = panel.findViewById(R.id.pad_editor_options);
         hide = panel.findViewById(R.id.pad_editor_hide);
         reset = panel.findViewById(R.id.pad_editor_reset);
-        addWasd = panel.findViewById(R.id.pad_editor_add_wasd);
-        addWasd.setOnClickListener(v -> addWasd());
-        addTouchpad = panel.findViewById(R.id.pad_editor_add_touchpad);
-        addTouchpad.setOnClickListener(v -> addTouchpad());
-        preset = panel.findViewById(R.id.pad_editor_preset);
+        Chip preset = panel.findViewById(R.id.pad_editor_preset);
         preset.setOnClickListener(v -> choosePreset());
         glyphs = panel.findViewById(R.id.pad_editor_glyphs);
         glyphs.setContentDescription(getContext().getString(R.string.pad_edit_glyphs));
         glyphs.setOnClickListener(v -> chooseGlyphs());
         pointerMode = panel.findViewById(R.id.pad_editor_pointer_mode);
-        pointerMode.setOnClickListener(v -> togglePointerMode());
+        mouseCard = panel.findViewById(R.id.pad_editor_mode_mouse);
+        mouseCard.setOnClickListener(v -> setPointerMode(PadLayout.PointerMode.MOUSE));
+        cameraCard = panel.findViewById(R.id.pad_editor_mode_camera);
+        cameraCard.setOnClickListener(v -> setPointerMode(PadLayout.PointerMode.CAMERA));
         split = panel.findViewById(R.id.pad_editor_split);
         split.setOnClickListener(v -> split());
         join = panel.findViewById(R.id.pad_editor_join);
@@ -115,26 +175,38 @@ final class PadEditor extends FrameLayout {
         });
         panel.findViewById(R.id.pad_editor_cancel).setOnClickListener(v -> controller.finishEditing(false));
         panel.findViewById(R.id.pad_editor_done).setOnClickListener(v -> controller.finishEditing(true));
-        MaterialSwitch thisGame = panel.findViewById(R.id.pad_editor_this_game);
-        thisGame.setVisibility(gameAvailable ? VISIBLE : GONE);
-        thisGame.setChecked(this.perGame);
-        thisGame.setOnCheckedChangeListener((button, checked) -> this.perGame = checked);
+        MaterialSwitch gameSwitch = panel.findViewById(R.id.pad_editor_this_game);
+        thisGame = gameSwitch;
+        gameSwitch.setVisibility(gameAvailable ? VISIBLE : GONE);
+        gameSwitch.setChecked(this.perGame);
+        gameSwitch.setOnCheckedChangeListener((button, checked) -> this.perGame = checked);
         com.limelight.ui.StepSlider.showValue(opacity, value -> String.format(Locale.getDefault(), "%d %%", value));
         opacity.addOnChangeListener((slider, value, fromUser) -> {
             if (fromUser && !settingOpacity) setOpacity(Math.round(value));
         });
         setClickable(true);
         updatePanel();
+        if (transitions) {
+            // The dimmed surface and the panel come in quickly rather than at once.
+            surface.setAlpha(0);
+            surface.animate().alpha(1).setDuration(PANEL_MS).setInterpolator(EASE).start();
+            panel.setAlpha(0);
+            panel.setScaleX(.96f);
+            panel.setScaleY(.96f);
+            panel.animate().alpha(1).scaleX(1).scaleY(1).setDuration(PANEL_MS).setInterpolator(EASE).start();
+        }
     }
 
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        // As wide as the design asks on a tablet, never wider than a phone in portrait leaves room for.
-        int width = Math.round(Math.min(PANEL_WIDTH_DP * density, w - 2 * PANEL_MARGIN_DP * density));
-        // A narrow panel shows Hide and Reset as icons so Cancel and Done stay on the row; a short
-        // surface (a phone in landscape) drops the hint so the panel covers fewer controls.
-        boolean narrow = width < PANEL_WIDTH_DP * density, shortSurface = h < SHORT_SURFACE_DP * density;
+        // As wide as the design asks on a tablet, never wider than a phone in portrait leaves room for. A short surface
+        // (a phone in landscape) gets a wider, lower panel without the hint, so it covers fewer controls.
+        boolean shortSurface = h < SHORT_SURFACE_DP * density;
+        int width = Math.round(Math.min((shortSurface ? SHORT_PANEL_WIDTH_DP : PANEL_WIDTH_DP) * density,
+                w - 2 * PANEL_MARGIN_DP * density));
+        // A narrow panel shows Reset as its icon so Cancel and Done stay on the row.
+        boolean narrow = width < PANEL_WIDTH_DP * density;
         LayoutParams params = (LayoutParams) panel.getLayoutParams();
         if (params.width != width || narrow != compactButtons || shortSurface != this.shortSurface) {
             params.width = Math.max(0, width);
@@ -159,6 +231,46 @@ final class PadEditor extends FrameLayout {
         } else {
             post(this::showPlacedPanel);
         }
+    }
+
+    /**
+     * Where the preset and glyph chips and the game switch go, so the panel stays low on a short surface: beside the
+     * Add tiles when every group of them fits there in one row, else in one row below them. On a tall surface the
+     * chips sit above the switch, below the tiles.
+     */
+    private void arrangeLayout() {
+        int margin = Math.round(12 * density);
+        int content = ((LayoutParams) panel.getLayoutParams()).width - panel.getPaddingStart() - panel.getPaddingEnd();
+        boolean beside = false;
+        if (shortSurface && content > 0 && addSection.getVisibility() == VISIBLE && groups != null) {
+            int any = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+            // The options as wide as their own words, whatever row they were in before.
+            View chips = (View) glyphs.getParent();
+            chips.measure(any, any);
+            thisGame.measure(any, any);
+            groups.measure(any, any);
+            int side = Math.max(chips.getMeasuredWidth(), thisGame.getMeasuredWidth());
+            beside = groups.getMeasuredWidth() <= content - side - margin;
+        }
+        layoutSection.setOrientation(beside ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams add = (LinearLayout.LayoutParams) addSection.getLayoutParams();
+        add.width = beside ? 0 : LinearLayout.LayoutParams.MATCH_PARENT;
+        add.weight = beside ? 1 : 0;
+        add.setMarginEnd(beside ? margin : 0);
+        addSection.setLayoutParams(add);
+        boolean oneRow = shortSurface && !beside;
+        options.setOrientation(oneRow ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        options.setGravity(oneRow ? Gravity.CENTER_VERTICAL : Gravity.NO_GRAVITY);
+        LinearLayout.LayoutParams side = (LinearLayout.LayoutParams) options.getLayoutParams();
+        side.width = beside ? LinearLayout.LayoutParams.WRAP_CONTENT : LinearLayout.LayoutParams.MATCH_PARENT;
+        options.setLayoutParams(side);
+        // Beside the tiles the switch is as wide as its words, so its column is; in one row it takes what the chips
+        // leave; below the chips it spans the panel.
+        LinearLayout.LayoutParams game = (LinearLayout.LayoutParams) thisGame.getLayoutParams();
+        game.width = beside ? LinearLayout.LayoutParams.WRAP_CONTENT : oneRow ? 0 : LinearLayout.LayoutParams.MATCH_PARENT;
+        game.weight = oneRow ? 1 : 0;
+        game.setMarginStart(oneRow ? Math.round(16 * density) : 0);
+        thisGame.setLayoutParams(game);
     }
 
     /** The grip: dragging it moves the panel anywhere on the surface; letting go remembers where, per orientation. */
@@ -236,6 +348,19 @@ final class PadEditor extends FrameLayout {
         return surface.previewState(control);
     }
 
+    /** The Add tile for {@code control}, or null when the layout shows it; for tests. */
+    View tile(PadLayout.Control control) {
+        for (Tile tile : tiles) {
+            if (tile.control == control) return tile;
+        }
+        return null;
+    }
+
+    /** How many alignment guides the surface shows now, for tests. */
+    int guides() {
+        return surface.guidesX + surface.guidesY;
+    }
+
     PadLayout draft() {
         return draft;
     }
@@ -249,10 +374,26 @@ final class PadEditor extends FrameLayout {
     }
 
     void select(PadLayout.Control control) {
+        if (control != selected) transition();
         selected = control;
         updatePanel();
         surface.invalidate();
         post(this::keepPanelClear);
+    }
+
+    /**
+     * Animates the panel's next change: what goes fades out, what comes fades in and the rest, the panel too, moves to
+     * its new place; once played, the panel moves out of the picked control's way.
+     */
+    private void transition() {
+        if (!transitions || !isLaidOut()) return;
+        TransitionSet set = new TransitionSet().setOrdering(TransitionSet.ORDERING_TOGETHER)
+                .addTransition(new Fade()).addTransition(new ChangeBounds());
+        set.setDuration(PANEL_MS);
+        set.setInterpolator(EASE);
+        set.excludeTarget(surface, true);
+        set.addListener(settled);
+        TransitionManager.beginDelayedTransition(this, set);
     }
 
     /** The controls the editor shows: everything but what the settings keep off. */
@@ -261,15 +402,40 @@ final class PadEditor extends FrameLayout {
     }
 
     /**
-     * Whether the surface draws the control and a tap can pick it: a control the default layout leaves out has no
-     * ghost while hidden. A cluster and its members never show together: a split cluster has no ghost under its
-     * members, and a member is off the surface while its cluster shows.
+     * Whether the surface draws the control and a tap can pick it: a shown control the settings allow. A cluster and
+     * its members never show together: a member is off the surface while its cluster shows.
      */
     private boolean onSurface(PadLayout.Control control) {
-        if (!editable(control) || (control.hiddenByDefault && draft.spec(control).hidden)) return false;
+        if (!editable(control) || draft.spec(control).hidden) return false;
         PadLayout.Control cluster = control.cluster();
-        if (cluster != null) return draft.spec(cluster).hidden;
+        return cluster == null || draft.spec(cluster).hidden;
+    }
+
+    /**
+     * Whether the Add tiles offer the control: the layout leaves it out and the settings allow it. A split cluster is
+     * not offered, its members are; a member only while its cluster is split, so adding never shows a cluster with
+     * its members.
+     */
+    boolean addable(PadLayout.Control control) {
+        if (!editable(control) || !draft.spec(control).hidden) return false;
+        PadLayout.Control cluster = control.cluster();
+        if (cluster != null) return draft.isSplit(cluster);
         return !draft.isSplit(control);
+    }
+
+    /** The Add group a control is offered in: the PC's gamepad, keyboard and mouse, or the extras beyond a gamepad. */
+    static int addGroup(PadLayout.Control control) {
+        if (control == PadLayout.Control.WASD || control == PadLayout.Control.POINTER_PAD) return KEYBOARD_MOUSE;
+        if (control.steam || control == PadLayout.Control.TOUCHPAD) return EXTRAS;
+        return GAMEPAD;
+    }
+
+    private static int groupName(int group) {
+        switch (group) {
+            case KEYBOARD_MOUSE: return R.string.pad_edit_group_keyboard_mouse;
+            case EXTRAS: return R.string.pad_edit_group_extras;
+            default: return R.string.pad_edit_group_gamepad;
+        }
     }
 
     /**
@@ -305,6 +471,7 @@ final class PadEditor extends FrameLayout {
         surface.invalidate();
     }
 
+    /** Hides the picked control, which leaves the surface for the Add tiles but stays picked, so Show undoes it. */
     void toggleHidden() {
         if (selected == null) return;
         PadLayout.Spec spec = draft.spec(selected);
@@ -333,16 +500,22 @@ final class PadEditor extends FrameLayout {
         changed();
     }
 
-    /** Puts the WASD stick in the layout and picks it, so the panel moves off it and it can be placed at once. */
+    /** Puts a control the layout leaves out back in, where it was, and picks it, so it can be placed at once. */
+    void add(PadLayout.Control control) {
+        if (!addable(control)) return;
+        draft.spec(control).hidden = false;
+        select(control);
+        changed();
+    }
+
+    /** Puts the WASD stick in the layout and picks it. */
     void addWasd() {
-        draft.spec(PadLayout.Control.WASD).hidden = false;
-        select(PadLayout.Control.WASD);
+        add(PadLayout.Control.WASD);
     }
 
     /** Puts the pointer touchpad in the layout and picks it, ready to move, resize and set its mode. */
     void addTouchpad() {
-        draft.spec(PadLayout.Control.POINTER_PAD).hidden = false;
-        select(PadLayout.Control.POINTER_PAD);
+        add(PadLayout.Control.POINTER_PAD);
     }
 
     /** A preset replaces the layout with its selection of controls; Done keeps it, Cancel drops it. */
@@ -366,11 +539,17 @@ final class PadEditor extends FrameLayout {
                 }).setNegativeButton(android.R.string.cancel, null).create().show();
     }
 
+    /** The pointer touchpad's mode, from its Mouse and Camera cards. */
+    void setPointerMode(PadLayout.PointerMode mode) {
+        if (draft.pointerMode() == mode) return;
+        draft.setPointerMode(mode);
+        changed();
+    }
+
     /** Switches the pointer touchpad between moving the pointer and moving the camera. */
     void togglePointerMode() {
-        draft.setPointerMode(draft.pointerMode() == PadLayout.PointerMode.MOUSE ?
+        setPointerMode(draft.pointerMode() == PadLayout.PointerMode.MOUSE ?
                 PadLayout.PointerMode.CAMERA : PadLayout.PointerMode.MOUSE);
-        changed();
     }
 
     private void changed() {
@@ -396,37 +575,89 @@ final class PadEditor extends FrameLayout {
         settingOpacity = true;
         opacity.setValue(Math.max(PadLayout.MIN_OPACITY, Math.min(PadLayout.MAX_OPACITY, Math.round(spec.opacity / 5f) * 5)));
         settingOpacity = false;
-        hide.setEnabled(selected != null);
-        boolean showing = selected != null && spec.hidden;
+        // A picked control shows its own section; with none, the layout's: the Add tiles, preset, glyphs and game.
+        boolean picked = selected != null;
+        controlSection.setVisibility(picked ? VISIBLE : GONE);
+        layoutSection.setVisibility(picked ? GONE : VISIBLE);
+        boolean showing = picked && spec.hidden;
         hide.setIconResource(showing ? R.drawable.ic_visibility : R.drawable.ic_visibility_off);
-        label(hide, getContext().getString(showing ? R.string.pad_edit_show : R.string.pad_edit_hide));
+        hide.setText(showing ? R.string.pad_edit_show : R.string.pad_edit_hide);
         label(reset, getContext().getString(R.string.pad_edit_reset));
-        boolean wasdOut = editable(PadLayout.Control.WASD) && draft.spec(PadLayout.Control.WASD).hidden;
-        addWasd.setVisibility(wasdOut ? VISIBLE : GONE);
-        boolean touchpadOut = editable(PadLayout.Control.POINTER_PAD) && draft.spec(PadLayout.Control.POINTER_PAD).hidden;
-        addTouchpad.setVisibility(touchpadOut ? VISIBLE : GONE);
         boolean pointerPad = selected == PadLayout.Control.POINTER_PAD;
         pointerMode.setVisibility(pointerPad ? VISIBLE : GONE);
+        boolean camera = draft.pointerMode() == PadLayout.PointerMode.CAMERA;
+        mouseCard.setSelected(!camera);
+        cameraCard.setSelected(camera);
         // The pointer touchpad's line says what Camera does, so the mode is found; a short surface shows only that.
         hint.setText(pointerPad ? R.string.pad_edit_hint_camera : R.string.pad_edit_hint);
         hint.setVisibility(pointerPad || !shortSurface ? VISIBLE : GONE);
         // Split for a shown face cluster or D-pad; Join for one of the members that stand in for it.
-        split.setVisibility(selected != null && PadLayout.members(selected).length > 0 && !spec.hidden ? VISIBLE : GONE);
-        join.setVisibility(selected != null && selected.cluster() != null ? VISIBLE : GONE);
-        boolean camera = draft.pointerMode() == PadLayout.PointerMode.CAMERA;
-        // The text names what the touchpad does now; the description names what pressing gives, since it switches.
-        pointerMode.setText(getContext().getString(camera ? R.string.pad_touchpad_mode_camera : R.string.pad_touchpad_mode_mouse));
-        pointerMode.setContentDescription(getContext().getString(camera ? R.string.pad_touchpad_mode_mouse :
-                R.string.pad_touchpad_mode_camera));
+        split.setVisibility(picked && PadLayout.members(selected).length > 0 && !spec.hidden ? VISIBLE : GONE);
+        join.setVisibility(picked && selected.cluster() != null ? VISIBLE : GONE);
         glyphs.setText(glyphName(getContext(), draft.glyph()));
-        preset.setText(getContext().getString(R.string.pad_edit_preset));
+        updateAdd();
+        arrangeLayout();
+    }
+
+    /** Builds the Add tiles again when the controls the layout leaves out changed, and redraws them otherwise. */
+    private void updateAdd() {
+        StringBuilder shown = new StringBuilder();
+        List<PadLayout.Control> out = new ArrayList<>();
+        for (PadLayout.Control control : PadLayout.Control.values()) {
+            if (!addable(control)) continue;
+            out.add(control);
+            shown.append(control.name()).append(',');
+        }
+        if (shown.toString().equals(addShown)) {
+            for (Tile tile : tiles) tile.refresh();
+            return;
+        }
+        addShown = shown.toString();
+        addSection.removeAllViews();
+        tiles.clear();
+        groups = null;
+        addSection.setVisibility(out.isEmpty() ? GONE : VISIBLE);
+        if (out.isEmpty()) return;
+        addSection.addView(heading(R.string.pad_edit_add, R.style.TextAppearance_Nightjar_Label, R.color.night_on_surface));
+        // Each group its name over its tiles; the groups side by side as far as the panel is wide.
+        int gap = Math.round(TILE_GAP_DP * density);
+        groups = new TileFlow(getContext(), Math.round(GROUP_GAP_DP * density), gap);
+        addSection.addView(groups, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        for (int group : new int[] {GAMEPAD, KEYBOARD_MOUSE, EXTRAS}) {
+            TileFlow flow = null;
+            for (PadLayout.Control control : out) {
+                if (addGroup(control) != group) continue;
+                if (flow == null) {
+                    LinearLayout block = new LinearLayout(getContext());
+                    block.setOrientation(LinearLayout.VERTICAL);
+                    block.addView(heading(groupName(group), R.style.TextAppearance_Nightjar_Caption,
+                            R.color.night_on_surface_variant));
+                    flow = new TileFlow(getContext(), gap, gap);
+                    block.addView(flow);
+                    groups.addView(block);
+                }
+                Tile tile = new Tile(getContext(), control);
+                tiles.add(tile);
+                flow.addView(tile);
+            }
+        }
+    }
+
+    private TextView heading(int text, int appearance, int color) {
+        TextView view = new TextView(getContext());
+        TextViewCompat.setTextAppearance(view, appearance);
+        view.setTextColor(ContextCompat.getColor(getContext(), color));
+        view.setText(text);
+        view.setPadding(0, Math.round(6 * density), 0, Math.round(4 * density));
+        return view;
     }
 
     /** "120 %", or "150 × 80 %" for a control whose width and height differ. */
     static String sizeLabel(PadLayout.Spec spec) {
         int w = Math.round(spec.widthScale * 100), h = Math.round(spec.heightScale * 100);
         return w == h ? String.format(Locale.getDefault(), "%d %%", w) :
-                String.format(Locale.getDefault(), "%d \u00d7 %d %%", w, h);
+                String.format(Locale.getDefault(), "%d × %d %%", w, h);
     }
 
     private static String glyphName(Context context, PadLayout.Glyph glyph) {
@@ -445,7 +676,7 @@ final class PadEditor extends FrameLayout {
         }
         int[] wide = (int[]) button.getTag(R.id.pad_editor_hide);
         int touch = Math.round(PadLayout.MIN_TOUCH_DP * density);
-        // Icon alone: a 48 dp square with the icon in its middle, so four buttons fit a phone's row.
+        // Icon alone: a 48 dp square with the icon in its middle, so the row fits a phone.
         int side = compactButtons ? Math.max(0, (touch - button.getIconSize()) / 2) : 0;
         button.setText(compactButtons ? null : text);
         button.setContentDescription(compactButtons ? text : null);
@@ -500,26 +731,191 @@ final class PadEditor extends FrameLayout {
         if (!RectF.intersects(control, under)) return;
         LayoutParams params = (LayoutParams) panel.getLayoutParams();
         boolean controlHigh = control.centerY() < getHeight() / 2f;
-        params.gravity = Gravity.CENTER_HORIZONTAL | (controlHigh ? Gravity.BOTTOM : Gravity.TOP);
-        params.topMargin = params.bottomMargin = Math.round(16 * density);
+        int gravity = Gravity.CENTER_HORIZONTAL | (controlHigh ? Gravity.BOTTOM : Gravity.TOP);
+        int margin = Math.round(16 * density);
+        if (params.gravity == gravity && params.topMargin == margin && params.bottomMargin == margin) return;
+        transition();
+        params.gravity = gravity;
+        params.topMargin = params.bottomMargin = margin;
         panel.setLayoutParams(params);
     }
 
-    /** Draws the dimmed stream, the grid, every control and the outlines, and takes the editing touches. */
+    /**
+     * The nudge that lines a dragged box's start, centre or end up with another control's when one is within
+     * {@code tolerance}, the nearest winning; NaN when none is near. {@code lines} holds each other control's start,
+     * centre and end along the same axis, {@code count} values in all. Edges meet edges, on either side, and centres
+     * meet centres.
+     */
+    static float alignNudge(float start, float centre, float end, float[] lines, int count, float tolerance) {
+        float best = Float.NaN;
+        for (int i = 0; i + 2 < count; i += 3) {
+            float otherStart = lines[i], otherCentre = lines[i + 1], otherEnd = lines[i + 2];
+            best = nearer(best, otherCentre - centre, tolerance);
+            best = nearer(best, otherStart - start, tolerance);
+            best = nearer(best, otherEnd - end, tolerance);
+            best = nearer(best, otherStart - end, tolerance);
+            best = nearer(best, otherEnd - start, tolerance);
+        }
+        return best;
+    }
+
+    private static float nearer(float best, float candidate, float tolerance) {
+        if (Math.abs(candidate) > tolerance) return best;
+        return Float.isNaN(best) || Math.abs(candidate) < Math.abs(best) ? candidate : best;
+    }
+
+    /**
+     * Which of the other controls' {@code lines} (as {@link #alignNudge} takes them) the box's start, centre or end lies
+     * on, to half a pixel: edges on edges, centres on centres. Each line goes once into {@code out}, as far as it
+     * reaches; returns how many.
+     */
+    static int alignedLines(float start, float centre, float end, float[] lines, int count, float[] out) {
+        int found = 0;
+        for (int mine = 0; mine < 3 && found < out.length; mine++) {
+            float line = mine == 0 ? start : mine == 1 ? centre : end;
+            for (int i = 0; i < count; i++) {
+                if ((i % 3 == 1) != (mine == 1) || Math.abs(lines[i] - line) > .5f) continue;
+                boolean known = false;
+                for (int k = 0; k < found; k++) known |= Math.abs(out[k] - line) <= .5f;
+                if (!known) out[found++] = line;
+                break;
+            }
+        }
+        return found;
+    }
+
+    /** One control the layout leaves out, drawn small as it plays, with its name under it; a tap puts it in. */
+    @SuppressLint("ViewConstructor")
+    final class Tile extends View {
+        final PadLayout.Control control;
+        private final TextPaint caption = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final float captionSize;
+        private String name = "";
+
+        Tile(Context context, PadLayout.Control control) {
+            super(context);
+            this.control = control;
+            setBackgroundResource(R.drawable.bg_pad_editor_tile);
+            setFocusable(true);
+            setClickable(true);
+            setOnClickListener(v -> add(control));
+            caption.setTextAlign(Paint.Align.CENTER);
+            captionSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 11, getResources().getDisplayMetrics());
+            caption.setTextSize(captionSize);
+            caption.setColor(ContextCompat.getColor(context, R.color.night_on_surface));
+            refresh();
+        }
+
+        /** Its name follows the glyph set (a face button's letter), its drawing that and the touchpad's mode. */
+        void refresh() {
+            name = name(getContext(), control, draft.glyph());
+            setContentDescription(getContext().getString(R.string.pad_edit_add_control, name));
+            invalidate();
+        }
+
+        @Override
+        protected void onMeasure(int widthSpec, int heightSpec) {
+            setMeasuredDimension(Math.round(TILE_WIDTH_DP * density), Math.round(TILE_HEIGHT_DP * density));
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float pad = 6 * density, width = getWidth(), captionHeight = captionSize + 4 * density;
+            // The control at its default shape, as large as the tile's picture area allows.
+            float most = width - 2 * pad, tall = getHeight() - captionHeight - 2 * pad;
+            float ratio = PadLayout.baseWidth(control) / PadLayout.baseHeight(control);
+            float w = most, h = most / ratio;
+            if (h > tall) {
+                h = tall;
+                w = tall * ratio;
+            }
+            painter.draw(canvas, control, (width - w) / 2, pad + (tall - h) / 2, w, h, surface.previewState(control));
+            // A long name shrinks to fit, down to 9 sp, before it is cut short.
+            float room = width - pad, size = captionSize;
+            caption.setTextSize(size);
+            float wide = caption.measureText(name);
+            if (wide > room) caption.setTextSize(Math.max(captionSize * 9 / 11, size * room / wide));
+            CharSequence text = TextUtils.ellipsize(name, caption, room, TextUtils.TruncateAt.END);
+            canvas.drawText(text, 0, text.length(), width / 2, getHeight() - pad - caption.descent(), caption);
+        }
+    }
+
+    /**
+     * Lays its children out in rows, as many to a row as fit, {@code across} apart in a row and {@code down} between
+     * rows; it is as wide as its widest row unless told otherwise, so a flow of flows wraps each in turn.
+     */
+    static final class TileFlow extends ViewGroup {
+        private final int across, down;
+
+        TileFlow(Context context, int across, int down) {
+            super(context);
+            this.across = across;
+            this.down = down;
+        }
+
+        @Override
+        protected void onMeasure(int widthSpec, int heightSpec) {
+            int mode = MeasureSpec.getMode(widthSpec), size = MeasureSpec.getSize(widthSpec);
+            int limit = mode == MeasureSpec.UNSPECIFIED ? Integer.MAX_VALUE : size;
+            int childWidth = mode == MeasureSpec.UNSPECIFIED ? widthSpec : MeasureSpec.makeMeasureSpec(size, MeasureSpec.AT_MOST);
+            int x = 0, y = 0, row = 0, widest = 0;
+            for (int i = 0; i < getChildCount(); i++) {
+                View child = getChildAt(i);
+                if (child.getVisibility() == GONE) continue;
+                measureChild(child, childWidth, MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+                if (x > 0 && x + child.getMeasuredWidth() > limit) {
+                    x = 0;
+                    y += row + down;
+                    row = 0;
+                }
+                x += child.getMeasuredWidth() + across;
+                widest = Math.max(widest, x - across);
+                row = Math.max(row, child.getMeasuredHeight());
+            }
+            setMeasuredDimension(mode == MeasureSpec.EXACTLY ? size : Math.min(limit, widest), resolveSize(y + row, heightSpec));
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            int width = r - l, x = 0, y = 0, row = 0;
+            for (int i = 0; i < getChildCount(); i++) {
+                View child = getChildAt(i);
+                if (child.getVisibility() == GONE) continue;
+                int w = child.getMeasuredWidth(), h = child.getMeasuredHeight();
+                if (x > 0 && x + w > width) {
+                    x = 0;
+                    y += row + down;
+                    row = 0;
+                }
+                child.layout(x, y, x + w, y + h);
+                x += w + across;
+                row = Math.max(row, h);
+            }
+        }
+    }
+
+    /** Draws the dimmed stream, the grid, every control, the outlines and the guides, and takes the editing touches. */
     private final class Surface extends View {
-        private final Paint scrim = new Paint(), grid = new Paint();
-        private final float[] box = new float[4];
+        private final Paint scrim = new Paint(), grid = new Paint(), guide = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final float[] box = new float[4], other = new float[4];
         private final PadPainter.State idle = new PadPainter.State(), pointerIdle = new PadPainter.State();
         private float offsetX, offsetY, pinchDistance, pinchWidth, pinchHeight, anchorX, anchorY;
         private boolean dragging, pinching;
         /** The corner handle being dragged ({@link #corner}'s bits), or -1. */
         private int resizing = -1;
+        /** The other controls' lines along one axis while a control is dragged ({@link #alignNudge}). */
+        private float[] lines = new float[96];
+        /** The lines the dragged control shares with others now: x of the upright guides, y of the level ones. */
+        private final float[] guideX = new float[3], guideY = new float[3];
+        private int guidesX, guidesY;
 
         Surface(Context context) {
             super(context);
             scrim.setColor(0x99000000);
             grid.setColor(0x14FFFFFF);
             grid.setStrokeWidth(Math.max(1, density));
+            guide.setColor(painter.accent());
+            guide.setStrokeWidth(Math.max(1, density));
         }
 
         @Override
@@ -535,13 +931,15 @@ final class PadEditor extends FrameLayout {
                 PadLayout.Spec spec = draft.spec(control);
                 draft.bounds(control, width, height, density, box);
                 // Show the real opacity, but never so faint that a control cannot be found.
-                float alpha = spec.hidden ? .3f : Math.max(.35f, base * spec.opacity / 100f);
+                float alpha = Math.max(.35f, base * spec.opacity / 100f);
                 int saved = canvas.saveLayerAlpha(box[0], box[1], box[0] + box[2], box[1] + box[3],
                         Math.round(alpha * 255));
                 painter.draw(canvas, control, box[0], box[1], box[2], box[3], previewState(control));
                 canvas.restoreToCount(saved);
-                painter.drawOutline(canvas, box[0], box[1], box[2], box[3], control == selected, spec.hidden);
+                painter.drawOutline(canvas, box[0], box[1], box[2], box[3], control == selected);
             }
+            for (int i = 0; i < guidesX; i++) canvas.drawLine(guideX[i], 0, guideX[i], height, guide);
+            for (int i = 0; i < guidesY; i++) canvas.drawLine(0, guideY[i], width, guideY[i], guide);
         }
 
         /** What a control shows at rest here: the pointer touchpad its mode's word, as it does in play. */
@@ -554,14 +952,12 @@ final class PadEditor extends FrameLayout {
         private PadLayout.Control hit(float x, float y) {
             PadLayout.Control[] controls = PadLayout.Control.values();
             float slop = 8 * density;
-            // A shown control wins over a hidden one's ghost; among each, the last drawn is on top, so it wins.
-            for (boolean ghosts : new boolean[] {false, true}) {
-                for (int i = controls.length - 1; i >= 0; i--) {
-                    if (!onSurface(controls[i]) || draft.spec(controls[i]).hidden != ghosts) continue;
-                    draft.bounds(controls[i], getWidth(), getHeight(), density, box);
-                    if (x >= box[0] - slop && x <= box[0] + box[2] + slop && y >= box[1] - slop && y <= box[1] + box[3] + slop) {
-                        return controls[i];
-                    }
+            // The last drawn is on top, so it wins.
+            for (int i = controls.length - 1; i >= 0; i--) {
+                if (!onSurface(controls[i])) continue;
+                draft.bounds(controls[i], getWidth(), getHeight(), density, box);
+                if (x >= box[0] - slop && x <= box[0] + box[2] + slop && y >= box[1] - slop && y <= box[1] + box[3] + slop) {
+                    return controls[i];
                 }
             }
             return null;
@@ -573,7 +969,7 @@ final class PadEditor extends FrameLayout {
          * inside the control only a corner's quarter counts, so a small control's middle still moves it.
          */
         private int corner(float x, float y) {
-            if (selected == null) return -1;
+            if (selected == null || !onSurface(selected)) return -1;
             draft.bounds(selected, getWidth(), getHeight(), density, box);
             float reach = PadLayout.MIN_TOUCH_DP / 2 * density, outline = PadPainter.OUTLINE_DP * density;
             float insideX = Math.min(reach, box[2] / 4), insideY = Math.min(reach, box[3] / 4);
@@ -601,6 +997,7 @@ final class PadEditor extends FrameLayout {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: {
                     pinching = false;
+                    guidesX = guidesY = 0;
                     // A corner handle of the picked control wins over whatever lies under it.
                     resizing = corner(event.getX(), event.getY());
                     if (resizing >= 0) {
@@ -629,6 +1026,7 @@ final class PadEditor extends FrameLayout {
                         pinching = true;
                         dragging = false;
                         resizing = -1;
+                        guidesX = guidesY = 0;
                         pinchDistance = distance(event);
                         pinchWidth = draft.spec(selected).widthScale;
                         pinchHeight = draft.spec(selected).heightScale;
@@ -642,11 +1040,7 @@ final class PadEditor extends FrameLayout {
                     } else if (resizing >= 0 && selected != null) {
                         resize(event.getX() + offsetX, event.getY() + offsetY);
                     } else if (dragging && selected != null) {
-                        float grid = GRID_DP * density;
-                        float x = Math.round((event.getX() + offsetX) / grid) * grid;
-                        float y = Math.round((event.getY() + offsetY) / grid) * grid;
-                        draft.moveTo(selected, x, y, getWidth(), getHeight(), density);
-                        invalidate();
+                        drag(event.getX() + offsetX, event.getY() + offsetY);
                     }
                     break;
                 case MotionEvent.ACTION_POINTER_UP:
@@ -658,6 +1052,8 @@ final class PadEditor extends FrameLayout {
                     dragging = false;
                     pinching = false;
                     resizing = -1;
+                    guidesX = guidesY = 0;
+                    invalidate();
                     keepPanelClear();
                     updatePanel();
                     break;
@@ -665,6 +1061,46 @@ final class PadEditor extends FrameLayout {
                     break;
             }
             return true;
+        }
+
+        /**
+         * Moves the dragged control's centre to ({@code x}, {@code y}): onto another control's centre or edge line when
+         * one is within half a grid step, else onto the grid; then shows the lines it shares with others.
+         */
+        private void drag(float x, float y) {
+            float width = getWidth(), height = getHeight(), grid = GRID_DP * density, tolerance = grid / 2;
+            draft.bounds(selected, width, height, density, box);
+            float w = box[2], h = box[3];
+            int count = otherLines(true);
+            float nudge = alignNudge(x - w / 2, x, x + w / 2, lines, count, tolerance);
+            x = Float.isNaN(nudge) ? Math.round(x / grid) * grid : x + nudge;
+            count = otherLines(false);
+            nudge = alignNudge(y - h / 2, y, y + h / 2, lines, count, tolerance);
+            y = Float.isNaN(nudge) ? Math.round(y / grid) * grid : y + nudge;
+            draft.moveTo(selected, x, y, width, height, density);
+            // Where it landed, kept on the surface, decides the guides.
+            draft.bounds(selected, width, height, density, box);
+            float left = box[0], top = box[1], right = box[0] + box[2], bottom = box[1] + box[3];
+            count = otherLines(true);
+            guidesX = alignedLines(left, (left + right) / 2, right, lines, count, guideX);
+            count = otherLines(false);
+            guidesY = alignedLines(top, (top + bottom) / 2, bottom, lines, count, guideY);
+            invalidate();
+        }
+
+        /** The other shown controls' start, centre and end along x ({@code across}) or y, into {@link #lines}. */
+        private int otherLines(boolean across) {
+            int count = 0;
+            for (PadLayout.Control control : PadLayout.Control.values()) {
+                if (control == selected || !onSurface(control)) continue;
+                draft.bounds(control, getWidth(), getHeight(), density, other);
+                if (lines.length < count + 3) lines = Arrays.copyOf(lines, lines.length * 2);
+                float start = across ? other[0] : other[1], size = across ? other[2] : other[3];
+                lines[count++] = start;
+                lines[count++] = start + size / 2;
+                lines[count++] = start + size;
+            }
+            return count;
         }
 
         /**

@@ -6,6 +6,7 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Looper;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -77,6 +78,16 @@ public class ModernControllerPreviewTest {
 
     private void capture(String name) throws IOException {
         File directory = outputDirectory();
+        // Each capture shows the editor as it settles, not partway through a change.
+        PadEditor.transitions = false;
+        try {
+            capture(name, directory);
+        } finally {
+            PadEditor.transitions = true;
+        }
+    }
+
+    private void capture(String name, File directory) throws IOException {
         RuntimeEnvironment.getApplication().getSharedPreferences("mic_button", 0).edit().clear().commit();
         ModernController.clearLayouts(RuntimeEnvironment.getApplication());
         UiNavigationTest.Screen screen = Robolectric.buildActivity(UiNavigationTest.Screen.class).setup().visible().get();
@@ -132,13 +143,124 @@ public class ModernControllerPreviewTest {
         PadEditor editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
         touchTargets(editor, metrics.density, problems);
         write(frame, width, height, new File(directory, name + "-3-editor-all.png"));
+        panelInside(editor, "all", problems);
         editor.select(PadLayout.Control.FACE);
         editor.toggleHidden();
         editor.select(PadLayout.Control.DPAD);
         write(frame, width, height, new File(directory, name + "-4-editor-picked.png"));
+        panelInside(editor, "picked", problems);
+        controller.finishEditing(false);
+
+        // What the look adds beyond the default layout: PlayStation's coloured glyphs on a split face cluster and the
+        // pointer touchpad in Camera mode, pressed: the circle button, the D-pad up and right, a shoulder, each with its
+        // halo, and the pad with its trail.
+        PadLayout extras = controller.layout().copy();
+        extras.setGlyph(PadLayout.Glyph.PLAYSTATION);
+        extras.spec(PadLayout.Control.POINTER_PAD).hidden = false;
+        extras.setPointerMode(PadLayout.PointerMode.CAMERA);
+        extras.split(PadLayout.Control.FACE, width, height, metrics.density);
+        controller.save(extras, false);
+        controller.refreshLayout();
+        layout(frame, width, height);
+        PadControlView circle = controller.view(PadLayout.Control.B);
+        circle.down(0, circle.getWidth() / 2f, circle.getHeight() / 2f, 100);
+        PadControlView dpad = controller.view(PadLayout.Control.DPAD);
+        dpad.down(1, dpad.getWidth() * .8f, dpad.getHeight() * .2f, 100);
+        PadControlView lb = controller.view(PadLayout.Control.LB);
+        lb.down(2, lb.getWidth() / 2f, lb.getHeight() / 2f, 100);
+        // Held past the ring that runs out on the press: the steady halos.
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(PadPainter.RIPPLE_MS + 20));
+        PadControlView pad = controller.view(PadLayout.Control.POINTER_PAD);
+        float padWidth = pad.getWidth(), padHeight = pad.getHeight();
+        pad.down(3, padWidth * .2f, padHeight * .75f, 100);
+        for (int i = 1; i <= 10; i++) {
+            float t = i / 10f;
+            pad.move(3, padWidth * (.2f + .55f * t), padHeight * (.75f - .5f * t * (2 - t)), 100_000_000L + i * 16_000_000L);
+        }
+        write(frame, width, height, new File(directory, name + "-5-play-extras.png"));
+        controller.releaseInput();
+
+        // The editor with controls left out: the Add tiles, grouped.
+        controller.startEditing();
+        layout(frame, width, height);
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        layout(frame, width, height);
+        editor = (PadEditor) frame.getChildAt(frame.getChildCount() - 1);
+        editor.select(PadLayout.Control.L3);
+        editor.toggleHidden();
+        editor.select(PadLayout.Control.HOME);
+        editor.toggleHidden();
+        editor.select(null);
+        layout(frame, width, height);
+        touchTargets(editor, metrics.density, problems);
+        tiles(editor, metrics.density, problems);
+        panelInside(editor, "add", problems);
+        write(frame, width, height, new File(directory, name + "-6-editor-add.png"));
+
+        // The pointer touchpad picked: its Mouse and Camera cards.
+        editor.select(PadLayout.Control.POINTER_PAD);
+        layout(frame, width, height);
+        touchTargets(editor, metrics.density, problems);
+        tiles(editor, metrics.density, problems);
+        panelInside(editor, "touchpad", problems);
+        write(frame, width, height, new File(directory, name + "-7-editor-touchpad.png"));
+
+        // The right stick dragged until its centre lines up with the left one's: a guide shows the line.
+        View surface = editor.getChildAt(0);
+        float[] leftBox = editor.draft().bounds(PadLayout.Control.LEFT_STICK, surface.getWidth(), surface.getHeight(),
+                metrics.density, new float[4]);
+        float[] rightBox = editor.draft().bounds(PadLayout.Control.RIGHT_STICK, surface.getWidth(), surface.getHeight(),
+                metrics.density, new float[4]);
+        float fromX = rightBox[0] + rightBox[2] / 2, fromY = rightBox[1] + rightBox[3] / 2;
+        float toX = fromX - rightBox[2] / 3, toY = leftBox[1] + leftBox[3] / 2 + 2 * metrics.density;
+        touch(surface, MotionEvent.ACTION_DOWN, fromX, fromY);
+        for (int i = 1; i <= 4; i++) {
+            touch(surface, MotionEvent.ACTION_MOVE, fromX + (toX - fromX) * i / 4, fromY + (toY - fromY) * i / 4);
+        }
+        if (editor.guides() == 0) problems.add("no guide while lined up");
+        write(frame, width, height, new File(directory, name + "-8-editor-guide.png"));
+        touch(surface, MotionEvent.ACTION_UP, toX, toY);
         controller.finishEditing(false);
         controller.destroy();
         assertTrue(name + ": " + problems, problems.isEmpty());
+    }
+
+    private static void touch(View view, int action, float x, float y) {
+        long now = android.os.SystemClock.uptimeMillis();
+        MotionEvent event = MotionEvent.obtain(now, now, action, x, y, 0);
+        view.dispatchTouchEvent(event);
+        event.recycle();
+    }
+
+    /** The editor's panel lies whole on the surface, and its Done button whole in the panel. */
+    private static void panelInside(PadEditor editor, String state, List<String> problems) {
+        View panel = editor.panel();
+        float left = panel.getX(), top = panel.getY();
+        if (left < -.5f || top < -.5f || left + panel.getWidth() > editor.getWidth() + .5f
+                || top + panel.getHeight() > editor.getHeight() + .5f) {
+            problems.add(state + ": the panel leaves the surface");
+        }
+        View done = editor.findViewById(com.limelight.R.id.pad_editor_done);
+        float y = done.getY();
+        for (View parent = (View) done.getParent(); parent != panel; parent = (View) parent.getParent()) y += parent.getY();
+        if (done.getHeight() == 0 || y < 0 || y + done.getHeight() > panel.getHeight() + .5f) {
+            problems.add(state + ": Done is not whole in the panel");
+        }
+    }
+
+    /** The Add tiles and the touchpad's mode cards take a 48 dp touch. */
+    private static void tiles(View view, float density, List<String> problems) {
+        if (view.getVisibility() != View.VISIBLE) return;
+        boolean card = view.getId() == com.limelight.R.id.pad_editor_mode_mouse || view.getId() == com.limelight.R.id.pad_editor_mode_camera;
+        if (card || view instanceof PadEditor.Tile) {
+            if (view.getHeight() < Math.floor(48 * density) || view.getWidth() < Math.floor(48 * density)) {
+                problems.add(view.getContentDescription() + " is " + view.getWidth() / density + "x" + view.getHeight() / density + " dp");
+            }
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) tiles(group.getChildAt(i), density, problems);
+        }
     }
 
     /** Every shown control on the surface, at least 48 dp, and apart from the others and the microphone button. */

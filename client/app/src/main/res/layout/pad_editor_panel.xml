@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The modern controller's layout editor panel. PadEditor fills in the texts and states. -->
+<!--
+    The modern controller's layout editor panel. PadEditor fills in the texts and states. The middle scrolls when the
+    panel would not fit the surface; the grip and the Reset, Cancel and Done row always show. With a control picked
+    the middle shows that control (pad_editor_control), with none the layout (pad_editor_layout).
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="400dp"
@@ -27,183 +31,307 @@
             android:importantForAccessibility="no" />
     </FrameLayout>
 
+    <ScrollView
+        android:id="@+id/pad_editor_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/pad_editor_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/pad_editor_selection"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textAppearance="@style/TextAppearance.Nightjar.Title"
+                    android:textColor="@color/night_on_surface" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/pad_editor_smaller"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:contentDescription="@string/pad_edit_smaller"
+                    app:icon="@drawable/ic_pad_smaller"
+                    app:iconTint="@color/night_on_surface" />
+
+                <TextView
+                    android:id="@+id/pad_editor_size"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="56dp"
+                    android:maxLines="1"
+                    android:gravity="center"
+                    android:textAppearance="@style/TextAppearance.Nightjar.Label"
+                    android:textColor="@color/night_on_surface" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/pad_editor_larger"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:contentDescription="@string/pad_edit_larger"
+                    app:icon="@drawable/ic_pad_larger"
+                    app:iconTint="@color/night_on_surface" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/pad_editor_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/pad_edit_hint"
+                android:textAppearance="@style/TextAppearance.Nightjar.Caption"
+                android:textColor="@color/night_on_surface_variant" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/title_osc_opacity"
+                    android:textAppearance="@style/TextAppearance.Nightjar.Label"
+                    android:textColor="@color/night_on_surface_variant" />
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/pad_editor_opacity"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:contentDescription="@string/title_osc_opacity"
+                    android:stepSize="5"
+                    android:valueFrom="10"
+                    android:valueTo="100"
+                    app:labelBehavior="floating"
+                    app:tickVisible="false"
+                    app:thumbColor="@color/night_primary"
+                    app:trackColorActive="@color/night_primary"
+                    app:trackColorInactive="@color/night_outline_variant" />
+            </LinearLayout>
+
+            <!-- The picked control: Split or Join, Hide, and for the pointer touchpad its two modes. -->
+            <LinearLayout
+                android:id="@+id/pad_editor_control"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/pad_editor_split"
+                        style="@style/Widget.Nightjar.Button.Tonal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="@dimen/space_s"
+                        android:text="@string/pad_edit_split"
+                        android:visibility="gone" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/pad_editor_join"
+                        style="@style/Widget.Nightjar.Button.Tonal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="@dimen/space_s"
+                        android:text="@string/pad_edit_join"
+                        android:visibility="gone" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/pad_editor_hide"
+                        style="@style/Widget.Nightjar.Button.Tonal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/pad_edit_hide"
+                        app:icon="@drawable/ic_visibility_off" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/pad_editor_pointer_mode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_xs"
+                    android:layout_marginBottom="@dimen/space_xs"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/pad_editor_mode_mouse"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="@dimen/space_s"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_pad_editor_card"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:padding="@dimen/space_m">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:importantForAccessibility="no"
+                            android:src="@drawable/ic_mouse_pointer"
+                            app:tint="@color/pad_editor_card_content" />
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="@dimen/space_m"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/pad_touchpad_mouse"
+                                android:textAppearance="@style/TextAppearance.Nightjar.Label"
+                                android:textColor="@color/pad_editor_card_content" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/pad_touchpad_mouse_summary"
+                                android:textAppearance="@style/TextAppearance.Nightjar.Caption"
+                                android:textColor="@color/night_on_surface_variant" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/pad_editor_mode_camera"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_pad_editor_card"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:minHeight="56dp"
+                        android:orientation="horizontal"
+                        android:padding="@dimen/space_m">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:importantForAccessibility="no"
+                            android:src="@drawable/ic_pad_camera"
+                            app:tint="@color/pad_editor_card_content" />
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="@dimen/space_m"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/pad_touchpad_camera"
+                                android:textAppearance="@style/TextAppearance.Nightjar.Label"
+                                android:textColor="@color/pad_editor_card_content" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/pad_touchpad_camera_summary"
+                                android:textAppearance="@style/TextAppearance.Nightjar.Caption"
+                                android:textColor="@color/night_on_surface_variant" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Nothing picked: the controls to add, the preset and glyphs, and where Done saves. -->
+            <LinearLayout
+                android:id="@+id/pad_editor_layout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- The Add tiles, grouped; PadEditor builds them from the controls the layout leaves out. -->
+                <LinearLayout
+                    android:id="@+id/pad_editor_add"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Below the tiles, or beside them on a short surface (PadEditor). -->
+                <LinearLayout
+                    android:id="@+id/pad_editor_options"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/pad_editor_preset"
+                            style="@style/Widget.Nightjar.Chip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checkable="false"
+                            android:text="@string/pad_edit_preset"
+                            app:chipIcon="@drawable/ic_tune"
+                            app:chipIconTint="@color/night_on_surface"
+                            app:chipIconVisible="true" />
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/pad_editor_glyphs"
+                            style="@style/Widget.Nightjar.Chip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="@dimen/space_s"
+                            android:checkable="false"
+                            android:text="@string/pad_glyph_xbox"
+                            app:chipIcon="@drawable/ic_gamepad"
+                            app:chipIconTint="@color/night_on_surface"
+                            app:chipIconVisible="true" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/pad_editor_this_game"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:text="@string/pad_edit_this_game"
+                        android:textAppearance="@style/TextAppearance.Nightjar.Body"
+                        android:textColor="@color/night_on_surface" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
     <LinearLayout
+        android:id="@+id/pad_editor_actions"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal">
-
-        <TextView
-            android:id="@+id/pad_editor_selection"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:textAppearance="@style/TextAppearance.Nightjar.Title"
-            android:textColor="@color/night_on_surface" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_smaller"
-            style="@style/Widget.Material3.Button.IconButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:contentDescription="@string/pad_edit_smaller"
-            app:icon="@drawable/ic_pad_smaller"
-            app:iconTint="@color/night_on_surface" />
-
-        <TextView
-            android:id="@+id/pad_editor_size"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minWidth="56dp"
-            android:maxLines="1"
-            android:gravity="center"
-            android:textAppearance="@style/TextAppearance.Nightjar.Label"
-            android:textColor="@color/night_on_surface" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_larger"
-            style="@style/Widget.Material3.Button.IconButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:contentDescription="@string/pad_edit_larger"
-            app:icon="@drawable/ic_pad_larger"
-            app:iconTint="@color/night_on_surface" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/pad_editor_hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/pad_edit_hint"
-        android:textAppearance="@style/TextAppearance.Nightjar.Caption"
-        android:textColor="@color/night_on_surface_variant" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/space_xs"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/title_osc_opacity"
-            android:textAppearance="@style/TextAppearance.Nightjar.Label"
-            android:textColor="@color/night_on_surface_variant" />
-
-        <com.google.android.material.slider.Slider
-            android:id="@+id/pad_editor_opacity"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:contentDescription="@string/title_osc_opacity"
-            android:stepSize="5"
-            android:valueFrom="10"
-            android:valueTo="100"
-            app:labelBehavior="floating"
-            app:tickVisible="false"
-            app:thumbColor="@color/night_primary"
-            app:trackColorActive="@color/night_primary"
-            app:trackColorInactive="@color/night_outline_variant" />
-    </LinearLayout>
-
-    <com.google.android.material.materialswitch.MaterialSwitch
-        android:id="@+id/pad_editor_this_game"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:text="@string/pad_edit_this_game"
-        android:textAppearance="@style/TextAppearance.Nightjar.Body"
-        android:textColor="@color/night_on_surface" />
-
-    <!-- Shown while the layout leaves one of the optional controls out. -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_add_wasd"
-            style="@style/Widget.Nightjar.Button.Text"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/pad_edit_add_wasd"
-            app:icon="@drawable/ic_add" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_add_touchpad"
-            style="@style/Widget.Nightjar.Button.Text"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/pad_edit_add_touchpad"
-            app:icon="@drawable/ic_add" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_preset"
-            style="@style/Widget.Nightjar.Button.Text"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/pad_edit_preset" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_glyphs"
-            style="@style/Widget.Nightjar.Button.Text"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/pad_glyph_xbox" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_pointer_mode"
-            style="@style/Widget.Nightjar.Button.Text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/pad_touchpad_mode_mouse" />
-
-        <!-- Split for the picked face cluster or D-pad, Join for one of its members. -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_split"
-            style="@style/Widget.Nightjar.Button.Text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/pad_edit_split"
-            android:visibility="gone" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_join"
-            style="@style/Widget.Nightjar.Button.Text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/pad_edit_join"
-            android:visibility="gone" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/pad_editor_hide"
-            style="@style/Widget.Nightjar.Button.Text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/pad_edit_hide"
-            app:icon="@drawable/ic_visibility_off" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/pad_editor_reset"

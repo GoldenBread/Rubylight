@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A tile of the layout editor's Add grid: Nightjar's glass, lit while pressed, ringed while focused. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="14dp" />
+            <solid android:color="@color/night_glass_selectedfill" />
+        </shape>
+    </item>
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="14dp" />
+            <solid android:color="@color/night_glass_controlfill" />
+            <stroke android:width="?attr/nightjarFocusRingWidth" android:color="@color/night_glass_ring" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="14dp" />
+            <solid android:color="@color/night_glass_controlfill" />
+        </shape>
+    </item>
+</selector>
