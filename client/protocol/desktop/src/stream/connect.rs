@@ -1089,7 +1089,10 @@ pub(super) fn automatic_rejoin(plan: &LaunchPlan, role: AppRole, auto_reconnect:
 /// The log's route line: what carries the traffic to the PC and where that was read. A route that
 /// answered and is not wireless is wired (`network::Toward` is only ever wired or wireless), its
 /// speed unknown when the port reports none; only the internet connection's answer can be either.
-pub(super) fn route_line(toward: Result<crate::network::Toward, crate::network::Fallback>, wireless: bool, link_mbps: u32) -> String {
+/// `link_mbps` is the wired link speed: the pacing hint and the bound of PyroWave's default bitrate
+/// (0 when unknown). A wireless route has none on purpose (`Network::wired_link_mbps`), so the line
+/// gives the adapter's rate (`adapter_mbps`, 0 when unread) instead of a misleading "link 0 Mbps".
+pub(super) fn route_line(toward: Result<crate::network::Toward, crate::network::Fallback>, wireless: bool, link_mbps: u32, adapter_mbps: u32) -> String {
     let medium = match (toward, wireless) {
         (_, true) => "wireless",
         (Ok(_), false) => "wired",
@@ -1099,7 +1102,12 @@ pub(super) fn route_line(toward: Result<crate::network::Toward, crate::network::
         Ok(_) => "from the route".to_string(),
         Err(why) => format!("from the internet connection, {why}"),
     };
-    let link = if medium == "wired" && link_mbps == 0 { "link speed unknown".to_string() } else { format!("link {link_mbps} Mbps") };
+    let link = match (wireless, link_mbps, adapter_mbps) {
+        (true, _, 0) => "adapter rate unknown, no link speed used on a wireless route".to_string(),
+        (true, _, rate) => format!("adapter rate {rate} Mbps, not used as the link speed on a wireless route"),
+        (false, 0, _) => "link speed unknown".to_string(),
+        (false, link, _) => format!("link {link} Mbps"),
+    };
     format!("{medium} ({source}), {link}")
 }
 
@@ -1258,7 +1266,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
         let why = if settings.tell_host_wireless { "the PC is not a Rubylight host" } else { "it is turned off in the settings" };
         eprintln!("nightjar: not telling the PC the route is wireless: {why}");
     }
-    eprintln!("nightjar: route to the PC: {}", route_line(toward, network.wireless(), routed_link_mbps));
+    eprintln!("nightjar: route to the PC: {}", route_line(toward, network.wireless(), routed_link_mbps, network.link_mbps));
     let measured_pace = plan.pace.as_ref().map_or(0, |pace| pace.for_network(&network, plan.host_link_mbps));
     let LinkHints { link_mbps, sent_link_mbps, pace_mbps } = link_hints(
         settings.tell_host_link_speed,

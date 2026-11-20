@@ -160,7 +160,12 @@ fn allocations_in_steady_streaming(
         let (shared, gate) = (shared.clone(), gate.clone());
         std::thread::spawn(move || {
             count_into(Some(counter));
-            let decoder = decode_loop(Box::new(Gated(gate)), &shared, |s| s.clear());
+            let decoder = decode_loop(
+                Box::new(Gated(gate)),
+                &shared,
+                KeyFrameRequests::new(60),
+                |s| s.clear(),
+            );
             count_into(None);
             drop(decoder);
         })

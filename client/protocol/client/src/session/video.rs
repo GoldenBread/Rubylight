@@ -542,16 +542,18 @@ struct Direct {
     ready: Vec<Frame>,
     decoded_key_frame: bool,
     need_refresh: bool,
+    refresh: KeyFrameRequests,
     done: Vec<Frame>,
 }
 
 impl Direct {
-    fn new(decoder: Box<dyn VideoDecoder>) -> Self {
+    fn new(decoder: Box<dyn VideoDecoder>, refresh: KeyFrameRequests) -> Self {
         Self {
             decoder,
             ready: Vec::new(),
             decoded_key_frame: false,
             need_refresh: false,
+            refresh,
             done: Vec::new(),
         }
     }
@@ -561,13 +563,20 @@ impl Direct {
     fn submit(&mut self, shared: &VideoShared) {
         for frame in self.ready.drain(..) {
             shared.counters.submitted.fetch_add(1, Ordering::Relaxed);
-            match self.decoder.submit(&frame) {
-                DecodeStatus::Ok => self.decoded_key_frame |= frame.frame_type == FrameType::Idr,
+            let need_idr = match self.decoder.submit(&frame) {
+                DecodeStatus::Ok => {
+                    if frame.frame_type == FrameType::Idr {
+                        self.decoded_key_frame = true;
+                        self.refresh.key_frame_decoded();
+                    }
+                    false
+                }
                 DecodeStatus::NeedIdr => {
                     shared.counters.need_idr.fetch_add(1, Ordering::Relaxed);
-                    self.need_refresh = true;
+                    true
                 }
-            }
+            };
+            self.need_refresh |= self.refresh.request(need_idr, now_us);
             self.done.push(frame);
         }
     }
@@ -732,6 +741,8 @@ pub struct VideoStart {
     pub receive_coalescing: bool,
     /// Where a roam's rebind leaves the receive thread's next socket.
     pub next_socket: Arc<NextSocket>,
+    /// The stream's frame rate, which paces a failing decoder's key frame requests.
+    pub fps: i32,
 }
 
 /// The running video stream.
@@ -755,7 +766,7 @@ impl VideoStream {
     ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let (direct, queued) = if start.direct_submit {
-            (Some(Direct::new(decoder)), None)
+            (Some(Direct::new(decoder, KeyFrameRequests::new(start.fps))), None)
         } else {
             (None, Some(decoder))
         };
@@ -793,11 +804,12 @@ impl VideoStream {
             },
         )?);
         if let Some(decoder) = queued {
+            let refresh = KeyFrameRequests::new(start.fps);
             let decode_session = session.clone();
             stream.decode = Some(std::thread::Builder::new().name("VideoDec".into()).spawn(
                 move || {
                     decode_session.prioritize_decode_thread();
-                    decoder_thread(decoder, shared, control)
+                    decoder_thread(decoder, shared, control, refresh)
                 },
             )?);
         }
@@ -1027,18 +1039,86 @@ fn receive_batch<'b>(
     }
 }
 
+/// Paces the key frame requests of a decoder that keeps failing (Nightjar issue 77: a V4L2
+/// decoder that could not set up its buffers answered every frame, the requested key frames
+/// too, with [`DecodeStatus::NeedIdr`], and the stream asked for 99 key frames in 2 s while the
+/// app took a second to replace the decoder). The first request goes out at once, so a single
+/// failure recovers as fast as before. It then stays outstanding until a key frame decodes or
+/// the window passes. A requested key frame that arrives but fails to decode does not clear
+/// it: that is the failing case, and the answer to an immediate new request would fail alike.
+/// Asked again within the window, the request is deferred, not dropped: it goes out with the
+/// first frame after the window, so a decoder replaced meanwhile still gets its key frame. Only
+/// the decoder's requests are paced; the receiver's own, for frames lost on the way, are not.
+/// The receiver ([`VideoReceiver::request_decoder_refresh`]) stays as the C core's, which the
+/// differential tests compare it with.
+pub(super) struct KeyFrameRequests {
+    window_us: u64,
+    /// When the request not yet answered by a decoded key frame went out.
+    sent_us: Option<u64>,
+    /// The decoder asked again within the window.
+    deferred: bool,
+}
+
+impl KeyFrameRequests {
+    /// The window is the time the host needs to answer: a round trip, for which 100 ms allows
+    /// Wi-Fi and most internet paths, plus four frame intervals for the host to wait for the
+    /// next captured frame, encode it, send the key frame (several times an inter frame's size,
+    /// paced over more than one interval) and for the decoder to take it. That is 133 ms at
+    /// 120 fps and 167 ms at 60 fps, so a decoder failing on every frame makes at most 6 to 8
+    /// requests a second instead of one per frame, and a request answered in time is never
+    /// repeated. An unknown frame rate counts as 60 fps.
+    pub(super) fn new(fps: i32) -> Self {
+        let fps = if fps > 0 { fps as u64 } else { 60 };
+        Self {
+            window_us: 100_000 + 4 * 1_000_000 / fps,
+            sent_us: None,
+            deferred: false,
+        }
+    }
+
+    /// The decoder took a key frame: the request is answered and the next goes out at once.
+    pub(super) fn key_frame_decoded(&mut self) {
+        self.sent_us = None;
+        self.deferred = false;
+    }
+
+    /// Whether to request a key frame after a frame the decoder answered with `need_idr`. The
+    /// clock is read only when the decoder asks or a request waits.
+    pub(super) fn request(&mut self, need_idr: bool, now_us: impl FnOnce() -> u64) -> bool {
+        if !need_idr && !self.deferred {
+            return false;
+        }
+        let now = now_us();
+        match self.sent_us {
+            Some(sent) if now.saturating_sub(sent) < self.window_us => {
+                self.deferred = true;
+                false
+            }
+            _ => {
+                self.sent_us = Some(now);
+                self.deferred = false;
+                true
+            }
+        }
+    }
+}
+
 fn decoder_thread(
     decoder: Box<dyn VideoDecoder>,
     shared: Arc<VideoShared>,
     control: ControlHandle,
+    refresh: KeyFrameRequests,
 ) -> Box<dyn VideoDecoder> {
-    decode_loop(decoder, &shared, |signals| route(&control, signals))
+    decode_loop(decoder, &shared, refresh, |signals| {
+        route(&control, signals)
+    })
 }
 
 /// The decoder thread's loop, with the routing of the receiver's signals left to the caller.
 fn decode_loop(
     mut decoder: Box<dyn VideoDecoder>,
     shared: &VideoShared,
+    mut refresh: KeyFrameRequests,
     mut route_signals: impl FnMut(&mut Vec<VideoSignal>),
 ) -> Box<dyn VideoDecoder> {
     let mut signals = Vec::new();
@@ -1076,14 +1156,20 @@ fn decode_loop(
         let need_idr = status == DecodeStatus::NeedIdr;
         let decoded_idr = status == DecodeStatus::Ok
             && (std::mem::take(&mut skipped_idr) || frame.frame_type == FrameType::Idr);
+        if need_idr {
+            skipped_idr = false;
+            shared.counters.need_idr.fetch_add(1, Ordering::Relaxed);
+        }
+        if decoded_idr {
+            refresh.key_frame_decoded();
+        }
+        let request_idr = refresh.request(need_idr, now_us);
         // Asked after each frame: a decoder replaced mid-stream may not recover with RFI.
         let lost_rfi = !idr_only && !decoder.recovers_with_rfi();
         // Most frames tell the receiver nothing and leave its lock to the receive thread.
-        if need_idr || decoded_idr || lost_rfi {
+        if request_idr || decoded_idr || lost_rfi {
             let mut receiver = lock(&shared.receiver);
-            if need_idr {
-                skipped_idr = false;
-                shared.counters.need_idr.fetch_add(1, Ordering::Relaxed);
+            if request_idr {
                 let mut sink = Sink {
                     shared,
                     direct: None,

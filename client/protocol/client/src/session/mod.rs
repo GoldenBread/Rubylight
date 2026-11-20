@@ -1385,6 +1385,7 @@ fn start(
             direct_submit: outcome.video_capabilities & sdp::CAPABILITY_DIRECT_SUBMIT != 0,
             receive_coalescing: config.receive_coalescing,
             next_socket: parts.video_next_socket.clone(),
+            fps: stream.fps,
         };
         parts.video = Some(
             video::VideoStream::start(

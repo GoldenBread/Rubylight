@@ -195,12 +195,17 @@ fn a_wired_route_says_wired_with_its_speed_or_that_it_is_unknown() {
     use crate::network::{Fallback, Toward};
     // NUC Flatpak: eno1 at 1000 Mbps was logged as "wired or unknown (from the route)".
     let wired = Ok(Toward { wireless: false, link_mbps: 1000 });
-    assert_eq!(route_line(wired, false, 1000), "wired (from the route), link 1000 Mbps");
-    assert_eq!(route_line(Ok(Toward { wireless: false, link_mbps: 0 }), false, 0), "wired (from the route), link speed unknown");
-    assert_eq!(route_line(Ok(Toward { wireless: true, link_mbps: 0 }), true, 0), "wireless (from the route), link 0 Mbps");
-    assert_eq!(route_line(Err(Fallback::NotTelling), false, 0),
-        "wired or unknown (from the internet connection, interface does not say), link 0 Mbps");
-    assert_eq!(route_line(Err(Fallback::Route), true, 0), "wireless (from the internet connection, route lookup failed), link 0 Mbps");
+    assert_eq!(route_line(wired, false, 1000, 1000), "wired (from the route), link 1000 Mbps");
+    assert_eq!(route_line(Ok(Toward { wireless: false, link_mbps: 0 }), false, 0, 0), "wired (from the route), link speed unknown");
+    assert_eq!(route_line(Ok(Toward { wireless: true, link_mbps: 0 }), true, 0, 0),
+        "wireless (from the route), adapter rate unknown, no link speed used on a wireless route");
+    // Issue 77: a 2161 Mbps Wi-Fi 7 link was logged as "link 0 Mbps", the hint a wireless route never sends.
+    assert_eq!(route_line(Ok(Toward { wireless: true, link_mbps: 0 }), true, 0, 2161),
+        "wireless (from the route), adapter rate 2161 Mbps, not used as the link speed on a wireless route");
+    assert_eq!(route_line(Err(Fallback::NotTelling), false, 0, 0),
+        "wired or unknown (from the internet connection, interface does not say), link speed unknown");
+    assert_eq!(route_line(Err(Fallback::Route), true, 0, 866),
+        "wireless (from the internet connection, route lookup failed), adapter rate 866 Mbps, not used as the link speed on a wireless route");
 }
 
 #[test]

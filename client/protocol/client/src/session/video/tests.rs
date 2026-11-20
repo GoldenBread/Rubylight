@@ -284,7 +284,7 @@ impl Running {
             shared: shared.clone(),
             seen,
             thread: std::thread::spawn(move || {
-                decode_loop(Box::new(recorder), &for_thread, |_| {})
+                decode_loop(Box::new(recorder), &for_thread, KeyFrameRequests::new(60), |_| {})
             }),
         }
     }
@@ -692,8 +692,14 @@ fn slower_than_the_stream(
         go: gate,
     };
     let for_thread = shared.clone();
-    let thread =
-        std::thread::spawn(move || decode_loop(Box::new(decoder), &for_thread, |_| {}));
+    let thread = std::thread::spawn(move || {
+        decode_loop(
+            Box::new(decoder),
+            &for_thread,
+            KeyFrameRequests::new(60),
+            |_| {},
+        )
+    });
     let decoding = || {
         in_decode
             .recv_timeout(HANG_GUARD)
@@ -1126,11 +1132,14 @@ impl VideoDecoder for DirectFake {
 fn a_direct_decoder_submits_outside_the_receivers_lock_and_its_feedback_comes_first() {
     let shared = Arc::new(VideoShared::new(records(false)));
     let log = Arc::new(Mutex::new(Vec::new()));
-    let mut direct = Direct::new(Box::new(DirectFake {
-        shared: shared.clone(),
-        log: log.clone(),
-        status: DecodeStatus::NeedIdr,
-    }));
+    let mut direct = Direct::new(
+        Box::new(DirectFake {
+            shared: shared.clone(),
+            log: log.clone(),
+            status: DecodeStatus::NeedIdr,
+        }),
+        KeyFrameRequests::new(60),
+    );
     let mut host = Blocks::new();
     let mut packets = flat(host.frame(&[8, 6], 1));
     packets.extend(flat(host.frame(&[8, 6], 2)));
@@ -1200,4 +1209,106 @@ fn a_decoder_without_rfi_turns_the_receivers_rfi_recovery_off() {
         assert_eq!(frames_seen(&seen).len(), 1, "{seen:?}");
         assert_eq!(lock(&shared.receiver).rfi_recovery(), rfi, "decoder with rfi {rfi}");
     }
+}
+
+#[test]
+fn a_failing_decoder_asks_for_one_key_frame_per_window_and_a_decoded_one_clears_it() {
+    // 120 fps: a 100 ms round trip plus four frame intervals.
+    let mut requests = KeyFrameRequests::new(120);
+    assert_eq!(requests.window_us, 133_333);
+    // The first failure asks at once.
+    assert!(requests.request(true, || 1_000));
+    // A burst of failures within the window asks no more, and frames the decoder took
+    // meanwhile do not either.
+    for now in (2_000..134_000).step_by(1_000) {
+        assert!(!requests.request(true, || now), "at {now} us");
+        assert!(!requests.request(false, || now), "at {now} us");
+    }
+    // The deferred request goes out with the first frame after the window, even one taken.
+    assert!(requests.request(false, || 134_400));
+    assert!(
+        !requests.request(false, || 300_000),
+        "nothing waits any more"
+    );
+    // A decoded key frame answers it: a deferred request is dropped, and the next failure
+    // asks at once although it is within the window.
+    assert!(!requests.request(true, || 140_000));
+    requests.key_frame_decoded();
+    assert!(!requests.request(false, || 140_001));
+    assert!(requests.request(true, || 140_002));
+    // An unknown frame rate counts as 60 fps.
+    assert_eq!(KeyFrameRequests::new(0).window_us, 166_666);
+}
+
+/// A decoder that fails every frame but `ok`, logging its submissions.
+struct FailingDecoder {
+    log: Arc<Mutex<Vec<Option<u32>>>>,
+    ok: u32,
+}
+
+impl VideoDecoder for FailingDecoder {
+    fn setup(&mut self, _: &crate::session::VideoSetup) -> Result<(), i32> {
+        Ok(())
+    }
+
+    fn submit(&mut self, frame: &Frame) -> DecodeStatus {
+        lock(&self.log).push(Some(frame.number));
+        if frame.number == self.ok {
+            DecodeStatus::Ok
+        } else {
+            DecodeStatus::NeedIdr
+        }
+    }
+}
+
+#[test]
+fn a_decoder_failing_every_key_frame_does_not_flood_the_host_with_requests() {
+    // Issue 77: the decoder failed every frame, the asked-for key frames too, and each failure
+    // asked for another, one key frame every frame or two. A window of seconds (1 fps) keeps
+    // the burst within it however slowly the test runs.
+    let shared = Arc::new(VideoShared::new(records(false)));
+    let log: Arc<Mutex<Vec<Option<u32>>>> = Arc::default();
+    let (done, routed) = mpsc::channel();
+    let decoder = FailingDecoder {
+        log: log.clone(),
+        ok: 21,
+    };
+    let (for_thread, for_route) = (shared.clone(), log.clone());
+    let thread = std::thread::spawn(move || {
+        decode_loop(
+            Box::new(decoder),
+            &for_thread,
+            KeyFrameRequests::new(1),
+            move |signals| {
+                for signal in signals.drain(..) {
+                    if matches!(signal, VideoSignal::RequestIdr) {
+                        lock(&for_route).push(None);
+                    }
+                }
+                done.send(()).unwrap();
+            },
+        )
+    });
+    // One frame at a time, once the decoder thread is done with the one before, as the host's
+    // answers arrive: each request flushes the queue. Frames 1 to 20 are key frames the decoder fails, 21 is one it decodes, 22 and 23 fail.
+    for number in 1..=23 {
+        let frame_type = if number <= 21 {
+            FrameType::Idr
+        } else {
+            FrameType::P
+        };
+        assert!(shared.queue.offer(numbered(number, frame_type)).is_ok());
+        routed
+            .recv_timeout(HANG_GUARD)
+            .expect("the decoder never took the frame");
+    }
+    shared.queue.shutdown();
+    thread.join().unwrap();
+    // A request (None) after the first failure and after the first failure that follows the
+    // decoded key frame, none for the burst between.
+    let mut expected: Vec<Option<u32>> = vec![Some(1), None];
+    expected.extend((2..=22).map(Some));
+    expected.extend([None, Some(23)]);
+    assert_eq!(*lock(&log), expected);
+    assert_eq!(shared.counters.need_idr.load(Ordering::Relaxed), 22);
 }
