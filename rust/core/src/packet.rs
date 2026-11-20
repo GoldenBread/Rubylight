@@ -234,8 +234,8 @@ impl VideoPacketizer {
         ConventionalPlan { layout, percentage }
     }
     pub fn fec_limited(&self, payload_bytes: usize) -> bool {
-        self.conventional_plan(payload_bytes)
-            .limited(self.fec_percent)
+        let shards = (payload_bytes + 8).div_ceil(self.packet_size - 16);
+        conventional_fec(shards, self.fec_percent, self.min_fec).1 < self.fec_percent
     }
     /// The largest payload that still gets the full `fec_percent` within
     /// Moonlight's four blocks ([`Self::fec_limited`] false). A larger frame
