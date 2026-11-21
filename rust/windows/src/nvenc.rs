@@ -55,6 +55,9 @@ use windows::{
 
 const SUCCESS: NVENCSTATUS = _NVENCSTATUS_NV_ENC_SUCCESS;
 const MAX_PENDING: usize = 8;
+/// Slots whose cleanup the driver refused that a session keeps waiting for a
+/// retry; one more registration fails instead of adding to them.
+const MAX_DEFERRED: usize = MAX_PENDING;
 /// A frame still unfinished this long after its submission means a hung
 /// driver. A shorter wait belongs to the session's stall policy
 /// (`encoder_stall_limit`: 250 ms, doubling up to 2 s), which waits out a
@@ -515,6 +518,42 @@ struct Slot {
     event: HANDLE,
     event_registered: bool,
     signaled: bool,
+}
+impl Slot {
+    /// Its registration failed and the driver kept part of it: no input finds
+    /// it, it waits for a retry or the session's destruction.
+    fn deferred(&self) -> bool {
+        self.input.key == 0 && !self.released()
+    }
+    /// A deferred slot that holds nothing any more (`release`): the list
+    /// reuses or trims it.
+    fn released(&self) -> bool {
+        self.input.key == 0
+            && self.event.is_invalid()
+            && self.registered.is_null()
+            && self.mapped.is_null()
+            && self.output.is_null()
+            && !self.event_registered
+            && self
+                .d3d12
+                .as_ref()
+                .is_none_or(|slot| slot.registered.is_null() && slot.mapped.is_null())
+    }
+    /// After `cleanup_slot` succeeded: close the completion event, which the
+    /// driver no longer has registered, and let go of the input, and leave
+    /// the slot without a key so no input finds it.
+    fn release(&mut self) {
+        if !self.event.is_invalid() {
+            // SAFETY: This slot alone owns the event; `cleanup_slot` unregistered it from the
+            // driver, and the handle is cleared so `Drop` does not close it twice.
+            let _ = unsafe { CloseHandle(self.event) };
+            self.event = HANDLE::default();
+        }
+        self.input.key = 0;
+        self.input._texture = None;
+        self.input.cuda = None;
+        self.input.d3d12 = None;
+    }
 }
 impl Drop for Slot {
     fn drop(&mut self) {
@@ -1483,8 +1522,19 @@ impl Session {
             bail!("an NVENC input does not match its session's D3D11 or D3D12 device");
         }
         let _guard = self.guard()?;
-        let index = self.slots.len();
-        self.slots.push(Slot {
+        self.retry_deferred();
+        let deferred = self.slots.iter().filter(|slot| slot.deferred()).count();
+        if deferred >= MAX_DEFERRED {
+            // A persistent fault: each failed registration would leave one
+            // more slot, with its event handle, until the session ends. Fail
+            // visibly so the encoder is recreated, which destroys the session.
+            tracing::error!(
+                deferred,
+                "NVENC keeps inputs it will not release; the encoder must be recreated"
+            );
+            bail!("NVENC input cleanup keeps failing: {deferred} inputs are held by the driver");
+        }
+        let fresh = Slot {
             input,
             metadata: Metadata::new(self.stream.codec),
             registered: ptr::null_mut(),
@@ -1495,23 +1545,59 @@ impl Session {
             event: HANDLE::default(),
             event_registered: false,
             signaled: false,
-        });
+        };
+        // A slot the driver has let go is reused, so repeated faults that
+        // clean up on retry do not lengthen the list.
+        let index = match self.slots.iter().position(Slot::released) {
+            Some(index) => {
+                self.slots[index] = fresh;
+                index
+            }
+            None => {
+                self.slots.push(fresh);
+                self.slots.len() - 1
+            }
+        };
         if let Err(error) = self.acquire(index) {
             // A slot that failed to register is released at once, so the
             // texture registers afresh when it comes round again instead of
             // failing at map.
-            let mut slot = self.slots.pop().unwrap();
-            if let Err(cleanup) = cleanup_slot(&self.functions, self.raw, self.api, &mut slot) {
-                // The driver still holds part of it: Session::drop releases
-                // that, no input finds the slot by its key and it does not
-                // count against the registration limit.
-                tracing::warn!(error = %cleanup, "NVENC input cleanup deferred to session destruction");
-                slot.input.key = 0;
-                self.slots.push(slot);
+            match cleanup_slot(&self.functions, self.raw, self.api, &mut self.slots[index]) {
+                Ok(()) => {
+                    self.slots[index].release();
+                    self.trim_released();
+                }
+                Err(cleanup) => {
+                    // The driver still holds part of it: `retry_deferred`
+                    // tries again on the next registration and
+                    // Session::drop releases the rest. No input finds the
+                    // slot by its key and it does not count against the
+                    // registration limit, but only MAX_DEFERRED may wait.
+                    tracing::warn!(error = %cleanup, "NVENC input cleanup deferred");
+                    self.slots[index].input.key = 0;
+                }
             }
             return Err(error);
         }
         Ok(index)
+    }
+    /// Try again to release the slots whose cleanup failed; a slot the driver
+    /// lets go of gives up its event handle and inputs.
+    fn retry_deferred(&mut self) {
+        for slot in self.slots.iter_mut().filter(|slot| slot.deferred()) {
+            if cleanup_slot(&self.functions, self.raw, self.api, slot).is_ok() {
+                slot.release();
+            }
+        }
+        self.trim_released();
+    }
+    /// Drop released slots from the end of the list. Only slots with a key
+    /// can be in flight, and a released one has none, so no pending frame
+    /// names them.
+    fn trim_released(&mut self) {
+        while self.slots.last().is_some_and(Slot::released) {
+            self.slots.pop();
+        }
     }
     /// Register slot `index`'s input and make its output and completion
     /// event. A failure leaves what was made in the slot for `cleanup_slot`.

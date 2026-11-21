@@ -42,6 +42,8 @@ struct Driver {
     reject_in_place: bool,
     /// Unregistering an input fails and keeps it registered.
     reject_unregister: bool,
+    /// Registering a completion event fails, after the slot made its handle.
+    reject_register_event: bool,
     reject_invalidate: Option<u64>,
     reject_submit: bool,
     asynchronous: bool,
@@ -432,6 +434,9 @@ unsafe extern "C" fn register_event(
     let p = unsafe { &*parameters };
     // SAFETY: `raw` is a live handle that `open` boxed and `destroy` has not freed.
     assert_eq!(p.version, unsafe { handle(raw) }.event());
+    if state(|d| d.reject_register_event) {
+        return _NVENCSTATUS_NV_ENC_ERR_GENERIC;
+    }
     state(|d| assert!(d.events.insert(p.completionEvent as usize)));
     SUCCESS
 }
@@ -2391,20 +2396,98 @@ fn inputs_the_driver_keeps_do_not_use_up_the_registration_limit() -> Result<()> 
         d.reject_unregister = true;
     });
     let mut encoder = session(&Negotiated::default(), ApiVersion(13, 0))?;
-    for key in 0..2 * MAX_PENDING {
+    for key in 0..MAX_DEFERRED {
         let error = input(&mut encoder, 100 + key).unwrap_err();
         assert!(!format!("{error:#}").contains("limit"), "{error:#}");
     }
     assert!(encoder.slots.iter().all(|slot| slot.input.key == 0));
-    state(|d| d.reject_output = false);
+    // The driver lets go: the next registration releases them and reuses the room.
+    state(|d| {
+        d.reject_output = false;
+        d.reject_unregister = false;
+    });
     let slot = input(&mut encoder, 17)?;
     encoder.submit(slot, None, true, Instant::now())?;
     assert!(encoder.poll()?[0].idr);
-    // Session destruction releases them once the driver lets go.
-    state(|d| d.reject_unregister = false);
+    assert_eq!(encoder.slots.len(), 1);
     drop(encoder);
     assert_clean();
     Ok(())
+}
+/// Counts the completion events slots still hold open.
+fn open_events(encoder: &Session) -> usize {
+    encoder
+        .slots
+        .iter()
+        .filter(|slot| !slot.event.is_invalid())
+        .count()
+}
+#[test]
+fn a_persistent_cleanup_fault_keeps_the_deferred_slots_and_their_events_bounded() -> Result<()> {
+    reset();
+    state(|d| {
+        d.asynchronous = true;
+        d.reject_register_event = true;
+        d.reject_unregister = true;
+    });
+    let mut encoder = session(&Negotiated::default(), ApiVersion(13, 0))?;
+    for key in 0..MAX_DEFERRED {
+        let error = input(&mut encoder, 100 + key).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("completion event"),
+            "{error:#}"
+        );
+    }
+    assert_eq!(open_events(&encoder), MAX_DEFERRED);
+    // Past the bound registration fails visibly, without another slot or handle.
+    for key in 0..4 * MAX_DEFERRED {
+        let error = input(&mut encoder, 200 + key).unwrap_err();
+        assert!(format!("{error:#}").contains("keeps failing"), "{error:#}");
+    }
+    assert_eq!(encoder.slots.len(), MAX_DEFERRED);
+    assert_eq!(open_events(&encoder), MAX_DEFERRED);
+    // The driver lets go: the retry closes every handle and the list shrinks.
+    state(|d| {
+        d.reject_register_event = false;
+        d.reject_unregister = false;
+    });
+    let slot = input(&mut encoder, 17)?;
+    assert_eq!(encoder.slots.len(), 1);
+    assert_eq!(open_events(&encoder), 1);
+    assert_eq!(slot, 0);
+    drop(encoder);
+    assert_clean();
+    Ok(())
+}
+#[test]
+fn a_fault_that_clears_on_retry_does_not_lengthen_the_slot_list() -> Result<()> {
+    reset();
+    state(|d| {
+        d.asynchronous = true;
+        d.reject_register_event = true;
+    });
+    let mut encoder = session(&Negotiated::default(), ApiVersion(13, 0))?;
+    let live = input_ok(&mut encoder, 17)?;
+    for round in 0..4 * MAX_DEFERRED {
+        // Only the cleanup fails this round; the next registration retries it.
+        state(|d| d.reject_unregister = true);
+        input(&mut encoder, 100 + round).unwrap_err();
+        state(|d| d.reject_unregister = false);
+        assert_eq!(encoder.slots.len(), 2);
+        input(&mut encoder, 300 + round).unwrap_err();
+        assert_eq!(encoder.slots.len(), 1);
+    }
+    assert_eq!(open_events(&encoder), 1);
+    assert_eq!(live, 0);
+    drop(encoder);
+    assert_clean();
+    Ok(())
+}
+fn input_ok(encoder: &mut Session, key: usize) -> Result<usize> {
+    state(|d| d.reject_register_event = false);
+    let slot = input(encoder, key);
+    state(|d| d.reject_register_event = true);
+    slot
 }
 #[test]
 fn without_dynamic_bitrate_a_change_resets_after_the_frames_in_flight() -> Result<()> {
