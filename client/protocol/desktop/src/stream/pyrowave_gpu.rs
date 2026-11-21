@@ -81,8 +81,7 @@ impl Reconstruction {
             for texture in &self.textures[..uploads] {
                 if !SDL_UpdateTexture(*texture, ptr::null(), info.data[0].cast(), info.linesize[0]) { return false; }
             }
-            stages.add(UPLOAD, step);
-            let step = Instant::now();
+            let step = stages.lap(UPLOAD, step);
             for level in (0..5).rev() {
                 parameters[4] = level;
                 for pass in 0..2 {
