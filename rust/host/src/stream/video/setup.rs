@@ -310,7 +310,22 @@ impl SessionThread<'_> {
         workers.client_commands = Some(crate::process::ClientCommands::start(&h, &s)?);
         workers.audio = Some(m.spawn_audio(&h, &s)?);
         configure_video_fec(&s, &c)?;
-        s.configure_link_rate(c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
+        let max_kbps = max_bitrate_kbps(&s, &c);
+        s.configure_link_rate(c.link_rate_adaptation(), max_kbps);
+        let ceiling = butterpollo_core::stream_policy::explain_bitrate(&s.config, &c, max_kbps);
+        tracing::info!(
+            configured_bitrate_kbps = s.config.configured_bitrate_kbps,
+            encoder_kbps = ceiling.encoder_kbps,
+            fec_percent = s.config.launch_fec,
+            fec_reserved_kbps = ceiling.fec_reserved_kbps,
+            audio_channels = s.config.audio_channels,
+            audio_reserved_kbps = ceiling.audio_reserved_kbps,
+            overhead_reserved_kbps = ceiling.overhead_reserved_kbps,
+            max_bitrate_kbps = ceiling.host_max_bitrate_kbps,
+            link_ceiling_kbps = ceiling.link_ceiling_kbps,
+            ceiling_source = ceiling.ceiling_source,
+            "stream bitrate budget and link ceiling"
+        );
         {
             let (enabled, shadow) = congestion_mode(&c);
             s.configure_congestion(enabled, max_bitrate_kbps(&s, &c), shadow);

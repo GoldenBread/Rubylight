@@ -1536,13 +1536,20 @@ fn bitrate_ceiling_kbps(config: &Config) -> u64 {
     }
 }
 const NO_BITRATE_CEILING_KBPS: u64 = i32::MAX as u64 / 1000;
-/// The encoder's bitrate for `stream`, at most `ceiling` Kbps of what it asks
-/// for. A client that sent the bitrate its user set (`configured_bitrate_kbps`)
-/// gets that number less the FEC share (`launch_fec`), audio and 500 Kbps of
-/// overhead, as Sunshine takes it, so video, parity and audio together stay
-/// within it; one that sent none already took its own share off
-/// `bitrate_kbps`.
-fn encoder_share_kbps(stream: &Negotiated, ceiling: u64) -> u32 {
+/// Breakdown of how a launch bitrate became the encoder target and link-rate ceiling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BitrateBudget {
+    pub requested_kbps: u32,
+    pub host_max_bitrate_kbps: u32,
+    pub fec_reserved_kbps: u32,
+    pub audio_reserved_kbps: u32,
+    pub overhead_reserved_kbps: u32,
+    pub encoder_kbps: u32,
+    pub link_ceiling_kbps: u32,
+    pub ceiling_source: &'static str,
+}
+
+fn share_breakdown(stream: &Negotiated, ceiling: u64) -> BitrateBudget {
     let configured = u64::from(stream.configured_bitrate_kbps);
     let requested = if configured > 0 {
         configured
@@ -1555,22 +1562,91 @@ fn encoder_share_kbps(stream: &Negotiated, ceiling: u64) -> u32 {
     // more than an Onn 4K Pro's 100 Mbps port carries. Each frame gets a half
     // or a quarter of Vibepollo's budget instead.
     let mut budget = requested.min(ceiling);
+    let mut fec_reserved = 0u64;
+    let mut audio_reserved = 0u64;
+    let mut overhead_reserved = 0u64;
     if configured > 0 {
         if stream.codec != 3 {
-            budget = budget * (100 - u64::from(stream.launch_fec.min(80))) / 100;
+            let after_fec = budget * (100 - u64::from(stream.launch_fec.min(80))) / 100;
+            fec_reserved = budget.saturating_sub(after_fec);
+            budget = after_fec;
         }
         let audio = u64::from(stream.audio_channels) * if stream.audio_quality { 256 } else { 96 };
         if stream.codec == 3 {
             // PyroWave's bitrate is the stream's whole wire budget, as
             // Vibeshine takes it: audio with its 50% parity and control come
             // off in full, uncapped, so a calibrated total holds.
-            budget = budget.saturating_sub((audio * 3).div_ceil(2) + 500);
+            let audio_share = (audio * 3).div_ceil(2);
+            audio_reserved = audio_share.min(budget);
+            let after_audio = budget.saturating_sub(audio_share);
+            overhead_reserved = 500.min(after_audio);
+            budget = budget.saturating_sub(audio_share + 500);
         } else {
-            budget -= audio.min(budget / 5);
-            budget -= 500.min(budget / 10);
+            audio_reserved = audio.min(budget / 5);
+            budget -= audio_reserved;
+            overhead_reserved = 500.min(budget / 10);
+            budget -= overhead_reserved;
         }
     }
-    budget.clamp(1, 2_000_000) as u32
+    let encoder_kbps = budget.clamp(1, 2_000_000) as u32;
+    let host_max_bitrate_kbps = if ceiling < NO_BITRATE_CEILING_KBPS {
+        ceiling.min(u64::from(u32::MAX)) as u32
+    } else {
+        0
+    };
+    BitrateBudget {
+        requested_kbps: requested.min(u64::from(u32::MAX)) as u32,
+        host_max_bitrate_kbps,
+        fec_reserved_kbps: fec_reserved as u32,
+        audio_reserved_kbps: audio_reserved as u32,
+        overhead_reserved_kbps: overhead_reserved as u32,
+        encoder_kbps,
+        link_ceiling_kbps: encoder_kbps,
+        ceiling_source: "client_request",
+    }
+}
+
+/// The encoder's bitrate for `stream`, at most `ceiling` Kbps of what it asks
+/// for. A client that sent the bitrate its user set (`configured_bitrate_kbps`)
+/// gets that number less the FEC share (`launch_fec`), audio and 500 Kbps of
+/// overhead, as Sunshine takes it, so video, parity and audio together stay
+/// within it; one that sent none already took its own share off
+/// `bitrate_kbps`.
+fn encoder_share_kbps(stream: &Negotiated, ceiling: u64) -> u32 {
+    share_breakdown(stream, ceiling).encoder_kbps
+}
+
+/// Explain the effective encoder bitrate and link-rate ceiling at stream start,
+/// matching the calculations in [`apply`] and [`crate::link_rate::LinkRate::new`].
+pub fn explain_bitrate(stream: &Negotiated, config: &Config, max_kbps: u32) -> BitrateBudget {
+    let mut breakdown = share_breakdown(stream, bitrate_ceiling_kbps(config));
+    let encoder_kbps = if stream.bitrate_kbps > 0 {
+        stream.bitrate_kbps
+    } else {
+        breakdown.encoder_kbps
+    };
+    breakdown.encoder_kbps = encoder_kbps;
+    let codec_cap = if stream.codec == 3 {
+        2_000_000
+    } else {
+        500_000
+    };
+    let link_cap = if max_kbps > 0 { max_kbps } else { u32::MAX };
+    breakdown.link_ceiling_kbps = encoder_kbps.min(codec_cap).min(link_cap);
+    breakdown.ceiling_source = if link_cap < encoder_kbps && link_cap < codec_cap {
+        "host_max_bitrate"
+    } else if codec_cap < encoder_kbps {
+        "codec_limit"
+    } else if breakdown.host_max_bitrate_kbps > 0
+        && breakdown.host_max_bitrate_kbps < breakdown.requested_kbps
+    {
+        "host_max_bitrate"
+    } else if breakdown.link_ceiling_kbps < breakdown.requested_kbps {
+        "wire_budget_after_fec_audio"
+    } else {
+        "client_request"
+    };
+    breakdown
 }
 /// The encoder's bitrate for a bitrate of `kbps` a client asks for mid-stream
 /// (0x553C), in the unit of its launch: the stream of a client that sent the

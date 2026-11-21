@@ -2604,6 +2604,60 @@ fn configured_wire_budget_deducts_fec_and_audio_after_the_ceiling() {
     // Vibeshine takes them off a PyroWave total: 192 * 3 / 2 + 500.
     assert_eq!(pyro.bitrate_kbps, 799212);
 }
+
+#[test]
+fn explain_bitrate_identifies_wire_budget_and_ceiling_sources() {
+    let mut configured = Negotiated {
+        fps: 144,
+        codec: 2,
+        configured_bitrate_kbps: 80_000,
+        audio_channels: 2,
+        audio_quality: true,
+        ..Default::default()
+    };
+    let default_cfg = Config::default();
+    apply(&mut configured, 144_000, &default_cfg);
+    assert_eq!(configured.bitrate_kbps, 62_988);
+    let explained = explain_bitrate(&configured, &default_cfg, 0);
+    assert_eq!(explained.requested_kbps, 80_000);
+    assert_eq!(explained.fec_reserved_kbps, 16_000);
+    assert_eq!(explained.audio_reserved_kbps, 512);
+    assert_eq!(explained.overhead_reserved_kbps, 500);
+    assert_eq!(explained.encoder_kbps, 62_988);
+    assert_eq!(explained.link_ceiling_kbps, 62_988);
+    assert_eq!(explained.ceiling_source, "wire_budget_after_fec_audio");
+
+    let capped_cfg = Config::parse("max_bitrate=15000\n").unwrap();
+    let mut capped = Negotiated {
+        fps: 120,
+        codec: 2,
+        configured_bitrate_kbps: 20_000,
+        audio_channels: 6,
+        ..Default::default()
+    };
+    apply(&mut capped, 120_000, &capped_cfg);
+    let explained = explain_bitrate(&capped, &capped_cfg, 15_000);
+    assert_eq!(explained.ceiling_source, "host_max_bitrate");
+    assert_eq!(explained.host_max_bitrate_kbps, 15_000);
+
+    let legacy = Negotiated {
+        bitrate_kbps: 20_000,
+        ..Default::default()
+    };
+    let explained = explain_bitrate(&legacy, &default_cfg, 0);
+    assert_eq!(explained.link_ceiling_kbps, 20_000);
+    assert_eq!(explained.ceiling_source, "client_request");
+
+    let mut codec_limited = Negotiated {
+        codec: 2,
+        configured_bitrate_kbps: 800_000,
+        ..Default::default()
+    };
+    apply(&mut codec_limited, 120_000, &default_cfg);
+    let explained = explain_bitrate(&codec_limited, &default_cfg, 0);
+    assert_eq!(explained.link_ceiling_kbps, 500_000);
+    assert_eq!(explained.ceiling_source, "codec_limit");
+}
 #[test]
 fn a_stream_runs_at_the_rate_its_request_asks_for() {
     // Artemis's Warp launches at 60 and asks for 120 or 240; Moonlight for
