@@ -304,7 +304,6 @@
         <item>Ativado</item>
         <item>Mais rápido</item>
     </string-array>
-    <string name="summary_vrr_unavailable">Requer Android 6 ou mais recente.</string>
     <string name="title_virtual_display_scale">Resolução de renderização do PC</string>
     <string name="summary_virtual_display_scale">O tamanho em que o PC renderiza, como porcentagem da resolução da transmissão; o vídeo enviado mantém o tamanho. Acima de 100, o PC desenha mais pixels do que envia; abaixo, menos.</string>
     <string name="title_virtual_display_dpi">Escala da tela do PC</string>

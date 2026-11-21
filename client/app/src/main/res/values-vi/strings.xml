@@ -304,7 +304,6 @@
         <item>Bật</item>
         <item>Nhanh nhất</item>
     </string-array>
-    <string name="summary_vrr_unavailable">Cần Android 6 trở lên.</string>
     <string name="title_virtual_display_scale">Độ phân giải kết xuất trên PC</string>
     <string name="summary_virtual_display_scale">Kích thước PC kết xuất, tính theo phần trăm độ phân giải stream; video gửi đi vẫn giữ nguyên kích thước. Trên 100, PC vẽ nhiều điểm ảnh hơn số nó gửi; dưới 100 thì ít hơn.</string>
     <string name="title_virtual_display_dpi">Tỷ lệ hiển thị trên PC</string>

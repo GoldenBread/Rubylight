@@ -374,7 +374,6 @@
     <string name="tag_unused_refresh_switched">Not used at the %1$d Hz streams switch this screen to: that isn’t 2 to 4 times the frame rate</string>
     <string name="tag_unused_with">Not used with %1$s</string>
     <string name="tag_every_frame_with">Keeping every frame isn’t used with %1$s</string>
-    <string name="summary_vrr_unavailable">Needs Android 6 or newer.</string>
     <string name="title_virtual_display_scale">PC render resolution</string>
     <string name="summary_virtual_display_scale">The size the PC renders at, as a percent of the stream resolution; the video sent keeps its size. Above 100 the PC draws more pixels than it sends, below fewer.</string>
     <string name="title_virtual_display_dpi">PC display scaling</string>

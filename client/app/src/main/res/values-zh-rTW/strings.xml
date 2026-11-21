@@ -304,7 +304,6 @@
         <item>開啟</item>
         <item>最快</item>
     </string-array>
-    <string name="summary_vrr_unavailable">需要 Android 6 或更新版本。</string>
     <string name="title_virtual_display_scale">電腦轉譯解析度</string>
     <string name="summary_virtual_display_scale">電腦繪製的大小，以串流解析度的百分比表示；傳送的視訊大小不變。高於 100 時，電腦繪製的像素比傳送的多；低於 100 時則較少。</string>
     <string name="title_virtual_display_dpi">電腦顯示縮放</string>

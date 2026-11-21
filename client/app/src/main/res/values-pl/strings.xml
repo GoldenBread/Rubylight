@@ -304,7 +304,6 @@
         <item>Wł.</item>
         <item>Najszybciej</item>
     </string-array>
-    <string name="summary_vrr_unavailable">Wymaga Androida 6 lub nowszego.</string>
     <string name="title_virtual_display_scale">Rozdzielczość renderowania komputera</string>
     <string name="summary_virtual_display_scale">Rozmiar, w jakim komputer renderuje obraz, jako procent rozdzielczości strumienia; wysyłane wideo zachowuje swój rozmiar. Powyżej 100 komputer rysuje więcej pikseli, niż wysyła, poniżej mniej.</string>
     <string name="title_virtual_display_dpi">Skalowanie ekranu komputera</string>

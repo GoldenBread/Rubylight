@@ -192,41 +192,6 @@ public class VrrOfferedTest {
                 HostCapabilities.UNKNOWN, game, 1, StreamLayers.Network.WIFI);
     }
 
-    @Test
-    public void whereNotOfferedThePcRowIsGreyedAndPacingIsntReplaced() {
-        DisplayFrameRatePolicy.vrrOfferedOverride = false;
-        HostStreamProfile.deserialize("v2;vrr=true;real_vrr=false").save(RuntimeEnvironment.getApplication(), "vrr-pc");
-        ActivityController<HostStreamSettings> controller = openPc("vrr-pc");
-        try {
-            HostStreamSettings.SettingsFragment settings = (HostStreamSettings.SettingsFragment)
-                    controller.get().getFragmentManager().findFragmentById(R.id.host_profile_settings);
-            Preference vrr = settings.findPreference("vrr");
-            assertFalse(vrr.isEnabled());
-            assertEquals(controller.get().getString(R.string.summary_vrr_unavailable), String.valueOf(vrr.getSummary()));
-            String pacing = String.valueOf(settings.findPreference("pacing").getSummary());
-            assertFalse(pacing.contains(controller.get().getString(R.string.layers_pacing_vrr)));
-        } finally {
-            controller.pause().stop().destroy();
-        }
-        HostStreamProfile kept = HostStreamProfile.deserialize(HostStreamProfile.raw(RuntimeEnvironment.getApplication(), "vrr-pc"));
-        assertEquals("the PC's choice is kept", Boolean.TRUE, kept.vrr);
-        assertEquals("with its Real VRR", Boolean.FALSE, kept.realVrr);
-
-        DisplayFrameRatePolicy.vrrOfferedOverride = null;
-        controller = openPc("vrr-pc");
-        try {
-            HostStreamSettings.SettingsFragment settings = (HostStreamSettings.SettingsFragment)
-                    controller.get().getFragmentManager().findFragmentById(R.id.host_profile_settings);
-            assertTrue(settings.findPreference("vrr").isEnabled());
-            assertTrue("the PC's Fastest", String.valueOf(settings.findPreference("vrr").getSummary())
-                    .startsWith(controller.get().getResources().getStringArray(R.array.vrr_choice_names)[VrrChoice.FASTEST]));
-            assertTrue(String.valueOf(settings.findPreference("pacing").getSummary())
-                    .contains(controller.get().getString(R.string.layers_pacing_vrr)));
-        } finally {
-            controller.pause().stop().destroy();
-        }
-    }
-
     private static ActivityController<HostStreamSettings> openPc(String uuid) {
         Application app = RuntimeEnvironment.getApplication();
         HostCapabilityCache.save(app, uuid, TestHosts.rubylight());

@@ -304,7 +304,6 @@
         <item>开启</item>
         <item>最快</item>
     </string-array>
-    <string name="summary_vrr_unavailable">需要 Android 6 或更高版本。</string>
     <string name="title_virtual_display_scale">电脑渲染分辨率</string>
     <string name="summary_virtual_display_scale">电脑渲染的尺寸，以串流分辨率的百分比表示；发送的视频尺寸不变。高于 100 时，电脑绘制的像素比发送的多；低于 100 时则更少。</string>
     <string name="title_virtual_display_dpi">电脑显示缩放</string>

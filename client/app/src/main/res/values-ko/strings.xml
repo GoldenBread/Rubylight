@@ -304,7 +304,6 @@
         <item>사용</item>
         <item>가장 빠르게</item>
     </string-array>
-    <string name="summary_vrr_unavailable">Android 6 이상이 필요합니다.</string>
     <string name="title_virtual_display_scale">PC 렌더링 해상도</string>
     <string name="summary_virtual_display_scale">PC가 렌더링하는 크기를 스트림 해상도의 백분율로 나타냅니다. 전송되는 영상 크기는 그대로입니다. 100을 넘으면 PC가 보내는 것보다 많은 픽셀을 그리고, 100 미만이면 더 적게 그립니다.</string>
     <string name="title_virtual_display_dpi">PC 디스플레이 배율</string>

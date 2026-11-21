@@ -1156,15 +1156,9 @@ public class HostStreamSettings extends NightjarActivity {
             findPreference("vrr").setSummary(summary(HostStreamProfile.Field.VRR, own.vrr != null, vrrText(config)));
             String pacing = summary(HostStreamProfile.Field.PACING, own.has(HostStreamProfile.Field.PACING), pacingText(config));
             findPreference("pacing").setSummary(config.vrr ? pacing + "\n" + getString(R.string.layers_pacing_vrr) : pacing);
-            // Greyed where vrrOffered is false, as in Settings; a value saved here is kept, and pacing applies.
             Preference vrr = findPreference("vrr");
-            if (DisplayFrameRatePolicy.vrrOffered(activity)) {
-                vrr.setEnabled(true);
-                vrr.setSummary(vrr.getSummary() + "\n" + getString(R.string.summary_vrr));
-            } else {
-                vrr.setEnabled(false);
-                vrr.setSummary(R.string.summary_vrr_unavailable);
-            }
+            vrr.setEnabled(true);
+            vrr.setSummary(vrr.getSummary() + "\n" + getString(R.string.summary_vrr));
             Preference virtual = findPreference("virtual");
             Preference scale = findPreference("scale");
             Preference dpi = findPreference("dpi");

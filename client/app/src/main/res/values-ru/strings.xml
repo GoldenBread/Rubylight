@@ -304,7 +304,6 @@
         <item>Вкл.</item>
         <item>Быстрее всего</item>
     </string-array>
-    <string name="summary_vrr_unavailable">Нужен Android 6 или новее.</string>
     <string name="title_virtual_display_scale">Разрешение рендеринга на ПК</string>
     <string name="summary_virtual_display_scale">Размер, в котором ПК выполняет рендеринг, в процентах от разрешения трансляции; размер передаваемого видео не меняется. Выше 100 ПК рисует больше пикселей, чем передаёт, ниже — меньше.</string>
     <string name="title_virtual_display_dpi">Масштаб экрана ПК</string>

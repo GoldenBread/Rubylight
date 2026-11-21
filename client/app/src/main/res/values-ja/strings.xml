@@ -304,7 +304,6 @@
         <item>オン</item>
         <item>最速</item>
     </string-array>
-    <string name="summary_vrr_unavailable">Android 6 以降が必要です。</string>
     <string name="title_virtual_display_scale">PC のレンダリング解像度</string>
     <string name="summary_virtual_display_scale">PC がレンダリングするサイズを、ストリーム解像度に対する割合（パーセント）で表します。送られる映像のサイズは変わりません。100 を超えると PC は送る映像より多くのピクセルを描画し、100 未満では少なくなります。</string>
     <string name="title_virtual_display_dpi">PC のディスプレイ拡大率</string>

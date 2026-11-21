@@ -304,7 +304,6 @@
         <item>Açık</item>
         <item>En hızlı</item>
     </string-array>
-    <string name="summary_vrr_unavailable">Android 6 veya üstü gerekir.</string>
     <string name="title_virtual_display_scale">Bilgisayarın işleme çözünürlüğü</string>
     <string name="summary_virtual_display_scale">Bilgisayarın işlediği boyut, yayın çözünürlüğünün yüzdesi olarak; gönderilen videonun boyutu değişmez. 100’ün üstünde bilgisayar gönderdiğinden daha fazla, altında daha az piksel çizer.</string>
     <string name="title_virtual_display_dpi">Bilgisayar ekran ölçeği</string>

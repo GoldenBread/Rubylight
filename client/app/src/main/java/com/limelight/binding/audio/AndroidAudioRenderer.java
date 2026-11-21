@@ -582,8 +582,6 @@ public class AndroidAudioRenderer implements AudioRenderer {
                     ", concealed " + framesToMs(stats[9]) + " ms, skipped late " + framesToMs(stats[10]) + " ms";
         } else if (track != null) {
             output = "AudioTrack, underruns " + track.getUnderrunCount();
-        } else if (track != null) {
-            output = "AudioTrack";
         } else {
             return;
         }

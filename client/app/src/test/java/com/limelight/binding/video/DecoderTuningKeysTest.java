@@ -270,6 +270,13 @@ public class DecoderTuningKeysTest {
     }
 
     @Test
+    @Config(sdk = 25)
+    public void mediaTekPresetNeedsVendorKeySupport() {
+        // Fire OS 6 OMX.MTK builds on Android 7.1 have no vendor format keys.
+        assertAbsent("Android 7.1", tune("OMX.MTK.VIDEO.DECODER.HEVC", 0, false), MTK_KEYS);
+    }
+
+    @Test
     @Config(sdk = 34)
     public void androidTwelveSendsTheMediaTekPresetEvenWhenTheDecoderListsLess() {
         MediaCodecInfo decoder = decoder("c2.mtk.hevc.decoder", "vendor.mtk.vdec.low-latency.mode");
