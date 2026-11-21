@@ -6,13 +6,13 @@
 
 This page covers the Android app and the release workflow. The desktop client for Windows, Linux and macOS has its own [install](../protocol/desktop/README.md#installing) and [build](../protocol/desktop/README.md#building) steps, with the Mac's [build and verification](../protocol/desktop/README.md#macos) in the same guide.
 
-Get published APKs from [Nightjar releases](https://github.com/RamazanKara/nightjar/releases), or build one yourself as described below. Open the APK on Android 5.0 or newer and allow installation from the app opening it; no root is needed. With USB debugging enabled, `adb install -r app-nonRoot-debug.apk` also installs it.
+Get published APKs from [Nightjar releases](https://github.com/RamazanKara/nightjar/releases), or build one yourself as described below. Open the APK on Android 7.1 or newer and allow installation from the app opening it; no root is needed. With USB debugging enabled, `adb install -r app-nonRoot-debug.apk` also installs it.
 
 Updates require the same signing key. Debug APKs built on different machines use different keys; changing keys requires uninstalling the old app, which removes settings and pairing identity. The normal package ID remains `com.butterpollo.client`; debug builds use `com.butterpollo.client.debug` and a `(Debug)` label.
 
 ## Toolchain and source
 
-Use JDK 21 and the Android SDK/NDK already installed on your machine. Android 16 Robolectric tests require JDK 21. The repository pins compile SDK 37, target SDK 36, minimum SDK 21, NDK `29.0.14206865`, Android Gradle Plugin `9.4.0` and Gradle `9.7.1`. Check [app/build.gradle](../app/build.gradle), [build.gradle](../build.gradle) and the [wrapper configuration](../gradle/wrapper/gradle-wrapper.properties) when updating the toolchain.
+Use JDK 21 and the Android SDK/NDK already installed on your machine. Android 16 Robolectric tests require JDK 21. The repository pins compile SDK 37, target SDK 36, minimum SDK 25, NDK `29.0.14206865`, Android Gradle Plugin `9.4.0` and Gradle `9.7.1`. Check [app/build.gradle](../app/build.gradle), [build.gradle](../build.gradle) and the [wrapper configuration](../gradle/wrapper/gradle-wrapper.properties) when updating the toolchain.
 
 The SDK Manager package for compile SDK 37 is `platforms;android-37.0`, not `platforms;android-37`. Install it together with `build-tools;36.0.0`, `platform-tools` and `ndk;29.0.14206865` when preparing a clean build environment.
 

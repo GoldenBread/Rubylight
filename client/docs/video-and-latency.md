@@ -32,7 +32,7 @@ Before a stream starts, Nightjar checks what the hardware decoder can decode and
 
 ## HDR and color
 
-HDR10 needs an HDR10 display, Android 7+ and a compatible HEVC Main10 or AV1 10-bit decoder, plus HDR configured on the streamed host display. PyroWave has its own HDR-capability checks. Enable **Settings → Video → HDR**, or HDR in a PC's or game's own settings.
+HDR10 needs an HDR10 display and a compatible HEVC Main10 or AV1 10-bit decoder, plus HDR configured on the streamed host display. PyroWave has its own HDR-capability checks. Enable **Settings → Video → HDR**, or HDR in a PC's or game's own settings.
 
 Nightjar handles BT.2020/PQ and static mastering metadata. Debug stats show the negotiated format, so you can confirm HDR is active.
 
