@@ -171,7 +171,6 @@ impl CursorShape {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::format;
 
     fn image() -> CursorImage {
         CursorImage {

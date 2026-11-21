@@ -306,31 +306,5 @@ int main() {
     assert(calls == 1);
     assert(!pushPyroWaveFrame(frame.data(), frame.size(), [](const uint8_t *, size_t) { return false; }));
 
-    const char *sdp = "a=rtpmap:99 PYROWAVE/90000\r\na=x-ss-pyrowave.bitstream:186f0393\r\n";
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000, sdp) == VIDEO_FORMAT_PYROWAVE_MAIN10_444);
-    const int profiles[] = {0x10000, 0x20000, 0x40000, 0x80000};
-    for (int i = 0; i < 4; ++i) {
-        assert(selectPyroWaveFormat(0xf0000, 0x800000u << i, sdp) == profiles[i]);
-        assert(selectPyroWaveFormat(profiles[i], 0x07800000, sdp) == profiles[i]);
-    }
-    assert(selectPyroWaveFormat(0xf0000, 0, sdp) == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000, "PYROWAVE/90000") == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000, "AV1/90000") == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000,
-        "PYROWAVE/90000\na=x-ss-pyrowave.bitstream:186f03930\n") == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000,
-        "a=rtpmap:99 PYROWAVE/90000\na=x-ss-pyrowave.bitstream:186f0393") == VIDEO_FORMAT_PYROWAVE_MAIN10_444);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000,
-        "a=rtpmap:99 PYROWAVE/90000\na=x-ss-pyrowave.bitstream:186f03930\n") == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000,
-        "a=rtpmap:99 PYROWAVE/90000\na=description:a=x-ss-pyrowave.bitstream:186f0393\n") == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000,
-        "a=description:PYROWAVE/90000\na=x-ss-pyrowave.bitstream:186f0393\n") == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000,
-        "a=rtpmap:99 OTHERPYROWAVE/90000\na=x-ss-pyrowave.bitstream:186f0393\n") == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000,
-        "a=rtpmap:99 PYROWAVE/900001\na=x-ss-pyrowave.bitstream:186f0393\n") == 0);
-    assert(selectPyroWaveFormat(0xf0000, 0x07800000,
-        "a=rtpmap: PYROWAVE/90000\na=x-ss-pyrowave.bitstream:186f0393\n") == 0);
-    std::puts("PyroWave ordinary framing and negotiation: passed");
+    std::puts("PyroWave ordinary framing: passed");
 }

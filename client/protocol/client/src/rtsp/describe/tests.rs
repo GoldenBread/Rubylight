@@ -173,6 +173,27 @@ fn video_format_selection() {
         future.select_video_format(all, SCM_PYROWAVE | SCM_AV1_MAIN8),
         VIDEO_FORMAT_AV1_MAIN8
     );
+    // PyroWave needs a complete rtpmap line and a complete bitstream line: look-alikes are ordinary SDP.
+    let bitstream = "a=x-ss-pyrowave.bitstream:186f0393";
+    for sdp in [
+        format!("a=rtpmap:99 PYROWAVE/90000\n{bitstream}\n"),
+        format!("a=rtpmap:99 PYROWAVE/90000\r\n{bitstream}"),
+    ] {
+        assert!(DescribeInfo::parse(&sdp).pyrowave, "{sdp:?}");
+    }
+    for sdp in [
+        format!("PYROWAVE/90000\n{bitstream}\n"),
+        format!("AV1/90000\n{bitstream}\n"),
+        "a=rtpmap:99 PYROWAVE/90000\n".to_string(),
+        format!("a=rtpmap:99 PYROWAVE/90000\n{bitstream}0\n"),
+        format!("a=rtpmap:99 PYROWAVE/90000\na=description:{bitstream}\n"),
+        format!("a=description:PYROWAVE/90000\n{bitstream}\n"),
+        format!("a=rtpmap:99 OTHERPYROWAVE/90000\n{bitstream}\n"),
+        format!("a=rtpmap:99 PYROWAVE/900001\n{bitstream}\n"),
+        format!("a=rtpmap: PYROWAVE/90000\n{bitstream}\n"),
+    ] {
+        assert!(!DescribeInfo::parse(&sdp).pyrowave, "{sdp:?}");
+    }
     let plain = DescribeInfo::parse("a=x-ss-general.featureFlags:0\r\n");
     assert_eq!(
         plain.select_video_format(all, 0x0FFF_FFFF),
