@@ -18,9 +18,8 @@ All Rust is one Cargo workspace in `protocol/`.
 | `nightjar-policy` | `protocol/policy/` | Decisions without I/O or a clock: bitrate, the quality ladder, the recovery budget, the overlay, the stream menu, the SteamGridDB and IGDB lookup (`game_info/`). Both apps call it, so they decide alike. |
 | `nightjar-desktop` | `protocol/desktop/` | The Windows, Linux and macOS app. |
 | `nightjar-android` | `protocol/android/` | `libnightjar_core.so`, the JNI side of the Android app's Rust engine. |
-| `rubylight-protocol-ffi` | `protocol/ffi/` | A C interface to `rubylight-protocol` for the Android app's C code. |
+| `rubylight-protocol-ffi` | `protocol/ffi/` | A C interface to `rubylight-protocol`. |
 | `nightjar-cli` | `protocol/cli/` | A headless client for tests. |
-| `nightjar-difftest` | `protocol/difftest/` | Runs the engine and the patched moonlight-common-c on the same packets and compares their output byte for byte. |
 
 A feature lands in both apps in one change. What they share goes into `nightjar-policy` or `nightjar-core`; an app only draws it and binds it to its platform.
 
@@ -58,9 +57,9 @@ A feature lands in both apps in one change. What they share goes into `nightjar-
 
 ## The Android app
 
-Gradle builds one module, `app/`, in the flavors `nonRoot` and `root`. Its tasks [`buildRustEngine` and `prepareNativePatches`](../app/build.gradle) build `nightjar-android` for each ABI and apply `app/src/main/jni/moonlight-core/patches/` to moonlight-common-c.
+Gradle builds one module, `app/`, in the flavors `nonRoot` and `root`. Its task [`buildRustEngine`](../app/build.gradle) builds `nightjar-android` for each ABI.
 
-A stream runs on one of two engines. The Rust engine is `nightjar-core` behind [`RustBridge`](../app/src/main/java/com/limelight/nvstream/jni/RustBridge.java) and `protocol/android/src/lib.rs`; the C engine is moonlight-common-c behind [`MoonBridge`](../app/src/main/java/com/limelight/nvstream/jni/MoonBridge.java) and `app/src/main/jni/moonlight-core/`. The Rust side calls the same `MoonBridge` callbacks the C side does (`protocol/android/src/bridge.rs`, `listener.rs`, `renderers.rs`), so decoders and input see one interface. [`StreamEngine`](../app/src/main/java/com/limelight/nvstream/jni/StreamEngine.java) records which one ran. A protocol change must hold on both.
+A stream runs on the Rust engine, `nightjar-core` behind [`RustBridge`](../app/src/main/java/com/limelight/nvstream/jni/RustBridge.java) and `protocol/android/src/lib.rs`. It calls the `MoonBridge` callbacks (`protocol/android/src/bridge.rs`, `listener.rs`, `renderers.rs`), so decoders and input see one interface. [`StreamEngine`](../app/src/main/java/com/limelight/nvstream/jni/StreamEngine.java) records the engine and why a stream could not start. `libmoonlight-core.so` is a slim native library (`app/src/main/jni/moonlight-core/`) for AAudio output, DualSense USB audio, haptics and microphone, and the controller-type tables; it does not stream.
 
 | Part | `app/src/main/java/com/limelight/` |
 | --- | --- |
@@ -100,7 +99,7 @@ A decision both apps make from the setting goes into `protocol/policy/src/`.
 
 1. The id in [`ids.rs`](../protocol/core/src/ids.rs) and a module in `protocol/core/src/`.
 2. The engine: `protocol/client/src/control/messages.rs` to send, `events.rs` to receive. It is sent only to a host that announced it.
-3. Android: `protocol/android/src/lib.rs` and its [`RustBridge`](../app/src/main/java/com/limelight/nvstream/jni/RustBridge.java) method; on the C engine the bridge in `app/src/main/jni/moonlight-core/`, with a patch in its `patches/` folder where moonlight-common-c itself must change.
+3. Android: `protocol/android/src/lib.rs` and its [`RustBridge`](../app/src/main/java/com/limelight/nvstream/jni/RustBridge.java) method.
 4. Desktop: the handler in `protocol/desktop/src/stream/`.
 5. Tests: `protocol/client/tests/control_messages_contract.rs` and [`MoonBridgeControlMessagesTest`](../app/src/test/java/com/limelight/nvstream/jni/MoonBridgeControlMessagesTest.java).
 
@@ -114,10 +113,10 @@ Add it to [`Feature`](../protocol/client/src/http/capabilities.rs) with the evid
 | --- | --- |
 | Engine | `cargo test -p nightjar-core` in `protocol/`. `protocol/client/tests/` runs whole sessions on loopback (`session_loopback.rs`, `control_loopback.rs`, `host_interop.rs`) and holds the contracts. |
 | Bytes from the network | The property tests `protocol/core/src/fuzz.rs`, `protocol/client/src/fuzz_tests.rs` and the `fuzz_tests.rs` under `http/` and `rtsp/`. `PROPTEST_CASES` raises the count. |
-| Same result as moonlight-common-c | `cargo test -p nightjar-difftest` |
+| Same bytes as the classic C engine for audio, video and FEC | `cargo test -p nightjar-core --test golden_audio --test golden_video --test golden_fec` (digests recorded from it in `protocol/client/tests/golden/golden.txt`) |
 | A policy | Its module tests, and recorded traces under `protocol/policy/tests/traces/` replayed by `protocol/policy/tests/traces.rs` |
 | Desktop UI | `protocol/desktop/src/ui/tests.rs` draws pages and dialogs without a window; `protocol/desktop/src/shot.rs` rasterises them for screenshots. |
-| Android | `gradlew :app:testNonRootDebugUnitTest --tests <class>` (JUnit and Robolectric, under `app/src/test/java/`). The unit tests do not compile the JNI code: `gradlew :app:externalNativeBuildNonRootDebug` does. `scripts/test-native.sh` runs the C tests, `scripts/emulator-smoke.py` drives the app on an emulator. |
+| Android | `gradlew :app:testNonRootDebugUnitTest --tests <class>` (JUnit and Robolectric, under `app/src/test/java/`). The unit tests do not compile the JNI code: `gradlew :app:externalNativeBuildNonRootDebug` does. `scripts/test-native.sh` runs the native C tests, `scripts/emulator-smoke.py` drives the app on an emulator. |
 | Documentation | `node scripts/check-doc-links.mjs`, and `scripts/generate-settings.py` leaving `docs/settings.md` unchanged |
 
 [Building](building.md) has the toolchains each of these needs.
@@ -130,5 +129,4 @@ The fix history repeats a few shapes. Check a change against them before calling
 - **One language only.** A new text needs every table in `protocol/desktop/src/strings/` and every translated `strings.xml`.
 - **Gated by name or model.** A feature follows what the host announced and what the device's decoder reports at run time, not a host brand, a vendor or an Android version.
 - **Recovery.** A reconnect, a network change or a stopped stream meets state the first launch set. The cases live in `protocol/desktop/src/stream/recovery.rs`, `protocol/policy/src/recovery.rs` and [`GameRecoveryTest`](../app/src/test/java/com/limelight/GameRecoveryTest.java).
-- **One engine only** on Android: a change in the Rust engine that the C engine's patches do not have, or the reverse.
 - **Linux code compiled for macOS.** `cfg(unix)` is both; the macOS build runs only in CI.

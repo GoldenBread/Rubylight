@@ -15,7 +15,6 @@ Everything on this page applies to Android and to Nightjar for Windows and Linux
 - The PC must offer clipboard sync and let this device read and write its clipboard. If it doesn't, the stream says so once.
 - Android lets an app read the clipboard only while it is in front, so a copy made in another app goes to the PC once you are back in the stream.
 - It carries text. A copy too large for the sync, or an image copied on the PC, names the stream menu entry that carries it.
-- On Android it needs the **New streaming engine** (on by default).
 
 ### Text and images from the stream menu
 
@@ -59,7 +58,7 @@ A PC that shares no folders, or a host without shared folders, says so and point
 
 USB forwarding hands a USB device plugged into this device, such as a drawing tablet or a security key, to the PC until you detach or unplug it or the stream ends.
 
-- **Android:** turn on **Settings → Controls → Forward USB devices** (off by default, in its **USB** group). It needs the New streaming engine. During a stream, the menu's **More** then shows **USB devices**.
+- **Android:** turn on **Settings → Controls → Forward USB devices** (off by default, in its **USB** group). During a stream, the menu's **More** then shows **USB devices**.
 - **Windows and Linux:** turn on **Settings → Controls → Forward USB devices** (off by default); **USB devices** is then in the stream menu when the PC offers it. On Linux, webcams and USB audio devices go through your distribution's usbip tools, which the Flatpak cannot reach; see [Steam Deck](steam-deck.md#what-the-flatpak-cant-do). On Windows, Nightjar reaches a device only through the WinUSB driver, so the list names the driver of any device that uses another one instead of offering it; install WinUSB for that device (for example with Zadig) to forward it.
 - **Automatic:** tick **Automatic** for a device in **USB devices** (Android) or in the stream controls' USB list (Windows and Linux), and Nightjar attaches it by itself: as soon as the PC is known to take USB devices, and whenever it is plugged in during a stream, recognised by its vendor and product on any port. Untick it to attach that device by hand again.
 - **Always allow (Android):** while USB forwarding is on, Android's USB permission request offers **Always allow**; with it ticked, Android keeps the answer after Nightjar restarts and stops asking for that device.

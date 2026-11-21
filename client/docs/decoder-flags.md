@@ -2,7 +2,7 @@
 
 [Nightjar docs](index.md) › [Reference](index.md#reference)
 
-Nightjar and its two streaming engines (Rust and the classic C engine) share one MediaCodec setup: `MediaCodecHelper.setDecoderLowLatencyOptions` builds the format, `MediaCodecDecoderRenderer.initializeDecoder` walks the fallback ladder. This page lists the low-latency keys Nightjar sends to each decoder, what was measured and what is deliberately not sent. "Both engines" cannot differ here.
+Nightjar's streaming engine (Rust) uses one MediaCodec setup: `MediaCodecHelper.setDecoderLowLatencyOptions` builds the format, `MediaCodecDecoderRenderer.initializeDecoder` walks the fallback ladder. This page lists the low-latency keys Nightjar sends to each decoder, what was measured and what is deliberately not sent. "Both engines" cannot differ here.
 
 ## Rules
 
@@ -51,7 +51,7 @@ Nightjar's default render loop already takes the shortest path: frame pacing def
 
 ## Retroid Pocket 6 (Snapdragon 8 Gen 2)
 
-One combined check on 2026-10-24 for the Snapdragon part: the 1080p60 HEVC fixture through an isolated Rubylight host on the same PC, classic C engine, `c2.qti.hevc.decoder.low_latency`, about 88 s per run, the first 2 s dropped. Medians in ms (95th percentile in brackets); n is 4800 to 5200 frames. "Before" is the build without any of this work (two runs), "Vendor lists" the build with the Tegra, MediaTek and `low-latency` changes plus the logging (two runs), "All keys" this page's full set (one run).
+One combined check on 2026-10-24 for the Snapdragon part: the 1080p60 HEVC fixture through an isolated Rubylight host on the same PC, on the classic C engine (since removed), `c2.qti.hevc.decoder.low_latency`, about 88 s per run, the first 2 s dropped. Medians in ms (95th percentile in brackets); n is 4800 to 5200 frames. "Before" is the build without any of this work (two runs), "Vendor lists" the build with the Tegra, MediaTek and `low-latency` changes plus the logging (two runs), "All keys" this page's full set (one run).
 
 | Build | Decode | Client total | End to end |
 | --- | --- | --- | --- |

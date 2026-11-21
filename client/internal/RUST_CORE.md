@@ -1,9 +1,9 @@
 # Rust streaming core
 
-Nightjar is moving its streaming engine from moonlight-common-c (C, plus Nightjar's patches and
-`android_*.c` replacements) to Rust, so one implementation serves the Android app and the desktop
-clients for Windows, Linux and macOS. This file is the plan and the status; update the status as work
-lands.
+Nightjar's streaming engine is Rust, so one implementation serves the Android app and the desktop
+clients for Windows, Linux and macOS. It replaced moonlight-common-c (C, plus Nightjar's patches and
+`android_*.c` replacements), which existed until its removal and is gone from the tree. This file
+is the design and the status; update the status as work lands.
 
 ## Layout
 
@@ -13,8 +13,7 @@ The Rust workspace is `protocol/`:
 | --- | --- | --- |
 | `rubylight-protocol` | `protocol/core` | `no_std` wire formats shared with the Rubylight host (which depends on it by git revision). Keep it dependency-free. |
 | `nightjar-core` | `protocol/client` | The client streaming engine (std): pairing and host HTTP, RTSP/SDP, the encrypted ENet control stream, input, video and audio receive with FEC, PyroWave records, timing. No platform code: decoding, rendering, audio output and input capture belong to the apps. |
-| `nightjar-difftest` | `protocol/difftest` | Test-only (`publish = false`): builds the patched moonlight-common-c receive paths in `build.rs` (sources copied to `OUT_DIR`, patches applied there) and compares them with `nightjar-core` on identical packet sequences. Needs the `moonlight-common-c` and `nanors` submodules and OpenSSL; compiled out elsewhere. |
-| `rubylight-protocol-ffi` | `protocol/ffi` | C ABI for the Android app. Grows a Limelight-compatible API over `nightjar-core` for the switch-over. |
+| `rubylight-protocol-ffi` | `protocol/ffi` | C ABI for the Android app. A Limelight-compatible API over `nightjar-core`. |
 | `nightjar-android` | `protocol/android` | `libnightjar_core.so` (`publish = false`): the JNI side of the app's `RustBridge`, built by Gradle's `buildRustEngine` for the four ABIs and not committed. See "Android switch-over" below. |
 | `nightjar-cli` | `protocol/cli` | Headless test client (`publish = false`): stream, decode every frame, report. Drop-in for Rubylight's `rust/tests/moonlight_client.c` (same arguments, environment, output lines and exit codes) so Rubylight's `interop.py`/`e2e.py` drive it unchanged; pairing and launch stay in `interop.py`. Decoding needs the `ffmpeg` feature (libavcodec and libopus, as the C client). |
 | `nightjar-policy` | `protocol/policy` | Stream policies both clients share, with no I/O and no clock (bitrate, quality, health, recovery, launch, collections, open-play, stream menu and more). Android calls some through `libnightjar_core.so` and keeps the rest trace-equal (`PolicyTraceTest`). |
@@ -86,28 +85,26 @@ The C client on the same package: h264 710/710 and recovery 3/3 (5.2 ms mean), e
 
 ## Android switch-over
 
-The setting Settings > Advanced > "New streaming engine"
-(`checkbox_rust_engine`, on by default since 2026-10-23; off selects the classic C engine) picks
-the engine per stream:
+The Rust engine is the only streaming engine. There is no setting for it; the former
+"New streaming engine" setting (`checkbox_rust_engine`) and its migration are gone and its stored
+values are cleared.
 
-- `NvConnection` calls `MoonBridge.requestRustEngine(prefs.rustEngine)` before
-  `startConnection`. `MoonBridge` keeps its public API; every streaming call is now a Java
-  method that goes to `RustBridge` when the current stream runs on Rust, else to the C native
-  (renamed with a `c` prefix: `cStartConnection`, `cSendMouseMove`, ...). Pairing, HTTP,
-  STUN, the connectivity test, controller guessing and the USB audio natives stay C/Java.
-- `RustBridge.fallbackReason` keeps a stream on the C engine when the host is older than
-  GFE 3.22 (app version below 7.1.431) or reports no codec support; a missing or broken
-  `libnightjar_core.so` does the same. `StreamEngine` records the engine and the reason; the
-  `Streaming engine` warning, the Statistics and Debug overlays (`... · Rust`, `Streaming engine:`
-  line) and the problem report ("Streaming engine for the last stream") all show it, so a
-  fallback is never only in logcat.
-- `libnightjar_core.so` (`protocol/android`) calls the same `MoonBridge.bridge*` callbacks as
-  `callbacks.c`, so the renderers, the audio renderer and the listener serve both engines
-  unchanged. Opus is decoded in Rust against the app's prebuilt `libopus.a` (the archive
-  `libmoonlight-core.so` links), so both engines decode with the same library and no cmake or
-  second Opus build is needed; the microphone encoder uses it the same way.
+- `NvConnection` calls `RustBridge`; `MoonBridge` keeps its public API and every streaming call is
+  a Java method that goes to `RustBridge`. Pairing and HTTP run in Java. `libmoonlight-core.so`
+  is a slim native library for AAudio output, the DualSense USB audio, haptics and microphone
+  natives, and the controller-type tables.
+- `RustBridge` refuses to start a stream, visibly, when the host is older than GFE 3.22 (app
+  version below 7.1.431) or reports no codec support (error -109, stage "streaming engine
+  check"); a missing or broken `libnightjar_core.so` does the same. `StreamEngine` records the
+  engine and the reason; the connecting screen, the Statistics and Debug overlays and the
+  problem report ("Streaming engine for the last stream") all show it, so a refusal is never
+  only in logcat.
+- `libnightjar_core.so` (`protocol/android`) calls the `MoonBridge.bridge*` callbacks, so the
+  renderers, the audio renderer and the listener are the same for every stream. Opus is decoded
+  in Rust against the app's prebuilt `libopus.a`, so no cmake or second Opus build is needed; the
+  microphone encoder uses it the same way.
 - `connection_started` is forwarded after the session is stored, so Java can call into the
-  session from that callback as with the C engine.
+  session from that callback.
 - Build: Gradle's `buildRustEngine` (app/build.gradle) runs `cargo build --release --locked`
   per ABI with the NDK's clang as `CC` and linker (`--target=<abi>21`,
   `-z max-page-size=16384`), checks every LOAD segment is 16 KiB aligned and adds the output
@@ -118,12 +115,12 @@ the engine per stream:
 
 | Area | Rust path | Notes |
 | --- | --- | --- |
-| Start, stop, interrupt, stages, termination codes, host termination reasons | yes | Same stage numbers and `ML_ERROR_*` codes; stage names and port flags still come from the C helpers. |
+| Start, stop, interrupt, stages, termination codes, host termination reasons | yes | Same stage numbers and `ML_ERROR_*` codes; stage names and port flags come from Java. |
 | Network grace (`setNetworkGracePeriodMs`) | yes | `SessionConfig::network_grace`. |
 | Input-only sessions | yes | `SessionConfig::input_only`. |
-| Remote monitor sessions | yes | `SessionConfig::remote_monitor`: the input queue is disabled (nothing is sent, not even the haptics enable) and the start wiggle is skipped, as the C skips `startInputStream`. Server commands and controller audio messages are still sent on the control stream, as in C, which only skips the input stream. Loopback test `a_remote_monitor_connection_sends_no_input_at_all`. |
-| H.264, HEVC, AV1, 10-bit, 4:4:4, RFI capabilities | yes | Parameter sets submitted separately, picture data in one buffer, timestamps mapped to CLOCK_MONOTONIC as `callbacks.c` does. |
-| PyroWave | yes | The fallback is gone; a PyroWave stream ran on a phone in the B8 comparison (`docs/PARITY-MATRIX.md`). Records, SDP/RTSP and the queue are difftested against the patched C (`protocol/difftest/tests/video.rs`) and negotiated in `host_interop.rs`; the Java renderer receives the same `bridgeDrSubmitDecodeUnit` units. |
+| Remote monitor sessions | yes | `SessionConfig::remote_monitor`: the input queue is disabled (nothing is sent, not even the haptics enable) and the start wiggle is skipped, as the C engine skipped `startInputStream`. Server commands and controller audio messages are still sent on the control stream, as in the C engine, which only skipped the input stream. Loopback test `a_remote_monitor_connection_sends_no_input_at_all`. |
+| H.264, HEVC, AV1, 10-bit, 4:4:4, RFI capabilities | yes | Parameter sets submitted separately, picture data in one buffer, timestamps mapped to CLOCK_MONOTONIC as the C engine's `callbacks.c` did. |
+| PyroWave | yes | A PyroWave stream ran on a phone in the B8 comparison (`docs/PARITY-MATRIX.md`). Records, SDP/RTSP and the queue are covered by the golden video tests (`protocol/client/tests/golden_video.rs`) and negotiated in `host_interop.rs`; the Java renderer receives the same `bridgeDrSubmitDecodeUnit` units. |
 | HDR mode and metadata | yes | `SS_HDR_METADATA` layout. |
 | Audio (Opus, surround, high quality, packet loss concealment) | yes | Decoded in Rust with the app's libopus. |
 | Pending audio duration, pending video frames, RTT for the overlay | yes | From `Session::stats`. |
@@ -135,7 +132,7 @@ the engine per stream:
 | PresentClock vsync grid and content rate | yes | `PresentClock::schedule_on_grid(rtp, ready_us, Grid)` runs the unchanged `schedule` (delay, warm-up, holds), then snaps the present time to a fixed-refresh panel's vsync grid (`Grid{anchor_us, interval_us, lead_us, slack_us}`; `snap` is the pure helper). It never waits past the first vsync the frame can make; a frame whose vsync is taken moves one on, but never two in a row, otherwise `shares_vsync` is set; `late_by_us` is for late-frame dropping. `observe(rtp)` and `content_rate_mhz()` follow the presented rate from host timestamps (median of 1 s, hitches ignored, reported after 2 s within 3 %, 0 = unknown). Java: `HostFrameClock.presentOnGrid(...)` fills a `GridPlan`, `contentRateMilliHz()`, `start(maxHz, schedule, probe, trackRate)`. Both engines implement `scheduleOnGrid`, `observe` and `contentRate`: the Rust engine (`RustBridge.presentClock*`) and the C engine (`rp_present_clock_*` behind `MoonBridge.cPresentClock*`). Out array: releaseNs, vsyncNs, vsyncIndex, flags (1 late, 2 shares vsync), holdUs, latencyUs (-1 without clock sync), lateByUs. Tests: `present_clock/grid_tests.rs`, `HostFrameClockTest`. |
 | Phase lock reports (0x5530, 500 ms windows, newest only, 1 s max age) | yes | |
 | Display caps (0x5531), reconfigure (0x5532), cursor shapes (0x5540/0x5541), server commands (0x3000) | yes | Cursor shapes re-encoded to the wire form for Java. |
-| Microphone (Opus 32 kb/s VoIP, in-band FEC, 200 ms reset gap) | yes | Encrypted stream only, as in C. |
+| Microphone (Opus 32 kb/s VoIP, in-band FEC, 200 ms reset gap) | yes | Encrypted stream only, as in the C engine. |
 | GFE before 3.22, hosts without codec support | falls back | Not ported. |
 | Socket QoS (always: `SO_PRIORITY` 6 audio and microphone, 5 video, 6 plus DSCP EF/ECT(1) on the control socket, dropped after three unanswered connects as ENet does) and "Prioritize stream traffic" (6 on the RTSP socket, nice -4 on VideoRecv, AudioRecv, AudioDec and the control thread; VideoDec is not raised, as in C) | yes | `nightjar_core::priority`, passed in `SessionConfig::network_priority` (no global state). Linux and Android only; a refused option is logged at warn through `Listener::warn`. Tests: `media_sockets_are_bound_with_their_priority`, `the_marking_comes_off_after_three_unanswered_connects` (Linux). |
 | "Unbatched input" (no 1 ms mouse and pen batching) | yes | `SessionConfig::unbatched_input`, `InputQueue::set_unbatched`. |
@@ -144,24 +141,23 @@ Emulator test on 2026-10-20 (AVD nj-demo2, x86_64, Android 15, `c2.goldfish` dec
 isolated Rubylight 2.5.9 host on this PC as 10.0.2.2, Desktop at 1280x720x60): Rust engine
 H.264 and HEVC streams decoded and displayed at 59.5-60 FPS with 0% loss; the host logged the
 display caps, host timing requests and phase lock reports from the Rust path, and the
-disconnect was clean. The C engine on the same setup: 60 FPS, 0% loss, equivalent.
+disconnect was clean. The C engine, while it existed, on the same setup: 60 FPS, 0% loss, equivalent.
 
 ## Verification
 
 1. Unit tests per module.
-2. Differential tests against the C it replaces: the C sources are compiled in tests (`cc`
-   crate, dev-only) and fed the same packet sequences, including loss, reordering and
-   duplicates; outputs must match exactly. Rubylight's `rust/tests/fec-reference` does the
-   same for FEC.
+2. Golden tests (`protocol/client/tests/golden_{audio,video,fec}.rs`, helpers in `golden/`):
+   the 22 cases of the former differential tests, with loss, reordering and duplicates, check
+   `nightjar-core` against digests (`golden.txt`, 432 runs) recorded from the patched C engine
+   while it existed. Rubylight's `rust/tests/fec-reference` does the same for FEC.
 3. End to end against an isolated Rubylight host (`rust/release/e2e.py`, `e2e_host.py`) with
    `nightjar-cli` in place of the C test client.
-4. On Android, the Rust engine shipped behind a setting first and is now the default (the C engine
-   stays as the explicit opt-out); then the C is removed.
+4. On Android, the Rust engine shipped behind a setting first, became the default, and then
+   the C engine was removed.
 
 ## Android parity checklist
 
-Nightjar's native changes that the Rust engine must carry (see `app/src/main/jni/moonlight-core`
-and its `patches/`): controller haptics and controller audio (0x5533-0x5535), host timing
+Nightjar's native changes the Rust engine carries (they were patches to moonlight-common-c): controller haptics and controller audio (0x5533-0x5535), host timing
 (0x5536), clock sync (0x5537), cursor shapes (0x5540/0x5541), phase lock (0x5530), display caps
 (0x5531), reconfigure (0x5532), network grace, host termination reasons, disconnect intercept,
 control teardown ordering, PyroWave records and link hints, the larger video receive buffer,
@@ -171,16 +167,16 @@ microphone passthrough, STUN, the RTSP and SDP extensions, the bughunt fixes.
 
 - [x] Wire formats crate, phase lock, PyroWave records, host timing, clock sync, PresentClock.
 - [x] `nightjar-core` scaffold
-- [x] `fec` + `video` (differential tests in `protocol/difftest`)
-- [x] `audio` (differential tests in `protocol/difftest`)
+- [x] `fec` + `video` (golden tests in `protocol/client/tests`)
+- [x] `audio` (golden tests in `protocol/client/tests`)
 - [x] `crypto` + `control` + `input` (encrypted control stream only; GFE's TCP and plaintext
   generations are not ported)
 - [x] `rtsp` + `sdp` + `http` (TCP RTSP incl. encrypted; RTSP over ENet for GFE < 3.22 is not ported)
 - [x] `session` + `nightjar-cli`, e2e against Rubylight (loopback session tests in
   `protocol/client/tests/session_loopback.rs`)
-- [x] Android switch-over behind a setting (`protocol/android`, `RustBridge`; see the parity
+- [x] Android switch-over (`protocol/android`, `RustBridge`; see the parity
   checklist and `docs/PARITY-MATRIX.md` for the remaining gaps)
-- [x] Rust engine as the Android default (C engine kept as the opt-out)
-- [ ] Removal of the C engine
+- [x] Rust engine as the Android default
+- [x] Removal of the C engine (the only engine; GFE before 3.22 is no longer supported)
 - [x] Desktop client milestone 1 (Windows, Linux): pairing, library, launch/resume/quit, hardware decoding, VRR pacing, audio, input, overlay. Streamed against an isolated Rubylight host on Windows (HEVC D3D11VA up to 5120x1440@240).
 - [x] Desktop client releases for Windows and Linux (x86_64 and aarch64), then macOS: packaged FFmpeg, HDR output, VA-API DMA-BUF import, per-PC settings, Wake-on-LAN, one-time PIN pairing. Current state: `protocol/desktop/README.md` and `docs/CLIENT-PARITY.md`.

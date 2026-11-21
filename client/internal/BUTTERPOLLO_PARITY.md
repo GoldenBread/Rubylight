@@ -43,7 +43,6 @@ Implemented between 2026-10-07 and 2026-10-09 and carried into Nightjar:
 
 - Real-device checks: [device-checklist.md](device-checklist.md) is the list; the PyroWave ones
   are under [Exact real-device checks still required](#exact-real-device-checks-still-required).
-- Removal of the classic C engine ([RUST_CORE.md](RUST_CORE.md)).
 - Recorded on 2026-10-09 as protocol boundaries: virtual-display layouts, desktop scale and
   retained displays are set on the host, not by launch options; host administrator settings need
   the host's own authentication, which a pairing certificate does not grant; the video header

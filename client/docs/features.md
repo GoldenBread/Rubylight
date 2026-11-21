@@ -2,7 +2,7 @@
 
 [Nightjar docs](index.md) › [Reference](index.md#reference) · [Android and desktop](CLIENT-PARITY.md) · [Host feature support](PARITY-MATRIX.md)
 
-Nightjar streams a PC to Android phones, handhelds, tablets, Android TV and Fire TV, and to Windows, Linux and macOS. All clients share one streaming engine, written in Rust; the Android app also keeps the classic moonlight-common-c engine as a setting.
+Nightjar streams a PC to Android phones, handhelds, tablets, Android TV and Fire TV, and to Windows, Linux and macOS. All clients share one streaming engine, written in Rust.
 
 This page lists every feature with a link to its guide. Features available on only one client are marked, and [Android and desktop](CLIENT-PARITY.md) compares the clients row by row. Features that need support from the PC's host name the requirement; [host feature support](PARITY-MATRIX.md) lists which hosts provide each capability. Every Moonlight-compatible host gets the stream, the controls and the diagnostics. Setting names and defaults are in the [settings reference](settings.md).
 
