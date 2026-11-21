@@ -1,2 +1,0 @@
-# Adaptive bitrate
-- **Adaptive bitrate is one setting.** The console's two bitrate switches, Lower the bitrate when the link cannot carry it and Adapt to network congestion, are now one Adaptive bitrate setting with three choices: Off, On, and On, and react to network delay. Your earlier choice carries over, also in each app's and device's own settings: if you had the bitrate adaptation off, it stays off.

@@ -1,0 +1,7 @@
+• One on-screen controller: the classic one is gone and your layout carries over.
+• Lower bitrate, Vibration, Trackpad acceleration and Glide are one row each.
+• Steam Controller controls no longer make the PC pick a PlayStation controller, and a tap on a pad clicks it.
+• TV: steadier Home focus; Back closes the system keyboard.
+• A 60 FPS stream keeps a 120 Hz screen at 120 Hz.
+• The stream tells you when Controllers is Off.
+• A failing decoder no longer floods the PC with picture requests.

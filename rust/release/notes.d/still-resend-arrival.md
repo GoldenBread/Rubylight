@@ -1,1 +1,0 @@
-- **The still-picture resend keeps to its schedule with the default frame pacing.** When nothing on screen moves, the still-picture resend no longer falls further behind with every frame under arrival pacing (6.0.0 fixed this only for Fixed grid pacing and constant-rate capture), and a resend never delays the next new picture.

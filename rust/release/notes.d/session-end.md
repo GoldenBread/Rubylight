@@ -1,2 +1,0 @@
-# Shutting down mid-stream
-- **Shutting down Windows during a stream now ends it at once on the client.** Windows ended the host with the session before the Rubylight service heard of the shutdown, so clients waited for their connection to time out, and a USB device forwarded from the client ended with an error. The host now notices the end of the session itself: it tells its clients that the stream ends and detaches forwarded USB devices, as when the service stops, and lets Windows go on within a few seconds.

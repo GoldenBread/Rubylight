@@ -1,2 +1,0 @@
-# Pictures behind the window in front
-- **A game or video behind the window in front is no longer held when that window repaints in short bursts.** A terminal app printing in front of a 60 fps picture made the host hold that picture 50 ms at a time: 56.0 fps with 21 such holds in 12 s on an RX 7900 XT, now 60.0 fps with none. The window in front now counts as moving only once it has kept changing for half a second, as a game or video does.

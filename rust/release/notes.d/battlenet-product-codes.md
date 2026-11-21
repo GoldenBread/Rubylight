@@ -1,2 +1,0 @@
-# Battle.net product codes
-- **Battle.net games installed by current versions of the launcher are recognized again.** Diablo IV and other products that Battle.net records under a long id such as `fenris` showed up under that id in Add games, marked as not recognized and with no way to add them. Rubylight now looks each product up by its product code and gets its name and launch command from that. A product it still doesn't know is named after its install folder.
