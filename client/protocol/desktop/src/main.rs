@@ -698,11 +698,16 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         eprintln!("nightjar: gamescope: starting fullscreen without a border; Start+Back opens the stream menu");
     }
     // SAFETY: display queries on the main thread after SDL_Init; the mode is SDL's and read at once.
-    let screen = unsafe {
+    let (screen, os_scale) = unsafe {
         let mode = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
-        (!mode.is_null()).then(|| ((*mode).w, (*mode).h))
+        ((!mode.is_null()).then(|| ((*mode).w, (*mode).h)), SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay()))
     };
-    let (width, height) = handheld::start_size(kms::active(), screen);
+    // Auto only enlarges unscaled screens, where SDL's window size is in pixels and points alike.
+    let zoom = match settings.ui_zoom {
+        0 => config::auto_zoom(screen.map(|(_, h)| h as f32), os_scale),
+        _ => 100,
+    };
+    let (width, height) = handheld::start_size(kms::active(), screen, zoom);
     // SAFETY: window and renderer creation on the main thread.
     let (window, renderer, wake_event) = unsafe {
         let window = SDL_CreateWindow(

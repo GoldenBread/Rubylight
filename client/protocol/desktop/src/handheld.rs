@@ -69,9 +69,15 @@ pub fn fills_screen() -> bool {
 /// The launcher window's size at creation: 1280x800 on a desktop. Straight to the display, the
 /// display's current mode (`screen`): SDL's KMSDRM sets the mode closest to the window's windowed
 /// size, so a 1280x800 window would take a 4K TV down to 720p for the launcher and the stream.
-pub fn start_size(kms: bool, screen: Option<(i32, i32)>) -> (i32, i32) {
+/// On a desktop, Auto's `zoom` above 100 % grows the window with it, as far as 90 % of the screen,
+/// so the pages keep the room they are laid out for.
+pub fn start_size(kms: bool, screen: Option<(i32, i32)>, zoom: u32) -> (i32, i32) {
     match screen {
         Some((w, h)) if kms && w > 0 && h > 0 => (w, h),
+        Some((w, h)) if zoom > 100 && w > 0 && h > 0 => {
+            let grow = |base: i32, room: i32| (base * zoom as i32 / 100).min(room * 9 / 10).max(base);
+            (grow(1280, w), grow(800, h))
+        }
         _ => (1280, 800),
     }
 }

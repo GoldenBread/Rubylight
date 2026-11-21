@@ -42,10 +42,13 @@ fn under_gamescope_the_window_is_borderless_fullscreen_and_stays_so() {
 
 #[test]
 fn straight_to_the_display_the_launcher_opens_at_the_displays_mode() {
-    assert_eq!(start_size(true, Some((3840, 2160))), (3840, 2160));
-    assert_eq!(start_size(false, Some((3840, 2160))), (1280, 800), "a desktop window keeps its size");
-    assert_eq!(start_size(true, None), (1280, 800), "no mode read: SDL picks");
-    assert_eq!(start_size(true, Some((0, 0))), (1280, 800));
+    assert_eq!(start_size(true, Some((3840, 2160)), 200), (3840, 2160));
+    assert_eq!(start_size(false, Some((3840, 2160)), 100), (1280, 800), "a desktop window keeps its size");
+    assert_eq!(start_size(true, None, 100), (1280, 800), "no mode read: SDL picks");
+    assert_eq!(start_size(true, Some((0, 0)), 100), (1280, 800));
+    assert_eq!(start_size(false, Some((3840, 2160)), 200), (2560, 1600), "Auto at 200 % keeps 1280x800 points");
+    assert_eq!(start_size(false, Some((2880, 1800)), 250), (2592, 1620), "no larger than 90 % of the screen");
+    assert_eq!(start_size(false, None, 200), (1280, 800));
 }
 
 #[test]
