@@ -986,6 +986,11 @@ public class MoonBridge {
         return RustBridge.getPendingAudioDuration();
     }
 
+    /** The engine's session clock in microseconds, which the Vulkan renderer maps receive times with. */
+    public static long sessionNowUs() {
+        return RustBridge.sessionNowUs();
+    }
+
     /** The engine's Opus concealer for the AAudio callback, a C function pointer for aaudio_output.c. */
     public static long audioConcealer() {
         return RustBridge.audioConcealer();

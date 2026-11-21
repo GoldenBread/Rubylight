@@ -142,7 +142,7 @@ public class VulkanRendererBridge {
         try {
             if (handle != 0) {
                 nativeNoteReceived(handle, hostPtsUs, receiveTimeUs, enqueueTimeUs, hostProcessingLatency,
-                        com.limelight.nvstream.jni.RustBridge.sessionNowUs());
+                        com.limelight.nvstream.jni.MoonBridge.sessionNowUs());
             }
         } finally {
             gate.exit();
