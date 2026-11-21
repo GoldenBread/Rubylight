@@ -389,6 +389,15 @@ impl PlanesPass {
         Ok(self.direct.as_ref().expect("made above"))
     }
 
+    /// Lets go of what the pass keeps of the decoder's textures (the bound surface, its slice views
+    /// and the texture facts), for a picture that is not a decoder surface: the decoder that made
+    /// them may be gone, and they would keep a pool slice and its device alive.
+    pub fn release_surface(&mut self) {
+        self.bound = None;
+        self.surface_views = None;
+        self.surface_facts = None;
+    }
+
     /// Lets go of SDL's back buffer, for a frame the pass does not draw into it (SDL may resize then).
     pub fn release_back_buffer(&mut self) {
         self.back_buffer.release();

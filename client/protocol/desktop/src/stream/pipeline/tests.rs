@@ -377,8 +377,9 @@ fn frames_failing_for_a_second_open_the_decoder_again_once_then_end_the_stream()
     failing.decoded();
     assert_eq!(failing.failed(1_200_000, true, true), Escalation::Wait);
     assert_eq!(failing.failed(6_000_000, true, true), Escalation::Wait);
-    // A backend on the renderer's own device (D3D11VA, Vulkan video) is opened again once, and a
-    // rebuild would take the same device: it ends the stream, as before the rebuild existed.
+    // A backend on the renderer's own device (D3D11VA, Vulkan video) or none (software) is opened
+    // again once, and a rebuild would take the same device: it ends the stream, as before the
+    // rebuild existed.
     let mut failing = Failing::default();
     failing.failed(0, true, false);
     failing.failed(500_000, true, false);
@@ -404,20 +405,16 @@ fn a_decoder_that_keeps_failing_is_opened_again_and_then_ends_the_stream_saying_
     assert!(decoder.decoder.is_some(), "opened again");
     assert!(decoder.failing.reopened);
     assert!(notices(&shared).is_empty(), "the stream goes on");
-    // The reopened context made no picture: a decoder on a new device is tried before the end.
+    // Software has no device of its own: a rebuild would only open it again, so the reopened
+    // decoder's second ends the stream.
     for at in [1_100_000, 1_600_000, 2_100_000] {
         decoder.frame_failed(at);
     }
-    assert!(decoder.decoder.is_some(), "made anew");
-    assert!(decoder.failing.rebuilt);
-    assert!(notices(&shared).is_empty(), "the stream goes on");
-    for at in [2_200_000, 2_700_000, 3_200_000] {
-        decoder.frame_failed(at);
-    }
+    assert!(!decoder.failing.rebuilt, "no rebuild for a decoder without a device of its own");
     let ended = notices(&shared);
     let [Notice::DecoderFailed(text)] = ended.as_slice() else { panic!("expected exactly the DecoderFailed notice") };
     assert!(text.contains("stopped working"), "{text}");
-    decoder.frame_failed(4_000_000);
+    decoder.frame_failed(3_000_000);
     assert!(notices(&shared).is_empty(), "said once");
 }
 
@@ -470,10 +467,7 @@ fn a_hardware_decoder_that_never_made_a_picture_gives_way_to_the_next_decoder() 
         for at in [4_400_000, 4_900_000, 5_400_000] {
             decoder.frame_failed(at);
         }
-        assert!(decoder.failing.rebuilt && notices(&shared).is_empty());
-        for at in [5_500_000, 6_000_000, 6_500_000] {
-            decoder.frame_failed(at);
-        }
+        assert!(!decoder.failing.rebuilt, "software has no device to rebuild");
         assert!(matches!(notices(&shared).as_slice(), [Notice::DecoderFailed(_)]));
     }
 }

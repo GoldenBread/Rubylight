@@ -112,13 +112,13 @@ impl<K, D> Cache<K, D> {
 
     fn park_at(&self, key: K, decoder: D, name: Option<String>, made_under: u64, at: std::time::Instant) {
         let mut parked = self.parked.lock().unwrap_or_else(|poison| poison.into_inner());
+        // Every drop below runs under the lock, so a `clear` waits for a drop in progress. A
+        // decoder's `Drop` never calls into the cache.
         if made_under != generation() {
-            drop(parked);
             drop(decoder);
             return;
         }
         let replaced = parked.replace(Parked { key, decoder, name, generation: made_under, at });
-        drop(parked);
         drop(replaced);
     }
 
@@ -148,8 +148,8 @@ impl<K, D> Cache<K, D> {
             std::thread::sleep(KEEP_FOR.saturating_sub(at.elapsed()));
             let mut parked = self.parked.lock().unwrap_or_else(|poison| poison.into_inner());
             if parked.as_ref().is_some_and(|entry| entry.at == at) {
+                // Dropped under the lock: a `clear` (before the renderer's device goes) waits for it.
                 let old = parked.take();
-                drop(parked);
                 drop(old);
             }
         });
@@ -171,7 +171,6 @@ impl<K, D> Cache<K, D> {
         let entry = parked.as_ref()?;
         if entry.at.elapsed() >= KEEP_FOR || entry.generation != generation() {
             let stale = parked.take();
-            drop(parked);
             drop(stale);
             return None;
         }
@@ -179,7 +178,6 @@ impl<K, D> Cache<K, D> {
             // One session runs at a time, so a decoder that does not serve this stream serves no
             // later one: its pool, textures and device go now, not beside the new decoder's.
             let unused = parked.take();
-            drop(parked);
             drop(unused);
             return None;
         }
@@ -187,9 +185,11 @@ impl<K, D> Cache<K, D> {
         Some((entry.decoder, entry.name))
     }
 
-    /// Drops the parked decoder, if any, on the calling thread.
+    /// Drops the parked decoder, if any, on the calling thread. A drop another thread has in
+    /// progress (the timer's, a `take`'s) holds the lock, so this returns only once it is done.
     pub fn clear(&self) {
-        let old = self.parked.lock().unwrap_or_else(|poison| poison.into_inner()).take();
+        let mut parked = self.parked.lock().unwrap_or_else(|poison| poison.into_inner());
+        let old = parked.take();
         drop(old);
     }
 }
@@ -441,6 +441,34 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(!cache.is_parked(), "the timer drops the decoder the reconnect never took");
+    }
+
+    /// A decoder the timer is dropping is still alive for the device it holds: `clear`, which runs
+    /// before the renderer is destroyed, waits for that drop instead of finding the cache empty.
+    #[test]
+    fn clear_waits_for_a_decoder_the_timer_is_dropping() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        struct Slow(Arc<AtomicBool>, Arc<AtomicBool>);
+        impl Drop for Slow {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                self.1.store(true, Ordering::SeqCst);
+            }
+        }
+        let (started, done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let cache: &'static Cache<u8, Slow> = Box::leak(Box::new(Cache::new()));
+        cache.park_aged(0, Slow(started.clone(), done.clone()), KEEP_FOR + std::time::Duration::from_secs(1));
+        cache.expire_later();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !started.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(started.load(Ordering::SeqCst), "the timer starts dropping the decoder");
+        assert!(!done.load(Ordering::SeqCst));
+        cache.clear();
+        assert!(done.load(Ordering::SeqCst), "clear returns only after the drop in progress finished");
     }
 
     #[test]

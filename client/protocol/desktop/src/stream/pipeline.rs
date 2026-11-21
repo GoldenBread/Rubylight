@@ -835,9 +835,14 @@ impl Decoder {
     fn frame_failed(&mut self, now_us: u64) {
         let frames = self.failing.frames + 1;
         let for_ms = self.failing.since_us.map_or(0, |since| now_us.saturating_sub(since) / 1000);
-        // A decoder on the renderer's own device (D3D11VA, Vulkan video) gets no new one from a
-        // rebuild: the device is the renderer's, which the renderer's recovery replaces.
-        let rebuildable = self.decoder.as_ref().is_some_and(|decoder| !matches!(decoder.hardware, Hardware::D3d11(_) | Hardware::Vulkan(_)));
+        // Only a backend that makes a device of its own gets a new one from a rebuild: software has
+        // none, and D3D11VA and Vulkan video use the renderer's, which its recovery replaces.
+        let rebuildable = self.decoder.as_ref().is_some_and(|decoder| match decoder.hardware {
+            Hardware::Vaapi | Hardware::Cuda | Hardware::V4l2m2m => true,
+            #[cfg(target_os = "macos")]
+            Hardware::VideoToolbox => true,
+            _ => false,
+        });
         match self.failing.failed(now_us, self.decoder.is_some(), rebuildable) {
             Escalation::Wait => {}
             Escalation::Reopen => {

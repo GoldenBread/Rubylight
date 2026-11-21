@@ -186,6 +186,8 @@ impl VideoTexture {
                     Err(error) => { self.fail(format!("the plane shader pass cannot be made: {error}"), format!("the plane shader pass cannot be made: {error}")); return false; }
                 }
             }
+            // A picture from memory: the decoder surfaces the pass kept are of a decoder that is gone.
+            self.planes.as_mut().unwrap().release_surface();
             if self.goes_direct(renderer, false) {
                 match self.planes.as_mut().unwrap().upload_frame(info) {
                     Ok(()) => {
