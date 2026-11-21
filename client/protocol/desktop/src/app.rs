@@ -44,8 +44,9 @@ impl App {
     fn save_hosts_and_place(&mut self) {
         self.save_hosts();
         // Under gamescope, or straight to the display, the window was never placed from the saved
-        // place, so the desktop's stays.
-        if handheld::start_window(handheld::fills_screen()).restore_place {
+        // place, so the desktop's stays. A fullscreen launcher keeps the windowed place saved
+        // before it, and records the display it is on.
+        if !handheld::fills_screen() {
             if let Some(placement) = window_place::current(self.window, self.store.window_placement().as_ref()) {
                 if let Err(e) = self.store.save_window_placement(&placement) { eprintln!("nightjar: window place not saved: {e}"); }
             }

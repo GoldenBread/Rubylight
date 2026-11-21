@@ -103,6 +103,9 @@ impl App {
                     SDL_SetWindowFullscreenMode(self.window, std::ptr::null());
                     SDL_SetWindowFullscreen(self.window, true);
                 }
+                // The launcher may be fullscreen from its Window setting: a windowed stream
+                // leaves it (not under gamescope, where there is no desktop to be on).
+                WindowMode::Windowed if !handheld::fills_screen() => { SDL_SetWindowFullscreen(self.window, false); }
                 WindowMode::Windowed => {}
             }
             SDL_SyncWindow(self.window);
@@ -397,13 +400,17 @@ impl App {
         self.abr_stops.extend(stop.map(|stop| (stopped_host, stop)));
         // The stream's cursor shows the pointer again on leaving.
         self.pointer.shown();
-        // SAFETY: window and renderer calls on the main thread.
-        unsafe {
-            if handheld::start_window(handheld::fills_screen()).windowed_after_stream {
-                SDL_SetWindowFullscreen(self.window, false);
-            }
-            SDL_SetRenderVSync(self.renderer, 1);
+        // The launcher's window takes the Window setting again: a stream leaves the screen in its
+        // own mode (an exclusive one with Fullscreen). The second screen's process ends with the
+        // stream and keeps its windowed window.
+        if second_screen::this_process() {
+            // SAFETY: a window call on the main thread.
+            unsafe { SDL_SetWindowFullscreen(self.window, false); }
+        } else {
+            self.apply_launcher_window_mode();
         }
+        // SAFETY: a renderer call on the main thread.
+        unsafe { SDL_SetRenderVSync(self.renderer, 1); }
         self.hosts.refresh_after_exit(host);
         // A reconnect asks the PC itself before it launches.
         if reconnect.is_none() && self.running {

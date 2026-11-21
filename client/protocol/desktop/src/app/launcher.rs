@@ -120,6 +120,27 @@ impl App {
         }
     }
 
+    /// Puts the launcher's window in the Window setting's mode: Fullscreen and Borderless fill
+    /// the screen on the desktop's mode, without a stream's own mode; Windowed is an ordinary
+    /// window. Under gamescope, straight to the display, and on the second screen the window stays
+    /// as the start made it.
+    pub(crate) fn apply_launcher_window_mode(&mut self) {
+        self.launcher_window_mode = self.launcher.settings.window_mode;
+        if handheld::fills_screen() || second_screen::this_process() { return; }
+        let windowed = self.launcher.settings.window_mode == WindowMode::Windowed;
+        // SAFETY: window calls on the main thread.
+        unsafe {
+            let fullscreen = SDL_GetWindowFlags(self.window) & SDL_WINDOW_FULLSCREEN != 0;
+            if windowed && fullscreen {
+                SDL_SetWindowFullscreen(self.window, false);
+            } else if !windowed && (!fullscreen || !SDL_GetWindowFullscreenMode(self.window).is_null()) {
+                SDL_SetWindowFullscreenMode(self.window, std::ptr::null());
+                SDL_SetWindowFullscreen(self.window, true);
+            }
+        }
+        self.window_changed = true;
+    }
+
     /// Minimizing or hiding the window is leaving Nightjar for the PIN lock's grace time.
     pub(crate) fn track_visibility(&mut self, event: &SDL_Event) {
         // SAFETY: reading the event type.

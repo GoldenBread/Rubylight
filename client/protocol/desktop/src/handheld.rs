@@ -1,11 +1,12 @@
 //! Steam Deck and other Linux handhelds in Game Mode, where gamescope is the compositor: Nightjar
 //! starts fullscreen without a border, hides the pointer while a controller is in use, and asks
 //! gamescope's swapchain for HDR (scRGB, else HDR10 as PQ) instead of the window's HDR state,
-//! which SDL cannot read there. Everything here is pure, so the tests need no gamescope.
+//! which SDL cannot read there. A desktop's launcher takes the Window setting's mode instead.
+//! Everything here is pure, so the tests need no gamescope.
 
 use std::ffi::OsStr;
 use std::sync::OnceLock;
-use crate::config::Renderer;
+use crate::config::{Renderer, WindowMode};
 
 /// Gamescope runs this session: `XDG_CURRENT_DESKTOP` names it (Game Mode sets
 /// `gamescope`; a list is colon-separated) or `GAMESCOPE_WAYLAND_DISPLAY` is set, which gamescope
@@ -48,17 +49,28 @@ pub struct StartWindow {
     /// Fullscreen on the desktop's mode (never an exclusive mode change).
     pub fullscreen: bool,
     pub borderless: bool,
-    /// The saved place and size from the last launch apply.
+    /// The saved place and size from the last launch apply; a fullscreen launcher returns to them
+    /// when the setting, or the Fullscreen hotkey, gives it a window again.
     pub restore_place: bool,
-    /// Leaving a stream returns the window to windowed.
-    pub windowed_after_stream: bool,
 }
 
-/// Under gamescope, and straight to the display (KMS), the window fills the screen without a
-/// border from the start and stays so after a stream: there is no desktop to return to, and a
-/// saved windowed place means nothing (and is not overwritten).
-pub fn start_window(fills_screen: bool) -> StartWindow {
-    StartWindow { fullscreen: fills_screen, borderless: fills_screen, restore_place: !fills_screen, windowed_after_stream: !fills_screen }
+/// The launcher's window mode. Under gamescope, and straight to the display (KMS), it fills the
+/// screen without a border from the start whatever the setting: there is no desktop to return
+/// to, and a saved windowed place means nothing. On a desktop, the Window setting's Fullscreen
+/// and Borderless both fill the screen on the desktop's mode, without a title bar and without an
+/// exclusive mode change (the mode switch belongs to a stream); Windowed is the ordinary window.
+pub fn launcher_window_mode(mode: WindowMode, fills_screen: bool) -> WindowMode {
+    match mode {
+        WindowMode::Windowed if !fills_screen => WindowMode::Windowed,
+        _ => WindowMode::Borderless,
+    }
+}
+
+/// [`launcher_window_mode`] as the flags of the window at creation. Fullscreen here is SDL's
+/// fullscreen on the desktop's mode, as gamescope and KMS already open.
+pub fn start_window(mode: WindowMode, fills_screen: bool) -> StartWindow {
+    let fullscreen = launcher_window_mode(mode, fills_screen) != WindowMode::Windowed;
+    StartWindow { fullscreen, borderless: fills_screen, restore_place: !fills_screen }
 }
 
 /// The window fills the screen with no desktop around it: gamescope, or straight to the display.

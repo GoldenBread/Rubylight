@@ -303,11 +303,17 @@ fn a_stream_starts_with_what_became_of_4_4_4_and_10_bit_next_to_the_warning() {
 
 #[test]
 fn under_gamescope_the_launcher_window_opens_borderless_fullscreen() {
-    let deck = start_flags(handheld::start_window(true));
+    let deck = start_flags(handheld::start_window(WindowMode::Windowed, true));
     assert!(deck.0 & SDL_WINDOW_FULLSCREEN.0 != 0 && deck.0 & SDL_WINDOW_BORDERLESS.0 != 0);
     assert!(deck.0 & SDL_WINDOW_HIDDEN.0 != 0, "shown after the GUI is ready");
-    let desktop = start_flags(handheld::start_window(false));
-    assert_eq!(desktop.0, (SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN).0);
+    let windowed = start_flags(handheld::start_window(WindowMode::Windowed, false));
+    assert_eq!(windowed.0, (SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN).0);
+    // The Window setting opens the launcher as it opens its streams' window, on a desktop.
+    for mode in [WindowMode::Fullscreen, WindowMode::Borderless] {
+        let desktop = start_flags(handheld::start_window(mode, false));
+        assert!(desktop.0 & SDL_WINDOW_FULLSCREEN.0 != 0, "{mode:?}");
+        assert_eq!(desktop.0 & SDL_WINDOW_BORDERLESS.0, 0, "SDL's fullscreen has no border");
+    }
     assert_eq!(stream_window_mode(WindowMode::Fullscreen, true, false), WindowMode::Borderless, "no exclusive mode under gamescope");
     assert_eq!(stream_window_mode(WindowMode::Fullscreen, false, false), WindowMode::Fullscreen);
     assert_eq!(stream_window_mode(WindowMode::Windowed, true, false), WindowMode::Windowed);

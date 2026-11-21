@@ -32,12 +32,25 @@ fn gamescopes_layer_goes_off_only_when_its_socket_is_missing() {
 
 #[test]
 fn under_gamescope_the_window_is_borderless_fullscreen_and_stays_so() {
-    let deck = start_window(true);
+    let deck = start_window(WindowMode::Windowed, true);
     assert!(deck.fullscreen && deck.borderless);
     assert!(!deck.restore_place, "a saved windowed place is not used");
-    assert!(!deck.windowed_after_stream, "a stream's end keeps it fullscreen");
-    let desktop = start_window(false);
-    assert_eq!(desktop, StartWindow { fullscreen: false, borderless: false, restore_place: true, windowed_after_stream: true });
+    let windowed = start_window(WindowMode::Windowed, false);
+    assert_eq!(windowed, StartWindow { fullscreen: false, borderless: false, restore_place: true });
+}
+
+#[test]
+fn on_a_desktop_fullscreen_and_borderless_open_the_launcher_fullscreen_without_a_title_bar() {
+    for mode in [WindowMode::Fullscreen, WindowMode::Borderless] {
+        let start = start_window(mode, false);
+        assert!(start.fullscreen, "{mode:?}");
+        assert!(!start.borderless, "the fullscreen window has no border of its own");
+        assert!(start.restore_place, "the saved place is what a window returns to");
+    }
+    // The handheld and straight-to-the-display window keeps the display's mode whatever the setting.
+    for mode in [WindowMode::Fullscreen, WindowMode::Borderless, WindowMode::Windowed] {
+        assert_eq!(launcher_window_mode(mode, true), WindowMode::Borderless, "{mode:?}");
+    }
 }
 
 #[test]

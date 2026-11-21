@@ -255,6 +255,10 @@ struct App {
     open_play: open_play::OpenPlay,
     /// The background the title bar was last given (High contrast turns it black).
     title_bar: egui::Color32,
+    /// The launcher window's mode last applied from the Window setting: a changed setting moves the
+    /// window once, and the Fullscreen hotkey keeps its own toggle in between
+    /// (`apply_launcher_window_mode`).
+    launcher_window_mode: WindowMode,
     /// The window changed since the last launcher frame: it needs one, whatever egui paints.
     window_changed: bool,
     /// A save failed this run and the player was told: the one notice a run gives for it.
@@ -692,8 +696,11 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         .chain(profiles.entries.iter().map(|profile| &profile.settings))));
 
     // Steam's Game Mode, and straight to the display: fullscreen without a border from the start
-    // (handheld.rs), at the display's current mode in KMS mode.
-    let start = handheld::start_window(handheld::fills_screen());
+    // (handheld.rs), at the display's current mode in KMS mode. On a desktop the Window setting
+    // opens the launcher as it opens its streams' window: Fullscreen and Borderless fill the
+    // screen on the desktop's mode, Windowed is an ordinary window.
+    let launcher_mode = if second_screen::this_process() { WindowMode::Windowed } else { settings.window_mode };
+    let start = handheld::start_window(launcher_mode, handheld::fills_screen());
     if handheld::gamescope() {
         eprintln!("nightjar: gamescope: starting fullscreen without a border; Start+Back opens the stream menu");
     }
@@ -1025,6 +1032,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         select_read: false,
         move_watch: Default::default(),
         title_bar: *theme::NIGHT,
+        launcher_window_mode: launcher_mode,
         window_changed: true,
         save_failed_told,
     };

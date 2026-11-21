@@ -2230,6 +2230,12 @@ impl Launcher {
         if *s != before {
             self.settings_dirty = true;
         }
+        // The Window row moves the launcher's own window at once, as Fullscreen moves a stream's;
+        // the other rows wait for the page to close. A PC's, game's or profile's Window value is
+        // theirs alone and acts when it streams.
+        if !layered && s.window_mode != before.window_mode {
+            commands.push(Command::SaveSettings);
+        }
         // Switching it is how to ask a PC again that refused it before.
         if sharp_color(s) != sharp_color(&before) || s.experimental_packed_444 != before.experimental_packed_444 {
             commands.push(Command::AskFullChromaAgain);

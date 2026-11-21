@@ -434,11 +434,15 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
                 self.launcher.open(Screen::Apps(host));
             }
             Command::SaveSettings => {
-                let s = &self.launcher.settings;
-                self.pads.configure(s);
-                if let Err(e) = self.store.save_settings(s) {
+                self.pads.configure(&self.launcher.settings);
+                if let Err(e) = self.store.save_settings(&self.launcher.settings) {
                     eprintln!("nightjar: saving settings failed: {e}");
                     self.save_failed();
+                }
+                // A changed Window setting is the launcher's window too, once nothing streams: a
+                // stream's own mode applies when it ends (app/session.rs).
+                if self.streaming.is_none() && self.launcher.settings.window_mode != self.launcher_window_mode {
+                    self.apply_launcher_window_mode();
                 }
             }
             Command::RetryLaunch => {
