@@ -199,7 +199,8 @@ fn heartbeat_device_info_errors_are_not_monitor_loss() {
         })
         .unwrap();
     assert_eq!(types, [DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME]);
-    for fail_call in [1] {
+    {
+        let fail_call = 1;
         let mut calls = 0;
         let result = topology.shows(&[(owned.adapter, owned.target)], &owned, |_| {
             calls += 1;
