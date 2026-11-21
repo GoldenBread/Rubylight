@@ -546,6 +546,26 @@ pub fn follow_display(display: Option<Rate>) {
         }
     }
 }
+/// Whether a cap follows one stream's display now, so the stream reads that display's mode
+/// every live tick (250 ms) rather than only with each 5 s timing window: a game that sets its
+/// own mode takes the cap off within a tick. One mode read and an uncontended lock each
+/// tick, none per frame, and nothing at all for a stream without a followed cap.
+pub fn following() -> bool {
+    state().try_lock().is_ok_and(|state| follows(&state))
+}
+fn follows(state: &State) -> bool {
+    state.users == 1
+        && state.active == "rtss"
+        && state
+            .follow
+            .as_ref()
+            .is_some_and(|follow| !follow.failed && !follow.shared)
+}
+/// Whether the stream reads its display's mode at this live tick: with every timing window,
+/// and between windows while a cap follows the display.
+pub fn display_read_due(window_due: bool, following: bool) -> bool {
+    window_due || following
+}
 /// Whether the followed cap has to come off (`true`) or go back on for a display at
 /// `display`, or `None` when it is as it should be, a change is under way, or there is no
 /// cap one stream's display decides.
@@ -742,6 +762,59 @@ mod tests {
         let mut state = followed();
         state.active = "none".into();
         assert_eq!(wanted_change(&state, Rate(60_000)), None);
+    }
+
+    /// A game's mode change reaches the cap within one live tick (250 ms) instead of the
+    /// next 5 s timing window: the display is read at each tick while a cap follows it.
+    #[test]
+    fn a_followed_display_is_read_every_live_tick() {
+        let mut state = State {
+            users: 1,
+            active: "rtss".into(),
+            follow: Some(Follow {
+                id: 1,
+                root: PathBuf::new(),
+                rate: Rate(60_000),
+                standing_down: false,
+                changing: false,
+                failed: false,
+                shared: false,
+            }),
+            ..State::default()
+        };
+        assert!(follows(&state));
+        // Also while the cap is off, to see the display get fast again.
+        state.follow.as_mut().unwrap().standing_down = true;
+        assert!(follows(&state));
+        state.follow.as_mut().unwrap().shared = true;
+        assert!(!follows(&state));
+        state.follow.as_mut().unwrap().shared = false;
+        state.follow.as_mut().unwrap().failed = true;
+        assert!(!follows(&state));
+        state.follow.as_mut().unwrap().failed = false;
+        state.users = 2;
+        assert!(!follows(&state));
+        state.users = 1;
+        state.follow = None;
+        assert!(!follows(&state));
+        // A stream's loop: ticks every 250 ms, a 5 s window; the game changes the mode
+        // at each offset. The wait until the display is read next, with and without
+        // the follow.
+        let tick = 250u64;
+        let delay = |following: bool, change_at: u64| {
+            (1..)
+                .map(|n| n * tick)
+                .find(|at| *at >= change_at && display_read_due(at % 5_000 == 0, following))
+                .unwrap()
+                - change_at
+        };
+        let (mut before, mut after) = (0, 0);
+        for change_at in (0..10_000).step_by(10) {
+            before = before.max(delay(false, change_at));
+            after = after.max(delay(true, change_at));
+        }
+        assert!(before >= 4_990, "{before}");
+        assert!(after <= tick, "{after}");
     }
 
     /// The stream's end, or the crash watcher, finds the profile with the cap or

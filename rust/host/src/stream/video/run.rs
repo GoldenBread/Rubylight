@@ -824,36 +824,22 @@ impl SessionThread<'_> {
                         }
                     }
                     *s.output.write().unwrap() = prepared.output();
-                    if Instant::now() >= timing_due {
-                        let now = Instant::now();
-                        timing_due = now + Duration::from_secs(5);
-                        // The stage samples of these five seconds into the
-                        // stream's stutter report, whatever the log level. They
-                        // are copied out under the sender's lock and the
-                        // medians run after it is released.
-                        let pictures = s.stats.performance.lock().unwrap().advance_stutter();
-                        if let Some(pictures) = pictures {
-                            stutter_totals.add(&pictures, stream_period.get());
-                            s.stats.publish_stutter(&stutter_totals);
-                        }
-                        // Pipeline frame rates since the last summary; the
-                        // sampler was baselined at stream start. The
-                        // source-rate warning is not a logging concern: it
-                        // feeds the console at every `min_log_level`, so it
-                        // samples and runs before the INFO-only timing line.
-                        let rates = pipeline_log.sample(now, s.pipeline_counts(), Duration::from_secs(5));
-                        let pipeline = rates.as_ref().map(butterpollo_core::pipeline_rates::PipelineRates::from);
-                        let source_mhz = pipeline.as_ref().and_then(|rates| rates.source_mhz);
-                        // What the stream can show: its own rate, or the
-                        // captured display's where that is lower. A 60 Hz
-                        // monitor streamed at 120 fps presents 60 frames a
-                        // second at best, so a source at 60 is not the limit.
-                        // The display's mode is read with each window: a
-                        // virtual display is retimed when the stream's is. A
-                        // window target names no display, so the display it is
-                        // laid over is asked instead.
+                    // What the stream can show: its own rate, or the captured
+                    // display's where that is lower. A 60 Hz monitor streamed at 120 fps
+                    // presents 60 frames a second at best, so a source at 60 is not the
+                    // limit. The display's mode is read with each window (a virtual
+                    // display is retimed when the stream's is), and at every live tick
+                    // while a frame cap follows it, so a game's mode change takes the cap
+                    // off within 250 ms, not at the next window. A window target names
+                    // no display, so the display it is laid over is asked instead.
+                    let window_due = Instant::now() >= timing_due;
+                    let mut display_mhz = None;
+                    if butterpollo_windows::limiter::display_read_due(
+                        window_due,
+                        butterpollo_windows::limiter::following(),
+                    ) {
                         let shown = prepared.output();
-                        let display_mhz = butterpollo_windows::display::mode(&shown)
+                        display_mhz = butterpollo_windows::display::mode(&shown)
                             .or_else(|_| butterpollo_windows::display::mode(&output))
                             .ok()
                             .map(|mode| mode.dmDisplayFrequency)
@@ -877,6 +863,29 @@ impl SessionThread<'_> {
                             display_refresh_mhz = Some(now_mhz);
                         }
                         butterpollo_windows::limiter::follow_display(display_mhz.map(butterpollo_core::framegen::Rate));
+                    }
+                    if window_due {
+                        let now = Instant::now();
+                        timing_due = now + Duration::from_secs(5);
+                        // The stage samples of these five seconds into the
+                        // stream's stutter report, whatever the log level. They
+                        // are copied out under the sender's lock and the
+                        // medians run after it is released.
+                        let pictures = s.stats.performance.lock().unwrap().advance_stutter();
+                        if let Some(pictures) = pictures {
+                            stutter_totals.add(&pictures, stream_period.get());
+                            s.stats.publish_stutter(&stutter_totals);
+                        }
+                        // Pipeline frame rates since the last summary; the
+                        // sampler was baselined at stream start. The
+                        // source-rate warning is not a logging concern: it
+                        // feeds the console at every `min_log_level`, so it
+                        // samples and runs before the INFO-only timing line.
+                        let rates = pipeline_log.sample(now, s.pipeline_counts(), Duration::from_secs(5));
+                        let pipeline = rates.as_ref().map(butterpollo_core::pipeline_rates::PipelineRates::from);
+                        let source_mhz = pipeline.as_ref().and_then(|rates| rates.source_mhz);
+                        // What the stream can show: its own rate, or the
+                        // captured display's where that is lower (read above).
                         // The source rate against what the stream can show. A
                         // game below it is the limit that every per-stage
                         // number hides. A new warning or a re-word writes one
