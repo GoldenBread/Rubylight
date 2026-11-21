@@ -424,7 +424,7 @@ Nightjar can also pin app shortcuts to the Android launcher. For external game l
 
 ## Nightjar for Windows and Linux
 
-The desktop client takes a keyboard, a mouse, a touchpad and controllers. It has no on-screen or touch controls; those are Android-only by design. Its settings are listed in the [desktop settings reference](settings.md#nightjar-for-windows-and-linux). Nightjar for macOS uses the same keys with Control and Option in place of Ctrl and Alt (**Control+Option+Shift+Tab** opens the stream menu).
+The desktop client takes a keyboard, a mouse, a touchpad and controllers. It has no on-screen controls; those are Android-only by design. A touch screen scrolls the launcher: a finger drag moves its pages, lists and drop-down menus, a tap still clicks, and a drag that ends over a row does not click it. Its settings are listed in the [desktop settings reference](settings.md#nightjar-for-windows-and-linux). Nightjar for macOS uses the same keys with Control and Option in place of Ctrl and Alt (**Control+Option+Shift+Tab** opens the stream menu).
 
 | Input | What it does |
 | --- | --- |

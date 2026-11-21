@@ -759,6 +759,19 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     });
 
     let mut gui = Gui::new();
+    // A launcher on a touch screen scrolls by dragging from the first finger: egui offers that
+    // once it has seen a touch, so one is announced before the window shows (gui::prime_touch).
+    // SAFETY: SDL is up; the list SDL returns is freed here.
+    unsafe {
+        let mut count = 0;
+        let ids = SDL_GetTouchDevices(&mut count);
+        let screen = !ids.is_null()
+            && (0..count.max(0)).any(|i| SDL_GetTouchDeviceType(*ids.add(i as usize)).0 == SDL_TOUCH_DEVICE_DIRECT.0);
+        if !ids.is_null() {
+            SDL_free(ids.cast());
+        }
+        gui.prime_touch(screen);
+    }
     // Before the window shows: UI Automation's adapter has to be on it from the start.
     if let Err(e) = gui.attach_accessibility(window, waker.clone()) {
         eprintln!("nightjar: screen readers cannot read this window: {e}");

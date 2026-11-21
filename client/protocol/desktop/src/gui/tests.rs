@@ -80,7 +80,7 @@ fn page_offset(gui: &mut Gui) -> f32 {
 /// opened, or a touchpad's two fingers moved no pointer.
 #[test]
 fn a_wheel_turn_scrolls_without_a_motion_first() {
-    let scale = Scale { pixels_per_point: 1.0, density: 1.0 };
+    let scale = Scale { pixels_per_point: 1.0, density: 1.0, size: Vec2::new(400.0, 300.0) };
     // SAFETY: an all-zero SDL_Event is a valid value of the C union.
     let mut event: SDL_Event = unsafe { std::mem::zeroed() };
     event.r#type = SDL_EVENT_MOUSE_WHEEL.0;
@@ -107,7 +107,7 @@ fn a_wheel_turn_scrolls_without_a_motion_first() {
 /// system setting says there too.
 #[test]
 fn a_natural_scrolling_turn_scrolls_like_the_system_says() {
-    let scale = Scale { pixels_per_point: 1.0, density: 1.0 };
+    let scale = Scale { pixels_per_point: 1.0, density: 1.0, size: Vec2::new(400.0, 300.0) };
     // SAFETY: an all-zero SDL_Event is a valid value of the C union.
     let mut event: SDL_Event = unsafe { std::mem::zeroed() };
     event.r#type = SDL_EVENT_MOUSE_WHEEL.0;
@@ -118,6 +118,130 @@ fn a_natural_scrolling_turn_scrolls_like_the_system_says() {
     let mut gui = Gui::new();
     gui.handle(&event, scale);
     assert!(page_offset(&mut gui) > 0.0, "a turn toward the user moves down the page, flipped or not");
+}
+
+/// An SDL finger event, as a touch screen sends it (the position is normalized to 0...1).
+fn finger_event(kind: SDL_EventType, id: u64, x: f32, y: f32) -> SDL_Event {
+    // SAFETY: an all-zero SDL_Event is a valid value of the C union.
+    let mut event: SDL_Event = unsafe { std::mem::zeroed() };
+    event.r#type = kind.0;
+    event.tfinger.touchID = SDL_TouchID(1);
+    event.tfinger.fingerID = SDL_FingerID(id);
+    event.tfinger.x = x;
+    event.tfinger.y = y;
+    event.tfinger.pressure = 0.5;
+    event
+}
+
+/// The virtual mouse SDL makes from a finger: the motion and button events egui's pointer gets.
+fn touch_mouse(kind: SDL_EventType, x: f32, y: f32, down: bool) -> SDL_Event {
+    // SAFETY: an all-zero SDL_Event is a valid value of the C union.
+    let mut event: SDL_Event = unsafe { std::mem::zeroed() };
+    event.r#type = kind.0;
+    match kind {
+        SDL_EVENT_MOUSE_MOTION => {
+            event.motion.which = SDL_TOUCH_MOUSEID;
+            event.motion.x = x;
+            event.motion.y = y;
+        }
+        _ => {
+            event.button.which = SDL_TOUCH_MOUSEID;
+            event.button.button = SDL_BUTTON_LEFT as u8;
+            event.button.down = down;
+            event.button.x = x;
+            event.button.y = y;
+        }
+    }
+    event
+}
+
+/// One pass of a page whose button sits at the top of a tall scroll area, with what
+/// [`Gui::handle`] queued: how far the page scrolled and whether the button clicked.
+fn scroll_page(gui: &mut Gui, time: f64) -> (f32, bool) {
+    let mut offset = 0.0;
+    let mut clicked = false;
+    gui.ctx
+        .run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0))),
+                time: Some(time),
+                events: std::mem::take(&mut gui.events),
+                ..Default::default()
+            },
+            |ui| {
+                let page = egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                    clicked = ui.add_sized(Vec2::new(300.0, 80.0), egui::Button::new("Game")).clicked();
+                    ui.allocate_space(Vec2::new(300.0, 3000.0));
+                });
+                offset = page.state.clamped_offset().y;
+            },
+        )
+        .textures_delta
+        .clear();
+    (offset, clicked)
+}
+
+#[test]
+fn a_finger_is_a_touch_at_the_point_it_touches_and_no_second_pointer() {
+    let scale = Scale { pixels_per_point: 1.0, density: 1.0, size: Vec2::new(400.0, 300.0) };
+    let mut gui = Gui::new();
+    let mut down = finger_event(SDL_EVENT_FINGER_DOWN, 12, 0.25, 0.4);
+    down.tfinger.pressure = 0.25;
+    gui.handle(&down, scale);
+    assert_eq!(
+        gui.events,
+        vec![Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(12),
+            phase: egui::TouchPhase::Start,
+            pos: Pos2::new(100.0, 120.0),
+            force: Some(0.25),
+        }],
+        "only the touch: SDL's virtual mouse is the pointer egui already sees"
+    );
+}
+
+#[test]
+fn a_finger_tap_clicks_once_through_sdls_virtual_mouse() {
+    let scale = Scale { pixels_per_point: 1.0, density: 1.0, size: Vec2::new(400.0, 300.0) };
+    let mut gui = Gui::new();
+    scroll_page(&mut gui, 0.0);
+    gui.handle(&finger_event(SDL_EVENT_FINGER_DOWN, 3, 0.25, 0.2), scale);
+    gui.handle(&touch_mouse(SDL_EVENT_MOUSE_MOTION, 100.0, 60.0, false), scale);
+    gui.handle(&touch_mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, 100.0, 60.0, true), scale);
+    let (offset, clicked) = scroll_page(&mut gui, 0.05);
+    assert_eq!((offset, clicked), (0.0, false), "the touch does not click before the finger lifts");
+    gui.handle(&finger_event(SDL_EVENT_FINGER_UP, 3, 0.25, 0.2), scale);
+    gui.handle(&touch_mouse(SDL_EVENT_MOUSE_BUTTON_UP, 100.0, 60.0, false), scale);
+    let (offset, clicked) = scroll_page(&mut gui, 0.1);
+    assert_eq!(offset, 0.0);
+    assert!(clicked, "a tap on a row clicks it once");
+}
+
+#[test]
+fn a_finger_drag_scrolls_the_page_and_does_not_click_at_its_end() {
+    let scale = Scale { pixels_per_point: 1.0, density: 1.0, size: Vec2::new(400.0, 300.0) };
+    let mut gui = Gui::new();
+    gui.prime_touch(true);
+    // The page lays out once, then registers its drag area, which the next pass's press finds.
+    scroll_page(&mut gui, 0.0);
+    scroll_page(&mut gui, 0.05);
+    // The finger presses the button and moves up the pane, over it all the way.
+    let at = |y: f32| y / 300.0;
+    gui.handle(&finger_event(SDL_EVENT_FINGER_DOWN, 7, 0.25, at(70.0)), scale);
+    gui.handle(&touch_mouse(SDL_EVENT_MOUSE_MOTION, 100.0, 70.0, false), scale);
+    gui.handle(&touch_mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, 100.0, 70.0, true), scale);
+    scroll_page(&mut gui, 0.1);
+    for (n, y) in [50.0, 30.0, 10.0].into_iter().enumerate() {
+        gui.handle(&finger_event(SDL_EVENT_FINGER_MOTION, 7, 0.25, at(y)), scale);
+        gui.handle(&touch_mouse(SDL_EVENT_MOUSE_MOTION, 100.0, y, false), scale);
+        let _ = scroll_page(&mut gui, 0.15 + n as f64 * 0.05);
+    }
+    gui.handle(&finger_event(SDL_EVENT_FINGER_UP, 7, 0.25, at(10.0)), scale);
+    gui.handle(&touch_mouse(SDL_EVENT_MOUSE_BUTTON_UP, 100.0, 10.0, false), scale);
+    let (offset, clicked) = scroll_page(&mut gui, 0.35);
+    assert!(offset > 40.0, "the drag moved the page with the finger: {offset}");
+    assert!(!clicked, "and its end over the button is no click");
 }
 
 #[test]

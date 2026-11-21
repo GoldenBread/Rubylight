@@ -78,18 +78,25 @@ pub fn clipboard_text() -> Option<String> {
 pub struct Scale {
     pub pixels_per_point: f32,
     pub density: f32,
+    /// The client area in window coordinates, which SDL's mouse positions and its touches
+    /// normalized to 0...1 are measured in.
+    pub size: Vec2,
 }
 
 impl Scale {
     pub fn of(window: *mut SDL_Window) -> Self {
+        let (mut w, mut h) = (0, 0);
         // SAFETY: a live window.
-        let (display, density) =
-            unsafe { (SDL_GetWindowDisplayScale(window), SDL_GetWindowPixelDensity(window)) };
+        let (display, density) = unsafe {
+            SDL_GetWindowSize(window, &mut w, &mut h);
+            (SDL_GetWindowDisplayScale(window), SDL_GetWindowPixelDensity(window))
+        };
         let density = if density > 0.0 { density } else { 1.0 };
         let pixels_per_point = if display > 0.0 { display } else { density };
         Self {
             pixels_per_point,
             density,
+            size: Vec2::new(w.max(0) as f32, h.max(0) as f32),
         }
     }
 
@@ -368,6 +375,25 @@ impl Gui {
         self.events.push(event);
     }
 
+    /// Tells egui a touch screen is here before the first finger. A scroll area offers drag-to-scroll
+    /// only once egui has seen a touch (`InputState::has_touch_screen`), and the area a first finger
+    /// presses has to exist a frame before that press, so one touch that starts and ends at once is
+    /// announced. Call it before the first frame when SDL reports a touch screen.
+    pub fn prime_touch(&mut self, present: bool) {
+        if !present {
+            return;
+        }
+        let touch = |phase| Event::Touch {
+            device_id: egui::TouchDeviceId(0),
+            id: egui::TouchId(0),
+            phase,
+            pos: Pos2::ZERO,
+            force: None,
+        };
+        self.events.push(touch(egui::TouchPhase::Start));
+        self.events.push(touch(egui::TouchPhase::End));
+    }
+
     /// Takes an SDL event. Returns whether egui used it.
     pub fn handle(&mut self, event: &SDL_Event, scale: Scale) -> bool {
         // Points are the zoomed ones: egui's pixels per point is the display's times the zoom.
@@ -415,6 +441,26 @@ impl Gui {
                     });
                 }
                 SDL_EVENT_WINDOW_MOUSE_LEAVE => self.events.push(Event::PointerGone),
+                // SDL also sends the virtual mouse a touch makes (`SDL_TOUCH_MOUSEID`), and that
+                // is what egui's pointer sees, as a mouse's would: a tap clicks and a drag scrolls
+                // a scroll area, whose drag-to-scroll egui turns on once a touch has been seen.
+                // The finger itself is the touch egui tracks for that, never a second pointer.
+                SDL_EVENT_FINGER_DOWN | SDL_EVENT_FINGER_MOTION | SDL_EVENT_FINGER_UP | SDL_EVENT_FINGER_CANCELED => {
+                    let f = event.tfinger;
+                    let phase = match kind {
+                        SDL_EVENT_FINGER_DOWN => egui::TouchPhase::Start,
+                        SDL_EVENT_FINGER_UP => egui::TouchPhase::End,
+                        SDL_EVENT_FINGER_CANCELED => egui::TouchPhase::Cancel,
+                        _ => egui::TouchPhase::Move,
+                    };
+                    self.events.push(Event::Touch {
+                        device_id: egui::TouchDeviceId(f.touchID.0),
+                        id: egui::TouchId(f.fingerID.0),
+                        phase,
+                        pos: point(f.x * scale.size.x, f.y * scale.size.y),
+                        force: Some(f.pressure.clamp(0.0, 1.0)),
+                    });
+                }
                 SDL_EVENT_KEY_DOWN | SDL_EVENT_KEY_UP => {
                     let k = event.key;
                     self.modifiers = modifiers_of(k.r#mod);
