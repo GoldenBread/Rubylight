@@ -190,7 +190,16 @@ fn heartbeat_device_info_errors_are_not_monitor_loss() {
         paths: vec![path],
         modes: vec![],
     };
-    for fail_call in [1, 2] {
+    // The target's name is the only query a check makes: no source-name read.
+    let mut types = Vec::new();
+    topology
+        .shows(&[(owned.adapter, owned.target)], &owned, |header| {
+            types.push(header.r#type);
+            0
+        })
+        .unwrap();
+    assert_eq!(types, [DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME]);
+    for fail_call in [1] {
         let mut calls = 0;
         let result = topology.shows(&[(owned.adapter, owned.target)], &owned, |_| {
             calls += 1;

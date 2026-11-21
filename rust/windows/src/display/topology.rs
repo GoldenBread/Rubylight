@@ -982,15 +982,8 @@ impl Topology {
                 p.targetInfo.adapterId == *adapter && p.targetInfo.id == *target
             })
         }) {
-            let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
-                header: header(
-                    DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
-                    size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>(),
-                    p.sourceInfo.adapterId,
-                    p.sourceInfo.id,
-                ),
-                ..Default::default()
-            };
+            // Only the target's name says which monitor this is; the source's GDI name
+            // is not used here, so it is not asked for (one query less each second).
             let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME {
                 header: header(
                     DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
@@ -1000,7 +993,6 @@ impl Topology {
                 ),
                 ..Default::default()
             };
-            check(device_info(&mut source.header))?;
             check(device_info(&mut target.header))?;
             if wide(&target.monitorDevicePath).eq_ignore_ascii_case(&monitor.monitor_device_path) {
                 return Ok(true);
