@@ -12,11 +12,20 @@ import com.limelight.LimeLog;
 final class RustBridge {
     private RustBridge() {}
 
-    private static Boolean available;
+    private static volatile Boolean available;
     private static String loadFailure;
 
-    /** Loads the library once; false when it is missing or broken ({@link #loadFailure} says why). */
-    static synchronized boolean isAvailable() {
+    /**
+     * Loads the library once; false when it is missing or broken ({@link #loadFailure} says why).
+     * MoonBridge calls it when it loads, so a failure is known before the first stream, and input
+     * and queries made without the library are no-ops instead of an UnsatisfiedLinkError.
+     */
+    static boolean isAvailable() {
+        Boolean known = available;
+        return known != null ? known : load();
+    }
+
+    private static synchronized boolean load() {
         if (available == null) {
             boolean loaded;
             try {

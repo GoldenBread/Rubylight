@@ -391,7 +391,7 @@ mod qwave {
 /// The environment variable that turns the decode priority on (`1`) or off (`0`) on the desktop.
 pub const DECODE_PRIORITY_ENV: &str = "NIGHTJAR_DECODE_PRIORITY";
 /// The Android system property that does the same (`adb shell setprop
-/// debug.nightjar.decode_priority 0`); the classic engine's `latency.c` reads it too.
+/// debug.nightjar.decode_priority 0`); the former C engine's `latency.c` read it too.
 pub const DECODE_PRIORITY_PROPERTY: &str = "debug.nightjar.decode_priority";
 /// `THREAD_PRIORITY_ABOVE_NORMAL`: the Windows level of [`ThreadLevel::Stream`].
 pub const WINDOWS_STREAM_PRIORITY: i32 = 1;

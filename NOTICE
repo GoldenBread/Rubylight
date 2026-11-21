@@ -207,6 +207,21 @@ GPL-3.0, Jays2Kings, Ryochan7, schmaldeo and contributors). Its settings
 (enable_dsu_server, dsu_server_port) and default port 26760 are Foundation Sunshine's
 (https://github.com/AlkaidLab/foundation-sunshine, GPL-3.0).
 
+moonlight-common-c
+
+Nightjar's client connectivity test (client/protocol/client/src/connectivity.rs) is
+ported from the LiTestClientConnectivity of moonlight-common-c
+(https://github.com/moonlight-stream/moonlight-common-c, GPL-3.0, Cameron Gutman and
+contributors): the ports and their flags, a TCP connect or UDP echo for each port, and
+a test server that has to answer on the reference port first. The connection stage
+names and the port flags a failed stage implicates (client/app/src/main/java/com/
+limelight/nvstream/jni/PortFlags.java) are those of its LiGetStageName,
+LiGetPortFlagsFromStage, LiGetPortFlagsFromTerminationErrorCode and LiStringifyPortFlags,
+as Moonlight Android (https://github.com/moonlight-stream/moonlight-android, GPL-3.0,
+Cameron Gutman and contributors) shows them. Nightjar's receive path, control stream
+and their tests in client/protocol/client were ported from the same library, which
+Nightjar's Android app carried until its Rust engine replaced it.
+
 Artemis
 
 Nightjar's touchpad gestures for a physical touchpad and the Trackpad (touchpad

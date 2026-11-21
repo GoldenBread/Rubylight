@@ -1,12 +1,11 @@
 //! libnightjar_core.so: the JNI side of `com.limelight.nvstream.jni.RustBridge`, which runs
-//! a stream on nightjar-core instead of moonlight-common-c. `MoonBridge` routes a stream's
-//! calls here when the "New streaming engine" setting is on and the stream needs nothing the
-//! Rust engine lacks; see internal/RUST_CORE.md for what is covered.
+//! every stream on nightjar-core. `MoonBridge` starts a stream here, or fails the start with
+//! the reason; see internal/RUST_CORE.md for what is covered.
 //!
-//! Each entry point mirrors the C native of the same name in `app/src/main/jni/moonlight-core`
-//! (`simplejni.c`, `callbacks.c`, `android_control.c`, `android_microphone.c`,
-//! `android_present_clock.c`), which build on moonlight-common-c (GPL-3.0, Cameron Gutman and
-//! contributors).
+//! Each entry point was ported from the C native of the same name in Nightjar's former C
+//! engine (`simplejni.c`, `callbacks.c`, `android_control.c`, `android_microphone.c`,
+//! `android_present_clock.c`), which built on moonlight-common-c (GPL-3.0, Cameron Gutman and
+//! contributors); the golden tests in `client/tests` keep what it recorded.
 
 mod bridge;
 pub mod collections;

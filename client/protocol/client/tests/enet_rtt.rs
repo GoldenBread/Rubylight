@@ -1,7 +1,7 @@
 //! The control stream's round trip time, as the overlay and the stats line report it, is ENet's
 //! smoothed estimate. Upstream ENet (and rusty_enet) smooths with truncating integer division,
 //! which stops moving once a sample is within 7 ms of the mean, so a stream on a 2 ms link read
-//! 7 to 8 ms against 2 ms on the C engine, whose moonlight-common-c ENet rounds up. The patched
+//! 7 to 8 ms against 2 ms on the former C engine, whose moonlight-common-c ENet rounds up. The patched
 //! copy in `protocol/vendor/rusty_enet` rounds up too.
 
 use std::cell::Cell;

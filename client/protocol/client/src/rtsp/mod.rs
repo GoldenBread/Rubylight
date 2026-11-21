@@ -1015,7 +1015,7 @@ pub fn transact(
         }
     };
     socket.set_nodelay(true)?;
-    // "Prioritize stream traffic" raises this connection like the rest, as the C engine does.
+    // "Prioritize stream traffic" raises this connection like the rest, as the former C engine did.
     if let Err(e) = priority::prioritize_socket(&socket, Qos::BestEffort, network_priority) {
         warn(&format!("Could not set the RTSP socket priority: {e}"));
     }

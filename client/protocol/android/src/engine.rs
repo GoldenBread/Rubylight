@@ -131,7 +131,7 @@ pub fn network_changed(metered: bool) -> NetworkChange {
     })
 }
 
-/// What `MoonBridge.startConnection` passes, minus what only the C engine uses.
+/// What `MoonBridge.startConnection` passes, minus what only the former C engine used.
 pub struct StartParams {
     pub host: HostInfo,
     pub config: SessionConfig,

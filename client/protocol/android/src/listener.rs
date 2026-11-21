@@ -19,7 +19,7 @@ use crate::{engine, platform};
 pub struct Events {
     bridge: &'static Bridge,
     /// `connection_started` arrived; forwarded once the session is stored, so Java can use
-    /// it from the callback as with the C engine.
+    /// it from the callback as the former C engine did.
     pub started: AtomicBool,
 }
 

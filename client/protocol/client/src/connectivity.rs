@@ -39,19 +39,22 @@ pub const PORTS: [(u32, Transport, u16); 7] = [
 /// Every flag in [`PORTS`].
 pub const VALID_FLAGS: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0100 | 0x0200 | 0x0400 | 0x0800;
 
-/// Tests the ports in `flags` (others are ignored) on `test_server`, resolved with
-/// `reference_port`: the flags of the ports that did not answer, 0 when all did, or
-/// [`INCONCLUSIVE`] when the server did not resolve.
+/// How long a resolved address gets to accept a connection on the reference port.
+const REFERENCE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Tests the ports in `flags` (others are ignored) on `test_server`: the flags of the ports that
+/// did not answer, 0 when all did, or [`INCONCLUSIVE`] when the server did not resolve or no
+/// address it resolved to (IPv6 and IPv4 alike, so a broken IPv6 route is not every port's fault)
+/// accepted a connection on `reference_port`.
 pub fn test_client_connectivity(test_server: &str, reference_port: u16, flags: u32) -> u32 {
     let flags = flags & VALID_FLAGS;
     if flags == 0 {
         return 0;
     }
-    let Some(server) = (test_server, reference_port)
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut a| a.next())
-    else {
+    let Ok(addresses) = (test_server, reference_port).to_socket_addrs() else {
+        return INCONCLUSIVE;
+    };
+    let Some(server) = first_reachable(&addresses.collect::<Vec<_>>(), REFERENCE_TIMEOUT) else {
         return INCONCLUSIVE;
     };
     let ports: Vec<_> = PORTS
@@ -59,7 +62,15 @@ pub fn test_client_connectivity(test_server: &str, reference_port: u16, flags: u
         .copied()
         .filter(|(flag, ..)| flags & flag != 0)
         .collect();
-    failing_flags(server.ip(), &ports, PORT_TIMEOUT)
+    failing_flags(server, &ports, PORT_TIMEOUT)
+}
+
+/// The first of `addresses` (the server on the reference port) that accepts a TCP connection.
+fn first_reachable(addresses: &[SocketAddr], timeout: Duration) -> Option<IpAddr> {
+    addresses
+        .iter()
+        .find(|address| TcpStream::connect_timeout(address, timeout).is_ok())
+        .map(SocketAddr::ip)
 }
 
 /// The flags of `ports` that did not answer on `server`, each tried in its own thread.
@@ -156,6 +167,28 @@ mod tests {
         ];
         assert_eq!(failing_flags(LOOPBACK, &ports, SHORT), 0x200);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn the_first_address_that_answers_on_the_reference_port_is_the_one_tested() {
+        let listener = TcpListener::bind((LOOPBACK, 0)).unwrap();
+        let open = listener.local_addr().unwrap();
+        let closed = SocketAddr::new(LOOPBACK, free_tcp_port());
+        // A dead first address (a broken IPv6 route, say) falls through to the next.
+        assert_eq!(first_reachable(&[closed, open], SHORT), Some(LOOPBACK));
+        assert_eq!(first_reachable(&[open], SHORT), Some(LOOPBACK));
+        // None answering is inconclusive, not every port blocked.
+        assert_eq!(first_reachable(&[closed], SHORT), None);
+        assert_eq!(first_reachable(&[], SHORT), None);
+    }
+
+    #[test]
+    fn a_server_that_answers_nowhere_is_inconclusive() {
+        let closed = free_tcp_port();
+        assert_eq!(
+            test_client_connectivity("127.0.0.1", closed, 0x0001),
+            INCONCLUSIVE
+        );
     }
 
     #[test]

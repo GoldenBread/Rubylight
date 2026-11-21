@@ -128,6 +128,10 @@ Copyright (c) 2026 mattxslv
 
 The desktop Settings screen predicts the display mode Windows' Fullscreen takes by SDL 3's `SDL_GetClosestFullscreenDisplayMode` (`src/video/SDL_video.c`, SDL 3.4.20, [libsdl-org/SDL](https://github.com/libsdl-org/SDL), zlib license, Copyright (C) 1997-2026 Sam Lantinga): `closest_fullscreen_mode` in `client/protocol/desktop/src/ui/settings.rs` follows its loop over the display's modes. The zlib notice is quoted with the port in that file and kept in `third-party/licenses/SDL-LICENSE.txt`.
 
+## Nightjar's connectivity test and stage names from moonlight-common-c
+
+Nightjar's client connectivity test (`client/protocol/client/src/connectivity.rs`) and its connection stage names and port flags (`client/app/src/main/java/com/limelight/nvstream/jni/PortFlags.java`) are ported from [moonlight-common-c](https://github.com/moonlight-stream/moonlight-common-c) (`LiTestClientConnectivity`, `LiGetStageName`, `LiGetPortFlagsFromStage`, `LiGetPortFlagsFromTerminationErrorCode`, `LiStringifyPortFlags`) and shown as in [Moonlight Android](https://github.com/moonlight-stream/moonlight-android), both GPL-3.0 by Cameron Gutman and contributors. The Android app no longer carries the C library; the licence is GPL-3.0, as Rubylight's own (`LICENSE`).
+
 ## Nightjar gyroscope mapping from jvanderv42's fork
 
 Nightjar's per-controller gyroscope mapping (axis choice, inversion and sensitivity, the Flydigi Apex 4 and Vader 4 Pro preset) and its in-stream motion readings are ported from [jvanderv42's Nightjar fork](https://github.com/jvanderv42/nightjar) at commit d0e14cf25 (GPL-3.0): `client/app/src/main/java/com/limelight/binding/input/GyroAxisTransformer.java`, `GyroMappingPreferences.java`, `GyroDiagnosticOverlay.java` and `client/app/src/main/java/com/limelight/preferences/GyroProfileEditor.java`. The desktop client's gyroscope axes and sensitivity (`client/protocol/desktop/src/gamepad.rs`) follow the same design. It remains under GPL-3.0.

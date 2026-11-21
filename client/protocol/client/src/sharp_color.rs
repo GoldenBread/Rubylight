@@ -27,7 +27,7 @@ pub struct Input {
     pub sdr10: bool,
     /// PyroWave is the chosen codec: its 4:4:4 is a codec choice of its own.
     pub pyrowave: bool,
-    /// The engine can stream packed full chroma (Android's classic engine cannot).
+    /// The engine can stream packed full chroma (Android's former classic engine could not).
     pub packed_engine: bool,
     /// The formats the codec choice offers without 4:4:4 or 10-bit SDR.
     pub base: u32,
@@ -361,7 +361,7 @@ mod tests {
                 false,
             ),
             (
-                "the classic engine has no packed path",
+                "an engine without a packed path",
                 Input { packed_engine: false, decodable: SDR10_FORMATS, decoder_reason: "no 4:4:4 profile".into(), ..auto() },
                 HEVC_8,
                 Pick::Without(Why::Decoder("no 4:4:4 profile".into())),

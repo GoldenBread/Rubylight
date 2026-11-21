@@ -860,7 +860,7 @@ pub fn connect(
         SocketAddr::V6(_) => SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0),
     });
     let socket = UdpSocket::bind(local)?;
-    // Marked before connecting, as the C engine does: the connect retransmissions below take
+    // Marked before connecting, as the former C engine did: the connect retransmissions below take
     // the marking off again for routes that drop it.
     let marking = mark_for_connect(&socket, local.is_ipv6(), &config.warn);
     let bound = socket.local_addr()?;

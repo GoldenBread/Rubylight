@@ -1,4 +1,4 @@
-//! Nightjar's stream policies, shared by the desktop clients and, once the C engine is gone, the
+//! Nightjar's stream policies, shared by the desktop clients and the
 //! Android app. Pure logic: no I/O and no clock. Callers pass time in as `now_ms` from a
 //! monotonic clock.
 //!

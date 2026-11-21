@@ -169,6 +169,9 @@ public class MoonBridge {
     static {
         // The slim native library: AAudio output, USB audio for the DualSense and the controller tables.
         System.loadLibrary("moonlight-core");
+        // The Rust engine's library loads here too; a failure is recorded (RustBridge.loadFailure) and
+        // the stream start refuses with it, never an UnsatisfiedLinkError later.
+        RustBridge.isAvailable();
     }
 
     public static int CAPABILITY_SLICES_PER_FRAME(byte slices) {
@@ -878,18 +881,22 @@ public class MoonBridge {
     }
 
     public static void sendMouseMove(short deltaX, short deltaY) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendMouseMove(deltaX, deltaY);
     }
 
     public static void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendMousePosition(x, y, referenceWidth, referenceHeight);
     }
 
     public static void sendMouseMoveAsMousePosition(short deltaX, short deltaY, short referenceWidth, short referenceHeight) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendMouseMoveAsMousePosition(deltaX, deltaY, referenceWidth, referenceHeight);
     }
 
     public static void sendMouseButton(byte buttonEvent, byte mouseButton) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendMouseButton(buttonEvent, mouseButton);
     }
 
@@ -898,11 +905,13 @@ public class MoonBridge {
                                     byte leftTrigger, byte rightTrigger,
                                     short leftStickX, short leftStickY,
                                     short rightStickX, short rightStickY) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendMultiControllerInput(controllerNumber, activeGamepadMask, buttonFlags, leftTrigger, rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
     }
 
     public static int sendTouchEvent(byte eventType, int pointerId, float x, float y, float pressure,
                                             float contactAreaMajor, float contactAreaMinor, short rotation) {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.sendTouchEvent(eventType, pointerId, x, y, pressure, contactAreaMajor, contactAreaMinor, rotation);
     }
 
@@ -913,64 +922,77 @@ public class MoonBridge {
 
     /** How this stream takes a physical touchpad's fingers ("Touchpad gestures on the PC"). */
     public static int touchpadTransport() {
+        if (!RustBridge.isAvailable()) return TOUCHPAD_NONE;
         return RustBridge.touchpadTransport();
     }
 
     /** One motion event of a physical touchpad; 0, or the input error. */
     public static int touchpadFrame(int device, int[] ids, float[] xs, float[] ys, float[] pressures, int count,
                                     boolean button, short widthMm, short heightMm) {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.touchpadFrame(device, ids, xs, ys, pressures, count, button, widthMm, heightMm);
     }
 
     /** Lifts the touchpad's fingers on the host. */
     public static int touchpadCancel() {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.touchpadCancel();
     }
 
     public static int sendPenEvent(byte eventType, byte toolType, byte penButtons, float x, float y,
                                           float pressure, float contactAreaMajor, float contactAreaMinor,
                                           short rotation, byte tilt) {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.sendPenEvent(eventType, toolType, penButtons, x, y, pressure, contactAreaMajor, contactAreaMinor, rotation, tilt);
     }
 
     /** Controller identity (0x55000080): the engine drops it for a host without it. */
     public static int sendControllerIdentityEvent(byte controllerNumber, int vendorId, int productId) {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.sendControllerIdentityEvent(controllerNumber, vendorId, productId);
     }
 
     public static int sendControllerArrivalEvent(byte controllerNumber, short activeGamepadMask, byte type, int supportedButtonFlags, short capabilities) {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.sendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, supportedButtonFlags, capabilities);
     }
 
     public static int sendControllerTouchEvent(byte controllerNumber, byte eventType, int pointerId, float x, float y, float pressure) {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.sendControllerTouchEvent(controllerNumber, eventType, pointerId, x, y, pressure);
     }
 
     public static int sendControllerMotionEvent(byte controllerNumber, byte motionType, float x, float y, float z) {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.sendControllerMotionEvent(controllerNumber, motionType, x, y, z);
     }
 
     public static int sendControllerBatteryEvent(byte controllerNumber, byte batteryState, byte batteryPercentage) {
+        if (!RustBridge.isAvailable()) return LI_ERR_UNSUPPORTED;
         return RustBridge.sendControllerBatteryEvent(controllerNumber, batteryState, batteryPercentage);
     }
 
     public static void sendKeyboardInput(short keyMap, byte keyDirection, byte modifier, byte flags) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendKeyboardInput(keyMap, keyDirection, modifier, flags);
     }
 
     public static void sendMouseHighResScroll(short scrollAmount) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendMouseHighResScroll(scrollAmount);
     }
 
     public static void sendMouseHighResHScroll(short scrollAmount) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendMouseHighResHScroll(scrollAmount);
     }
 
     public static void sendUtf8Text(byte[] text) {
+        if (!RustBridge.isAvailable()) return;
         RustBridge.sendUtf8Text(text);
     }
     public static boolean sendServerCommand(byte[] payload) {
-        return RustBridge.sendServerCommand(payload);
+        return RustBridge.isAvailable() && RustBridge.sendServerCommand(payload);
     }
 
     public static String getStageName(int stage) {

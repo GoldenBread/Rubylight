@@ -1658,7 +1658,9 @@ public class NvConnection {
                                 micPermitted, prefs.usbDualSenseHaptics,
                                 sentLinkMbps, pyroWavePaceMbps, clientWireless);
                         if (context.streamConfig.isPacked444()) {
-                            rememberPackedModes(appContext, hostDetails.uuid, ret, MoonBridge.getHostPacked444Modes());
+                            // The PC's modes only exist after a start that went through; a refusal needs none.
+                            rememberPackedModes(appContext, hostDetails.uuid, ret,
+                                    ret == 0 ? MoonBridge.getHostPacked444Modes() : 0);
                         }
                         if (ret != 0) {
                             // An engine names the stage that failed, which ends the connecting
