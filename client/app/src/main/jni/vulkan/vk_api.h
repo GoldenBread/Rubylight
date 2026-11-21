@@ -1,6 +1,6 @@
 #pragma once
 
-// Vulkan is loaded at runtime (libvulkan.so is not in the API 25 sysroot we link against),
+// Vulkan is loaded at runtime (not every device has a Vulkan driver, and the app also runs on API 25),
 // so every entry point is called through these function pointers.
 
 #define VK_NO_PROTOTYPES

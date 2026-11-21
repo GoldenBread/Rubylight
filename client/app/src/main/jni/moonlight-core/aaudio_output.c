@@ -246,7 +246,7 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeOpenAudio(JNIEnv* en
     atomic_init(&output->stallGaps, 0);
     output->rate = (uint32_t)rate;
     output->conceal = (int (*)(int16_t*, int))(intptr_t)concealer;
-    // Loading at runtime keeps API 21-26 installations independent of libaaudio.
+    // Loading at runtime keeps API 25 installations (AAudio is API 26) independent of libaaudio.
     output->library = dlopen("libaaudio.so", RTLD_NOW | RTLD_LOCAL);
     if (!output->library) goto failed;
 #define AUDIO_LOAD(name) output->name = dlsym(output->library, #name); if (!output->name) goto failed;

@@ -47,7 +47,7 @@ static int sock;
 // devices and writes the evdev output packets to a socket. This allows
 // Moonlight to read input devices without having to muck with changing
 // device permissions or modifying SELinux policy (which is prevented in
-// Marshmallow anyway).
+// Android 6 and later anyway).
 
 #define test_bit(bit, array)    (array[bit/8] & (1<<(bit%8)))
 
