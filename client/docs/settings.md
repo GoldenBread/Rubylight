@@ -633,7 +633,7 @@ The App section is in the main settings only.
 | About | More | | Open | Nightjar's version, licences and credits, with a link to its source code. |
 | Logs | More | | Open logs folder | Attach `nightjar.log`, and `nightjar.prev.log` for a problem before a restart, to a bug report. |
 | Reset all settings | More | | Reset all… | Asks first. Every row of the main settings goes back to its default. The language, PCs, games, profiles, PIN lock, controller buttons, shortcuts and settings without a row stay as they are. |
-| *Accessibility:* Text and button size | More | 100 % | 85, 100, 115, 130, 150, 200, 250 % | UI zoom; 200 and 250 are for a 4K TV whose system reports no display scale (SteamOS gamescope). Ctrl+= and Ctrl+- change it, Ctrl+0 resets it. |
+| *Accessibility:* Text and button size | More | Auto (follows the screen) | Auto (follows the screen), 85, 100, 115, 130, 150, 200, 250 % | UI zoom. Auto follows the screen's height in layout points over 1080, at most 250 %: a 1280x800 panel and a 1080p or OS-scaled screen stay at 100 %, a 1440p screen is 133 % and a 4K screen at OS scale 1 is 200 %, and it changes when you dock or undock. Ctrl+= and Ctrl+- step from Auto's size to a fixed step, Ctrl+0 returns to Auto. |
 | High contrast | More | Off | On, Off | Black surfaces, white text, thicker outlines and focus rings. |
 | Reduce motion | More | Follow system | Follow system, Reduce, Full motion | Follow system uses the Windows animation setting or macOS's Reduce motion; on Linux motion stays on. |
 

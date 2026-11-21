@@ -100,6 +100,22 @@ impl Scale {
     }
 }
 
+/// The monitor's size in egui points (the OS scale divided out): Auto's zoom follows it, and it
+/// is read every frame, so docking or undocking changes the zoom without a restart.
+fn monitor_size(window: *mut SDL_Window, scale: &Scale) -> Option<Vec2> {
+    // SAFETY: a live window; the mode pointer is owned by SDL.
+    unsafe {
+        let mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+        if mode.is_null() {
+            return None;
+        }
+        let mode = &*mode;
+        let density = if mode.pixel_density > 0.0 { mode.pixel_density } else { 1.0 };
+        let points = if scale.pixels_per_point > 0.0 { scale.pixels_per_point } else { 1.0 };
+        Some(Vec2::new(mode.w.max(0) as f32 * density / points, mode.h.max(0) as f32 * density / points))
+    }
+}
+
 pub(crate) fn premultiplied_blend() -> SDL_BlendMode {
     SDL_ComposeCustomBlendMode(
         SDL_BLENDFACTOR_ONE,
@@ -440,6 +456,7 @@ impl Gui {
         ui: impl FnMut(&mut egui::Ui),
     ) -> egui::FullOutput {
         let scale = Scale::of(window);
+        let monitor = monitor_size(window, &scale);
         let (mut w, mut h) = (0, 0);
         // SAFETY: a live renderer.
         unsafe { SDL_GetCurrentRenderOutputSize(renderer, &mut w, &mut h) };
@@ -461,11 +478,13 @@ impl Gui {
         };
         if let Some(viewport) = input.viewports.get_mut(&egui::ViewportId::ROOT) {
             viewport.native_pixels_per_point = Some(scale.pixels_per_point);
+            viewport.monitor_size = monitor;
         } else {
             input.viewports.insert(
                 egui::ViewportId::ROOT,
                 egui::ViewportInfo {
                     native_pixels_per_point: Some(scale.pixels_per_point),
+                    monitor_size: monitor,
                     focused: Some(self.focused),
                     ..Default::default()
                 },

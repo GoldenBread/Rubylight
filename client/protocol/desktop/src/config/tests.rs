@@ -552,7 +552,7 @@ fn choosing_nightjars_wait_forgets_the_saved_untrusted_displays() {
 #[test]
 fn a_settings_file_from_before_accessibility_loads_with_the_defaults() {
     let old: Settings = serde_json::from_str("{\"fps\": 90}").unwrap();
-    assert_eq!(old.ui_zoom, 100);
+    assert_eq!(old.ui_zoom, 0, "Auto is the default");
     assert!(!old.high_contrast);
     assert_eq!(old.reduce_motion, ReduceMotion::System);
     assert_eq!(old.language, Language::System);
@@ -579,12 +579,41 @@ fn zoom_steps_stay_inside_the_range_and_odd_values_snap() {
     assert_eq!(nearest_zoom(230), 250);
     assert_eq!(nearest_zoom(170), 150);
     assert_eq!(step_zoom(85, -1), 85, "the bottom step stays");
-    assert_eq!(nearest_zoom(0), 85);
+    assert_eq!(nearest_zoom(0), 0, "Auto stays Auto");
     assert_eq!(nearest_zoom(9999), 250);
     assert_eq!(nearest_zoom(120), 115);
     assert_eq!(step_zoom(120, 1), 130);
     let set: Settings = serde_json::from_str("{\"ui_zoom\":250}").unwrap();
     assert_eq!(nearest_zoom(set.ui_zoom), 250, "a stored 250 % loads as it is");
+}
+
+#[test]
+fn auto_zoom_follows_the_screens_height_in_points() {
+    assert_eq!(auto_zoom(Some(800.0)), 100, "a Deck's 1280x800 panel stays at 100 %");
+    assert_eq!(auto_zoom(Some(1080.0)), 100, "1080p and an OS-scaled screen stay at 100 %");
+    assert_eq!(auto_zoom(Some(1440.0)), 133, "1440p at OS scale 1");
+    assert_eq!(auto_zoom(Some(2160.0)), 200, "4K at OS scale 1");
+    assert_eq!(auto_zoom(Some(1440.0)), 133, "4K at OS scale 1.5 is 1440 points");
+    assert_eq!(auto_zoom(Some(1080.0)), 100, "4K at OS scale 2 is 1080 points");
+    assert_eq!(auto_zoom(Some(3000.0)), 250, "clamped at 250 %");
+    assert_eq!(auto_zoom(None), 100, "an unknown screen size stays at 100 %");
+}
+
+#[test]
+fn the_old_default_zoom_moves_to_auto_once() {
+    let mut old: Settings = serde_json::from_str("{\"ui_zoom\":100}").unwrap();
+    assert!(!old.ui_zoom_auto_migrated, "a file from before Auto has no marker");
+    old.migrate();
+    assert_eq!(old.ui_zoom, 0, "the old default 100 % becomes Auto");
+    assert!(old.ui_zoom_auto_migrated);
+    old.ui_zoom = 100;
+    old.migrate();
+    assert_eq!(old.ui_zoom, 100, "a 100 % chosen after the migration is kept");
+    let mut other: Settings = serde_json::from_str("{\"ui_zoom\":150}").unwrap();
+    other.migrate();
+    assert_eq!(other.ui_zoom, 150, "other stored sizes stay");
+    assert_eq!(Settings::default().ui_zoom, 0, "new installs start on Auto");
+    assert!(Settings::default().ui_zoom_auto_migrated, "and do not migrate their choice later");
 }
 
 #[test]

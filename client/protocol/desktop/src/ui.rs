@@ -617,6 +617,16 @@ const PAIR_LINK_DELAY: f64 = 1.0;
 /// window a row's label and its control stay in one glance. No window under about 1400 reaches it.
 pub(crate) const SETTINGS_W: f32 = 1300.0;
 
+/// The monitor's height in egui points, with the OS scale divided out (`gui::Gui` fills
+/// `monitor_size` from the window's display). Where the platform reports none, the window's own
+/// screen rect stands in; with neither, Auto stays at 100 %.
+fn monitor_height_points(ctx: &egui::Context) -> Option<f32> {
+    ctx.input(|i| {
+        let viewport = i.viewport();
+        viewport.monitor_size.or_else(|| viewport.outer_rect.map(|rect| rect.size())).map(|size| size.y)
+    })
+}
+
 impl Launcher {
     pub fn new(settings: Settings, profiles: Profiles, shortcuts: crate::shortcuts::Shortcuts, display: Display) -> Self {
         let more_settings = settings.settings_more_open;
@@ -729,7 +739,11 @@ impl Launcher {
             crate::theme::set_theme_look(ctx, look, still);
             self.look = Some((look, still));
         }
-        let zoom = crate::config::nearest_zoom(s.ui_zoom) as f32 / 100.0;
+        let zoom = if s.ui_zoom == 0 {
+            crate::config::auto_zoom(monitor_height_points(ctx)) as f32 / 100.0
+        } else {
+            crate::config::nearest_zoom(s.ui_zoom) as f32 / 100.0
+        };
         if (ctx.zoom_factor() - zoom).abs() > f32::EPSILON {
             ctx.set_zoom_factor(zoom);
         }
@@ -738,7 +752,8 @@ impl Launcher {
         crate::theme::fonts_for(ctx, lang);
     }
 
-    /// Ctrl+= and Ctrl+- step the zoom, Ctrl+0 resets it. Returns whether it changed.
+    /// Ctrl+= and Ctrl+- step the zoom from Auto's current size, Ctrl+0 returns to Auto. Returns
+    /// whether it changed.
     fn zoom_keys(&mut self, ctx: &egui::Context) -> bool {
         // In a text field the keys belong to the field.
         if ctx.text_edit_focused() {
@@ -758,8 +773,10 @@ impl Launcher {
             }
         });
         let Some(step) = step else { return false };
-        let zoom = if step == 0 { 100 } else { step_zoom(self.settings.ui_zoom, step) };
-        let changed = zoom != self.settings.ui_zoom;
+        let stored = self.settings.ui_zoom;
+        let current = if stored == 0 { crate::config::auto_zoom(monitor_height_points(ctx)) } else { stored };
+        let zoom = if step == 0 { 0 } else { step_zoom(current, step) };
+        let changed = zoom != stored;
         self.settings.ui_zoom = zoom;
         changed
     }

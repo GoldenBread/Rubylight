@@ -1933,12 +1933,14 @@ impl Launcher {
                     }
                 });
                 rows.group(en("Accessibility"));
-                setting_row(ui, s, &mut rows, &["ui_zoom"], "Text and button size", "Makes Nightjar’s menus bigger or smaller; the stream is not scaled.", |ui, s| {
+                setting_row(ui, s, &mut rows, &["ui_zoom"], "Text and button size", "Makes Nightjar’s menus bigger or smaller; the stream is not scaled. Auto follows the screen’s resolution.", |ui, s| {
+                    let name = |zoom: u32| if zoom == 0 { tr("Auto (follows the screen)").to_owned() } else { format!("{}%", crate::config::nearest_zoom(zoom)) };
                     Combo::from_id_salt("ui-zoom")
-                        .selected_text(format!("{}%", crate::config::nearest_zoom(s.ui_zoom)))
+                        .selected_text(name(s.ui_zoom))
                         .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut s.ui_zoom, 0, name(0));
                             for step in UI_ZOOM_STEPS {
-                                ui.selectable_value(&mut s.ui_zoom, step, format!("{step}%"));
+                                ui.selectable_value(&mut s.ui_zoom, step, name(step));
                             }
                         })
                         .response
@@ -2976,7 +2978,11 @@ pub(super) fn value_text(key: &str, s: &Settings, display: &Display, style: crat
         "rtx_hdr" => enhancement_name(s.rtx_hdr),
         "rtx_video" => enhancement_name(s.rtx_video),
         "language" => language_name(s.language).to_owned(),
-        "ui_zoom" => format!("{}%", crate::config::nearest_zoom(s.ui_zoom)),
+        "ui_zoom" => if s.ui_zoom == 0 {
+            tr("Auto (follows the screen)").to_owned()
+        } else {
+            format!("{}%", crate::config::nearest_zoom(s.ui_zoom))
+        },
         "reduce_motion" => reduce_motion_name(s.reduce_motion).to_owned(),
         "theme" => tr(s.theme.label()).to_owned(),
         "home_card_size" => tr(s.home_card_size.label()).to_owned(),

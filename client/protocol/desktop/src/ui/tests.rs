@@ -1506,9 +1506,9 @@ fn the_high_contrast_setting_reaches_the_style() {
 #[test]
 fn ctrl_equals_minus_and_zero_step_the_zoom_except_in_a_text_field() {
     let mut f = Frames::new(record("PC", true, true), Reach::Online);
-    assert_eq!(f.l.settings.ui_zoom, 100);
+    assert_eq!(f.l.settings.ui_zoom, 0, "new installs start on Auto");
     f.press_with(Key::Equals, egui::Modifiers::COMMAND);
-    assert_eq!(f.l.settings.ui_zoom, 115);
+    assert_eq!(f.l.settings.ui_zoom, 115, "zoom in steps from Auto's 100 %");
     f.press_with(Key::Equals, egui::Modifiers::COMMAND);
     f.press_with(Key::Equals, egui::Modifiers::COMMAND);
     f.press_with(Key::Equals, egui::Modifiers::COMMAND);
@@ -1518,7 +1518,7 @@ fn ctrl_equals_minus_and_zero_step_the_zoom_except_in_a_text_field() {
     f.press_with(Key::Minus, egui::Modifiers::COMMAND);
     assert_eq!(f.l.settings.ui_zoom, 200);
     f.press_with(Key::Num0, egui::Modifiers::COMMAND);
-    assert_eq!(f.l.settings.ui_zoom, 100);
+    assert_eq!(f.l.settings.ui_zoom, 0, "Ctrl+0 returns to Auto");
     // The Rename dialog's name field has the keyboard.
     f.press(Key::F2);
     f.press(Key::ArrowDown);
@@ -1527,7 +1527,7 @@ fn ctrl_equals_minus_and_zero_step_the_zoom_except_in_a_text_field() {
     assert!(matches!(f.l.dialog, Dialog::Rename { .. }));
     assert!(f.ctx.text_edit_focused(), "the name field is focused");
     f.press_with(Key::Equals, egui::Modifiers::COMMAND);
-    assert_eq!(f.l.settings.ui_zoom, 100, "a text field keeps Ctrl+=");
+    assert_eq!(f.l.settings.ui_zoom, 0, "a text field keeps Ctrl+=");
 }
 
 #[test]

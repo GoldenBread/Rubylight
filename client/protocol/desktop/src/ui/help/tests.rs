@@ -289,14 +289,14 @@ fn the_launcher_keys_do_what_the_list_says() {
         page.chord(*chord);
         assert!(matches!(page.l.dialog, Dialog::HostOptions { .. }), "{chord:?} opens the focused PC's options");
     }
-    let zoom = page.l.settings.ui_zoom;
+    assert_eq!(page.l.settings.ui_zoom, 0, "new installs start on Auto");
     page.chord(binding(Action::ZoomIn)[0]);
-    assert!(page.l.settings.ui_zoom > zoom, "zoom in");
+    assert_eq!(page.l.settings.ui_zoom, 115, "zoom in steps from Auto's 100 %");
     page.chord(binding(Action::ZoomOut)[0]);
     page.chord(binding(Action::ZoomOut)[0]);
-    assert!(page.l.settings.ui_zoom < zoom, "zoom out");
+    assert_eq!(page.l.settings.ui_zoom, 85, "zoom out");
     page.chord(binding(Action::ZoomReset)[0]);
-    assert_eq!(page.l.settings.ui_zoom, 100, "reset zoom");
+    assert_eq!(page.l.settings.ui_zoom, 0, "reset returns to Auto");
     page.chord(binding(Action::Help)[0]);
     assert_eq!(page.l.screen, Screen::Help);
     page.chord(binding(Action::Back)[0]);

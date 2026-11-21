@@ -739,8 +739,14 @@ pub struct Settings {
     pub setup_card_host: Option<u64>,
     /// The card was offered on this install: it never comes back, even after every PC is unpaired.
     pub setup_card_seen: bool,
-    /// The launcher's size in percent: one of [`UI_ZOOM_STEPS`]. Not a per-PC or per-game override.
+    /// The launcher's size in percent: one of [`UI_ZOOM_STEPS`], or 0 for Auto, which follows the
+    /// screen's height ([`auto_zoom`]). Not a per-PC or per-game override.
     pub ui_zoom: u32,
+    /// The once-only move of the old default 100 % to Auto has run ([`Settings::migrate`]).
+    /// Present from new installs; missing from files written before Auto, so those move their old
+    /// default 100 % once, and a 100 % chosen after that is kept.
+    #[serde(default)]
+    pub ui_zoom_auto_migrated: bool,
     /// Brighter text, black surfaces and thicker outlines and focus rings.
     pub high_contrast: bool,
     /// "Show debug settings" (Android's `checkbox_show_debug_settings`): the settings list shows the
@@ -760,12 +766,23 @@ pub struct Settings {
     pub post_stream_decode_time: bool,
 }
 
-/// The launcher's sizes in percent, smallest first (Nightjar Android's steps, plus 200 and 250 for a 4K TV whose system reports no display scale).
+/// The launcher's sizes in percent, smallest first (Nightjar Android's steps, plus 200 and 250 for a larger screen or one whose system reports no display scale).
 pub const UI_ZOOM_STEPS: [u32; 7] = [85, 100, 115, 130, 150, 200, 250];
 
-/// The step to use for a stored size: the nearest one, so a hand-edited file still works.
+/// The step to use for a stored size: the nearest one, so a hand-edited file still works. 0 is
+/// Auto and stays 0.
 pub fn nearest_zoom(percent: u32) -> u32 {
+    if percent == 0 {
+        return 0;
+    }
     UI_ZOOM_STEPS.into_iter().min_by_key(|step| step.abs_diff(percent)).unwrap_or(100)
+}
+
+/// Auto's size for a monitor `height` in egui points, with the OS scale already divided out: its
+/// height over 1080, clamped to 100–250 %. A screen of unknown size stays at 100 %.
+pub fn auto_zoom(height_points: Option<f32>) -> u32 {
+    let Some(height) = height_points.filter(|h| h.is_finite()) else { return 100 };
+    ((height / 1080.0).clamp(1.0, 2.5) * 100.0).round() as u32
 }
 
 /// The step after (`+1`) or before (`-1`) `percent`, kept inside the steps.
@@ -1082,6 +1099,13 @@ impl Settings {
         if !self.real_vrr_default_on {
             (self.present_at_host_times, self.real_vrr_default_on) = (true, true);
         }
+        // The old default 100 % becomes Auto once; after that, a chosen 100 % stays.
+        if !self.ui_zoom_auto_migrated {
+            if self.ui_zoom == 100 {
+                self.ui_zoom = 0;
+            }
+            self.ui_zoom_auto_migrated = true;
+        }
         // Lower bitrate's three switches become its one value: a player who had it off keeps it off.
         let switches = (self.retired_busy_bitrate.take(), self.retired_lost_bitrate.take(), self.retired_keep_bitrate.take());
         if let Some(choice) = folded_lower_bitrate(switches) {
@@ -1364,7 +1388,8 @@ impl Default for Settings {
             settings_more_open: false,
             setup_card_host: None,
             setup_card_seen: false,
-            ui_zoom: 100,
+            ui_zoom: 0,
+            ui_zoom_auto_migrated: true,
             high_contrast: false,
             show_debug_settings: false,
             theme: Theme::Dark,
