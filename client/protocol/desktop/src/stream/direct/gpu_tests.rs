@@ -276,3 +276,37 @@ fn chroma_is_drawn_on_the_left_luma_sample_of_its_pair() {
     let red: Vec<f32> = (0..16).map(|x| pixels[4 * 16 + x][0] - pixels[4 * 16 + x][1]).collect();
     assert!((red[4] - red[5]).abs() < 0.03 && red[4] > red[3] + 0.1, "centred chroma: {red:?}");
 }
+
+/// A decoder texture is asked for its description once, not for each picture, and the kept
+/// reference stops another texture from taking its address.
+#[test]
+fn a_picture_texture_is_asked_for_its_description_once() {
+    use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_11_0};
+    // SAFETY: Plain D3D11 calls on a device made and used on this thread.
+    unsafe {
+        let (mut device, mut context) = (None, None);
+        D3D11CreateDevice(None, D3D_DRIVER_TYPE_WARP, HMODULE::default(), D3D11_CREATE_DEVICE_FLAG(0), Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION, Some(&mut device), None, Some(&mut context)).unwrap();
+        let device: ID3D11Device = device.unwrap();
+        let make = |width: u32| {
+            let mut texture = None;
+            device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: width, Height: 4, MipLevels: 1, ArraySize: 2, Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                ..Default::default() }, None, Some(&mut texture)).ok().and(texture)
+        };
+        let (Some(first), Some(second)) = (make(8), make(16)) else {
+            eprintln!("WARP makes no textures here: the cache is not exercised");
+            return;
+        };
+        let mut facts = KeptDesc::default();
+        for _ in 0..5 {
+            assert_eq!(facts.of(&first).Width, 8);
+        }
+        assert_eq!(facts.queries, 1, "one texture, asked once");
+        assert_eq!((facts.of(&second).Width, facts.of(&second).ArraySize), (16, 2));
+        assert_eq!(facts.queries, 2, "the next texture is asked once");
+        facts.clear();
+        assert_eq!(facts.of(&second).Width, 16);
+        assert_eq!(facts.queries, 3, "a cleared entry is asked again");
+    }
+}

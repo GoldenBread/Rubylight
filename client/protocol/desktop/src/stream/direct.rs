@@ -238,6 +238,39 @@ fn flags(picture: &Picture, output: &Output, tonemap: bool) -> u32 {
         | u32::from(picture.transfer == Transfer::Hlg) << 7 | u32::from(picture.centred_chroma) << 8
 }
 
+/// A decoder texture's description, asked once for the texture and not for each picture: the
+/// decoder's pool is a few textures that live as long as it does. The reference keeps the texture
+/// alive, so no other texture takes its address (the key) while it is kept.
+#[derive(Default)]
+pub(super) struct KeptDesc {
+    kept: Option<(usize, ID3D11Texture2D, D3D11_TEXTURE2D_DESC)>,
+    /// How often a texture was asked (a test counts it).
+    #[cfg(test)]
+    pub(super) queries: u32,
+}
+
+impl KeptDesc {
+    /// `texture`'s description, from what is kept when it is the texture kept.
+    pub(super) fn of(&mut self, texture: &ID3D11Texture2D) -> D3D11_TEXTURE2D_DESC {
+        let key = texture.as_raw() as usize;
+        if let Some((kept, _, desc)) = &self.kept {
+            if *kept == key { return *desc; }
+        }
+        #[cfg(test)]
+        {
+            self.queries += 1;
+        }
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        // SAFETY: A live texture.
+        unsafe { texture.GetDesc(&mut desc) };
+        self.kept = Some((key, texture.clone(), desc));
+        desc
+    }
+
+    /// Lets go of the kept texture (a new stream, or the device goes).
+    pub(super) fn clear(&mut self) { self.kept = None; }
+}
+
 /// The pass. It records on a deferred context, so SDL's cached immediate-context state holds.
 pub struct Direct {
     device: ID3D11Device,
@@ -255,6 +288,8 @@ pub struct Direct {
     pending: std::collections::VecDeque<usize>,
     /// The texture the views are for, and its views per slice.
     views: Option<(usize, bool, std::collections::HashMap<u32, Planes>)>,
+    /// What the picture's texture was last asked for.
+    facts: KeptDesc,
     tracker: PeakTracker,
     source: Option<PeakSource>,
     /// The view of SDL's back buffer, for the swap chain and output size it was made at. It is
@@ -320,6 +355,7 @@ impl Direct {
             staging,
             pending: Default::default(),
             views: None,
+            facts: KeptDesc::default(),
             tracker: PeakTracker::default(),
             source: None,
             back_buffer: None,
@@ -332,6 +368,7 @@ impl Direct {
         self.tracker = PeakTracker::default();
         self.source = None;
         self.views = None;
+        self.facts.clear();
         self.back_buffer = None;
     }
 
@@ -420,8 +457,7 @@ impl Direct {
     unsafe fn draw_warped(&mut self, target: &ID3D11RenderTargetView, viewport: [f32; 4], picture: &Picture,
         output: Output, tone: Tone, warp: &super::frame_warp::WarpDraw, mut lock: impl FnMut(&mut dyn FnMut())) -> Result<(), String> {
         let planes = self.views(picture, &mut lock)?;
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        ID3D11Texture2D::from_raw_borrowed(&picture.texture).ok_or("no picture texture")?.GetDesc(&mut desc);
+        let desc = self.facts.of(ID3D11Texture2D::from_raw_borrowed(&picture.texture).ok_or("no picture texture")?);
         let texture_size = (desc.Width, desc.Height);
         self.collect();
         let pq = picture.transfer == Transfer::Pq;

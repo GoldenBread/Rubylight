@@ -121,6 +121,8 @@ pub struct HqScaler {
     scaler: Object,
     context: Object,
     parameters: Parameters,
+    /// The input texture's description, asked once for each texture of the decoder's pool.
+    input_desc: super::direct::KeptDesc,
     _library: libloading::Library,
 }
 
@@ -153,7 +155,7 @@ impl HqScaler {
         let name = wide("AMFHQScaler");
         let mut scaler = ptr::null_mut();
         let created = factory.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, *const u16, *mut *mut c_void) -> i32>(slot::FACTORY_CREATE_COMPONENT)(factory.0, context.0, name.as_ptr(), &mut scaler);
-        let result = Self { scaler: Object(scaler), context, parameters: p, _library: library };
+        let result = Self { scaler: Object(scaler), context, parameters: p, input_desc: Default::default(), _library: library };
         check(created, "CreateComponent(AMFHQScaler)")?;
         if result.scaler.0.is_null() { return Err("AMF has no HQ Scaler".into()); }
         let mut caps = ptr::null_mut();
@@ -198,8 +200,7 @@ impl HqScaler {
             self.context.0, input.as_raw(), &mut surface, ptr::null_mut()), "CreateSurfaceFromDX11Native")?;
         let surface = Object(surface);
         if surface.0.is_null() { return Err("AMF made no surface of the picture".into()); }
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        input.GetDesc(&mut desc);
+        let desc = self.input_desc.of(input);
         let p = &self.parameters;
         if let Some((width, height)) = crop(p, (desc.Width, desc.Height))? {
             check(surface.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32, i32) -> i32>(slot::SURFACE_SET_CROP)(surface.0, 0, 0, width, height), "SetCrop")?;
