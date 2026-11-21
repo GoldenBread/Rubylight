@@ -53,13 +53,13 @@ def check_load(jobs):
     """Stops the run unless `jobs` busy shells run and the CPUs are busy; returns the CPU use in percent."""
     time.sleep(1.0)
     ps = f.sh('ps -A -o PID,STAT,NAME,ARGS', check=False)
-    # The subshells share the parent's command line, which holds the loop text.
-    busy = sum(1 for line in ps.splitlines() if 'while :' in line and 'ps -A' not in line)
+    # The subshells share the parent's command line, which holds the loop text: `jobs` loops and the parent.
+    busy = sum(1 for line in ps.splitlines() if 'while :' in line and 'ps -A' not in line) - 1
     cpu = cpu_busy_percent()
-    f.log(f'load check: {busy} sh processes, CPU {cpu}%')
-    if busy < jobs or cpu < 70:
+    f.log(f'load check: {busy} busy loops, CPU {cpu}%')
+    if busy < jobs or cpu < 95:
         f.sh('pkill -f "while :" ; true', check=False)
-        raise SystemExit(f'load did not start: {busy} sh processes, CPU {cpu}%')
+        raise SystemExit(f'load did not start: {busy} busy loops, CPU {cpu}%')
     return cpu
 
 
