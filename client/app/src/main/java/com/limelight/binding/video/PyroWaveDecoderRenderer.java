@@ -30,7 +30,15 @@ public final class PyroWaveDecoderRenderer {
     private Context driverContext;
     private GpuDriverStore.Driver customDriver;
     private String driverStatus = "";
-    private long lastSubmissionDurationNs;
+    private volatile long lastSubmissionDurationNs;
+    // Native work that changes or needs the renderer (submit, early chunks, event polling, HDR and Frame Warp
+    // setup) runs under nativeLock; the object monitor guards only the cheap state the getters read (handle,
+    // format, driver text) and is not held across a native submit, so the statistics and health getters never wait
+    // for one. Teardown (setup and cleanup) takes nativeLock first and the monitor second, always in that order:
+    // it waits for the submit in flight, and only then clears handle and destroys the renderer, so a submit that
+    // went native keeps its renderer alive and a later one sees handle 0. The getters check handle and call native
+    // under the monitor, which the teardown also holds while it destroys.
+    private final Object nativeLock = new Object();
     private final EarlyWork earlyWork = new EarlyWork();
     // Survives a crash, so the next stream can hand GPU power management back to the kernel.
     private static final String MAX_CLOCKS_ACTIVE = "pyrowave_max_clocks_active";
@@ -228,10 +236,22 @@ public final class PyroWaveDecoderRenderer {
      * rate, read only with the PC's frame times (Real VRR): frames are then shown no closer than one
      * refresh at it. 0 leaves that open.
      */
-    synchronized boolean setup(Surface surface, int format, int width, int height, int fps, float displayRefreshRate,
-                               float topRefreshRate, int pacingMode, boolean fullRange, boolean stretch,
-                               UpscalingPolicy.Mode upscaling, int sharpness,
-                               Context context, boolean maxClocks, boolean preacquire) {
+    boolean setup(Surface surface, int format, int width, int height, int fps, float displayRefreshRate,
+                  float topRefreshRate, int pacingMode, boolean fullRange, boolean stretch,
+                  UpscalingPolicy.Mode upscaling, int sharpness,
+                  Context context, boolean maxClocks, boolean preacquire) {
+        synchronized (nativeLock) {
+            synchronized (this) {
+                return setupLocked(surface, format, width, height, fps, displayRefreshRate, topRefreshRate,
+                        pacingMode, fullRange, stretch, upscaling, sharpness, context, maxClocks, preacquire);
+            }
+        }
+    }
+
+    private boolean setupLocked(Surface surface, int format, int width, int height, int fps, float displayRefreshRate,
+                                float topRefreshRate, int pacingMode, boolean fullRange, boolean stretch,
+                                UpscalingPolicy.Mode upscaling, int sharpness,
+                                Context context, boolean maxClocks, boolean preacquire) {
         cleanup();
         if (!LIBRARY_LOADED || surface == null || !surface.isValid()) return false;
         driverContext = context.getApplicationContext();
@@ -294,9 +314,11 @@ public final class PyroWaveDecoderRenderer {
      * next picture on. The renderer is set up before the stream says whether it offers Frame Warp, so this comes
      * after setup(). False when it cannot; the stream then goes without.
      */
-    synchronized boolean setFrameWarp(long api) {
-        frameWarp = handle != 0 && api != 0 && nativeSetFrameWarp(handle, api);
-        return frameWarp;
+    boolean setFrameWarp(long api) {
+        synchronized (nativeLock) {
+            frameWarp = handle != 0 && api != 0 && nativeSetFrameWarp(handle, api);
+            return frameWarp;
+        }
     }
 
     static final int SUBMIT_ACCEPTED = 1;
@@ -306,49 +328,51 @@ public final class PyroWaveDecoderRenderer {
     // timestamps arrive separately through nativePollRenderedFrames, before release/present events.
     // Exactly one of data and directData is set: directData is the Rust engine's frame in place,
     // read by native code during the call without a copy.
-    synchronized long submitFrame(byte[] data, ByteBuffer directData, int length, long ptsUs, int frameNumber,
-                                  long hostPresentationTimeUs, PyroWaveDisplayClock.Snapshot displayClock,
-                                  FrameLatencyStats stats, Context context, boolean enablePerformanceHints, int frameRate) {
-        lastSubmissionDurationNs = 0;
-        if (handle == 0) return -1;
-        // setup() runs on the connection thread; submission runs on the actual decode thread.
-        // Track the Java thread identity because native thread IDs can be reused after a restart.
-        Thread currentSubmissionThread = Thread.currentThread();
-        if (submissionThread != currentSubmissionThread) {
-            if (!setSubmissionThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) &&
-                    !setSubmissionThreadPriority(Process.THREAD_PRIORITY_DISPLAY)) {
-                LimeLog.warning("PyroWave submission thread priority could not be raised");
+    long submitFrame(byte[] data, ByteBuffer directData, int length, long ptsUs, int frameNumber,
+                     long hostPresentationTimeUs, PyroWaveDisplayClock.Snapshot displayClock,
+                     FrameLatencyStats stats, Context context, boolean enablePerformanceHints, int frameRate) {
+        synchronized (nativeLock) {
+            lastSubmissionDurationNs = 0;
+            if (handle == 0) return -1;
+            // setup() runs on the connection thread; submission runs on the actual decode thread.
+            // Track the Java thread identity because native thread IDs can be reused after a restart.
+            Thread currentSubmissionThread = Thread.currentThread();
+            if (submissionThread != currentSubmissionThread) {
+                if (!setSubmissionThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY) &&
+                        !setSubmissionThreadPriority(Process.THREAD_PRIORITY_DISPLAY)) {
+                    LimeLog.warning("PyroWave submission thread priority could not be raised");
+                }
+                if (performanceHints != null) {
+                    performanceHints.close();
+                    performanceHints = null;
+                }
+                submissionThread = currentSubmissionThread;
             }
-            if (performanceHints != null) {
-                performanceHints.close();
-                performanceHints = null;
+            if (performanceHints == null) {
+                performanceHints = new DecoderPerformanceHints(context, enablePerformanceHints, frameRate);
             }
-            submissionThread = currentSubmissionThread;
+            // The host clock drives cadence; local ptsUs remains the unique statistics key.
+            // Copy the latest measured display phase before starting the native submission timer.
+            long vsyncNs = displayClock.vsyncNs;
+            long intervalNs = displayClock.intervalNs;
+            // Frame Warp shifts each picture for the frame the host drew it as
+            if (frameWarp) nativeNoteFrameNumber(handle, frameNumber);
+            long workStartNs = Debug.threadCpuTimeNanos();
+            long result;
+            long submissionStartNs = System.nanoTime();
+            try {
+                result = directData != null ?
+                        nativeSubmitDirectFrame(handle, directData, length, ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs) :
+                        nativeSubmitFrame(handle, data, length, ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs);
+            } finally {
+                // Match Moonlight X's wall-clock interval around native parsing, command recording
+                // and submission. Polling and Android performance-hint work are not submission work.
+                lastSubmissionDurationNs = System.nanoTime() - submissionStartNs;
+                performanceHints.reportWorkDuration(earlyWork.take(Debug.threadCpuTimeNanos() - workStartNs), frameRate);
+            }
+            nativePollRenderedFrames(handle, stats);
+            return result;
         }
-        if (performanceHints == null) {
-            performanceHints = new DecoderPerformanceHints(context, enablePerformanceHints, frameRate);
-        }
-        // The host clock drives cadence; local ptsUs remains the unique statistics key.
-        // Copy the latest measured display phase before starting the native submission timer.
-        long vsyncNs = displayClock.vsyncNs;
-        long intervalNs = displayClock.intervalNs;
-        // Frame Warp shifts each picture for the frame the host drew it as
-        if (frameWarp) nativeNoteFrameNumber(handle, frameNumber);
-        long workStartNs = Debug.threadCpuTimeNanos();
-        long result;
-        long submissionStartNs = System.nanoTime();
-        try {
-            result = directData != null ?
-                    nativeSubmitDirectFrame(handle, directData, length, ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs) :
-                    nativeSubmitFrame(handle, data, length, ptsUs, hostPresentationTimeUs, vsyncNs, intervalNs);
-        } finally {
-            // Match Moonlight X's wall-clock interval around native parsing, command recording
-            // and submission. Polling and Android performance-hint work are not submission work.
-            lastSubmissionDurationNs = System.nanoTime() - submissionStartNs;
-            performanceHints.reportWorkDuration(earlyWork.take(Debug.threadCpuTimeNanos() - workStartNs), frameRate);
-        }
-        nativePollRenderedFrames(handle, stats);
-        return result;
     }
 
     private static boolean setSubmissionThreadPriority(int priority) {
@@ -365,7 +389,7 @@ public final class PyroWaveDecoderRenderer {
         }
     }
 
-    synchronized long getLastSubmissionDurationNs() {
+    long getLastSubmissionDurationNs() {
         return lastSubmissionDurationNs;
     }
 
@@ -374,8 +398,10 @@ public final class PyroWaveDecoderRenderer {
         return (int) ptsUs;  // Matches the native side's release events.
     }
 
-    synchronized void pollRenderedFrames(FrameLatencyStats stats) {
-        if (handle != 0) nativePollRenderedFrames(handle, stats);
+    void pollRenderedFrames(FrameLatencyStats stats) {
+        synchronized (nativeLock) {
+            if (handle != 0) nativePollRenderedFrames(handle, stats);
+        }
     }
 
     /**
@@ -433,24 +459,28 @@ public final class PyroWaveDecoderRenderer {
         return handle != 0 ? nativeGetPresentMode(handle) : "unavailable";
     }
 
-    synchronized void submitChunks(byte[] data, int length, boolean first) {
-        if (handle == 0) return;
-        long workStartNs = Debug.threadCpuTimeNanos();
-        try {
-            nativeSubmitChunks(handle, data, length, first);
-        } finally {
-            earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
+    void submitChunks(byte[] data, int length, boolean first) {
+        synchronized (nativeLock) {
+            if (handle == 0) return;
+            long workStartNs = Debug.threadCpuTimeNanos();
+            try {
+                nativeSubmitChunks(handle, data, length, first);
+            } finally {
+                earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
+            }
         }
     }
 
     // The Rust engine's chunk batch in place: data is a direct buffer, read only during the call.
-    synchronized void submitChunksDirect(ByteBuffer data, int length, boolean first) {
-        if (handle == 0) return;
-        long workStartNs = Debug.threadCpuTimeNanos();
-        try {
-            nativeSubmitChunksDirect(handle, data, length, first);
-        } finally {
-            earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
+    void submitChunksDirect(ByteBuffer data, int length, boolean first) {
+        synchronized (nativeLock) {
+            if (handle == 0) return;
+            long workStartNs = Debug.threadCpuTimeNanos();
+            try {
+                nativeSubmitChunksDirect(handle, data, length, first);
+            } finally {
+                earlyWork.add(Debug.threadCpuTimeNanos() - workStartNs);
+            }
         }
     }
 
@@ -509,20 +539,32 @@ public final class PyroWaveDecoderRenderer {
         return handle != 0 ? nativeGetLastRecordLossPercent(handle) : 0;
     }
 
-    synchronized void setHdrMode(boolean enabled, byte[] metadata) {
-        if (handle != 0) nativeSetHdrMode(handle, enabled, metadata);
+    void setHdrMode(boolean enabled, byte[] metadata) {
+        synchronized (nativeLock) {
+            if (handle != 0) nativeSetHdrMode(handle, enabled, metadata);
+        }
     }
 
     /** The stream's HDR transfer from its ANNOUNCE: HLG, else PQ. Before the first frame. */
-    synchronized void setTransfer(boolean hlg) {
-        if (handle != 0) nativeSetTransfer(handle, hlg);
+    void setTransfer(boolean hlg) {
+        synchronized (nativeLock) {
+            if (handle != 0) nativeSetTransfer(handle, hlg);
+        }
     }
 
-    synchronized void cleanup() {
+    void cleanup() {
         cleanup(null);
     }
 
-    synchronized void cleanup(FrameLatencyStats stats) {
+    void cleanup(FrameLatencyStats stats) {
+        synchronized (nativeLock) {
+            synchronized (this) {
+                cleanupLocked(stats);
+            }
+        }
+    }
+
+    private void cleanupLocked(FrameLatencyStats stats) {
         submissionThread = null;
         frameWarp = false;
         earlyWork.take(0);
