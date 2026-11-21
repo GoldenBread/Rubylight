@@ -399,11 +399,14 @@ pub fn configure_udp(socket: &UdpSocket) -> Result<()> {
         // SAFETY: WSAGetLastError only reads this thread's last Winsock error.
         return Err(std::io::Error::from_raw_os_error(unsafe { WSAGetLastError() }.0).into());
     }
-    // Vibepollo's video socket buffer: a key frame's burst fits without the
-    // non-blocking socket refusing it.
-    socket2::SockRef::from(socket).set_send_buffer_size(1 << 20)?;
+    // Vibepollo's video socket buffer: 4 MiB absorbs startup keyframe and
+    // initial audio bursts without the non-blocking socket refusing them.
+    socket2::SockRef::from(socket).set_send_buffer_size(SEND_BUFFER_DEFAULT)?;
     Ok(())
 }
+
+/// Default UDP send buffer applied by [`configure_udp`] (matches WebRTC media).
+pub const SEND_BUFFER_DEFAULT: usize = 4 << 20;
 /// Set whether this socket refuses to fragment its later datagrams:
 /// `IP_DONTFRAGMENT` and `IPV6_DONTFRAG`, so an oversized probe packet fails
 /// with WSAEMSGSIZE at the sender instead of being fragmented and lost whole
@@ -454,6 +457,24 @@ fn transient(error: WSA_ERROR) -> bool {
     ]
     .contains(&error)
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SegmentedFailure {
+    DisableOffload,
+    FallbackDatagrams,
+    DropBatch,
+    Fatal,
+}
+fn classify_segmented_error(error: WSA_ERROR) -> SegmentedFailure {
+    if [WSAEINVAL, WSAENOPROTOOPT, WSAEOPNOTSUPP, WSAEMSGSIZE].contains(&error) {
+        SegmentedFailure::DisableOffload
+    } else if error == WSAENOBUFS {
+        SegmentedFailure::FallbackDatagrams
+    } else if transient(error) {
+        SegmentedFailure::DropBatch
+    } else {
+        SegmentedFailure::Fatal
+    }
+}
 /// A send or receive error that loses only this datagram; the socket keeps
 /// working. A receive also reports a datagram too large for its buffer this
 /// way (WSAEMSGSIZE) after discarding it.
@@ -472,12 +493,45 @@ pub fn datagram_lost(error: &std::io::Error) -> bool {
 /// this long after the frame's first refusal.
 pub const WRITABLE_WAIT: std::time::Duration = std::time::Duration::from_millis(4);
 const BUFFER_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(1);
+/// Default shared transient `WSAENOBUFS` retry budget for one audio send pass.
+pub const AUDIO_ENOBUFS_WAIT: std::time::Duration = std::time::Duration::from_millis(12);
+
+/// Shared retry deadline across one datagram send pass (such as all audio
+/// packets captured in one pass) so a congested socket does not multiply waits
+/// per packet beyond one audio interval.
+#[derive(Clone, Copy, Debug)]
+pub struct DatagramPass {
+    until: std::time::Instant,
+    enobufs_until: std::time::Instant,
+    deadline: Option<std::time::Instant>,
+    enobufs_deadline: Option<std::time::Instant>,
+}
+
+impl DatagramPass {
+    /// Start a pass capped at [`WRITABLE_WAIT`] for `WSAEWOULDBLOCK` and
+    /// `enobufs_wait` for `WSAENOBUFS`.
+    pub fn new(enobufs_wait: std::time::Duration) -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            until: now + WRITABLE_WAIT,
+            enobufs_until: now + enobufs_wait,
+            deadline: None,
+            enobufs_deadline: None,
+        }
+    }
+}
+
 /// The writable wait left to one send call, started at its first full buffer.
 #[derive(Default)]
 struct WaitBudget {
     deadline: Option<std::time::Instant>,
     /// The frame's own deadline ([`Batch::begin_frame`]), if one is in flight.
     frame_until: Option<std::time::Instant>,
+    /// Optional separate retry window for transient `WSAENOBUFS` pressure so
+    /// startup bursts and high-refresh frames recover without slowing down
+    /// `WSAEWOULDBLOCK` waits or adding latency to successful sends.
+    enobufs_deadline: Option<std::time::Instant>,
+    enobufs_until: Option<std::time::Instant>,
     /// Full-buffer refusals seen by this send call.
     refusals: u32,
     backoff_timer: Option<crate::timing::Timer>,
@@ -487,10 +541,21 @@ impl WaitBudget {
     /// the frame's, once a batch of it met a full socket, so a socket that
     /// stays full is not waited on again for each batch and the rest of that
     /// frame is abandoned instead; `until` is the frame's own deadline.
+    #[cfg(test)]
     fn for_frame(until: Option<std::time::Instant>, deadline: Option<std::time::Instant>) -> Self {
+        Self::for_frame_with_enobufs(until, deadline, None, None)
+    }
+    fn for_frame_with_enobufs(
+        until: Option<std::time::Instant>,
+        deadline: Option<std::time::Instant>,
+        enobufs_until: Option<std::time::Instant>,
+        enobufs_deadline: Option<std::time::Instant>,
+    ) -> Self {
         Self {
             deadline,
             frame_until: until,
+            enobufs_deadline,
+            enobufs_until,
             ..Default::default()
         }
     }
@@ -502,6 +567,16 @@ impl WaitBudget {
         *self
             .deadline
             .get_or_insert(self.frame_until.map_or(wait, |until| until.max(wait)))
+    }
+    fn deadline_for(&mut self, now: std::time::Instant, enobufs: bool) -> std::time::Instant {
+        if enobufs && (self.enobufs_until.is_some() || self.enobufs_deadline.is_some()) {
+            let wait = now + WRITABLE_WAIT;
+            *self
+                .enobufs_deadline
+                .get_or_insert(self.enobufs_until.map_or(wait, |until| until.max(wait)))
+        } else {
+            self.deadline_at(now)
+        }
     }
     /// Count a full-buffer refusal; true from the second on, when the retry
     /// should pause first. A socket can poll writable and still refuse a
@@ -518,9 +593,17 @@ impl WaitBudget {
     /// Reserve a short pause only when it leaves time for the retry. All
     /// datagrams in a batch share this deadline, including time already spent
     /// polling a full socket or sending earlier datagrams.
-    fn backoff_at(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+    fn backoff_for(
+        &mut self,
+        now: std::time::Instant,
+        enobufs: bool,
+    ) -> Option<std::time::Instant> {
         let retry = now + BUFFER_RETRY_DELAY;
-        (retry < self.deadline_at(now)).then_some(retry)
+        (retry < self.deadline_for(now, enobufs)).then_some(retry)
+    }
+    #[cfg(test)]
+    fn backoff_at(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        self.backoff_for(now, false)
     }
 }
 /// Wait until `socket` has a datagram to read, or `timeout_ms` passes;
@@ -581,20 +664,20 @@ fn buffer_available(
     }
     let again = budget.refused_again();
     if error == WSAEWOULDBLOCK {
-        if again && !pause(budget, trace.as_deref_mut()) {
+        if again && !pause(budget, false, trace.as_deref_mut()) {
             return false;
         }
         return writable(socket, budget, trace);
     }
     debug_assert_eq!(error, WSAENOBUFS);
-    pause(budget, trace)
+    pause(budget, true, trace)
 }
 
 /// Wait [`BUFFER_RETRY_DELAY`] if the budget leaves time for a retry after
 /// it; false when it does not.
-fn pause(budget: &mut WaitBudget, trace: Option<&mut WritableWaits>) -> bool {
+fn pause(budget: &mut WaitBudget, enobufs: bool, trace: Option<&mut WritableWaits>) -> bool {
     let started = std::time::Instant::now();
-    let Some(retry_at) = budget.backoff_at(started) else {
+    let Some(retry_at) = budget.backoff_for(started, enobufs) else {
         return false;
     };
     if budget.backoff_timer.is_none() {
@@ -610,7 +693,7 @@ fn pause(budget: &mut WaitBudget, trace: Option<&mut WritableWaits>) -> bool {
         trace.elapsed += finished.saturating_duration_since(started);
     }
     // A delayed timer wake must not revive an expired batch budget.
-    finished < budget.deadline_at(started)
+    finished < budget.deadline_for(started, enobufs)
 }
 
 /// A successful UDP send must never be repeated. Retry buffer pressure for as
@@ -681,6 +764,21 @@ fn send_one(
         Err(error) => Err(error),
     })
 }
+fn send_datagram_budget(
+    socket: &ReplySocket,
+    packet: &[u8],
+    peer: SocketAddr,
+    budget: &mut WaitBudget,
+) -> Result<bool> {
+    let (result, _) = socket.send_pinned(peer, socket.source(peer), |source| {
+        send_one(socket, packet, peer, source, budget, None)
+    })?;
+    match result {
+        Ok(()) => Ok(true),
+        Err(error) if transient(error) => Ok(false),
+        Err(error) => Err(std::io::Error::from_raw_os_error(error.0).into()),
+    }
+}
 /// Shared wait budget across a group of datagrams sent via [`send_datagram_with_wait`].
 #[derive(Default)]
 pub struct DatagramWait(WaitBudget);
@@ -693,19 +791,32 @@ pub fn send_datagram_with_wait(
     peer: SocketAddr,
     wait: &mut DatagramWait,
 ) -> Result<bool> {
-    let (result, _) = socket.send_pinned(peer, socket.source(peer), |source| {
-        send_one(socket, packet, peer, source, &mut wait.0, None)
-    })?;
-    match result {
-        Ok(()) => Ok(true),
-        Err(error) if transient(error) => Ok(false),
-        Err(error) => Err(std::io::Error::from_raw_os_error(error.0).into()),
-    }
+    send_datagram_budget(socket, packet, peer, &mut wait.0)
 }
 /// One datagram, from the address `peer` reached; `Ok(false)` when a
 /// transient error dropped it.
 pub fn send_datagram(socket: &ReplySocket, packet: &[u8], peer: SocketAddr) -> Result<bool> {
     send_datagram_with_wait(socket, packet, peer, &mut DatagramWait::default())
+}
+/// One datagram using a [`DatagramPass`] shared across a capture pass so
+/// `WSAENOBUFS` can recover while persistent refusal fails subsequent packets
+/// immediately without multiplying retry sleeps.
+pub fn send_datagram_pass(
+    socket: &ReplySocket,
+    packet: &[u8],
+    peer: SocketAddr,
+    pass: &mut DatagramPass,
+) -> Result<bool> {
+    let mut budget = WaitBudget::for_frame_with_enobufs(
+        Some(pass.until),
+        pass.deadline,
+        Some(pass.enobufs_until),
+        pass.enobufs_deadline,
+    );
+    let ok = send_datagram_budget(socket, packet, peer, &mut budget)?;
+    pass.deadline = budget.deadline.filter(|_| !ok);
+    pass.enobufs_deadline = budget.enobufs_deadline.filter(|_| !ok);
+    Ok(ok)
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Link {
@@ -955,6 +1066,11 @@ fn qwave() -> Option<&'static Qwave> {
         })
         .as_ref()
 }
+/// Load `qwave.dll` and create its handle ahead of the first media burst so
+/// [`QosFlow::new`] does not stall the video or audio send path at startup.
+pub fn warm_up_qos() -> bool {
+    qwave().is_some()
+}
 /// Tags a socket's datagrams to one client for priority, as Vibepollo does
 /// when Moonlight asks (it does on a local network): video as audio-video
 /// traffic (DSCP 40, 802.1p 5), audio as voice (DSCP 56, 802.1p 7). Wi-Fi
@@ -1068,15 +1184,36 @@ impl Default for Batch {
 struct FrameWait {
     until: std::time::Instant,
     deadline: Option<std::time::Instant>,
+    enobufs_until: Option<std::time::Instant>,
+    enobufs_deadline: Option<std::time::Instant>,
 }
 impl Batch {
     /// Start one video frame: its batches share one wait for room in a full
     /// socket, up to `wait` from now or [`WRITABLE_WAIT`] from the frame's
     /// first refusal, whichever is later (see [`Batch::frame_wait_spent`]).
     pub fn begin_frame(&mut self, wait: std::time::Duration) {
+        let now = std::time::Instant::now();
         self.frame = Some(FrameWait {
-            until: std::time::Instant::now() + wait,
+            until: now + wait,
             deadline: None,
+            enobufs_until: None,
+            enobufs_deadline: None,
+        });
+    }
+    /// Start one video frame with a separate shared retry ceiling for
+    /// transient `WSAENOBUFS` driver pressure, keeping `WSAEWOULDBLOCK` at
+    /// `wait` and adding zero delay when the socket accepts datagrams.
+    pub fn begin_frame_with_enobufs(
+        &mut self,
+        wait: std::time::Duration,
+        enobufs_wait: std::time::Duration,
+    ) {
+        let now = std::time::Instant::now();
+        self.frame = Some(FrameWait {
+            until: now + wait,
+            deadline: None,
+            enobufs_until: Some(now + enobufs_wait),
+            enobufs_deadline: None,
         });
     }
     /// The frame is over: a later batch outside a frame gets its own wait.
@@ -1086,9 +1223,13 @@ impl Batch {
     /// The frame in flight met a full socket and its shared wait is over:
     /// its sender gives up the rest of it.
     pub fn frame_wait_spent(&self) -> bool {
-        self.frame
-            .and_then(|frame| frame.deadline)
-            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        let now = std::time::Instant::now();
+        self.frame.is_some_and(|frame| {
+            [frame.deadline, frame.enobufs_deadline]
+                .into_iter()
+                .flatten()
+                .any(|deadline| now >= deadline)
+        })
     }
     /// How many of the leading `packets` one segmented send carries: equal
     /// sizes, then at most one shorter, at most 64 and 65507 bytes in all.
@@ -1188,9 +1329,11 @@ impl Batch {
             return Ok(0);
         }
         let mut source = socket.source(peer);
-        let mut budget = WaitBudget::for_frame(
+        let mut budget = WaitBudget::for_frame_with_enobufs(
             self.frame.map(|frame| frame.until),
             self.frame.and_then(|frame| frame.deadline),
+            self.frame.and_then(|frame| frame.enobufs_until),
+            self.frame.and_then(|frame| frame.enobufs_deadline),
         );
         let dropped = self.dropped;
         let result = self.send_within(socket, packets, peer, &mut source, &mut budget);
@@ -1199,6 +1342,7 @@ impl Batch {
             // batch that dropped nothing ends that spell, and a later refusal
             // starts a new one with at least WRITABLE_WAIT.
             frame.deadline = budget.deadline.filter(|_| self.dropped > dropped);
+            frame.enobufs_deadline = budget.enobufs_deadline.filter(|_| self.dropped > dropped);
         }
         result
     }
@@ -1228,24 +1372,30 @@ impl Batch {
                     self.last_sent = packets.len();
                     return Ok(sent);
                 }
-                // WSAEMSGSIZE here can be the offload's own limit, not the
-                // path's MTU: turn segmentation off and send the datagrams one
-                // by one, where an oversized one is counted as such. Dropping
-                // the batch would leave every later batch dropped as well.
-                Err(error)
-                    if [WSAEINVAL, WSAENOPROTOOPT, WSAEOPNOTSUPP, WSAEMSGSIZE].contains(&error) =>
-                {
-                    self.offload = false;
-                    tracing::warn!(
-                        code = error.0,
-                        "UDP segmentation unavailable or this batch could not be segmented; using individual datagrams with more CPU overhead. Update the network driver or lower bitrate if sending stalls"
-                    );
-                }
-                Err(error) if transient(error) => {
-                    self.dropped(packets.len(), error);
-                    return Ok(0);
-                }
-                Err(error) => return Err(std::io::Error::from_raw_os_error(error.0).into()),
+                Err(error) => match classify_segmented_error(error) {
+                    // WSAEMSGSIZE here can be the offload's own limit, not the
+                    // path's MTU: turn segmentation off and send the datagrams one
+                    // by one, where an oversized one is counted as such. Dropping
+                    // the batch would leave every later batch dropped as well.
+                    SegmentedFailure::DisableOffload => {
+                        self.offload = false;
+                        tracing::warn!(
+                            code = error.0,
+                            "UDP segmentation unavailable or this batch could not be segmented; using individual datagrams with more CPU overhead. Update the network driver or lower bitrate if sending stalls"
+                        );
+                    }
+                    // Transient ENOBUFS on a multi-packet GSO buffer can still
+                    // leave room for individual datagrams; keep offload enabled
+                    // for later batches once driver pressure clears.
+                    SegmentedFailure::FallbackDatagrams => {}
+                    SegmentedFailure::DropBatch => {
+                        self.dropped(packets.len(), error);
+                        return Ok(0);
+                    }
+                    SegmentedFailure::Fatal => {
+                        return Err(std::io::Error::from_raw_os_error(error.0).into());
+                    }
+                },
             }
         }
         let mut sent = 0;

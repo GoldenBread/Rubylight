@@ -433,7 +433,10 @@ impl SessionThread<'_> {
                             sent.lost.push_block(block.data, block.parity);
                             if block.index == 0 {
                                 // The frame's batches share one wait for a full socket.
-                                batch.begin_frame(butterpollo_core::network_pacing::frame_send_wait(stream_period.get()));
+                                batch.begin_frame_with_enobufs(
+                                    butterpollo_core::network_pacing::frame_send_wait(stream_period.get()),
+                                    butterpollo_core::network_pacing::enobufs_frame_wait(wire_frame),
+                                );
                                 next_wire_frame.set(u64::from(wire_frame.wrapping_add(1)));
                                 s.stats.video_frame.store(u64::from(wire_frame) + 1, Ordering::Release);
                             }
@@ -447,8 +450,8 @@ impl SessionThread<'_> {
                                 if network_pacer.due() > now {
                                     timer.until_paced(network_pacer.due());
                                 }
-                                let budget = butterpollo_core::network_pacing::batch_payload_limit(
-                                    bps, remaining[0].len(), peer.ip().to_canonical().is_ipv6(), batch_kb * 1024,
+                                let budget = butterpollo_core::network_pacing::startup_batch_payload_limit(
+                                    wire_frame, bps, remaining[0].len(), peer.ip().to_canonical().is_ipv6(), batch_kb * 1024,
                                 );
                                 let count = butterpollo_windows::net::Batch::count(remaining, budget);
                                 let refused = batch.dropped;
@@ -670,7 +673,10 @@ impl SessionThread<'_> {
                 let mut sent_packets = 0;
                 let mut sent_bytes = 0;
                 // The frame's batches share one wait for a full socket.
-                batch.begin_frame(butterpollo_core::network_pacing::frame_send_wait(stream_period.get()));
+                batch.begin_frame_with_enobufs(
+                    butterpollo_core::network_pacing::frame_send_wait(stream_period.get()),
+                    butterpollo_core::network_pacing::enobufs_frame_wait(wire_frame),
+                );
                 'blocks: loop {
                     let block_started = Instant::now();
                     let block_count = match next_block(&mut packets) {
@@ -697,8 +703,8 @@ impl SessionThread<'_> {
                             timer.until_paced(network_pacer.due());
                             pacing_wait += now.elapsed();
                         }
-                        let budget = butterpollo_core::network_pacing::batch_payload_limit(
-                            bps, remaining[0].len(), peer.ip().to_canonical().is_ipv6(), batch_kb * 1024,
+                        let budget = butterpollo_core::network_pacing::startup_batch_payload_limit(
+                            wire_frame, bps, remaining[0].len(), peer.ip().to_canonical().is_ipv6(), batch_kb * 1024,
                         );
                         let count =
                             butterpollo_windows::net::Batch::count(remaining, budget);

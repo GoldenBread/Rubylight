@@ -21,6 +21,8 @@ pub(super) trait AudioSink {
     /// Whether the far end is known. Audio is encoded either way (the capture must be drained),
     /// and a sink that is not ready when the ping window passes raises [`PingWait::WARNING`].
     fn ready(&mut self) -> bool;
+    /// Start one audio capture pass so its datagrams share a single transient-buffer wait.
+    fn begin_pass(&mut self) {}
     /// Send one encoded Opus packet. Returns how many packets did not go out, which the caller
     /// counts as loss; only a broken transport is an error. `position` is where the packet starts
     /// in the audio thread's stream, in 48 kHz samples, counting every packet and any audio the
@@ -507,6 +509,7 @@ pub(super) struct GameStreamAudio<'a> {
     /// The last call's packets, handed back to the packetizer next call: no
     /// packet of a stream allocates its own buffer.
     packets: Vec<Vec<u8>>,
+    pass: butterpollo_windows::net::DatagramPass,
 }
 
 impl<'a> GameStreamAudio<'a> {
@@ -526,6 +529,9 @@ impl<'a> GameStreamAudio<'a> {
             use_qos,
             peer: None,
             packets: Vec::new(),
+            pass: butterpollo_windows::net::DatagramPass::new(
+                butterpollo_windows::net::AUDIO_ENOBUFS_WAIT,
+            ),
         }
     }
 }
@@ -539,20 +545,25 @@ impl AudioSink for GameStreamAudio<'_> {
         self.peer.is_some()
     }
 
+    fn begin_pass(&mut self) {
+        self.pass = butterpollo_windows::net::DatagramPass::new(
+            butterpollo_windows::net::AUDIO_ENOBUFS_WAIT,
+        );
+    }
+
     fn send(&mut self, opus: &[u8], _captured: Instant, _position: u64) -> Result<usize> {
         let Some(peer) = self.peer else {
             return Ok(1);
         };
         let mut unsent = 0;
-        let mut wait = butterpollo_windows::net::DatagramWait::default();
         self.packetizer.encode_into(opus, &mut self.packets)?;
         // A lost audio packet is concealed by the client; only a broken socket stops the audio.
         for packet in &self.packets {
-            if !butterpollo_windows::net::send_datagram_with_wait(
+            if !butterpollo_windows::net::send_datagram_pass(
                 self.socket,
                 packet,
                 peer,
-                &mut wait,
+                &mut self.pass,
             )? {
                 unsent += 1;
             }
@@ -570,16 +581,15 @@ impl AudioSink for GameStreamAudio<'_> {
             return Ok(parts.len());
         };
         let mut unsent = 0;
-        let mut wait = butterpollo_windows::net::DatagramWait::default();
         for (index, part) in parts.iter().enumerate() {
             self.packetizer
                 .encode_part_into(part, index + 1 == parts.len(), &mut self.packets)?;
             for packet in &self.packets {
-                if !butterpollo_windows::net::send_datagram_with_wait(
+                if !butterpollo_windows::net::send_datagram_pass(
                     self.socket,
                     packet,
                     peer,
-                    &mut wait,
+                    &mut self.pass,
                 )? {
                     unsent += 1;
                 }

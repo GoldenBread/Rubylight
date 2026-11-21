@@ -464,6 +464,7 @@ impl Media {
             }
             let now = Instant::now();
             if ready {
+                output.begin_pass();
                 for (samples, &at) in packets.samples.iter_mut().zip(&packets.positions) {
                     couch.process(&s.audio, &s.launch.warnings, samples);
                     for _ in 0..encoder.send(output.as_mut(), samples, now, at)? {

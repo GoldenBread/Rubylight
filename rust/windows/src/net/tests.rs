@@ -1518,3 +1518,90 @@ fn interface_change_notifications_arrive_and_end_with_the_registration() {
     );
     drop(changes);
 }
+
+#[test]
+fn configure_udp_sets_four_megabyte_send_buffer() -> Result<()> {
+    let socket = UdpSocket::bind("127.0.0.1:0")?;
+    configure_udp(&socket)?;
+    assert!(socket2::SockRef::from(&socket).send_buffer_size()? >= SEND_BUFFER_DEFAULT);
+    Ok(())
+}
+
+#[test]
+fn enobufs_budget_gives_wider_recovery_window_without_changing_wouldblock_or_default() {
+    let ms = std::time::Duration::from_millis;
+    let start = std::time::Instant::now();
+
+    // Default budget keeps WRITABLE_WAIT for both WSAEWOULDBLOCK and WSAENOBUFS.
+    let mut default_budget = WaitBudget::default();
+    assert_eq!(
+        default_budget.deadline_for(start, true),
+        start + WRITABLE_WAIT
+    );
+    assert_eq!(
+        default_budget.deadline_for(start, false),
+        start + WRITABLE_WAIT
+    );
+
+    // Frame budget with separate enobufs_until widens WSAENOBUFS without moving WSAEWOULDBLOCK.
+    let mut frame_budget =
+        WaitBudget::for_frame_with_enobufs(Some(start + ms(7)), None, Some(start + ms(30)), None);
+    assert_eq!(frame_budget.deadline_for(start, false), start + ms(7));
+    assert_eq!(frame_budget.deadline_for(start, true), start + ms(30));
+    assert!(frame_budget.backoff_for(start + ms(7), false).is_none());
+    assert_eq!(
+        frame_budget.backoff_for(start + ms(25), true),
+        Some(start + ms(26))
+    );
+    assert!(frame_budget.backoff_for(start + ms(29), true).is_none());
+}
+
+#[test]
+fn datagram_pass_shares_enobufs_deadline_across_packets() -> Result<()> {
+    let sender = ReplySocket::bind("127.0.0.1:0")?;
+    let receiver = UdpSocket::bind("127.0.0.1:0")?;
+    let peer = receiver.local_addr()?;
+
+    // Healthy sends succeed without allocating any refusal deadline.
+    let mut pass = DatagramPass::new(AUDIO_ENOBUFS_WAIT);
+    assert!(send_datagram_pass(&sender, &[1, 2, 3], peer, &mut pass)?);
+    assert!(pass.deadline.is_none());
+    assert!(pass.enobufs_deadline.is_none());
+
+    // Once a pass exhausts its shared ENOBUFS deadline, subsequent packets retry
+    // non-blockingly without sleeping again.
+    let past = std::time::Instant::now() - std::time::Duration::from_millis(1);
+    let mut expired =
+        WaitBudget::for_frame_with_enobufs(Some(past), Some(past), Some(past), Some(past));
+    let socket = UdpSocket::bind("127.0.0.1:0")?;
+    let mut waits = WritableWaits::default();
+    assert!(!buffer_available(
+        &socket,
+        WSAENOBUFS,
+        &mut expired,
+        Some(&mut waits)
+    ));
+    assert_eq!(waits.count, 0);
+    Ok(())
+}
+
+#[test]
+fn classify_segmented_error_falls_back_on_enobufs_without_disabling_offload() {
+    assert_eq!(
+        classify_segmented_error(WSAENOBUFS),
+        SegmentedFailure::FallbackDatagrams
+    );
+    for offload_err in [WSAEINVAL, WSAENOPROTOOPT, WSAEOPNOTSUPP, WSAEMSGSIZE] {
+        assert_eq!(
+            classify_segmented_error(offload_err),
+            SegmentedFailure::DisableOffload
+        );
+    }
+    for drop_err in [WSAEWOULDBLOCK, WSAECONNRESET, WSAENETDOWN] {
+        assert_eq!(
+            classify_segmented_error(drop_err),
+            SegmentedFailure::DropBatch
+        );
+    }
+    assert_eq!(classify_segmented_error(WSAEACCES), SegmentedFailure::Fatal);
+}

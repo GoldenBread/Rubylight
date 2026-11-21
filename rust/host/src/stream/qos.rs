@@ -80,6 +80,17 @@ impl Drop for Worker {
     }
 }
 
+/// Load and initialize Windows qWAVE asynchronously once per host process so
+/// early media bursts do not contend with its first-time service startup.
+pub(super) fn warm_up() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        let _ = thread::Builder::new().name("qos warmup".into()).spawn(|| {
+            butterpollo_windows::net::warm_up_qos();
+        });
+    });
+}
+
 /// One worker and at most one pending change per session's media socket.
 #[derive(Default)]
 pub(super) struct Tagged {

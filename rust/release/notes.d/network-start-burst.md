@@ -1,0 +1,2 @@
+# Stream startup reliability
+- **Cleaner stream starts on busy Wi-Fi and cold adapters.** Video and audio sockets now allocate a 4 MiB send buffer, start qWAVE initialization ahead of frame 1, bound initial keyframe UDP segmentation batches, retry transient adapter buffer exhaustion (`WSAENOBUFS`) cleanly within a bounded per-frame or per-pass window, and fall back to individual datagrams when a segmented batch hits transient buffer exhaustion rather than dropping the whole batch at once.

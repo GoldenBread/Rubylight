@@ -959,3 +959,43 @@ fn the_paced_send_buffer_holds_ten_milliseconds_at_the_pace() {
         assert_eq!(paced_send_buffer(bps) % MIB, 0, "{bps}");
     }
 }
+
+#[test]
+fn startup_frames_cap_batch_burst_and_keep_steady_state_unchanged() {
+    let datagram = 1408;
+    let steady = batch_payload_limit(800_000_000, datagram, false, 64 * 1024);
+    assert!(steady > STARTUP_BATCH_CAP_BYTES);
+
+    // Frames 1..=STARTUP_BATCH_FRAMES cap segmented bursts at STARTUP_BATCH_CAP_BYTES.
+    for frame in 1..=STARTUP_BATCH_FRAMES {
+        let limit = startup_batch_payload_limit(frame, 800_000_000, datagram, false, 64 * 1024);
+        assert!(limit <= STARTUP_BATCH_CAP_BYTES, "frame {frame}: {limit}");
+        assert!(limit >= datagram);
+    }
+
+    // Frame 0 (unset/legacy) and frames past startup preserve batch_payload_limit verbatim.
+    for frame in [0, STARTUP_BATCH_FRAMES + 1, 1000] {
+        assert_eq!(
+            startup_batch_payload_limit(frame, 800_000_000, datagram, false, 64 * 1024),
+            steady
+        );
+    }
+
+    // Smaller caller limits stay respected during startup as well.
+    assert_eq!(
+        startup_batch_payload_limit(1, 800_000_000, datagram, false, 4096),
+        batch_payload_limit(800_000_000, datagram, false, 4096)
+    );
+}
+
+#[test]
+fn enobufs_wait_widens_startup_window_without_changing_steady_state() {
+    for frame in 1..=STARTUP_ENOBUFS_FRAMES {
+        assert_eq!(enobufs_frame_wait(frame), STARTUP_ENOBUFS_WAIT);
+    }
+    assert_eq!(enobufs_frame_wait(0), SEND_FRAME_WAIT);
+    assert_eq!(
+        enobufs_frame_wait(STARTUP_ENOBUFS_FRAMES + 1),
+        SEND_FRAME_WAIT
+    );
+}

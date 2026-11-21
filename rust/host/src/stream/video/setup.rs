@@ -124,6 +124,9 @@ impl SessionThread<'_> {
             }
             return Ok(None);
         }
+        if s.config.video_qos || s.config.audio_qos {
+            crate::stream::qos::warm_up();
+        }
         Ok(Some(Configured { timer, c, config_version }))
     }
 

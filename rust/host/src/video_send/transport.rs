@@ -239,9 +239,12 @@ impl Transport<'_> {
             .video_frame
             .store(u64::from(frame.wire_frame) + 1, Ordering::Release);
         // A full socket is waited on for about one picture period, shared by
-        // every batch of this frame; then the rest of it is abandoned.
-        self.batch
-            .begin_frame(network_pacing::frame_send_wait(period));
+        // every batch of this frame; transient ENOBUFS gets a separate recovery
+        // window so startup bursts do not drop while QoS and adapter queues warm.
+        self.batch.begin_frame_with_enobufs(
+            network_pacing::frame_send_wait(period),
+            network_pacing::enobufs_frame_wait(frame.wire_frame),
+        );
         let waits = self.batch.waits.unwrap();
         Sending {
             wire_frame: frame.wire_frame,
@@ -371,7 +374,8 @@ impl Transport<'_> {
         let bps = cur.bps;
         // The datagram size, pace and batch cap are constant for the frame,
         // so the batch payload limit is computed once, not for every batch.
-        let budget = network_pacing::batch_payload_limit(
+        let budget = network_pacing::startup_batch_payload_limit(
+            frame.wire_frame,
             bps,
             super::early::datagram(&frame.packetizer),
             ipv6,

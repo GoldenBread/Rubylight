@@ -268,6 +268,30 @@ pub fn batch_payload_limit(bps: u64, datagram: usize, ipv6: bool, maximum: usize
         .max(datagram as u64) as usize
 }
 
+/// First wire frames whose segmented batches are bounded so stream startup does
+/// not overflow an unprimed adapter send queue while QoS initializes.
+pub const STARTUP_BATCH_FRAMES: u32 = 8;
+
+/// Per-batch payload ceiling used during [`STARTUP_BATCH_FRAMES`].
+pub const STARTUP_BATCH_CAP_BYTES: usize = 16 * 1024;
+
+/// Batch payload limit that caps the first [`STARTUP_BATCH_FRAMES`] wire frames
+/// to [`STARTUP_BATCH_CAP_BYTES`], leaving steady-state batches unchanged.
+pub fn startup_batch_payload_limit(
+    frame: u32,
+    bps: u64,
+    datagram: usize,
+    ipv6: bool,
+    maximum: usize,
+) -> usize {
+    let cap = if (1..=STARTUP_BATCH_FRAMES).contains(&frame) {
+        maximum.min(STARTUP_BATCH_CAP_BYTES)
+    } else {
+        maximum
+    };
+    batch_payload_limit(bps, datagram, ipv6, cap)
+}
+
 pub fn video_wire_rate_bps(
     packetizer: &crate::packet::VideoPacketizer,
     stream_kbps: u32,
@@ -392,6 +416,25 @@ pub const SEND_FRAME_WAIT: Duration = Duration::from_millis(20);
 /// [`SEND_FRAME_WAIT`] for a stream whose pictures come `period` apart.
 pub fn frame_send_wait(period: Duration) -> Duration {
     period.min(SEND_FRAME_WAIT)
+}
+
+/// First wire frames granted a wider transient `WSAENOBUFS` retry budget
+/// while the adapter queue and QoS flow settle.
+pub const STARTUP_ENOBUFS_FRAMES: u32 = 15;
+
+/// Total `WSAENOBUFS` retry budget per frame during [`STARTUP_ENOBUFS_FRAMES`].
+pub const STARTUP_ENOBUFS_WAIT: Duration = Duration::from_millis(30);
+
+/// Total transient `WSAENOBUFS` retry budget for one video frame (`frame` is
+/// the 1-based wire frame counter). Steady-state frames keep [`SEND_FRAME_WAIT`]
+/// even at high refresh rates so brief driver buffer exhaustion recovers without
+/// adding latency when the adapter accepts datagrams immediately.
+pub fn enobufs_frame_wait(frame: u32) -> Duration {
+    if (1..=STARTUP_ENOBUFS_FRAMES).contains(&frame) {
+        STARTUP_ENOBUFS_WAIT
+    } else {
+        SEND_FRAME_WAIT
+    }
 }
 
 pub struct Pacer {
