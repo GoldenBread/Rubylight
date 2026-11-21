@@ -159,9 +159,7 @@ pub fn restore(h: &Shared, token: &str) -> Result<Value> {
     std::fs::rename(&path, folder.join(core::STAGED)).context("the backup could not be staged")?;
     remove_pending(directory, None);
     tracing::info!(saved = %before.display(), "settings restore staged; restarting");
-    h.restart.store(true, std::sync::atomic::Ordering::Release);
-    h.stop.store(true, std::sync::atomic::Ordering::Release);
-    h.wake_maintenance();
+    h.request_stop("settings_restore_restart", true);
     Ok(
         json!({"status": true, "saved": before.file_name().map(|n| n.to_string_lossy().into_owned())}),
     )

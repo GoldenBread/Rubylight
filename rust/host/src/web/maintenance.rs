@@ -23,14 +23,13 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str) -> anyhow::Result<Val
             json!({"status":true})
         }
         ("POST", "/api/restart") => {
-            h.restart.store(true, std::sync::atomic::Ordering::Release);
-            h.stop.store(true, std::sync::atomic::Ordering::Release);
-            h.wake_maintenance();
+            tracing::info!("host restart requested from the administration console");
+            h.request_stop("console_restart", true);
             json!({"status":true})
         }
         ("POST", "/api/quit") => {
-            h.stop.store(true, std::sync::atomic::Ordering::Release);
-            h.wake_maintenance();
+            tracing::info!("host shutdown requested from the administration console");
+            h.request_stop("console_quit", false);
             json!({"status":true})
         }
         _ => return Err(anyhow::anyhow!("unknown API endpoint")),

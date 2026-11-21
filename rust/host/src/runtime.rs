@@ -227,10 +227,13 @@ fn user_action(h: &Shared, action: Action, web_port: u16) {
             });
         }
         Action::Restart => {
-            h.restart.store(true, Ordering::Release);
-            h.stop.store(true, Ordering::Release);
+            tracing::info!("host restart requested from the tray");
+            h.request_stop("tray_restart", true);
         }
-        Action::Quit => h.stop.store(true, Ordering::Release),
+        Action::Quit => {
+            tracing::info!("host shutdown requested from the tray");
+            h.request_stop("tray_quit", false);
+        }
     }
 }
 /// Keep routine app status in the tray instead of covering the captured
@@ -507,6 +510,7 @@ pub async fn maintain(
     while !h.stop.load(Ordering::Acquire) {
         if stop_signal.requested() {
             tracing::info!("service requested host shutdown");
+            h.note_stop_reason("service_stop");
             h.stop.store(true, Ordering::Release);
             break;
         }

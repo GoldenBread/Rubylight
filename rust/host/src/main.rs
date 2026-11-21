@@ -353,12 +353,133 @@ fn log_encoder_gpu_check() {
     }
 }
 
+#[derive(Clone)]
+struct SharedLogFile(std::sync::Arc<std::sync::Mutex<butterpollo_core::logfile::RotatingFile>>);
+
+impl SharedLogFile {
+    fn new(file: butterpollo_core::logfile::RotatingFile) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(file)))
+    }
+}
+
+impl std::io::Write for SharedLogFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .flush()
+    }
+}
+
+fn utc_timestamp(now: std::time::SystemTime) -> String {
+    let dt = time::OffsetDateTime::from(now);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        dt.year(),
+        u8::from(dt.month()),
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second(),
+        dt.microsecond(),
+    )
+}
+
+fn panic_payload(info: &std::panic::PanicHookInfo<'_>) -> String {
+    if let Some(s) = info.payload().downcast_ref::<&str>() {
+        (*s).to_owned()
+    } else if let Some(s) = info.payload().downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "non-string panic payload".to_owned()
+    }
+}
+
+fn format_panic_line(
+    timestamp: &str,
+    thread: &str,
+    location: Option<&str>,
+    message: &str,
+) -> String {
+    let location = location.unwrap_or("unknown");
+    format!(
+        "{timestamp} ERROR butterpollo: host panicked thread={thread:?} location={location:?} message={message:?}\n"
+    )
+}
+
+fn write_panic_line(log: &SharedLogFile, line: &str) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(50);
+    loop {
+        match log.0.try_lock() {
+            Ok(mut file) => {
+                use std::io::Write;
+                return file.write_all(line.as_bytes()).is_ok() && file.flush().is_ok();
+            }
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                use std::io::Write;
+                let mut file = poisoned.into_inner();
+                return file.write_all(line.as_bytes()).is_ok() && file.flush().is_ok();
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+}
+
+/// Logs panics directly to `butterpollo.log` and flushes before the process aborts
+/// (`panic = "abort"` in release) or the crash minidump helper runs.
+fn install_panic_hook(log: SharedLogFile) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        thread_local! {
+            static IN_HOOK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        if !IN_HOOK.replace(true) {
+            let thread = std::thread::current()
+                .name()
+                .unwrap_or("unnamed")
+                .to_owned();
+            let location = info
+                .location()
+                .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()));
+            let message = panic_payload(info);
+            let timestamp = utc_timestamp(std::time::SystemTime::now());
+            let line = format_panic_line(&timestamp, &thread, location.as_deref(), &message);
+            if !write_panic_line(&log, &line) {
+                tracing::error!(
+                    thread = %thread,
+                    location = location.as_deref().unwrap_or("unknown"),
+                    panic = %message,
+                    "host panicked"
+                );
+            }
+            IN_HOOK.set(false);
+        }
+        previous(info);
+    }));
+}
+
+enum ExitAction {
+    Return,
+    Exit(i32),
+}
+
 async fn run(args: Args, assets: PathBuf) -> Result<()> {
     let supervised = args.service_stop_source.is_some();
     let stop_signal =
         butterpollo_windows::process::StopSignal::new(args.service_stop_source.as_deref())?;
-    let directory = match args.config_dir {
-        Some(directory) => directory,
+    let directory = match &args.config_dir {
+        Some(directory) => directory.clone(),
         None => butterpollo_core::paths::portable_profile()?,
     };
     let h = state::Host::load(directory, assets, args.port)?;
@@ -384,10 +505,11 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         Err(error) => return Err(error),
     };
     let log_level = h.config.read().unwrap().log_level();
-    let (writer, _log_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+    let shared_log = SharedLogFile::new(appender);
+    let (writer, log_guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .buffered_lines_limit(8192)
         .lossy(true)
-        .finish(appender);
+        .finish(shared_log.clone());
     use tracing_subscriber::prelude::*;
     // The service host has no console; formatting every event a second time
     // for a stdout nobody reads is wasted work.
@@ -401,6 +523,47 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         )
         .with(terminal.then(tracing_subscriber::fmt::layer))
         .init();
+    install_panic_hook(shared_log);
+    let action = match run_logged(
+        &args,
+        h.clone(),
+        supervised,
+        stop_signal,
+        unusable_log,
+        crash_reporting,
+        display_recovery,
+    )
+    .await
+    {
+        Ok(action) => action,
+        Err(error) => {
+            tracing::error!(
+                reason = h.stop_reason().unwrap_or("startup_or_runtime_error"),
+                error = %format!("{error:#}"),
+                exit_code = 1u32,
+                "host exiting with error"
+            );
+            drop(log_guard);
+            return Err(error);
+        }
+    };
+    drop(log_guard);
+    if let ExitAction::Exit(code) = action {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_logged(
+    args: &Args,
+    h: state::Shared,
+    supervised: bool,
+    stop_signal: butterpollo_windows::process::StopSignal,
+    unusable_log: Option<(PathBuf, anyhow::Error)>,
+    crash_reporting: Option<anyhow::Error>,
+    display_recovery: Option<anyhow::Error>,
+) -> Result<ExitAction> {
     if let Some((path, error)) = unusable_log {
         tracing::warn!(
             path = %path.display(),
@@ -653,20 +816,41 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         })
         .ok();
     let mut session_ended = false;
+    let stop_source: Option<&'static str>;
     let outcome: Result<()> = tokio::select! {
-        signal=tokio::signal::ctrl_c()=>signal.context("waiting for shutdown"),
+        signal=tokio::signal::ctrl_c()=>{
+            match signal {
+                Ok(()) => {
+                    tracing::info!("Ctrl+C received; host shutting down");
+                    stop_source = Some("ctrl_c");
+                    Ok(())
+                }
+                Err(error) => {
+                    tracing::error!(error = %format!("{error:#}"), "Ctrl+C listener failed; host shutting down");
+                    stop_source = Some("ctrl_c_error");
+                    Err(error.into())
+                }
+            }
+        },
         _=session_end.requested()=>{
             session_ended = true;
+            stop_source = Some("windows_session_end");
             Ok(())
         },
         task=tasks.join_next()=>{
-            match task {
-                Some(Ok(Err(error))) => Err(error.context("host listener failed")),
-                Some(Err(error)) => Err(error.into()),
-                _ => Err(anyhow::anyhow!("host listener stopped unexpectedly")),
-            }
+            stop_source = Some("listener_failed");
+            let error = match task {
+                Some(Ok(Err(error))) => error.context("host listener failed"),
+                Some(Err(error)) => error.into(),
+                _ => anyhow::anyhow!("host listener stopped unexpectedly"),
+            };
+            tracing::error!(error = %format!("{error:#}"), "host listener stopped; shutting down");
+            Err(error)
         },
-        _=runtime::maintain(h.clone(), stop_signal, actions, ports.web)=>Ok(())
+        _=runtime::maintain(h.clone(), stop_signal, actions, ports.web)=>{
+            stop_source = h.stop_reason().or(Some("maintenance_stopped"));
+            Ok(())
+        }
     };
     // The service ends the host 20 s after it asked it to stop (`shutdown_host`). Every wait
     // below takes at most what is left of SHUTDOWN_WAITS, so the host finishes on its own.
@@ -780,14 +964,21 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
     }
     drop(tray);
     drop(session_end_watch);
+    let reason = stop_source.or_else(|| h.stop_reason()).unwrap_or("unknown");
     if let Some(code) = session_end::exit_code(supervised, session_ended) {
-        drop(_log_guard);
-        std::process::exit(code as i32);
+        tracing::info!(reason, exit_code = code, "host exiting");
+        return Ok(ExitAction::Exit(code as i32));
     }
     if h.restart.load(Ordering::Acquire) {
+        let code = butterpollo_windows::service::RESTART_EXIT_CODE;
+        tracing::info!(
+            reason,
+            exit_code = code,
+            supervised,
+            "host exiting for restart"
+        );
         if supervised {
-            drop(_log_guard);
-            std::process::exit(butterpollo_windows::service::RESTART_EXIT_CODE as i32);
+            return Ok(ExitAction::Exit(code as i32));
         } else {
             use std::os::windows::process::CommandExt;
             std::process::Command::new(std::env::current_exe()?)
@@ -796,7 +987,9 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
                 .spawn()?;
         }
     }
-    outcome
+    outcome?;
+    tracing::info!(reason, exit_code = 0u32, "host exiting");
+    Ok(ExitAction::Return)
 }
 /// What the host's own waits at a service stop take together, at most: under the 20 s after
 /// which the service ends it, with room for the steps that do not wait.
@@ -912,5 +1105,46 @@ mod shutdown_tests {
         assert!(!slow);
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(within(Duration::from_secs(5), "quick step", || {}).await);
+    }
+
+    #[test]
+    fn panic_line_is_written_and_flushed_to_rotating_log() {
+        let dir = std::env::temp_dir().join(format!(
+            "butterpollo-panic-log-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("butterpollo.log");
+        let file = butterpollo_core::logfile::RotatingFile::open_default(&path).unwrap();
+        let shared = SharedLogFile::new(file);
+        let stamp = utc_timestamp(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        assert_eq!(stamp, "1970-01-01T00:00:01.000000Z");
+        let line = format_panic_line(&stamp, "session", Some("src/foo.rs:42:5"), "boom");
+        assert!(write_panic_line(&shared, &line));
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            on_disk.contains("ERROR butterpollo: host panicked"),
+            "{on_disk}"
+        );
+        assert!(on_disk.contains("thread=\"session\""), "{on_disk}");
+        assert!(
+            on_disk.contains("location=\"src/foo.rs:42:5\""),
+            "{on_disk}"
+        );
+        assert!(on_disk.contains("message=\"boom\""), "{on_disk}");
+        drop(shared);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn host_request_stop_records_first_reason_and_restart_flag() {
+        let fixture = crate::state::test_support::Fixture::new();
+        let host = &fixture.host;
+        assert_eq!(host.stop_reason(), None);
+        host.request_stop("tray_restart", true);
+        host.note_stop_reason("service_stop");
+        assert_eq!(host.stop_reason(), Some("tray_restart"));
+        assert!(host.stop.load(Ordering::Acquire));
+        assert!(host.restart.load(Ordering::Acquire));
     }
 }

@@ -365,6 +365,7 @@ pub struct Host {
     pub web_sessions: Mutex<HashMap<String, WebSession>>,
     pub stop: std::sync::atomic::AtomicBool,
     pub restart: std::sync::atomic::AtomicBool,
+    stop_reason: Mutex<Option<&'static str>>,
     /// Wakes the maintenance loop (`runtime::maintain`) from an idle wait:
     /// [`Host::wake_maintenance`].
     maintain_wake: Arc<tokio::sync::Notify>,
@@ -561,6 +562,32 @@ impl Host {
     /// What [`Host::wake_maintenance`] notifies.
     pub(crate) fn maintain_wake(&self) -> &Arc<tokio::sync::Notify> {
         &self.maintain_wake
+    }
+    /// Records the first reason the host was asked to stop so the exit log names it.
+    pub fn note_stop_reason(&self, reason: &'static str) {
+        let mut guard = self
+            .stop_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.get_or_insert(reason);
+    }
+    /// The first stop reason recorded, if any.
+    pub fn stop_reason(&self) -> Option<&'static str> {
+        *self
+            .stop_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// Asks the host to stop (and optionally restart) for `reason` and wakes the
+    /// maintenance loop.
+    pub fn request_stop(&self, reason: &'static str, restart: bool) {
+        self.note_stop_reason(reason);
+        if restart {
+            self.restart
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        self.wake_maintenance();
     }
     /// Keeps a failed session's reason for its device's `/serverinfo`, unless
     /// the device launched again after that session started: an old stream's
@@ -980,6 +1007,7 @@ impl Host {
             web_sessions: Mutex::new(web_sessions),
             stop: std::sync::atomic::AtomicBool::new(false),
             restart: std::sync::atomic::AtomicBool::new(false),
+            stop_reason: Mutex::new(None),
             maintain_wake,
             codecs: std::sync::atomic::AtomicU32::new(0),
             encoder_probe_error: Mutex::new(None),
