@@ -279,18 +279,20 @@ pub const CLEAR_WINDOWS: u32 = 6;
 /// A source below this share of what the stream can show counts as the limit:
 /// 116 of 120 fps is below it (the issue #124 game), a healthy 119.x is not.
 const LOW_PERCENT: u32 = 97;
-/// Below two new pictures a second there is nothing to judge: the picture is
-/// static and the host repeats what it has, which is not a slow game.
-const STATIC_MHZ: u32 = 2_000;
-/// A standing warning is re-worded at most this often, when the rate moved.
-pub const REWORD: Duration = Duration::from_secs(30);
+/// Below ten new pictures a second there is nothing to judge: the picture is a
+/// menu, a loading screen or a still desktop, not a game too slow to keep up,
+/// and its advice to raise the game's frame cap would be wrong.
+const STATIC_MHZ: u32 = 10_000;
+/// A standing warning is re-worded at most this often, when the rate moved, so
+/// a game that hovers at its limit does not fill the log.
+pub const REWORD: Duration = Duration::from_secs(60);
 
 /// What a complete timing window says about the source rate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceRateWarning {
-    /// The game or desktop is the limit: its rate, and the rate it was measured
-    /// against (the stream's, or the display's when that is lower), both rounded
-    /// to 5 fps, in millihertz, to show.
+    /// The game or desktop is the limit: its rate, rounded to 5 fps for the
+    /// message, and the exact rate it was measured against (the stream's, or
+    /// the display's when that is lower), both in millihertz.
     Below { source_mhz: u32, limit_mhz: u32 },
     /// The source keeps up with the stream again.
     Cleared,
@@ -393,7 +395,7 @@ impl SourceRate {
                 self.told = Some(now);
                 return Some(SourceRateWarning::Below {
                     source_mhz: rounded,
-                    limit_mhz: rounded_fps(limit_mhz),
+                    limit_mhz,
                 });
             }
             return None;
@@ -408,7 +410,7 @@ impl SourceRate {
                 self.good_windows = 0;
                 return Some(SourceRateWarning::Below {
                     source_mhz: rounded,
-                    limit_mhz: rounded_fps(limit_mhz),
+                    limit_mhz,
                 });
             }
         } else {
@@ -422,6 +424,29 @@ impl SourceRate {
 /// zero: jitter in one window must not re-word a standing warning.
 fn rounded_fps(mhz: u32) -> u32 {
     (mhz.saturating_add(2_500) / 5_000 * 5_000).max(1_000)
+}
+
+/// The stream card's wording for [`SourceRateWarning::Below`]. `pushed`: the
+/// capture is Rubylight's own virtual display (`idd-push`), whose frame push is
+/// the limit there rather than the game; `game`: a game is streaming, not the
+/// desktop. `source_mhz` and `limit_mhz` are in millihertz: a 144 fps stream says
+/// 144 and 59.94 fps rounds to 60.
+pub fn below_message(pushed: bool, game: bool, source_mhz: u32, limit_mhz: u32) -> String {
+    let source_fps = source_mhz.saturating_add(500) / 1000;
+    let limit_fps = limit_mhz.saturating_add(500) / 1000;
+    if pushed {
+        format!(
+            "Rubylight's virtual display is delivering about {source_fps} fps, below the {limit_fps} fps this stream can show; the display's frame push is the limit here, not the game's own frame rate. Check the virtual display driver, or lower the stream's frame rate to match."
+        )
+    } else if game {
+        format!(
+            "The game is rendering about {source_fps} fps, below the {limit_fps} fps this stream can show, so the picture cannot run smoother than that. Raise the game's own frame-rate cap, lower its resolution or graphics settings, or lower the stream's frame rate to match."
+        )
+    } else {
+        format!(
+            "The PC's screen is updating about {source_fps} times a second, below the {limit_fps} fps this stream can show."
+        )
+    }
 }
 
 #[cfg(test)]
@@ -785,10 +810,13 @@ mod tests {
         // The number follows the rate, but not before `REWORD`.
         assert_eq!(at(&mut watch, t, 3, TARGET, 60_000), None);
         assert_eq!(at(&mut watch, t, 4, TARGET, 62_000), None);
-        assert_eq!(at(&mut watch, t, 8, TARGET, 60_000), below(60, 120));
+        assert_eq!(at(&mut watch, t, 13, TARGET, 60_000), None);
+        assert_eq!(at(&mut watch, t, 14, TARGET, 60_000), below(60, 120));
         // Once shown, a rate in the same 5 fps step says nothing new.
         assert_eq!(at(&mut watch, t, 15, TARGET, 59_000), None);
-        assert_eq!(at(&mut watch, t, 16, TARGET, 31_000), below(30, 120));
+        // A re-word waits for `REWORD` from the last one.
+        assert_eq!(at(&mut watch, t, 16, TARGET, 31_000), None);
+        assert_eq!(at(&mut watch, t, 26, TARGET, 31_000), below(30, 120));
     }
 
     #[test]
@@ -844,6 +872,68 @@ mod tests {
         );
         // A slow picture after the clear starts a new streak, not a warning.
         assert_eq!(at(&mut watch, t, 29, TARGET, 60_000), None);
+    }
+
+    /// Five new pictures a second is a menu, a spinner or a loading screen, not a game whose
+    /// frame cap the user should raise: below the static floor it never warns.
+    #[test]
+    fn a_five_fps_menu_is_not_a_slow_game() {
+        let mut watch = SourceRate::default();
+        let t = Instant::now();
+        for n in 0..20 {
+            assert_eq!(at(&mut watch, t, n, TARGET, 5_000), None, "{n}");
+        }
+        // Ten fps is moving content: three complete windows still warn.
+        assert_eq!(at(&mut watch, t, 20, TARGET, 10_000), None);
+        assert_eq!(at(&mut watch, t, 21, TARGET, 10_000), None);
+        assert_eq!(at(&mut watch, t, 22, TARGET, 10_000), below(10, 120));
+    }
+
+    /// The limit the warning carries is the stream's exact rate: a 144 fps stream is 144, not
+    /// the 145 that rounding its 1000 Hz display's refresh produced.
+    #[test]
+    fn the_limit_is_the_streams_exact_rate() {
+        let mut watch = SourceRate::default();
+        let t = Instant::now();
+        assert_eq!(at(&mut watch, t, 0, 144_000, 125_000), None);
+        assert_eq!(at(&mut watch, t, 1, 144_000, 125_000), None);
+        assert_eq!(at(&mut watch, t, 2, 144_000, 125_000), below(125, 144));
+        let mut vrr = SourceRate::default();
+        assert_eq!(
+            at_display(&mut vrr, t, 0, 144_000, Some(1_000_000), 70_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut vrr, t, 1, 144_000, Some(1_000_000), 70_000),
+            None
+        );
+        assert_eq!(
+            at_display(&mut vrr, t, 2, 144_000, Some(1_000_000), 70_000),
+            below(70, 144)
+        );
+    }
+
+    /// `idd-push` blames the virtual display's frame push, not the game, and exact stream rates
+    /// like 144 and 59.94 show as 144 and 60 fps.
+    #[test]
+    fn wording_matches_the_capture_backend_and_exact_stream_rate() {
+        let pushed = below_message(true, true, 70_000, 144_000);
+        assert!(
+            pushed.contains("70 fps") && pushed.contains("144 fps"),
+            "{pushed}"
+        );
+        assert!(pushed.contains("not the game's own frame rate"), "{pushed}");
+        assert!(!pushed.contains("Raise the game's own"), "{pushed}");
+
+        let game = below_message(false, true, 50_000, 59_940);
+        assert!(game.contains("50 fps") && game.contains("60 fps"), "{game}");
+        assert!(game.contains("Raise the game's own"), "{game}");
+
+        let desktop = below_message(false, false, 30_000, 144_000);
+        assert!(
+            desktop.contains("30 times a second") && desktop.contains("144 fps"),
+            "{desktop}"
+        );
     }
 
     #[test]

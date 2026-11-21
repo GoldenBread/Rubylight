@@ -899,39 +899,47 @@ impl SessionThread<'_> {
                         // game below it is the limit that every per-stage
                         // number hides. A new warning or a re-word writes one
                         // WARN line; `SourceRate` limits re-words to one per
-                        // 30 s.
+                        // 60 s (`REWORD`).
                         if let Some(change) = source_rate.window(now, stream.fps_millihz(), display_mhz, source_mhz) {
-                            use butterpollo_core::pipeline_rates::SourceRateWarning;
+                            use butterpollo_core::pipeline_rates::{SourceRateWarning, below_message};
                             match change {
                                 SourceRateWarning::Below { source_mhz, limit_mhz } => {
-                                    let source_fps = source_mhz / 1000;
-                                    let limit_fps = limit_mhz / 1000;
+                                    // `idd-push` frames come from Rubylight's own virtual
+                                    // display driver: a low rate there is the display's frame
+                                    // push (item 8 of #142), not the game's own rate.
+                                    let pushed = backend == "idd-push";
                                     tracing::warn!(
                                         client = %s.launch.client.name,
-                                        source_fps,
+                                        source_fps = source_mhz / 1000,
                                         stream_fps = stream.fps_millihz() as f64 / 1000.,
                                         display_fps = display_mhz.map(|mhz| mhz as f64 / 1000.),
-                                        "the game or desktop is the frame-rate limit"
+                                        capture = backend,
+                                        "{}",
+                                        if pushed {
+                                            "the virtual display's frame push is the frame-rate limit"
+                                        } else {
+                                            "the game or desktop is the frame-rate limit"
+                                        }
                                     );
-                                    // A desktop stream has no game to advise
-                                    // about, so it says what the screen does
-                                    // and nothing more.
-                                    let message = if crate::stream::launch_app(&h, &s.launch).is_some() {
-                                        format!(
-                                            "The game is rendering about {source_fps} fps, below the {limit_fps} fps this stream can show, so the picture cannot run smoother than that. Raise the game's own frame-rate cap, lower its resolution or graphics settings, or lower the stream's frame rate to match."
-                                        )
-                                    } else {
-                                        format!(
-                                            "The PC's screen is updating about {source_fps} times a second, below the {limit_fps} fps this stream can show."
-                                        )
-                                    };
+                                    let message = below_message(
+                                        pushed,
+                                        crate::stream::launch_app(&h, &s.launch).is_some(),
+                                        source_mhz,
+                                        limit_mhz,
+                                    );
                                     s.launch.warnings.set("source_frame_rate", message);
                                 }
                                 SourceRateWarning::Cleared => {
                                     s.launch.warnings.clear("source_frame_rate");
                                     tracing::info!(
                                         client = %s.launch.client.name,
-                                        "the game or desktop keeps up with the stream's frame rate again"
+                                        capture = backend,
+                                        "{}",
+                                        if backend == "idd-push" {
+                                            "the virtual display keeps up with the stream's frame rate again"
+                                        } else {
+                                            "the game or desktop keeps up with the stream's frame rate again"
+                                        }
                                     );
                                 }
                             }
