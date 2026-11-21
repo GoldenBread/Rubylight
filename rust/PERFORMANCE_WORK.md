@@ -2714,6 +2714,31 @@ what the sender-thread and AMF-poll work would change.
 
 Artifacts: `bench-rc21\lp-*`, `rt-*`, `pc-*`.
 
+### Realtime priority measured again (2026-11-21, RX 7900 XT)
+
+Two realtime options on 6a3a2738c9 with temporary env switches (not
+committed): (B) the retired realtime compute queue and (C) process-wide GPU
+scheduling priority REALTIME (5) on AMD instead of HIGH (4). Release build,
+isolated test host on loopback, elevated, HEVC 2560x1440x120 at 80 Mb/s,
+45 s legs, `--record --skip-first 5`, beside `gpu_load 45 1000 60 200`,
+order A B B A, A C C A; picture age in ms.
+
+| Leg | p50 / p95 / p99 | claim_wait mean / p95 | Encode p95 |
+|---|---|---|---|
+| A (as main), four legs | 5.40-11.17 / 6.40-15.52 / 10.80-16.72 | 0.12-3.33 / 0.06-11.11 | 3.03-3.14 |
+| B, two legs | 5.63-7.02 / 10.85-10.92 / 14.62-15.12 | 0.21-1.00 / 0.93-2.96 | 3.04-3.07 |
+| C, two legs | 5.47-7.30 / 10.14-14.03 / 13.71-16.71 | 0.27-2.93 / 0.92-11.13 | 3.03-3.08 |
+
+Idle the three arms matched (p50 5.6, p95 5.7-5.8 ms), no leg dropped
+frames, hung the encoder or reset the driver. B did not take effect: the
+host logged compute queue priority 100 on both legs, so D3D12 refused
+GLOBAL_REALTIME to an elevated administrator (rc.22's run had it granted)
+and B is unmeasured. C took effect (scheduling priority 5) but its legs
+overlap A's, with a worse median on one leg: not better, so AMD stays at
+HIGH. A's own legs spread from 6.4 to 15.5 ms p95 under this load, wider
+than any difference between arms. Artifacts:
+`D:\CodexArtifacts\host-rt-ab\runs\e2e-t*`.
+
 ### First remote client: the laptop over Wi-Fi
 
 Moonlight-qt 6.1.0 on a Radeon 780M laptop (driver 32.0.31035.1003, D3D11VA,
