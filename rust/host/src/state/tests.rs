@@ -578,6 +578,84 @@ mod packed_reprobe {
         assert_eq!(f.host.packed_session_waits.load(Ordering::Acquire), 0);
     }
 
+    /// A launch is ready once the standard codecs are published: it never waits for the packed
+    /// 4:4:4 probe, which a launch does not ask for. `/serverinfo`, which offers the modes,
+    /// waits for the probe up to its deadline.
+    #[test]
+    fn launch_readiness_does_not_wait_for_the_packed_probe() {
+        const PROBE: Duration = Duration::from_millis(600);
+        fn probe(_: &Config, _: &Negotiated, _: &dyn Fn() -> bool) -> anyhow::Result<()> {
+            std::thread::sleep(PROBE);
+            Ok(())
+        }
+        let f = off();
+        f.host.startup_codecs.send_replace(false);
+        f.host.startup_packed.send_replace(false);
+        f.host.codecs.store(CODECS, Ordering::Release);
+        let config = packed_on(&f);
+        let began = Instant::now();
+        let pass = {
+            let host = f.host.clone();
+            std::thread::spawn(move || host.publish_standard_codecs(&config, CODECS, probe))
+        };
+        f.host
+            .wait_for_startup_codecs_blocking(Duration::from_secs(5));
+        let launch_ready = began.elapsed();
+        assert!(*f.host.startup_codecs.borrow());
+        assert!(
+            !*f.host.startup_packed.borrow(),
+            "the packed probe is still running"
+        );
+        assert!(launch_ready < PROBE / 2, "a launch waited {launch_ready:?}");
+        // A `/serverinfo` that cannot wait that long offers what is known.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let short = Instant::now();
+        runtime.block_on(
+            f.host
+                .wait_for_startup_packed(Instant::now() + Duration::from_millis(100)),
+        );
+        assert!(short.elapsed() < PROBE / 2);
+        assert!(!*f.host.startup_packed.borrow());
+        // One that can wait gets every mode once the probe has finished.
+        runtime.block_on(
+            f.host
+                .wait_for_startup_packed(Instant::now() + Duration::from_secs(10)),
+        );
+        let serverinfo_ready = began.elapsed();
+        pass.join().unwrap();
+        assert!(serverinfo_ready >= PROBE, "{serverinfo_ready:?}");
+        assert_ne!(offered(&f), 0);
+        eprintln!("launch ready after {launch_ready:?}, serverinfo after {serverinfo_ready:?}");
+    }
+
+    /// A launch queued while the packed probe runs has the encoder: the probe yields and
+    /// leaves its modes pending for after the stream.
+    #[test]
+    fn the_packed_probe_yields_to_a_launch_that_starts_meanwhile() {
+        fn probe(_: &Config, _: &Negotiated, _: &dyn Fn() -> bool) -> anyhow::Result<()> {
+            unreachable!("no mode is probed while a stream starts");
+        }
+        let f = off();
+        f.host.codecs.store(CODECS, Ordering::Release);
+        let config = packed_on(&f);
+        // A stream is starting or ending: the sessions are not idle.
+        f.host
+            .sessions
+            .lock()
+            .unwrap()
+            .teardown
+            .insert("stream".into(), Instant::now());
+        f.host.publish_standard_codecs(&config, CODECS, probe);
+        assert!(*f.host.startup_codecs.borrow() && *f.host.startup_packed.borrow());
+        assert_eq!(
+            f.host.packed_probe_pending.load(Ordering::Acquire),
+            butterpollo_core::packed444::ALL_MODES
+        );
+    }
+
     /// Only the modes that need a session wait: a mode that fails
     /// otherwise is final at once, and one that passes is offered.
     #[test]

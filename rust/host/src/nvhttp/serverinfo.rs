@@ -87,7 +87,11 @@ pub(super) async fn serverinfo(
     headers: axum::http::HeaderMap,
 ) -> Response {
     h.request_codec_probe();
+    let deadline = Instant::now() + STARTUP_CODEC_WAIT;
     h.wait_for_startup_codecs(STARTUP_CODEC_WAIT).await;
+    // The `Packed444Modes` below is what the startup probe found: a client that connects at
+    // once would otherwise cache none. A launch does not wait for it.
+    h.wait_for_startup_packed(deadline).await;
     let config = h.config_snapshot();
     let client = authenticated(&h, &connection, 0).ok();
     if let Some(client) = &client {

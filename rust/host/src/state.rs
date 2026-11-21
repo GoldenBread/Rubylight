@@ -407,6 +407,10 @@ pub struct Host {
     /// True once the startup probe has published its standard codecs, or
     /// found none. Later probes never hold requests back.
     pub(crate) startup_codecs: tokio::sync::watch::Sender<bool>,
+    /// True once the startup pass has also probed the packed 4:4:4 modes (or left them to a
+    /// later probe), so `packed_modes` is what the host knows. Only `/serverinfo`, which
+    /// offers the mask to clients, waits for it; a launch needs the standard codecs alone.
+    pub(crate) startup_packed: tokio::sync::watch::Sender<bool>,
     pub warnings: Warnings,
     pub current_app: Mutex<Option<crate::process::RunningApp>>,
     pub launch_transition: Mutex<()>,
@@ -995,6 +999,7 @@ impl Host {
             probing_codecs: std::sync::atomic::AtomicBool::new(true),
             codec_probe_requested: std::sync::atomic::AtomicBool::new(false),
             startup_codecs: tokio::sync::watch::channel(false).0,
+            startup_packed: tokio::sync::watch::channel(false).0,
             warnings,
             current_app: Mutex::new(None),
             launch_transition: Mutex::new(()),
@@ -1113,6 +1118,18 @@ impl Host {
         let mut ready = self.startup_codecs.subscribe();
         let _ = tokio::time::timeout(limit, ready.wait_for(|ready| *ready)).await;
     }
+    /// Wait until `deadline` for the startup pass's packed 4:4:4 probe, which runs after the
+    /// standard codecs are published. `/serverinfo` offers `Packed444Modes` from it; a launch
+    /// does not wait, because packed 4:4:4 is negotiated in the RTSP handshake from what
+    /// serverinfo offered, never asked for in `/launch`.
+    pub async fn wait_for_startup_packed(&self, deadline: Instant) {
+        let mut ready = self.startup_packed.subscribe();
+        let _ = tokio::time::timeout(
+            deadline.saturating_duration_since(Instant::now()),
+            ready.wait_for(|ready| *ready),
+        )
+        .await;
+    }
     /// `wait_for_startup_codecs` for a launch, which runs on a blocking thread.
     pub fn wait_for_startup_codecs_blocking(&self, limit: Duration) {
         let deadline = Instant::now() + limit;
@@ -1147,6 +1164,7 @@ impl Host {
                     // again once it has ended, without judging this attempt.
                     h.probing_codecs.store(false, Ordering::Release);
                     h.startup_codecs.send_replace(true);
+                    h.startup_packed.send_replace(true);
                     h.metadata.lock().unwrap().take();
                     tracing::debug!("encoder capability probe paused for a stream");
                     if !h.wait_for_codec_retry(&retry) {
@@ -1162,6 +1180,7 @@ impl Host {
                 });
                 h.probing_codecs.store(false, Ordering::Release);
                 h.startup_codecs.send_replace(true);
+                h.startup_packed.send_replace(true);
                 if h.stop.load(Ordering::Acquire) {
                     return;
                 }
@@ -1379,15 +1398,7 @@ impl Host {
         // probe. A driver/overlay failure in that child cannot kill them.
         self.codecs
             .store(flags | pyrowave, std::sync::atomic::Ordering::Release);
-        // The standard codecs are probed: a stream that starts from here on
-        // leaves the optional probes for after it, and the pass completes.
-        self.pass_packed_probe(
-            config,
-            flags,
-            &busy,
-            butterpollo_windows::codec_probe::packed,
-        );
-        self.startup_codecs.send_replace(true);
+        self.publish_standard_codecs(config, flags, butterpollo_windows::codec_probe::packed);
         let mut retry_pyrowave = None;
         if config.boolean("pyrowave", true) && !self.stop.load(std::sync::atomic::Ordering::Acquire)
         {
@@ -1401,6 +1412,17 @@ impl Host {
             retry_pyrowave = retry;
         }
         Ok(Some((flags, first_error, retry_pyrowave)))
+    }
+    /// The standard codecs are probed: launches go on at once, and a stream that starts from
+    /// here on leaves the optional probes for after it, so the pass completes. The packed
+    /// 4:4:4 probe then runs on, and `/serverinfo` waits for it (`startup_packed`). A launch
+    /// that starts meanwhile has the encoder: the probe yields to it and runs again once the
+    /// stream has ended, as a retry pass does, and not at the same time (an AMD encoder hang).
+    fn publish_standard_codecs(&self, config: &Config, flags: u32, probe: PackedProbe) {
+        self.startup_codecs.send_replace(true);
+        let streaming = || !self.sessions.lock().unwrap().idle();
+        self.pass_packed_probe(config, flags, &streaming, probe);
+        self.startup_packed.send_replace(true);
     }
     /// A codec pass's packed 4:4:4 probe of every mode `flags` allows. The
     /// modes a stream stopped, or that need a signed-in user's session, as

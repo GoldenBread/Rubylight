@@ -36,6 +36,7 @@ impl Fixture {
         host.codecs.store(0x1 | 0x100 | 0x200, Ordering::Release);
         host.probing_codecs.store(false, Ordering::Release);
         host.startup_codecs.send_replace(true);
+        host.startup_packed.send_replace(true);
         Self { host }
     }
     pub fn client(&self, perm: u32) -> Client {
