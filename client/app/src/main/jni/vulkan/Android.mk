@@ -18,7 +18,7 @@ LOCAL_C_INCLUDES := $(LOCAL_PATH)
 LOCAL_CPPFLAGS += -std=c++17 -Wall -include $(LOCAL_PATH)/li_compat.h
 
 # Vulkan and the API 26+ NDK libraries are loaded at runtime (see ndk_api.h and vk_api.h),
-# since the app's native code is built for API 21
+# since the app's native code is built for API 25
 LOCAL_LDLIBS := -llog -landroid -ldl
 
 include $(BUILD_SHARED_LIBRARY)

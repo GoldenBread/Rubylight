@@ -10,7 +10,7 @@
 namespace {
 
 // ANativeWindow_setBuffersDataSpace and ANativeWindow_getBuffersDataSpace are API 28 and the app's
-// native code is built for API 21. dlsym(RTLD_DEFAULT) searches only the app's linker namespace,
+// native code is built for API 25. dlsym(RTLD_DEFAULT) searches only the app's linker namespace,
 // which holds neither library, so each is opened and searched by handle. They stay loaded.
 constexpr const char* kLibraries[] = {"libnativewindow.so", "libandroid.so"};
 

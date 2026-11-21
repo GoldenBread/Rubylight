@@ -1,6 +1,6 @@
 #pragma once
 
-// The app builds native code against API 21, but the Vulkan renderer needs NDK functions
+// The app builds native code against API 25, but the Vulkan renderer needs NDK functions
 // from API 26-30. They are looked up at runtime so the library still loads on older
 // devices, where the Java side never enables the Vulkan renderer.
 
