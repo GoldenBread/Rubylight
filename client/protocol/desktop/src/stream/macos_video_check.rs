@@ -32,7 +32,6 @@ fn draw(
             color_range: 0,
         },
         number: 1,
-        follows: true, history_breaks: 1,
         rtp: 0,
         receive_us: 0,
         enqueue_us: 0,

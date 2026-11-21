@@ -352,22 +352,9 @@ public class MediaCodecDecoderRendererTest {
     }
 
     @Test
-    public void temporalThatFellBackIsShownAsSgsrWithTheReasonItRuns() {
-        String[] names = {"Off", "Smooth", "Sharp (FSR)", "Sharp, Snapdragon (SGSR)", "Temporal, Snapdragon (SGSR 2)"};
-        String unavailable = "%1$s; temporal upscaling unavailable";
-        assertEquals("Temporal, Snapdragon (SGSR 2)",
-                MediaCodecDecoderRenderer.glesModeName(names, UpscalingPolicy.Mode.SGSR2, false, unavailable));
-        assertEquals("Sharp, Snapdragon (SGSR); temporal upscaling unavailable",
-                MediaCodecDecoderRenderer.glesModeName(names, UpscalingPolicy.Mode.SGSR2, true, unavailable));
-        assertEquals("Sharp (FSR)", MediaCodecDecoderRenderer.glesModeName(names, UpscalingPolicy.Mode.FSR1, true, unavailable));
-
-        assertEquals("Temporal (Vulkan)", MediaCodecDecoderRenderer.pyroWaveModeName(
-                PyroWaveDecoderRenderer.TEMPORAL_ACTIVE, UpscalingPolicy.Mode.SGSR2, "Smooth", unavailable));
-        assertEquals("SGSR (Vulkan); temporal upscaling unavailable", MediaCodecDecoderRenderer.pyroWaveModeName(
-                PyroWaveDecoderRenderer.TEMPORAL_FALLBACK, UpscalingPolicy.Mode.SGSR2, "Smooth", unavailable));
-        assertEquals("SGSR (Vulkan)", MediaCodecDecoderRenderer.pyroWaveModeName(
-                PyroWaveDecoderRenderer.TEMPORAL_OFF, UpscalingPolicy.Mode.FSR1, "Smooth", unavailable));
-        assertEquals("Smooth", MediaCodecDecoderRenderer.pyroWaveModeName(
-                PyroWaveDecoderRenderer.TEMPORAL_OFF, UpscalingPolicy.Mode.BILINEAR, "Smooth", unavailable));
+    public void pyroWaveModeNameSelectsBilinearOrSgsr() {
+        assertEquals("SGSR (Vulkan)", MediaCodecDecoderRenderer.pyroWaveModeName(UpscalingPolicy.Mode.FSR1, "Smooth"));
+        assertEquals("SGSR (Vulkan)", MediaCodecDecoderRenderer.pyroWaveModeName(UpscalingPolicy.Mode.SGSR1, "Smooth"));
+        assertEquals("Smooth", MediaCodecDecoderRenderer.pyroWaveModeName(UpscalingPolicy.Mode.BILINEAR, "Smooth"));
     }
 }

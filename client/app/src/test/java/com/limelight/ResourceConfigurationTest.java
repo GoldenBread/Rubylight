@@ -31,9 +31,7 @@ public class ResourceConfigurationTest {
 
     @Test
     public void upscalingLabelsAndValuesMatchGlobalHostAndOverlayModeOrder() throws Exception {
-        // Temporal (SGSR2) is no longer offered; a stored one reads as SGSR, so the lists omit it.
-        UpscalingPolicy.Mode[] modes = java.util.Arrays.stream(UpscalingPolicy.Mode.values())
-                .filter(mode -> mode != UpscalingPolicy.Mode.SGSR2).toArray(UpscalingPolicy.Mode[]::new);
+        UpscalingPolicy.Mode[] modes = UpscalingPolicy.Mode.values();
         NodeList arrays = read("res/values/arrays.xml").getElementsByTagName("string-array");
         int checked = 0;
         for (int i = 0; i < arrays.getLength(); i++) {

@@ -22,3 +22,6 @@ venv/
 
 # WebRTC e2e: the browser client is fetched at its pin, never vendored
 /rust/tests/fixtures/webrtc-web/
+
+# Local scratch drafts (APKs, PNGs, prototype dependencies)
+/drafts/

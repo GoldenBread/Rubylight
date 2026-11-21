@@ -408,7 +408,6 @@
     <string name="upscaling_bilinear">スムーズ</string>
     <string name="upscaling_fsr1">シャープ（FSR）</string>
     <string name="upscaling_sgsr1">シャープ、Snapdragon（SGSR）</string>
-    <string name="upscaling_temporal_unavailable">%1$s。テンポラルアップスケーリングは利用できません</string>
     <string name="summary_upscaling">画面より小さいストリームの拡大方法です。FSRとSGSRはエッジをシャープにしますが、GPU時間とバッテリーを少し使います。HDRストリームはこれらを使わずに拡大されます。</string>
     <string name="title_upscaling_sharpness">アップスケーリングのシャープネス</string>
     <string name="summary_upscaling_sharpness" formatted="false">FSR または SGSR が加えるシャープ化の強さです。輪郭がぼやける場合は上げ、輪郭に縁取り（ハロー）が出る場合は下げてください。</string>

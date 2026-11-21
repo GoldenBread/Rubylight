@@ -90,32 +90,6 @@ public class UpscalingShaderTest {
     }
 
     @Test
-    public void temporalShadersDeclareTheInputsGlesTemporalUpscalerSets() throws Exception {
-        String[][] uniforms = {
-                {"temporal_prep.frag", "samplerExternalOES source;", "uniform mat4 textureTransform;", "uniform vec2 renderSize;",
-                        "layout(location = 0) out vec4 color;", "layout(location = 1) out vec4 luma;"},
-                {"temporal_down.frag", "sampler2D level;"},
-                {"temporal_motion.frag", "sampler2D cur0;", "sampler2D cur1;", "sampler2D cur2;", "sampler2D prev0;",
-                        "sampler2D prev1;", "sampler2D prev2;", "sampler2D prevMotion;"},
-                {"temporal_cut.frag", "sampler2D motion;"},
-                {"temporal_accumulate.frag", "sampler2D frame;", "sampler2D motion;", "sampler2D cut;", "sampler2D history;",
-                        "uniform vec2 renderSize;", "uniform vec2 outputSize;", "uniform float reset;", "uniform float boxStatic;"},
-                {"temporal_detail.frag", "sampler2D frame;", "sampler2D history;", "uniform vec4 viewportInfo;",
-                        "uniform vec2 outputSize;", "uniform float edgeSharpness;", "in vec2 uv;"},
-        };
-        for (String[] shader : uniforms) {
-            String text = source(shader[0]);
-            assertTrue(shader[0], text.startsWith("#version 300 es\n"));
-            assertTrue(shader[0], text.contains("precision highp float;"));
-            assertEquals(shader[0], 1, occurrences(text, "void main()"));
-            assertFalse(shader[0], text.contains("gl_FragColor"));
-            for (int i = 1; i < shader.length; i++) assertTrue(shader[0] + ": " + shader[i], text.contains(shader[i]));
-        }
-        assertTrue(source("temporal_accumulate.frag").contains("NOTICE-SGSR2.txt"));
-        assertTrue(Files.readString(Path.of("src/main/assets/NOTICE-SGSR2.txt")).contains("BSD-3-Clause"));
-    }
-
-    @Test
     public void sgsrRetainsTheMobileKernelAndPackagedBsdNotice() throws Exception {
         String sgsr = source("sgsr.frag");
         assertEquals(12, occurrences(sgsr, "weightY(pl.x"));

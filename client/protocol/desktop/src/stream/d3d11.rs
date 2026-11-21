@@ -108,25 +108,6 @@ impl Filter {
     }
 }
 
-/// A texture on the device of `like` that the temporal upscaler renders into and reads: R16F
-/// (`vector` false) or RGBA16F, cleared to zero.
-pub unsafe fn half_float_target(like: *mut c_void, size: (u32, u32), vector: bool) -> windows::core::Result<ID3D11Texture2D> {
-    let like = ID3D11Texture2D::from_raw_borrowed(&like).unwrap();
-    let device = like.GetDevice()?;
-    let mut texture = None;
-    device.CreateTexture2D(&D3D11_TEXTURE2D_DESC {
-        Width: size.0, Height: size.1, MipLevels: 1, ArraySize: 1,
-        Format: if vector { DXGI_FORMAT_R16G16B16A16_FLOAT } else { DXGI_FORMAT_R16_FLOAT },
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
-        BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32, ..Default::default()
-    }, None, Some(&mut texture))?;
-    let texture = texture.unwrap();
-    let mut view = None;
-    device.CreateRenderTargetView(&texture, None, Some(&mut view))?;
-    device.GetImmediateContext()?.ClearRenderTargetView(view.as_ref().unwrap(), &[0.0; 4]);
-    Ok(texture)
-}
-
 /// Converts the GPU PyroWave decoder's planes to linear RGB in the renderer's target texture.
 pub struct PlanesPass {
     context: ID3D11DeviceContext,

@@ -1,6 +1,5 @@
 // PyroWave's YCbCr planes (u_y, u_cb, u_cr, declared by the including shader) to RGB, unclamped;
-// shared by planar_csc.frag and temporal_prep.frag. Adapted from joemossjr16/artemis-android-pyrowave
-// (GPL-3.0).
+// used by planar_csc.frag. Adapted from joemossjr16/artemis-android-pyrowave (GPL-3.0).
 vec3 pyroPlanesToRgb(vec2 uv, int tenBit, int hdr, int fullRange) {
     vec2 cuv = uv;
     // The Rubylight host averages each 2x2 chroma block, so its sampling is centred.

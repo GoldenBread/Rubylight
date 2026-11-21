@@ -48,7 +48,6 @@ public class PyroWaveRendererLockingTest {
             renderer.getDriver();
             renderer.getWaits();
             renderer.getUpscalingReason();
-            renderer.temporalState();
             renderer.getPresentMode();
             renderer.getLastGpuDecodeUs();
             renderer.getEarlyRecords();

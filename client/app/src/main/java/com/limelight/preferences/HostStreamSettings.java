@@ -1148,8 +1148,7 @@ public class HostStreamSettings extends NightjarActivity {
             findPreference("sharpness").setSummary(summary(HostStreamProfile.Field.SHARPNESS, own.upscalingSharpness != null,
                     getString(R.string.upscaling_sharpness_value, config.upscalingSharpness)));
             findPreference("sharpness").setEnabled(config.upscalingMode == UpscalingPolicy.Mode.FSR1 ||
-                    config.upscalingMode == UpscalingPolicy.Mode.SGSR1 ||
-                    config.upscalingMode == UpscalingPolicy.Mode.SGSR2);
+                    config.upscalingMode == UpscalingPolicy.Mode.SGSR1);
             for (String key : new String[] {"hdr", "yuv444", "full_range"}) {
                 findPreference(key).setSummary(summary(switchField(key), switchOverride(key) != null, switchText(key, switchValue(config, key))));
             }

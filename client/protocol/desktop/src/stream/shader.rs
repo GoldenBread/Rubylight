@@ -8,8 +8,6 @@ pub(super) enum Shader {
     #[cfg(unix)]
     Planes,
     Packed,
-    /// One of the temporal upscaler's passes (`stream::temporal`).
-    Temporal(super::temporal::Stage),
 }
 
 impl Shader {
@@ -22,15 +20,6 @@ impl Shader {
         }
     }
 
-    /// The Direct3D 11 source of a temporal pass: `temporal.hlsl` with the pass selected.
-    #[cfg(windows)]
-    pub fn temporal_hlsl(stage: super::temporal::Stage) -> Vec<u8> {
-        let mut source = format!("#define TEMPORAL_{}
-", stage.name().to_uppercase()).into_bytes();
-        source.extend_from_slice(include_bytes!("../temporal.hlsl"));
-        source
-    }
-
     pub fn info(self) -> SDL_GPUShaderCreateInfo {
         #[cfg(target_os = "macos")]
         let (code, entrypoint, format): (&[u8], _, _) = (
@@ -39,7 +28,6 @@ impl Shader {
                 Self::Wavelet => include_bytes!("../metal/pyrowave.metal"),
                 Self::Planes => include_bytes!("../metal/pyrowave-planes.metal"),
                 Self::Packed => include_bytes!("../metal/packed444.metal"),
-                Self::Temporal(stage) => stage.metal(),
             },
             c"nightjar_fragment",
             SDL_GPU_SHADERFORMAT_MSL,
@@ -67,7 +55,6 @@ impl Shader {
                 c"fragment",
                 SDL_GPU_SHADERFORMAT_SPIRV,
             ),
-            Self::Temporal(stage) => (stage.spirv(), c"fragment", SDL_GPU_SHADERFORMAT_SPIRV),
         };
         SDL_GPUShaderCreateInfo {
             code: code.as_ptr(),
@@ -80,13 +67,9 @@ impl Shader {
                 // The three planes and Frame Warp's HUD mask.
                 #[cfg(unix)]
                 Self::Planes => 4,
-                Self::Temporal(stage) => stage.inputs(),
                 _ => 1,
             },
-            num_uniform_buffers: match self {
-                Self::Temporal(stage) => u32::from(stage.uniforms()),
-                _ => 1,
-            },
+            num_uniform_buffers: 1,
             num_storage_buffers: u32::from(matches!(self, Self::Packed)),
             ..Default::default()
         }
@@ -106,12 +89,6 @@ mod tests {
             ("pyrowave", include_bytes!("../pyrowave.spv"), include_str!("../metal/pyrowave.metal")),
             ("pyrowave-planes", include_bytes!("../pyrowave-planes.spv"), include_str!("../metal/pyrowave-planes.metal")),
             ("packed444", include_bytes!("../packed444.spv"), include_str!("../metal/packed444.metal")),
-            ("temporal-prep", include_bytes!("../temporal-prep.spv"), include_str!("../metal/temporal-prep.metal")),
-            ("temporal-down", include_bytes!("../temporal-down.spv"), include_str!("../metal/temporal-down.metal")),
-            ("temporal-motion", include_bytes!("../temporal-motion.spv"), include_str!("../metal/temporal-motion.metal")),
-            ("temporal-cut", include_bytes!("../temporal-cut.spv"), include_str!("../metal/temporal-cut.metal")),
-            ("temporal-accumulate", include_bytes!("../temporal-accumulate.spv"), include_str!("../metal/temporal-accumulate.metal")),
-            ("temporal-detail", include_bytes!("../temporal-detail.spv"), include_str!("../metal/temporal-detail.metal")),
         ] {
             let digest: String = Sha256::digest(spirv).iter().map(|byte| format!("{byte:02x}")).collect();
             assert_eq!(

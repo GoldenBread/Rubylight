@@ -10,7 +10,7 @@ public class UpscalingPolicyTest {
     @Test
     public void onlySmallerSdrMediaCodecStreamsUseTheGpu() {
         assertEquals(DISABLED, decision(OFF, 1280, 720, 1920, 1080, false, false, true));
-        for (UpscalingPolicy.Mode mode : new UpscalingPolicy.Mode[] {BILINEAR, FSR1, SGSR1, SGSR2}) {
+        for (UpscalingPolicy.Mode mode : new UpscalingPolicy.Mode[] {BILINEAR, FSR1, SGSR1}) {
             assertEquals(NONE, decision(mode, 1280, 720, 1920, 1080, false, false, true));
             assertEquals(NONE, decision(mode, 1920, 1080, 2560, 1440, false, false, true));
             assertEquals(HDR, decision(mode, 1280, 720, 1920, 1080, true, false, true));
@@ -167,24 +167,6 @@ public class UpscalingPolicyTest {
         for (int i = 0; i < 4 * window(60); i++) policy.recordFrame(4000000, 3);
         assertEquals(NONE, policy.getReason());
         policy.fail(SLOW);
-        assertEquals(SLOW, policy.getReason());
-    }
-
-    @Test
-    public void aSlowTemporalPassFallsBackToSgsr1BeforeEndingUpscaling() {
-        UpscalingPolicy policy = new UpscalingPolicy(120);
-        policy.setTemporalActive(true);
-        long over = 1000000000L / 120 + 2000000;
-        for (int i = 0; i < 2 * window(120); i++) policy.recordFrame(over, 0);
-        // The temporal passes went over budget for a whole window: SGSR 1 takes over, upscaling stays on.
-        assertEquals(NONE, policy.getReason());
-        assertTrue(policy.takeTemporalFallback());
-        assertFalse("taken once", policy.takeTemporalFallback());
-        // A fresh window: the frames that made temporal too slow are not held against SGSR 1.
-        policy.recordFrame(over, 0);
-        assertEquals(NONE, policy.getReason());
-        // A sustained overload of SGSR 1 itself still ends upscaling.
-        for (int i = 0; i < 3 * window(120) && policy.getReason() == NONE; i++) policy.recordFrame(over, 0);
         assertEquals(SLOW, policy.getReason());
     }
 

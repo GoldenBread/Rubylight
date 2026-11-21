@@ -63,19 +63,8 @@ impl Drop for Pass {
     }
 }
 
-/// What one draw does to temporal upscaling's history: `advance` a whole newly decoded picture
-/// moves it on, and `reset` drops it because the picture does not follow the last one drawn (a
-/// key frame, a lost frame's gap: `temporal::history_stale`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct History {
-    pub advance: bool,
-    pub reset: bool,
-}
-
 pub struct Upscaler {
     passes: Vec<Pass>,
-    /// Temporal upscaling's passes, which replace `passes` (`Upscaling::Sgsr2`).
-    temporal: Option<super::temporal::Temporal>,
     textures: [*mut SDL_Texture; 3],
     input: (i32, i32),
     output: (i32, i32),
@@ -83,10 +72,9 @@ pub struct Upscaler {
 }
 
 impl Upscaler {
-    /// The upscaler for `mode`, or why it cannot be made. Temporal upscaling's refusal is its
-    /// runtime probe: half-float targets or a pass's shader the GPU does not take.
+    /// The upscaler for `mode`, or why it cannot be made.
     pub fn new(renderer: *mut SDL_Renderer, input: (i32, i32), output: (i32, i32), mode: Upscaling) -> Result<Self, String> {
-        let mut result = Self { passes: Vec::new(), temporal: None, textures: [ptr::null_mut(); 3], input, output, mode };
+        let mut result = Self { passes: Vec::new(), textures: [ptr::null_mut(); 3], input, output, mode };
         unsafe {
             for (i, size) in [input, output, output].into_iter().enumerate() {
                 let texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, size.0, size.1);
@@ -94,11 +82,6 @@ impl Upscaler {
                 result.textures[i] = texture;
                 SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
                 SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
-            }
-            if mode == Upscaling::Sgsr2 {
-                let size = |(w, h): (i32, i32)| (w as u32, h as u32);
-                result.temporal = Some(super::temporal::Temporal::new(renderer, result.textures[0], result.textures[1], size(input), size(output))?);
-                return Ok(result);
             }
             let pass = |input, output| Pass::new(renderer, input, output, Shader::Upscale).ok_or_else(|| format!("its pass cannot be created: {}", crate::sdl::error()));
             result.passes.push(pass(result.textures[0], result.textures[1])?);
@@ -115,23 +98,14 @@ impl Upscaler {
     /// its alignment padding, which stays out).
     #[cfg(any(test, all(target_os = "macos", feature = "demo-library")))]
     pub fn draw(&mut self, renderer: *mut SDL_Renderer, source: *mut SDL_Texture, sharpness: u32) -> Result<*mut SDL_Texture, String> {
-        self.draw_warped(renderer, source, sharpness, &super::frame_warp::WarpDraw::default(), &mut super::frame_warp::Mesh::default(),
-            History { advance: true, reset: false })
+        self.draw_warped(renderer, source, sharpness, &super::frame_warp::WarpDraw::default(), &mut super::frame_warp::Mesh::default())
     }
 
     /// `draw` with Frame Warp's `warp` applied as the picture is copied in, at its own size, so
     /// the upscaler works on the shifted picture (its triangles built in `mesh`).
-    /// Temporal upscaling advances its history only with a whole, newly decoded picture
-    /// (`History::advance`): a repeat, or a beam race's present of a picture's first slices,
-    /// shows its last output again, so no picture enters the history twice or in part.
     pub fn draw_warped(&mut self, renderer: *mut SDL_Renderer, source: *mut SDL_Texture, sharpness: u32, warp: &super::frame_warp::WarpDraw,
-        mesh: &mut super::frame_warp::Mesh, history: History) -> Result<*mut SDL_Texture, String> {
+        mesh: &mut super::frame_warp::Mesh) -> Result<*mut SDL_Texture, String> {
         let failed = |what: &str| format!("{what}: {}", crate::sdl::error());
-        if let Some(t) = &self.temporal {
-            if !history.advance {
-                return Ok(if t.has_output() { self.textures[1] } else { source });
-            }
-        }
         unsafe {
             let previous = SDL_GetRenderTarget(renderer);
             if !SDL_SetRenderTarget(renderer, self.textures[0]) { return Err(failed("the picture cannot be copied in")); }
@@ -144,11 +118,6 @@ impl Upscaler {
             let ok = copied && SDL_FlushRenderer(renderer);
             SDL_SetRenderTarget(renderer, previous);
             if !ok { return Err(failed("the picture cannot be copied in")); }
-            if let Some(temporal) = &mut self.temporal {
-                if history.reset { temporal.reset(); }
-                temporal.draw(renderer, sharpness)?;
-                return Ok(self.textures[1]);
-            }
             for (i, pass) in self.passes.iter().enumerate() {
                 let input = if i == 0 { self.input } else { self.output };
                 let parameters = [
@@ -165,21 +134,6 @@ impl Upscaler {
     }
 }
 
-/// The mode an upscaler is made for: SGSR 1 once temporal upscaling failed in this stream.
-pub fn effective_mode(setting: Upscaling, temporal_failed: bool) -> Upscaling {
-    if setting == Upscaling::Sgsr2 && temporal_failed { Upscaling::Sgsr1 } else { setting }
-}
-
-/// The stats line's name of the running upscaler, which says why SGSR 1 stands in for temporal
-/// upscaling: it failed, or Frame Warp is on (`frame_warp`).
-pub fn running_label(setting: Upscaling, temporal_failed: bool, frame_warp: bool) -> &'static str {
-    match setting {
-        Upscaling::Sgsr2 if temporal_failed => "SGSR 1 (temporal unavailable)",
-        Upscaling::Sgsr2 if frame_warp => "SGSR 1 (temporal off with Frame Warp)",
-        _ => setting.label(),
-    }
-}
-
 /// The part of a source texture an upscaler reads: the picture's `input` size from the top left.
 fn source_rect(input: (i32, i32)) -> SDL_FRect {
     SDL_FRect { x: 0.0, y: 0.0, w: input.0 as f32, h: input.1 as f32 }
@@ -188,7 +142,6 @@ fn source_rect(input: (i32, i32)) -> SDL_FRect {
 impl Drop for Upscaler {
     fn drop(&mut self) {
         self.passes.clear();
-        self.temporal = None;
         for texture in self.textures {
             if !texture.is_null() { unsafe { SDL_DestroyTexture(texture) }; }
         }
@@ -216,33 +169,9 @@ pub(super) fn check_scalers() {
                 (true, false) => [0, 255, 0, 255], (false, true) => [0, 0, 255, 255], (true, true) => [255; 4] };
             let pixels: Vec<_> = (0..32 * 32).flat_map(|i| color.map_or_else(|| quadrant(i % 32 >= 16, i / 32 >= 16), |c| [c, c, c, 255])).collect();
             assert!(SDL_UpdateTexture(input, ptr::null(), pixels.as_ptr().cast(), 32 * 4));
-            for mode in [Upscaling::Fsr1, Upscaling::Sgsr1, Upscaling::Sgsr2] {
-                // Temporal upscaling draws a few frames, so the history and not only the first
-                // frame's reset is read.
+            for mode in [Upscaling::Fsr1, Upscaling::Sgsr1] {
                 let mut upscaler = Upscaler::new(renderer, (32, 32), (128, 128), mode).unwrap_or_else(|e| panic!("{mode:?} GPU scaler: {e}"));
-                let warp = super::frame_warp::WarpDraw::default();
-                if let Some(temporal) = &upscaler.temporal {
-                    // A non-advancing draw before any whole picture leaves history unseeded and
-                    // returns the source texture as-is.
-                    let parity = temporal.parity();
-                    let early = upscaler.draw_warped(renderer, input, 50, &warp, &mut super::frame_warp::Mesh::default(), History::default());
-                    assert_eq!(early, Ok(input));
-                    assert_eq!(upscaler.temporal.as_ref().map(|t| (t.has_output(), t.parity())), Some((false, parity)));
-                }
-                let mut output = ptr::null_mut();
-                for _ in 0..if mode == Upscaling::Sgsr2 { 4 } else { 1 } {
-                    output = upscaler.draw(renderer, input, 50).unwrap_or_else(|e| panic!("{mode:?} GPU draw: {e}"));
-                }
-                if let Some(temporal) = &upscaler.temporal {
-                    // A repeat of the same picture shows the last output and leaves the history.
-                    let parity = temporal.parity();
-                    let repeated = upscaler.draw_warped(renderer, input, 50, &warp, &mut super::frame_warp::Mesh::default(), History::default());
-                    assert_eq!(repeated, Ok(output));
-                    assert_eq!(upscaler.temporal.as_ref().map(|t| t.parity()), Some(parity), "a repeat advanced the history");
-                    // A mid-stream reset redraws cleanly without running motion search.
-                    output = upscaler.draw_warped(renderer, input, 50, &warp, &mut super::frame_warp::Mesh::default(),
-                        History { advance: true, reset: true }).unwrap_or_else(|e| panic!("{mode:?} reset draw: {e}"));
-                }
+                let output = upscaler.draw(renderer, input, 50).unwrap_or_else(|e| panic!("{mode:?} GPU draw: {e}"));
                 assert!(SDL_GetRenderTarget(renderer).is_null());
                 assert!(SDL_SetRenderTarget(renderer, output));
                 let surface = SDL_RenderReadPixels(renderer, ptr::null());
@@ -278,17 +207,6 @@ mod tests {
         // A 2184x1968 stream's AV1 picture in its 2240x1968 texture.
         let rect = source_rect((2184, 1968));
         assert_eq!((rect.x, rect.y, rect.w, rect.h), (0.0, 0.0, 2184.0, 1968.0));
-    }
-
-    #[test]
-    fn a_failed_temporal_upscaler_gives_way_to_sgsr_1_and_says_so() {
-        assert_eq!(effective_mode(Upscaling::Sgsr2, false), Upscaling::Sgsr2);
-        assert_eq!(effective_mode(Upscaling::Sgsr2, true), Upscaling::Sgsr1);
-        assert_eq!(effective_mode(Upscaling::Fsr1, true), Upscaling::Fsr1, "only temporal upscaling falls back to SGSR 1");
-        assert_eq!(running_label(Upscaling::Sgsr2, false, false), "Temporal (SGSR 2)");
-        assert_eq!(running_label(Upscaling::Sgsr2, true, false), "SGSR 1 (temporal unavailable)");
-        assert_eq!(running_label(Upscaling::Sgsr2, false, true), "SGSR 1 (temporal off with Frame Warp)");
-        assert_eq!(running_label(Upscaling::Sgsr1, true, true), "SGSR 1");
     }
 
     #[cfg(not(target_os = "macos"))]

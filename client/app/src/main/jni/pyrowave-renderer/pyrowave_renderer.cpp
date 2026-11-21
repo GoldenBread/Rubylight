@@ -1834,29 +1834,12 @@ namespace {
             return created;
         }
 
-        // The temporal upscaler's passes, in order, and the timestamps around them per slot.
-        enum TemporalPass { T_PREP, T_DOWN, T_MOTION, T_CUT, T_ACCUMULATE, T_DETAIL, T_PASS_COUNT };
-        static constexpr uint32_t TEMPORAL_TIMESTAMPS = T_PASS_COUNT + 1;
-
-        // Upscaling is optional: any failure leaves the direct CSC path in place. The temporal mode
-        // also builds SGSR 1, which it falls back to and which Frame Warp draws with.
+        // Upscaling is optional: any failure leaves the direct CSC path in place.
         bool createUpscaler() {
             // SGSR works on display-referred SDR; ten-bit output keeps the direct path.
-            const bool sgsrMode = upscaleMode == UPSCALE_SGSR || upscaleMode == UPSCALE_TEMPORAL;
-            if (sgsrMode && !tenBit && !createUpscalerResources()) {
+            if (upscaleMode == UPSCALE_SGSR && !tenBit && !createUpscalerResources()) {
                 LOGW("SGSR setup failed; presenting directly");
             }
-            if (upscaleMode == UPSCALE_TEMPORAL && !tenBit) {
-                if (const char *failure = createTemporalResources()) {
-                    LOGW("Temporal upscaling unavailable (%s); using SGSR 1", failure);
-                    // Nothing temporal was submitted yet
-                    destroyTemporalResources();
-                } else {
-                    temporal.ready = true;
-                    LOGI("Temporal upscaling ready");
-                }
-            }
-            temporalState = pyroTemporalState(upscaleMode, tenBit, temporal.ready, false);
             return true;
         }
 
@@ -1873,500 +1856,6 @@ namespace {
             upscalePipeline = buildPipeline(sgsr_frag_spv, sizeof(sgsr_frag_spv), upscaleLayout, renderPass);
             LOGI("SGSR upscaling %s", upscalePipeline != VK_NULL_HANDLE ? "ready" : "failed");
             return upscalePipeline != VK_NULL_HANDLE;
-        }
-
-        // The temporal upscaler (UPSCALE_TEMPORAL; shaders/temporal_*.frag, ports of the GLES passes
-        // in assets/shaders): prep, two luma downsamples, motion, scene cut and accumulate render
-        // into their own images ahead of the swapchain pass, and the detail pass draws inside it in
-        // place of SGSR 1. Fragment passes only, no compute: they run on any device that can render
-        // to and filter half-float colour images, which createTemporalResources() probes.
-        // Null when everything is made, else why not; the caller destroys what was made.
-        const char *createTemporalResources() {
-            static const struct {
-                VkFormat format;
-                const char *problem;
-            } formats[] = {
-                {VK_FORMAT_R8G8B8A8_UNORM, "RGBA8 images cannot be rendered to, filtered and cleared"},
-                {VK_FORMAT_R16_SFLOAT, "R16F images cannot be rendered to, filtered and cleared"},
-                {VK_FORMAT_R16G16B16A16_SFLOAT, "RGBA16F images cannot be rendered to, filtered and cleared"},
-            };
-            const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-                    VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-            for (const auto &entry : formats) {
-                VkFormatProperties props;
-                vk.GetPhysicalDeviceFormatProperties(physicalDevice, entry.format, &props);
-                if ((props.optimalTilingFeatures & required) != required) return entry.problem;
-            }
-
-            VkSamplerCreateInfo samplerInfo = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            samplerInfo.maxLod = 0.0f;
-            samplerInfo.magFilter = samplerInfo.minFilter = VK_FILTER_NEAREST;
-            if (!check(vk.CreateSampler(device, &samplerInfo, nullptr, &temporal.nearest), "vkCreateSampler(temporal)")) {
-                return "a sampler could not be made";
-            }
-            samplerInfo.magFilter = samplerInfo.minFilter = VK_FILTER_LINEAR;
-            if (!check(vk.CreateSampler(device, &samplerInfo, nullptr, &temporal.linear), "vkCreateSampler(temporal)")) {
-                return "a sampler could not be made";
-            }
-
-            const VkFormat rgba8 = VK_FORMAT_R8G8B8A8_UNORM, r16f = VK_FORMAT_R16_SFLOAT, rgba16f = VK_FORMAT_R16G16B16A16_SFLOAT;
-            const VkFormat prepFormats[2] = {rgba8, r16f};
-            temporal.prepPass = createTemporalPass(prepFormats, 2);
-            temporal.lumaPass = createTemporalPass(&r16f, 1);
-            temporal.floatPass = createTemporalPass(&rgba16f, 1);
-            if (temporal.prepPass == VK_NULL_HANDLE || temporal.lumaPass == VK_NULL_HANDLE ||
-                temporal.floatPass == VK_NULL_HANDLE) return "a render pass could not be made";
-
-            // Prep reads the slot's planes through the direct path's set layout and descriptor set.
-            static const uint32_t bindingCounts[T_PASS_COUNT] = {0, 1, 7, 1, 4, 2};
-            static const uint32_t pushSizes[T_PASS_COUNT] = {sizeof(PyroWaveTemporalPrepParams), 0, 0, 0,
-                                                             sizeof(PyroWaveTemporalAccumulateParams),
-                                                             sizeof(PyroWaveTemporalDetailParams)};
-            for (int pass = 0; pass < T_PASS_COUNT; ++pass) {
-                VkDescriptorSetLayout layout = setLayout;
-                if (bindingCounts[pass] > 0) {
-                    VkDescriptorSetLayoutBinding bindings[7] = {};
-                    for (uint32_t i = 0; i < bindingCounts[pass]; ++i) {
-                        bindings[i].binding = i;
-                        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                        bindings[i].descriptorCount = 1;
-                        bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-                    }
-                    VkDescriptorSetLayoutCreateInfo layoutInfo = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-                    layoutInfo.bindingCount = bindingCounts[pass];
-                    layoutInfo.pBindings = bindings;
-                    if (!check(vk.CreateDescriptorSetLayout(device, &layoutInfo, nullptr, &temporal.setLayouts[pass]),
-                               "vkCreateDescriptorSetLayout(temporal)")) return "a descriptor set layout could not be made";
-                    layout = temporal.setLayouts[pass];
-                }
-                VkPipelineLayoutCreateInfo plInfo = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-                plInfo.setLayoutCount = 1;
-                plInfo.pSetLayouts = &layout;
-                const VkPushConstantRange range = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushSizes[pass]};
-                plInfo.pushConstantRangeCount = pushSizes[pass] > 0 ? 1 : 0;
-                plInfo.pPushConstantRanges = &range;
-                if (!check(vk.CreatePipelineLayout(device, &plInfo, nullptr, &temporal.layouts[pass]),
-                           "vkCreatePipelineLayout(temporal)")) return "a pipeline layout could not be made";
-            }
-            temporal.pipelines[T_PREP] = buildPipeline(temporal_prep_frag_spv, sizeof(temporal_prep_frag_spv),
-                                                       temporal.layouts[T_PREP], temporal.prepPass, 2);
-            temporal.pipelines[T_DOWN] = buildPipeline(temporal_down_frag_spv, sizeof(temporal_down_frag_spv),
-                                                       temporal.layouts[T_DOWN], temporal.lumaPass);
-            temporal.pipelines[T_MOTION] = buildPipeline(temporal_motion_frag_spv, sizeof(temporal_motion_frag_spv),
-                                                         temporal.layouts[T_MOTION], temporal.floatPass);
-            temporal.pipelines[T_CUT] = buildPipeline(temporal_cut_frag_spv, sizeof(temporal_cut_frag_spv),
-                                                      temporal.layouts[T_CUT], temporal.lumaPass);
-            temporal.pipelines[T_ACCUMULATE] = buildPipeline(temporal_accumulate_frag_spv, sizeof(temporal_accumulate_frag_spv),
-                                                             temporal.layouts[T_ACCUMULATE], temporal.floatPass);
-            temporal.pipelines[T_DETAIL] = buildPipeline(temporal_detail_frag_spv, sizeof(temporal_detail_frag_spv),
-                                                         temporal.layouts[T_DETAIL], renderPass);
-            for (VkPipeline built : temporal.pipelines) {
-                if (built == VK_NULL_HANDLE) return "a shader pipeline could not be built";
-            }
-
-            // The stream-size images; history follows the picture's size (ensureTemporalHistory()).
-            const auto sizes = pyroTemporalSizes(width, height);
-            const VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-            if (!createImage(temporal.frame, width, height, rgba8, usage) ||
-                !createImage(temporal.cut, 1, 1, r16f, usage)) return "an image could not be made";
-            for (int p = 0; p < 2; ++p) {
-                if (!createImage(temporal.luma[0][p], width, height, r16f, usage) ||
-                    !createImage(temporal.luma[1][p], sizes.luma1.width, sizes.luma1.height, r16f, usage) ||
-                    !createImage(temporal.luma[2][p], sizes.luma2.width, sizes.luma2.height, r16f, usage) ||
-                    !createImage(temporal.motion[p], sizes.motion.width, sizes.motion.height, rgba16f, usage)) {
-                    return "an image could not be made";
-                }
-                const VkImageView prepViews[2] = {temporal.frame.view, temporal.luma[0][p].view};
-                temporal.prepFramebuffer[p] = createTemporalFramebuffer(temporal.prepPass, prepViews, 2, {width, height});
-                temporal.lumaFramebuffer[1][p] = createTemporalFramebuffer(temporal.lumaPass, &temporal.luma[1][p].view, 1, sizes.luma1);
-                temporal.lumaFramebuffer[2][p] = createTemporalFramebuffer(temporal.lumaPass, &temporal.luma[2][p].view, 1, sizes.luma2);
-                temporal.motionFramebuffer[p] = createTemporalFramebuffer(temporal.floatPass, &temporal.motion[p].view, 1, sizes.motion);
-                if (temporal.prepFramebuffer[p] == VK_NULL_HANDLE || temporal.lumaFramebuffer[1][p] == VK_NULL_HANDLE ||
-                    temporal.lumaFramebuffer[2][p] == VK_NULL_HANDLE || temporal.motionFramebuffer[p] == VK_NULL_HANDLE) {
-                    return "a framebuffer could not be made";
-                }
-            }
-            temporal.cutFramebuffer = createTemporalFramebuffer(temporal.lumaPass, &temporal.cut.view, 1, {1, 1});
-            if (temporal.cutFramebuffer == VK_NULL_HANDLE) return "a framebuffer could not be made";
-
-            // Per parity p (the current frame's index): two downsamples, motion, cut, accumulate, detail.
-            const VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * (1 + 1 + 7 + 1 + 4 + 2)};
-            VkDescriptorPoolCreateInfo poolInfo = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-            poolInfo.maxSets = 2 * 6;
-            poolInfo.poolSizeCount = 1;
-            poolInfo.pPoolSizes = &poolSize;
-            if (!check(vk.CreateDescriptorPool(device, &poolInfo, nullptr, &temporal.pool), "vkCreateDescriptorPool(temporal)")) {
-                return "a descriptor pool could not be made";
-            }
-            for (int p = 0; p < 2; ++p) {
-                const int q = 1 - p;
-                VkDescriptorSet *sets[6] = {&temporal.down1Set[p], &temporal.down2Set[p], &temporal.motionSet[p],
-                                            &temporal.cutSet[p], &temporal.accumulateSet[p], &temporal.detailSet[p]};
-                const VkDescriptorSetLayout layouts[6] = {temporal.setLayouts[T_DOWN], temporal.setLayouts[T_DOWN],
-                                                          temporal.setLayouts[T_MOTION], temporal.setLayouts[T_CUT],
-                                                          temporal.setLayouts[T_ACCUMULATE], temporal.setLayouts[T_DETAIL]};
-                for (int i = 0; i < 6; ++i) {
-                    VkDescriptorSetAllocateInfo setInfo = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-                    setInfo.descriptorPool = temporal.pool;
-                    setInfo.descriptorSetCount = 1;
-                    setInfo.pSetLayouts = &layouts[i];
-                    if (!check(vk.AllocateDescriptorSets(device, &setInfo, sets[i]), "vkAllocateDescriptorSets(temporal)")) {
-                        return "a descriptor set could not be made";
-                    }
-                }
-                // Luma and cut are read NEAREST; frame, motion and history LINEAR (texelFetch ignores it).
-                writeTemporalSet(temporal.down1Set[p], 0, {{temporal.nearest, temporal.luma[0][p].view}});
-                writeTemporalSet(temporal.down2Set[p], 0, {{temporal.nearest, temporal.luma[1][p].view}});
-                writeTemporalSet(temporal.motionSet[p], 0, {{temporal.nearest, temporal.luma[0][p].view},
-                                                            {temporal.nearest, temporal.luma[1][p].view},
-                                                            {temporal.nearest, temporal.luma[2][p].view},
-                                                            {temporal.nearest, temporal.luma[0][q].view},
-                                                            {temporal.nearest, temporal.luma[1][q].view},
-                                                            {temporal.nearest, temporal.luma[2][q].view},
-                                                            {temporal.linear, temporal.motion[q].view}});
-                writeTemporalSet(temporal.cutSet[p], 0, {{temporal.linear, temporal.motion[p].view}});
-                writeTemporalSet(temporal.accumulateSet[p], 0, {{temporal.linear, temporal.frame.view},
-                                                                {temporal.linear, temporal.motion[p].view},
-                                                                {temporal.nearest, temporal.cut.view}});
-                writeTemporalSet(temporal.detailSet[p], 0, {{temporal.linear, temporal.frame.view}});
-            }
-            createTemporalTiming();
-            return nullptr;
-        }
-
-        // Colour attachments, each fully overwritten every frame (so never loaded), then sampled by
-        // the passes after it. The first dependency orders the overwrite after the previous frame's
-        // reads and writes of the same image and after a clear (the queue runs frames in order).
-        VkRenderPass createTemporalPass(const VkFormat *formats, uint32_t count) {
-            VkAttachmentDescription attachments[2] = {};
-            VkAttachmentReference refs[2] = {};
-            for (uint32_t i = 0; i < count; ++i) {
-                attachments[i].format = formats[i];
-                attachments[i].samples = VK_SAMPLE_COUNT_1_BIT;
-                attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-                attachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-                attachments[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-                attachments[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-                attachments[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                attachments[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                refs[i] = {i, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-            }
-            VkSubpassDescription subpass = {};
-            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-            subpass.colorAttachmentCount = count;
-            subpass.pColorAttachments = refs;
-            VkSubpassDependency dependencies[2] = {};
-            dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-            dependencies[0].dstSubpass = 0;
-            dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                                           VK_PIPELINE_STAGE_TRANSFER_BIT;
-            dependencies[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-            dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-            dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            dependencies[1].srcSubpass = 0;
-            dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-            dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-            dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-            dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            VkRenderPassCreateInfo rpInfo = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-            rpInfo.attachmentCount = count;
-            rpInfo.pAttachments = attachments;
-            rpInfo.subpassCount = 1;
-            rpInfo.pSubpasses = &subpass;
-            rpInfo.dependencyCount = 2;
-            rpInfo.pDependencies = dependencies;
-            VkRenderPass pass = VK_NULL_HANDLE;
-            check(vk.CreateRenderPass(device, &rpInfo, nullptr, &pass), "vkCreateRenderPass(temporal)");
-            return pass;
-        }
-
-        VkFramebuffer createTemporalFramebuffer(VkRenderPass pass, const VkImageView *views, uint32_t count,
-                                                PyroWaveExtent extent) {
-            VkFramebufferCreateInfo fbInfo = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-            fbInfo.renderPass = pass;
-            fbInfo.attachmentCount = count;
-            fbInfo.pAttachments = views;
-            fbInfo.width = extent.width;
-            fbInfo.height = extent.height;
-            fbInfo.layers = 1;
-            VkFramebuffer framebuffer = VK_NULL_HANDLE;
-            check(vk.CreateFramebuffer(device, &fbInfo, nullptr, &framebuffer), "vkCreateFramebuffer(temporal)");
-            return framebuffer;
-        }
-
-        // Writes consecutive bindings from `first`; every image is sampled in SHADER_READ_ONLY_OPTIMAL.
-        void writeTemporalSet(VkDescriptorSet set, uint32_t first,
-                              std::initializer_list<std::pair<VkSampler, VkImageView>> images) {
-            VkDescriptorImageInfo infos[7];
-            VkWriteDescriptorSet writes[7] = {};
-            uint32_t count = 0;
-            for (const auto &image : images) {
-                if (count == 7) break;
-                infos[count] = {image.first, image.second, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-                writes[count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[count].dstSet = set;
-                writes[count].dstBinding = first + count;
-                writes[count].descriptorCount = 1;
-                writes[count].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                writes[count].pImageInfo = &infos[count];
-                ++count;
-            }
-            vk.UpdateDescriptorSets(device, count, writes, 0, nullptr);
-        }
-
-        // The two history images at the picture's size before rotation, remade when it changes;
-        // every (re)creation starts the history again. False, with temporal upscaling off for the
-        // rest of the stream (SGSR 1 then draws), when they cannot be made. Present thread.
-        bool ensureTemporalHistory(PyroWaveExtent extent) {
-            if (temporal.history[0].image != VK_NULL_HANDLE && extent.width == temporal.outputExtent.width &&
-                extent.height == temporal.outputExtent.height) return true;
-            if (temporal.history[0].image != VK_NULL_HANDLE) {
-                // A draw in flight may still read the old images (as recreateSwapchain())
-                std::scoped_lock lock(decodeQueueMutex, renderQueueMutex);
-                if (!check(vk.DeviceWaitIdle(device), "wait before resizing temporal history")) {
-                    temporal.ready = false;
-                    return false;
-                }
-            }
-            destroyTemporalHistory();
-            const VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-            bool made = true;
-            for (int p = 0; p < 2 && made; ++p) {
-                made = createImage(temporal.history[p], extent.width, extent.height, VK_FORMAT_R16G16B16A16_SFLOAT, usage);
-                if (made) {
-                    temporal.historyFramebuffer[p] = createTemporalFramebuffer(temporal.floatPass, &temporal.history[p].view, 1,
-                                                                               extent);
-                    made = temporal.historyFramebuffer[p] != VK_NULL_HANDLE;
-                }
-            }
-            if (!made) {
-                LOGW("Temporal upscaling unavailable (history images of %ux%u could not be made); using SGSR 1",
-                     extent.width, extent.height);
-                temporal.ready = false;
-                return false;
-            }
-            for (int p = 0; p < 2; ++p) {
-                writeTemporalSet(temporal.accumulateSet[p], 3, {{temporal.linear, temporal.history[1 - p].view}});
-                writeTemporalSet(temporal.detailSet[p], 1, {{temporal.linear, temporal.history[p].view}});
-            }
-            temporal.outputExtent = extent;
-            temporal.reset = true;
-            return true;
-        }
-
-        void destroyPlane(Plane &plane) {
-            if (plane.view != VK_NULL_HANDLE) vk.DestroyImageView(device, plane.view, nullptr);
-            if (plane.image != VK_NULL_HANDLE) vk.DestroyImage(device, plane.image, nullptr);
-            if (plane.memory != VK_NULL_HANDLE) vk.FreeMemory(device, plane.memory, nullptr);
-            plane = Plane();
-        }
-
-        void destroyFramebuffer(VkFramebuffer &framebuffer) {
-            if (framebuffer != VK_NULL_HANDLE) vk.DestroyFramebuffer(device, framebuffer, nullptr);
-            framebuffer = VK_NULL_HANDLE;
-        }
-
-        // The GPU is done with them.
-        void destroyTemporalHistory() {
-            for (int p = 0; p < 2; ++p) {
-                destroyFramebuffer(temporal.historyFramebuffer[p]);
-                destroyPlane(temporal.history[p]);
-            }
-            temporal.outputExtent = {0, 0};
-        }
-
-        // Everything createTemporalResources() made; the GPU is done with it. Leaves `ready` false.
-        void destroyTemporalResources() {
-            destroyTemporalHistory();
-            for (int p = 0; p < 2; ++p) {
-                destroyFramebuffer(temporal.prepFramebuffer[p]);
-                destroyFramebuffer(temporal.lumaFramebuffer[1][p]);
-                destroyFramebuffer(temporal.lumaFramebuffer[2][p]);
-                destroyFramebuffer(temporal.motionFramebuffer[p]);
-                for (auto &level : temporal.luma) destroyPlane(level[p]);
-                destroyPlane(temporal.motion[p]);
-            }
-            destroyFramebuffer(temporal.cutFramebuffer);
-            destroyPlane(temporal.frame);
-            destroyPlane(temporal.cut);
-            // The pool takes its sets with it
-            if (temporal.pool != VK_NULL_HANDLE) vk.DestroyDescriptorPool(device, temporal.pool, nullptr);
-            for (int pass = 0; pass < T_PASS_COUNT; ++pass) {
-                if (temporal.pipelines[pass] != VK_NULL_HANDLE) vk.DestroyPipeline(device, temporal.pipelines[pass], nullptr);
-                if (temporal.layouts[pass] != VK_NULL_HANDLE) vk.DestroyPipelineLayout(device, temporal.layouts[pass], nullptr);
-                if (temporal.setLayouts[pass] != VK_NULL_HANDLE) {
-                    vk.DestroyDescriptorSetLayout(device, temporal.setLayouts[pass], nullptr);
-                }
-            }
-            for (VkRenderPass pass : {temporal.prepPass, temporal.lumaPass, temporal.floatPass}) {
-                if (pass != VK_NULL_HANDLE) vk.DestroyRenderPass(device, pass, nullptr);
-            }
-            if (temporal.nearest != VK_NULL_HANDLE) vk.DestroySampler(device, temporal.nearest, nullptr);
-            if (temporal.linear != VK_NULL_HANDLE) vk.DestroySampler(device, temporal.linear, nullptr);
-            if (temporal.queries != VK_NULL_HANDLE) vk.DestroyQueryPool(device, temporal.queries, nullptr);
-            temporal = Temporal();
-        }
-
-        // Per-pass GPU times, only with the debug.nightjar.pyro_submit=1 profile and timestamps on
-        // the presentation queue's family.
-        void createTemporalTiming() {
-            if (!submissionDiagnostics.isEnabled()) return;
-            uint32_t familyCount = 0;
-            vk.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &familyCount, nullptr);
-            std::vector<VkQueueFamilyProperties> families(familyCount);
-            vk.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &familyCount, families.data());
-            VkPhysicalDeviceProperties props;
-            vk.GetPhysicalDeviceProperties(physicalDevice, &props);
-            const uint32_t bits = queueFamily < familyCount ? families[queueFamily].timestampValidBits : 0;
-            if (bits == 0 || props.limits.timestampPeriod <= 0.0f) {
-                LOGI("PyroWave submit profile: temporal GPU timing unavailable (no timestamps on the presentation queue)");
-                return;
-            }
-            VkQueryPoolCreateInfo queryInfo = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-            queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
-            queryInfo.queryCount = SLOT_COUNT * TEMPORAL_TIMESTAMPS;
-            if (!check(vk.CreateQueryPool(device, &queryInfo, nullptr, &temporal.queries), "vkCreateQueryPool(temporal)")) {
-                temporal.queries = VK_NULL_HANDLE;
-                LOGI("PyroWave submit profile: temporal GPU timing unavailable (no query pool)");
-                return;
-            }
-            temporal.timestampMask = bits >= 64 ? ~uint64_t(0) : (uint64_t(1) << bits) - 1;
-            temporal.timestampPeriodNs = props.limits.timestampPeriod;
-            LOGI("PyroWave submit profile: temporal GPU timing on (%u-bit timestamps, %.2f ns per tick, all queues: %u)",
-                 bits, props.limits.timestampPeriod, props.limits.timestampComputeAndGraphics);
-        }
-
-        // The slot's last temporal timestamps, now that its draw fence signalled; logs the averages
-        // once per five seconds. Present thread.
-        void collectTemporalTiming(int index, uint64_t now) {
-            if (temporal.queries == VK_NULL_HANDLE || !temporal.timed[index]) return;
-            temporal.timed[index] = false;
-            uint64_t stamps[TEMPORAL_TIMESTAMPS] = {};
-            if (vk.GetQueryPoolResults(device, temporal.queries, uint32_t(index) * TEMPORAL_TIMESTAMPS, TEMPORAL_TIMESTAMPS,
-                                       sizeof(stamps), stamps, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) return;
-            auto &window = temporal.timing;
-            if (window.start == 0) window.start = now;
-            const auto ticks = [&](int from, int to) {
-                return double((stamps[to] - stamps[from]) & temporal.timestampMask) * temporal.timestampPeriodNs;
-            };
-            for (int pass = 0; pass < T_PASS_COUNT; ++pass) window.ns[pass] += ticks(pass, pass + 1);
-            window.ns[T_PASS_COUNT] += ticks(0, T_PASS_COUNT);
-            ++window.frames;
-            if (now - window.start < STATS_INTERVAL_US) return;
-            const double divisor = double(window.frames) * 1e6;
-            LOGI("PyroWave submit profile: temporal GPU n=%llu prep=%.3f down=%.3f motion=%.3f cut=%.3f accumulate=%.3f "
-                 "detail=%.3f total=%.3f ms avg",
-                 (unsigned long long)window.frames, window.ns[T_PREP] / divisor, window.ns[T_DOWN] / divisor,
-                 window.ns[T_MOTION] / divisor, window.ns[T_CUT] / divisor, window.ns[T_ACCUMULATE] / divisor,
-                 window.ns[T_DETAIL] / divisor, window.ns[T_PASS_COUNT] / divisor);
-            window = {};
-        }
-
-        void writeTemporalTimestamp(VkCommandBuffer cmd, bool timed, int index, uint32_t stamp, VkPipelineStageFlagBits stage) {
-            if (timed) vk.CmdWriteTimestamp(cmd, stage, temporal.queries, uint32_t(index) * TEMPORAL_TIMESTAMPS + stamp);
-        }
-
-        // One temporal pass into `framebuffer` of `extent`.
-        void recordTemporalPass(VkCommandBuffer cmd, TemporalPass pass, VkRenderPass passHandle, VkFramebuffer framebuffer,
-                                PyroWaveExtent extent, VkDescriptorSet set, const void *push, uint32_t pushSize) {
-            VkRenderPassBeginInfo rpBegin = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-            rpBegin.renderPass = passHandle;
-            rpBegin.framebuffer = framebuffer;
-            rpBegin.renderArea = {{0, 0}, {extent.width, extent.height}};
-            vk.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-            const VkViewport viewport = {0.0f, 0.0f, float(extent.width), float(extent.height), 0.0f, 1.0f};
-            const VkRect2D scissor = {{0, 0}, {extent.width, extent.height}};
-            vk.CmdSetViewport(cmd, 0, 1, &viewport);
-            vk.CmdSetScissor(cmd, 0, 1, &scissor);
-            vk.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, temporal.pipelines[pass]);
-            vk.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, temporal.layouts[pass], 0, 1, &set, 0, nullptr);
-            if (pushSize > 0) vk.CmdPushConstants(cmd, temporal.layouts[pass], VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushSize, push);
-            vk.CmdDraw(cmd, 3, 1, 0, 0);
-            vk.CmdEndRenderPass(cmd);
-        }
-
-        // On a (re)start, the previous frame's luma pyramid, motion (the predictor) and history read
-        // as zero, as freshly made GLES textures do.
-        void clearTemporalPrevious(VkCommandBuffer cmd, int prev) {
-            const VkImage images[5] = {temporal.luma[0][prev].image, temporal.luma[1][prev].image, temporal.luma[2][prev].image,
-                                       temporal.motion[prev].image, temporal.history[prev].image};
-            VkImageMemoryBarrier barriers[5] = {};
-            for (int i = 0; i < 5; ++i) {
-                barriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                barriers[i].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-                barriers[i].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                barriers[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                barriers[i].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                barriers[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barriers[i].image = images[i];
-                barriers[i].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            }
-            vk.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 5, barriers);
-            const VkClearColorValue zero = {};
-            const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            for (VkImage image : images) {
-                vk.CmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
-            }
-            for (auto &barrier : barriers) {
-                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            }
-            vk.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
-                                  nullptr, 5, barriers);
-        }
-
-        // Every temporal pass before the swapchain's render pass, for slot `index` at picture size
-        // `output`; the detail pass follows in recordDraw(). No added frame of delay: each output
-        // uses the current frame and state from earlier frames only.
-        void recordTemporalPasses(VkCommandBuffer cmd, int index, PyroWaveExtent output, bool timed) {
-            const int cur = temporal.parity, prev = 1 - cur;
-            if (timed) {
-                vk.CmdResetQueryPool(cmd, temporal.queries, uint32_t(index) * TEMPORAL_TIMESTAMPS, TEMPORAL_TIMESTAMPS);
-                writeTemporalTimestamp(cmd, timed, index, 0, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
-            }
-            if (temporal.reset) clearTemporalPrevious(cmd, prev);
-            const auto sizes = pyroTemporalSizes(width, height);
-            const PyroWaveTemporalPrepParams prep = {{tenBit, hdr, fullRange, 0}, {float(width), float(height)}};
-            recordTemporalPass(cmd, T_PREP, temporal.prepPass, temporal.prepFramebuffer[cur], {width, height},
-                               slots[index].descriptorSet, &prep, sizeof(prep));
-            writeTemporalTimestamp(cmd, timed, index, 1, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-            recordTemporalPass(cmd, T_DOWN, temporal.lumaPass, temporal.lumaFramebuffer[1][cur], sizes.luma1,
-                               temporal.down1Set[cur], nullptr, 0);
-            recordTemporalPass(cmd, T_DOWN, temporal.lumaPass, temporal.lumaFramebuffer[2][cur], sizes.luma2,
-                               temporal.down2Set[cur], nullptr, 0);
-            writeTemporalTimestamp(cmd, timed, index, 2, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-            recordTemporalPass(cmd, T_MOTION, temporal.floatPass, temporal.motionFramebuffer[cur], sizes.motion,
-                               temporal.motionSet[cur], nullptr, 0);
-            writeTemporalTimestamp(cmd, timed, index, 3, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-            recordTemporalPass(cmd, T_CUT, temporal.lumaPass, temporal.cutFramebuffer, {1, 1}, temporal.cutSet[cur], nullptr, 0);
-            writeTemporalTimestamp(cmd, timed, index, 4, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-            const PyroWaveTemporalAccumulateParams accumulate = {
-                    {float(width), float(height)}, {float(output.width), float(output.height)},
-                    temporal.reset ? 1.0f : 0.0f, pyroTemporalBoxStatic(width, height, output)};
-            recordTemporalPass(cmd, T_ACCUMULATE, temporal.floatPass, temporal.historyFramebuffer[cur], output,
-                               temporal.accumulateSet[cur], &accumulate, sizeof(accumulate));
-            writeTemporalTimestamp(cmd, timed, index, 5, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-        }
-
-        // After the submit of a draw recordDraw() recorded: a temporal one moves the state on (its
-        // current images become the next frame's previous ones). Present thread.
-        void temporalSubmitted(int index) {
-            if (!temporal.recorded) return;
-            temporal.recorded = false;
-            temporal.parity = 1 - temporal.parity;
-            temporal.reset = false;
-            temporal.timed[index] = temporal.recordedTimed;
         }
 
         bool createFrameResources() {
@@ -2817,7 +2306,6 @@ namespace {
                 std::lock_guard<std::mutex> lock(queueCount == 2 ? renderQueueMutex : decodeQueueMutex);
                 submittedNs = nowNs();
                 if (!check(vk.QueueSubmit(queue, 1, &submitInfo, slot.drawFence), "vkQueueSubmit")) return false;
-                temporalSubmitted(index);
                 clock_gettime(CLOCK_MONOTONIC, &released);
                 presented = vk.QueuePresentKHR(queue, &presentInfo);
             }
@@ -2895,34 +2383,10 @@ namespace {
             const auto rotatedOutput = pyroRotateViewport(output,
                     {swapchainExtent.width, swapchainExtent.height}, rotationQuarterTurns);
             const PyroWaveColorParams color = {tenBit, hdr, fullRange, rotationQuarterTurns};
-            // Frame Warp draws only through the SGSR pipelines, so temporal upscaling pauses while it is on.
             const bool sgsrReady = (warp == nullptr ? upscalePipeline : warpUpscalePipeline) != VK_NULL_HANDLE;
-            if (temporal.ready && warp != nullptr && !temporal.warpLogged) {
-                LOGW("Temporal upscaling does not run with Frame Warp; using SGSR 1");
-                temporal.warpLogged = true;
-            }
-            bool temporalUsable = temporal.ready && warp == nullptr;
-            auto reason = pyroUpscalingReason(upscaleMode, tenBit || hdr, width, height, output, sgsrReady || temporalUsable);
-            const PyroWaveExtent temporalOutput = pyroTemporalOutputExtent(output);
-            if (temporalUsable && upscaleMode == UPSCALE_TEMPORAL && reason == UPSCALING_ACTIVE &&
-                !ensureTemporalHistory(temporalOutput)) {
-                temporalUsable = false;
-                reason = pyroUpscalingReason(upscaleMode, tenBit || hdr, width, height, output, sgsrReady);
-            }
+            const auto reason = pyroUpscalingReason(upscaleMode, tenBit || hdr, width, height, output, sgsrReady);
             upscalingReason = reason;
-            const auto path = pyroUpscalePath(reason, upscaleMode, sgsrReady, temporalUsable);
-            temporalState = pyroTemporalState(upscaleMode, tenBit, temporal.ready, warp != nullptr);
-            const bool upscale = path == UPSCALE_PATH_SGSR;
-            temporal.recorded = path == UPSCALE_PATH_TEMPORAL;
-            temporal.recordedTimed = false;
-            if (temporal.recorded) {
-                collectTemporalTiming(index, nowUs());
-                temporal.recordedTimed = temporal.queries != VK_NULL_HANDLE;
-                recordTemporalPasses(cmd, index, temporalOutput, temporal.recordedTimed);
-            } else {
-                // The next temporal draw starts over rather than blending a stale history.
-                temporal.reset = true;
-            }
+            const bool upscale = reason == UPSCALING_ACTIVE && upscaleMode == UPSCALE_SGSR && sgsrReady;
             vk.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
             VkViewport viewport = {};
@@ -2934,16 +2398,7 @@ namespace {
             VkRect2D scissor = {{0, 0}, swapchainExtent};
             vk.CmdSetViewport(cmd, 0, 1, &viewport);
             vk.CmdSetScissor(cmd, 0, 1, &scissor);
-            if (path == UPSCALE_PATH_TEMPORAL) {
-                // The detail pass, in SGSR 1's place and viewport
-                const PyroWaveTemporalDetailParams params = {
-                        {1.0f / float(width), 1.0f / float(height), float(width), float(height)},
-                        {float(temporalOutput.width), float(temporalOutput.height)}, edgeSharpness, rotationQuarterTurns};
-                vk.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, temporal.pipelines[T_DETAIL]);
-                vk.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, temporal.layouts[T_DETAIL], 0, 1,
-                                         &temporal.detailSet[temporal.parity], 0, nullptr);
-                vk.CmdPushConstants(cmd, temporal.layouts[T_DETAIL], VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(params), &params);
-            } else if (upscale) {
+            if (upscale) {
                 const PyroWaveSgsrParams params = {{1.0f / float(width), 1.0f / float(height), float(width), float(height)},
                                                   edgeSharpness, fullRange, rotationQuarterTurns};
                 const VkPipelineLayout layout = warp == nullptr ? upscaleLayout : warpUpscaleLayout;
@@ -2963,9 +2418,6 @@ namespace {
                                          1, 1, &warpSlots[index].set, 0, nullptr);
             }
             vk.CmdDraw(cmd, 3, 1, 0, 0);
-            if (temporal.recorded) {
-                writeTemporalTimestamp(cmd, temporal.recordedTimed, index, T_PASS_COUNT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-            }
             vk.CmdEndRenderPass(cmd);
             return check(vk.EndCommandBuffer(cmd), "vkEndCommandBuffer");
         }
@@ -3618,7 +3070,6 @@ namespace {
                     if (slot.decodeFence != VK_NULL_HANDLE) vk.DestroyFence(device, slot.decodeFence, nullptr);
                 }
                 destroyWarpResources();
-                destroyTemporalResources();
                 if (commandPool != VK_NULL_HANDLE) vk.DestroyCommandPool(device, commandPool, nullptr);
                 if (drawCommandPool != VK_NULL_HANDLE) vk.DestroyCommandPool(device, drawCommandPool, nullptr);
                 if (pipeline != VK_NULL_HANDLE) vk.DestroyPipeline(device, pipeline, nullptr);
@@ -3771,41 +3222,6 @@ namespace {
         float edgeSharpness = 1.5f;
         VkPipelineLayout upscaleLayout = VK_NULL_HANDLE;
         VkPipeline upscalePipeline = VK_NULL_HANDLE;
-        // The temporal upscaler (createTemporalResources()), made by create() and then used by the
-        // present thread only. Images indexed [p] alternate: the current frame writes `parity` and
-        // reads the other as the previous frame's.
-        struct Temporal {
-            bool ready = false;
-            VkSampler nearest = VK_NULL_HANDLE, linear = VK_NULL_HANDLE;
-            VkRenderPass prepPass = VK_NULL_HANDLE, lumaPass = VK_NULL_HANDLE, floatPass = VK_NULL_HANDLE;
-            VkDescriptorSetLayout setLayouts[T_PASS_COUNT] = {};
-            VkPipelineLayout layouts[T_PASS_COUNT] = {};
-            VkPipeline pipelines[T_PASS_COUNT] = {};
-            VkDescriptorPool pool = VK_NULL_HANDLE;
-            VkDescriptorSet down1Set[2] = {}, down2Set[2] = {}, motionSet[2] = {}, cutSet[2] = {}, accumulateSet[2] = {},
-                    detailSet[2] = {};
-            // Stream size: RGBA8 frame, R16F luma pyramid (full, half, quarter), RGBA16F motion per
-            // 8x8 block, R16F 1x1 scene cut. Output size: RGBA16F history.
-            Plane frame, luma[3][2], motion[2], cut, history[2];
-            VkFramebuffer prepFramebuffer[2] = {}, lumaFramebuffer[3][2] = {}, motionFramebuffer[2] = {},
-                    cutFramebuffer = VK_NULL_HANDLE, historyFramebuffer[2] = {};
-            PyroWaveExtent outputExtent = {0, 0};
-            int parity = 0;
-            // The next temporal draw starts over: previous images cleared, accumulate's reset set
-            bool reset = true;
-            bool warpLogged = false;
-            // What the last recordDraw() recorded, applied by temporalSubmitted()
-            bool recorded = false, recordedTimed = false;
-            // Per-pass GPU timing (createTemporalTiming()): whether a slot's last draw wrote timestamps
-            VkQueryPool queries = VK_NULL_HANDLE;
-            bool timed[SLOT_COUNT] = {};
-            uint64_t timestampMask = 0;
-            float timestampPeriodNs = 0.0f;
-            struct {
-                uint64_t start = 0, frames = 0;
-                double ns[T_PASS_COUNT + 1] = {};
-            } timing;
-        } temporal;
         VkDeviceQueueGlobalPriorityCreateInfoEXT globalPriority = {};
         bool highPriorityQueue = false;
 
@@ -3899,8 +3315,6 @@ namespace {
         bool showsHostTimes() const { return framePacingMode == HOST_TIMES_MODE; }
         std::string driverDescription;
         std::atomic<PyroWaveUpscalingReason> upscalingReason{UPSCALING_DISABLED};
-        // PyroWaveTemporalState, for PyroWaveDecoderRenderer.temporalState()
-        std::atomic<int> temporalState{TEMPORAL_OFF};
 
         // The managed decoder owns its command buffers. An outer timestamp pair
         // would include CPU submission gaps, so report this metric unavailable.
@@ -4589,12 +4003,6 @@ JNIEXPORT jint JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetUpscalingReason(JNIEnv *, jclass, jlong handle) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
     return renderer != nullptr ? renderer->upscalingReason.load() : UPSCALING_DISABLED;
-}
-
-JNIEXPORT jint JNICALL
-Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetTemporalState(JNIEnv *, jclass, jlong handle) {
-    auto *renderer = reinterpret_cast<Renderer *>(handle);
-    return renderer != nullptr ? renderer->temporalState.load() : TEMPORAL_OFF;
 }
 
 JNIEXPORT jboolean JNICALL

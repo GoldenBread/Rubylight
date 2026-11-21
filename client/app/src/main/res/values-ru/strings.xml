@@ -408,7 +408,6 @@
     <string name="upscaling_bilinear">Сглаженное</string>
     <string name="upscaling_fsr1">Чёткое (FSR)</string>
     <string name="upscaling_sgsr1">Чёткое, Snapdragon (SGSR)</string>
-    <string name="upscaling_temporal_unavailable">%1$s; временное масштабирование недоступно</string>
     <string name="summary_upscaling">Как увеличивается поток, меньший чем экран. FSR и SGSR повышают резкость краёв ценой небольшой нагрузки на GPU и батарею. HDR-потоки увеличиваются без них.</string>
     <string name="title_upscaling_sharpness">Резкость масштабирования</string>
     <string name="summary_upscaling_sharpness" formatted="false">Сколько резкости добавляют FSR или SGSR. Увеличьте, если края размыты; уменьшите, если вокруг краёв видны ореолы.</string>

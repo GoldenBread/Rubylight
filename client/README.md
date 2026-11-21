@@ -302,6 +302,6 @@ Nightjar is a fork of [Moonlight Android](https://github.com/moonlight-stream/mo
 - Nonary's moonlight-qt fork, the reference for the desktop client's VRR pacing and D3D11VA rendering, and the source of the Linux high-performance GPU power hold (`client/protocol/desktop/src/stream/gpu_hold.rs`), the Windows VRR sync switch `blank` (`stream/present/pacer.rs`) and the macOS refresh range (`src/mac_display.rs`), all from commit 19758e5e6
 - [Nonary/moonlight-common-c](https://github.com/Nonary/moonlight-common-c), for the DualSense waveform protocol
 
-The bundled third-party components (PyroWave, Granite, volk, KosmicKrisp from Mesa, the Khronos Vulkan loader, SPIRV-Tools, SPIRV-Headers, libadrenotools, AMD FSR 1, Qualcomm SGSR 1 and SGSR 2, SDL, FFmpeg, the Figtree font and others) keep their own licenses. [License and credits](docs/index.md#license-and-credits) names each contribution and the notices to retain when redistributing.
+The bundled third-party components (PyroWave, Granite, volk, KosmicKrisp from Mesa, the Khronos Vulkan loader, SPIRV-Tools, SPIRV-Headers, libadrenotools, AMD FSR 1, Qualcomm SGSR 1, SDL, FFmpeg, the Figtree font and others) keep their own licenses. [License and credits](docs/index.md#license-and-credits) names each contribution and the notices to retain when redistributing.
 
 <sub>Thank you to everyone who opened pull requests, reported bugs, requested features and tested builds; you are all in [CONTRIBUTORS.md](CONTRIBUTORS.md).</sub>

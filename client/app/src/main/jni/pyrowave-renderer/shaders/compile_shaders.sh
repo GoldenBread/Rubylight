@@ -2,8 +2,7 @@
 # Regenerates ../shaders_spv.h from the GLSL sources. Run after editing a shader.
 # Uses the glslc that ships with the NDK (ndk/<version>/shader-tools/<host>/glslc).
 # The *_warp variants are the same sources built with -DFRAME_WARP (frame_warp.glsl); without it
-# they compile to exactly what they did before Frame Warp. temporal_*.frag are the Vulkan ports of
-# assets/shaders/temporal_*.frag (the temporal upscaler).
+# they compile to exactly what they did before Frame Warp.
 set -e
 
 cd "$(dirname "$0")"
@@ -27,12 +26,6 @@ spv() {
     spv sgsr_frag_spv sgsr.frag
     spv planar_csc_warp_frag_spv -DFRAME_WARP planar_csc.frag
     spv sgsr_warp_frag_spv -DFRAME_WARP sgsr.frag
-    spv temporal_prep_frag_spv temporal_prep.frag
-    spv temporal_down_frag_spv temporal_down.frag
-    spv temporal_motion_frag_spv temporal_motion.frag
-    spv temporal_cut_frag_spv temporal_cut.frag
-    spv temporal_accumulate_frag_spv temporal_accumulate.frag
-    spv temporal_detail_frag_spv temporal_detail.frag
 } | tr -d '\r' > "$OUT"
 
 echo "Wrote $OUT"

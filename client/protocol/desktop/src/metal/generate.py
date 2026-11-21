@@ -13,8 +13,7 @@ import sys
 
 dest = Path(__file__).resolve().parent
 compiler = sys.argv[1] if len(sys.argv) > 1 else "spirv-cross"
-for shader, entry in (("upscale", "fragment"), ("pyrowave", "fragment"), ("pyrowave-planes", "planes"), ("packed444", "fragment"),
-                      *((f"temporal-{name}", "fragment") for name in ("prep", "down", "motion", "cut", "accumulate", "detail"))):
+for shader, entry in (("upscale", "fragment"), ("pyrowave", "fragment"), ("pyrowave-planes", "planes"), ("packed444", "fragment")):
     spirv = dest.parent / (shader + ".spv")
     digest = hashlib.sha256(spirv.read_bytes()).hexdigest()
     code = subprocess.check_output([

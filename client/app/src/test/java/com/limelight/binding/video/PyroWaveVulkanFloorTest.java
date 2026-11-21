@@ -29,9 +29,8 @@ public class PyroWaveVulkanFloorTest {
             shaders++;
             assertTrue(shader.group(1), Integer.parseUnsignedInt(shader.group(2), 16) <= 0x00010300);
         }
-        // The fullscreen vertex shader, the plain and sharpened fragments, each also
-        // with Frame Warp, and the six temporal upscaler passes.
-        assertEquals(11, shaders);
+        // The fullscreen vertex shader, and the plain and sharpened fragments, each also with Frame Warp.
+        assertEquals(5, shaders);
     }
 
     @Test

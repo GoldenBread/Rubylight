@@ -428,7 +428,7 @@ fn every_marked_text_has_an_entry_in_every_language() {
 /// Texts a language may leave in English: names, key caps, units and loanwords. Any other
 /// entry that equals its English is a label nobody translated ("Back" shipped that way).
 const SAME_IN_ENGLISH: &[&str] = &[
-    "Xbox", "PlayStation", "Nintendo", "HDR", "Temporal (SGSR 2)", "CPU", "GPU", "Guide", "Start", "Radeon Anti-Lag", "Radeon Chill", "Radeon Boost",
+    "Xbox", "PlayStation", "Nintendo", "HDR", "CPU", "GPU", "Guide", "Start", "Radeon Anti-Lag", "Radeon Chill", "Radeon Boost",
     "Radeon Image Sharpening", "Enhanced Sync", "Frame Rate Target Control", "AMD Fluid Motion Frames", "Radeon Super Resolution",
     "Rubylight {}", "NVIDIA GameStream", "Nightjar {}", "{} %", "Ctrl", "Shift", "Ctrl+F", "V-Sync", "{} ms", "{} fps", "OK",
     "Share / Misc", "PIN", "Co-op", "Enter", "Del", "{} s", "{} min", "Stereo", "Codec", "Back / Select", "Software", "Video", "Audio",

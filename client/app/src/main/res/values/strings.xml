@@ -517,7 +517,6 @@
     <string name="summary_upscaling_sharpness" formatted="false">How much sharpening FSR or SGSR adds. Raise it for soft edges; lower it if edges show halos.</string>
     <string name="upscaling_sharpness_value">%1$d%%</string>
     <string name="upscaling_direct">Off (direct output)</string>
-    <string name="upscaling_temporal_unavailable">%1$s; temporal upscaling unavailable</string>
     <string name="title_vulkan_render">Render through Vulkan</string>
     <string name="summary_vulkan_render">Presents video through Vulkan, for frame-generation overlays that hook into it. It adds some latency and turns upscaling off; leave it off unless you use such an overlay.</string>
     <string name="vulkan_render_fallback">Vulkan rendering is not used. %1$s</string>

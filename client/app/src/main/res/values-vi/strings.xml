@@ -408,7 +408,6 @@
     <string name="upscaling_bilinear">Mượt</string>
     <string name="upscaling_fsr1">Sắc nét (FSR)</string>
     <string name="upscaling_sgsr1">Sắc nét, Snapdragon (SGSR)</string>
-    <string name="upscaling_temporal_unavailable">%1$s; không dùng được nâng cấp theo thời gian</string>
     <string name="summary_upscaling">Cách phóng to luồng nhỏ hơn màn hình. FSR và SGSR làm nét cạnh, đổi lại tốn một chút thời gian GPU và pin. Luồng HDR được phóng to mà không dùng chúng.</string>
     <string name="title_upscaling_sharpness">Độ sắc nét khi nâng cấp</string>
     <string name="summary_upscaling_sharpness" formatted="false">Mức làm nét mà FSR hoặc SGSR thêm vào. Tăng nếu các cạnh bị mờ; giảm nếu quanh các cạnh xuất hiện quầng sáng.</string>

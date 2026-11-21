@@ -408,7 +408,6 @@
     <string name="upscaling_bilinear">Yumuşak</string>
     <string name="upscaling_fsr1">Keskin (FSR)</string>
     <string name="upscaling_sgsr1">Keskin, Snapdragon (SGSR)</string>
-    <string name="upscaling_temporal_unavailable">%1$s; zamansal ölçeklendirme kullanılamıyor</string>
     <string name="summary_upscaling">Ekrandan küçük bir akışın nasıl büyütüldüğü. FSR ve SGSR, biraz GPU süresi ve pil karşılığında kenarları keskinleştirir. HDR akışlar bunlar olmadan büyütülür.</string>
     <string name="title_upscaling_sharpness">Ölçeklendirme keskinliği</string>
     <string name="summary_upscaling_sharpness" formatted="false">FSR veya SGSR’nin eklediği keskinleştirme miktarı. Kenarlar yumuşaksa artırın; kenarlarda hale oluşuyorsa azaltın.</string>

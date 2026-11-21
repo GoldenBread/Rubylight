@@ -726,7 +726,7 @@ impl Streaming {
         }
         // One shift for all of a frame's slices and its own present (`Presenter::draw`).
         if let Some(warp) = self.frame_warp.as_mut() { self.texture.warp = warp.draw(Some(self.racer.seq())); }
-        let flipped = self.render_flip(renderer, draw_overlay, true, false, false, None);
+        let flipped = self.render_flip(renderer, draw_overlay, true, false, None);
         self.needs_redraw = false;
         self.racer.presented(flipped.issued_us, &scan);
         for (band, _) in &batch {
@@ -883,14 +883,6 @@ impl Streaming {
         None
     }
 
-    /// Temporal upscaling was refused or failed: SGSR 1 stands in for the rest of the stream,
-    /// said in the log, once in a toast and in the stats line.
-    fn temporal_unavailable(&mut self, reason: &str) {
-        eprintln!("nightjar: temporal upscaling is unavailable: {reason}; the stream continues with SGSR 1");
-        self.temporal_failed = true;
-        self.show_toast(tr("Temporal upscaling is unavailable; using SGSR 1."));
-    }
-
     /// The stats line for the upscaling setting.
     pub(super) fn upscaling_line(&self) -> String {
         if self.settings.upscaling == config::Upscaling::Ai {
@@ -910,7 +902,7 @@ impl Streaming {
         }
         if self.upscale_failed { "Bilinear (GPU unavailable)".into() }
         else if self.texture.is_hdr() { "Bilinear (HDR)".into() }
-        else if self.upscaler.is_some() { upscale::running_label(self.settings.upscaling, self.temporal_failed, self.frame_warp.is_some()).into() }
+        else if self.upscaler.is_some() { self.settings.upscaling.label().into() }
         else { "Bilinear (no upscale needed)".into() }
     }
 
@@ -1006,12 +998,10 @@ impl Streaming {
         self.exit = Some(Exit::Ended(Some(tr("PyroWave pictures cannot be shown on this device. Choose another Video codec in Settings, then start the stream again.").to_owned())));
     }
 
-    /// Draws the texture and the overlay and presents. `fresh` is a whole newly decoded picture,
-    /// which advances temporal upscaling; `reset` drops the history it would advance, for a
-    /// picture that does not follow the last one drawn (`temporal::history_stale`). `probe` reads
-    /// the beam around the present; `due_us` is when the picture was due, for the wait's budget
-    /// against the next one.
-    fn render_flip(&mut self, renderer: *mut SDL_Renderer, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), probe: bool, fresh: bool, reset: bool, due_us: Option<u64>) -> Flipped {
+    /// Draws the texture and the overlay and presents. `fresh` is a whole newly decoded picture
+    /// (for MetalFX reuse); `probe` reads the beam around the present; `due_us` is when the
+    /// picture was due, for the wait's budget against the next one.
+    fn render_flip(&mut self, renderer: *mut SDL_Renderer, draw_overlay: &mut impl FnMut(&mut Self, *mut SDL_Renderer), probe: bool, #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] fresh: bool, due_us: Option<u64>) -> Flipped {
         // SAFETY: drawing on a live renderer.
         unsafe {
             let (mut w, mut h) = (0, 0);
@@ -1094,44 +1084,18 @@ impl Streaming {
                     // Frame Warp shifts the picture on its way into the upscaler, in the picture's own
                     // pixels; the upscaled picture is drawn as it is.
                     let warp = std::mem::take(&mut self.texture.warp);
-                    // Temporal upscaling that cannot be made or fails to draw gives way to SGSR 1
-                    // for the rest of the stream, and draws this picture with it.
-                    // Frame Warp shifts each redraw between pictures, which temporal upscaling
-                    // cannot show without feeding a picture into its history twice: SGSR 1 draws
-                    // while Frame Warp is on, said in the log and the stats line.
-                    let warp_on = self.frame_warp.is_some();
-                    if warp_on && self.settings.upscaling == config::Upscaling::Sgsr2 && !self.temporal_warp_logged {
-                        eprintln!("nightjar: temporal upscaling does not run with Frame Warp; the stream uses SGSR 1");
-                        self.temporal_warp_logged = true;
+                    let mut refused = None;
+                    if !self.upscaler.as_ref().is_some_and(|u| u.matches(input, output, self.settings.upscaling)) {
+                        self.upscaler = upscale::Upscaler::new(renderer, input, output, self.settings.upscaling).map_err(|e| refused = Some(e)).ok();
                     }
-                    let upscaled = loop {
-                        let mode = upscale::effective_mode(self.settings.upscaling, self.temporal_failed || warp_on);
-                        let mut refused = None;
-                        if !self.upscaler.as_ref().is_some_and(|u| u.matches(input, output, mode)) {
-                            self.upscaler = upscale::Upscaler::new(renderer, input, output, mode).map_err(|e| refused = Some(e)).ok();
-                        }
-                        let drawn = match self.upscaler.as_mut() {
-                            // Only a whole newly decoded picture (`fresh`) moves temporal upscaling's
-                            // history on; a repeat or a beam race's slice present shows its last output.
-                            Some(u) => u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh,
-                                upscale::History { advance: fresh, reset }),
-                            None => Err(refused.unwrap_or_default()),
-                        };
-                        match drawn {
-                            Ok(upscaled) => break Some(upscaled),
-                            Err(reason) if mode == config::Upscaling::Sgsr2 => {
-                                self.upscaler = None;
-                                self.temporal_unavailable(&reason);
-                            }
-                            Err(reason) => {
-                                eprintln!("nightjar: GPU upscaling failed: {reason}; the stream continues with bilinear scaling");
-                                break None;
-                            }
-                        }
+                    let drawn = match self.upscaler.as_mut() {
+                        Some(u) => u.draw_warped(renderer, texture, self.settings.upscale_sharpness, &warp, &mut self.texture.warp_mesh),
+                        None => Err(refused.unwrap_or_default()),
                     };
-                    match upscaled {
-                        Some(upscaled) => texture = upscaled,
-                        None => {
+                    match drawn {
+                        Ok(upscaled) => texture = upscaled,
+                        Err(reason) => {
+                            eprintln!("nightjar: GPU upscaling failed: {reason}; the stream continues with bilinear scaling");
                             self.texture.warp = warp;
                             self.upscaler = None;
                             self.upscale_failed = true;
@@ -1280,11 +1244,6 @@ impl Streaming {
         self.window.dropped_pacing += dropped;
         self.shared.counters.replaced.fetch_add(u64::from(dropped), Ordering::Relaxed);
         let has_picture = picture.is_some();
-        // Temporal upscaling's history is the same scene's until the decode side reports a key
-        // frame or a gap. The count is cumulative, so pictures the pacer drops carry it on:
-        // skipping pictures alone keeps the history, a break in a dropped one still resets it.
-        let temporal_reset = picture.as_ref().is_some_and(|p| temporal::history_stale(self.drawn_history, p.decoded.follows, p.decoded.history_breaks));
-        if let Some(p) = &picture { self.drawn_history = p.decoded.history_breaks; }
         // Without a picture or a redraw, the held picture may go out again: for a VRR panel
         // about to refresh by itself, or shifted anew by Frame Warp.
         let kept = !has_picture && !self.needs_redraw && !sliced && self.lfc_repeat(now);
@@ -1399,7 +1358,7 @@ impl Streaming {
         }
         let (flipped, by_kms) = match self.kms_flip(window, &mut draw_overlay, has_picture) {
             Some(flipped) => (flipped, true),
-            None => (self.render_flip(renderer, &mut draw_overlay, has_picture, has_picture, temporal_reset, picture.as_ref().map(|p| p.present_us)), false),
+            None => (self.render_flip(renderer, &mut draw_overlay, has_picture, has_picture, picture.as_ref().map(|p| p.present_us)), false),
         };
         self.needs_redraw = false;
         // The draw after the hold, which the hold's margin has to leave time for.

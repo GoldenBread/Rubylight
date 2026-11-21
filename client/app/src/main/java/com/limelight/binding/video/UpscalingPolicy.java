@@ -6,7 +6,7 @@ import android.media.MediaFormat;
 public final class UpscalingPolicy {
     public enum Mode {
         // Ordinals index R.array.upscaling_names: a new mode goes last.
-        OFF("off"), BILINEAR("bilinear"), FSR1("fsr1"), SGSR1("sgsr1"), SGSR2("sgsr2");
+        OFF("off"), BILINEAR("bilinear"), FSR1("fsr1"), SGSR1("sgsr1");
 
         public final String value;
 
@@ -16,7 +16,7 @@ public final class UpscalingPolicy {
 
         /** The stored value of the Upscaling setting. The removed Temporal choice ("sgsr2") reads as SGSR. */
         public static Mode fromPreference(String value) {
-            if (SGSR2.value.equals(value)) return SGSR1;
+            if ("sgsr2".equals(value)) return SGSR1;
             for (Mode mode : values()) {
                 if (mode.value.equals(value)) return mode;
             }
@@ -25,7 +25,7 @@ public final class UpscalingPolicy {
 
         /** A mode saved by name in a PC's, game's or profile's settings; the removed Temporal choice reads as SGSR. */
         public static Mode fromStoredName(String name) {
-            return SGSR2.name().equals(name) ? SGSR1 : valueOf(name);
+            return "SGSR2".equals(name) ? SGSR1 : valueOf(name);
         }
     }
 
@@ -66,10 +66,6 @@ public final class UpscalingPolicy {
     private int ringIndex, ringFilled, ringSlow;
     private volatile Reason reason = Reason.NONE;
     private volatile float addedMs = -1;
-    // Whether the temporal passes run beside SGSR 1: their first sustained slow verdict falls back to
-    // SGSR 1 instead of ending upscaling, and only a too-slow SGSR 1 does that.
-    private boolean temporalActive;
-    private boolean temporalFallback;
 
     public UpscalingPolicy(int fps) {
         setFrameRate(fps);
@@ -85,25 +81,10 @@ public final class UpscalingPolicy {
         }
     }
 
-    /** Starts a new window, so the frames after a fallback are judged on their own. */
+    /** Starts a new window for the updated frame rate. */
     private void resetWindow() {
         ringIndex = ringFilled = ringSlow = 0;
         warmup = WARMUP_FRAMES;
-    }
-
-    /** Records whether the temporal passes run; {@link #takeTemporalFallback} tells when they must stop. */
-    synchronized void setTemporalActive(boolean active) {
-        temporalActive = active;
-    }
-
-    /**
-     * Takes the request a slow temporal pass made: SGSR 1, built beside it, draws from here on without a
-     * decoder restart. False when none was made, as when SGSR 1 itself is too slow.
-     */
-    synchronized boolean takeTemporalFallback() {
-        boolean asked = temporalFallback;
-        temporalFallback = false;
-        return asked;
     }
 
     public static Reason unavailableReason(Mode mode, int width, int height, int outputWidth,
@@ -225,15 +206,7 @@ public final class UpscalingPolicy {
         // panel. Only a full window that is mostly over budget, not routine replacement or a few
         // spikes anywhere in it, warrants fallback.
         if (ringFilled == overBudget.length && ringSlow * 2 > overBudget.length) {
-            if (temporalActive) {
-                // SGSR 1, built beside the temporal passes, draws from here on: no decoder restart and
-                // no window left over, so only a too-slow SGSR 1 ends upscaling.
-                temporalActive = false;
-                temporalFallback = true;
-                resetWindow();
-            } else {
-                fail(Reason.SLOW);
-            }
+            fail(Reason.SLOW);
         }
     }
 

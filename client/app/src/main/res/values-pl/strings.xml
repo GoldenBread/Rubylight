@@ -408,7 +408,6 @@
     <string name="upscaling_bilinear">Gładkie</string>
     <string name="upscaling_fsr1">Ostre (FSR)</string>
     <string name="upscaling_sgsr1">Ostre, Snapdragon (SGSR)</string>
-    <string name="upscaling_temporal_unavailable">%1$s; skalowanie temporalne niedostępne</string>
     <string name="summary_upscaling">Jak powiększany jest stream mniejszy niż ekran. FSR i SGSR wyostrzają krawędzie kosztem trochę czasu GPU i baterii. Streamy HDR są powiększane bez nich.</string>
     <string name="title_upscaling_sharpness">Ostrość skalowania</string>
     <string name="summary_upscaling_sharpness" formatted="false">Jak mocno FSR lub SGSR wyostrza obraz. Zwiększ, jeśli krawędzie są miękkie; zmniejsz, jeśli wokół krawędzi widać obwódki.</string>

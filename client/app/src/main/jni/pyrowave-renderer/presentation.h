@@ -7,8 +7,6 @@
 constexpr int UPSCALE_OFF = 0;
 constexpr int UPSCALE_SGSR = 1;
 constexpr int UPSCALE_BILINEAR = 2;
-// The temporal upscaler (shaders/temporal_*.frag), with SGSR 1 as its fallback.
-constexpr int UPSCALE_TEMPORAL = 3;
 
 // Shared with PyroWaveDecoderRenderer.getUpscalingReason().
 enum PyroWaveUpscalingReason {
@@ -81,30 +79,6 @@ struct PyroWaveSgsrParams {
     int32_t fullRange, rotationQuarterTurns;
 };
 
-// shaders/temporal_prep.frag: planar_csc.frag's parameters, then the stream size.
-struct PyroWaveTemporalPrepParams {
-    PyroWaveColorParams color;
-    float renderSize[2];
-};
-
-// shaders/temporal_accumulate.frag
-struct PyroWaveTemporalAccumulateParams {
-    float renderSize[2], outputSize[2];
-    float reset, boxStatic;
-};
-
-// shaders/temporal_detail.frag
-struct PyroWaveTemporalDetailParams {
-    float viewportInfo[4];
-    float outputSize[2];
-    float edgeSharpness;
-    int32_t rotationQuarterTurns;
-};
-
-static_assert(sizeof(PyroWaveTemporalPrepParams) == 24 && offsetof(PyroWaveTemporalPrepParams, renderSize) == 16);
-static_assert(sizeof(PyroWaveTemporalAccumulateParams) == 24 && offsetof(PyroWaveTemporalAccumulateParams, reset) == 16);
-static_assert(sizeof(PyroWaveTemporalDetailParams) == 32 && offsetof(PyroWaveTemporalDetailParams, outputSize) == 16 &&
-              offsetof(PyroWaveTemporalDetailParams, rotationQuarterTurns) == 28);
 static_assert(sizeof(PyroWaveColorParams) == 16 && offsetof(PyroWaveColorParams, rotationQuarterTurns) == 12);
 static_assert(sizeof(PyroWaveSgsrParams) == 28 && offsetof(PyroWaveSgsrParams, edgeSharpness) == 16 &&
               offsetof(PyroWaveSgsrParams, fullRange) == 20 && offsetof(PyroWaveSgsrParams, rotationQuarterTurns) == 24);
@@ -124,53 +98,8 @@ inline PyroWaveUpscalingReason pyroUpscalingReason(int mode, bool tenBitOrHdr, u
     if (tenBitOrHdr) return UPSCALING_HDR;
     if (viewport.width < float(width) || viewport.height < float(height) ||
         (viewport.width == float(width) && viewport.height == float(height))) return UPSCALING_NOT_NEEDED;
-    if ((mode == UPSCALE_SGSR || mode == UPSCALE_TEMPORAL) && !sgsrReady) return UPSCALING_GPU_ERROR;
+    if (mode == UPSCALE_SGSR && !sgsrReady) return UPSCALING_GPU_ERROR;
     return UPSCALING_ACTIVE;
-}
-
-// What draws the picture. temporalUsable: the temporal upscaler's resources are ready and Frame
-// Warp, which only the SGSR pipelines carry, is off. A temporal mode that cannot run uses SGSR 1.
-enum PyroWaveUpscalePath { UPSCALE_PATH_DIRECT = 0, UPSCALE_PATH_SGSR = 1, UPSCALE_PATH_TEMPORAL = 2 };
-
-inline PyroWaveUpscalePath pyroUpscalePath(PyroWaveUpscalingReason reason, int mode, bool sgsrReady,
-                                           bool temporalUsable) {
-    if (reason != UPSCALING_ACTIVE) return UPSCALE_PATH_DIRECT;
-    if (mode == UPSCALE_TEMPORAL && temporalUsable) return UPSCALE_PATH_TEMPORAL;
-    if ((mode == UPSCALE_SGSR || mode == UPSCALE_TEMPORAL) && sgsrReady) return UPSCALE_PATH_SGSR;
-    return UPSCALE_PATH_DIRECT;
-}
-
-// Shared with PyroWaveDecoderRenderer.TEMPORAL_*: off when the temporal mode is not chosen (or the
-// stream is ten-bit, which upscales nothing), fallback when it is but SGSR 1 runs instead (setup
-// failed or Frame Warp is on).
-enum PyroWaveTemporalState { TEMPORAL_OFF = 0, TEMPORAL_ACTIVE = 1, TEMPORAL_FALLBACK = 2 };
-
-inline PyroWaveTemporalState pyroTemporalState(int mode, bool tenBit, bool temporalReady, bool frameWarp) {
-    if (mode != UPSCALE_TEMPORAL || tenBit) return TEMPORAL_OFF;
-    return temporalReady && !frameWarp ? TEMPORAL_ACTIVE : TEMPORAL_FALLBACK;
-}
-
-// The temporal upscaler's stream-size targets for a w x h stream: the luma pyramid's half and
-// quarter levels (floor, as temporal_down.frag reads 2x2 boxes) and one motion vector per 8x8 block.
-struct PyroWaveTemporalSizes {
-    PyroWaveExtent luma1, luma2, motion;
-};
-
-inline PyroWaveTemporalSizes pyroTemporalSizes(uint32_t width, uint32_t height) {
-    const auto half = [](uint32_t v) { return std::max(v / 2, 1u); };
-    return {{half(width), half(height)}, {half(half(width)), half(half(height))},
-            {std::max((width + 7) / 8, 1u), std::max((height + 7) / 8, 1u)}};
-}
-
-// The accumulate and history size: the picture's viewport before rotation, in whole pixels.
-inline PyroWaveExtent pyroTemporalOutputExtent(const PyroWaveViewport &viewport) {
-    return {std::max(uint32_t(viewport.width + 0.5f), 1u), std::max(uint32_t(viewport.height + 0.5f), 1u)};
-}
-
-// SGSR 2's static neighbourhood box size: min(20, (output area / stream area)^3).
-inline float pyroTemporalBoxStatic(uint32_t width, uint32_t height, PyroWaveExtent output) {
-    const float ratio = float(output.width) * float(output.height) / (float(width) * float(height));
-    return std::min(20.0f, ratio * ratio * ratio);
 }
 
 // Surface format selection. Values match VkFormat and VkColorSpaceKHR, kept independent of

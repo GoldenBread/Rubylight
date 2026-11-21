@@ -37,7 +37,6 @@ mod touchpad;
 pub(crate) use present::macos_video_check::run as check_metal;
 
 mod shader;
-mod temporal;
 mod upscale;
 #[cfg(target_os = "macos")]
 mod metalfx;
@@ -606,10 +605,6 @@ pub struct Streaming {
     #[cfg(windows)]
     enhancer: Option<enhance::Enhancer>,
     upscale_failed: bool,
-    /// Temporal upscaling was refused or failed in this stream; SGSR 1 stands in for it.
-    temporal_failed: bool,
-    /// Temporal upscaling gave way to SGSR 1 for Frame Warp, said once in the log.
-    temporal_warp_logged: bool,
     phase: phase::Phase,
     /// Whether racing the display's beam can work here, once the beam race is on and a picture is
     /// shown; on a VRR stream that tears, whether the display refreshes on present (`sync_vrr`).
@@ -894,9 +889,6 @@ pub struct Streaming {
     timings: VecDeque<(u32, u64)>,
     /// Frame Warp's shift for each present, while the stream runs it (`Facts::frame_warp`).
     frame_warp: Option<frame_warp::Presenter>,
-    /// The decode side's breaks count at the last picture a present took, which temporal
-    /// upscaling's history follows (`temporal::history_stale`).
-    drawn_history: u64,
 }
 
 /// What the main loop should do next.
@@ -1168,8 +1160,6 @@ impl Streaming {
             #[cfg(windows)]
             enhancer: None,
             upscale_failed: false,
-            temporal_failed: false,
-            temporal_warp_logged: false,
             phase: phase::Phase::default(),
             race_probe: None,
             // The sync interval as `App::begin_stream` set it.
@@ -1327,7 +1317,6 @@ impl Streaming {
             hdr_output: hdr_stream.then(|| HdrOutput::new(true)),
             timings: VecDeque::new(),
             frame_warp: warp_presenter,
-            drawn_history: 0,
         };
         streaming.report_keyboard_layout();
         // Before anything that sets a bitrate: what the PC counts this stream's bitrate as.
