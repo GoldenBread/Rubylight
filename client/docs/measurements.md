@@ -122,14 +122,13 @@ Present times come from `dumpsys SurfaceFlinger --latency`, not from the moment 
 
 ## Two Debug settings after the input hand-off
 
-Measured on a Retroid Pocket 6 (120 Hz panel, HEVC 1080p60 20 Mbps, Smoothest pacing, Direct submit and Prioritize stream traffic on, 90 s per leg in the order off, on, on, off, idle and with 8 busy loops running on the device), receive to release from Nightjar's latency CSV. **Speed up frame hand-off** and **Decoder priority for receiving** were each compared with the other off.
+Measured on a Retroid Pocket 6 (120 Hz panel, HEVC 1080p60 20 Mbps, Smoothest pacing, Direct submit and Prioritize stream traffic on, 90 s per leg, order off, on, on, off), receive to release from Nightjar's latency CSV. **Speed up frame hand-off** and **Decoder priority for receiving** were each compared with the other off. The load legs ran 8 busy shell loops on the device; the script checked before each leg that the loops were running and the device's CPUs were 100 % busy (`tools/hw/settings_ab.py`). The idle legs came from an earlier build of the same branch, so compare off with on within a row, not idle with load.
 
 | Setting | Load | Off p50 / p95 ms (two legs) | On p50 / p95 ms (two legs) | Drops |
 | --- | --- | --- | --- | --- |
 | Speed up frame hand-off | idle | 2.47 / 4.67, 2.58 / 4.51 | 2.47 / 4.52, 2.54 / 4.60 | 0 / 0 |
-| Speed up frame hand-off | load | 2.65 / 4.79, 2.61 / 5.66 | 2.52 / 4.44, 2.43 / 4.50 | 0 / 0 |
+| Speed up frame hand-off | 8 loops, CPUs 100 % busy | 1.37 / 3.20, 1.41 / 3.65 | 1.39 / 3.54, 1.39 / 3.28 | 0 / 0 |
 | Decoder priority for receiving | idle | 2.59 / 5.55, 2.63 / 4.73 | 2.56 / 9.45, 2.58 / 4.65 | 0 / 0 |
-| Decoder priority for receiving | load | 2.57 / 4.39, 2.46 / 4.65 | 2.47 / 4.51, 2.57 / 4.61 | 0 / 0 |
+| Decoder priority for receiving | 8 loops, CPUs 100 % busy | 1.39 / 3.61, 1.39 / 3.68 | 1.39 / 3.39, 1.38 / 3.29 | 0 / 0 |
 
-Neither setting moved the median or the p95 beyond the spread between legs of one arm (p95 4.4 to 5.7 ms off; the one 9.45 ms p95 was a single idle leg of the priority arm that its twin did not repeat), and no leg dropped a frame, so an earlier reading that the priority setting was slower under load did not repeat. The busy loops did not slow the stream either, so this load was light for a device with eight cores. The log of an on leg shows the receive thread raised to nice -8.
-
+Neither setting moved the median or the p95 beyond the spread between legs of one arm, idle or under load, and no leg dropped a frame (the few catch-up drops per leg came as often with a setting off as on). The priority setting was not slower under load, so an earlier reading that it was did not repeat. The busy loops did not slow the stream, which stayed on the cores the loops left to it. The hand-off worker (InputSubmit) was handed only one or two units per stream, the start of the stream, so the second submit thread the hint setting adds was in the session but did almost no work; a decoder that stalls would exercise it, and this one never did.

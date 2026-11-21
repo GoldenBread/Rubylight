@@ -325,9 +325,9 @@ Tier: Main rows show when a section opens; More rows fold behind the section's l
 
 | Setting / preference key | Tier | Default | Choices and units | When to change or use |
 | --- | --- | --- | --- | --- |
-| Speed up frame hand-off<br>`checkbox_submit_hint` | More | Off | On; Off | Off by default, under Debug's More rows. Also reports the threads that hand frames to the decoder (the receive thread and the input worker) to Android's performance hints. On a Retroid Pocket 6 it made no measurable difference, idle or under load; turn it on to compare. |
+| Speed up frame hand-off<br>`checkbox_submit_hint` | More | Off | On; Off | Off by default, under Debug's More rows. Also reports the threads that hand frames to the decoder (the receive thread and the input worker) to Android's performance hints. On a Retroid Pocket 6 it made no measurable difference, idle or with its CPUs fully loaded; turn it on to compare. |
 | Video data straight to the decoder<br>`checkbox_codec_direct` | More | @bool/default_codec_direct | On; Off | On by default, under Debug's More rows. H.264, HEVC and AV1 frames go into the decoder's buffer in place, one copy fewer. Turn it off if video stops or shows errors on this device. |
-| Decoder priority for receiving<br>`checkbox_receive_decode_priority` | More | Off | On; Off | Off by default, under Debug's More rows. With Prioritize stream traffic on and frames going to the decoder directly, gives the receive thread the decoder's priority. On a Retroid Pocket 6 it made no measurable difference, idle or under load (an earlier slower reading under load did not repeat); turn it on to compare. |
+| Decoder priority for receiving<br>`checkbox_receive_decode_priority` | More | Off | On; Off | Off by default, under Debug's More rows. With Prioritize stream traffic on and frames going to the decoder directly, gives the receive thread the decoder's priority. On a Retroid Pocket 6 it made no measurable difference, idle or with its CPUs fully loaded (an earlier slower reading under load did not repeat); turn it on to compare. |
 
 #### Diagnostics
 
