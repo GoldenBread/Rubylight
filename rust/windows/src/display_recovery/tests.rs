@@ -10,25 +10,48 @@ fn hdr_is_restored_only_while_the_display_has_the_applied_value() {
 
 #[test]
 fn a_crashed_streams_mode_is_restored_only_while_the_display_shows_what_the_stream_set() {
+    let original = (3840, 2160, 60000);
     let requested = (1920, 1080, 120000);
     // A TV can take the resolution and keep its old rate, or the rate alone.
-    let partial = (1920, 1080, 60000);
-    let rate_only = (2560, 1440, 120000);
+    let kept_rate = (1920, 1080, 60000);
+    let kept_size = (3840, 2160, 120000);
     // A mode the user set by hand after the crash.
     let by_hand = (2560, 1440, 144000);
     // A clean end records the mode the display actually took: it is put back
     // only while the display still has it, and a change the user made since
     // stays.
-    assert!(restore_mode_needed(false, partial, partial));
-    assert!(!restore_mode_needed(false, requested, partial));
+    assert!(restore_mode_needed(false, kept_rate, kept_rate, original));
+    assert!(!restore_mode_needed(false, requested, kept_rate, original));
     // A crash can leave the requested mode recorded while the display landed
     // on part of it: the original still comes back.
-    assert!(restore_mode_needed(true, requested, requested));
-    assert!(restore_mode_needed(true, partial, requested));
-    assert!(restore_mode_needed(true, rate_only, requested));
+    assert!(restore_mode_needed(true, requested, requested, original));
+    assert!(restore_mode_needed(true, kept_rate, requested, original));
+    assert!(restore_mode_needed(true, kept_size, requested, original));
     // A mode that is none of it was set by the user since: it stays.
-    assert!(!restore_mode_needed(true, by_hand, requested));
-    assert!(!restore_mode_needed(true, (3840, 2160, 60000), requested));
+    assert!(!restore_mode_needed(true, by_hand, requested, original));
+    assert!(!restore_mode_needed(
+        true,
+        (3840, 2160, 144000),
+        requested,
+        original
+    ));
+}
+
+#[test]
+fn a_hand_set_mode_with_the_same_refresh_survives_a_crashed_apply() {
+    // 3840x2160@60 desktop, the stream asks 1920x1080@60, the host crashes during the
+    // apply, and the user then sets 2560x1440@60: only the refresh matches.
+    let original = (3840, 2160, 60000);
+    let requested = (1920, 1080, 60000);
+    assert!(!restore_mode_needed(
+        true,
+        (2560, 1440, 60000),
+        requested,
+        original
+    ));
+    // The requested mode, or the original that never changed, still comes back.
+    assert!(restore_mode_needed(true, requested, requested, original));
+    assert!(restore_mode_needed(true, original, requested, original));
 }
 
 #[test]
