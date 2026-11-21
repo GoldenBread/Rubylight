@@ -39,6 +39,18 @@ fn a_chosen_vigem_pad_without_its_driver_says_what_to_install() {
     let message = unavailable(&anyhow::anyhow!("no interface"));
     assert!(message.contains("no interface"), "{message}");
     assert!(message.contains("Rubylight setup"), "{message}");
+    // A recorded installation problem takes precedence for VHF, while ViGEmBus keeps its own text.
+    assert_eq!(
+        unavailable_text(
+            &anyhow::anyhow!("no interface"),
+            Some("Smart App Control is on".into())
+        ),
+        "Smart App Control is on"
+    );
+    assert!(
+        unavailable_text(&error, Some("Smart App Control is on".into()))
+            .starts_with("DualShock 4 (ViGEmBus)")
+    );
 }
 
 #[test]
@@ -292,12 +304,13 @@ fn hid_rumble_reaches_feedback_for_each_profile() -> Result<()> {
                     (0x8000, 0x4000)
                 }
                 7 => {
+                    // Per-band HD rumble (SDL amplitude table, max across sides):
+                    // left low-band index 100 (0x40 + 50 -> 65535), right high-band index 68 (68 << 1 -> 32861).
                     output[0] = 0x10;
-                    output[3] = if running { 200 } else { 0 };
-                    output[5] = 0x40;
-                    output[7] = if running { 100 } else { 0 };
+                    output[5] = if running { 0x40 + 50 } else { 0x40 };
+                    output[7] = if running { 68 << 1 } else { 0 };
                     output[9] = 0x40;
-                    (65535, 32767)
+                    (65535, 32861)
                 }
                 _ => unreachable!(),
             };
