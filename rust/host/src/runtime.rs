@@ -479,6 +479,11 @@ pub async fn maintain(
     let mut steam_at = Instant::now() + Duration::from_secs(5);
     let mut launcher_at = Instant::now();
     let launcher_reading = Arc::new(AtomicBool::new(false));
+    // A launched game's window brought back after a mode switch left it minimised or behind its
+    // store client (issue #131): every couple of seconds while an app runs, off the stream's
+    // thread, and only while a look can still do anything.
+    let mut focus_at = Instant::now() + crate::launch_focus::EVERY;
+    let focus_reading = Arc::new(AtomicBool::new(false));
     let mut wake_at = Instant::now();
     let waking = Arc::new(AtomicBool::new(false));
     let library_ticking = Arc::new(AtomicBool::new(false));
@@ -546,6 +551,11 @@ pub async fn maintain(
             launcher_at = Instant::now() + crate::launcher_watch::EVERY;
             let h = h.clone();
             spawn_exclusive(&launcher_reading, move || crate::launcher_watch::watch(&h));
+        }
+        if Instant::now() >= focus_at && !resting {
+            focus_at = Instant::now() + crate::launch_focus::EVERY;
+            let h = h.clone();
+            spawn_exclusive(&focus_reading, move || crate::launch_focus::watch(&h));
         }
         if Instant::now() >= wake_at {
             wake_at = Instant::now() + butterpollo_core::wake::idle::TICK;

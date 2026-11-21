@@ -4,9 +4,11 @@
 
 use windows::Win32::{
     Foundation::{HWND, LPARAM},
+    Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
     UI::WindowsAndMessaging::{
-        EnumWindows, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
-        GetWindowThreadProcessId, IsWindowVisible,
+        EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
+        GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        WS_EX_TOOLWINDOW,
     },
 };
 
@@ -15,6 +17,15 @@ pub struct TopWindow {
     pub title: String,
     /// Whether it is the window in front.
     pub foreground: bool,
+    /// Whether it is minimised, as a game is after an exclusive-fullscreen
+    /// mode switch.
+    pub minimized: bool,
+    /// Whether the window has an owner (`GW_OWNER`), such as a dialog or popup.
+    pub owned: bool,
+    /// Whether it carries `WS_EX_TOOLWINDOW`.
+    pub tool: bool,
+    /// Whether DWM reports the window cloaked (`DWMWA_CLOAKED`).
+    pub cloaked: bool,
 }
 
 /// The visible windows that have a title, on the desktop the signed-in user sees.
@@ -37,10 +48,26 @@ pub fn visible() -> Vec<TopWindow> {
                     if !title.trim().is_empty() {
                         let mut pid = 0;
                         GetWindowThreadProcessId(window, Some(&mut pid));
+                        let owned =
+                            GetWindow(window, GW_OWNER).is_ok_and(|owner| !owner.is_invalid());
+                        let tool = (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32
+                            & WS_EX_TOOLWINDOW.0)
+                            != 0;
+                        let mut cloaked = 0u32;
+                        let _ = DwmGetWindowAttribute(
+                            window,
+                            DWMWA_CLOAKED,
+                            (&mut cloaked as *mut u32).cast(),
+                            4,
+                        );
                         scan.found.push(TopWindow {
                             pid,
                             title,
                             foreground: window == scan.front,
+                            minimized: IsIconic(window).as_bool(),
+                            owned,
+                            tool,
+                            cloaked: cloaked != 0,
                         });
                     }
                 }

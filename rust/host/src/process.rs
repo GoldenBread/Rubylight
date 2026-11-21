@@ -5,10 +5,10 @@ use butterpollo_core::connection_commands::ConnectionCommand as ClientCommand;
 use butterpollo_core::state::{App, PrepCommand};
 use butterpollo_windows::process::{CommandCancellation, Process};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 /// The stream values a device's connection commands read. The size is the one
 /// the device asked for, which its display keeps: a host `max_stream_resolution`
@@ -321,6 +321,8 @@ pub struct RunningApp {
     /// Every program the app starts only opens a launcher's own window (Steam Big Picture): the
     /// launcher is the app, so its windows are no prompt standing in for a game.
     launcher_only: bool,
+    /// The launched game's window first seen, and the brings-back since (issue #131).
+    focus: Option<Focus>,
 }
 /// The folder of the program an app starts, as Vibepollo uses when the app
 /// has no working directory: games often load files relative to it.
@@ -412,7 +414,10 @@ impl RunningApp {
         !self.launches && !self.has_game_process()
     }
     fn has_game_process(&self) -> bool {
-        self.steam.is_some() || self.playnite.is_some() || self.child.is_some()
+        self.steam.is_some()
+            || self.playnite.is_some()
+            || self.child.is_some()
+            || !self.foreign.is_empty()
     }
     /// The processes whose windows may come back after a display's departure
     /// minimised them. None for a background game, whose windows stay out of the
@@ -422,6 +427,35 @@ impl RunningApp {
             return Ok(Default::default());
         }
         self.window_processes()
+    }
+    /// The game's window processes that may be brought to the front after a
+    /// launch (issue #131): never a background game's, never a Playnite launch's,
+    /// never a program the desktop's explorer started (the user's own, not the
+    /// app's), and none for an app with no game process to name.
+    #[cfg(test)]
+    pub fn focus_windows(&self) -> Result<BTreeSet<u32>> {
+        if self.background || self.playnite.is_some() || !self.has_game_process() {
+            return Ok(Default::default());
+        }
+        self.make_focus_snapshot().candidate_pids()
+    }
+    /// A lock-free snapshot of the game's tracked processes for [`FocusSnapshot::candidate_pids`],
+    /// returning `None` when launch focus is not active for this app at `now`.
+    pub fn focus_snapshot(&self, now: Instant) -> Option<FocusSnapshot> {
+        self.bring_back_open(now)
+            .then(|| self.make_focus_snapshot())
+    }
+    fn make_focus_snapshot(&self) -> FocusSnapshot {
+        FocusSnapshot {
+            generation: self.generation.clone(),
+            steam_tracked: self.steam.as_ref().map(|t| t.tracked.clone()),
+            child_pids: self
+                .child
+                .as_ref()
+                .and_then(|c| c.process_ids().ok())
+                .unwrap_or_default(),
+            foreign: self.foreign.clone(),
+        }
     }
     /// The verified game processes (pid → creation time) and this session's
     /// process list.
@@ -441,12 +475,22 @@ impl RunningApp {
         } else if let Some(playnite) = &self.playnite {
             playnite.audio_processes(processes)?
         } else {
-            let ids = self.child.as_ref().context("this app has no owned game process; game-only audio and background streaming are unavailable for Desktop or detached commands")?.process_ids()?;
-            processes
-                .iter()
-                .filter(|p| ids.contains(&p.pid))
-                .map(|p| (p.pid, p.started))
-                .collect()
+            let mut owned: BTreeMap<u32, u64> = if let Some(child) = &self.child {
+                let ids = child.process_ids()?;
+                processes
+                    .iter()
+                    .filter(|p| ids.contains(&p.pid))
+                    .map(|p| (p.pid, p.started))
+                    .collect()
+            } else if self.foreign.is_empty() {
+                anyhow::bail!(
+                    "this app has no owned game process; game-only audio and background streaming are unavailable for Desktop or detached commands"
+                );
+            } else {
+                BTreeMap::new()
+            };
+            owned.extend(self.foreign.iter().map(|(&pid, &started)| (pid, started)));
+            owned
         };
         Ok(owned)
     }
@@ -518,6 +562,7 @@ impl RunningApp {
             foreground_check: None,
             game_seen: false,
             launcher_only: only_opens_launchers(app),
+            focus: None,
             exit_timeout: exit_timeout(app, &butterpollo_core::config::Config::default()),
             settings_swap: None,
             settings_watch: std::time::Instant::now(),
@@ -1067,6 +1112,87 @@ impl RunningApp {
                 .is_some_and(|launch| launch.game_up());
         Some((game_up, age))
     }
+    /// Whether bringing a launched game's window back may still happen at `now`
+    /// (issue #131): worth a look at the PC's process list and the desktop. Before
+    /// the game's window is seen that lasts as long as a launcher prompt is
+    /// watched for ([`butterpollo_core::launcher_prompt::WATCH_LIMIT`]); after, a
+    /// minute from its first sight. Playnite already manages its own launch focus.
+    pub fn bring_back_open(&self, now: Instant) -> bool {
+        if self.background || !self.launches || self.playnite.is_some() || !self.has_game_process()
+        {
+            return false;
+        }
+        match &self.focus {
+            Some(focus) => {
+                now.saturating_duration_since(focus.seen) < BRING_BACK_WINDOW
+                    && focus.restores < BRING_BACK_LIMIT
+            }
+            None => self.launch_progress().is_some(),
+        }
+    }
+    /// As [`Self::bring_back`], applied only if this app still has `generation`,
+    /// returning the pid to bring back and the app's name.
+    pub fn bring_back_for(
+        &mut self,
+        generation: &str,
+        now: Instant,
+        windows: Vec<(u32, bool)>,
+        foreground: Option<u32>,
+        store_client: impl Fn(u32) -> bool,
+    ) -> Option<(u32, String)> {
+        if self.generation != generation {
+            return None;
+        }
+        self.bring_back(now, windows, foreground, store_client)
+            .map(|pid| (pid, self.name.clone()))
+    }
+    /// Whether to bring a launched game's window back at `now`, `found` being
+    /// what a look at the desktop saw of it (issue #131). An exclusive-fullscreen
+    /// game that switches the streamed display's mode can be left minimised, or
+    /// behind the Steam window that started with it; the user then clicks it in
+    /// the taskbar. For a minute after the window was first seen the host does
+    /// that itself: at most [`BRING_BACK_LIMIT`] times, [`BRING_BACK_SPACING`]
+    /// apart, and never over a program the user is using. A background game's
+    /// window and one of an app that starts no program are never brought back.
+    ///
+    /// `windows` are the game's windows on the desktop (`pid`, minimised),
+    /// `foreground` the process of the window in front, and `store_client`
+    /// whether a process's program is a store client's. The pid whose window to
+    /// bring back, if any.
+    pub fn bring_back(
+        &mut self,
+        now: Instant,
+        windows: Vec<(u32, bool)>,
+        foreground: Option<u32>,
+        store_client: impl Fn(u32) -> bool,
+    ) -> Option<u32> {
+        if !self.bring_back_open(now) {
+            return None;
+        }
+        let found = found_window(windows.iter().copied(), foreground, store_client);
+        // Only a window that showed up counts: the minute starts at its first sight.
+        if self.focus.is_none() && found == LaunchWindow::Missing {
+            return None;
+        }
+        let focus = self.focus.get_or_insert(Focus {
+            seen: now,
+            restores: 0,
+            next: now,
+        });
+        if now < focus.next
+            || !matches!(found, LaunchWindow::Minimized | LaunchWindow::BehindClient)
+        {
+            return None;
+        }
+        focus.restores += 1;
+        focus.next = now + BRING_BACK_SPACING;
+        // The window that is down is the one to bring back, else the game's main one.
+        windows
+            .iter()
+            .find(|(_, minimized)| *minimized)
+            .or_else(|| windows.first())
+            .map(|(pid, _)| *pid)
+    }
     /// A Steam game looked for in `install_dir`, with its first look due.
     #[cfg(test)]
     pub fn track_steam(&mut self, install_dir: &str) {
@@ -1200,6 +1326,112 @@ impl ForegroundCheck {
         }
     }
 }
+/// How long after a launched game's window was first seen it may be brought
+/// back (issue #131): the display mode switch that leaves it minimised happens
+/// in its first seconds.
+const BRING_BACK_WINDOW: Duration = Duration::from_secs(60);
+/// The most brings-back, and the least time between two: the user's one click
+/// in the taskbar, not a fight with the game.
+const BRING_BACK_LIMIT: u8 = 3;
+const BRING_BACK_SPACING: Duration = Duration::from_secs(3);
+/// What a look at the desktop found of a launched game's window (issue #131).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaunchWindow {
+    /// No window of the game is on the desktop.
+    Missing,
+    /// The game's window is in front.
+    Front,
+    /// The game's window is minimised, as an exclusive-fullscreen mode switch
+    /// can leave it.
+    Minimized,
+    /// A store client's window (Steam's) is in front of the game's.
+    BehindClient,
+    /// Another program is in front: the user's, never taken from them.
+    BehindOther,
+}
+/// Read what a look saw: the game's own windows (`pid`, minimised) and the
+/// process of the window in front, with whether a process is a store client's.
+fn found_window(
+    windows: impl IntoIterator<Item = (u32, bool)>,
+    foreground: Option<u32>,
+    store_client: impl Fn(u32) -> bool,
+) -> LaunchWindow {
+    let (mut present, mut minimized, mut front) = (false, false, false);
+    for (pid, down) in windows {
+        present = true;
+        minimized |= down;
+        front |= foreground == Some(pid);
+    }
+    if !present {
+        LaunchWindow::Missing
+    } else if front {
+        LaunchWindow::Front
+    } else if foreground.is_some_and(|pid| !store_client(pid)) {
+        LaunchWindow::BehindOther
+    } else if minimized {
+        LaunchWindow::Minimized
+    } else if foreground.is_some_and(store_client) {
+        LaunchWindow::BehindClient
+    } else {
+        LaunchWindow::BehindOther
+    }
+}
+/// The game's window first seen, and the brings-back since (issue #131).
+#[derive(Debug, PartialEq)]
+struct Focus {
+    seen: Instant,
+    restores: u8,
+    next: Instant,
+}
+/// Lock-free inputs for finding the game's candidate window processes off `current_app`.
+pub struct FocusSnapshot {
+    pub(crate) generation: String,
+    steam_tracked: Option<BTreeMap<u32, u64>>,
+    child_pids: Vec<u32>,
+    foreign: BTreeMap<u32, u64>,
+}
+impl FocusSnapshot {
+    /// Resolve the game's candidate window pids against the current session process list.
+    pub fn candidate_pids(&self) -> Result<BTreeSet<u32>> {
+        let processes = session_processes()?;
+        Ok(self.candidates_in(&processes))
+    }
+    pub(crate) fn candidates_in(
+        &self,
+        processes: &[butterpollo_core::steam::Process],
+    ) -> BTreeSet<u32> {
+        let owned = if let Some(tracked) = &self.steam_tracked {
+            tracked.clone()
+        } else {
+            let mut map: BTreeMap<u32, u64> = processes
+                .iter()
+                .filter(|p| self.child_pids.contains(&p.pid))
+                .map(|p| (p.pid, p.started))
+                .collect();
+            map.extend(self.foreign.iter().map(|(&pid, &started)| (pid, started)));
+            map
+        };
+        focus_candidates(&owned, processes)
+    }
+}
+/// The `owned` game processes' windows, minus what the desktop's explorer
+/// started (the user's own program) and minus store clients, launchers, or shells
+/// (`FocusSnapshot::candidate_pids`).
+fn focus_candidates(
+    owned: &BTreeMap<u32, u64>,
+    processes: &[butterpollo_core::steam::Process],
+) -> BTreeSet<u32> {
+    butterpollo_core::background::window_owners(owned, processes)
+        .into_iter()
+        .filter(|pid| {
+            !started_from_desktop(*pid, processes)
+                && processes
+                    .iter()
+                    .find(|p| p.pid == *pid)
+                    .is_none_or(|p| watches_program(&p.name))
+        })
+        .collect()
+}
 /// Whether a fullscreen `program`, created at `created`, is a game a store
 /// client started for an app launched at `launched_at`. The store clients
 /// themselves never are: quitting a Big Picture app that started Steam must
@@ -1294,7 +1526,7 @@ fn foreign_game(program: &str, created: u64, launched_at: u64) -> bool {
     created != 0 && created >= launched_at && !store_client(name)
 }
 /// Whether the program named `name` (its file name) is a store client, Playnite or the host.
-fn store_client(name: &str) -> bool {
+pub(crate) fn store_client(name: &str) -> bool {
     const CLIENTS: [&str; 14] = [
         "steam.exe",
         "steamwebhelper.exe",

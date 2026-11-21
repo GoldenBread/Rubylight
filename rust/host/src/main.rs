@@ -12,6 +12,7 @@ mod game_settings;
 mod host_warnings;
 mod internet_play;
 mod invites;
+mod launch_focus;
 mod launcher_watch;
 mod library;
 mod logging;

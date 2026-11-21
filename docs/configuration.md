@@ -13,7 +13,7 @@ This guide covers each feature's settings by topic. [All settings](#all-settings
 | Network | [Adaptive bitrate](#adaptive-bitrate) · [Error correction chosen by the device](#error-correction-chosen-by-the-device) · [Roaming](#roaming) |
 | Sound | [Game-only audio](#game-only-audio) · [PCM and Dolby Digital audio](#pcm-and-dolby-digital-audio) · [Surround, night mode and headphone surround](#surround-night-mode-and-headphone-surround) |
 | Input | [Keyboard, touch, pen and cursor](#keyboard-touch-pen-and-cursor) · [Controllers](#controllers) · [MoonDeck](#moondeck) · [Couch menu](#couch-menu) |
-| Games | [Close apps on disconnect](#close-apps-on-disconnect) · [When a Playnite game closes](#when-a-playnite-game-closes) · [Playnite launch focus](#playnite-launch-focus) · [Radeon settings per game](#radeon-settings-per-game) · [Managed game files](#managed-game-files) · [Game settings per device](#game-settings-per-device) · [Neural Rendering](#neural-rendering) · [Background streaming](#background-streaming) |
+| Games | [Close apps on disconnect](#close-apps-on-disconnect) · [When a Playnite game closes](#when-a-playnite-game-closes) · [Playnite launch focus](#playnite-launch-focus) · [Launch focus](#launch-focus) · [Radeon settings per game](#radeon-settings-per-game) · [Managed game files](#managed-game-files) · [Game settings per device](#game-settings-per-device) · [Neural Rendering](#neural-rendering) · [Background streaming](#background-streaming) |
 | Apps and devices | [Settings for one app or device](#settings-for-one-app-or-device) · [Host control, session actions and Radeon settings](#host-control-session-actions-and-radeon-settings) |
 | Sharing and browsers | [Clipboard, files and USB](#clipboard-files-and-usb) · [File transfer](#file-transfer) · [Shared folders](#shared-folders) · [WebRTC server](#webrtc-server) |
 | Running the host | [Multiple instances](#multiple-instances) · [Updates](#updates) · [Settings backup and restore](#settings-backup-and-restore) |
@@ -693,6 +693,10 @@ The **Exit timeout** (`exit_timeout`) is a different wait: how long a game gets 
 When launching a Playnite game or fullscreen menu, Rubylight can bring its window to the front so controller input reaches it. Under **All settings → Games › Playnite launch focus**, **Confirm game focus** (`playnite_focus_attempts`, default `3`) sets the number of successful focus confirmations. Rubylight checks once a second, for at most **Stop focusing after** (`playnite_focus_timeout_secs`, default `15` seconds).
 
 If launch keeps interrupting a window you are using on the host, enable **Stop after the first focus confirmation** (`playnite_focus_exit_on_first`, default `false`) or set either numeric limit to `0` to disable focus management. Stopping early lets a launcher or splash screen take focus back; increase the timeout when a slow launch otherwise leaves the game behind another window. Save and launch again to apply these settings.
+
+## Launch focus
+
+A game that switches the streamed display to another exclusive-fullscreen resolution can be left minimised, or behind the Steam window that started with it: the stream then shows a quarter of the game, or the desktop, until the game is clicked in the taskbar. For the minute after a launched game's window first appears, Rubylight brings it back to the front the way that click does, at most three times, three seconds apart. It never takes the front from a program you opened on the PC, and it leaves a [background stream's](#background-streaming) game alone. There is no setting: it is part of launching a game.
 
 ## Radeon settings per game
 

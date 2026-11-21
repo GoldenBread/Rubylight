@@ -83,6 +83,35 @@ pub fn process() -> Option<u32> {
         (pid != 0).then_some(pid)
     }
 }
+/// The process of the active non-shell foreground window on the input desktop,
+/// returning `None` for desktop/shell/taskbar windows, minimised windows, or our
+/// own process so launch focus does not mistake them for another user app.
+pub fn active_process() -> Option<u32> {
+    crate::input::follow_input_desktop();
+    // SAFETY: each call takes a window handle or no arguments, and writes only
+    // into a live local of the size passed.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() || is_shell_or_desktop(window) || IsIconic(window).as_bool() {
+            return None;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        (pid != 0 && pid != GetCurrentProcessId()).then_some(pid)
+    }
+}
+/// Whether `window` is the Windows desktop, shell, or a shell/taskbar window.
+fn is_shell_or_desktop(window: HWND) -> bool {
+    let mut class = [0u16; 256];
+    // SAFETY: `window` is taken by value and `class` holds its UTF-16 buffer capacity.
+    unsafe {
+        if window == GetDesktopWindow() || window == GetShellWindow() {
+            return true;
+        }
+        let count = GetClassNameW(window, &mut class).max(0) as usize;
+        shell_class(&String::from_utf16_lossy(&class[..count]))
+    }
+}
 fn process_path(pid: u32) -> Option<String> {
     // SAFETY: the process handle is closed once after the query, and `count` is the capacity of
     // `name` in UTF-16 units, updated to the length written.
@@ -171,14 +200,10 @@ fn in_front_rect(display: [i32; 4]) -> InFront {
         }
         let mut pid = 0;
         GetWindowThreadProcessId(window, Some(&mut pid));
-        let mut class = [0u16; 256];
-        let count = GetClassNameW(window, &mut class).max(0) as usize;
         // A shell window Windows reports when the desktop is focused (Progman, the
         // taskbar's classes) or one of our own covers the display without presenting
         // past the compositor.
-        let nothing = window == GetDesktopWindow()
-            || window == GetShellWindow()
-            || shell_class(&String::from_utf16_lossy(&class[..count]))
+        let nothing = is_shell_or_desktop(window)
             || pid == GetCurrentProcessId()
             || IsIconic(window).as_bool();
         let mut cloaked = 0u32;

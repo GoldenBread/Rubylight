@@ -4,15 +4,17 @@
 use std::path::{Path, PathBuf};
 use windows::Win32::{
     Foundation::{HWND, LPARAM},
+    Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
     UI::{
         Input::KeyboardAndMouse::{
             INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
             SendInput, VIRTUAL_KEY,
         },
         WindowsAndMessaging::{
-            BringWindowToTop, EnumWindows, GW_OWNER, GetForegroundWindow, GetWindow,
-            GetWindowThreadProcessId, IsIconic, IsWindowVisible, SW_RESTORE, SW_SHOWMINNOACTIVE,
-            SetForegroundWindow, ShowWindow,
+            BringWindowToTop, EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow,
+            GetWindowLongPtrW, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic,
+            IsWindowVisible, SW_RESTORE, SW_SHOWMINNOACTIVE, SetForegroundWindow, ShowWindow,
+            WS_EX_TOOLWINDOW,
         },
     },
 };
@@ -121,8 +123,9 @@ pub fn settings_path() -> Option<PathBuf> {
             .join("settings.xml"),
     )
 }
-/// Visible top-level windows of `pid`.
+/// Visible top-level windows of `pid` on the signed-in user's input desktop.
 pub fn windows_of(pid: u32) -> Vec<HWND> {
+    crate::input::follow_input_desktop();
     struct Search {
         pid: u32,
         found: Vec<HWND>,
@@ -159,8 +162,9 @@ pub fn minimize(pid: u32) {
         }
     }
 }
-/// The top-level windows minimised now, by handle.
+/// The top-level windows minimised now, by handle, on the input desktop.
 pub fn minimized_windows() -> std::collections::BTreeSet<isize> {
+    crate::input::follow_input_desktop();
     unsafe extern "system" fn visit(window: HWND, data: LPARAM) -> windows::core::BOOL {
         // SAFETY: EnumWindows passes the set from minimized_windows as `data`, which outlives the
         // enumeration and is not otherwise used during it. IsIconic takes the handle by value.
@@ -214,6 +218,46 @@ pub fn focus(pid: u32) -> bool {
         return false;
     };
     to_front(window)
+}
+/// Pick the best window from top-level candidates (`window`, `minimized`, `eligible` — titled,
+/// uncloaked, non-tool): prefers eligible+minimized, then eligible, then minimized, else first.
+fn pick_focus_window<W: Copy>(
+    windows: impl IntoIterator<Item = W>,
+    inspect: impl Fn(W) -> (bool, bool),
+) -> Option<W> {
+    let items: Vec<(W, bool, bool)> = windows
+        .into_iter()
+        .map(|w| {
+            let (minimized, eligible) = inspect(w);
+            (w, minimized, eligible)
+        })
+        .collect();
+    items
+        .iter()
+        .find(|&&(_, minimized, eligible)| eligible && minimized)
+        .or_else(|| items.iter().find(|&&(_, _, eligible)| eligible))
+        .or_else(|| items.iter().find(|&&(_, minimized, _)| minimized))
+        .or_else(|| items.first())
+        .map(|&(w, _, _)| w)
+}
+/// Bring `pid`'s minimised or main titled window to the front without tapping Alt,
+/// matching the unowned top-level windows launch focus inspects; true when it is in front.
+pub fn focus_quietly(pid: u32) -> bool {
+    let Some(window) = pick_focus_window(windows_of(pid), |window| {
+        // SAFETY: `window` is taken by value and `cloaked` is a live u32 out-pointer.
+        unsafe {
+            let minimized = IsIconic(window).as_bool();
+            let titled = GetWindowTextLengthW(window) > 0;
+            let tool = (GetWindowLongPtrW(window, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0) != 0;
+            let mut cloaked = 0u32;
+            let _ =
+                DwmGetWindowAttribute(window, DWMWA_CLOAKED, (&mut cloaked as *mut u32).cast(), 4);
+            (minimized, titled && !tool && cloaked == 0)
+        }
+    }) else {
+        return false;
+    };
+    to_front_quietly(window)
 }
 /// Bring `window` to the front, activated; true when it is in front.
 pub(crate) fn to_front(window: HWND) -> bool {
@@ -281,5 +325,30 @@ mod tests {
         // 1: the user's, before; 3: the departure's; 4: never minimised; 2 is gone.
         let minimized = |window| window == 1 || window == 3;
         assert_eq!(newly_minimized([1, 3, 4], minimized, &before), [3]);
+    }
+    #[test]
+    fn focus_quietly_prefers_titled_uncloaked_windows_over_untitled_helpers() {
+        // (id, minimized, eligible): 1 is an untitled DX/helper window ahead of 2 (titled game).
+        let windows = [(1, false, false), (2, false, true)];
+        assert_eq!(
+            pick_focus_window(windows, |w| (w.1, w.2)).map(|w| w.0),
+            Some(2)
+        );
+        // When both an untitled helper and a titled window exist and only the titled one is
+        // minimised, pick the minimised titled window.
+        let mixed = [(1, true, false), (2, true, true), (3, false, true)];
+        assert_eq!(
+            pick_focus_window(mixed, |w| (w.1, w.2)).map(|w| w.0),
+            Some(2)
+        );
+        // If no titled window exists at all, fall back to a minimised or first candidate.
+        assert_eq!(
+            pick_focus_window([(1, false, false), (2, true, false)], |w| (w.1, w.2)).map(|w| w.0),
+            Some(2)
+        );
+        assert_eq!(
+            pick_focus_window(Vec::<(u32, bool, bool)>::new(), |w| (w.1, w.2)),
+            None
+        );
     }
 }
