@@ -676,6 +676,28 @@ class FrameLatencyStats {
                 frame.outputNs - frame.submitNs;
     }
 
+    /** The three timings of getInputToOutputNs, getSubmitToOutputNs and getOutputNs, read in one call. */
+    static final class OutputTimes {
+        long inputToOutputNs;
+        long submitToOutputNs;
+        long outputNs;
+    }
+
+    /**
+     * Fills out with what getInputToOutputNs, getSubmitToOutputNs and getOutputNs return for the
+     * output, under one lock instead of three. Zeros when untracked.
+     */
+    synchronized void readOutputTimes(int outputIndex, OutputTimes out) {
+        Frame frame = output(outputIndex);
+        if (frame == null) {
+            out.inputToOutputNs = out.submitToOutputNs = out.outputNs = 0;
+            return;
+        }
+        out.inputToOutputNs = frame.inputNs <= 0 || frame.outputNs < frame.inputNs ? 0 : frame.outputNs - frame.inputNs;
+        out.submitToOutputNs = frame.submitNs <= 0 || frame.outputNs < frame.submitNs ? 0 : frame.outputNs - frame.submitNs;
+        out.outputNs = frame.outputNs;
+    }
+
     /** When a still-owned output buffer came out of the decoder, or zero when untracked. */
     synchronized long getOutputNs(int outputIndex) {
         Frame frame = output(outputIndex);

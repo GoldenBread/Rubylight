@@ -55,6 +55,27 @@ public class FrameLatencyStatsTest {
         assertEquals("what the display gate reads", 10, stats.getSubmitToOutputNs(5));
     }
 
+    @Test public void readOutputTimesGivesWhatTheThreeGettersGive() {
+        FrameLatencyStats stats = new FrameLatencyStats();
+        FrameLatencyStats.OutputTimes times = new FrameLatencyStats.OutputTimes();
+        stats.readOutputTimes(5, times);
+        assertEquals(0, times.inputToOutputNs + times.submitToOutputNs + times.outputNs);
+        stats.onFrameReceived(100);
+        stats.onDecoderInput(1, 1, 100, 150, 200, (char) 0);
+        stats.onDecoderQueued(1, 203);
+        stats.onDecoderOutput(5, 1, 210);
+        stats.readOutputTimes(5, times);
+        assertEquals(stats.getInputToOutputNs(5), times.inputToOutputNs);
+        assertEquals(stats.getSubmitToOutputNs(5), times.submitToOutputNs);
+        assertEquals(stats.getOutputNs(5), times.outputNs);
+        assertEquals(7, times.inputToOutputNs);
+        assertEquals(10, times.submitToOutputNs);
+        assertEquals(210, times.outputNs);
+        stats.readOutputTimes(6, times);
+        assertEquals("an untracked output reads zeros, not the previous values", 0,
+                times.inputToOutputNs + times.submitToOutputNs + times.outputNs);
+    }
+
     @Test public void displayWaitAndClientLatencyEndAtTheHandOffAndTheScreenTimeGoesToItsOwnStage() {
         FrameLatencyStats stats = new FrameLatencyStats();
         decodedAndReleased(stats, 1);

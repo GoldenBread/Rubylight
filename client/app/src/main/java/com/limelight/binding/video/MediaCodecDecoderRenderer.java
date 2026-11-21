@@ -4172,13 +4172,20 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         frameLatencyStats.onQueueState(index, DecoderQueuePolicy.depth(numFramesIn, numFramesOut, decoderDepthBase), excessNs);
     }
 
+    private final FrameLatencyStats.OutputTimes debtTimes = new FrameLatencyStats.OutputTimes();
+
     /** Feeds the debt policy with the output at index, logs the queue it saw and an ended recovery. */
     private void noteDebt(int index) {
         int depth = DecoderQueuePolicy.depth(numFramesIn, numFramesOut, decoderDepthBase);
-        long excessNs = debt.watchesDisplay()
-                ? debt.onOutput(frameLatencyStats.getInputToOutputNs(index), frameLatencyStats.getSubmitToOutputNs(index),
-                        frameLatencyStats.getOutputNs(index), contentIntervalNs(), depth)
-                : debt.onOutput(frameLatencyStats.getInputToOutputNs(index), System.nanoTime(), contentIntervalNs());
+        long excessNs;
+        if (debt.watchesDisplay()) {
+            // Decoder output thread only: one lock for the three timings.
+            frameLatencyStats.readOutputTimes(index, debtTimes);
+            excessNs = debt.onOutput(debtTimes.inputToOutputNs, debtTimes.submitToOutputNs,
+                    debtTimes.outputNs, contentIntervalNs(), depth);
+        } else {
+            excessNs = debt.onOutput(frameLatencyStats.getInputToOutputNs(index), System.nanoTime(), contentIntervalNs());
+        }
         frameLatencyStats.onQueueState(index, depth, excessNs);
         logDebtEvent();
     }
