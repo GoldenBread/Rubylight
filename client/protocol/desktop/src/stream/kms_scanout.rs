@@ -190,6 +190,9 @@ pub struct Scanout {
     async_cap: bool,
     async_failed: bool,
     commit_times: plan::CommitTimes,
+    /// What a picture's commit is made of and handed the kernel as, kept from commit to commit.
+    commit_sets: Vec<(u32, u32, u64)>,
+    commit_buffers: plan::AtomicBuffers,
     /// The software renderer and its canvas the overlay is painted on.
     canvas: *mut SDL_Surface,
     overlay_renderer: *mut SDL_Renderer,
@@ -239,7 +242,7 @@ impl Scanout {
             mode.refresh_hz(),
             if async_cap { "available" } else { "unavailable" }
         );
-        Ok(Self { card, output, wishes, async_cap, async_failed: false, commit_times: plan::CommitTimes::default(), canvas, overlay_renderer, engaged: None, off: None })
+        Ok(Self { card, output, wishes, async_cap, async_failed: false, commit_times: plan::CommitTimes::default(), commit_sets: Vec::new(), commit_buffers: plan::AtomicBuffers::default(), canvas, overlay_renderer, engaged: None, off: None })
     }
 
     /// The planes show the stream.
@@ -675,46 +678,45 @@ impl Scanout {
     }
 
     fn commit_inner(&mut self) -> Result<(), String> {
-        let Self { card, output, wishes, engaged, async_cap, async_failed, commit_times, off, .. } = self;
+        let Self { card, output, wishes, engaged, async_cap, async_failed, commit_times, off, commit_sets: sets, commit_buffers, .. } = self;
         if off.is_some() {
             return Ok(());
         }
         let Some(engaged) = engaged.as_mut() else { return Ok(()) };
-        let mut sets = Vec::new();
+        sets.clear();
         let mut only_fb = true;
         if engaged.props_dirty {
-            Self::stream_sets(card, engaged, output, wishes, &mut sets)?;
+            Self::stream_sets(card, engaged, output, wishes, sets)?;
             only_fb = false;
         }
         let video = engaged.layout.video;
         if engaged.shown_rect != Some(engaged.rect) {
             let (fb, rect) = (engaged.next_fb, engaged.rect);
-            Self::put_plane(engaged, output, &mut sets, video, fb, Some(rect));
+            Self::put_plane(engaged, output, sets, video, fb, Some(rect));
             only_fb = false;
         } else if engaged.next_fb != engaged.shown_fb {
             let fb = engaged.next_fb;
-            Self::put(engaged, output, &mut sets, Object::Plane(video), "FB_ID", u64::from(fb));
+            Self::put(engaged, output, sets, Object::Plane(video), "FB_ID", u64::from(fb));
         }
         if let Some(show) = engaged.overlay.change {
             let full = Self::full_rect(engaged);
             let (plane, fb) = (engaged.overlay.plane, engaged.overlay.buffers[1 - engaged.overlay.front].fb);
-            Self::put_plane(engaged, output, &mut sets, plane, fb, show.then_some(full));
+            Self::put_plane(engaged, output, sets, plane, fb, show.then_some(full));
             only_fb = false;
         }
         if sets.is_empty() {
             return Ok(());
         }
-        let planes: Vec<Plane> = engaged.snapshot.planes.iter().map(|(p, _)| p.clone()).collect();
         let may_tear = plan::may_tear(wishes.tearing, engaged.vrr_on, wishes.tear_free);
-        let tear = plan::async_flip(may_tear, *async_cap && !*async_failed, engaged.layout.video_on_primary(&planes), only_fb);
+        let tear = plan::async_flip(may_tear, *async_cap && !*async_failed, engaged.layout.video_on_primary(engaged.snapshot.planes.iter().map(|(p, _)| p)), only_fb);
         let flags = if tear { drm::ATOMIC_PAGE_FLIP_ASYNC } else if only_fb { 0 } else { drm::ATOMIC_ALLOW_MODESET };
         let began = std::time::Instant::now();
-        match card.commit(&sets, flags) {
+        match card.commit_with(commit_buffers, sets, flags) {
             Ok(()) => {}
             Err(e) if tear => {
                 eprintln!("nightjar: kms: the card refused an async flip ({e}); pictures wait for the refresh from here");
                 *async_failed = true;
-                card.commit(&sets, 0).map_err(|e| format!("the card refused a picture: {e}"))?;
+                card.commit_with(commit_buffers, sets, 0).map_err(|e| format!("the card refused a picture: {e}"))?;
             }
             Err(e) => return Err(format!("the card refused a commit: {e}")),
         }

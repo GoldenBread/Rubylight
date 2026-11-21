@@ -6,6 +6,25 @@ fn mode(width: u32, height: u32, refresh_hz: f64) -> Mode {
 }
 
 #[test]
+fn atomic_buffers_group_the_sets_by_object_in_order_of_appearance() {
+    let sets = [(7, 1, 10), (3, 2, 20), (7, 3, 30), (9, 4, 40), (3, 5, 50), (7, 6, 60)];
+    let mut buffers = AtomicBuffers::default();
+    buffers.fill(&sets);
+    assert_eq!(buffers.objects(), [7, 3, 9]);
+    assert_eq!(buffers.counts(), [3, 2, 1]);
+    assert_eq!(buffers.props(), [1, 3, 6, 2, 5, 4]);
+    assert_eq!(buffers.values(), [10, 30, 60, 20, 50, 40]);
+    // A smaller commit replaces them, without growing anything.
+    let capacity = (buffers.objects.capacity(), buffers.props.capacity());
+    buffers.fill(&[(3, 8, 80)]);
+    assert_eq!((buffers.objects(), buffers.counts(), buffers.props(), buffers.values()), (&[3][..], &[1][..], &[8][..], &[80][..]));
+    buffers.fill(&sets);
+    assert_eq!((buffers.objects.capacity(), buffers.props.capacity()), capacity, "a commit of the same size allocates nothing");
+    buffers.fill(&[]);
+    assert!(buffers.objects().is_empty() && buffers.counts().is_empty());
+}
+
+#[test]
 fn a_rate_is_a_multiple_within_half_a_hertz() {
     assert_eq!(rate_multiple(60.0, 60), Some(1));
     assert_eq!(rate_multiple(59.94, 60), Some(1));

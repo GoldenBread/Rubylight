@@ -741,29 +741,20 @@ impl Card {
     /// ALLOW_MODESET, PAGE_FLIP_ASYNC). Blocking: it returns once the commit is on the screen,
     /// as a V-Sync present returns.
     pub fn commit(&self, sets: &[(u32, u32, u64)], flags: u32) -> std::io::Result<()> {
-        // Grouped by object, in the order objects first appear.
-        let mut objects: Vec<u32> = Vec::new();
-        for (object, ..) in sets {
-            if !objects.contains(object) { objects.push(*object); }
-        }
-        let mut counts = Vec::with_capacity(objects.len());
-        let mut props = Vec::with_capacity(sets.len());
-        let mut values = Vec::with_capacity(sets.len());
-        for object in &objects {
-            let mine: Vec<&(u32, u32, u64)> = sets.iter().filter(|(o, ..)| o == object).collect();
-            counts.push(mine.len() as u32);
-            for (_, prop, value) in mine {
-                props.push(*prop);
-                values.push(*value);
-            }
-        }
+        self.commit_with(&mut plan::AtomicBuffers::default(), sets, flags)
+    }
+
+    /// [`commit`](Self::commit) with the arrays it hands the kernel kept in `buffers`: a commit
+    /// per picture allocates nothing.
+    pub fn commit_with(&self, buffers: &mut plan::AtomicBuffers, sets: &[(u32, u32, u64)], flags: u32) -> std::io::Result<()> {
+        buffers.fill(sets);
         let mut atomic = Atomic {
             flags,
-            count_objs: objects.len() as u32,
-            objs_ptr: objects.as_ptr() as u64,
-            count_props_ptr: counts.as_ptr() as u64,
-            props_ptr: props.as_ptr() as u64,
-            prop_values_ptr: values.as_ptr() as u64,
+            count_objs: buffers.objects().len() as u32,
+            objs_ptr: buffers.objects().as_ptr() as u64,
+            count_props_ptr: buffers.counts().as_ptr() as u64,
+            props_ptr: buffers.props().as_ptr() as u64,
+            prop_values_ptr: buffers.values().as_ptr() as u64,
             ..Default::default()
         };
         ioctl(self.fd, ATOMIC, &mut atomic)

@@ -202,8 +202,8 @@ pub struct Layout {
 
 impl Layout {
     /// The picture is on the primary plane (async flips change only the primary plane's FB).
-    pub fn video_on_primary(&self, planes: &[Plane]) -> bool {
-        planes.iter().any(|p| p.id == self.video && p.kind == PlaneKind::Primary)
+    pub fn video_on_primary<'a>(&self, planes: impl IntoIterator<Item = &'a Plane>) -> bool {
+        planes.into_iter().any(|p| p.id == self.video && p.kind == PlaneKind::Primary)
     }
 }
 
@@ -592,6 +592,45 @@ impl CommitTimes {
 /// commit change.
 pub fn async_flip(tearing: bool, cap: bool, video_on_primary: bool, only_fb_changes: bool) -> bool {
     tearing && cap && video_on_primary && only_fb_changes
+}
+
+/// What an atomic commit hands the kernel for `sets` (object, property, value): the objects in
+/// the order they first appear, each one's property count, and all the properties and values,
+/// grouped by object. Kept between commits, so a commit allocates nothing once these have grown
+/// to the size of its sets.
+#[derive(Default)]
+pub struct AtomicBuffers {
+    objects: Vec<u32>,
+    counts: Vec<u32>,
+    props: Vec<u32>,
+    values: Vec<u64>,
+}
+
+impl AtomicBuffers {
+    pub fn fill(&mut self, sets: &[(u32, u32, u64)]) {
+        self.objects.clear();
+        self.counts.clear();
+        self.props.clear();
+        self.values.clear();
+        for (object, ..) in sets {
+            if !self.objects.contains(object) { self.objects.push(*object); }
+        }
+        for object in &self.objects {
+            let before = self.props.len();
+            for &(o, prop, value) in sets {
+                if o == *object {
+                    self.props.push(prop);
+                    self.values.push(value);
+                }
+            }
+            self.counts.push((self.props.len() - before) as u32);
+        }
+    }
+
+    pub fn objects(&self) -> &[u32] { &self.objects }
+    pub fn counts(&self) -> &[u32] { &self.counts }
+    pub fn props(&self) -> &[u32] { &self.props }
+    pub fn values(&self) -> &[u64] { &self.values }
 }
 
 /// A plane's source and destination: the shown part of the picture (16.16 fixed point is the
