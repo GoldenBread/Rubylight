@@ -17,8 +17,9 @@ final class RustBridge {
 
     /**
      * Loads the library once; false when it is missing or broken ({@link #loadFailure} says why).
-     * MoonBridge calls it when it loads, so a failure is known before the first stream, and input
-     * and queries made without the library are no-ops instead of an UnsatisfiedLinkError.
+     * MoonBridge's guarded forwarders and the stream start call it on first use, so input and
+     * queries made without the library are no-ops and the start refuses, never an UnsatisfiedLinkError.
+     * Never call it from MoonBridge's static initialiser: init() initialises MoonBridge (lock order).
      */
     static boolean isAvailable() {
         Boolean known = available;

@@ -169,9 +169,9 @@ public class MoonBridge {
     static {
         // The slim native library: AAudio output, USB audio for the DualSense and the controller tables.
         System.loadLibrary("moonlight-core");
-        // The Rust engine's library loads here too; a failure is recorded (RustBridge.loadFailure) and
-        // the stream start refuses with it, never an UnsatisfiedLinkError later.
-        RustBridge.isAvailable();
+        // Not the Rust engine's library: its init() initialises this class, so loading it from here
+        // would take RustBridge's lock under this class's init lock while another thread in
+        // RustBridge.load() waits the other way round. The forwarders load it on first use.
     }
 
     public static int CAPABILITY_SLICES_PER_FRAME(byte slices) {
