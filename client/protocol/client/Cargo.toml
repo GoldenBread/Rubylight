@@ -58,3 +58,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(aes_armv8)', 'cfg(polyval_
 butterpollo-core = { version = "3.0.0-alpha.1", git = "https://github.com/RamazanKara/Rubylight", rev = "682aa119bc181d94652b65009f471eb5015e3c8a", package = "butterpollo-core" }
 # Property tests over the host replies, control stream and USB/IP server (fuzz_tests.rs).
 proptest = { version = "1", default-features = false, features = ["std"] }
+# Receive-path golden tests (tests/golden): the host simulators encrypt.
+aes = "0.8"
+aes-gcm = "0.10"
+cbc = "0.1"

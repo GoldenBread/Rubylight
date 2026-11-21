@@ -182,7 +182,7 @@ impl VideoHost {
 
 /// Annex B test bitstreams.
 pub mod bitstream {
-    use crate::net::Rng;
+    use crate::golden::net::Rng;
 
     /// Random bytes that may contain start codes when `raw` is set; otherwise every third
     /// byte is non-zero so none appear.

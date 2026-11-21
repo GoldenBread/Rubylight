@@ -1,12 +1,13 @@
-//! Video receive: C and Rust on identical packet sequences.
-#![cfg(difftest_c)]
+//! Video receive against the classic engine's recorded output (golden/mod.rs).
+
+mod golden;
 
 use nightjar_core::video::VideoConfig;
-use nightjar_difftest::host::{
+use golden::host::{
     bitstream, VideoFrame, VideoHost, FRAME_AFTER_INVALIDATION, FRAME_IDR, FRAME_P,
 };
-use nightjar_difftest::net::{Impairment, Rng};
-use nightjar_difftest::{run_video, run_video_events, Step};
+use golden::net::{Impairment, Rng};
+use golden::{run_video, run_video_events, Step};
 
 const H264: u32 = 0x0001;
 const HEVC: u32 = 0x0100;

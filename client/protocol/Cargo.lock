@@ -1666,17 +1666,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nightjar-difftest"
-version = "0.1.0"
-dependencies = [
- "aes",
- "aes-gcm",
- "cbc",
- "cc",
- "nightjar-core",
-]
-
-[[package]]
 name = "nightjar-policy"
 version = "0.1.0"
 dependencies = [

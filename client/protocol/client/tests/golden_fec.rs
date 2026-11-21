@@ -1,9 +1,10 @@
-//! Reed-Solomon: nightjar-core's port against nanors.
-#![cfg(difftest_c)]
+//! Reed-Solomon: nightjar-core's port against the output nanors recorded (golden/mod.rs).
+
+mod golden;
 
 use nightjar_core::fec::ReedSolomon;
-use nightjar_difftest::c::{rs_decode, rs_encode};
-use nightjar_difftest::net::Rng;
+use golden::net::Rng;
+use golden::{check, Fnv};
 
 fn shards(rng: &mut Rng, count: usize, size: usize) -> Vec<Vec<u8>> {
     (0..count)
@@ -25,27 +26,24 @@ fn rust_decode(data: usize, set: &mut [Vec<u8>], missing: &[bool], size: usize) 
 
 #[test]
 fn encode_matches_nanors() {
-    let _guard = nightjar_difftest::C_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let mut rng = Rng::new(1);
     for _ in 0..120 {
         let data = 1 + rng.below(200);
         let parity = 1 + rng.below((255 - data).min(60));
         let size = 1 + rng.below(1200);
-        let mut c = shards(&mut rng, data + parity, size);
-        let mut r = c.clone();
-        assert!(rs_encode(data, &mut c, size));
-        rust_encode(data, &mut r, size);
-        assert_eq!(c, r, "{data}+{parity} x {size}");
+        let mut set = shards(&mut rng, data + parity, size);
+        let mut key = Fnv::new();
+        key.u64(data as u64);
+        set.iter().for_each(|s| key.bytes(s));
+        rust_encode(data, &mut set, size);
+        let mut out = Fnv::new();
+        set.iter().for_each(|s| out.bytes(s));
+        check("fec-encode", key.finish(), out.finish());
     }
 }
 
 #[test]
 fn decode_matches_nanors() {
-    let _guard = nightjar_difftest::C_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let mut rng = Rng::new(2);
     for round in 0..160 {
         let data = 1 + rng.below(220);
@@ -66,28 +64,27 @@ fn decode_matches_nanors() {
                 shard.fill(0xEE);
             }
         }
-        let (mut c, mut r) = (set.clone(), set);
-        let c_ok = rs_decode(data, &mut c, &missing, size);
-        let r_ok = rust_decode(data, &mut r, &missing, size);
-        assert_eq!(c_ok, r_ok, "{data}+{parity} missing {missing:?}");
-        if c_ok {
-            assert_eq!(c[..data], r[..data], "{data}+{parity} x {size}");
+        let mut key = Fnv::new();
+        key.u64(data as u64);
+        key.u64(size as u64);
+        set.iter().for_each(|s| key.bytes(s));
+        missing.iter().for_each(|&m| key.bytes(&[u8::from(m)]));
+        let ok = rust_decode(data, &mut set, &missing, size);
+        let mut out = Fnv::new();
+        out.bytes(&[u8::from(ok)]);
+        if ok {
+            set[..data].iter().for_each(|s| out.bytes(s));
         }
+        check("fec-decode", key.finish(), out.finish());
     }
 }
 
 #[test]
 fn rejects_what_nanors_rejects() {
-    let _guard = nightjar_difftest::C_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    // Whether nanors took each of these (it rejects 0 or 255+ shards in all, and no data or no parity).
     for (data, parity) in [(0, 1), (1, 0), (200, 56), (255, 1), (254, 1)] {
-        let mut set = vec![vec![1u8; 4]; data + parity];
-        let c = data + parity > 0 && rs_encode(data, &mut set, 4);
-        assert_eq!(
-            c,
-            ReedSolomon::new(data, parity).is_some(),
-            "{data}+{parity}"
-        );
+        let accepted = ReedSolomon::new(data, parity).is_some();
+        let recorded = (data * 1000 + parity) as u64;
+        check("fec-reject", recorded, u64::from(accepted));
     }
 }

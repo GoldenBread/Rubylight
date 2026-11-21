@@ -1,10 +1,11 @@
-//! Audio receive: C and Rust on identical packet sequences.
-#![cfg(difftest_c)]
+//! Audio receive against the classic engine's recorded output (golden/mod.rs).
+
+mod golden;
 
 use nightjar_core::audio::{AudioConfig, AudioEncryption};
-use nightjar_difftest::host::AudioHost;
-use nightjar_difftest::net::{Impairment, Rng};
-use nightjar_difftest::{run_audio, Step};
+use golden::host::AudioHost;
+use golden::net::{Impairment, Rng};
+use golden::{run_audio, Step};
 
 fn config(duration: u32) -> AudioConfig {
     AudioConfig {
