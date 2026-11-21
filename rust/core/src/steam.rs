@@ -556,9 +556,19 @@ fn manifests(steamapps: &Path) -> Vec<PathBuf> {
         // Unreadable now, so not cached: the next check reads it again.
         return vec![];
     };
-    read.insert(steamapps.to_owned(), (modified, names.clone()));
+    // A folder changed within the clock's granularity may change again with the same time, so its
+    // names are cached only once that time is a moment old.
+    let settled = std::time::SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age >= MANIFESTS_SETTLE);
+    if settled {
+        read.insert(steamapps.to_owned(), (modified, names.clone()));
+    }
     names
 }
+
+/// How old a `steamapps` folder's time must be before its manifest names are cached.
+const MANIFESTS_SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
 /// The folder's manifest names, `None` when they cannot be read.
 fn manifest_names(steamapps: &Path) -> Option<Vec<PathBuf>> {
     let entries = std::fs::read_dir(steamapps).ok()?;
