@@ -498,6 +498,7 @@ public class MoonBridge {
      */
     public static int usbAttach(int fd, String path, String name, HostEndpoint host) {
         if (host == null) return USB_HOST_FAILED;
+        if (!RustBridge.isAvailable()) return USB_NO_STREAM;
         return RustBridge.usbAttach(fd, path, name, host.address, host.httpPort, host.httpsPort,
                 host.serverCertificatePem, host.uniqueId, host.clientCertificateDer,
                 host.clientPrivateKeyPkcs8);
@@ -505,11 +506,13 @@ public class MoonBridge {
 
     /** Detaches an attachment of this stream; false when it is not attached. */
     public static boolean usbDetach(int requestId) {
-        return RustBridge.usbDetach(requestId);
+        return RustBridge.isAvailable() && RustBridge.usbDetach(requestId);
     }
 
     /** This stream's attachments as JSON (src/usb.rs's list_json), "[]" without any. */
     public static String usbList() {
+        // The USB screen asks with no stream too: without the engine there is nothing attached.
+        if (!RustBridge.isAvailable()) return "[]";
         String list = RustBridge.usbList();
         if (list == null) {
             LimeLog.severe("USB: the attachment list did not reach Java");
