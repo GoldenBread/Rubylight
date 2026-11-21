@@ -1271,5 +1271,51 @@ impl PrimaryWatch {
         self.stopped
     }
 }
+
+/// Deduplicates repeated display heartbeat or recovery errors and backs off
+/// retries exponentially while an identical failure persists.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeartbeatThrottle {
+    last_error: Option<String>,
+    failures: u32,
+}
+
+impl HeartbeatThrottle {
+    /// Record a successful attempt. Returns `true` when recovering from an error.
+    pub fn note_ok(&mut self) -> bool {
+        self.failures = 0;
+        self.last_error.take().is_some()
+    }
+
+    /// Record a failure. Returns `true` when this error is new and should warn,
+    /// resetting backoff so a new failure cause retries without delay.
+    pub fn note_error(&mut self, error: &str) -> bool {
+        if self.last_error.as_deref() == Some(error) {
+            self.failures = self.failures.saturating_add(1);
+            false
+        } else {
+            self.last_error = Some(error.to_owned());
+            self.failures = 1;
+            true
+        }
+    }
+
+    /// Interval before the next attempt, doubling on repeated identical failures
+    /// up to `max_backoff`.
+    pub fn next_tick(
+        &self,
+        base: std::time::Duration,
+        max_backoff: std::time::Duration,
+    ) -> std::time::Duration {
+        if self.failures <= 1 {
+            return base;
+        }
+        let shift = (self.failures - 1).min(16);
+        base.saturating_mul(1u32 << shift)
+            .min(max_backoff)
+            .max(base)
+    }
+}
+
 #[cfg(test)]
 mod tests;

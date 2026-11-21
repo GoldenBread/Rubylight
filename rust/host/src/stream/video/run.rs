@@ -37,7 +37,7 @@ impl SessionThread<'_> {
         // The stream's size and rate. A client whose display changes can ask
         // for others mid-stream (0x5532); the encoder is rebuilt from this copy.
         // The host's `max_stream_resolution` cap shrinks only the coded picture.
-        let mut stream = s.config.clone();
+        let mut stream = s.effective_config();
         let resolution_cap = c.max_stream_resolution();
         let mut rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
         // A constant-rate capture publishes for its fastest stream: this one's
@@ -1461,6 +1461,15 @@ impl SessionThread<'_> {
                     runtime_revision = runtime_revision.wrapping_add(1);
                 }
                 let (mut image, enhancement_changed) = enhancer.apply(&s, &runtime_config, runtime_revision, raw_image.clone());
+                if m.fallback_hdr_if_sdr(
+                    &s,
+                    &mut stream,
+                    &image,
+                    enhancer.hdr_peak(&runtime_config).is_some(),
+                ) {
+                    rebuild_encoder = true;
+                    pacer.reset_source_phase();
+                }
                 if enhancement_changed
                     || (!rebuild_encoder && encoder.as_ref().is_none_or(|encoder| !encoder.accepts_gpu_device(&image)))
                 {

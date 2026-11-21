@@ -1513,3 +1513,39 @@ fn a_display_that_left_lays_the_stream_out_again_once_windows_has_settled() {
     watch.departure_handled();
     assert!(!watch.departure_due(start + LayoutWatch::DEPARTURE_SETTLE * 3));
 }
+
+#[test]
+fn heartbeat_throttle_warns_once_per_error_and_backs_off() {
+    use std::time::Duration;
+    let base = Duration::from_millis(100);
+    let max = Duration::from_secs(1);
+    let mut throttle = HeartbeatThrottle::default();
+
+    assert_eq!(throttle.next_tick(base, max), Duration::from_millis(100));
+    assert!(!throttle.note_ok());
+
+    assert!(throttle.note_error("selected display does not support HDR"));
+    assert_eq!(throttle.next_tick(base, max), Duration::from_millis(100));
+
+    assert!(!throttle.note_error("selected display does not support HDR"));
+    assert_eq!(throttle.next_tick(base, max), Duration::from_millis(200));
+
+    assert!(!throttle.note_error("selected display does not support HDR"));
+    assert_eq!(throttle.next_tick(base, max), Duration::from_millis(400));
+
+    assert!(!throttle.note_error("selected display does not support HDR"));
+    assert_eq!(throttle.next_tick(base, max), Duration::from_millis(800));
+
+    assert!(!throttle.note_error("selected display does not support HDR"));
+    assert_eq!(throttle.next_tick(base, max), Duration::from_secs(1));
+
+    // A distinct error warns again and resets backoff to base for the first retry.
+    assert!(throttle.note_error("Access is denied."));
+    assert_eq!(throttle.next_tick(base, max), Duration::from_millis(100));
+
+    // Recovering reports once and restores normal cadence.
+    assert!(throttle.note_ok());
+    assert!(!throttle.note_ok());
+    assert_eq!(throttle.next_tick(base, max), Duration::from_millis(100));
+    assert!(throttle.note_error("selected display does not support HDR"));
+}

@@ -296,7 +296,7 @@ impl Enhancer {
                 image.gpu.vendor,
                 &image.gpu.display.adapter,
                 image.pixel,
-                s.config.hdr,
+                s.hdr_active(),
                 config,
             );
             // Told once per change: with the same text the warning is already

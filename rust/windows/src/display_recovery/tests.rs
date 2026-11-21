@@ -388,3 +388,58 @@ fn exited_process_handles_do_not_keep_recovery_journals_owned() {
     assert_eq!(identity(pid).unwrap(), None);
     assert!(identity(std::process::id()).unwrap().is_some());
 }
+
+#[test]
+fn recover_pending_retries_after_incomplete_and_stops_once_restored() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("display-recovery.json");
+    let kept = Journal {
+        pid: 0,
+        started: 0,
+        entries: BTreeMap::from([(
+            "display1".into(),
+            Entry {
+                hdr: Some((false, true)),
+                ..Default::default()
+            },
+        )]),
+    };
+    butterpollo_core::state::write_json(&path, &kept).unwrap();
+
+    // First retry fails (e.g. Access denied on Winlogon): pending journal remains.
+    let err =
+        recover_pending_at(&path, |_| anyhow::bail!("Access is denied. (os error 5)")).unwrap_err();
+    assert!(err.to_string().contains("Access is denied"));
+    assert!(path.exists());
+
+    // Second retry succeeds and removes the journal.
+    let restored = recover_pending_at(&path, |p| {
+        std::fs::remove_file(p)?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(restored);
+    assert!(!recover_pending_at(&path, |_| unreachable!()).unwrap());
+}
+
+#[test]
+fn recover_pending_skips_when_current_process_owns_a_live_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("display-recovery.json");
+    let pid = std::process::id();
+    let live = Journal {
+        pid,
+        started: identity(pid).unwrap().unwrap(),
+        entries: BTreeMap::from([(
+            "display1".into(),
+            Entry {
+                hdr: Some((false, true)),
+                ..Default::default()
+            },
+        )]),
+    };
+    butterpollo_core::state::write_json(&path, &live).unwrap();
+
+    let ran = recover_pending_at(&path, |_| panic!("must not recover live host journal")).unwrap();
+    assert!(!ran);
+}

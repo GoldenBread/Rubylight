@@ -263,6 +263,11 @@ impl SessionThread<'_> {
         };
         tracing::info!(ms = first_wait.elapsed().as_millis() as u64, "first frame timing");
         require_hdr_source(&s, || first.gpu.display_in_hdr(), false)?;
+        let mut effective = s.effective_config();
+        let rtx_hdr_active = crate::nvidia_enhance::generated_peak(&c, effective.hdr, first.pixel)
+            .is_some()
+            && butterpollo_core::encoder_gpu::is_nvidia(first.gpu.vendor);
+        m.fallback_hdr_if_sdr(&s, &mut effective, &first, rtx_hdr_active);
         s.source_checked.store(true, Ordering::Release);
         m.configure_encoder(&s, &c, &first, &prepared, &mut encoder)
             .map_err(|error| error.context(EncoderFailure("the encoder could not be created")))?;

@@ -681,7 +681,11 @@ impl Media {
                     // next pass re-reads.
                     let revision = s.hdr_revision.load(Ordering::Acquire);
                     if revision != p.hdr_seen {
-                        let metadata = s.hdr_metadata.read().unwrap().map(|m| m.wire(s.config.hdr));
+                        let metadata = s
+                            .hdr_metadata
+                            .read()
+                            .unwrap()
+                            .map(|m| m.wire(s.hdr_active()));
                         match metadata {
                             // Nothing to send, or the client has it: this revision is done.
                             None => p.hdr_seen = revision,

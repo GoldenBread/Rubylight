@@ -382,3 +382,101 @@ fn global_close_on_disconnect_waits_for_the_last_streaming_device() {
         .remove(&second.launch.id);
     assert!(application_finished(&fixture.host));
 }
+
+#[test]
+fn display_recovery_retry_waits_for_session_ready_and_backs_off_on_failure() {
+    let mut retry = DisplayRecoveryRetry::default();
+    let t0 = Instant::now();
+    let mut launches = 0usize;
+
+    // Skips while no user session is unlocked or host is busy streaming.
+    retry.poll(t0, true, true, false, |_, _| launches += 1);
+    retry.poll(t0, true, false, true, |_, _| launches += 1);
+    assert_eq!(launches, 0);
+
+    // Launches once idle and session_ready becomes true.
+    retry.poll(
+        t0 + Duration::from_secs(1),
+        true,
+        true,
+        true,
+        |_, result| {
+            launches += 1;
+            *result.lock().unwrap() = Some(Err("Access is denied. (os error 5)".into()));
+        },
+    );
+    assert_eq!(launches, 1);
+
+    // Drains failure and sets 2 s backoff; does not retry before due time.
+    retry.poll(
+        t0 + Duration::from_millis(1500),
+        true,
+        true,
+        true,
+        |_, _| {
+            launches += 1;
+        },
+    );
+    assert_eq!(launches, 1);
+    assert!(retry.due(true).is_some());
+
+    // Retries after backoff, succeeds, and stops.
+    retry.poll(
+        t0 + Duration::from_secs(4),
+        true,
+        true,
+        true,
+        |_, result| {
+            launches += 1;
+            *result.lock().unwrap() = Some(Ok(true));
+        },
+    );
+    assert_eq!(launches, 2);
+    retry.poll(t0 + Duration::from_secs(5), false, true, true, |_, _| {
+        launches += 1;
+    });
+    assert_eq!(launches, 2);
+    assert_eq!(retry.due(false), None);
+}
+
+#[test]
+fn display_recovery_retry_runs_immediately_when_session_unlocks() {
+    let mut retry = DisplayRecoveryRetry::default();
+    let t0 = Instant::now();
+    let mut launches = 0usize;
+
+    retry.poll(t0, true, true, true, |_, result| {
+        launches += 1;
+        *result.lock().unwrap() = Some(Err("Access is denied. (os error 5)".into()));
+    });
+    // Drain failure #1 -> 2 s backoff; then retry at +2 s.
+    retry.poll(t0, true, true, true, |_, _| launches += 1);
+    retry.poll(
+        t0 + Duration::from_secs(2),
+        true,
+        true,
+        true,
+        |_, result| {
+            launches += 1;
+            *result.lock().unwrap() = Some(Err("Access is denied. (os error 5)".into()));
+        },
+    );
+    // Drain failure #2 while session locks (sets 4 s backoff).
+    retry.poll(t0 + Duration::from_secs(2), true, true, false, |_, _| {
+        launches += 1;
+    });
+    assert_eq!(launches, 2);
+
+    // As soon as session unlocks again (even 1 s later, before the 4 s backoff), it retries immediately.
+    retry.poll(
+        t0 + Duration::from_secs(3),
+        true,
+        true,
+        true,
+        |_, result| {
+            launches += 1;
+            *result.lock().unwrap() = Some(Ok(true));
+        },
+    );
+    assert_eq!(launches, 3);
+}

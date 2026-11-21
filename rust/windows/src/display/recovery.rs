@@ -1359,6 +1359,7 @@ impl Retained {
             .spawn(move || {
                 let mut pending = false;
                 let mut retry_at = Instant::now();
+                let mut heartbeat = butterpollo_core::display_policy::HeartbeatThrottle::default();
                 while !worker_stop.load(std::sync::atomic::Ordering::Acquire) {
                     // Windows refuses display configuration from the normal
                     // desktop while it is locked.
@@ -1372,13 +1373,18 @@ impl Retained {
                     let retry_feed = restoring || result.is_err();
                     match result {
                         Ok(Some(true)) => {
+                            let _ = heartbeat.note_ok();
                             pending = true;
                             retry_at = Instant::now();
                         }
                         Err(e) => {
-                            tracing::warn!(error=%e,"retained monitor lease heartbeat failed")
+                            if heartbeat.note_error(&e.to_string()) {
+                                tracing::warn!(error=%e,"retained monitor lease heartbeat failed");
+                            }
                         }
-                        _ => {}
+                        _ => {
+                            let _ = heartbeat.note_ok();
+                        }
                     }
                     if pending && Instant::now() >= retry_at {
                         retry_at = Instant::now() + Duration::from_secs(1);
@@ -1397,13 +1403,14 @@ impl Retained {
                             }
                         }
                     }
-                    std::thread::park_timeout(Duration::from_millis(if pending || retry_feed {
+                    let base = Duration::from_millis(if pending || retry_feed {
                         25
                     } else if worker_active.load(std::sync::atomic::Ordering::Acquire) != 0 {
                         100
                     } else {
                         250
-                    }));
+                    });
+                    std::thread::park_timeout(heartbeat.next_tick(base, Duration::from_secs(1)));
                 }
             })?;
         Ok(Self {

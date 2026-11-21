@@ -1,0 +1,3 @@
+# HDR state and startup recovery
+- **HDR falls back cleanly to 10-bit SDR when a display stays in SDR.** Streams requested in HDR now fall back to 10-bit SDR instead of tagging SDR frames as HDR whenever Windows keeps HDR off on the captured display and RTX HDR is not generating HDR, signalling the client and the stream status card consistently.
+- **Repeated display heartbeat warnings and startup display recovery are reliable across lock transitions.** Repeated identical display lease heartbeat failures warn once and back off instead of flooding the log every 100 ms, and interrupted-stream HDR/mode recovery runs on the active input desktop and retries automatically after a sign-in or unlock so Windows does not stay stuck with HDR left on.

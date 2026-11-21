@@ -1494,7 +1494,7 @@ pub fn packed_drops_hlg(stream: &mut Negotiated, warnings: &crate::session::Warn
     dropped
 }
 /// An HDR request streamed as ten-bit SDR: its HDR format pick goes with it.
-fn stream_sdr_10bit(stream: &mut Negotiated) {
+pub fn stream_sdr_10bit(stream: &mut Negotiated) {
     stream.sdr_10bit = true;
     stream.hdr = false;
     stream.hdr_format = 0;

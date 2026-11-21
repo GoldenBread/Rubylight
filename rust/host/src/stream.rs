@@ -97,6 +97,24 @@ pub(crate) fn require_hdr_source(
         ),
     }
 }
+
+/// Whether a non-WebRTC stream configured for HDR must fall back to 10-bit SDR
+/// because capture shows the display stayed in SDR (`Some(false)`) with an SDR
+/// surface and RTX HDR is not generating HDR from it.
+pub(crate) fn should_fallback_hdr_to_sdr(
+    transport: butterpollo_core::session::Transport,
+    stream_hdr: bool,
+    source_is_bgra8: bool,
+    display_in_hdr: Option<bool>,
+    rtx_hdr_active: bool,
+) -> bool {
+    transport != butterpollo_core::session::Transport::WebRtc
+        && stream_hdr
+        && source_is_bgra8
+        && display_in_hdr == Some(false)
+        && !rtx_hdr_active
+}
+
 /// Backoff only after reopening fails; resource release is acknowledged.
 const RECOVERY_RETRY: Duration = Duration::from_millis(150);
 /// How long a capture of the app's window that became unavailable (minimised, closed) waits
@@ -1246,12 +1264,49 @@ impl Media {
         s: &Session,
         display: butterpollo_core::hdr::Metadata,
     ) -> butterpollo_core::hdr::Metadata {
-        let previous = s.hdr_metadata.read().unwrap().map(|m| m.wire(s.config.hdr));
+        let hdr = s.hdr_active();
+        let previous = s.hdr_metadata.read().unwrap().map(|m| m.wire(hdr));
         let metadata = s.set_display_hdr_metadata(display);
-        if previous != Some(metadata.wire(s.config.hdr)) {
+        if previous != Some(metadata.wire(hdr)) {
             let _ = self.control_wake.send(&[1]);
         }
         metadata
+    }
+    /// Drops a GameStream session out of HDR to 10-bit SDR when Windows left the
+    /// captured display in SDR with a BGRA8 surface and RTX HDR is not running,
+    /// waking control so clients receive `0x010e` (`enabled=false`).
+    fn fallback_hdr_if_sdr(
+        &self,
+        s: &Session,
+        stream: &mut butterpollo_core::rtsp::Negotiated,
+        image: &GpuImage,
+        rtx_hdr_active: bool,
+    ) -> bool {
+        let display_in_hdr = image.gpu.display_in_hdr();
+        if !should_fallback_hdr_to_sdr(
+            s.launch.transport,
+            stream.hdr,
+            image.pixel == butterpollo_windows::capture::Pixel::Bgra8,
+            display_in_hdr,
+            rtx_hdr_active,
+        ) {
+            return false;
+        }
+        butterpollo_core::stream_policy::stream_sdr_10bit(stream);
+        if s.disable_hdr() {
+            let _ = self.control_wake.send(&[1]);
+        }
+        tracing::warn!(
+            client = %s.launch.client.name,
+            output = %image.gpu.display.display_name,
+            source_pixel = ?image.pixel,
+            "display HDR did not stay active; falling back to 10-bit SDR for this stream"
+        );
+        s.launch.warnings.set(
+            "display_hdr",
+            "Requested display HDR state was not applied; capture source HDR is off, so this stream fell back to SDR. Check Windows HDR and the display policy, or reconnect with HDR disabled.",
+        );
+        true
     }
     fn configure_encoder(
         &self,
@@ -1261,8 +1316,9 @@ impl Media {
         prepared: &crate::display_session::Ready,
         encoder: &mut Option<Encoder>,
     ) -> Result<()> {
+        let stream = s.effective_config();
         *encoder = Some(Encoder::new_gpu_reported(
-            &s.config,
+            &stream,
             first,
             c,
             &s.launch.warnings,
@@ -1272,31 +1328,31 @@ impl Media {
             .ok()
             .map(|mode| mode.dmDisplayFrequency);
         let (requested_capture, constant_rate) = prepared.capture_method();
-        tracing::info!(width=s.config.width,height=s.config.height,display_width=s.config.display_size().0,display_height=s.config.display_size().1,capped=s.config.capped(),fps=f64::from(s.config.fps_millihz())/1000.,requested_fps=s.config.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=s.config.configured_bitrate_kbps,codec=s.config.codec,hdr=s.config.hdr,ten_bit=s.config.ten_bit(),full_range=s.config.full_range(),color_matrix=s.config.color_matrix(),vrr=s.config.vrr_low_latency,packet_size=s.config.packet_size,pyrowave_records=s.config.pyrowave_records,pyrowave_row_order=s.config.pyrowave_row_order,requested_capture=%requested_capture,constant_rate=constant_rate,requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
-        if s.config.chroma_packing != 0 {
-            let (coded_width, coded_height) = s.config.coded_size();
+        tracing::info!(width=stream.width,height=stream.height,display_width=stream.display_size().0,display_height=stream.display_size().1,capped=stream.capped(),fps=f64::from(stream.fps_millihz())/1000.,requested_fps=stream.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=stream.configured_bitrate_kbps,codec=stream.codec,hdr=stream.hdr,ten_bit=stream.ten_bit(),full_range=stream.full_range(),color_matrix=stream.color_matrix(),vrr=stream.vrr_low_latency,packet_size=stream.packet_size,pyrowave_records=stream.pyrowave_records,pyrowave_row_order=stream.pyrowave_row_order,requested_capture=%requested_capture,constant_rate=constant_rate,requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
+        if stream.chroma_packing != 0 {
+            let (coded_width, coded_height) = stream.coded_size();
             tracing::info!(
-                packing_version = s.config.chroma_packing,
-                codec = s.config.codec,
+                packing_version = stream.chroma_packing,
+                codec = stream.codec,
                 coded_width,
                 coded_height,
-                bit_depth = if s.config.ten_bit() { 10 } else { 8 },
+                bit_depth = if stream.ten_bit() { 10 } else { 8 },
                 "packed 4:4:4 stream"
             );
         }
         // The same floor link-rate adaptation stops at, measured on the project's test scenes.
         // Whole frames per second, as the client's minimum is, so 59.94 compares as 60.
-        let minimum = butterpollo_core::link_rate::pyrowave_floor_kbps(&s.config);
-        let recommended = butterpollo_core::link_rate::pyrowave_recommended_kbps(&s.config);
+        let minimum = butterpollo_core::link_rate::pyrowave_floor_kbps(&stream);
+        let recommended = butterpollo_core::link_rate::pyrowave_recommended_kbps(&stream);
         let bitrate = s.bitrate.load(Ordering::Relaxed);
-        if s.config.codec == 3 && bitrate < minimum {
+        if stream.codec == 3 && bitrate < minimum {
             tracing::warn!(
                 bitrate_kbps = bitrate,
                 minimum_kbps = minimum,
                 recommended_kbps = recommended,
                 "PyroWave bitrate is below the level where the project's test scenes kept detail; text and textures may lose detail. Raise the bitrate in Moonlight with network headroom, lower the resolution or frame rate, or use HEVC or AV1"
             );
-        } else if s.config.codec == 3 && bitrate < recommended {
+        } else if stream.codec == 3 && bitrate < recommended {
             tracing::warn!(
                 bitrate_kbps = bitrate,
                 minimum_kbps = minimum,
@@ -1308,7 +1364,7 @@ impl Media {
         // brightness. RTX HDR's picture is generated at its own peak, not the
         // SDR monitor's; its enhancer reports the same from its first frame.
         let mut display_metadata = first.gpu.hdr_metadata();
-        if let Some(peak) = crate::nvidia_enhance::generated_peak(c, s.config.hdr, first.pixel) {
+        if let Some(peak) = crate::nvidia_enhance::generated_peak(c, stream.hdr, first.pixel) {
             display_metadata = display_metadata.generated(peak);
         }
         let metadata = self.set_display_hdr_metadata(s, display_metadata);

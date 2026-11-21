@@ -1035,6 +1035,7 @@ impl Ready {
         let worker = std::thread::Builder::new()
             .name("game-display-lease".into())
             .spawn(move || {
+                let mut heartbeat = butterpollo_core::display_policy::HeartbeatThrottle::default();
                 while !worker_stop.load(Ordering::Acquire) {
                     // Windows refuses display configuration from the normal
                     // desktop while it is locked (issue #6).
@@ -1048,7 +1049,7 @@ impl Ready {
                         let followed = prepared.follow_shape(to);
                         prepared.mode_report.followed(&followed);
                     }
-                    let tick = if active || result.is_err() || prepared.recovery.pending {
+                    let base_tick = if active || result.is_err() || prepared.recovery.pending {
                         Duration::from_millis(100)
                     } else {
                         Duration::from_millis(250)
@@ -1059,9 +1060,19 @@ impl Ready {
                     // an older heartbeat cannot overwrite its new identity.
                     worker_target.publish(current);
                     drop(prepared);
-                    if let Err(error) = result {
-                        tracing::warn!(%error, "game display heartbeat failed");
+                    match &result {
+                        Ok(()) => {
+                            if heartbeat.note_ok() {
+                                tracing::info!("game display heartbeat recovered");
+                            }
+                        }
+                        Err(error) => {
+                            if heartbeat.note_error(&error.to_string()) {
+                                tracing::warn!(%error, "game display heartbeat failed");
+                            }
+                        }
                     }
+                    let tick = heartbeat.next_tick(base_tick, Duration::from_secs(1));
                     std::thread::park_timeout(tick);
                 }
             })?;

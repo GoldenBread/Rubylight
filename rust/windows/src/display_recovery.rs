@@ -6,7 +6,10 @@ use std::{
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     path::{Path, PathBuf},
     process::{Child, Command},
-    sync::{Mutex, OnceLock},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use windows::Win32::{Foundation::*, System::Threading::*};
 type Mode = (u32, u32, u32);
@@ -135,6 +138,7 @@ struct Journal {
     entries: BTreeMap<String, Entry>,
 }
 static PATH: OnceLock<PathBuf> = OnceLock::new();
+static PENDING_STARTUP: AtomicBool = AtomicBool::new(false);
 static WATCH: Mutex<Option<(Child, OwnedHandle)>> = Mutex::new(None);
 
 fn watch_done(pid: u32) -> Result<OwnedHandle> {
@@ -282,9 +286,53 @@ pub fn initialize(directory: &Path) -> Result<Option<anyhow::Error>> {
         }
         incomplete = recover(&path).err();
     }
+    PENDING_STARTUP.store(incomplete.is_some(), Ordering::Release);
     PATH.set(path)
         .map_err(|_| anyhow::anyhow!("display recovery already initialized"))?;
     Ok(incomplete)
+}
+
+/// Whether startup recovery left unfinished display restoration from an earlier
+/// interrupted session.
+pub fn has_pending() -> bool {
+    PENDING_STARTUP.load(Ordering::Acquire)
+}
+
+/// Retry unfinished startup display recovery, if any entries remain from a
+/// previous host and this host has not started a live display lease yet. Returns
+/// `Ok(true)` when leftover entries were restored, `Ok(false)` when nothing
+/// remains or a live lease on this host now owns the journal.
+pub fn recover_pending() -> Result<bool> {
+    if !has_pending() {
+        return Ok(false);
+    }
+    let Some(path) = PATH.get() else {
+        PENDING_STARTUP.store(false, Ordering::Release);
+        return Ok(false);
+    };
+    let outcome = recover_pending_at(path, recover);
+    if outcome.is_ok() {
+        PENDING_STARTUP.store(false, Ordering::Release);
+    }
+    outcome
+}
+
+fn recover_pending_at(path: &Path, recover_fn: impl FnOnce(&Path) -> Result<()>) -> Result<bool> {
+    let _guard = lock(path)?;
+    if !path.exists() {
+        return Ok(false);
+    }
+    let journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
+    let current = std::process::id();
+    if journal.pid == current {
+        // A stream or monitor lease in this host already wrote to the journal.
+        return Ok(false);
+    }
+    if journal.pid != 0 && identity(journal.pid)? == Some(journal.started) {
+        anyhow::bail!("another host owns this display recovery journal");
+    }
+    recover_fn(path)?;
+    Ok(true)
 }
 fn watch(path: &Path) -> Result<()> {
     use std::os::windows::process::CommandExt;
@@ -580,6 +628,12 @@ pub fn release_profile(id: &str) -> Result<()> {
 /// stay changed. Failed per-display changes and arrangement restoration are
 /// kept for a later recovery as well.
 fn recover(path: &Path) -> Result<()> {
+    // Switching to the active input desktop (Winlogon or Default) avoids
+    // Access Denied when restoring display HDR or modes across lock transitions.
+    crate::input::on_input_desktop(|| recover_inline(path))
+}
+
+fn recover_inline(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }

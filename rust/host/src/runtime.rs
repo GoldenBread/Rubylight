@@ -492,6 +492,7 @@ pub async fn maintain(
     let library_ticking = Arc::new(AtomicBool::new(false));
     let covers_fetching = Arc::new(AtomicBool::new(false));
     let updating = Arc::new(AtomicBool::new(false));
+    let mut display_recovery = DisplayRecoveryRetry::default();
     let mut library_tick_watch = LibraryTickWatch::default();
     let mut hotkey = RestoreHotkey::default();
     let mut tray = butterpollo_core::tray::Tracker::default();
@@ -612,6 +613,22 @@ pub async fn maintain(
             spawn_exclusive(&updating, move || crate::updater::poll(&h));
         }
         auto_lock.poll(&h);
+        let recovery_pending = butterpollo_windows::display_recovery::has_pending();
+        display_recovery.poll(
+            Instant::now(),
+            recovery_pending,
+            resting,
+            recovery_session_ready(),
+            |active, result| {
+                let wake = wake.clone();
+                spawn_exclusive(&active, move || {
+                    let outcome = butterpollo_windows::display_recovery::recover_pending()
+                        .map_err(|error| format!("{error:#}"));
+                    *result.lock().unwrap() = Some(outcome);
+                    wake.notify_one();
+                });
+            },
+        );
         if actions.is_some() {
             show_app(&h, &mut tray);
             butterpollo_windows::tray::release_overdue_notices();
@@ -648,12 +665,103 @@ pub async fn maintain(
             Some(steam_at),
             notices,
             auto_lock.due(),
+            display_recovery.due(butterpollo_windows::display_recovery::has_pending()),
         ];
         let at = idle_until(Instant::now(), timers.into_iter().flatten());
         tokio::select! {
             () = tokio::time::sleep_until(at.into()) => {}
             () = wake.notified() => {}
         }
+    }
+}
+
+fn recovery_session_ready() -> bool {
+    !butterpollo_windows::input::secure_desktop_shown()
+        && !(butterpollo_windows::process::is_system()
+            && !butterpollo_windows::process::user_signed_in())
+}
+
+/// Retries incomplete startup display recovery once the host is idle, a user
+/// session exists, and Windows is not holding the secure desktop.
+#[derive(Default)]
+struct DisplayRecoveryRetry {
+    waiting_for_session: bool,
+    throttle: butterpollo_core::display_policy::HeartbeatThrottle,
+    next_at: Option<Instant>,
+    active: Arc<AtomicBool>,
+    result: Arc<std::sync::Mutex<Option<std::result::Result<bool, String>>>>,
+}
+
+impl DisplayRecoveryRetry {
+    const MIN_BACKOFF: Duration = Duration::from_secs(2);
+    const MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+    fn drain_result(&mut self, now: Instant) {
+        let Some(outcome) = self.result.lock().unwrap().take() else {
+            return;
+        };
+        match outcome {
+            Ok(true) => {
+                let _ = self.throttle.note_ok();
+                self.next_at = None;
+                tracing::info!(
+                    "display settings from the previous interrupted stream were restored"
+                );
+            }
+            Ok(false) => {
+                let _ = self.throttle.note_ok();
+                self.next_at = None;
+            }
+            Err(error) => {
+                if self.throttle.note_error(&error) {
+                    tracing::warn!(
+                        error = %error,
+                        "display settings from an interrupted stream could not be restored yet; retrying"
+                    );
+                }
+                self.next_at = Some(
+                    now + self
+                        .throttle
+                        .next_tick(Self::MIN_BACKOFF, Self::MAX_BACKOFF),
+                );
+            }
+        }
+    }
+
+    fn poll(
+        &mut self,
+        now: Instant,
+        pending: bool,
+        resting: bool,
+        session_ready: bool,
+        mut spawn: impl FnMut(
+            Arc<AtomicBool>,
+            Arc<std::sync::Mutex<Option<std::result::Result<bool, String>>>>,
+        ),
+    ) {
+        self.drain_result(now);
+        if !pending || !resting || self.active.load(Ordering::Acquire) {
+            return;
+        }
+        if !session_ready {
+            self.waiting_for_session = true;
+            return;
+        }
+        if self.waiting_for_session {
+            // Try right away once a user signs in or unlocks the desktop.
+            self.waiting_for_session = false;
+            self.next_at = Some(now);
+        }
+        let due = self.next_at.unwrap_or(now);
+        if now >= due {
+            // Back off immediately until the background attempt reports back.
+            self.next_at = Some(now + Self::MIN_BACKOFF);
+            spawn(self.active.clone(), self.result.clone());
+        }
+    }
+
+    fn due(&self, pending: bool) -> Option<Instant> {
+        pending.then_some(self.next_at).flatten()
     }
 }
 

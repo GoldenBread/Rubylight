@@ -230,6 +230,10 @@ pub struct Session<P = (), A = ()> {
     pub stats: Stats,
     pub started: Instant,
     pub output: std::sync::RwLock<String>,
+    /// Whether the stream is currently sending HDR; starts at `config.hdr` and
+    /// drops to `false` if a GameStream display stayed in SDR so the encoder,
+    /// `0x010e` HDR control packet, and status JSON stay consistent.
+    pub hdr_active: AtomicBool,
     /// The display's HDR metadata, once the encoder has it. Clients are told
     /// the HDR state only then, so they hear it once with the real values.
     pub hdr_metadata: std::sync::RwLock<Option<crate::hdr::Metadata>>,
@@ -328,6 +332,7 @@ impl<P, A> Session<P, A> {
             u16::try_from(config.height).unwrap_or(u16::MAX),
         );
         let reconfigure = crate::reconfigure::Reconfiguration::of(&config);
+        let hdr = config.hdr;
         Arc::new(Self {
             encoder: Default::default(),
             capture_warnings: Default::default(),
@@ -369,6 +374,7 @@ impl<P, A> Session<P, A> {
             stats: Stats::default(),
             started,
             output: std::sync::RwLock::new(String::new()),
+            hdr_active: AtomicBool::new(hdr),
             hdr_metadata: Default::default(),
             hdr_revision: AtomicU64::new(1),
             hdr_source: Default::default(),
@@ -1749,6 +1755,28 @@ impl<P, A> Session<P, A> {
             .store(fec.percent() as u32, Ordering::Release);
         fec.log_due(now)
     }
+    /// Whether the stream is currently encoding and signalling HDR.
+    pub fn hdr_active(&self) -> bool {
+        self.hdr_active.load(Ordering::Acquire)
+    }
+    /// Negotiated stream parameters adjusted for whether HDR stayed active.
+    pub fn effective_config(&self) -> Negotiated {
+        let mut config = self.config.clone();
+        if config.hdr && !self.hdr_active() {
+            crate::stream_policy::stream_sdr_10bit(&mut config);
+        }
+        config
+    }
+    /// Drop the stream from HDR back to 10-bit SDR and advance `hdr_revision`
+    /// so control loops send `0x010e` (`enabled=false`). Returns `true` when
+    /// active HDR turned off.
+    pub fn disable_hdr(&self) -> bool {
+        let changed = self.hdr_active.swap(false, Ordering::AcqRel);
+        if changed {
+            self.hdr_revision.fetch_add(1, Ordering::Release);
+        }
+        changed
+    }
     /// Records the captured source's HDR metadata for the encoder and client.
     pub fn set_display_hdr_metadata(&self, display: crate::hdr::Metadata) -> crate::hdr::Metadata {
         self.hdr_source.lock().unwrap().display = Some(display);
@@ -1798,6 +1826,6 @@ impl<P, A> Session<P, A> {
         };
         let performance = performance.snapshot();
         let stutter = self.stats.stutter_window().report(mode.period()).snapshot();
-        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.config.hdr,"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| crate::link_rate::pyrowave_floor_kbps(&self.config)),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| crate::link_rate::pyrowave_recommended_kbps(&self.config)),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance,"stutter":stutter,"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
+        serde_json::json!({"warnings":warnings,"encoder":*self.encoder.read().unwrap(),"uuid":self.launch.client.uuid,"device_name":self.launch.client.name,"width":width,"height":height,"display_width":requested.width,"display_height":requested.height,"fps":fps,"requested_fps":requested_fps,"video_format":self.config.codec,"hdr":self.hdr_active(),"vrr":self.config.vrr_low_latency,"encoder_bitrate_kbps":self.bitrate.load(Ordering::Relaxed),"adaptive_bitrate":self.adaptive_bitrate.lock().unwrap().snapshot(),"link_rate":self.link_rate_snapshot(),"congestion":self.congestion_snapshot(),"packet_pacing":self.automatic_pacing.lock().unwrap().snapshot(),"fec_percent":self.fec_percent(),"pyrowave_minimum_kbps":(self.config.codec == 3).then(|| crate::link_rate::pyrowave_floor_kbps(&self.config)),"pyrowave_recommended_kbps":(self.config.codec == 3).then(|| crate::link_rate::pyrowave_recommended_kbps(&self.config)),"audio_channels":self.config.audio_channels,"state":if self.stopping(){"STOPPING"}else{"RUNNING"},"frames_sent":self.stats.frames.load(Ordering::Relaxed),"frames_replaced":self.stats.frames_replaced.load(Ordering::Relaxed),"packets_sent":self.stats.packets.load(Ordering::Relaxed),"bytes_sent":self.stats.bytes.load(Ordering::Relaxed),"idr_requests":self.stats.idr_requests.load(Ordering::Relaxed),"reference_invalidations":self.stats.reference_invalidations.load(Ordering::Relaxed),"send_loss_recoveries":self.stats.send_loss_recoveries.load(Ordering::Relaxed),"frames_lost_on_send":self.stats.frames_lost_on_send.load(Ordering::Relaxed),"keyframes_past_fec":self.stats.keyframes_past_fec.load(Ordering::Relaxed),"slice_delivery_overflows":self.stats.slice_delivery_overflows.load(Ordering::Relaxed),"encode_latency_ms":self.stats.latency_us.load(Ordering::Relaxed) as f64/1000.,"performance":performance,"stutter":stutter,"pipeline_rates":self.console_pipeline_rates(),"uptime_seconds":self.started.elapsed().as_secs_f64(),"role":self.launch.role,"guest":self.launch.guest()})
     }
 }

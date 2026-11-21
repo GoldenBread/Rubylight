@@ -2056,3 +2056,88 @@ fn an_hdr_request_alone_in_overrides_folds_over_the_layers_below() {
         "force_off"
     );
 }
+
+#[test]
+fn gamestream_hdr_falls_back_to_sdr_only_when_display_and_source_stay_sdr() {
+    use butterpollo_core::session::Transport;
+    assert!(super::should_fallback_hdr_to_sdr(
+        Transport::GameStream,
+        true,
+        true,
+        Some(false),
+        false,
+    ));
+    // WebRTC handles missing HDR via require_hdr_source.
+    assert!(!super::should_fallback_hdr_to_sdr(
+        Transport::WebRtc,
+        true,
+        true,
+        Some(false),
+        false,
+    ));
+    // Physical HDR display whose Desktop Duplication returned BGRA8 keeps HDR.
+    assert!(!super::should_fallback_hdr_to_sdr(
+        Transport::GameStream,
+        true,
+        true,
+        Some(true),
+        false,
+    ));
+    // Intentional RTX HDR converting BGRA8 SDR -> HDR keeps HDR.
+    assert!(!super::should_fallback_hdr_to_sdr(
+        Transport::GameStream,
+        true,
+        true,
+        Some(false),
+        true,
+    ));
+    // Unreadable display color space avoids false fallback.
+    assert!(!super::should_fallback_hdr_to_sdr(
+        Transport::GameStream,
+        true,
+        true,
+        None,
+        false,
+    ));
+}
+
+#[test]
+fn disabling_hdr_updates_effective_config_info_and_hdr_control_payload() {
+    let f = crate::state::test_support::Fixture::new();
+    let mut negotiated = butterpollo_core::rtsp::Negotiated {
+        codec: 2,
+        hdr: true,
+        hdr_format: 1,
+        ..Default::default()
+    };
+    negotiated.csc_mode = 2; // BT.709 limited SDR
+    let client = f.client(u32::MAX);
+    let session = Session::new(f.launch(client, Role::Stream), negotiated);
+
+    assert!(session.hdr_active());
+    assert_eq!(session.info()["hdr"], true);
+    let initial_meta = session.set_display_hdr_metadata(butterpollo_core::hdr::Metadata::default());
+    assert_eq!(initial_meta.wire(session.hdr_active())[0], 1);
+    let revision_before = session
+        .hdr_revision
+        .load(std::sync::atomic::Ordering::Acquire);
+
+    assert!(session.disable_hdr());
+    assert!(!session.disable_hdr());
+    assert!(!session.hdr_active());
+    assert_eq!(session.info()["hdr"], false);
+    assert!(
+        session
+            .hdr_revision
+            .load(std::sync::atomic::Ordering::Acquire)
+            > revision_before
+    );
+
+    let effective = session.effective_config();
+    assert!(!effective.hdr);
+    assert!(effective.sdr_10bit);
+    assert!(effective.ten_bit());
+    assert_eq!(effective.hdr_format, 0);
+    assert_eq!(effective.color_matrix(), 1);
+    assert_eq!(initial_meta.wire(session.hdr_active())[0], 0);
+}
