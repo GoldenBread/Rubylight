@@ -146,18 +146,18 @@ impl Snapshot {
     }
     pub fn capture() -> Result<Self> {
         let topology = Topology::query()?;
+        // One listing for every part: each costs a DXGI enumeration and the colour queries.
+        let monitors = topology.monitors();
         Ok(Self {
             version: 1,
-            nodes: topology.nodes()?,
-            hdr: topology
-                .monitors()
-                .into_iter()
-                .map(|m| (m.device_id, m.hdr_enabled))
+            nodes: topology.nodes_of(monitors.clone())?,
+            hdr: monitors
+                .iter()
+                .map(|m| (m.device_id.clone(), m.hdr_enabled))
                 .collect(),
-            rotation: topology.rotations(),
-            clone_groups: topology.clone_groups(),
-            scale: topology
-                .monitors()
+            rotation: topology.rotations_of(&monitors),
+            clone_groups: Topology::clone_groups_of(&monitors),
+            scale: monitors
                 .iter()
                 .filter_map(|m| {
                     dpi_scale(m)

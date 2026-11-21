@@ -412,7 +412,14 @@ pub(super) fn activate_target(routes: &[Route]) -> Result<Option<bool>> {
 }
 impl Topology {
     pub(super) fn rotations(&self) -> std::collections::BTreeMap<String, u32> {
-        self.monitors()
+        self.rotations_of(&self.monitors())
+    }
+    /// [`Self::rotations`] for monitors already listed, which cost a DXGI enumeration.
+    pub(super) fn rotations_of(
+        &self,
+        monitors: &[Monitor],
+    ) -> std::collections::BTreeMap<String, u32> {
+        monitors
             .iter()
             .filter_map(|m| {
                 self.paths
@@ -466,8 +473,12 @@ impl Topology {
         Ok(())
     }
     pub(super) fn clone_groups(&self) -> Vec<Vec<String>> {
+        Self::clone_groups_of(&self.monitors())
+    }
+    /// [`Self::clone_groups`] for monitors already listed, which cost a DXGI enumeration.
+    pub(super) fn clone_groups_of(monitors: &[Monitor]) -> Vec<Vec<String>> {
         let mut groups = std::collections::BTreeMap::<(u32, i32, u32), Vec<String>>::new();
-        for monitor in self.monitors() {
+        for monitor in monitors {
             groups
                 .entry((
                     monitor.adapter.LowPart,
@@ -475,7 +486,7 @@ impl Topology {
                     monitor.source,
                 ))
                 .or_default()
-                .push(monitor.device_id);
+                .push(monitor.device_id.clone());
         }
         groups
             .into_values()
@@ -556,12 +567,20 @@ impl Topology {
         Ok(())
     }
     pub fn nodes(&self) -> Result<Vec<butterpollo_core::topology::Node>> {
+        self.nodes_of(self.monitors())
+    }
+    /// [`Self::nodes`] for monitors already listed, which cost a DXGI enumeration.
+    pub(super) fn nodes_of(
+        &self,
+        monitors: Vec<Monitor>,
+    ) -> Result<Vec<butterpollo_core::topology::Node>> {
         use butterpollo_core::topology::{Kind, Mode, Node, Position};
-        self.monitors()
+        let listed = monitors.clone();
+        monitors
             .into_iter()
             .map(|m| {
                 let mode = mode(&m.display_name)?;
-                let refresh = self.refresh(&m.device_id)?;
+                let refresh = self.refresh_in(&listed, &m.device_id)?;
                 // SAFETY: mode() returns a display DEVMODEW, whose display position union field is initialized.
                 let position = unsafe { mode.Anonymous1.Anonymous2.dmPosition };
                 Ok(Node {
@@ -715,9 +734,16 @@ impl Topology {
         }
     }
     pub fn refresh(&self, id: &str) -> Result<butterpollo_core::framegen::Rate> {
-        let monitor = self
-            .monitors()
-            .into_iter()
+        self.refresh_in(&self.monitors(), id)
+    }
+    /// [`Self::refresh`] among monitors already listed, which cost a DXGI enumeration.
+    fn refresh_in(
+        &self,
+        monitors: &[Monitor],
+        id: &str,
+    ) -> Result<butterpollo_core::framegen::Rate> {
+        let monitor = monitors
+            .iter()
             .find(|m| m.device_id == id)
             .context("display unavailable")?;
         let path = self

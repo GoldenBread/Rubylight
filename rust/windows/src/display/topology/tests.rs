@@ -549,3 +549,41 @@ fn shows_follows_a_display_that_changes_routes() {
             .unwrap()
     );
 }
+/// A snapshot lists the monitors once (each listing is a DXGI enumeration and the colour
+/// queries) and takes its nodes' refresh rates, rotations and clone groups from that list.
+#[test]
+fn a_listed_set_of_monitors_gives_refresh_rotations_and_clone_groups() {
+    let mut first = monitor("first", 1, false);
+    first.target = 10;
+    let mut second = monitor("second", 1, false);
+    second.target = 11;
+    let path = |monitor: &Monitor, rate: u32| {
+        let mut path = DISPLAYCONFIG_PATH_INFO::default();
+        path.targetInfo.adapterId = monitor.adapter;
+        path.targetInfo.id = monitor.target;
+        path.sourceInfo.id = monitor.source;
+        path.targetInfo.refreshRate.Numerator = rate;
+        path.targetInfo.refreshRate.Denominator = 1;
+        path.targetInfo.rotation = DISPLAYCONFIG_ROTATION_ROTATE90;
+        path
+    };
+    let topology = Topology {
+        paths: vec![path(&first, 60), path(&second, 120)],
+        modes: vec![],
+    };
+    let listed = [first, second];
+    assert_eq!(
+        topology.refresh_in(&listed, "second").unwrap(),
+        butterpollo_core::framegen::Rate(120_000)
+    );
+    assert!(topology.refresh_in(&listed, "third").is_err());
+    assert_eq!(
+        topology.rotations_of(&listed),
+        std::collections::BTreeMap::from([("first".to_string(), 2), ("second".to_string(), 2)])
+    );
+    // Both are on the one source of one adapter: a clone group.
+    assert_eq!(
+        Topology::clone_groups_of(&listed),
+        vec![vec!["first".to_string(), "second".to_string()]]
+    );
+}
