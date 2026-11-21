@@ -1333,7 +1333,7 @@ mod wayland {
         Ok((image, described))
     }
 
-    /// PQ BT.2020 with `params`' luminances.
+    /// Asks for a PQ BT.2020 description with `params`' luminances; its ready or failed comes later.
     unsafe fn create_pq(conn: &Conn, manager: &Object<CmData>, params: PqParams) -> Result<Object<ImageData>, String> {
         let version = conn.version(manager.proxy);
         // SAFETY: a live manager whose features `hdr_label` checked; each request's signature.
@@ -1350,7 +1350,7 @@ mod wayland {
             }
             // create is the creator's destructor.
             let proxy = (conn.api.marshal_flags)(creator, PARAMS_CREATE, &IMAGE_IF.0, version, MARSHAL_FLAG_DESTROY, null_mut::<c_void>());
-            ready(conn, Object::new(conn, proxy, &IMAGE_LISTENER))
+            Object::new(conn, proxy, &IMAGE_LISTENER).ok_or_else(|| "no image description".into())
         }
     }
 
@@ -1367,8 +1367,33 @@ mod wayland {
         made_for: Option<(Brightness, bool, Option<u32>)>,
         refreshed: Instant,
         pumps: u32,
+        /// A refresh whose answers the compositor has yet to send; the present goes on meanwhile.
+        inflight: Option<Inflight>,
         conn: Conn,
     }
+
+    /// A refresh under way: the compositor's answers arrive between frames, one step at a time
+    /// (`HdrDescription::advance`), so no round trip ever holds the present thread.
+    struct Inflight {
+        started: Instant,
+        /// What the new description is made for: the state at the start.
+        made_for: (Brightness, bool, Option<u32>),
+        step: Step,
+    }
+
+    enum Step {
+        /// The compositor's preferred description was asked for; waiting for its ready.
+        Preferred(Object<ImageData>),
+        /// Its information was asked for; waiting for the done.
+        Info { image: Object<ImageData>, info: Object<InfoData> },
+        /// Ours was created from `info`'s luminances; waiting for its ready.
+        Created { image: Object<ImageData>, label: HdrLabel, info: DescriptionInfo },
+    }
+
+    /// A refresh the compositor leaves unanswered this long is given up.
+    const REFRESH_TIMEOUT: Duration = Duration::from_secs(1);
+    /// Round trips the set-up waits for a refresh's answers at most (the steps need one each).
+    const SETUP_ROUND_TRIPS: usize = 12;
 
     // SAFETY: libwayland's proxies may be used from any thread; the description is used from one
     // at a time (behind INSTALLED's lock).
@@ -1400,43 +1425,166 @@ mod wayland {
                 made_for: None,
                 refreshed: Instant::now(),
                 pumps: 0,
+                inflight: None,
                 conn,
             };
             // SAFETY: objects of our connection; a failure drops what was made (Drop).
             unsafe {
                 description.manager = Some(manager(&description.conn)?);
                 description.feedback = Some(color_feedback(&description.conn, description.manager.as_ref().unwrap())?);
-                description.refresh()?;
+                description.refresh_now()?;
             }
             Ok(description)
         }
 
-        /// Reads the preferred description and makes ours from it, set on the surface when
-        /// attached, with the present's encoding to match. Whether it changed.
-        unsafe fn refresh(&mut self) -> Result<bool, String> {
-            let (Some(manager), Some(feedback)) = (&self.manager, &self.feedback) else { return Err("no colour manager".into()) };
-            let (preferred_image, info) = unsafe { preferred(&self.conn, feedback) }?;
-            let made_for = wanted();
-            let (brightness, gamma22, content_peak) = made_for;
-            let label = match hdr_label(&manager.data.support, &info, brightness, gamma22, content_peak) {
-                Ok(label) => label,
-                Err(why) => {
-                    self.conn.destroy(preferred_image.proxy, IMAGE_DESTROY);
-                    return Err(why);
+        /// The first refresh, before the stream draws: waits for the compositor's answers.
+        unsafe fn refresh_now(&mut self) -> Result<bool, String> {
+            // SAFETY: objects of our connection.
+            unsafe { self.begin() }?;
+            for _ in 0..SETUP_ROUND_TRIPS {
+                // SAFETY: as above.
+                if let Some(done) = unsafe { self.advance() } {
+                    return done;
                 }
+                if !self.conn.roundtrip() {
+                    self.give_up();
+                    return Err("the Wayland round trip failed".into());
+                }
+            }
+            Err(self.give_up())
+        }
+
+        /// Asks for the compositor's preferred description: the first step of a refresh, which
+        /// `advance` carries on as the answers arrive.
+        unsafe fn begin(&mut self) -> Result<(), String> {
+            let Some(feedback) = &self.feedback else { return Err("no colour manager".into()) };
+            // SAFETY: a live feedback object; get_preferred's "n".
+            let proxy = unsafe { (self.conn.api.marshal_flags)(feedback.proxy, FEEDBACK_GET_PREFERRED, &IMAGE_IF.0, self.conn.version(feedback.proxy), 0, null_mut::<c_void>()) };
+            let image = unsafe { Object::new(&self.conn, proxy, &IMAGE_LISTENER) }.ok_or("no image description")?;
+            self.inflight = Some(Inflight { started: Instant::now(), made_for: wanted(), step: Step::Preferred(image) });
+            self.conn.flush();
+            Ok(())
+        }
+
+        /// Gives up the refresh under way: its objects go, and the reason is returned.
+        fn give_up(&mut self) -> String {
+            let Some(Inflight { step, .. }) = self.inflight.take() else { return "no refresh under way".into() };
+            match step {
+                Step::Preferred(image) => {
+                    self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                    "the compositor did not answer for the image description".into()
+                }
+                Step::Info { image, info } => {
+                    // SAFETY: the info proxy of ours, destroyed once (its done ends it).
+                    unsafe { (self.conn.api.destroy)(info.proxy) };
+                    self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                    "the compositor did not describe its preferred description".into()
+                }
+                Step::Created { image, .. } => {
+                    self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                    "the compositor did not answer for the image description".into()
+                }
+            }
+        }
+
+        /// Takes the refresh under way one step on with what the compositor has answered so far;
+        /// never waits. None while it is still under way, else how it ended: whether the
+        /// description changed. A refresh that failed leaves the state it was made for in
+        /// `made_for` (not again for it: the next output change tries again).
+        unsafe fn advance(&mut self) -> Option<Result<bool, String>> {
+            let inflight = self.inflight.as_ref()?;
+            let made_for = inflight.made_for;
+            if inflight.started.elapsed() > REFRESH_TIMEOUT {
+                self.made_for = Some(made_for);
+                return Some(Err(self.give_up()));
+            }
+            let Inflight { started, step, .. } = self.inflight.take()?;
+            let wait = |step| Some(Inflight { started, made_for, step });
+            let fail = |this: &mut Self, why: String| {
+                this.made_for = Some(made_for);
+                Some(Err(why))
             };
-            let image = match label {
-                HdrLabel::Preferred | HdrLabel::Blending { .. } => preferred_image,
-                HdrLabel::Parametric(params) | HdrLabel::Desktop(params) => {
-                    self.conn.destroy(preferred_image.proxy, IMAGE_DESTROY);
-                    if self.label == Some(label) && self.image.is_some() {
-                        self.preferred = info;
-                        self.made_for = Some(made_for);
-                        return Ok(false);
+            match step {
+                Step::Preferred(image) => match image.data.state.clone() {
+                    None => {
+                        self.inflight = wait(Step::Preferred(image));
+                        None
                     }
-                    unsafe { create_pq(&self.conn, manager, params) }?
+                    Some(Err(why)) => {
+                        self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                        fail(self, why)
+                    }
+                    Some(Ok(())) => {
+                        // SAFETY: a ready description; get_information's "n".
+                        let proxy = unsafe { (self.conn.api.marshal_flags)(image.proxy, IMAGE_GET_INFORMATION, &INFO_IF.0, self.conn.version(image.proxy), 0, null_mut::<c_void>()) };
+                        let Some(info) = (unsafe { Object::<InfoData>::new(&self.conn, proxy, &INFO_LISTENER) }) else {
+                            self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                            return fail(self, "no description information".into());
+                        };
+                        self.conn.flush();
+                        self.inflight = wait(Step::Info { image, info });
+                        None
+                    }
+                },
+                Step::Info { image, info } => {
+                    if !info.data.done {
+                        self.inflight = wait(Step::Info { image, info });
+                        return None;
+                    }
+                    // The info object ends with its done event; the client only frees its proxy.
+                    // SAFETY: our proxy, destroyed once.
+                    unsafe { (self.conn.api.destroy)(info.proxy) };
+                    let described = info.data.info;
+                    let Some(manager) = &self.manager else {
+                        self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                        return fail(self, "no colour manager".into());
+                    };
+                    let (brightness, gamma22, content_peak) = made_for;
+                    let label = match hdr_label(&manager.data.support, &described, brightness, gamma22, content_peak) {
+                        Ok(label) => label,
+                        Err(why) => {
+                            self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                            return fail(self, why);
+                        }
+                    };
+                    match label {
+                        HdrLabel::Preferred | HdrLabel::Blending { .. } => Some(self.apply(image, label, described, made_for)),
+                        HdrLabel::Parametric(params) | HdrLabel::Desktop(params) => {
+                            self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                            if self.label == Some(label) && self.image.is_some() {
+                                self.preferred = described;
+                                self.made_for = Some(made_for);
+                                return Some(Ok(false));
+                            }
+                            // SAFETY: a live manager whose features `hdr_label` checked.
+                            match unsafe { create_pq(&self.conn, manager, params) } {
+                                Ok(created) => {
+                                    self.conn.flush();
+                                    self.inflight = wait(Step::Created { image: created, label, info: described });
+                                    None
+                                }
+                                Err(why) => fail(self, why),
+                            }
+                        }
+                    }
                 }
-            };
+                Step::Created { image, label, info } => match image.data.state.clone() {
+                    None => {
+                        self.inflight = wait(Step::Created { image, label, info });
+                        None
+                    }
+                    Some(Err(why)) => {
+                        self.conn.destroy(image.proxy, IMAGE_DESTROY);
+                        fail(self, why)
+                    }
+                    Some(Ok(())) => Some(self.apply(image, label, info, made_for)),
+                },
+            }
+        }
+
+        /// Makes the ready description `image` ours, set on the surface when attached, with the
+        /// present's encoding to match. Whether it changed (it did).
+        fn apply(&mut self, image: Object<ImageData>, label: HdrLabel, info: DescriptionInfo, made_for: (Brightness, bool, Option<u32>)) -> Result<bool, String> {
             if !self.surface_object.is_null() {
                 // The present's encoding and the description change together, from the next frame.
                 self.encode(label);
@@ -1487,10 +1635,17 @@ mod wayland {
         /// stream's brightness; a line for the log when ours changed or could not.
         fn pump(&mut self) -> Option<String> {
             self.pumps = self.pumps.wrapping_add(1);
-            if !self.pumps.is_multiple_of(8) {
+            // While a refresh waits for the compositor its answers are looked for on every call
+            // (a read that finds nothing is cheap); otherwise only on every 8th.
+            if self.inflight.is_none() && !self.pumps.is_multiple_of(8) {
                 return None;
             }
             self.conn.pump();
+            if self.inflight.is_some() {
+                // SAFETY: objects of our connection.
+                let ended = unsafe { self.advance() }?;
+                return self.report(ended);
+            }
             let feedback = self.feedback.as_mut()?;
             let changed = feedback.data();
             // SAFETY: the box, read between dispatches.
@@ -1502,14 +1657,22 @@ mod wayland {
             unsafe { (*changed).changed = false };
             self.refreshed = Instant::now();
             // SAFETY: objects of our connection.
-            match unsafe { self.refresh() } {
-                Ok(true) => Some(format!("HDR description follows the output: {}", self.describe())),
-                Ok(false) => None,
+            match unsafe { self.begin() } {
+                Ok(()) => None,
                 Err(why) => {
                     // Not again for this state: the next output change tries again.
                     self.made_for = Some(wanted());
-                    Some(format!("HDR description stays {} ({why})", self.describe()))
+                    self.report(Err(why))
                 }
+            }
+        }
+
+        /// The log line for a refresh that ended.
+        fn report(&self, ended: Result<bool, String>) -> Option<String> {
+            match ended {
+                Ok(true) => Some(format!("HDR description follows the output: {}", self.describe())),
+                Ok(false) => None,
+                Err(why) => Some(format!("HDR description stays {} ({why})", self.describe())),
             }
         }
 
@@ -1536,6 +1699,7 @@ mod wayland {
         fn drop(&mut self) {
             // Destroying the colour surface unsets the description from the surface's next commit.
             self.conn.destroy(self.surface_object, SURFACE_DESTROY);
+            self.give_up();
             if let Some(image) = self.image.take() {
                 self.conn.destroy(image.proxy, IMAGE_DESTROY);
             }
