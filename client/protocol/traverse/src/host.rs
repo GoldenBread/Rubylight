@@ -399,20 +399,25 @@ impl HostService {
             return;
         };
         let punch_session = wire::punch_session(datagram);
-        {
-            // Read-locked through the tunnel's handling, which never touches this map.
-            let tunnels = self.shared.tunnels.read().unwrap();
-            if let Some((session, tunnel)) = tunnels.get(&tag) {
-                if !tunnel.is_closed() && punch_session.map_or(true, |punched| punched == *session)
-                {
-                    tunnel.receive(datagram, from);
-                    return;
-                }
-                // A new session replaces a connected path only once the old one is gone, so an
-                // old punch replayed by someone on the way can't break a working stream.
-                if !tunnel.is_closed() && matches!(tunnel.state(), State::Connected(_)) {
-                    return;
-                }
+        // The map is read-locked only for the lookup, never through the tunnel's handling: a
+        // writer (a path starting or ending) then waits for a hash lookup, not for the slowest
+        // datagram in flight, and every datagram behind it does not wait for that writer.
+        let existing = self
+            .shared
+            .tunnels
+            .read()
+            .unwrap()
+            .get(&tag)
+            .map(|(session, tunnel)| (*session, tunnel.clone()));
+        if let Some((session, tunnel)) = &existing {
+            if !tunnel.is_closed() && punch_session.map_or(true, |punched| punched == *session) {
+                tunnel.receive(datagram, from);
+                return;
+            }
+            // A new session replaces a connected path only once the old one is gone, so an
+            // old punch replayed by someone on the way can't break a working stream.
+            if !tunnel.is_closed() && matches!(tunnel.state(), State::Connected(_)) {
+                return;
             }
         }
         let Some(client) = punch_session else { return };
@@ -463,6 +468,32 @@ impl HostService {
         }
     }
 
+    /// Drops the paths that closed. The map is write-locked only when one did, which is rare:
+    /// a write lock every second made the receive thread's next datagram wait for it (and for
+    /// every datagram in flight before it). The dropped paths go after the lock does.
+    fn prune_closed(&self) {
+        let any = self
+            .shared
+            .tunnels
+            .read()
+            .unwrap()
+            .values()
+            .any(|(_, tunnel)| tunnel.is_closed());
+        if !any {
+            return;
+        }
+        let closed: Vec<_> = {
+            let mut tunnels = self.shared.tunnels.write().unwrap();
+            let tags: Vec<[u8; 8]> = tunnels
+                .iter()
+                .filter(|(_, (_, tunnel))| tunnel.is_closed())
+                .map(|(tag, _)| *tag)
+                .collect();
+            tags.iter().filter_map(|tag| tunnels.remove(tag)).collect()
+        };
+        drop(closed);
+    }
+
     fn run(&self) {
         let mut next_stun: Millis = 0;
         while !self.stopped() {
@@ -472,11 +503,7 @@ impl HostService {
                 self.discover();
             }
             self.serve_devices();
-            self.shared
-                .tunnels
-                .write()
-                .unwrap()
-                .retain(|_, (_, tunnel)| !tunnel.is_closed());
+            self.prune_closed();
             let now = self.shared.node.now();
             self.shared
                 .path_errors
@@ -760,6 +787,51 @@ mod tests {
         assert_eq!(poll_interval(&state, &[], now), POLL_EVERY);
         state.heard = Some(now - ACTIVE_FOR);
         assert_eq!(poll_interval(&state, &[], now), POLL_IDLE);
+    }
+
+    /// The loop's once-a-second prune never write-locks the map while every path is open, so the
+    /// receive thread's per-datagram read lock is never queued behind it; and `receive` holds no
+    /// lock through a tunnel's handling.
+    #[test]
+    fn pruning_paths_leaves_the_receive_lock_alone_unless_one_closed() {
+        let host = HostService::start(config()).unwrap();
+        let device = Device {
+            id: "a".into(),
+            name: "Phone".into(),
+            secret: [3; 32],
+        };
+        host.set_devices(vec![device.clone()]);
+        let path = Keys::new(device.secret).path(&host.session(), &[9; 16]);
+        let probe = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut punch = wire::Sealer::new(&path.client_to_host, path.tag, [9; 16]).seal(
+            wire::Kind::Punch,
+            0,
+            &[],
+        );
+        host.receive(&mut punch, probe.local_addr().unwrap());
+        assert_eq!(paths(&host, 1).len(), 1);
+
+        // A reader (a datagram being looked up) holds the map: the prune must not wait for it.
+        let reader = host.shared.tunnels.read().unwrap();
+        let (done, finished) = std::sync::mpsc::channel();
+        let pruning = host.clone();
+        thread::spawn(move || {
+            pruning.prune_closed();
+            let _ = done.send(());
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_millis(500)).is_ok(),
+            "the prune waited for a reader with every path open"
+        );
+        drop(reader);
+
+        // A closed path is dropped, once the readers are gone.
+        for (_, tunnel) in host.shared.tunnels.read().unwrap().values() {
+            tunnel.close("test");
+        }
+        host.prune_closed();
+        assert!(host.shared.tunnels.read().unwrap().is_empty());
+        host.stop();
     }
 
     #[test]
