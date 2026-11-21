@@ -21,7 +21,7 @@ Nightjar opens on Home when a paired PC supports the native API. Home has four p
 
 - **Layout.** **Grid**, **Rows**, or **List**: a line per game with a small cover, its store and, from a Rubylight PC that sends it, when you last played it.
 - **Group by.** **Store** (a row per store), **Type** (games apart from other apps such as launchers and the desktop), **Collection** (below), **Installation** (the installed games, then the rest; offered while the library has both) or **None** (one library).
-- **Sort by.** **Title**, **Last played** or **Play time**, as the PCs report them (Steam and Playnite on a Rubylight PC). Within a row the installed games still come first. All games follows the same order. A game no PC reports a time for counts as never played.
+- **Sort by.** **Title**, **Last played** or **Play time**. **Last played** is the newest time the game's PCs report (Steam and Playnite on a Rubylight PC), or, when none does, when this device last streamed it, which the game's line also shows; **Play time** is the longest any PC reports. Within a row the installed games still come first. All games follows the same order. A game no PC reports a time for counts as never played.
 - **Order.** **Ascending** (A to Z, oldest first, least played first) or **Descending**. On Android, choosing the sort already chosen turns its order around, and its arrow shows which way.
 - **Card size.** Small, medium or large.
 

@@ -1,7 +1,18 @@
 use super::*;
 
+/// The tests that set the global [`CATALOG`] hold this across their set, call and clear: it is one
+/// for the whole test process, and the test threads may otherwise read each other's games.
+static CATALOG_TEST: Mutex<()> = Mutex::new(());
+
+fn catalog_test() -> std::sync::MutexGuard<'static, ()> {
+    CATALOG_TEST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[test]
 fn last_played_is_per_game_zero_for_never_and_absent_when_unknown() {
+    let _catalog = catalog_test();
     let game = |id: &str, at: Option<i64>| Game {
         id: id.into(),
         last_played: at,
@@ -30,6 +41,7 @@ fn last_played_is_per_game_zero_for_never_and_absent_when_unknown() {
 
 #[test]
 fn playtime_is_per_game_and_absent_when_not_sent() {
+    let _catalog = catalog_test();
     let game = |id: &str, minutes: Option<u64>| Game {
         id: id.into(),
         playtime_minutes: minutes,

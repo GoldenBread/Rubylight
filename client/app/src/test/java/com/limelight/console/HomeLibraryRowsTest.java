@@ -58,8 +58,12 @@ public class HomeLibraryRowsTest {
     }
 
     static String found(String title, String store) {
+        return found(title, store, true);
+    }
+
+    static String found(String title, String store, boolean installed) {
         return "{\"install_id\":null,\"title\":\"" + title + "\",\"game_id\":\"found:" + title + "\","
-                + "\"store\":{\"source\":\"" + store + "\"},\"installed\":true,\"added\":false}";
+                + "\"store\":{\"source\":\"" + store + "\"},\"installed\":" + installed + ",\"added\":false}";
     }
 
     private static String in(String game, String... collections) {
@@ -283,6 +287,28 @@ public class HomeLibraryRowsTest {
         assertEquals("this device's recents", Long.valueOf(1_780_000_000L), doom.lastPlayed);
         assertEquals("the PCs say, so they win", Long.valueOf(1_760_000_000L), portal.lastPlayed);
         assertEquals("the Recently played row stays the PCs' own", Arrays.asList("Portal"), titles(model.row("shelf:recent").cards));
+    }
+
+    @Test
+    public void theUngroupedLibraryCardsPlayTimeIsTheLongestItsPcsReport() throws Exception {
+        tower(Collections.emptyList(), playedFor(game(1, "Portal", "steam", true, null), 40));
+        rig.transport.reply("den", "capabilities", ok("{\"api_version\":1,\"features\":[\"library\"],"
+                + "\"permissions\":{\"list\":true,\"view\":true,\"launch\":true}}"));
+        rig.transport.reply("den", "library", ok(library("d", playedFor(game(1, "Portal", "steam", false, null), 600))));
+        rig.transport.reply("den", "session", ok(NativeApiFixtures.IDLE));
+        List<ComputerDetails> hosts = Arrays.asList(nativeHost("tower", "Tower", true), nativeHost("den", "Den", true));
+        HomeModel model = HomeModel.of(rig.repository.refresh(hosts), new HashSet<>(Arrays.asList("tower", "den")));
+        HomeModel.GameCard card = model.rows(HomeView.Group.NONE).get(0).cards.get(0);
+        assertEquals("Portal", card.title);
+        assertEquals("the longest its PCs report, as in the store rows and All games", Long.valueOf(600),
+                card.playtimeMinutes());
+    }
+
+    @Test
+    public void theNotAddedRowLeadsWithTheInstalledGames() throws Exception {
+        tower(Collections.singletonList("library.unadded"), game(1, "Portal", "steam", true, null),
+                found("Alpha", "gog", false), found("Beta", "gog", true));
+        assertEquals(Arrays.asList("Beta", "Alpha"), titles(model().row("shelf:unadded").cards));
     }
 
     @Test

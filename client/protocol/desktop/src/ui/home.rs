@@ -200,7 +200,8 @@ impl Launcher {
         } = data;
         let entries = library.shown();
         let group = console::shown_group(self.settings.home_group, entries);
-        let rows = console::home_rows(entries, group, console::Sort::shown(&self.settings, entries));
+        let played = console::Played { sources, recents: &self.recents };
+        let rows = console::home_rows(entries, group, console::Sort::shown(&self.settings, entries), played);
         let loading = library_loading(view);
         // The rest of the running games and recents: the panel first, a shelf for what it cannot hold.
         let has_cover = |host: u64, app: u32| {

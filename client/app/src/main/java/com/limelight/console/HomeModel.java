@@ -574,12 +574,19 @@ public final class HomeModel {
             ConsoleSnapshot.Source best = null;
             int hosts = 0;
             List<String> listing = new ArrayList<>();
+            List<ConsoleSnapshot.Source> copies = new ArrayList<>();
             for (ConsoleSnapshot.Source source : title.sources) {
                 if (only != null && !only.equals(source.hostUuid)) {
                     continue;
                 }
-                // A library entry that is not installed, or not added, cannot be started from here.
-                if (Boolean.FALSE.equals(source.installed) || !source.added || source.hidden) {
+                // A library entry that is not added cannot be started from here.
+                if (!source.added || source.hidden) {
+                    continue;
+                }
+                // The card's play time is the longest its copies report, as in All games.
+                copies.add(source);
+                // A copy that is not installed cannot start it: its installed copy does.
+                if (Boolean.FALSE.equals(source.installed)) {
                     continue;
                 }
                 if (best == null) {
@@ -593,7 +600,7 @@ public final class HomeModel {
             }
             library.add(new GameCard("game:" + title.key, title.title, best.hostUuid, best.hostName, best.appId,
                     badgeOf(snapshot, best), best, hosts, starred.contains(best.hostUuid + ":" + best.appId), false, listing,
-                    lineLastPlayed(snapshot, title, only)));
+                    lineLastPlayed(snapshot, title, only), copies));
         }
         List<GameCard> allGames = new ArrayList<>();
         List<Row> rows = libraryRows(snapshot, starred, allGames, launchDenied, only);
@@ -755,7 +762,7 @@ public final class HomeModel {
                     plain ? FILTER_ALL : FILTER_OTHER, true));
         }
         if (!unadded.isEmpty()) {
-            rows.add(new Row("shelf:unadded", RowKind.UNADDED, null, null, unadded, FILTER_UNADDED, true));
+            rows.add(new Row("shelf:unadded", RowKind.UNADDED, null, null, installedFirst(unadded), FILTER_UNADDED, true));
         }
         return rows;
     }

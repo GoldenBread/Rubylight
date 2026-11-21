@@ -379,7 +379,8 @@ impl Launcher {
         // The room a raised cover's ring needs at the top of the scroll comes out of the gap.
         ui.add_space(space::L - LIFT);
         let pool = if self.library_filter == console::LibraryFilter::Hidden { hidden } else { entries };
-        let mut shown = matching(pool, &self.library_filter, &words, console::Sort::shown(&self.settings, entries));
+        let played = console::Played { sources: &sources, recents: &self.recents };
+        let mut shown = matching(pool, &self.library_filter, &words, console::Sort::shown(&self.settings, entries), played);
         let (genre, length) = (self.genre_filter.as_deref(), self.length_filter);
         shown.retain(|entry| nightjar_policy::game_info::library::shows(facts_of(entry), genre, length));
         // Installed is offered while anything is not, so with nothing installed it holds no game.
@@ -623,8 +624,8 @@ impl Launcher {
 }
 
 /// The games of `pool` under `filter` whose title holds the lowercase `words`, in `sort`'s order.
-fn matching<'a>(pool: &'a [console::Entry], filter: &console::LibraryFilter, words: &str, sort: console::Sort) -> Vec<&'a console::Entry> {
-    let mut shown = console::filtered(pool, filter, sort);
+fn matching<'a>(pool: &'a [console::Entry], filter: &console::LibraryFilter, words: &str, sort: console::Sort, played: console::Played<'_>) -> Vec<&'a console::Entry> {
+    let mut shown = console::filtered(pool, filter, sort, played);
     if !words.is_empty() {
         shown.retain(|entry| entry.title.to_lowercase().contains(words));
     }
@@ -656,7 +657,7 @@ fn count_chips(chips: &mut [console::FilterChip], entries: &[console::Entry], hi
     }
     for chip in chips {
         let pool = if chip.filter == console::LibraryFilter::Hidden { hidden } else { entries };
-        chip.count = matching(pool, &chip.filter, words, console::Sort::default()).len();
+        chip.count = matching(pool, &chip.filter, words, console::Sort::default(), console::Played::default()).len();
     }
 }
 
