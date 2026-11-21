@@ -814,3 +814,46 @@ fn decoder_open_costs() {
         assert!(matches!(d3d11.receive(), crate::media::Received::Frame(_)), "a reopened D3D11VA decoder decodes the next stream");
     }
 }
+
+/// The decoder's texture is asked for its description and device once, not for each picture of
+/// the pool's few textures, and a picture that does not fit is still refused from what is kept.
+#[test]
+fn a_decoder_texture_is_asked_for_its_description_once() {
+    let (width, height) = (8, 4);
+    let bytes = vec![0u8; (width * height * 4) as usize];
+    let info = media::FrameInfo { width: width as i32, height: height as i32, kind: media::FRAME_D3D11_444, ten_bit: 0, pts: 0,
+        data: [std::ptr::null_mut(); 3], linesize: [0; 3], color_space: 1, color_range: 1, color_trc: 1 };
+    let layout = media::PlanarLayout::of_d3d11(&info).unwrap();
+    let parameters = crate::stream::present::planar_parameters(&info, layout, false, 1.0, 1.0);
+    // SAFETY: Plain D3D11 calls on a device made and used on this thread.
+    unsafe {
+        let (mut device, mut context) = (None, None);
+        D3D11CreateDevice(None, D3D_DRIVER_TYPE_WARP, HMODULE::default(), D3D11_CREATE_DEVICE_FLAG(0), Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION, Some(&mut device), None, Some(&mut context)).unwrap();
+        let (device, _context): (ID3D11Device, ID3D11DeviceContext) = (device.unwrap(), context.unwrap());
+        let target = linear_target(&device, width, height);
+        let mut pass = PlanesPass::new(target.as_raw()).unwrap();
+        let make = |array: u32| {
+            let data = vec![D3D11_SUBRESOURCE_DATA { pSysMem: bytes.as_ptr().cast(), SysMemPitch: width * 4, SysMemSlicePitch: 0 }; array as usize];
+            let mut texture = None;
+            device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: width, Height: height, MipLevels: 1, ArraySize: array, Format: DXGI_FORMAT_AYUV,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, Some(data.as_ptr()), Some(&mut texture)).ok().and(texture)
+        };
+        let (Some(first), Some(second)) = (make(2), make(2)) else {
+            eprintln!("WARP makes no AYUV textures here: the cache is not exercised");
+            return;
+        };
+        let lock = &mut |copy: &mut dyn FnMut()| copy();
+        for slice in [0, 1, 0, 1, 1] {
+            pass.draw_texture(&first, slice, (width, height), &parameters, lock).unwrap();
+        }
+        assert_eq!(pass.surface_queries, 1, "one texture, asked once");
+        pass.draw_texture(&second, 0, (width, height), &parameters, lock).unwrap();
+        pass.draw_texture(&second, 1, (width, height), &parameters, lock).unwrap();
+        assert_eq!(pass.surface_queries, 2, "the next texture is asked once");
+        assert!(pass.draw_texture(&second, 2, (width, height), &parameters, lock).is_err(), "a slice past the array is refused from what is kept");
+        assert!(pass.draw_texture(&second, 0, (width + 2, height), &parameters, lock).is_err(), "so is a picture larger than the texture");
+        assert_eq!(pass.surface_queries, 2);
+    }
+}

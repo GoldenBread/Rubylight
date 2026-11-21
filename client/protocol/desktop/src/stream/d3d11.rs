@@ -158,9 +158,23 @@ pub struct PlanesPass {
     bound: Option<BoundSurface>,
     /// Views of the decoder's readable textures' slices, for the one texture they are of.
     surface_views: Option<(usize, SliceViews)>,
+    /// What `check_surface` asked the decoder's texture last, kept by the texture.
+    surface_facts: Option<SurfaceFacts>,
+    /// How often `check_surface` asked a texture (a test counts it).
+    #[cfg(test)]
+    surface_queries: u32,
     /// Frame Warp's HUD mask, and its view for the next `draw_direct` (`t6`, `warp_row`).
     mask: super::frame_warp::D3d11Mask,
     mask_view: Option<ID3D11ShaderResourceView>,
+}
+
+/// A decoder texture's description, which `check_surface` asks once for the texture and not for
+/// each picture: the decoder's pool is a few textures that live as long as it does. The reference
+/// keeps the texture alive, so no other texture takes its address (the key) while it is kept.
+struct SurfaceFacts {
+    key: usize,
+    _texture: ID3D11Texture2D,
+    desc: D3D11_TEXTURE2D_DESC,
 }
 
 /// A decoder texture's slice views by slice and format.
@@ -320,7 +334,7 @@ impl PlanesPass {
         Ok(Self { context, queue, deferred: deferred.unwrap(), device, target: [target_view],
             vertex: vertex.unwrap(), fragment: fragment.unwrap(), constants: [constants], sampler: [sampler],
             raster: raster.unwrap(), size: (desc.Width, desc.Height), views: Default::default(), owner: None, frame: None,
-            surface: None, surface_fragment: None, direct: None, back_buffer: BackBuffer::default(), bound: None, surface_views: None,
+            surface: None, surface_fragment: None, direct: None, back_buffer: BackBuffer::default(), bound: None, surface_views: None, surface_facts: None, #[cfg(test)] surface_queries: 0,
             mask: Default::default(), mask_view: None })
     }
 
@@ -446,20 +460,32 @@ impl PlanesPass {
     /// What `draw_texture` checks before it reads slice `slice` of `source`: a format this pass
     /// reads, a picture that fits, the pass's own device. The texture's description and the
     /// constants of the surface entries.
-    fn check_surface(&self, source: &ID3D11Texture2D, slice: u32, size: (u32, u32), parameters: &[u32; 8]) -> Result<(D3D11_TEXTURE2D_DESC, [u32; 8]), String> {
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        // SAFETY: A live texture.
-        unsafe { source.GetDesc(&mut desc) };
+    fn check_surface(&mut self, source: &ID3D11Texture2D, slice: u32, size: (u32, u32), parameters: &[u32; 8]) -> Result<(D3D11_TEXTURE2D_DESC, [u32; 8]), String> {
+        let key = source.as_raw() as usize;
+        let desc = match &self.surface_facts {
+            Some(facts) if facts.key == key => facts.desc,
+            _ => {
+                #[cfg(test)]
+                {
+                    self.surface_queries += 1;
+                }
+                let mut desc = D3D11_TEXTURE2D_DESC::default();
+                // SAFETY: A live texture.
+                unsafe { source.GetDesc(&mut desc) };
+                // SAFETY: A live texture's device.
+                let device = unsafe { source.GetDevice() }.map_err(|e| format!("the decoder's texture has no device: {e}"))?;
+                if device.as_raw() != self.device.as_raw() {
+                    return Err("the decoder's pictures are on another Direct3D 11 device than the renderer's".into());
+                }
+                self.surface_facts = Some(SurfaceFacts { key, _texture: source.clone(), desc });
+                desc
+            }
+        };
         let Some(parameters) = surface_parameters(*parameters, desc.Format) else {
             return Err(format!("the decoder's pictures are DXGI format {}, not a 4:4:4 format this pass reads", desc.Format.0));
         };
         if size.0 == 0 || size.1 == 0 || size.0 > desc.Width || size.1 > desc.Height || slice >= desc.ArraySize {
             return Err(format!("a {}x{} picture in slice {slice} does not fit the decoder's {}x{}x{} textures", size.0, size.1, desc.Width, desc.Height, desc.ArraySize));
-        }
-        // SAFETY: A live texture's device.
-        let device = unsafe { source.GetDevice() }.map_err(|e| format!("the decoder's texture has no device: {e}"))?;
-        if device.as_raw() != self.device.as_raw() {
-            return Err("the decoder's pictures are on another Direct3D 11 device than the renderer's".into());
         }
         Ok((desc, parameters))
     }
