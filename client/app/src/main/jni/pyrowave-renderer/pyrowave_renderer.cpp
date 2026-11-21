@@ -72,6 +72,7 @@ typedef VkQueueGlobalPriorityKHR VkQueueGlobalPriority;
 #include "frame.h"
 #include "presentation.h"
 #include "schedule.h"
+#include "present_poll.h"
 #include "present_timing.h"
 #include "device_path.h"
 #include "image_hold.h"
@@ -2667,9 +2668,12 @@ namespace {
                         redrawVsyncNs = waitForPictureOrVsync(lock, woken);
                     } else {
                         // Display times of shown frames arrive a little after their present; keep
-                        // asking for them while the stream is still (as during the latency test).
+                        // asking for them while the stream is still (as during the latency test),
+                        // once per refresh: a time exists only after the display showed the frame.
                         while (!pendingPresents.empty() && !woken()) {
-                            if (slotReady.wait_for(lock, std::chrono::milliseconds(2), woken)) break;
+                            const int64_t waitNs = presentPoll.waitNs(nowNs(), driverRefreshPeriodNs);
+                            if (waitNs > 0 &&
+                                slotReady.wait_for(lock, std::chrono::nanoseconds(waitNs), woken)) break;
                             lock.unlock();
                             pollRenderedFrames();
                             lock.lock();
@@ -2827,7 +2831,8 @@ namespace {
                                           submissionDiagnostics.isEnabled() ? releasedNs : 0});
                 presentTiming.recordPresent(presentTime.presentID, timing, submittedNs);
             }
-            pollRenderedFrames();
+            // No poll here: this frame's own time cannot exist yet, and the next present (or the
+            // idle wait) asks once for every time that has come by then.
 
             presentStats.frames++;
             presentStats.acquireWaitUs += afterAcquire - beforeAcquire;
@@ -2998,9 +3003,10 @@ namespace {
                 // Display times of shown frames arrive a little after their present; keep asking
                 // for them meanwhile, as presentLoop() does
                 const bool polling = !pendingPresents.empty();
-                const int64_t waitNs = polling ? std::min<int64_t>(remainingNs, 2'000'000) : remainingNs;
-                if (slotReady.wait_for(lock, std::chrono::nanoseconds(waitNs), woken)) break;
-                if (polling) {
+                const int64_t pollNs = polling ? presentPoll.waitNs(nowNs(), driverRefreshPeriodNs) : remainingNs;
+                const int64_t waitNs = std::min<int64_t>(remainingNs, pollNs);
+                if (waitNs > 0 && slotReady.wait_for(lock, std::chrono::nanoseconds(waitNs), woken)) break;
+                if (polling && pollNs <= waitNs) {
                     lock.unlock();
                     pollRenderedFrames();
                     lock.lock();
@@ -3921,32 +3927,36 @@ namespace {
         // Present thread only, like pollRenderedFrames(): reused so polling doesn't allocate.
         std::vector<VkPastPresentationTimingGOOGLE> pastTimings;
 
-        // Present thread only: it owns the swapchain.
+        PyroWavePresentPoll presentPoll;
+
+        // Present thread only: it owns the swapchain. One driver query per call, two only when
+        // more times are waiting than pastTimings holds.
         void pollRenderedFrames() {
+            presentPoll.polled(nowNs());
             if (!displayTimingSupported || swapchain == VK_NULL_HANDLE || pendingPresents.empty()) return;
-            uint32_t count = 0;
-            if (vk.GetPastPresentationTimingGOOGLE(device, swapchain, &count, nullptr) == VK_SUCCESS && count != 0) {
+            if (pastTimings.empty()) pastTimings.resize(32);
+            for (int round = 0; round < 4; ++round) {
+                uint32_t count = uint32_t(pastTimings.size());
                 auto &timings = pastTimings;
-                timings.resize(count);
                 auto result = vk.GetPastPresentationTimingGOOGLE(device, swapchain, &count, timings.data());
-                if (result == VK_SUCCESS || result == VK_INCOMPLETE) {
-                    for (uint32_t i = 0; i < count; ++i) {
-                        const auto &timing = timings[i];
-                        auto frame = std::find_if(pendingPresents.begin(), pendingPresents.end(),
-                            [&timing](const auto &entry) { return entry.id == timing.presentID; });
-                        if (frame == pendingPresents.end()) continue;
-                        presentationDiagnostics.record(frame->completedNs, frame->releasedNs, timing.actualPresentTime);
-                        presentTiming.feedback(timing.presentID, int64_t(timing.actualPresentTime),
-                                               int64_t(timing.earliestPresentTime), int64_t(timing.presentMargin));
-                        // actualPresentTime uses CLOCK_MONOTONIC on Android, like System.nanoTime().
-                        if (timing.actualPresentTime != 0) {
-                            std::lock_guard<std::mutex> lock(eventsMutex);
-                            renderedFrames.push_back(frame->ptsUs);
-                            renderedFrames.push_back(jlong(timing.actualPresentTime));
-                        }
-                        pendingPresents.erase(frame);
+                if (result != VK_SUCCESS && result != VK_INCOMPLETE) break;
+                for (uint32_t i = 0; i < count; ++i) {
+                    const auto &timing = timings[i];
+                    auto frame = std::find_if(pendingPresents.begin(), pendingPresents.end(),
+                        [&timing](const auto &entry) { return entry.id == timing.presentID; });
+                    if (frame == pendingPresents.end()) continue;
+                    presentationDiagnostics.record(frame->completedNs, frame->releasedNs, timing.actualPresentTime);
+                    presentTiming.feedback(timing.presentID, int64_t(timing.actualPresentTime),
+                                           int64_t(timing.earliestPresentTime), int64_t(timing.presentMargin));
+                    // actualPresentTime uses CLOCK_MONOTONIC on Android, like System.nanoTime().
+                    if (timing.actualPresentTime != 0) {
+                        std::lock_guard<std::mutex> lock(eventsMutex);
+                        renderedFrames.push_back(frame->ptsUs);
+                        renderedFrames.push_back(jlong(timing.actualPresentTime));
                     }
+                    pendingPresents.erase(frame);
                 }
+                if (result != VK_INCOMPLETE) break;
             }
             // Skipped frames may never get a time, even when no further timings arrive.
             const uint64_t now = nowUs();
