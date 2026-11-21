@@ -267,7 +267,7 @@ fn decode(
             // on Qualcomm Iris the first open of a run sometimes never starts decoding (Nightjar
             // issue 77: the fixture's picture never came), while a second open decodes it. The
             // backends before it already did their part, so the retry starts at V4L2. A start's
-            // checks share one budget, so a decoder that never answers costs a start that much.
+            // checks share one budget for the long waits and the retry (see ProbeBudget).
             Err(reason) if attempt < V4L2_PROBE_RETRIES && retry_worthwhile(&order, &reason) => {
                 if !budget.retry() {
                     eprintln!(
@@ -299,10 +299,11 @@ const V4L2_PROBE_RETRIES: usize = 1;
 /// a start.
 const V4L2_PROBE_BUDGET: std::time::Duration = std::time::Duration::from_millis(2_000);
 
-/// What the decoder checks of one start have left of [`V4L2_PROBE_BUDGET`]: [`decode_with`] waits
-/// for a picture no longer than what is left, and [`decode`] takes a retry's settle from it too.
-/// A V4L2 M2M decoder that never answers therefore costs a start at most this much, however many
-/// formats are checked; one that decodes spends nothing of it.
+/// What the decoder checks of one start have left of [`V4L2_PROBE_BUDGET`]: every V4L2 M2M attempt
+/// is charged the time it waited, picture or not, and [`decode`] takes a retry's settle from it
+/// too. Once it is spent, an attempt still waits [`ASYNC_PROBE_FLOOR`] (as every attempt did before
+/// the budget) and nothing is retried, so a decoder that answers late is not called undecodable
+/// because an earlier format used the budget up.
 #[derive(Clone, Copy, Debug)]
 pub struct ProbeBudget {
     left: std::time::Duration,
@@ -315,12 +316,13 @@ impl Default for ProbeBudget {
 }
 
 impl ProbeBudget {
-    /// How long to wait for a picture of this attempt: what is left, at most [`ASYNC_PROBE_WAIT`].
+    /// How long to wait for a picture of this attempt: what is left, at most [`ASYNC_PROBE_WAIT`],
+    /// at least [`ASYNC_PROBE_FLOOR`].
     fn wait(&self) -> std::time::Duration {
-        self.left.min(ASYNC_PROBE_WAIT)
+        self.left.min(ASYNC_PROBE_WAIT).max(ASYNC_PROBE_FLOOR)
     }
 
-    /// An attempt that made no picture waited `waited` of the budget.
+    /// An attempt waited `waited` of the budget.
     fn spent(&mut self, waited: std::time::Duration) {
         self.left = self.left.saturating_sub(waited);
     }
@@ -389,6 +391,10 @@ fn first_that_decodes<T>(
 /// this stays well inside a stream's startup.
 const ASYNC_PROBE_WAIT: std::time::Duration = std::time::Duration::from_millis(1_500);
 
+/// The least [`decode_with`] waits for an asynchronous decoder's picture, budget spent or not: the
+/// quarter second every attempt had before [`ProbeBudget`].
+const ASYNC_PROBE_FLOOR: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// How often [`decode_with`] asks an asynchronous decoder again for the picture.
 const ASYNC_PROBE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
 
@@ -405,8 +411,8 @@ fn decode_with(decoder: &mut media::VideoDecoder, data: &[u8], budget: &mut Prob
         if status < 0 {
             return Err(format!("the decoder refused the end of input ({status})"));
         }
-        let wait = budget.wait();
-        Some((std::time::Instant::now() + wait, wait))
+        let now = std::time::Instant::now();
+        Some((now + budget.wait(), now))
     } else {
         None
     };
@@ -417,11 +423,8 @@ fn decode_with(decoder: &mut media::VideoDecoder, data: &[u8], budget: &mut Prob
         std::thread::sleep(ASYNC_PROBE_POLL);
         received = decoder.receive();
     }
-    if matches!(received, media::Received::None) {
-        // Only an attempt that ended without a picture spends the wait it took from the budget.
-        if let Some((_, wait)) = deadline {
-            budget.spent(wait);
-        }
+    if let Some((_, started)) = deadline {
+        budget.spent(started.elapsed());
     }
     match received {
         media::Received::Frame(_) if decoder.refused() => {
@@ -644,7 +647,8 @@ mod tests {
 
     /// Nightjar issue 77: an Iris whose V4L2 M2M decoder never answers must not add more than a
     /// couple of seconds to a start, though one start checks five HEVC fixtures. The two checks
-    /// share a budget; a retry's settle comes out of it too, and once it is spent nothing waits.
+    /// share a budget; a retry's settle comes out of it too, and once it is spent each attempt
+    /// still gets the old quarter second, without a retry.
     #[test]
     fn the_v4l2_probe_time_of_a_start_is_bounded_across_formats() {
         use std::time::Duration;
@@ -660,11 +664,11 @@ mod tests {
         budget.spent(retry_wait);
         assert_eq!(budget.left(), Duration::ZERO, "the two attempts spend the start's budget");
         assert!(!budget.retry(), "a second retry has nothing left");
-        assert_eq!(budget.wait(), Duration::ZERO, "the formats after it are not waited for");
-        // A decoder that decodes spends nothing: only an attempt that made no picture is charged.
-        let healthy = ProbeBudget::default();
-        assert_eq!(healthy.left(), V4L2_PROBE_BUDGET);
-        assert_eq!(healthy.wait(), ASYNC_PROBE_WAIT);
+        assert_eq!(budget.wait(), ASYNC_PROBE_FLOOR, "later formats still get the old quarter second");
+        // A slow picture is charged too, so slow successes cannot add up past the budget.
+        let mut slow = ProbeBudget::default();
+        slow.spent(Duration::from_millis(1_400));
+        assert_eq!(slow.wait(), Duration::from_millis(600));
     }
 
     /// The probe opens each fixture for its own size, as a stream's decoder is opened for the

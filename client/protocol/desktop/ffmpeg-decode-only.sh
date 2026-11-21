@@ -51,6 +51,8 @@ if [[ $(uname -s) == Linux ]]; then
   # The libraries get the run path $ORIGIN from LD_RUN_PATH (the linker uses it when no -rpath is
   # given; configure and make would expand a $ORIGIN in the flags).
   export LD_RUN_PATH='$ORIGIN'
+  # The ffmpeg command sits in bin/, the libraries it must load (these, patched) in lib/.
+  if [[ ${NIGHTJAR_FFMPEG_PROGRAMS:-0} == 1 ]]; then LD_RUN_PATH='$ORIGIN:$ORIGIN/../lib'; fi
   # The hardware decoders moonlight-qt and Moonlight V+ try on Linux, in Nightjar's order: VAAPI,
   # then Vulkan video (on the renderer's device, for GPUs without VAAPI such as NVIDIA's), then
   # the V4L2 memory-to-memory decoders of ARM handhelds and boards (H.264 and HEVC), then NVDEC.
