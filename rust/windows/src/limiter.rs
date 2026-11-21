@@ -290,6 +290,27 @@ fn unconfirmed_message(keys: &[String]) -> String {
 fn missing_provider_is_a_fault(explicit: bool, provider: Provider, error: &str) -> bool {
     provider != Provider::None && (explicit || provider == Provider::Rtss || !error.is_empty())
 }
+/// Whether the configured limiter can apply a cap now: RTSS is installed for `auto` and `rtss`,
+/// and `frame_limiter_provider = none` is no limiter at all.
+pub fn provider_usable(config: &Config) -> bool {
+    Provider::parse(config.get("frame_limiter_provider", "auto")) != Provider::None
+        && rtss::available(&rtss::root(config))
+}
+/// Says once per host run, not once per launch, that a virtual display's automatic cap needs
+/// RTSS. The host keeps that cap off instead ([`Policy::with_provider_available`]); a cap the
+/// user asked for still says on every stream that it was not applied. A provider turned off on
+/// purpose (`none`) says nothing.
+pub fn warn_automatic_cap_needs_rtss_once(config: &Config) {
+    if Provider::parse(config.get("frame_limiter_provider", "auto")) == Provider::None {
+        return;
+    }
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!(
+            "the virtual display's automatic frame limit needs RivaTuner Statistics Server (RTSS), which is not installed, so games on it run uncapped; install RTSS to cap them at the stream's frame rate"
+        );
+    }
+}
 /// `explicit`: the user asked for a cap ("Limit every stream" or a named
 /// provider), rather than the automatic virtual-display limit, which simply
 /// stays off on a host without RTSS.
@@ -342,7 +363,8 @@ impl Lease {
         let state = state().lock().unwrap();
         limiter_warning(
             policy.enabled,
-            explicit || policy.provider == Provider::Rtss,
+            policy.provider != Provider::None
+                && (explicit || !policy.follows_display || policy.provider == Provider::Rtss),
             &state.active,
             &state.message,
             (policy.enabled.then_some(policy.rate), state.rate),
@@ -428,11 +450,19 @@ impl Lease {
         }
         if state.active == "none" && policy.enabled {
             if missing_provider_is_a_fault(
-                config.boolean("frame_limiter_enable", false),
+                config.boolean("frame_limiter_enable", false) || !policy.follows_display,
                 policy.provider,
                 &state.message,
             ) {
-                tracing::warn!(provider = policy.provider.name(), rtss_root = %root.display(), rtss_available = rtss::available(&root), error = %state.message, "frame limiter has no available provider");
+                // A user's cap that no provider can apply is a fault, but it is the same fault
+                // on every launch: say it once per host run, and keep the rest at DEBUG.
+                static WARNED: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::debug!(provider = policy.provider.name(), rtss_root = %root.display(), rtss_available = rtss::available(&root), error = %state.message, "frame limiter has no available provider");
+                } else {
+                    tracing::warn!(provider = policy.provider.name(), rtss_root = %root.display(), rtss_available = rtss::available(&root), error = %state.message, "frame limiter has no available provider");
+                }
             } else {
                 tracing::debug!(provider = policy.provider.name(), rtss_root = %root.display(), rtss_available = rtss::available(&root), "frame limiter stays off: no provider was asked for or is available");
             }
@@ -887,6 +917,21 @@ mod tests {
             Provider::Auto,
             "RTSS did not confirm"
         ));
+    }
+
+    /// The automatic virtual-display cap is the automatic one only where RTSS can apply it;
+    /// `none` is off on purpose, not a missing provider.
+    #[test]
+    fn a_provider_is_usable_only_when_rtss_is_there_and_a_limiter_is_asked_for() {
+        let missing = std::env::temp_dir().join(format!("limiter-no-rtss-{}", std::process::id()));
+        let text = format!("rtss_install_path={}\n", missing.display());
+        for provider in ["auto", "rtss"] {
+            let config =
+                Config::parse(&format!("{text}frame_limiter_provider={provider}")).unwrap();
+            assert!(!provider_usable(&config), "{provider}");
+        }
+        let off = Config::parse(&format!("{text}frame_limiter_provider=none")).unwrap();
+        assert!(!provider_usable(&off));
     }
 
     #[test]

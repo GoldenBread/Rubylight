@@ -1645,7 +1645,22 @@ fn frame_policy(
     {
         framegen.rate = Rate(limit.saturating_mul(1000).min(1_000_000));
         framegen.enabled = true;
+        // The app's own frame limit is no automatic virtual-display cap: without RTSS it
+        // has to fail visibly, not stand down with it.
+        framegen.follows_display = false;
     }
+    // The automatic virtual-display cap is RTSS's to apply. On a host without a usable
+    // provider it would apply nothing and say so on every launch, so it stays off and the
+    // display's refresh paces the game (Virtual display refresh); the host says once per
+    // run what to install. A cap the user asked for stays and fails visibly on the card.
+    let provider = butterpollo_windows::limiter::provider_usable(config);
+    if !provider
+        && framegen.follows_display
+        && framegen.provider != butterpollo_core::framegen::Provider::Rtss
+    {
+        butterpollo_windows::limiter::warn_automatic_cap_needs_rtss_once(config);
+    }
+    framegen = framegen.with_provider_available(provider);
     if framegen.enabled {
         framegen = framegen.for_gpu(streams_on_nvidia(config));
     }

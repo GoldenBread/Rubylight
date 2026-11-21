@@ -270,6 +270,46 @@ fn only_the_automatic_virtual_display_cap_follows_the_display() {
     let monitor_asked = resolve("frame_limiter_enable=true", false);
     assert!(monitor_asked.enabled && !monitor_asked.follows_display);
 }
+/// A host without RTSS (or with `frame_limiter_provider = none`) does not report an automatic
+/// virtual-display cap nothing applies; the display's refresh paces the game instead. A cap the
+/// user asked for keeps failing visibly.
+#[test]
+fn only_an_available_provider_keeps_the_automatic_cap() {
+    let resolve = |text: &str, virtual_display: bool, available: bool| {
+        let c = Config::parse(text).unwrap();
+        Policy::resolve(&c, Rate(144_000), virtual_display, "none", false, false)
+            .unwrap()
+            .with_provider_available(available)
+    };
+    let automatic = resolve("virtual_display_refresh=1000hz", true, false);
+    assert!(!automatic.enabled && !automatic.follows_display);
+    let with_rtss = resolve("virtual_display_refresh=1000hz", true, true);
+    assert!(with_rtss.enabled && with_rtss.follows_display);
+    // `frame_limiter_enable` is the user's own cap: it stays and says it was not applied.
+    let asked = resolve(
+        "frame_limiter_enable=true\nvirtual_display_refresh=1000hz",
+        true,
+        false,
+    );
+    assert!(asked.enabled && !asked.follows_display);
+    // Asking for RTSS by name also stays and fails visibly on the stream's card.
+    let named_rtss = resolve(
+        "frame_limiter_provider=rtss\nvirtual_display_refresh=1000hz",
+        true,
+        false,
+    );
+    assert!(named_rtss.enabled && named_rtss.follows_display);
+    // `none` turns all limiting off on purpose.
+    let none = resolve(
+        "frame_limiter_provider=none\nvirtual_display_refresh=1000hz",
+        true,
+        false,
+    );
+    assert!(!none.enabled && !none.follows_display);
+    // A monitor stream has no automatic cap to stand down.
+    let monitor = resolve("", false, false);
+    assert!(!monitor.enabled && !monitor.follows_display);
+}
 /// A cap needs a display at one and a half times its rate or more: the modes the host sets
 /// (twice, four times, 1000 Hz) leave room, a game's own 60 Hz mode under a 60 fps cap none.
 #[test]

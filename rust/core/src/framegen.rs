@@ -302,6 +302,18 @@ impl Policy {
         }
         self
     }
+    /// The automatic virtual-display cap only when a limiter provider can apply it. RTSS is the
+    /// only provider; on a host without it the cap would apply nothing and say so on every
+    /// launch, so it stays off and the display's refresh paces the game (Virtual display
+    /// refresh). A cap the user asked for (`frame_limiter_enable`, RTSS by name, an app's own
+    /// frame limit) stays and fails visibly on the stream's card.
+    pub fn with_provider_available(mut self, available: bool) -> Self {
+        if !available && self.follows_display && self.provider != Provider::Rtss {
+            self.enabled = false;
+            self.follows_display = false;
+        }
+        self
+    }
 }
 #[cfg(test)]
 mod tests;
