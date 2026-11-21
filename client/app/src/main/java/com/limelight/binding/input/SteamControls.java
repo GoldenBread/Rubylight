@@ -79,10 +79,13 @@ public final class SteamControls {
         return clamp(down);
     }
 
-    /** A screen's touch pressure as the touchpad's: within 0 to 1. */
-    public static float pressure(float pressure) {
-        return clamp(pressure);
-    }
+    /**
+     * The pressure every on-screen trackpad touch carries. Many screens report a constant 1.0 (a binary
+     * pressure axis), and the host passes it on as the pad's full-scale pressure, which Steam reads as a pad
+     * click on touch-down (#150). A light fixed pressure keeps a touch a touch; the click comes only from a
+     * tap's click bit.
+     */
+    public static final float PAD_TOUCH_PRESSURE = 0.1f;
 
     /**
      * A physical pad's Touchpad button as the click of the pad its finger is on: the left pad's

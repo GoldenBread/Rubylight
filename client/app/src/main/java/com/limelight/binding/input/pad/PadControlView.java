@@ -52,8 +52,6 @@ final class PadControlView extends View {
     private final WasdKeys wasd;
     /** Where a trackpad's touches go; the trackpads send nothing without one. */
     private ModernController.TouchSink touchSink;
-    /** The pressure of the touch being handled, for a trackpad. */
-    private float touchPressure = 1;
     /** A trackpad tap in the making: when the finger went down, and how far it has travelled since. */
     private long padDownAt;
     /** A tapped trackpad's click is held and its touch not yet ended; where the finger was. */
@@ -491,7 +489,6 @@ final class PadControlView extends View {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN: {
                 int index = event.getActionIndex();
-                touchPressure = event.getPressure(index);
                 touchTimeNs = eventTimeNs(event, -1);
                 down(event.getPointerId(index), event.getX(index), event.getY(index), event.getEventTime());
                 break;
@@ -504,7 +501,6 @@ final class PadControlView extends View {
                     for (int history = 0; history < event.getHistorySize(); history++) {
                         long time = eventTimeNs(event, history);
                         for (int i = 0; i < event.getPointerCount(); i++) {
-                            touchPressure = event.getPressure(i);
                             move(event.getPointerId(i), event.getHistoricalX(i, history), event.getHistoricalY(i, history), time);
                         }
                     }
@@ -513,7 +509,6 @@ final class PadControlView extends View {
                 // between them is the finger's speed, and a late frame must not read as a slower one.
                 touchTimeNs = eventTimeNs(event, -1);
                 for (int i = 0; i < event.getPointerCount(); i++) {
-                    touchPressure = event.getPressure(i);
                     move(event.getPointerId(i), event.getX(i), event.getY(i), touchTimeNs);
                 }
                 break;
@@ -573,7 +568,7 @@ final class PadControlView extends View {
                 padTravel = 0;
                 padLastX = x;
                 padLastY = y;
-                padTouch(MoonBridge.LI_TOUCH_EVENT_DOWN, x, y, touchPressure);
+                padTouch(MoonBridge.LI_TOUCH_EVENT_DOWN, x, y);
                 applyAlpha();
                 redraw();
                 break;
@@ -683,7 +678,7 @@ final class PadControlView extends View {
                 padTravel += (float) Math.hypot(x - padLastX, y - padLastY);
                 padLastX = x;
                 padLastY = y;
-                padTouch(MoonBridge.LI_TOUCH_EVENT_MOVE, x, y, touchPressure);
+                padTouch(MoonBridge.LI_TOUCH_EVENT_MOVE, x, y);
                 redraw();
                 break;
             case TOUCHPAD: {
@@ -776,7 +771,7 @@ final class PadControlView extends View {
                     changed();
                     postDelayed(padClickRelease, PAD_CLICK_HOLD_MS);
                 } else {
-                    padTouch(MoonBridge.LI_TOUCH_EVENT_UP, state.touchX, state.touchY, touchPressure);
+                    padTouch(MoonBridge.LI_TOUCH_EVENT_UP, state.touchX, state.touchY);
                 }
                 state.touchX = Float.NaN;
                 state.touchY = Float.NaN;
@@ -819,7 +814,7 @@ final class PadControlView extends View {
         }
         // A trackpad's finger leaves where it last was, as the classic controller's does.
         if (control.shape == PadLayout.Shape.PAD && state.pressed) {
-            padTouch(MoonBridge.LI_TOUCH_EVENT_CANCEL, state.touchX, state.touchY, 0f);
+            padTouch(MoonBridge.LI_TOUCH_EVENT_CANCEL, state.touchX, state.touchY);
         }
         java.util.Arrays.fill(pointerIds, -1);
         java.util.Arrays.fill(pointerFlags, 0);
@@ -904,7 +899,7 @@ final class PadControlView extends View {
     }
 
     /** Sends a finger at ({@code x}, {@code y}) on this trackpad as a touch on its Steam Controller pad. */
-    private void padTouch(byte type, float x, float y, float pressure) {
+    private void padTouch(byte type, float x, float y) {
         if (type == MoonBridge.LI_TOUCH_EVENT_DOWN || type == MoonBridge.LI_TOUCH_EVENT_MOVE) {
             touchAt(x, y, type == MoonBridge.LI_TOUCH_EVENT_DOWN);
         } else {
@@ -914,7 +909,7 @@ final class PadControlView extends View {
         if (touchSink == null) return;
         int pad = PadInput.steamPad(control);
         touchSink.touch(type, SteamControls.pointerId(pad), SteamControls.touchX(pad, fraction(x, getWidth())),
-                SteamControls.touchY(fraction(y, getHeight())), SteamControls.pressure(pressure));
+                SteamControls.touchY(fraction(y, getHeight())), SteamControls.PAD_TOUCH_PRESSURE);
     }
 
     private static float fraction(float position, int size) {
@@ -932,7 +927,7 @@ final class PadControlView extends View {
         removeCallbacks(padClickRelease);
         gamepad.setButtons(slot(), 0);
         changed();
-        padTouch(MoonBridge.LI_TOUCH_EVENT_UP, padClickX, padClickY, touchPressure);
+        padTouch(MoonBridge.LI_TOUCH_EVENT_UP, padClickX, padClickY);
         state.touchX = Float.NaN;
         state.touchY = Float.NaN;
     }

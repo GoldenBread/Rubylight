@@ -35,8 +35,6 @@ public class SteamControlsTest {
         assertEquals(SteamControls.RIGHT_PAD, hostPad(SteamControls.touchX(SteamControls.RIGHT_PAD, -0.3f)));
         assertEquals(0f, SteamControls.touchY(-0.2f), 0f);
         assertEquals(1f, SteamControls.touchY(1.5f), 0f);
-        assertEquals(0f, SteamControls.pressure(Float.NaN), 0f);
-        assertEquals(1f, SteamControls.pressure(3f), 0f);
     }
 
     @Test

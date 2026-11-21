@@ -2,6 +2,7 @@ package com.limelight.binding.input.pad;
 
 import android.app.Application;
 import android.content.Context;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 
@@ -38,7 +39,7 @@ public class ModernSteamControlsTest {
             PadLayout.Control.L4, PadLayout.Control.L5, PadLayout.Control.R4, PadLayout.Control.R5,
             PadLayout.Control.LEFT_GRIP, PadLayout.Control.RIGHT_GRIP};
     private final List<Integer> buttons = new ArrayList<>();
-    /** Trackpad touches as {type, pointer, x * 1000, y * 1000}. */
+    /** Trackpad touches as {type, pointer, x * 1000, y * 1000, pressure * 1000}. */
     private final List<int[]> touches = new ArrayList<>();
     /** Buttons and touches in the order they went out: "b<flags>" and "t<type>". */
     private final List<String> events = new ArrayList<>();
@@ -72,7 +73,8 @@ public class ModernSteamControlsTest {
     private ModernController controller() {
         ModernController controller = new ModernController(frame.getContext(), frame, sink, prefs, null);
         controller.setTouchSink((type, pointer, x, y, pressure) ->
-                { touches.add(new int[] {type, pointer, Math.round(x * 1000), Math.round(y * 1000)}); events.add("t" + type); });
+                { touches.add(new int[] {type, pointer, Math.round(x * 1000), Math.round(y * 1000), Math.round(pressure * 1000)});
+                  events.add("t" + type); });
         controller.refreshLayout();
         controller.show();
         layout();
@@ -179,6 +181,27 @@ public class ModernSteamControlsTest {
         controller.hide();
         assertEquals(0, last());
         assertFalse(right.state().pressed);
+    }
+
+    @Test public void aTrackpadTouchCarriesALightFixedPressureWhateverTheScreenReports() {
+        // Screens with a binary pressure axis report 1.0 on every touch; sent on, Steam reads it as a pad click (#150).
+        ModernController controller = controller();
+        PadControlView right = controller.view(PadLayout.Control.RIGHT_PAD);
+        float w = right.getWidth(), h = right.getHeight();
+        long t = android.os.SystemClock.uptimeMillis();
+        int light = Math.round(SteamControls.PAD_TOUCH_PRESSURE * 1000);
+        int[] actions = {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_MOVE};
+        float[] pressures = {1f, 1f, 0.6f};
+        for (int i = 0; i < actions.length; i++) {
+            MotionEvent event = MotionEvent.obtain(t, t + 100L * i, actions[i], w / 2 + 40 * i, h / 2, pressures[i], 1f, 0, 1f, 1f, 0, 0);
+            right.onTouchEvent(event);
+            event.recycle();
+            int[] touch = touches.get(touches.size() - 1);
+            assertEquals(actions[i] == MotionEvent.ACTION_DOWN ? MoonBridge.LI_TOUCH_EVENT_DOWN : MoonBridge.LI_TOUCH_EVENT_MOVE, touch[0]);
+            assertEquals(light, touch[4]);
+        }
+        assertTrue(light > 0 && light < 500);
+        controller.destroy();
     }
 
     @Test public void aTrackpadSendsItsFingerToItsHalfOfTouchpadZero() {
