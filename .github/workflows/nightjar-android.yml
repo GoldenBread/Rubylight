@@ -7,7 +7,7 @@ on:
     # wip/** branches are a CI lane for work not yet on main (tools\dev.ps1 ci).
     branches: [main, 'wip/**']
     # Docs, store listing and artwork sources don't change the APK.
-    paths: ['client/**', '!client/**/*.md', '!client/docs/**', '!client/fastlane/**', '!client/store-assets/**', '!client/LICENSE.txt', '!client/.github/**', '.github/workflows/nightjar-android.yml']
+    paths: ['client/**', '!client/**/*.md', '!client/docs/**', '!client/fastlane/**', '!client/store-assets/**', '!client/LICENSE.txt', '!client/.github/**', '.config/nextest.toml', '.github/workflows/nightjar-android.yml']
   workflow_dispatch:
 
 # A newer push to the same wip/ branch replaces its run; every run of main keeps its own group.
@@ -83,11 +83,13 @@ jobs:
             glslang-tools libvulkan1 mesa-vulkan-drivers
           sudo chown -R "$USER" ~/apt-archives
           cmake --version | head -n 1
+      - uses: taiki-e/install-action@2b545d4fd42fdd72ed2a44eab8fedd1850e8f731 # nextest
       - name: Test and lint the desktop client
         run: |
           cd protocol
           cargo clippy -p nightjar-desktop --all-targets --locked -- -D warnings
-          cargo test -p nightjar-desktop --locked
+          cargo nextest run --config-file ../../.config/nextest.toml --profile ci -p nightjar-desktop --locked
+          cargo test --doc -p nightjar-desktop --locked
       # The PQ pass: its SPIR-V against glslang 15 (a missing or other glslang fails here), and the
       # ignored GPU test on Mesa's software Vulkan (lavapipe, the runner has no GPU).
       - name: Test the PQ present pass
@@ -95,7 +97,7 @@ jobs:
           NIGHTJAR_REQUIRE_GLSLANG: '1'
         run: |
           cd protocol
-          cargo test -p nightjar-desktop --locked -- pq_present --include-ignored
+          cargo nextest run --config-file ../../.config/nextest.toml --profile ci -p nightjar-desktop --locked --run-ignored all -E 'test(pq_present)'
       # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
       - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
         if: github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true'

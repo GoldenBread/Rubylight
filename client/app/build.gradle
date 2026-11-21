@@ -160,7 +160,28 @@ android {
             // test tasks run src/testRoot's tests; the shared suite (about 6 minutes) runs once, in
             // the nonRoot flavor. The root variant still compiles the whole suite.
             def testTask = it
-            if (testTask.name ==~ /testRoot\w*UnitTest/) {
+            def rubylightTestList = project.findProperty('rubylightTestList')
+            if (rubylightTestList != null) {
+                def rawPath = rubylightTestList.toString().trim()
+                if (!rawPath) {
+                    throw new GradleException('rubylightTestList property must not be blank')
+                }
+                def candidate = new File(rawPath)
+                def listFile = candidate.isAbsolute() ? candidate : rootProject.file(rawPath)
+                if (!listFile.isFile()) {
+                    throw new GradleException("rubylightTestList file does not exist: ${listFile}")
+                }
+                def patterns = listFile.readLines('UTF-8')
+                        .collect { it.trim() }
+                        .findAll { it && !it.startsWith('#') }
+                if (patterns.isEmpty()) {
+                    throw new GradleException("rubylightTestList file contains no test patterns: ${listFile}")
+                }
+                testTask.inputs.property('rubylightTestList', patterns)
+                patterns.each { pattern ->
+                    testTask.filter.includeTestsMatching(pattern)
+                }
+            } else if (testTask.name ==~ /testRoot\w*UnitTest/) {
                 def rootTests = fileTree('src/testRoot/java') { include '**/*Test.java', '**/*Test.kt' }
                 rootTests.visit { d ->
                     if (!d.directory) {

@@ -1,4 +1,4 @@
-import json, os, pathlib, shutil, subprocess, sys, tempfile, time, unittest
+import concurrent.futures, json, os, pathlib, shutil, subprocess, sys, tempfile, time, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -415,6 +415,83 @@ try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
         with self.lease('gradle'):
             self.assertIn(str(self.root.resolve() / 'gradle-lane' / 'BUILD-LOCK'), os.environ[build_lock.LANES_ENV])
         self.assertNotIn(build_lock.LANES_ENV, os.environ)
+
+    def test_missing_default_directory_falls_back_to_localappdata_while_preserving_explicit_default_pool(self):
+        local = self.root / 'local'
+        with mock.patch.object(build_lock, 'DEFAULT_DIRECTORY', self.root / 'missing-locks'), \
+                mock.patch.dict(os.environ, {'LOCALAPPDATA': str(local)}):
+            expected = (local / 'ButterpolloRust' / 'locks').resolve()
+            if os.name == 'nt':
+                self.assertEqual(build_lock.default_directory(), local / 'ButterpolloRust' / 'locks')
+                self.assertEqual(build_lock.lock_directory(), expected)
+                self.assertEqual(build_lock.pool_directory(), expected / 'target-pool')
+                self.assertEqual(build_lock.gradle_lane(), expected / 'gradle-lane')
+            self.assertEqual(build_lock.pool_directory(build_lock.DEFAULT_DIRECTORY), build_lock.DEFAULT_POOL)
+
+    def test_concurrent_stage_leases_keep_lanes_held_thread_safe_and_preserve_external_lanes(self):
+        os.environ[build_lock.CARGO_SLOTS_ENV] = '2'
+        os.environ[build_lock.LANES_ENV] = 'external-parent-lane'
+        errors = []
+
+        def worker(idx):
+            lane_name = ('cargo', 'gradle', 'web')[idx % 3]
+            for _ in range(4):
+                with self.lease(lane_name, timeout=5) as lease:
+                    held = build_lock.held_lanes()
+                    if 'external-parent-lane' not in held:
+                        errors.append(f'lost external lane: {held}')
+                    for slot in lease.taken.values():
+                        if str(slot.path) not in held:
+                            errors.append(f'missing own lane {slot.path} in {held}')
+                    time.sleep(0.02)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(worker, i) for i in range(4)]
+            for future in futures:
+                future.result()
+        self.assertEqual(errors, [])
+        self.assertEqual(os.environ.get(build_lock.LANES_ENV), 'external-parent-lane')
+
+        os.environ.pop(build_lock.LANES_ENV, None)
+        errors.clear()
+        def clean_worker(lane_name):
+            with self.lease(lane_name, timeout=5) as lease:
+                held = build_lock.held_lanes()
+                for slot in lease.taken.values():
+                    if str(slot.path) not in held:
+                        errors.append(f'missing {slot.path}')
+                time.sleep(0.02)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            for f in [pool.submit(clean_worker, n) for n in ('cargo', 'gradle', 'web')]:
+                f.result()
+        self.assertEqual(errors, [])
+        self.assertNotIn(build_lock.LANES_ENV, os.environ)
+
+    def test_environ_copy_is_thread_safe_under_concurrent_lane_transitions(self):
+        errors = []
+        stop = [False]
+
+        def copy_worker():
+            try:
+                while not stop[0]:
+                    snap = build_lock.environ_copy()
+                    self.assertIsInstance(snap, dict)
+            except Exception as exc:
+                errors.append(repr(exc))
+
+        def lease_worker(lane_name):
+            for _ in range(10):
+                with self.lease(lane_name, timeout=5):
+                    time.sleep(0.005)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            copier = pool.submit(copy_worker)
+            leasers = [pool.submit(lease_worker, n) for n in ('cargo', 'gradle', 'web')]
+            for f in leasers:
+                f.result()
+            stop[0] = True
+            copier.result()
+        self.assertEqual(errors, [])
 
 if __name__ == '__main__':
     unittest.main()

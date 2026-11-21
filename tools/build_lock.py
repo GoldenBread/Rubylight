@@ -19,9 +19,21 @@ owner exits, so a crashed stage never leaves a lane taken and no lane file is
 ever removed. Cargo and Gradle lock their own target and cache folders against
 a surviving child.
 """
-import argparse, ctypes, datetime, os, pathlib, re, subprocess, sys, time, uuid
+import argparse, collections, ctypes, datetime, os, pathlib, re, subprocess, sys, threading, time, uuid
 
 DEFAULT_DIRECTORY = pathlib.Path(r'C:\src\butterpollo-release') if os.name == 'nt' else pathlib.Path('/tmp/rubylight-build')
+
+
+def _default_fallback_directory():
+    if os.name != 'nt':
+        return pathlib.Path('/tmp/rubylight-build')
+    local = os.environ.get('LOCALAPPDATA')
+    base = pathlib.Path(local) if local else (pathlib.Path.home() / 'AppData' / 'Local')
+    return base / 'ButterpolloRust' / 'locks'
+
+
+_IMPORT_FALLBACK = _default_fallback_directory()
+FALLBACK_DIRECTORY = _IMPORT_FALLBACK
 OWNER_ENV = 'RUBYLIGHT_BUILD_LOCK_OWNER'
 PATH_ENV = 'RUBYLIGHT_BUILD_LOCK_PATH'
 # Lane files this process tree holds: an exclusive owner started inside a stage
@@ -47,8 +59,23 @@ CARGO_STAGE_PEAK_GB = 7
 MEMORY_RESERVE_GB = 16
 
 
+def default_directory():
+    if os.name != 'nt':
+        return DEFAULT_DIRECTORY
+    if DEFAULT_DIRECTORY.is_dir():
+        return DEFAULT_DIRECTORY
+    if FALLBACK_DIRECTORY != _IMPORT_FALLBACK:
+        return FALLBACK_DIRECTORY
+    return _default_fallback_directory()
+
+
 def lock_directory(directory=None):
-    return pathlib.Path(directory or os.environ.get('RUBYLIGHT_LOCK_DIRECTORY') or DEFAULT_DIRECTORY).resolve()
+    if directory:
+        return pathlib.Path(directory).resolve()
+    env = os.environ.get('RUBYLIGHT_LOCK_DIRECTORY')
+    if env:
+        return pathlib.Path(env).resolve()
+    return default_directory().resolve()
 
 
 def machine_wide(directory):
@@ -60,7 +87,9 @@ def pool_directory(directory=None):
     """The warm target pool: the machine's for the machine's locks, else one beside private locks."""
     if os.environ.get(POOL_ENV):
         return pathlib.Path(os.environ[POOL_ENV]).resolve()
-    return DEFAULT_POOL if machine_wide(directory) else lock_directory(directory) / 'target-pool'
+    if machine_wide(directory) and (directory is not None or DEFAULT_POOL.is_dir()):
+        return DEFAULT_POOL
+    return lock_directory(directory) / 'target-pool'
 
 
 def gradle_lane(directory=None):
@@ -228,8 +257,28 @@ def end_children_with_me():
     return bool(kernel.AssignProcessToJobObject(job, kernel.GetCurrentProcess()))
 
 
+_LANES_LOCK = threading.RLock()
+_ACTIVE_LANES = collections.Counter()
+_EXTERNAL_LANES = None
+
+
+def _sync_lanes_env():
+    ext = _EXTERNAL_LANES or []
+    paths = list(dict.fromkeys([*ext, *(p for p, count in _ACTIVE_LANES.items() if count > 0)]))
+    if paths:
+        os.environ[LANES_ENV] = os.pathsep.join(paths)
+    else:
+        os.environ.pop(LANES_ENV, None)
+
+
 def held_lanes():
-    return {p for p in os.environ.get(LANES_ENV, '').split(os.pathsep) if p}
+    with _LANES_LOCK:
+        return {p for p in os.environ.get(LANES_ENV, '').split(os.pathsep) if p}
+
+
+def environ_copy():
+    with _LANES_LOCK:
+        return dict(os.environ)
 
 
 def own_exclusive(path):
@@ -451,9 +500,25 @@ class StageLease:
         self.build = lock_directory(directory) / 'BUILD-LOCK'
         self.taken = {}
         self.waited = 0.0
-        self.previous = None
+        self._held = []
+
+    def _release_lanes(self):
+        global _EXTERNAL_LANES
+        if not self._held:
+            return
+        with _LANES_LOCK:
+            for path in self._held:
+                if _ACTIVE_LANES[path] > 1:
+                    _ACTIVE_LANES[path] -= 1
+                else:
+                    _ACTIVE_LANES.pop(path, None)
+            self._held = []
+            _sync_lanes_env()
+            if not _ACTIVE_LANES:
+                _EXTERNAL_LANES = None
 
     def _release(self):
+        self._release_lanes()
         for slot in self.taken.values():
             slot.release()
         self.taken = {}
@@ -466,6 +531,7 @@ class StageLease:
             raise
 
     def _enter(self):
+        global _EXTERNAL_LANES
         start = time.monotonic()
         deadline, last = start + self.timeout, None
         while True:
@@ -496,17 +562,18 @@ class StageLease:
                 raise TimeoutError(f'{self.label}: still waiting after {self.timeout:g}s: {holder}. No lock removed.')
             time.sleep(self.poll)
         self.waited = time.monotonic() - start
-        self.previous = os.environ.get(LANES_ENV)
         held = [str(s.path) for s in self.taken.values()]
-        os.environ[LANES_ENV] = os.pathsep.join(filter(None, [self.previous, *held]))
+        with _LANES_LOCK:
+            if not _ACTIVE_LANES:
+                _EXTERNAL_LANES = [p for p in os.environ.get(LANES_ENV, '').split(os.pathsep) if p]
+            for path in held:
+                _ACTIVE_LANES[path] += 1
+            self._held = held
+            _sync_lanes_env()
         return self
 
     def __exit__(self, *_):
         self._release()
-        if self.previous is None:
-            os.environ.pop(LANES_ENV, None)
-        else:
-            os.environ[LANES_ENV] = self.previous
 
 
 class BuildLock:

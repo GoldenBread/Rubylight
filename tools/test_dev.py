@@ -1,4 +1,4 @@
-import contextlib, io, json, os, pathlib, sys, tempfile, unittest
+import contextlib, io, json, os, pathlib, sys, tempfile, threading, time, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -306,23 +306,160 @@ class WarmTargets(unittest.TestCase):
         self.assertTrue(dev.same_path((pool / '2.owner').read_text(), ROOT))
 
 
-class QuickLog(unittest.TestCase):
-    def quick(self, exit_line, cargo=('test result: ok. 3 passed; 0 failed', 'Grüße')):
-        # As rl-quick writes it under Windows PowerShell: Out-File -Encoding utf8 for its own
-        # lines (a BOM each time), `*>>` appends cargo's output as UTF-16LE with CRLF.
-        utf8 = lambda s: '\ufeff'.encode('utf-8') + (s + '\r\n').encode('utf-8')
-        utf16 = lambda s: '\ufeff'.encode('utf-16-le') + (s + '\r\n').encode('utf-16-le')
-        data = utf8('== test') + b''.join(utf16(line) for line in cargo) + utf8(exit_line)
-        with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory, 'host.log.quick')
-            path.write_bytes(data)
-            return dev.read_quick(path)
+class EnvironmentAndNextest(unittest.TestCase):
+    def _fake_sdk(self, base):
+        cargo_bin = base / 'cargo/bin'
+        msys = base / 'msys/ucrt64'
+        pyrowave = base / 'sdk/pyrowave'
+        for path in (
+            cargo_bin / 'cargo.exe',
+            msys / 'bin/gcc.exe',
+            msys / 'bin/ld.lld.exe',
+            msys / 'bin/python.exe',
+            pyrowave / 'bin/libpyrowave-shared-1.dll',
+            pyrowave / 'share/pyrowave-shared/build-info.txt',
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('')
+        (msys / 'include/vulkan').mkdir(parents=True, exist_ok=True)
+        return cargo_bin.parent, msys.parent, pyrowave
 
-    def test_mixed_encodings_still_show_the_exit_line(self):
-        text, passed = self.quick('EXIT 0')
-        self.assertTrue(passed, repr(text))
-        self.assertIn('\ntest result: ok. 3 passed; 0 failed\n', text)
-        self.assertNotIn('\x00', text)
+    def test_host_env_validates_required_paths_and_sets_sdk_vars(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            cargo_home, msys_root, pyrowave = self._fake_sdk(base)
+            target = base / 'target'
+            with mock.patch.dict(os.environ, {
+                'CARGO_HOME': str(cargo_home),
+                'RUBYLIGHT_MSYS_ROOT': str(msys_root),
+                'BUTTERPOLLO_PYROWAVE_ROOT': str(pyrowave),
+                'PATH': f'{msys_root / "ucrt64/bin"};{os.environ.get("PATH", "")}',
+                'NIGHTJAR_ALLOW_UNTRANSLATED': '1',
+                'RUSTUP_TOOLCHAIN': 'stable',
+            }, clear=False):
+                os.environ.pop('RUSTFLAGS', None)
+                os.environ.pop('CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS', None)
+                env = dev.host_env(target, lock_directory=base / 'locks', fast=False)
+                self.assertEqual(env['LIBCLANG_PATH'], str(msys_root / 'ucrt64/bin'))
+                self.assertEqual(env['BUTTERPOLLO_VULKAN_INCLUDE'], str(msys_root / 'ucrt64/include'))
+                self.assertEqual(env['BUTTERPOLLO_PYROWAVE_ROOT'], str(pyrowave))
+                self.assertEqual(env['CARGO_TARGET_DIR'], str(target))
+                self.assertEqual(env['RUBYLIGHT_LOCK_DIRECTORY'], str((base / 'locks').resolve()))
+                self.assertNotIn('NIGHTJAR_ALLOW_UNTRANSLATED', env)
+                self.assertNotIn('RUSTFLAGS', env)
+                if os.name == 'nt':
+                    self.assertEqual(env['RUSTUP_TOOLCHAIN'], dev.HOST_TOOLCHAIN)
+                    self.assertIn('-Clink-arg=-fuse-ld=lld', env['CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'])
+                # Python 3.13 (sys.executable parent) and cargo_bin must precede ucrt64\bin on PATH.
+                parts = [os.path.normcase(os.path.normpath(p)) for p in env['PATH'].split(os.pathsep)]
+                sys_dir = os.path.normcase(os.path.normpath(str(pathlib.Path(sys.executable).resolve().parent)))
+                ucrt_dir = os.path.normcase(os.path.normpath(str(msys_root / 'ucrt64/bin')))
+                cargo_dir = os.path.normcase(os.path.normpath(str(cargo_home / 'bin')))
+                self.assertLess(parts.index(sys_dir), parts.index(ucrt_dir))
+                self.assertLess(parts.index(cargo_dir), parts.index(ucrt_dir))
+
+                if os.name == 'nt':
+                    (msys_root / 'ucrt64/bin/gcc.exe').unlink()
+                    with self.assertRaisesRegex(RuntimeError, 'rl-env: .*gcc.exe is missing'):
+                        dev.host_env(target)
+
+    def test_gnu_lld_isolation_and_service_rustflags_stripping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            cargo_home, msys_root, _ = self._fake_sdk(base)
+            with mock.patch.dict(os.environ, {
+                'CARGO_HOME': str(cargo_home),
+                'RUBYLIGHT_MSYS_ROOT': str(msys_root),
+                'RUSTFLAGS': '--cfg external',
+                'CARGO_ENCODED_RUSTFLAGS': 'abc',
+                'CARGO_BUILD_RUSTFLAGS': 'def',
+                'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS': '-Copt-level=2',
+            }):
+                c_env = dev.client_env(base / 't', fast=True)
+                i_env = dev.interop_env(base / 't', fast=False)
+                s_env = dev.service_env(base / 't', fast=False)
+                self.assertEqual(c_env['NIGHTJAR_ALLOW_UNTRANSLATED'], '1')
+                self.assertNotIn('NIGHTJAR_ALLOW_UNTRANSLATED', i_env)
+                if os.name == 'nt':
+                    self.assertEqual(c_env['CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'],
+                                     '-Copt-level=2 --cfg external -Clink-arg=-fuse-ld=lld')
+                    self.assertEqual(i_env['CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'],
+                                     '-Copt-level=2 --cfg external -Clink-arg=-fuse-ld=lld')
+                    self.assertNotIn('RUSTFLAGS', c_env)
+                    self.assertNotIn('CARGO_ENCODED_RUSTFLAGS', c_env)
+                    self.assertNotIn('RUSTFLAGS', i_env)
+                    self.assertNotIn('CARGO_ENCODED_RUSTFLAGS', i_env)
+                for forbidden in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS',
+                                  'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'):
+                    self.assertNotIn(forbidden, s_env)
+
+            # Without ld.lld on PATH, GNU RUSTFLAGS is left alone; if -fuse-ld= already set, no duplicate.
+            with mock.patch.object(dev.shutil, 'which', return_value=None):
+                env = dev.apply_gnu_lld({'PATH': str(base)})
+                self.assertNotIn('CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS', env)
+            if os.name == 'nt':
+                with mock.patch.object(dev.shutil, 'which', return_value='ld.lld.exe'):
+                    env = dev.apply_gnu_lld({'PATH': str(base),
+                                             'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS': '-Clink-arg=-fuse-ld=bfd'})
+                    self.assertEqual(env['CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'], '-Clink-arg=-fuse-ld=bfd')
+
+    def test_apply_gnu_lld_merges_caller_rustflags_and_handles_fuse_ld_conflict(self):
+        if os.name != 'nt':
+            self.skipTest('Windows GNU lld only')
+        with mock.patch.object(dev.shutil, 'which', return_value='ld.lld.exe'):
+            env = dev.apply_gnu_lld({
+                'PATH': r'C:\msys64\ucrt64\bin',
+                'RUSTFLAGS': '-C debuginfo=0',
+                'CARGO_ENCODED_RUSTFLAGS': 'encoded',
+            })
+            self.assertEqual(env['CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'],
+                             '-C debuginfo=0 -Clink-arg=-fuse-ld=lld')
+            self.assertNotIn('RUSTFLAGS', env)
+            self.assertNotIn('CARGO_ENCODED_RUSTFLAGS', env)
+
+            conflict = dev.apply_gnu_lld({
+                'PATH': r'C:\msys64\ucrt64\bin',
+                'RUSTFLAGS': '-Clink-arg=-fuse-ld=bfd',
+                'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS': '-Clink-arg=-fuse-ld=lld',
+            })
+            self.assertEqual(conflict['CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'],
+                             '-Clink-arg=-fuse-ld=lld')
+            self.assertNotIn('RUSTFLAGS', conflict)
+
+    def test_preferred_python_escapes_msys64_and_puts_windows_python_first(self):
+        if os.name != 'nt':
+            self.skipTest('Windows PATH protection only')
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            msys_bin = base / 'msys64' / 'ucrt64' / 'bin'
+            msys_bin.mkdir(parents=True)
+            msys_py = msys_bin / 'python.exe'
+            msys_py.write_text('')
+            local = base / 'local'
+            win_py = local / 'Programs' / 'Python' / 'Python313' / 'python.exe'
+            win_py.parent.mkdir(parents=True)
+            win_py.write_text('')
+            alt_dir = base / 'alt_py'
+            alt_dir.mkdir()
+            alt_py = alt_dir / 'python.exe'
+            alt_py.write_text('')
+
+            with mock.patch.object(dev.sys, 'executable', str(msys_py)), \
+                    mock.patch.dict(os.environ, {'LOCALAPPDATA': str(local), 'PATH': f'{msys_bin};{alt_dir}'}):
+                self.assertEqual(dev.preferred_python(), str(win_py))
+                env = dev.tool_env()
+                parts = [os.path.normcase(os.path.normpath(p)) for p in env['PATH'].split(os.pathsep)]
+                self.assertLess(parts.index(os.path.normcase(os.path.normpath(str(win_py.parent)))),
+                                parts.index(os.path.normcase(os.path.normpath(str(msys_bin)))))
+                with mock.patch.object(dev, 'run', return_value=0) as run_mock:
+                    self.assertTrue(dev.execute(dev.Check('code-map', 'code_map', ['docs/code-map.md']),
+                                                ROOT, base / 'cm.log', None))
+                self.assertEqual(run_mock.call_args.args[0][0], str(win_py))
+
+            # Fallback to non-MSYS2 PATH entry when LOCALAPPDATA Python313 is absent.
+            with mock.patch.object(dev.sys, 'executable', str(msys_py)), \
+                    mock.patch.dict(os.environ, {'LOCALAPPDATA': str(base / 'empty'), 'PATH': f'{msys_bin};{alt_dir}'}):
+                self.assertEqual(os.path.normcase(dev.preferred_python()), os.path.normcase(str(alt_py)))
 
     def test_programs_come_from_the_env_path_and_a_missing_one_fails_in_its_log(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -335,23 +472,85 @@ class QuickLog(unittest.TestCase):
             self.assertEqual(dev.run(['no-such-program-here'], log, directory), 127)
             self.assertIn('no-such-program-here is not on PATH', log.read_text(encoding='utf-8'))
 
-    def test_a_failure_or_a_missing_log_fails(self):
-        self.assertFalse(self.quick('EXIT 1')[1])
-        self.assertEqual(dev.read_quick(pathlib.Path('missing.quick')), ('', False))
+    def test_cargo_json_messages_write_rendered_text_not_raw_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = pathlib.Path(directory, 'clippy.log')
+            script = pathlib.Path(directory, 'fake_cargo.py')
+            script.write_text(
+                'import json, sys\n'
+                'print(json.dumps({"reason": "compiler-artifact", "target": {"name": "x"}}))\n'
+                'print(json.dumps({"reason": "compiler-message", "message": {"level": "error", "code": {"code": "E0425"}, '
+                '"message": "cannot find value `x`", "spans": [{"file_name": "rust/core/src/lib.rs", "line_start": 12, "column_start": 5, "is_primary": True}], '
+                '"rendered": "error[E0425]: cannot find value `x`\\n --> rust/core/src/lib.rs:12:5\\n"}}))\n'
+                'sys.exit(1)\n',
+                encoding='utf-8',
+            )
+            code = dev.run([sys.executable, str(script)], log, directory, json_messages=True)
+            self.assertEqual(code, 1)
+            text = log.read_text(encoding='utf-8')
+            self.assertIn('error[E0425]: cannot find value `x`', text)
+            self.assertIn('rust/core/src/lib.rs:12:5', text)
+            self.assertNotIn('"compiler-artifact"', text)
+            self.assertNotIn('"compiler-message"', text)
 
-    def test_exit_0_with_nothing_run_or_a_failed_test_fails(self):
-        # cargo off PATH: PowerShell leaves $LASTEXITCODE at 0 and rl-quick says EXIT 0.
-        missing = ("cargo : The term 'cargo' is not recognized as a name of a cmdlet",
-                   '    + FullyQualifiedErrorId : CommandNotFoundException')
-        self.assertFalse(self.quick('EXIT 0', missing)[1])
-        self.assertFalse(self.quick('EXIT 0', ())[1])
-        failed = ('test result: ok. 3 passed; 0 failed', 'test result: FAILED. 1 passed; 1 failed')
-        self.assertFalse(self.quick('EXIT 0', failed)[1])
+    def test_host_execution_runs_fmt_clippy_norun_and_brackets_tests_with_user_idle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            log = base / 'host.log'
+            target = base / 'target'
+            calls = []
+            def fake_run(cmd, log_path, cwd, env=None, shell=False, json_messages=False):
+                calls.append((cmd, json_messages))
+                return 1 if cmd[:3] == ['cargo', 'nextest', 'run'] and '--no-run' not in cmd else 0
+            with mock.patch.object(dev, 'host_env', return_value={'PATH': ''}), \
+                    mock.patch.object(dev, 'has_nextest', return_value=True), \
+                    mock.patch.object(dev, 'run', side_effect=fake_run), \
+                    mock.patch.object(dev, 'start_user_idle', return_value=('100.0', '50.0')) as idle_begin, \
+                    mock.patch.object(dev, 'end_user_idle') as idle_end:
+                ok = dev.execute(dev.Check('host', 'host', ['butterpollo-core']), ROOT, log, target)
+            self.assertFalse(ok)
+            idle_begin.assert_called_once()
+            idle_end.assert_called_once_with(ROOT, {'PATH': ''}, ('100.0', '50.0'))
+            self.assertEqual([c[0][:2] for c in calls], [
+                ['cargo', 'fmt'],
+                ['cargo', 'clippy'],
+                ['cargo', 'nextest'],
+                ['cargo', 'nextest'],
+            ])
+            self.assertTrue(calls[1][1])
+            self.assertIn('--message-format=json', calls[1][0])
+            self.assertIn('--no-run', calls[2][0])
+            self.assertNotIn('--no-run', calls[3][0])
+            self.assertIn('--config-file', calls[3][0])
+
+    def test_nextest_fallback_to_cargo_test_and_client_doctests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            log = base / 'client.log'
+            cmds_nextest = dev.client_commands(ROOT, ['nightjar-core', 'nightjar-desktop'], use_nextest=True)
+            self.assertEqual(cmds_nextest[0][:3], ['cargo', 'nextest', 'run'])
+            self.assertIn('--config-file', cmds_nextest[0])
+            self.assertEqual(cmds_nextest[1][:3], ['cargo', 'test', '--doc'])
+            self.assertEqual(cmds_nextest[2][:2], ['cargo', 'clippy'])
+            # When cargo-nextest is absent, host and client fall back to cargo test cleanly.
+            with mock.patch.object(dev, 'host_env', return_value={'PATH': ''}), \
+                    mock.patch.object(dev, 'has_nextest', return_value=False), \
+                    mock.patch.object(dev, 'run', return_value=0) as run_mock, \
+                    mock.patch.object(dev, 'start_user_idle', return_value=None):
+                self.assertTrue(dev.execute(dev.Check('host', 'host', ['butterpollo-core']), ROOT, log, base / 't'))
+            self.assertEqual([c.args[0][:2] for c in run_mock.call_args_list], [
+                ['cargo', 'fmt'],
+                ['cargo', 'clippy'],
+                ['cargo', 'test'],
+                ['cargo', 'test'],
+            ])
 
 
 class Execution(unittest.TestCase):
     def test_failed_client_tests_do_not_start_clippy(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(dev, 'run', return_value=1) as run:
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(dev, 'has_nextest', return_value=False), \
+                mock.patch.object(dev, 'run', return_value=1) as run:
             self.assertFalse(dev.execute(dev.Check('client', 'client', ['nightjar-desktop']), ROOT,
                                          pathlib.Path(directory) / 'check.log', pathlib.Path(directory)))
             self.assertEqual(run.call_count, 1)
@@ -369,6 +568,111 @@ class Execution(unittest.TestCase):
             self.assertEqual(len(summaries), 2)
             self.assertTrue(all(s['head'] == 'abc123' and not s['passed'] for s in summaries))
             self.assertEqual({s['checks'][1]['result'] for s in summaries}, {'NOT RUN', 'PASS'})
+
+    def test_parallel_lanes_run_concurrently_and_keep_deterministic_summary_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checks_list = [
+                dev.Check('web', 'web', ['check']),
+                dev.Check('generated-docs', 'generated', ['client/docs/settings.md']),
+                dev.Check('code-map', 'code_map', ['docs/code-map.md']),
+            ]
+            barrier = threading.Barrier(3, timeout=3)
+            def fake_execute(check, *args, **kwargs):
+                barrier.wait()
+                return True
+            out = io.StringIO()
+            with mock.patch.object(dev, 'plan', return_value=(checks_list, [])), \
+                    mock.patch.object(dev, 'stage_groups', return_value=[]), \
+                    mock.patch.object(dev, 'execute', side_effect=fake_execute), \
+                    mock.patch.object(dev, 'git', return_value='deadbeef\n'), \
+                    contextlib.redirect_stdout(out):
+                code = dev.main(['check', '--paths', 'rust/web/src/App.svelte', '--log-dir', directory])
+            self.assertEqual(code, 0, out.getvalue())
+            summary = json.loads(next(pathlib.Path(directory).glob('*/summary.json')).read_text())
+            self.assertEqual([c['name'] for c in summary['checks']], ['web', 'generated-docs', 'code-map'])
+
+    def test_fast_mode_plan_and_env_gating(self):
+        planned, _ = dev.plan([
+            'rust/core/src/lib.rs',
+            'rust/web/src/App.svelte',
+            'client/app/src/main/java/com/limelight/AppView.java',
+            'rust/release/e2e_result.py',
+        ], ROOT, fast=True)
+        by_name = {c.name: c for c in planned}
+        self.assertIn('host', by_name)
+        self.assertEqual(by_name['web'].items, ['check'])
+        self.assertTrue(by_name['app'].skip)
+        self.assertTrue(by_name['release-py'].skip)
+        self.assertIn('code-map', by_name)
+        self.assertIn('generated-docs', by_name)
+        self.assertIn('arch-check', by_name)
+        if not (ROOT / 'tools/arch_check.py').is_file():
+            self.assertTrue(by_name['arch-check'].skip)
+
+        with tempfile.TemporaryDirectory() as directory:
+            fake_root = pathlib.Path(directory)
+            (fake_root / 'tools').mkdir()
+            (fake_root / 'tools/arch_check.py').write_text('pass\n')
+            with mock.patch.object(dev, 'workspace', return_value=({}, set())):
+                fast_checks, _ = dev.plan(['tools/dev.py'], fake_root, fast=True)
+            arch = next(c for c in fast_checks if c.name == 'arch-check')
+            self.assertFalse(arch.skip)
+
+        with mock.patch.dict(os.environ, {'NIGHTJAR_ALLOW_UNTRANSLATED': '1'}):
+            self.assertEqual(dev.tool_env(fast=True)['NIGHTJAR_ALLOW_UNTRANSLATED'], '1')
+            self.assertNotIn('NIGHTJAR_ALLOW_UNTRANSLATED', dev.tool_env(fast=False))
+
+    def test_failure_digest_extracts_locations_and_caps_at_40_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            cases = [
+                ('host', 'error[E0308]: mismatched types\n  --> rust/core/src/lib.rs:42:9\n'
+                         'FAIL [ 0.12s] butterpollo_core::tests my_failing_test\n'
+                         'Diff in rust/host/src/main.rs at line 7:\n',
+                 ('rust/core/src/lib.rs:42:9: error[E0308]: mismatched types',
+                  'FAIL [ 0.12s] butterpollo_core::tests my_failing_test',
+                  'rust/host/src/main.rs:7:1: rustfmt diff')),
+                ('gradle', 'client/app/src/main/java/A.java:15: error: cannot find symbol\n'
+                           'e: file:///C:/client/B.kt:22:3 unresolved reference\n'
+                           'com.limelight.GameQualityTest > testScale FAILED\n',
+                 ('client/app/src/main/java/A.java:15:1: error: cannot find symbol',
+                  'C:/client/B.kt:22:3: error: unresolved reference',
+                  'com.limelight.GameQualityTest > testScale FAILED')),
+                ('web', 'src/App.svelte:19:4\nError: Type string is not assignable\n✖ renders host list\n',
+                 ('src/App.svelte:19:4: Error: Type string is not assignable',
+                  '✖ renders host list')),
+                ('tools', 'FAIL: test_broken (tools.test_dev.Plan)\n  File "tools/test_dev.py", line 88, in test_broken\n'
+                          'tools/code_map.py:12:1: stale link\n',
+                 ('tools/test_dev.py:88:1: FAIL: test_broken (tools.test_dev.Plan)',
+                  'tools/code_map.py:12:1: stale link')),
+            ]
+            for kind, text, expected in cases:
+                extracted = dev.extract_failure_lines(kind, text)
+                for needle in expected:
+                    self.assertIn(needle, extracted)
+
+            noisy_log = base / 'host.log'
+            noisy_log.write_text('\n'.join(f'error: err {i}\n  --> rust/core/src/f.rs:{i}:1' for i in range(1, 60)),
+                                 encoding='utf-8')
+            digest = dev.format_failure_digest([(dev.Check('host', 'host'), noisy_log)])
+            self.assertEqual(len(digest), 40)
+            self.assertIn('more diagnostic lines', digest[-1])
+
+    def test_extract_failure_lines_preserves_windows_drive_letter_paths(self):
+        host_log = (
+            "thread 'suite::panic_test_2' panicked at C:\\src\\rubylight-sprint\\rust\\core\\src\\abs.rs:44:5:\n"
+            "assertion failed: x == y\n"
+            "thread 'suite::old_panic' panicked at 'explicit boom', C:\\src\\rubylight-sprint\\rust\\core\\src\\abs.rs:45:6\n"
+            "error[E0308]: mismatched types\n"
+            "  --> C:\\src\\rubylight-sprint\\rust\\core\\src\\abs.rs:46:7\n"
+        )
+        host_extracted = dev.extract_failure_lines('host', host_log)
+        self.assertIn(r'C:\src\rubylight-sprint\rust\core\src\abs.rs:44:5: panicked: assertion failed: x == y', host_extracted)
+        self.assertIn(r'C:\src\rubylight-sprint\rust\core\src\abs.rs:45:6: panicked: explicit boom', host_extracted)
+        self.assertIn(r'C:\src\rubylight-sprint\rust\core\src\abs.rs:46:7: error[E0308]: mismatched types', host_extracted)
+        for kind in ('python', 'tools', 'arch', 'code_map', 'generated'):
+            extracted = dev.extract_failure_lines(kind, r'C:\src\rubylight-sprint\tools\foo.py:12:3: error')
+            self.assertIn(r'C:\src\rubylight-sprint\tools\foo.py:12:3: error', extracted)
 
     def test_web_dependencies_reuse_only_a_successful_matching_install(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -398,31 +702,47 @@ class Execution(unittest.TestCase):
                     self.assertFalse(dev.web_dependencies(web, web / 'log', refresh=True))
                 self.assertFalse((web / 'node_modules/.rubylight-dependencies.json').exists())
 
-    def test_app_tests_run_by_class_while_their_filters_fit_on_a_cmd_command_line(self):
+    def test_app_tests_run_by_class_or_test_list_file_never_dropping_filters(self):
         command = dev.gradle_command(ROOT, ['com.limelight.GameQualityTest'])
         self.assertEqual(command[-2:], ['--tests', 'com.limelight.GameQualityTest'])
         self.assertNotIn(dev.GRADLE_LINT_TASK, command)
-        # 170 classes once made cmd refuse the line ("Die Befehlszeile ist zu lang"): the whole suite runs, linted.
+        empty = dev.gradle_command(ROOT, [])
+        self.assertEqual(empty[-2:], [dev.GRADLE_TASK, dev.GRADLE_LINT_TASK])
+
+        # 170 classes exceed cmd's 8191-char limit: gradle_command emits -PrubylightTestList=<tempfile>.
         many = [f'com.limelight.binding.video.MediaCodecSomethingLongerTest{i}' for i in range(170)]
-        for items in (many, []):
-            command = dev.gradle_command(ROOT, items)
+        with self.assertRaises(ValueError):
+            dev.gradle_command(ROOT, many)
+        with tempfile.TemporaryDirectory() as directory:
+            list_path = pathlib.Path(directory) / 'tests.txt'
+            command = dev.gradle_command(ROOT, many, test_list_path=list_path)
             self.assertNotIn('--tests', command)
-            self.assertEqual(command[-2:], [dev.GRADLE_TASK, dev.GRADLE_LINT_TASK])
+            self.assertEqual(command[-2:], [dev.GRADLE_TASK, f'-PrubylightTestList={list_path}'])
+            self.assertEqual(list_path.read_text(encoding='utf-8').splitlines(), many)
             self.assertLessEqual(len(dev.subprocess.list2cmdline(command)), dev.CMD_LINE_LIMIT)
-        # gradlew.bat puts the JDK and the JVM options before the arguments on its own cmd line: they count too.
         few = many[:40]
         self.assertIn('--tests', dev.gradle_command(ROOT, few))
         with mock.patch.dict(os.environ, {'GRADLE_OPTS': '-Dx=' + 'y' * 6000}):
-            self.assertNotIn('--tests', dev.gradle_command(ROOT, few))
+            with self.assertRaises(ValueError):
+                dev.gradle_command(ROOT, few)
 
-    def test_an_app_class_list_too_long_for_cmd_runs_the_whole_suite(self):
+    def test_long_app_class_list_writes_temp_list_and_cleans_up_on_success_and_failure(self):
         many = [f'com.limelight.binding.video.MediaCodecSomethingLongerTest{i}' for i in range(170)]
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(dev, 'run', return_value=0) as run, \
-                contextlib.redirect_stdout(io.StringIO()) as out:
-            self.assertTrue(dev.execute(dev.Check('app', 'gradle', many), ROOT,
-                                        pathlib.Path(directory) / 'check.log', pathlib.Path(directory)))
-        self.assertNotIn('--tests', run.call_args.args[0])
-        self.assertIn('the whole suite runs', out.getvalue())
+        for exit_code in (0, 1):
+            seen_path = None
+            seen_lines = None
+            def fake_run(cmd, *args, **kwargs):
+                nonlocal seen_path, seen_lines
+                arg = next(a for a in cmd if a.startswith('-PrubylightTestList='))
+                seen_path = pathlib.Path(arg.split('=', 1)[1])
+                seen_lines = seen_path.read_text(encoding='utf-8').splitlines()
+                return exit_code
+            with tempfile.TemporaryDirectory() as directory, mock.patch.object(dev, 'run', side_effect=fake_run):
+                ok = dev.execute(dev.Check('app', 'gradle', many), ROOT,
+                                 pathlib.Path(directory) / 'check.log', pathlib.Path(directory))
+            self.assertEqual(ok, exit_code == 0)
+            self.assertEqual(seen_lines, many)
+            self.assertFalse(seen_path.exists())
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 """Run the smallest set of checks for what changed in this worktree.
 
-usage: python tools/dev.py check [--base REF] [--dry-run] [--log-dir DIR]
+usage: python tools/dev.py check [--base REF] [--dry-run] [--fast] [--log-dir DIR]
                                  [--target-dir DIR] [--paths PATH ...]
 
 The changed files are those between the merge base of HEAD and --base
@@ -8,35 +8,38 @@ The changed files are those between the merge base of HEAD and --base
 checks (see plan()):
 
 - host workspace crates, and the crates that depend on them, to
-  C:\\src\\rl-quick.ps1 (fmt, clippy, tests) in a warm target slot;
-- client/protocol crates, and their dependants, to `cargo test` in Nightjar's
-  workspace, plus `cargo clippy -D warnings` for the crates CI lints
-  (CLIENT_CLIPPY), plus the interop tests once tests/interop exists;
+  cargo fmt, clippy and nextest (or cargo test fallback) in a warm target slot;
+- client/protocol crates, and their dependants, to `cargo nextest` / `cargo test`
+  in Nightjar's workspace, plus `cargo clippy -D warnings` for CLIENT_CLIPPY,
+  plus the interop tests once tests/interop exists;
 - client/app sources to the Gradle unit tests of the touched classes;
 - rust/service, the Windows service's own workspace, to its fmt, clippy and
   tests (and the release suites, which check its version rule);
 - rust/web to the web console checks;
 - rust/release scripts to their unittest suites, tools/ to its own.
 
-Markdown is documentation and maps to nothing. One PASS/FAIL table is printed;
-each check's output goes to <log dir>/<run>/<check>.log with summary.json.
-Stops after failure unless --keep-going. Exits 1 if any check fails.
-
-Each build stage takes its own lanes (tools/build_lock.py), not one lock for
-the whole check: the Cargo stages a Cargo slot and a warm target slot from the
-pool (host: <pool>\\<n>, client: <pool>\\client-<n>), the app stage the Gradle
-lane, the web stage the web lane. A target slot remembers its last checkout;
-when another checkout built there, the fingerprints of the repository's own
-packages are removed first (claim_target), because Cargo judges path packages
-by modification time and would reuse that checkout's build.
+Markdown is documentation and maps to nothing (in full check). Independent
+lanes run concurrently via ThreadPoolExecutor; one PASS/FAIL table is printed
+with <=40-line structured failure digests and each check's output in
+<log dir>/<run>/<check>.log with summary.json.
+Stops queueing new checks after failure unless --keep-going. Exits 1 if any check fails.
 """
-import argparse, dataclasses, datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, time, tomllib, uuid
+import argparse, concurrent.futures, dataclasses, datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, tempfile, threading, time, tomllib, uuid
 import build_lock, generated_docs
 from build_lock import StageLease, wait_child
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RL_QUICK = pathlib.Path(r'C:\src\rl-quick.ps1')
-LOG_ROOT = pathlib.Path(r'C:\src\butterpollo-release\unified\dev-check')
+
+
+def default_log_root():
+    return build_lock.default_directory() / 'unified' / 'dev-check'
+
+
+_IMPORT_LOG_ROOT = default_log_root()
+LOG_ROOT = _IMPORT_LOG_ROOT
+HOST_TOOLCHAIN = '1.98.1-x86_64-pc-windows-gnu'
+NEXTEST_CONFIG = '.config/nextest.toml'
+DIGEST_MAX_LINES = 40
 CLIENT_WORKSPACE = 'client/protocol'
 # Files that change how every host crate builds.
 HOST_WIDE = ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'clippy.toml', '.cargo/',
@@ -158,7 +161,7 @@ def gradle_tests(root, sources):
     return sorted(filters), uncovered
 
 
-def plan(paths, root=ROOT):
+def plan(paths, root=ROOT, fast=False):
     """The checks for a list of repository-relative paths, and the paths no check covers."""
     paths = sorted({posix(p) for p in paths})
     host, host_default = workspace(root, '.')
@@ -240,6 +243,22 @@ def plan(paths, root=ROOT):
             checks.append(Check('interop', 'interop', skip='tests/interop does not exist yet'))
     if service:
         checks.append(Check('service', 'service', ['butterpollo-service']))
+    if fast:
+        if gradle_all or app_sources:
+            checks.append(Check('app', 'gradle', skip='skipped in --fast'))
+        if web:
+            checks.append(Check('web', 'web', ['check']))
+        if release:
+            checks.append(Check('release-py', 'python', skip='skipped in --fast'))
+        if tools:
+            checks.append(Check('tools-py', 'tools', ['tools/test_*.py']))
+        checks.append(Check('code-map', 'code_map', ['docs/code-map.md', 'client/docs/code-map.md']))
+        if (root / 'tools/arch_check.py').is_file():
+            checks.append(Check('arch-check', 'arch', ['tools/arch_check.py']))
+        else:
+            checks.append(Check('arch-check', 'arch', skip='tools/arch_check.py not present yet'))
+        checks.append(Check('generated-docs', 'generated', [d.path for d in generated_docs.DOCS]))
+        return checks, notes
     if gradle_all:
         checks.append(Check('app', 'gradle', []))
     elif app_sources:
@@ -437,11 +456,172 @@ def claim_slot(lock, root=ROOT):
     return target
 
 
-def client_env(target):
-    env = dict(os.environ)
-    env['PATH'] = r'C:\msys64\ucrt64\bin;' + str(pathlib.Path.home() / '.cargo/bin') + ';' + env.get('PATH', '')
-    env['LIBCLANG_PATH'] = r'C:\msys64\ucrt64\bin'
+def prepend_path(existing, dirs):
+    seen, ordered = set(), []
+    for entry in [*dirs, *(existing.split(os.pathsep) if existing else [])]:
+        if not entry:
+            continue
+        text = str(entry)
+        key = os.path.normcase(os.path.normpath(text))
+        if key not in seen:
+            seen.add(key)
+            ordered.append(text)
+    return os.pathsep.join(ordered)
+
+
+def _is_msys_path(path):
+    parts = [p.lower() for p in pathlib.Path(os.path.normpath(str(path))).parts]
+    return 'msys64' in parts
+
+
+def _is_windows_apps_path(path):
+    norm = os.path.normcase(os.path.normpath(str(path)))
+    return os.path.join('microsoft', 'windowsapps') in norm
+
+
+def preferred_python(env=None):
+    """Return a non-MSYS2 Windows Python when running under msys64, else sys.executable."""
+    exe = sys.executable
+    if os.name != 'nt' or not _is_msys_path(exe):
+        return exe
+    env = env or os.environ
+    local = env.get('LOCALAPPDATA')
+    if local:
+        candidate = pathlib.Path(local) / 'Programs' / 'Python' / 'Python313' / 'python.exe'
+        if candidate.is_file():
+            return str(candidate)
+    path_val = env.get('PATH', '')
+    for entry in path_val.split(os.pathsep):
+        if not entry or _is_msys_path(entry) or _is_windows_apps_path(entry):
+            continue
+        found = shutil.which('python', path=entry)
+        if found and not _is_msys_path(found) and not _is_windows_apps_path(found):
+            return found
+    py_launcher = shutil.which('py', path=path_val)
+    if py_launcher:
+        try:
+            res = subprocess.run([py_launcher, '-3.13', '-c', 'import sys; print(sys.executable)'],
+                                 env=env, capture_output=True, text=True, timeout=5)
+            resolved = res.stdout.strip().splitlines()[0].strip() if res.stdout.strip() else ''
+            if res.returncode == 0 and resolved and pathlib.Path(resolved).is_file() and not _is_msys_path(resolved):
+                return resolved
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return exe
+
+
+def tool_env(fast=False, lock_directory=None):
+    env = build_lock.environ_copy()
+    sys_exe_dir = str(pathlib.Path(preferred_python(env)).resolve().parent)
+    env['PATH'] = prepend_path(env.get('PATH', ''), [sys_exe_dir])
+    if fast:
+        env['NIGHTJAR_ALLOW_UNTRANSLATED'] = '1'
+    else:
+        env.pop('NIGHTJAR_ALLOW_UNTRANSLATED', None)
+    if lock_directory is not None:
+        env['RUBYLIGHT_LOCK_DIRECTORY'] = str(build_lock.lock_directory(lock_directory))
+    return env
+
+
+def apply_gnu_lld(env):
+    if os.name != 'nt':
+        return env
+    if not shutil.which('ld.lld', path=env.get('PATH')):
+        return env
+    key = 'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'
+    current = env.get(key, '').strip()
+    outer = env.pop('RUSTFLAGS', '').strip()
+    env.pop('CARGO_ENCODED_RUSTFLAGS', None)
+    if outer and not ('-fuse-ld=' in current and '-fuse-ld=' in outer):
+        current = f'{current} {outer}'.strip()
+    if '-fuse-ld=' not in current:
+        current = f'{current} -Clink-arg=-fuse-ld=lld'.strip()
+    env[key] = current
+    return env
+
+
+def _msys_ucrt_dir(env):
+    raw = env.get('RUBYLIGHT_MSYS_ROOT') or r'C:\msys64'
+    root = pathlib.Path(raw)
+    ucrt = root / 'ucrt64'
+    if ucrt.is_dir():
+        return ucrt
+    if (root / 'bin' / 'gcc.exe').is_file():
+        return root
+    return ucrt
+
+
+def _cargo_bin_dir(env):
+    cargo_home = env.get('CARGO_HOME')
+    base = pathlib.Path(cargo_home) if cargo_home else (pathlib.Path.home() / '.cargo')
+    return base / 'bin'
+
+
+def _pyrowave_dir(env):
+    if env.get('BUTTERPOLLO_PYROWAVE_ROOT'):
+        return pathlib.Path(env['BUTTERPOLLO_PYROWAVE_ROOT'])
+    local = env.get('LOCALAPPDATA')
+    base = pathlib.Path(local) if local else (pathlib.Path.home() / 'AppData' / 'Local')
+    return base / 'ButterpolloRust' / 'sdk' / 'pyrowave-502a3b52'
+
+
+def host_env(target, lock_directory=None, fast=False):
+    env = tool_env(fast=fast, lock_directory=lock_directory)
+    sys_exe_dir = str(pathlib.Path(preferred_python(env)).resolve().parent)
+    cargo_bin = _cargo_bin_dir(env)
+    msys = _msys_ucrt_dir(env)
+    pyrowave = _pyrowave_dir(env)
+    if os.name == 'nt':
+        required = (
+            cargo_bin / 'cargo.exe',
+            msys / 'bin' / 'gcc.exe',
+            msys / 'include' / 'vulkan',
+            pyrowave / 'share' / 'pyrowave-shared' / 'build-info.txt',
+        )
+        for need in required:
+            if not need.exists():
+                raise RuntimeError(f'rl-env: {need} is missing')
+        env['RUSTUP_TOOLCHAIN'] = HOST_TOOLCHAIN
+    env['PATH'] = prepend_path(env.get('PATH', ''), [sys_exe_dir, str(cargo_bin), str(msys / 'bin'), str(pyrowave / 'bin')])
+    env['LIBCLANG_PATH'] = str(msys / 'bin')
+    env['BUTTERPOLLO_VULKAN_INCLUDE'] = str(msys / 'include')
+    env['BUTTERPOLLO_PYROWAVE_ROOT'] = str(pyrowave)
     env['CARGO_TARGET_DIR'] = str(target)
+    if lock_directory is not None or not env.get('RUBYLIGHT_LOCK_DIRECTORY'):
+        env['RUBYLIGHT_LOCK_DIRECTORY'] = str(build_lock.lock_directory(lock_directory))
+    return apply_gnu_lld(env)
+
+
+def client_env(target, fast=False, lock_directory=None):
+    env = tool_env(fast=fast, lock_directory=lock_directory)
+    sys_exe_dir = str(pathlib.Path(preferred_python(env)).resolve().parent)
+    cargo_bin = _cargo_bin_dir(env)
+    msys_bin = _msys_ucrt_dir(env) / 'bin'
+    env['PATH'] = prepend_path(env.get('PATH', ''), [sys_exe_dir, str(cargo_bin), str(msys_bin)])
+    env['LIBCLANG_PATH'] = str(msys_bin)
+    env['CARGO_TARGET_DIR'] = str(target)
+    return apply_gnu_lld(env)
+
+
+def interop_env(target, fast=False, lock_directory=None):
+    env = client_env(target, fast=fast, lock_directory=lock_directory)
+    if os.name == 'nt':
+        msys = _msys_ucrt_dir(env)
+        pyrowave = _pyrowave_dir(env)
+        if (msys / 'include' / 'vulkan').is_dir():
+            env.setdefault('BUTTERPOLLO_VULKAN_INCLUDE', str(msys / 'include'))
+        if (pyrowave / 'bin').is_dir():
+            env.setdefault('BUTTERPOLLO_PYROWAVE_ROOT', str(pyrowave))
+            sys_exe_dir = str(pathlib.Path(preferred_python(env)).resolve().parent)
+            env['PATH'] = prepend_path(env.get('PATH', ''), [sys_exe_dir, str(_cargo_bin_dir(env)), str(msys / 'bin'), str(pyrowave / 'bin')])
+    return env
+
+
+def service_env(target, fast=False, lock_directory=None):
+    env = client_env(pathlib.Path(target) / 'service', fast=fast, lock_directory=lock_directory)
+    for name in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS',
+                 'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'):
+        env.pop(name, None)
     return env
 
 
@@ -453,21 +633,59 @@ CMD_LINE_LIMIT = 8191
 GRADLEW_OVERHEAD = 400
 
 
-def gradle_command(root, items):
-    """The app tests for these classes, or the whole suite when there are none or their filters do not fit
-    on cmd's command line. The whole suite lints too, as CI does: a NewApi error once passed here and failed CI."""
+def gradle_command(root, items, test_list_path=None):
+    """The app tests for these classes (via --tests or -PrubylightTestList), or the whole suite + lint."""
     # By its full path: with NoDefaultCurrentDirectoryInExePath set, cmd
     # doesn't look in its working folder for a bare gradlew.bat.
     command = ['cmd', '/c', str(root / 'client' / 'gradlew.bat'), '--no-daemon', '--max-workers=2', GRADLE_TASK]
+    if not items:
+        return command + [GRADLE_LINT_TASK]
     filters = [a for t in items for a in ('--tests', t)]
     budget = CMD_LINE_LIMIT - GRADLEW_OVERHEAD - sum(len(os.environ.get(name, ''))
                                                      for name in ('JAVA_HOME', 'JAVA_OPTS', 'GRADLE_OPTS'))
-    if filters and len(subprocess.list2cmdline(command + filters)) <= budget:
+    if test_list_path is None and len(subprocess.list2cmdline(command + filters)) <= budget:
         return command + filters
-    return command + [GRADLE_LINT_TASK]
+    if test_list_path is None:
+        raise ValueError('test_list_path is required when Gradle test filters exceed command line budget')
+    list_file = pathlib.Path(test_list_path)
+    list_file.write_text('\n'.join(items) + '\n', encoding='utf-8')
+    return command + [f'-PrubylightTestList={list_file}']
 
 
-def run(command, log, cwd, env=None, shell=False):
+def parse_cargo_json_line(line):
+    """Parse one line of `cargo --message-format=json`; returns (rendered_text, structured_line)."""
+    stripped = line.lstrip()
+    if not stripped.startswith('{'):
+        return line, None
+    try:
+        data = json.loads(stripped)
+    except ValueError:
+        return line, None
+    if not isinstance(data, dict) or 'reason' not in data:
+        return line, None
+    if data.get('reason') != 'compiler-message':
+        return None, None
+    msg = data.get('message') or {}
+    rendered = msg.get('rendered') or ''
+    level = msg.get('level') or ''
+    summary = None
+    if level in ('error', 'warning'):
+        spans = msg.get('spans') or []
+        primary = next((s for s in spans if s.get('is_primary')), None) or (spans[0] if spans else None)
+        code = (msg.get('code') or {}).get('code')
+        code_tag = f'[{code}]' if code else ''
+        text = msg.get('message') or ''
+        if primary:
+            summary = (f"{primary.get('file_name', '<unknown>')}:{primary.get('line_start', 0)}:"
+                       f"{primary.get('column_start', 0)}: {level}{code_tag}: {text}")
+        else:
+            summary = f'{level}{code_tag}: {text}'
+    if rendered and not rendered.endswith('\n'):
+        rendered += '\n'
+    return rendered or None, summary
+
+
+def run(command, log, cwd, env=None, shell=False, json_messages=False):
     with open(log, 'a', encoding='utf-8', errors='replace') as f:
         f.write(f'\n== {command if isinstance(command, str) else " ".join(map(str, command))}\n')
         f.flush()
@@ -479,10 +697,101 @@ def run(command, log, cwd, env=None, shell=False):
                 return 127
             command = [program, *command[1:]]
         try:
-            return wait_child(subprocess.Popen(command, cwd=cwd, env=env, shell=shell, stdout=f, stderr=subprocess.STDOUT))
+            if not json_messages:
+                return wait_child(subprocess.Popen(command, cwd=cwd, env=env, shell=shell, stdout=f, stderr=subprocess.STDOUT))
+            with subprocess.Popen(command, cwd=cwd, env=env, shell=shell,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True, encoding='utf-8', errors='replace') as proc:
+                assert proc.stdout is not None
+                for raw_line in proc.stdout:
+                    rendered, _ = parse_cargo_json_line(raw_line)
+                    if rendered:
+                        f.write(rendered)
+                return wait_child(proc)
         except OSError as error:
             f.write(f'{error}\n')
             return 127
+
+
+def has_nextest(env=None):
+    env = env or os.environ
+    path = env.get('PATH')
+    if shutil.which('cargo-nextest', path=path):
+        return True
+    cargo = shutil.which('cargo', path=path)
+    if not cargo:
+        return False
+    try:
+        res = subprocess.run([cargo, 'nextest', '--version'], env=env, capture_output=True, text=True, timeout=10)
+        return res.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def nextest_args(root):
+    cfg = root / NEXTEST_CONFIG
+    return ['--config-file', str(cfg)] if cfg.is_file() else []
+
+
+def doctest_crates(root, manifest_dir, crates):
+    base = root / manifest_dir
+    try:
+        manifest = tomllib.loads((base / 'Cargo.toml').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    members = manifest.get('workspace', {}).get('members')
+    dirs = [base / m for m in members] if members is not None else [base]
+    eligible = []
+    by_name = {}
+    for directory in dirs:
+        try:
+            pkg = tomllib.loads((directory / 'Cargo.toml').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        name = pkg.get('package', {}).get('name')
+        if not name:
+            continue
+        lib = pkg.get('lib') or {}
+        if lib.get('doctest') is False:
+            continue
+        crate_types = lib.get('crate-type') or []
+        if crate_types and all(ct in ('cdylib', 'staticlib') for ct in crate_types):
+            continue
+        lib_path = directory / (lib.get('path') or 'src/lib.rs')
+        if lib_path.is_file():
+            by_name[name] = True
+    for crate in crates:
+        if crate in by_name:
+            eligible.append(crate)
+    return eligible
+
+
+def start_user_idle(root, env):
+    idle = root / 'rust/release/user_idle.py'
+    if not idle.is_file():
+        return None
+    try:
+        out = subprocess.run([preferred_python(env), str(idle), 'begin'], cwd=root, env=env,
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    parts = out.stdout.strip().split()
+    return (parts[0], parts[1]) if len(parts) >= 2 else None
+
+
+def end_user_idle(root, env, mark):
+    if not mark:
+        return
+    idle = root / 'rust/release/user_idle.py'
+    if not idle.is_file():
+        return
+    try:
+        subprocess.run([preferred_python(env), str(idle), 'end', *mark], cwd=root, env=env,
+                       capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def client_specs(root, names):
@@ -491,35 +800,44 @@ def client_specs(root, names):
     return [f'path+file:///{posix((root / by_name[name]).resolve())}#{name}' for name in names]
 
 
-def client_commands(root, crates):
-    """cargo test for the client crates, then clippy as CI runs it for those of them it lints."""
+def client_commands(root, crates, use_nextest=False):
+    """cargo nextest/test for the client crates, then clippy as CI runs it for those of them it lints."""
     args = [a for spec in client_specs(root, crates) for a in ('-p', spec)]
-    commands = [['cargo', 'test', '-j', '4', '--locked', *args]]
+    if use_nextest:
+        commands = [['cargo', 'nextest', 'run', *nextest_args(root), '-j', '4', '--locked', *args]]
+        doc_crates = doctest_crates(root, CLIENT_WORKSPACE, crates)
+        if doc_crates:
+            doc_args = [a for spec in client_specs(root, doc_crates) for a in ('-p', spec)]
+            commands.append(['cargo', 'test', '--doc', '-j', '4', '--locked', *doc_args])
+    else:
+        commands = [['cargo', 'test', '-j', '4', '--locked', *args]]
     linted = [c for c in crates if c in CLIENT_CLIPPY]
     if linted:
         lint_args = [a for spec in client_specs(root, linted) for a in ('-p', spec)]
-        commands.append(['cargo', 'clippy', '-j', '4', '--all-targets', '--locked', *lint_args, '--', '-D', 'warnings'])
+        commands.append(['cargo', 'clippy', '-j', '4', '--all-targets', '--locked',
+                         '--message-format=json', *lint_args, '--', '-D', 'warnings'])
     return commands
 
 
-def web_dependencies(web, log, refresh=False):
+def web_dependencies(web, log, refresh=False, env=None):
     """Reuse only installs made successfully by this checker, for these inputs."""
     stamp = web / 'node_modules/.rubylight-dependencies.json'
     versions = {}
     for program in ('node', 'npm'):
-        result = subprocess.run(f'{program} --version', cwd=web, shell=True, capture_output=True, text=True)
+        result = subprocess.run(f'{program} --version', cwd=web, env=env, shell=True, capture_output=True, text=True)
         if result.returncode:
             return False
         versions[program] = result.stdout.strip()
     inputs = {name: hashlib.sha256((web / name).read_bytes()).hexdigest()
               for name in ('package.json', 'package-lock.json')}
-    config = {k: v for k, v in os.environ.items() if k.lower().startswith('npm_config_')}
+    environ = build_lock.environ_copy()
+    config = {k: v for k, v in environ.items() if k.lower().startswith('npm_config_')}
     receipt = dict(inputs=inputs, versions=versions, platform=sys.platform,
-                   node_env=os.environ.get('NODE_ENV'),
+                   node_env=environ.get('NODE_ENV'),
                    npm_config=hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest())
     configs = [web / '.npmrc', pathlib.Path.home() / '.npmrc']
-    if os.environ.get('NPM_CONFIG_USERCONFIG'):
-        configs.append(pathlib.Path(os.environ['NPM_CONFIG_USERCONFIG']))
+    if environ.get('NPM_CONFIG_USERCONFIG'):
+        configs.append(pathlib.Path(environ['NPM_CONFIG_USERCONFIG']))
     receipt['npmrc'] = [hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None for p in configs]
     installed = web / 'node_modules/.package-lock.json'
     receipt['installed'] = hashlib.sha256(installed.read_bytes()).hexdigest() if installed.exists() else None
@@ -529,89 +847,284 @@ def web_dependencies(web, log, refresh=False):
     except (OSError, ValueError):
         pass
     stamp.unlink(missing_ok=True)
-    if run('npm ci --no-audit --no-fund', log, web, shell=True):
+    if run('npm ci --no-audit --no-fund', log, web, env=env, shell=True):
         return False
     receipt['installed'] = hashlib.sha256(installed.read_bytes()).hexdigest() if installed.exists() else None
     stamp.write_text(json.dumps(receipt, sort_keys=True), encoding='utf-8')
     return True
 
 
-def read_quick(path):
-    """rl-quick's log as text, and whether it passed: EXIT 0, tests that ran and none failed.
-
-    Windows PowerShell appends cargo's output (`*>>`) as UTF-16LE between its own UTF-8
-    lines, so the file mixes both: drop the NULs and byte order marks, keep the ASCII.
-    A command PowerShell can't find (cargo off PATH, a missing rl-env.ps1) leaves
-    $LASTEXITCODE alone, so rl-quick can end with EXIT 0 having run nothing: that fails too.
-    """
-    data = path.read_bytes() if path.exists() else b''
-    text = data.replace(b'\x00', b'').decode('utf-8', errors='replace')
-    text = text.replace('﻿', '').replace('��', '').replace('\r\n', '\n')
-    passed = (re.search(r'(?m)^EXIT 0\s*$', text) is not None
-              and re.search(r'(?m)^test result: ok\.', text) is not None
-              and re.search(r'(?m)^test result: FAILED', text) is None
-              and 'CommandNotFoundException' not in text)
-    return text, passed
-
-
-def execute(check, root, log, target, fresh_dependencies=False):
+def execute(check, root, log, target, fresh_dependencies=False, fast=False, lock_directory=None):
     if not log.exists():
         log.write_text('', encoding='utf-8')
     if check.kind == 'host':
-        crates = ','.join(f"'{c}'" for c in check.items)
-        command = (f"& '{RL_QUICK}' -Repo '{root}' -Crates {crates} -TargetDir '{target}' "
-                   f"-Jobs 4 -Log '{log}.quick'")
-        code = run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], log, root)
-        quick = pathlib.Path(f'{log}.quick')
-        text, passed = read_quick(quick)
-        with open(log, 'a', encoding='utf-8') as f:
-            f.write(text)
-        quick.unlink(missing_ok=True)
-        return code == 0 and passed
+        env = host_env(target, lock_directory=lock_directory, fast=fast)
+        p_args = [a for c in check.items for a in ('-p', c)]
+        if fast:
+            cmd = ['cargo', 'check', *p_args, '--tests', '--locked', '-j', '4',
+                   '--target-dir', str(target), '--message-format=json']
+            return run(cmd, log, root, env, json_messages=True) == 0
+        if run(['cargo', 'fmt', '--', '--check'], log, root, env) != 0:
+            return False
+        clippy_cmd = ['cargo', 'clippy', *p_args, '--all-targets', '--locked', '-j', '4',
+                      '--target-dir', str(target), '--message-format=json', '--', '-D', 'warnings']
+        if run(clippy_cmd, log, root, env, json_messages=True) != 0:
+            return False
+        use_nextest = has_nextest(env)
+        if use_nextest:
+            pre_cmd = ['cargo', 'nextest', 'run', *nextest_args(root), *p_args, '--locked',
+                       '-j', '4', '--target-dir', str(target), '--no-run']
+        else:
+            pre_cmd = ['cargo', 'test', *p_args, '--locked', '-j', '4', '--target-dir', str(target), '--no-run']
+        if run(pre_cmd, log, root, env) != 0:
+            return False
+        mark = start_user_idle(root, env)
+        try:
+            if use_nextest:
+                test_cmd = ['cargo', 'nextest', 'run', *nextest_args(root), *p_args, '--locked',
+                            '-j', '4', '--target-dir', str(target)]
+            else:
+                test_cmd = ['cargo', 'test', *p_args, '--locked', '-j', '4', '--target-dir', str(target)]
+            ok = run(test_cmd, log, root, env) == 0
+            if ok and use_nextest:
+                doc_crates = doctest_crates(root, '.', check.items)
+                if doc_crates:
+                    doc_args = [a for c in doc_crates for a in ('-p', c)]
+                    ok = run(['cargo', 'test', '--doc', *doc_args, '--locked', '-j', '4',
+                              '--target-dir', str(target)], log, root, env) == 0
+            return ok
+        finally:
+            end_user_idle(root, env, mark)
     if check.kind == 'client':
-        env = client_env(target)
-        return all(run(command, log, root / CLIENT_WORKSPACE, env) == 0
-                   for command in client_commands(root, check.items))
+        env = client_env(target, fast=fast, lock_directory=lock_directory)
+        if fast:
+            args = [a for spec in client_specs(root, check.items) for a in ('-p', spec)]
+            cmd = ['cargo', 'check', '-j', '4', '--tests', '--locked', '--message-format=json', *args]
+            return run(cmd, log, root / CLIENT_WORKSPACE, env, json_messages=True) == 0
+        for command in client_commands(root, check.items, use_nextest=has_nextest(env)):
+            if run(command, log, root / CLIENT_WORKSPACE, env,
+                   json_messages='--message-format=json' in command) != 0:
+                return False
+        return True
     if check.kind == 'service':
         # Its own workspace, in a folder of this worktree's target dir; without a
         # developer's linker flags, as its release build (rust/service/build.ps1).
-        env = client_env(pathlib.Path(target) / 'service')
-        for name in ('RUSTFLAGS', 'CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'):
-            env.pop(name, None)
+        env = service_env(target, fast=fast, lock_directory=lock_directory)
         manifest = ['--manifest-path', str(root / SERVICE_WORKSPACE / 'Cargo.toml')]
-        return all(run(command, log, root, env) == 0 for command in (
+        if fast:
+            cmd = ['cargo', 'check', '-j', '4', '--tests', '--locked', '--message-format=json', *manifest]
+            return run(cmd, log, root, env, json_messages=True) == 0
+        use_nextest = has_nextest(env)
+        test_cmd = (['cargo', 'nextest', 'run', *nextest_args(root), '-j', '4', '--locked', *manifest]
+                    if use_nextest else ['cargo', 'test', '-j', '4', '--locked', *manifest])
+        commands = [
             ['cargo', 'fmt', *manifest, '--', '--check'],
-            ['cargo', 'clippy', '-j', '4', '--all-targets', '--locked', *manifest, '--', '-D', 'warnings'],
-            ['cargo', 'test', '-j', '4', '--locked', *manifest],
-        ))
+            ['cargo', 'clippy', '-j', '4', '--all-targets', '--locked', '--message-format=json',
+             *manifest, '--', '-D', 'warnings'],
+            test_cmd,
+        ]
+        if use_nextest and doctest_crates(root, SERVICE_WORKSPACE, ['butterpollo-service']):
+            commands.append(['cargo', 'test', '--doc', '-j', '4', '--locked', *manifest])
+        return all(run(command, log, root, env, json_messages='--message-format=json' in command) == 0
+                   for command in commands)
     if check.kind == 'interop':
-        env = client_env(target)
-        return run(['cargo', 'test', '-j', '4', '--locked', '--manifest-path', str(root / 'tests/interop/Cargo.toml')],
-                   log, root, env) == 0
+        env = interop_env(target, fast=fast, lock_directory=lock_directory)
+        manifest = ['--manifest-path', str(root / 'tests/interop/Cargo.toml')]
+        if fast:
+            cmd = ['cargo', 'check', '-j', '4', '--tests', '--locked', '--message-format=json', *manifest]
+            return run(cmd, log, root, env, json_messages=True) == 0
+        test_cmd = (['cargo', 'nextest', 'run', *nextest_args(root), '-j', '4', '--locked', *manifest]
+                    if has_nextest(env) else ['cargo', 'test', '-j', '4', '--locked', *manifest])
+        return run(test_cmd, log, root, env) == 0
     if check.kind == 'gradle':
-        env = {k: v for k, v in os.environ.items() if k.upper() != 'CARGO_TARGET_DIR'}
+        env = tool_env(fast=fast, lock_directory=lock_directory)
+        env = {k: v for k, v in env.items() if k.upper() != 'CARGO_TARGET_DIR'}
         # Its Rust engine builds beside the Cargo stages: at most a stage's share of the CPU.
         env['CARGO_BUILD_JOBS'] = str(build_lock.CARGO_STAGE_THREADS)
-        command = gradle_command(root, check.items)
-        if check.items and '--tests' not in command:
-            print(f'app: {len(check.items)} test classes do not fit on a cmd command line: the whole suite runs')
-        return run(command, log, root / 'client', env) == 0
+        list_path = None
+        try:
+            try:
+                command = gradle_command(root, check.items)
+            except ValueError:
+                fd, raw = tempfile.mkstemp(prefix='rubylight-tests-', suffix='.txt')
+                os.close(fd)
+                list_path = pathlib.Path(raw)
+                command = gradle_command(root, check.items, test_list_path=list_path)
+            return run(command, log, root / 'client', env) == 0
+        finally:
+            if list_path is not None:
+                list_path.unlink(missing_ok=True)
     if check.kind == 'web':
         web = root / 'rust/web'
-        if not web_dependencies(web, log, fresh_dependencies):
+        env = tool_env(fast=fast, lock_directory=lock_directory)
+        if not web_dependencies(web, log, fresh_dependencies, env=env):
             return False
-        for command in ('npm run check', 'node --test "*.test.mjs"', 'npm run build'):
-            if run(command, log, web, shell=True):
+        commands = ('npm run check',) if fast else ('npm run check', 'node --test "*.test.mjs"', 'npm run build')
+        for command in commands:
+            if run(command, log, web, env=env, shell=True):
                 return False
         return True
     if check.kind == 'python':
-        return all(run([sys.executable, '-m', 'unittest', 'discover', '-s', 'rust/release', '-p', suite],
-                       log, root) == 0 for suite in check.items)
+        env = tool_env(fast=fast, lock_directory=lock_directory)
+        py = preferred_python(env)
+        return all(run([py, '-m', 'unittest', 'discover', '-s', 'rust/release', '-p', suite],
+                       log, root, env=env) == 0 for suite in check.items)
     if check.kind == 'tools':
-        return run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py'], log, root) == 0
+        env = tool_env(fast=fast, lock_directory=lock_directory)
+        py = preferred_python(env)
+        return run([py, '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py'],
+                   log, root, env=env) == 0
     if check.kind == 'generated':
-        return run([sys.executable, str(root / 'tools/generated_docs.py'), '--check', *check.items], log, root) == 0
+        env = tool_env(fast=fast, lock_directory=lock_directory)
+        py = preferred_python(env)
+        return run([py, str(root / 'tools/generated_docs.py'), '--check', *check.items],
+                   log, root, env=env) == 0
+    if check.kind == 'code_map':
+        env = tool_env(fast=fast, lock_directory=lock_directory)
+        py = preferred_python(env)
+        return run([py, str(root / 'tools/code_map.py'), 'check'], log, root, env=env) == 0
+    if check.kind == 'arch':
+        env = tool_env(fast=fast, lock_directory=lock_directory)
+        py = preferred_python(env)
+        return run([py, str(root / 'tools/arch_check.py')], log, root, env=env) == 0
     raise ValueError(check.kind)
+
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+
+
+def extract_failure_lines(kind, log_text):
+    """Extract structured `file:line:col` diagnostics and failing test names from a check log."""
+    lines = [_ANSI_RE.sub('', raw).rstrip('\r') for raw in log_text.splitlines()]
+    out = []
+    if kind in ('host', 'client', 'service', 'interop'):
+        i = 0
+        while i < len(lines):
+            stripped = lines[i].strip()
+            m_err = re.match(r'^error(?:\[([^\]]+)\])?:\s*(.+)$', stripped)
+            if m_err and not m_err.group(2).startswith(('could not compile', 'aborting due to')):
+                code = f'[{m_err.group(1)}]' if m_err.group(1) else ''
+                msg = m_err.group(2)
+                loc = None
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    m_loc = re.match(r'^\s*-->\s+((?:[A-Za-z]:)?.+?:\d+:\d+)\s*$', lines[j])
+                    if m_loc:
+                        loc = m_loc.group(1)
+                        break
+                out.append(f'{loc}: error{code}: {msg}' if loc else f'error{code}: {msg}')
+            elif re.match(r'^[^\s].*?\.(?:rs|c|cpp|h):\d+:\d+:\s*(?:error|warning)', stripped):
+                out.append(stripped)
+            elif m_fmt := re.match(r'^Diff in (.+?) at line (\d+):', stripped):
+                out.append(f'{m_fmt.group(1)}:{m_fmt.group(2)}:1: rustfmt diff')
+            elif re.match(r'^(?:FAIL|TIMEOUT|LEAK)\s+\[[^\]]+\]\s+\S+', stripped):
+                out.append(stripped)
+            elif m_test := re.match(r'^test\s+(\S+)\s+\.\.\.\s+FAILED$', stripped):
+                out.append(f'FAILED test {m_test.group(1)}')
+            elif m_panic := re.match(r"^thread '[^']+' panicked at ((?:[A-Za-z]:)?[^:]+:\d+:\d+):$", stripped):
+                detail = lines[i + 1].strip() if i + 1 < len(lines) else ''
+                out.append(f'{m_panic.group(1)}: panicked: {detail}' if detail else f'{m_panic.group(1)}: panicked')
+            elif m_old_panic := re.match(r"^thread '[^']+' panicked at '(.+?)',\s*((?:[A-Za-z]:)?[^:]+:\d+:\d+)$", stripped):
+                out.append(f'{m_old_panic.group(2)}: panicked: {m_old_panic.group(1)}')
+            elif any(tok in stripped for tok in ('undefined reference to', 'ld.lld: error:', 'ld.lld.exe: error:', 'error: linking with')):
+                out.append(stripped)
+            i += 1
+    elif kind == 'gradle':
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if m := re.match(r'^(.+?\.java):(\d+):\s*error:\s*(.+)$', stripped):
+                out.append(f'{m.group(1)}:{m.group(2)}:1: error: {m.group(3)}')
+            elif m := re.match(r'^e:\s*(?:file:///)?(.+?\.kt):(\d+):(\d+)\s+(.+)$', stripped):
+                out.append(f'{m.group(1)}:{m.group(2)}:{m.group(3)}: error: {m.group(4)}')
+            elif m := re.match(r'^e:\s*(.+?\.kt):\s*\((\d+),\s*(\d+)\):\s*(.+)$', stripped):
+                out.append(f'{m.group(1)}:{m.group(2)}:{m.group(3)}: error: {m.group(4)}')
+            elif m := re.match(r'^(.+?):(\d+):\s*Error:\s*(.+)$', stripped):
+                out.append(f'{m.group(1)}:{m.group(2)}:1: lint error: {m.group(3)}')
+            elif re.match(r'^\S.*?>\s*\S.*?\s+FAILED$', stripped):
+                out.append(stripped)
+            elif stripped == '* What went wrong:' and i + 1 < len(lines) and lines[i + 1].strip():
+                out.append(lines[i + 1].strip())
+    elif kind == 'web':
+        i = 0
+        while i < len(lines):
+            stripped = lines[i].strip()
+            if m := re.match(r'^([^\s].*?\.(?:svelte|ts|tsx|js|mjs)):(\d+):(\d+)\s+(Error|Warn):\s*(.+)$', stripped):
+                out.append(f'{m.group(1)}:{m.group(2)}:{m.group(3)}: {m.group(4)}: {m.group(5)}')
+            elif m := re.match(r'^([^\s].*?\.(?:svelte|ts|tsx|js|mjs)):(\d+):(\d+)$', stripped):
+                if i + 1 < len(lines) and lines[i + 1].strip():
+                    out.append(f'{m.group(1)}:{m.group(2)}:{m.group(3)}: {lines[i + 1].strip()}')
+                else:
+                    out.append(stripped)
+            elif re.match(r'^(?:[✖✗]\s+|not ok \d+\s+-\s+)', stripped):
+                out.append(stripped)
+            elif m := re.search(r'at .*?\(([^()]+\.(?:svelte|ts|tsx|js|mjs):\d+:\d+)\)', stripped):
+                out.append(f'{m.group(1)}: {stripped}')
+            elif stripped.startswith(('error during build:', '[vite]')) or re.match(r'^file:\s*\S+:\d+:\d+', stripped):
+                out.append(stripped)
+            i += 1
+    elif kind in ('python', 'tools', 'code_map', 'arch', 'generated'):
+        pending_test = None
+        for line in lines:
+            stripped = line.strip()
+            if m := re.match(r'^(?:FAIL|ERROR):\s+(.+)$', stripped):
+                pending_test = stripped
+                out.append(stripped)
+            elif m := re.match(r'^File "([^"]+)", line (\d+),', stripped):
+                if pending_test:
+                    out.append(f'{m.group(1)}:{m.group(2)}:1: {pending_test}')
+                    pending_test = None
+                else:
+                    out.append(f'{m.group(1)}:{m.group(2)}:1')
+            elif m := re.match(r'^((?:[A-Za-z]:)?[^\s:]+\.(?:md|py|rs|java|kt|ts|tsx|js|mjs|svelte|toml|gradle))(?::(\d+)(?::(\d+))?)?:\s*(.+)$', stripped):
+                ln = m.group(2) or '1'
+                col = m.group(3) or '1'
+                out.append(f'{m.group(1)}:{ln}:{col}: {m.group(4)}')
+            elif stripped.startswith(('Stale:', 'AssertionError', 'RuntimeError:', 'SyntaxError:', 'ImportError:')):
+                out.append(stripped)
+    deduped = list(dict.fromkeys(out))
+    if not deduped:
+        tail = [line.strip() for line in lines if line.strip() and not line.startswith('== ')]
+        deduped = tail[-10:]
+    return deduped
+
+
+def format_failure_digest(failed_items, max_lines=DIGEST_MAX_LINES):
+    """Build a bounded (<= max_lines) diagnostic digest across failed checks."""
+    if not failed_items or max_lines <= 0:
+        return []
+    blocks = []
+    for check, log_path in failed_items:
+        try:
+            text = pathlib.Path(log_path).read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            text = ''
+        extracted = extract_failure_lines(check.kind, text)
+        blocks.append((check.name, log_path, extracted))
+    lines = []
+    if len(blocks) == 1:
+        name, log_path, extracted = blocks[0]
+        lines.append(f'FAIL {name} ({log_path}):')
+        lines.extend(f'  {item}' for item in extracted)
+    else:
+        per_block = max(2, (max_lines - 1) // len(blocks) - 1)
+        overflow = []
+        for name, log_path, extracted in blocks:
+            lines.append(f'FAIL {name} ({log_path}):')
+            shown = extracted[:per_block]
+            lines.extend(f'  {item}' for item in shown)
+            overflow.extend(f'  [{name}] {item}' for item in extracted[per_block:])
+        lines.extend(overflow)
+    if len(lines) > max_lines:
+        omitted = len(lines) - (max_lines - 1)
+        lines = lines[:max_lines - 1] + [f'... (+{omitted} more diagnostic lines in logs)']
+    return lines
+
+
+def check_lane(check):
+    if check.kind in ('host', 'client', 'service', 'interop'):
+        return 'cargo'
+    if check.kind in ('python', 'tools'):
+        return 'python'
+    return check.kind
 
 
 def main(argv=None):
@@ -620,6 +1133,8 @@ def main(argv=None):
     parser.add_argument('--slot', type=pathlib.Path, help="claim-slot: the slot's lock file, which the caller holds")
     parser.add_argument('--base', default='origin/main', help='compare against the merge base with this ref')
     parser.add_argument('--dry-run', action='store_true', help='print the plan only')
+    parser.add_argument('--fast', action='store_true',
+                        help='run static checks, cargo check --tests, and svelte-check only')
     parser.add_argument('--log-dir', type=pathlib.Path)
     parser.add_argument('--target-dir', type=pathlib.Path)
     parser.add_argument('--paths', nargs='*', help='plan for these paths instead of the changed files')
@@ -645,10 +1160,13 @@ def main(argv=None):
         print(f'{len(paths)} changed files against {args.base} (merge base {merge_base[:9]})')
     else:
         paths = args.paths
-    checks, unchecked = plan(paths, root)
+    checks, unchecked = plan(paths, root, fast=args.fast)
     where = str(args.target_dir) if args.target_dir else f'a warm slot of {args.pool or build_lock.pool_directory(args.lock_directory)}'
     run_id = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
-    log_dir = (args.log_dir or LOG_ROOT / worktree_name(root)) / run_id
+    base_log_root = (build_lock.lock_directory(args.lock_directory) / 'unified' / 'dev-check') if args.lock_directory else (
+        LOG_ROOT if LOG_ROOT != _IMPORT_LOG_ROOT else default_log_root()
+    )
+    log_dir = (args.log_dir or base_log_root / worktree_name(root)) / run_id
     if unchecked:
         shown = ', '.join(unchecked[:8]) + (f' and {len(unchecked) - 8} more' if len(unchecked) > 8 else '')
         print(f'No check for {len(unchecked)} files (docs and the like): {shown}')
@@ -661,43 +1179,100 @@ def main(argv=None):
             print(f'  {check.name:<16} {"SKIP" if check.skip else "run":<5} {check.describe()}')
         return 0
     log_dir.mkdir(parents=True, exist_ok=True)
-    rows, failed, targets = [], False, {}
-    for check in checks:
+    rows = [None] * len(checks)
+    targets = {}
+    print_lock = threading.Lock()
+    targets_lock = threading.Lock()
+    stop_event = threading.Event()
+    cargo_limit = max(1, build_lock.cargo_slots())
+    cargo_sem = threading.Semaphore(cargo_limit)
+
+    def safe_say(*a, **k):
+        with print_lock:
+            print(*a, **k)
+
+    def run_one(idx, check):
         log = log_dir / f'{check.name}.log'
-        if check.skip:
-            rows.append((check.name, 'SKIP', '', '', check.describe()))
-            continue
-        if failed and not args.keep_going:
-            rows.append((check.name, 'NOT RUN', '', '', 'earlier check failed'))
-            continue
-        print(f'-- {check.name}: {check.describe()}', flush=True)
+        if stop_event.is_set() and not args.keep_going:
+            rows[idx] = (check.name, 'NOT RUN', '', '', 'earlier check failed')
+            return False
+        safe_say(f'-- {check.name}: {check.describe()}', flush=True)
         log.write_text('', encoding='utf-8')
         waited, start = 0.0, time.monotonic()
         try:
-            # Each stage takes its own lanes; pure Python suites take none.
+            # Each stage takes its own lanes; pure Python/static suites take none.
             groups = stage_groups(check, root, args)
             if groups:
-                with StageLease(groups, args.lock_directory, f'dev {check.name} {root}', args.lock_timeout) as lease:
+                with StageLease(groups, args.lock_directory, f'dev {check.name} {root}',
+                                args.lock_timeout, say=safe_say) as lease:
+                    if stop_event.is_set() and not args.keep_going:
+                        rows[idx] = (check.name, 'NOT RUN', '', '', 'earlier check failed')
+                        return False
                     waited, start = lease.waited, time.monotonic()
                     target = stage_target(check, lease.taken, root, args.target_dir)
                     if target is not None:
-                        targets[check.name] = str(target)
+                        with targets_lock:
+                            targets[check.name] = str(target)
                         with log.open('a', encoding='utf-8') as out:
                             out.write(f'== target {target}\n')
-                    ok = execute(check, root, log, target, args.fresh_dependencies)
+                    ok = execute(check, root, log, target, args.fresh_dependencies,
+                                 fast=args.fast, lock_directory=args.lock_directory)
             else:
-                ok = execute(check, root, log, None, args.fresh_dependencies)
+                ok = execute(check, root, log, None, args.fresh_dependencies,
+                             fast=args.fast, lock_directory=args.lock_directory)
         except (OSError, RuntimeError) as error:
             with log.open('a', encoding='utf-8') as out:
                 out.write(str(error) + '\n')
             ok = False
-        failed |= not ok
-        rows.append((check.name, 'PASS' if ok else 'FAIL', f'{time.monotonic() - start:.0f} s',
-                     f'{waited:.0f} s' if waited >= 1 else '', check.describe() if ok else str(log)))
+        if not ok and not args.keep_going:
+            stop_event.set()
+        rows[idx] = (check.name, 'PASS' if ok else 'FAIL', f'{time.monotonic() - start:.0f} s',
+                     f'{waited:.0f} s' if waited >= 1 else '', check.describe() if ok else str(log))
+        return ok
+
+    def run_cargo(idx, check):
+        if stop_event.is_set() and not args.keep_going:
+            rows[idx] = (check.name, 'NOT RUN', '', '', 'earlier check failed')
+            return False
+        with cargo_sem:
+            return run_one(idx, check)
+
+    def run_lane(items):
+        for idx, check in items:
+            run_one(idx, check)
+
+    cargo_items = []
+    lane_queues = {}
+    for idx, check in enumerate(checks):
+        if check.skip:
+            rows[idx] = (check.name, 'SKIP', '', '', check.describe())
+            continue
+        lane = check_lane(check)
+        if lane == 'cargo':
+            cargo_items.append((idx, check))
+        else:
+            lane_queues.setdefault(lane, []).append((idx, check))
+
+    workers = max(1, len(lane_queues) + min(len(cargo_items), cargo_limit))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(run_lane, items) for items in lane_queues.values()]
+        futures += [pool.submit(run_cargo, idx, check) for idx, check in cargo_items]
+        for future in futures:
+            future.result()
+
+    failed = any(row[1] == 'FAIL' for row in rows)
     print()
     print(f'{"check":<16} {"result":<7} {"time":>6} {"wait":>6}  detail')
     for name, result, took, wait, detail in rows:
         print(f'{name:<16} {result:<7} {took:>6} {wait:>6}  {detail}')
+    if failed:
+        failed_items = [(checks[idx], log_dir / f'{checks[idx].name}.log')
+                        for idx, row in enumerate(rows) if row[1] == 'FAIL']
+        digest = format_failure_digest(failed_items)
+        if digest:
+            print()
+            for line in digest:
+                print(line)
     print(f'Logs: {log_dir}')
     summary = dict(head=git('rev-parse', 'HEAD', root=root).strip(), worktree=str(root), paths=paths,
                    targets=targets, passed=not failed, checks=[dict(name=n, result=r, time=t, wait=w, detail=d)

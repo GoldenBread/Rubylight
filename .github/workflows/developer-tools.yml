@@ -2,9 +2,9 @@ name: Developer workflow checks
 on:
   push:
     branches: [main, 'wip/**']
-    paths: ['tools/**', 'rust/build.ps1', 'rust/release/check*.ps1', '.github/workflows/developer-tools.yml']
+    paths: ['tools/**', 'rust/build.ps1', 'rust/release/check*.ps1', '.config/nextest.toml', '.github/workflows/developer-tools.yml']
   pull_request:
-    paths: ['tools/**', 'rust/build.ps1', 'rust/release/check*.ps1', '.github/workflows/developer-tools.yml']
+    paths: ['tools/**', 'rust/build.ps1', 'rust/release/check*.ps1', '.config/nextest.toml', '.github/workflows/developer-tools.yml']
   workflow_dispatch:
 permissions:
   contents: read
