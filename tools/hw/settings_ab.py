@@ -26,6 +26,8 @@ def set_prefs(setting, arm):
     prefs = f.pset(prefs, 'frame_pacing', 'string', 'smoothness')
     for key, value in (('checkbox_codec_direct', 'true'), ('checkbox_network_priority', 'true'),
                        (KEYS['submit'], 'false'), (KEYS['priority'], 'false'),
+                       # Without the marker the app's one-time default migration switches a stored off on.
+                       ('receive_decode_priority_default_on', 'true'),
                        (KEYS[setting], 'true' if arm == 'on' else 'false')):
         prefs = f.pset(prefs, key, 'boolean', value)
     with tempfile.NamedTemporaryFile('w', newline='\n', suffix='.xml', delete=False) as t:
@@ -36,7 +38,8 @@ def set_prefs(setting, arm):
     f.sh('rm -f /data/local/tmp/nj-ab-prefs.xml')
     got = f.run_as(f'cat {path}')
     want = f'name="{KEYS[setting]}" value="{"true" if arm == "on" else "false"}"'
-    if want not in got or 'name="checkbox_codec_direct" value="true"' not in got:
+    if (want not in got or 'name="checkbox_codec_direct" value="true"' not in got
+            or 'name="receive_decode_priority_default_on" value="true"' not in got):
         raise SystemExit('prefs did not take')
 
 

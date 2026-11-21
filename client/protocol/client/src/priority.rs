@@ -458,7 +458,7 @@ fn thread_level_on(
 }
 
 /// The decode priority switch: `setting` ([`crate::session::SessionConfig::receive_decode_priority`]:
-/// on for the desktop, Android's Debug setting, off by default) unless [`DECODE_PRIORITY_ENV`]
+/// on for the desktop, Android's Debug setting, on by default) unless [`DECODE_PRIORITY_ENV`]
 /// (desktop) or [`DECODE_PRIORITY_PROPERTY`] (Android) is `1` or `0`.
 pub fn decode_priority_switch(setting: bool) -> bool {
     #[cfg(target_os = "android")]

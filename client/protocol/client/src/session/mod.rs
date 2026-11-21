@@ -154,7 +154,7 @@ pub struct SessionConfig {
     /// The decode priority switch's setting ([`crate::priority::decode_priority_switch`]): with
     /// direct submission and `network_priority`, VideoRecv runs at the decoder's level, and on
     /// Windows the session threads are raised. On for the desktop; Android's Debug setting
-    /// "Decoder priority for receiving", off by default.
+    /// "Decoder priority for receiving", on by default there and passed in by the app.
     pub receive_decode_priority: bool,
     /// Nightjar's "Group incoming video packets": the network stack may hand over several
     /// video datagrams in one read (UDP_GRO on Linux and Android, receive coalescing on
@@ -1656,7 +1656,8 @@ mod tests {
 
     #[test]
     fn the_receive_decode_priority_follows_its_setting_and_is_off_by_default() {
-        // Android's "Decoder priority for receiving" measured worse under load: off unless asked.
+        // The protocol default stays off; Android's "Decoder priority for receiving" (on by default)
+        // and the desktop pass it in explicitly.
         assert!(!SessionConfig::default().receive_decode_priority);
         if std::env::var_os(priority::DECODE_PRIORITY_ENV).is_none() {
             let (off, _) = heard();
