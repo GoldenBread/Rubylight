@@ -804,7 +804,7 @@ fn the_base_probe_checks_only_formats_the_launch_can_offer() {
             assert_eq!(offered & color_probe::BASE_FORMATS & !base_probe_formats(&settings), 0, "{codec:?} hdr {hdr}");
         }
     }
-    assert!(color_probe::probe_base(Hardware::None, 0).decodable == color_probe::BASE_FORMATS, "software is never checked");
+    assert!(color_probe::probe_base(Hardware::None, 0, &mut color_probe::ProbeBudget::default()).decodable == color_probe::BASE_FORMATS, "software is never checked");
 }
 
 /// A hardware decoder that cannot decode HEVC Main10 or AV1 (`color_probe::probe_base`) is
@@ -835,7 +835,7 @@ fn plain_formats_the_hardware_decoder_cannot_decode_are_not_offered() {
     let software = color_probe::Base::software();
     assert_eq!(software.decodable, color_probe::BASE_FORMATS);
     assert!(software.backends.iter().all(|&(_, backend)| backend == Hardware::None) && software.backends.len() == 4);
-    assert_eq!(color_probe::probe_base(Hardware::None, color_probe::BASE_FORMATS), software, "software decoding is not checked");
+    assert_eq!(color_probe::probe_base(Hardware::None, color_probe::BASE_FORMATS, &mut color_probe::ProbeBudget::default()), software, "software decoding is not checked");
 }
 
 #[test]

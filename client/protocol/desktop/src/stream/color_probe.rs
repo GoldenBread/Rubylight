@@ -134,7 +134,7 @@ impl Base {
 /// Main10 or AV1 on an older one) would be offered, and FFmpeg would decode it in software, or
 /// for AV1 not at all. Software decoding decodes them all and is not checked. Only the formats of
 /// `wanted` are decoded (`negotiate::base_probe_formats`): the others are not offered anyway.
-pub fn probe_base(hardware: media::Hardware, wanted: u32) -> Base {
+pub fn probe_base(hardware: media::Hardware, wanted: u32, budget: &mut ProbeBudget) -> Base {
     if hardware == media::Hardware::None {
         return Base::software();
     }
@@ -151,7 +151,7 @@ pub fn probe_base(hardware: media::Hardware, wanted: u32) -> Base {
             continue;
         }
         let pictures = fixture_pictures(format, vaapi_node);
-        match decode(hardware, pictures, codec, data) {
+        match decode(hardware, pictures, codec, data, budget) {
             Ok((_, backend)) => {
                 eprintln!("nightjar: decoder probe: {name} {} ok", backend.label());
                 base.decodable |= format;
@@ -175,6 +175,7 @@ pub fn probe(
     hardware: media::Hardware,
     wanted: u32,
     planes: impl Fn(bool) -> Result<(), String>,
+    budget: &mut ProbeBudget,
 ) -> (u32, String) {
     let mut decodable = 0;
     let mut failures = Vec::new();
@@ -186,7 +187,7 @@ pub fn probe(
         }
         let yuv444 = format & VIDEO_FORMAT_MASK_YUV444 != 0;
         let pictures = fixture_pictures(format, vaapi_node);
-        match decode(hardware, pictures, codec, data)
+        match decode(hardware, pictures, codec, data, budget)
             .and_then(|(info, backend)| {
                 drawable(&info, yuv444, &planes)?;
                 keeps_depth(&info, pictures.ten_bit)?;
@@ -241,10 +242,11 @@ fn decode(
     pictures: media::Pictures,
     codec: media::Codec,
     data: &[u8],
+    budget: &mut ProbeBudget,
 ) -> Result<(media::FrameInfo, media::Hardware), String> {
     if hardware == media::Hardware::None {
         let mut decoder = media::VideoDecoder::open(codec, hardware, 1, false)?;
-        return decode_with(&mut decoder, data).map(|info| (info, hardware));
+        return decode_with(&mut decoder, data, budget).map(|info| (info, hardware));
     }
     let order = hardware.order();
     let mut attempt_order = order.clone();
@@ -258,14 +260,22 @@ fn decode(
             if pictures.chroma444 && decoder.hardware == media::Hardware::Vaapi {
                 super::pipeline::map_to_vulkan(hardware, &mut decoder);
             }
-            Ok((decoder.hardware, decode_with(&mut decoder, data)))
+            Ok((decoder.hardware, decode_with(&mut decoder, data, budget)))
         });
         match tried {
             // A V4L2 M2M decoder that made no picture gets one more go on a decoder opened anew:
             // on Qualcomm Iris the first open of a run sometimes never starts decoding (Nightjar
             // issue 77: the fixture's picture never came), while a second open decodes it. The
-            // backends before it already did their part, so the retry starts at V4L2.
+            // backends before it already did their part, so the retry starts at V4L2. A start's
+            // checks share one budget, so a decoder that never answers costs a start that much.
             Err(reason) if attempt < V4L2_PROBE_RETRIES && retry_worthwhile(&order, &reason) => {
+                if !budget.retry() {
+                    eprintln!(
+                        "nightjar: decoder probe: V4L2 M2M made no picture of the fixture ({reason}), and a start's {} of V4L2 probe time is spent; not opening it again",
+                        V4L2_PROBE_BUDGET.as_millis()
+                    );
+                    return Err(reason);
+                }
                 attempt += 1;
                 eprintln!(
                     "nightjar: decoder probe: V4L2 M2M made no picture of the fixture ({reason}); trying it once more on a decoder opened anew"
@@ -281,6 +291,54 @@ fn decode(
 /// How many times a [V4L2 M2M](media::Hardware::V4l2m2m) decoder that made no picture of a
 /// fixture is opened anew ([`decode`]): one, so a stream's probes cannot hang on a device.
 const V4L2_PROBE_RETRIES: usize = 1;
+
+/// How long all the decoder checks of one start may spend waiting for a V4L2 M2M picture, across
+/// every format they check ([`ProbeBudget`]): Nightjar issue 77's Iris sometimes never makes the
+/// first picture of an open, and the checks decode up to five HEVC fixtures (V4L2 M2M has no AV1
+/// decoder in this FFmpeg); a second and a half each, and a retry each, would add many seconds to
+/// a start.
+const V4L2_PROBE_BUDGET: std::time::Duration = std::time::Duration::from_millis(2_000);
+
+/// What the decoder checks of one start have left of [`V4L2_PROBE_BUDGET`]: [`decode_with`] waits
+/// for a picture no longer than what is left, and [`decode`] takes a retry's settle from it too.
+/// A V4L2 M2M decoder that never answers therefore costs a start at most this much, however many
+/// formats are checked; one that decodes spends nothing of it.
+#[derive(Clone, Copy, Debug)]
+pub struct ProbeBudget {
+    left: std::time::Duration,
+}
+
+impl Default for ProbeBudget {
+    fn default() -> Self {
+        Self { left: V4L2_PROBE_BUDGET }
+    }
+}
+
+impl ProbeBudget {
+    /// How long to wait for a picture of this attempt: what is left, at most [`ASYNC_PROBE_WAIT`].
+    fn wait(&self) -> std::time::Duration {
+        self.left.min(ASYNC_PROBE_WAIT)
+    }
+
+    /// An attempt that made no picture waited `waited` of the budget.
+    fn spent(&mut self, waited: std::time::Duration) {
+        self.left = self.left.saturating_sub(waited);
+    }
+
+    /// Whether a decoder opened anew may be tried, charging its settle to the budget when it may.
+    fn retry(&mut self) -> bool {
+        if self.left <= V4L2_PROBE_SETTLE {
+            return false;
+        }
+        self.left -= V4L2_PROBE_SETTLE;
+        true
+    }
+
+    #[cfg(test)]
+    fn left(&self) -> std::time::Duration {
+        self.left
+    }
+}
 
 /// How long [`decode`] lets a V4L2 M2M decoder release its device between the two opens: on
 /// Qualcomm Iris the decoder's firmware and buffers are gone by then, as they are for a new process.
@@ -335,7 +393,7 @@ const ASYNC_PROBE_WAIT: std::time::Duration = std::time::Duration::from_millis(1
 const ASYNC_PROBE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// Decodes the fixture `data` with `decoder`, required to stay its backend.
-fn decode_with(decoder: &mut media::VideoDecoder, data: &[u8]) -> Result<media::FrameInfo, String> {
+fn decode_with(decoder: &mut media::VideoDecoder, data: &[u8], budget: &mut ProbeBudget) -> Result<media::FrameInfo, String> {
     let status = decoder.send(data, 0);
     if status < 0 {
         return Err(format!("the decoder rejected the fixture ({status})"));
@@ -347,14 +405,23 @@ fn decode_with(decoder: &mut media::VideoDecoder, data: &[u8]) -> Result<media::
         if status < 0 {
             return Err(format!("the decoder refused the end of input ({status})"));
         }
-        Some(std::time::Instant::now() + ASYNC_PROBE_WAIT)
+        let wait = budget.wait();
+        Some((std::time::Instant::now() + wait, wait))
     } else {
         None
     };
     let mut received = decoder.receive();
-    while matches!(received, media::Received::None) && deadline.is_some_and(|deadline| std::time::Instant::now() < deadline) {
+    while matches!(received, media::Received::None)
+        && deadline.is_some_and(|(deadline, _)| std::time::Instant::now() < deadline)
+    {
         std::thread::sleep(ASYNC_PROBE_POLL);
         received = decoder.receive();
+    }
+    if matches!(received, media::Received::None) {
+        // Only an attempt that ended without a picture spends the wait it took from the budget.
+        if let Some((_, wait)) = deadline {
+            budget.spent(wait);
+        }
     }
     match received {
         media::Received::Frame(_) if decoder.refused() => {
@@ -464,7 +531,7 @@ mod tests {
 
     #[test]
     fn software_decoding_offers_every_4_4_4_and_10_bit_format_when_planes_draw() {
-        let (decodable, reason) = probe(media::Hardware::None, YUV444_FORMATS | SDR10_FORMATS, |_| Ok(()));
+        let (decodable, reason) = probe(media::Hardware::None, YUV444_FORMATS | SDR10_FORMATS, |_| Ok(()), &mut ProbeBudget::default());
         assert_eq!(decodable, YUV444_FORMATS | SDR10_FORMATS, "{reason}");
         assert_eq!(reason, "");
     }
@@ -474,7 +541,7 @@ mod tests {
         // Software Main10 pictures are planar too, so 10-bit goes with 4:4:4.
         let (decodable, reason) = probe(media::Hardware::None, YUV444_FORMATS | SDR10_FORMATS, |ten| {
             Err(format!("no R{} planes", if ten { 16 } else { 8 }))
-        });
+        }, &mut ProbeBudget::default());
         assert_eq!(decodable, 0);
         assert!(
             reason.contains("HEVC 4:4:4: no R8 planes")
@@ -488,17 +555,17 @@ mod tests {
             } else {
                 Ok(())
             }
-        });
+        }, &mut ProbeBudget::default());
         assert_eq!(decodable, YUV444_FORMATS);
     }
 
     /// 10-bit launches decoded the 4:4:4 fixtures too (about 12 ms) with 4:4:4 off.
     #[test]
     fn only_the_wanted_formats_are_decoded() {
-        let (decodable, reason) = probe(media::Hardware::None, SDR10_FORMATS, |_| Err("refused".into()));
+        let (decodable, reason) = probe(media::Hardware::None, SDR10_FORMATS, |_| Err("refused".into()), &mut ProbeBudget::default());
         assert_eq!(decodable, 0);
         assert!(reason.contains("HEVC Main10") && !reason.contains("4:4:4"), "{reason}");
-        assert_eq!(probe(media::Hardware::None, 0, |_| Err("refused".into())), (0, String::new()));
+        assert_eq!(probe(media::Hardware::None, 0, |_| Err("refused".into()), &mut ProbeBudget::default()), (0, String::new()));
     }
 
     /// The 128x128 fixtures were under NVDEC's smallest HEVC picture (144x144), so the probe
@@ -507,7 +574,7 @@ mod tests {
     #[test]
     fn the_fixtures_are_above_every_backends_smallest_picture_and_stay_small() {
         for &(format, codec, name, data) in BASE_FIXTURES.iter().chain(&FIXTURES) {
-            let (info, _) = decode(media::Hardware::None, media::Pictures::default(), codec, data)
+            let (info, _) = decode(media::Hardware::None, media::Pictures::default(), codec, data, &mut ProbeBudget::default())
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
             assert!(info.width >= 256 && info.height >= 256, "{name}: {}x{}", info.width, info.height);
             assert_eq!(
@@ -573,6 +640,31 @@ mod tests {
         // The retry is bounded, and the wait is longer than the quarter second that proved too short.
         assert_eq!(V4L2_PROBE_RETRIES, 1);
         assert!(ASYNC_PROBE_WAIT >= std::time::Duration::from_millis(1_000));
+    }
+
+    /// Nightjar issue 77: an Iris whose V4L2 M2M decoder never answers must not add more than a
+    /// couple of seconds to a start, though one start checks five HEVC fixtures. The two checks
+    /// share a budget; a retry's settle comes out of it too, and once it is spent nothing waits.
+    #[test]
+    fn the_v4l2_probe_time_of_a_start_is_bounded_across_formats() {
+        use std::time::Duration;
+        let mut budget = ProbeBudget::default();
+        assert!(V4L2_PROBE_BUDGET <= Duration::from_secs(2), "a start waits about two seconds at most");
+        assert_eq!(budget.left(), V4L2_PROBE_BUDGET);
+        assert_eq!(budget.wait(), ASYNC_PROBE_WAIT, "the first attempt gets the long wait");
+        budget.spent(budget.wait());
+        assert!(budget.retry(), "after a timeout the one retry still fits");
+        let retry_wait = budget.wait();
+        assert_eq!(retry_wait, budget.left(), "the retry waits what is left");
+        assert_eq!(budget.left(), V4L2_PROBE_BUDGET - ASYNC_PROBE_WAIT - V4L2_PROBE_SETTLE);
+        budget.spent(retry_wait);
+        assert_eq!(budget.left(), Duration::ZERO, "the two attempts spend the start's budget");
+        assert!(!budget.retry(), "a second retry has nothing left");
+        assert_eq!(budget.wait(), Duration::ZERO, "the formats after it are not waited for");
+        // A decoder that decodes spends nothing: only an attempt that made no picture is charged.
+        let healthy = ProbeBudget::default();
+        assert_eq!(healthy.left(), V4L2_PROBE_BUDGET);
+        assert_eq!(healthy.wait(), ASYNC_PROBE_WAIT);
     }
 
     /// The probe opens each fixture for its own size, as a stream's decoder is opened for the
@@ -666,14 +758,14 @@ mod tests {
             return;
         };
         let hardware = media::Hardware::D3d11(device.as_raw());
-        let base = probe_base(hardware, VIDEO_FORMAT_H265 | VIDEO_FORMAT_H265_MAIN10);
+        let base = probe_base(hardware, VIDEO_FORMAT_H265 | VIDEO_FORMAT_H265_MAIN10, &mut ProbeBudget::default());
         assert_eq!(base.decodable, VIDEO_FORMAT_H265 | VIDEO_FORMAT_H265_MAIN10, "{}", base.reason);
         for (format, ten_bit) in [(VIDEO_FORMAT_H265_REXT8_444, false), (VIDEO_FORMAT_H265_REXT10_444, true)] {
             let lists = matches!(
                 crate::gpu_adapters::others_decoding_hevc444(device.as_raw(), ten_bit),
                 Some((_, crate::gpu_adapters::Hevc444Gpus::Renderer))
             );
-            let (decodable, reason) = probe(hardware, format, |_| Ok(()));
+            let (decodable, reason) = probe(hardware, format, |_| Ok(()), &mut ProbeBudget::default());
             eprintln!("HEVC 4:4:4 (10-bit {ten_bit}): DXVA lists it {lists}, decodes {}: {reason}", decodable != 0);
             assert_eq!(decodable != 0, lists, "{reason}");
         }
@@ -684,11 +776,11 @@ mod tests {
     #[test]
     fn ten_bit_4_4_4_is_offered_where_its_pictures_draw() {
         use nightjar_core::color::YUV444_10_FORMATS;
-        let (decodable, reason) = probe(media::Hardware::None, YUV444_10_FORMATS, |_| Ok(()));
+        let (decodable, reason) = probe(media::Hardware::None, YUV444_10_FORMATS, |_| Ok(()), &mut ProbeBudget::default());
         assert_eq!((decodable, reason.as_str()), (VIDEO_FORMAT_H265_REXT10_444, ""));
         let (decodable, reason) = probe(media::Hardware::None, YUV444_10_FORMATS, |ten| {
             if ten { Err("no R16 planes".into()) } else { Ok(()) }
-        });
+        }, &mut ProbeBudget::default());
         assert_eq!(decodable, 0);
         assert!(reason.contains("HEVC 4:4:4 10-bit: no R16 planes"), "{reason}");
     }

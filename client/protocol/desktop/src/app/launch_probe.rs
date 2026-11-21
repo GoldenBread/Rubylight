@@ -57,15 +57,19 @@ unsafe impl Send for ProbeWork {}
 impl ProbeWork {
     fn run(self) -> ProbeResult {
         match self {
-            Self::ColorAndBase { color, base, device } => ProbeResult::ColorAndBase {
-                color: color.map(|(key, wanted)| {
+            Self::ColorAndBase { color, base, device } => {
+                // One budget for both checks: a V4L2 M2M decoder that never answers costs a start
+                // at most this much, however many fixtures the two checks decode (issue 77).
+                let mut budget = stream::color_probe::ProbeBudget::default();
+                let color = color.map(|(key, wanted)| {
                     let found = stream::color_probe::probe(key.0, wanted, |ten_bit| {
                         stream::color_probe::planes_drawable_device(device, ten_bit)
-                    });
+                    }, &mut budget);
                     (key, found)
-                }),
-                base: base.map(|(key, wanted)| (key, stream::color_probe::probe_base(key.0, wanted))),
-            },
+                });
+                let base = base.map(|(key, wanted)| (key, stream::color_probe::probe_base(key.0, wanted, &mut budget)));
+                ProbeResult::ColorAndBase { color, base }
+            }
             Self::Packed { hardware } => ProbeResult::Packed(stream::packed444::decode_all(hardware)),
         }
     }
