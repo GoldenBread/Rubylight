@@ -61,6 +61,7 @@ const ADD_REFUSED_LONG: Duration = Duration::from_secs(60);
 struct AddLog {
     refused_since: Option<Instant>,
     warned_long: bool,
+    warned_with_taskbar: bool,
     added_once: bool,
 }
 #[derive(Debug, PartialEq, Eq)]
@@ -70,11 +71,34 @@ enum AddReport {
     /// Added, the first time or after Windows refused it for this long.
     Added(Option<Duration>),
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AddOutcome {
+    Added,
+    Retry,
+    GiveUp,
+}
 impl AddLog {
+    fn is_added(&self) -> bool {
+        self.added_once && self.refused_since.is_none()
+    }
+    fn note_still_refused(&mut self, taskbar: bool) {
+        if taskbar {
+            self.warned_with_taskbar = true;
+        }
+    }
+    /// If retries gave up before any taskbar existed, allow a fresh retry window
+    /// once Explorer broadcasts `TaskbarCreated`.
+    fn on_taskbar_created(&mut self) {
+        if self.warned_long && !self.warned_with_taskbar {
+            self.refused_since = None;
+            self.warned_long = false;
+        }
+    }
     fn attempt(&mut self, added: bool, now: Instant) -> Option<AddReport> {
         if added {
             let refused = self.refused_since.take().map(|since| now - since);
             self.warned_long = false;
+            self.warned_with_taskbar = false;
             let first = !std::mem::replace(&mut self.added_once, true);
             return (first || refused.is_some()).then_some(AddReport::Added(refused));
         }
@@ -92,7 +116,16 @@ impl AddLog {
     }
 }
 /// Add the icon, and log what [`AddLog`] says of the attempt.
-unsafe fn add_icon(state: &mut State) -> bool {
+unsafe fn add_icon(state: &mut State, on_taskbar: bool) -> AddOutcome {
+    // Explorer can broadcast `TaskbarCreated` just after our 3 s timer already
+    // added the icon; `NIM_ADD` on an already-registered icon fails with
+    // `0x80004005`, so check `NIM_MODIFY` first when we believe it is present.
+    if on_taskbar && state.added.is_added() {
+        // SAFETY: the caller passes the live State of the tray window, whose icon data is complete.
+        if unsafe { Shell_NotifyIconW(NIM_MODIFY, &state.icon).as_bool() } {
+            return AddOutcome::Added;
+        }
+    }
     // SAFETY: the caller passes the live State of the tray window, whose icon data is complete.
     let (added, error) = unsafe {
         let added = Shell_NotifyIconW(NIM_ADD, &state.icon).as_bool();
@@ -104,29 +137,36 @@ unsafe fn add_icon(state: &mut State) -> bool {
     // SAFETY: both strings are static and NUL-terminated.
     let taskbar = unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) }.is_ok();
     match report {
-        // Without a taskbar (the sign-in screen, Explorer starting) a refusal is expected.
-        Some(AddReport::Refused) if !taskbar => tracing::info!(
+        // Initial refusals (e.g. 0x80004005 before the taskbar is ready) are retried
+        // every 3 s, so keep them at DEBUG until retries give up.
+        Some(AddReport::Refused) if !taskbar => tracing::debug!(
             error = ?error,
             session_id = session,
             "no taskbar yet for the tray icon; adding it when the taskbar starts"
         ),
-        Some(AddReport::Refused) => tracing::warn!(
+        Some(AddReport::Refused) => tracing::debug!(
             error = ?error,
             session_id = session,
             taskbar,
             "Windows refused the tray icon; adding it again every 3 s and when the taskbar starts"
         ),
-        Some(AddReport::StillRefused) if !taskbar => tracing::info!(
-            error = ?error,
-            session_id = session,
-            "still no taskbar for the tray icon after a minute; it shows only on the taskbar of a user signed in to this session"
-        ),
-        Some(AddReport::StillRefused) => tracing::warn!(
-            error = ?error,
-            session_id = session,
-            taskbar,
-            "Windows still refuses the tray icon after a minute although the taskbar is there"
-        ),
+        Some(AddReport::StillRefused) if !taskbar => {
+            state.added.note_still_refused(false);
+            tracing::info!(
+                error = ?error,
+                session_id = session,
+                "still no taskbar for the tray icon after a minute; stopping 3 s retries until the taskbar starts"
+            );
+        }
+        Some(AddReport::StillRefused) => {
+            state.added.note_still_refused(true);
+            tracing::warn!(
+                error = ?error,
+                session_id = session,
+                taskbar,
+                "Windows still refuses the tray icon after a minute although the taskbar is there; stopping 3 s retries until the taskbar restarts"
+            );
+        }
         Some(AddReport::Added(refused)) => tracing::info!(
             session_id = session,
             refused_s = refused.map(|refused| refused.as_secs()),
@@ -134,7 +174,13 @@ unsafe fn add_icon(state: &mut State) -> bool {
         ),
         None => {}
     }
-    added
+    if added {
+        AddOutcome::Added
+    } else if state.added.warned_long {
+        AddOutcome::GiveUp
+    } else {
+        AddOutcome::Retry
+    }
 }
 impl State {
     /// Show the running app's state in the icon and its tooltip.
@@ -302,10 +348,17 @@ unsafe extern "system" fn window(
             if message == taskbar || (message == WM_TIMER && wparam.0 == RETRY_TIMER) {
                 let s = &mut *state;
                 s.show();
-                if add_icon(s) {
-                    let _ = KillTimer(Some(hwnd), RETRY_TIMER);
-                } else if message == taskbar {
-                    SetTimer(Some(hwnd), RETRY_TIMER, 3000, None);
+                if message == taskbar {
+                    s.added.on_taskbar_created();
+                }
+                match add_icon(s, message == taskbar) {
+                    AddOutcome::Added | AddOutcome::GiveUp => {
+                        let _ = KillTimer(Some(hwnd), RETRY_TIMER);
+                    }
+                    AddOutcome::Retry if message == taskbar => {
+                        SetTimer(Some(hwnd), RETRY_TIMER, 3000, None);
+                    }
+                    AddOutcome::Retry => {}
                 }
                 return LRESULT(0);
             }
@@ -519,7 +572,7 @@ impl Tray {
                     for message in [state.taskbar, WM_APP + 1] {
                         let _ = ChangeWindowMessageFilterEx(hwnd, message, MSGFLT_ALLOW, None);
                     }
-                    if !add_icon(&mut state) {
+                    if add_icon(&mut state, false) == AddOutcome::Retry {
                         SetTimer(Some(hwnd), RETRY_TIMER, 3000, None);
                     }
                     *SHOWN.lock().unwrap() = Some(hwnd.0 as isize);
@@ -760,6 +813,7 @@ mod tests {
     fn a_refused_tray_icon_is_logged_once_and_again_when_it_keeps_failing() {
         let start = Instant::now();
         let mut log = AddLog::default();
+        assert!(!log.is_added());
         assert_eq!(log.attempt(false, start), Some(AddReport::Refused));
         // The 3 s retries say nothing more until a minute has passed, then once.
         assert_eq!(log.attempt(false, start + Duration::from_secs(3)), None);
@@ -767,17 +821,45 @@ mod tests {
             log.attempt(false, start + ADD_REFUSED_LONG),
             Some(AddReport::StillRefused)
         );
+        log.note_still_refused(true);
         assert_eq!(log.attempt(false, start + Duration::from_secs(120)), None);
         assert_eq!(
             log.attempt(true, start + Duration::from_secs(123)),
             Some(AddReport::Added(Some(Duration::from_secs(123))))
         );
+        assert!(log.is_added());
         // Explorer restarting adds it again: no line; a later refusal is new.
         assert_eq!(log.attempt(true, start + Duration::from_secs(200)), None);
         assert_eq!(
             log.attempt(false, start + Duration::from_secs(300)),
             Some(AddReport::Refused)
         );
+        assert!(!log.is_added());
+    }
+
+    #[test]
+    fn taskbar_creation_restarts_retries_only_when_it_gave_up_without_a_taskbar() {
+        let start = Instant::now();
+        let mut log = AddLog::default();
+        assert_eq!(log.attempt(false, start), Some(AddReport::Refused));
+        assert_eq!(
+            log.attempt(false, start + ADD_REFUSED_LONG),
+            Some(AddReport::StillRefused)
+        );
+        log.note_still_refused(false);
+        log.on_taskbar_created();
+        assert_eq!(
+            log.attempt(false, start + Duration::from_secs(120)),
+            Some(AddReport::Refused)
+        );
+        assert_eq!(
+            log.attempt(false, start + Duration::from_secs(180)),
+            Some(AddReport::StillRefused)
+        );
+        // Once it gave up with the taskbar present, another TaskbarCreated does not warn again.
+        log.note_still_refused(true);
+        log.on_taskbar_created();
+        assert_eq!(log.attempt(false, start + Duration::from_secs(240)), None);
     }
 
     #[test]
