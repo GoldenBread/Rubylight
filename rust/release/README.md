@@ -10,6 +10,8 @@ python rust/release/bump.py <version>   # versions, download links, a "## New in
 git push origin <commit>:refs/tags/v<version>   # the commit whose main run is green
 ```
 
+Before the tag, the `reviewer` agent (Opus) reviews the whole release: the range from the previous release tag to the commit to be tagged, with its `## New in <version>` notes (Nightjar's too, when its release goes with it). Fix its findings first.
+
 The workflow runs for tags `v2.*` to `v9.*` (`v[2-9].*`). Push the tag by commit: a clone that pulled Nightjar's subtree holds Nightjar's own `v4.x` tags, so a local `git tag v4.0.1` can collide with one of them.
 
 Without git, the same release is one click: **Actions → Rubylight Windows → Run workflow** on `main` with **Publish** ticked. It releases the version in `Cargo.toml` at main's head and creates its `v<version>` tag. An existing tag with or without `v` prevents publishing that version again. Package filenames keep the bare version. **Notes** instead of **Publish** only rewrites the published release's text from `rust/RELEASE_NOTES.md` on main, keeping its assets and its link to the run that built it.
