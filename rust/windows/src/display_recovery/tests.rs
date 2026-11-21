@@ -9,19 +9,26 @@ fn hdr_is_restored_only_while_the_display_has_the_applied_value() {
 }
 
 #[test]
-fn a_crashed_streams_mode_is_restored_even_when_the_requested_mode_did_not_land() {
+fn a_crashed_streams_mode_is_restored_only_while_the_display_shows_what_the_stream_set() {
     let requested = (1920, 1080, 120000);
-    // A TV can take the resolution and keep its old rate.
+    // A TV can take the resolution and keep its old rate, or the rate alone.
     let partial = (1920, 1080, 60000);
+    let rate_only = (2560, 1440, 120000);
+    // A mode the user set by hand after the crash.
+    let by_hand = (2560, 1440, 144000);
     // A clean end records the mode the display actually took: it is put back
     // only while the display still has it, and a change the user made since
     // stays.
     assert!(restore_mode_needed(false, partial, partial));
     assert!(!restore_mode_needed(false, requested, partial));
     // A crash can leave the requested mode recorded while the display landed
-    // on another one: the original still comes back.
-    assert!(restore_mode_needed(true, partial, requested));
+    // on part of it: the original still comes back.
     assert!(restore_mode_needed(true, requested, requested));
+    assert!(restore_mode_needed(true, partial, requested));
+    assert!(restore_mode_needed(true, rate_only, requested));
+    // A mode that is none of it was set by the user since: it stays.
+    assert!(!restore_mode_needed(true, by_hand, requested));
+    assert!(!restore_mode_needed(true, (3840, 2160, 60000), requested));
 }
 
 #[test]

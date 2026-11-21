@@ -891,11 +891,15 @@ fn restore_hdr_needed(current: bool, applied: bool) -> bool {
 /// Whether the mode a stream left on a display is put back. `requested`: the
 /// journal recorded the mode requested before the apply, not the one that
 /// landed. A clean end records the mode the display actually took, so it is
-/// put back only while the display still has it; a crashed stream's entry may
-/// hold the requested mode while the display landed on another one, and its
-/// original comes back regardless.
+/// put back only while the display still has it. A crash inside the apply
+/// leaves the requested mode, and the display may have taken only part of it
+/// (a TV takes the resolution and keeps its old rate): its original comes back
+/// while the display shows the requested mode or its resolution or refresh. Any
+/// other mode, such as one the user set by hand after the crash, stays.
 fn restore_mode_needed(requested: bool, current: Mode, applied: Mode) -> bool {
-    requested || current == applied
+    current == applied
+        || (requested
+            && ((current.0, current.1) == (applied.0, applied.1) || current.2 == applied.2))
 }
 
 #[cfg(test)]
