@@ -2,18 +2,16 @@ package com.limelight.nvstream.jni;
 
 import android.app.Application;
 
-import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
-import org.robolectric.util.ReflectionHelpers;
 
 import static org.junit.Assert.assertEquals;
 
-/** The report's receive buffer comes through MoonBridge from the new engine; the classic one has none. */
+/** The report's receive buffer comes through MoonBridge from the engine. */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34, application = Application.class,
         shadows = {com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class, RustBridgeReceiveBufferTest.Engine.class},
@@ -30,20 +28,8 @@ public class RustBridgeReceiveBufferTest {
         }
     }
 
-    @After
-    public void tearDown() {
-        ReflectionHelpers.setStaticField(MoonBridge.class, "rustStream", false);
-    }
-
     @Test
-    public void aNewEngineStreamAsksTheEngine() {
-        ReflectionHelpers.setStaticField(MoonBridge.class, "rustStream", true);
+    public void theReceiveBufferComesFromTheEngine() {
         assertEquals(INFO, MoonBridge.getVideoReceiveBufferInfo());
-    }
-
-    @Test
-    public void aClassicStreamHasNoAnswer() {
-        ReflectionHelpers.setStaticField(MoonBridge.class, "rustStream", false);
-        assertEquals(-1, MoonBridge.getVideoReceiveBufferInfo());
     }
 }

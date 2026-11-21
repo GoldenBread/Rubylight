@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">전체 크로마</string>
-    <string name="summary_packed_444">Rubylight의 전체 크로마 옵션, 새 스트리밍 엔진, 호환되는 HEVC/AV1 하드웨어 디코더가 필요합니다. PC 또는 이 기기가 지원하지 않으면 스트림은 전체 크로마 없이 시작합니다. HDR에는 호환되는 10비트 HDR 디스플레이 서피스도 필요합니다.</string>
+    <string name="summary_packed_444">Rubylight의 전체 크로마 옵션과 호환되는 HEVC/AV1 하드웨어 디코더가 필요합니다. PC 또는 이 기기가 지원하지 않으면 스트림은 전체 크로마 없이 시작합니다. HDR에는 호환되는 10비트 HDR 디스플레이 서피스도 필요합니다.</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">마우스나 오른쪽 스틱으로 시점을 돌리면 화면을 옮겨 다음 새로 고침에 바로 보여 줍니다. HUD는 제자리에 있고, 시점을 돌리는 동안 화면 가장자리는 근사치로 표시됩니다. PC 지원과 ‘새 스트리밍 엔진’이 필요합니다. Dolby Vision 화면에서는 켜면 스트림이 HDR10이 됩니다.</string>
+    <string name="summary_frame_warp">마우스나 오른쪽 스틱으로 시점을 돌리면 화면을 옮겨 다음 새로 고침에 바로 보여 줍니다. HUD는 제자리에 있고, 시점을 돌리는 동안 화면 가장자리는 근사치로 표시됩니다. PC 지원이 필요합니다. Dolby Vision 화면에서는 켜면 스트림이 HDR10이 됩니다.</string>
     <string name="frame_warp_overlay_mouse">Frame Warp: 고정 %1$s px/카운트, 지연 %2$s ms, 이동 %3$s px (최대 %4$s)</string>
     <string name="frame_warp_overlay_stick">Frame Warp: 고정 %1$s px/초, 지연 %2$s ms, 이동 %3$s px (최대 %4$s)</string>
     <string name="frame_warp_overlay_learning">Frame Warp: 학습 중</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp: PC에서 제공하지 않음</string>
     <string name="frame_warp_overlay_off">Frame Warp: 이 스트림에서 꺼짐</string>
-    <string name="frame_warp_needs_engine">Frame Warp에는 새 스트리밍 엔진이 필요합니다. 이 스트림은 Frame Warp 없이 실행됩니다.</string>
     <string name="frame_warp_unavailable">이 스트림에서 Frame Warp가 꺼졌습니다: %1$s</string>
     <string name="frame_warp_reason_hdr">이 기기는 디코더에서 직접 출력할 때만 HDR을 표시합니다</string>
     <string name="frame_warp_reason_full_chroma">전체 크로마가 켜져 있습니다</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">풀 레인지 영상을 요청해 어두운 부분과 밝은 부분의 디테일을 모두 표시합니다. PC와 화면이 모두 풀 레인지를 쓰지 않으면 어두운 부분이 뭉개지거나 밝은 부분이 날아갑니다. 둘 다 쓰는 경우가 아니면 꺼 두세요.</string>
     <string name="title_enable_post_stream_toast">스트리밍 후 디코딩 시간 표시</string>
     <string name="summary_enable_post_stream_toast">스트림이 끝나면 평균 디코딩 시간을 표시합니다. 이 기기의 디코딩 시간일 뿐, 엔드 투 엔드 지연 시간은 아닙니다.</string>
-    <string name="title_rust_engine">새 스트리밍 엔진</string>
-    <string name="summary_rust_engine">문제 해결용입니다. 켜 두고, 스트림이 시작되지 않거나 제대로 동작하지 않을 때만 끄세요. 기존 엔진에는 ‘Frame Warp’와 ‘오디오 패스스루’ 같은 새 기능이 없습니다.</string>
     <string name="toast_controller_type_changed">모션 컨트롤로 인해 컨트롤러 유형이 바뀔 수 있습니다.</string>
     <string name="local_network_rationale">PC를 찾으려면 로컬 네트워크 접근을 허용하세요.</string>
     <string name="resolution_360p">360p</string>

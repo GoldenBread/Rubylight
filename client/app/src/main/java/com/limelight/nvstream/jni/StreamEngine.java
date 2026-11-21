@@ -1,49 +1,34 @@
 package com.limelight.nvstream.jni;
 
 /**
- * Which streaming engine the last stream used and, when the Rust engine was requested but the C
- * engine ran, why. Shown in the stream overlays and the problem report, so a comparison never has
- * to guess which engine produced a timing CSV. Kept apart from MoonBridge, whose static
- * initializer loads the C library, so reports and tests can read it without native code.
+ * Which streaming engine the last stream used and, when the stream could not start, why. Shown in
+ * the stream overlays and the problem report, so a timing CSV or a report never has to guess.
+ * Kept apart from MoonBridge, whose static initializer loads a native library, so reports and
+ * tests can read it without native code.
  */
 public final class StreamEngine {
     private StreamEngine() {}
 
-    private static volatile String summary = "no stream started in this app process";
-    private static volatile boolean rust;
+    private static final String ENGINE = "Rust (nightjar-core)";
 
-    /** Records the engine chosen for the stream that is starting. */
-    static void record(boolean rustRequested, boolean rustUsed, String fallbackReason) {
-        rust = rustUsed;
-        summary = describe(rustRequested, rustUsed, fallbackReason);
+    private static volatile String summary = "no stream started in this app process";
+
+    /** Records the start of a stream: {@code refusal} is why the engine cannot start it, or null. */
+    static void record(String refusal) {
+        summary = describe(refusal);
     }
 
-    /** "Rust (nightjar-core)", or the C engine with the reason when Rust was requested. */
+    /** "Rust (nightjar-core)", or why the engine could not start the last stream. */
     public static String summary() {
         return summary;
     }
 
-    /** A short label for the overlay's first line: "Rust", "C", or "C (Rust fell back)". */
+    /** A short label for the overlay's first line: "Rust". */
     public static String label() {
-        return rust ? "Rust" : fellBack() ? "C (Rust fell back)" : "C";
+        return "Rust";
     }
 
-    public static boolean isRust() {
-        return rust;
-    }
-
-    /** Whether the Rust engine was wanted but the C engine runs. */
-    public static boolean fellBack() {
-        return !rust && summary.contains("requested but unavailable");
-    }
-
-    static String describe(boolean rustRequested, boolean rustUsed, String fallbackReason) {
-        if (rustUsed) {
-            return "Rust (nightjar-core)";
-        }
-        if (rustRequested) {
-            return "C (moonlight-common-c), Rust engine requested but unavailable: " + fallbackReason;
-        }
-        return "C (moonlight-common-c)";
+    static String describe(String refusal) {
+        return refusal == null ? ENGINE : ENGINE + " could not start the stream: " + refusal;
     }
 }

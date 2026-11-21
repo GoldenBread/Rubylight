@@ -35,7 +35,7 @@ public final class ProblemReport {
         audioDiagnostics = diagnostics;
     }
 
-    /** The engine of the last stream, and why the C engine ran if the Rust engine was requested. */
+    /** The engine of the last stream, and why it could not start the stream if it did not. */
     static String engineSection() {
         return "Streaming engine for the last stream:\n" + StreamEngine.summary() + "\n\n";
     }

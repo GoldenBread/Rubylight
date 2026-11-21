@@ -129,7 +129,7 @@ public class NvConnectionSmallStreamTest {
         @Implementation protected static void __staticInitializer__() {}
 
         @Implementation
-        public static int startConnection(String address, String appVersion, String gfeVersion,
+        public static int startConnection(String address, String appVersion,
                                           String rtspSessionUrl, int serverCodecModeSupport,
                                           int width, int height, int fps,
                                           int bitrate, int packetSize, int streamingRemotely,

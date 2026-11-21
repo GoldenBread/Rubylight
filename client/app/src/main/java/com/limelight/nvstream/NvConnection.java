@@ -894,7 +894,6 @@ public class NvConnection {
         }
 
         // May be missing for older servers
-        context.serverGfeVersion = h.getGfeVersion(serverInfo);
                 
         if (h.getPairState(serverInfo) != PairingManager.PairState.PAIRED) {
             context.connListener.displayMessage(appContext.getString(R.string.startup_not_paired));
@@ -1617,7 +1616,6 @@ public class NvConnection {
                             LimeLog.info("Network drop tolerance: " + prefs.networkGraceSeconds + " s");
                         }
                         MoonBridge.setNetworkGracePeriodMs(graceMs);
-                        MoonBridge.requestRustEngine(prefs.rustEngine);
                         // The session's choice (Game turns it off after a packed failure), not the saved setting.
                         MoonBridge.requestPacked444(context.streamConfig.isPacked444());
                         MoonBridge.requestHdrFormat(context.hdrFormat);
@@ -1635,13 +1633,13 @@ public class NvConnection {
                         MoonBridge.requestRoaming(prefs.clientRoaming, prefs.roamingMetered);
                         MoonBridge.requestAudioPassthrough(audioPassthroughCodecs(prefs.audioPassthrough, prefs.muteAudio,
                                 context.streamConfig.getAudioConfiguration().channelCount));
-                        // A setting of the New streaming engine only; the host learns the game once asked.
-                        MoonBridge.requestFrameWarp(prefs.frameWarp && prefs.rustEngine,
+                        // The host learns the game once asked.
+                        MoonBridge.requestFrameWarp(prefs.frameWarp,
                                 hostDetails.caps.has(HostCapabilities.Feature.FRAME_WARP));
                         // Before the start, so a change during the handshake is still reported.
                         Network streamNetwork = RoamingNetworkWatch.defaultNetwork(appContext);
                         int ret = MoonBridge.startConnection(context.serverAddress.address,
-                                context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,
+                                context.serverAppVersion, context.rtspSessionUrl,
                                 context.serverCodecModeSupport,
                                 context.negotiatedWidth, context.negotiatedHeight,
                                 context.streamConfig.getRefreshRate(), context.startBitrateKbps,
@@ -1687,7 +1685,7 @@ public class NvConnection {
                         // connection cannot carry on reconnects at once); the engine roams only
                         // with client roaming on both sides.
                         roamingWatch = RoamingNetworkWatch.start(appContext, streamNetwork,
-                                context.serverAddress.address, context.connListener);
+                                context.connListener);
                         startInputPolling(prefs.unbatchedInput);
                         startMicrophone();
                         started = true;

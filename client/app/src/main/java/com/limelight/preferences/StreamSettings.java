@@ -2001,13 +2001,8 @@ public class StreamSettings extends NightjarActivity {
                     idle.add(key);
                 }
             }
-            setShown(PreferenceConfiguration.CLIENT_ROAMING_PREF_STRING, SettingRules.clientRoamingApplies(prefs));
-            setShown(PreferenceConfiguration.RECEIVE_COALESCING_PREF_STRING, SettingRules.receiveCoalescingApplies(prefs));
             setShown(PreferenceConfiguration.AUDIO_PASSTHROUGH_PREF_STRING,
-                    SettingRules.audioPassthroughApplies(prefs, Build.VERSION.SDK_INT));
-            setShown(PreferenceConfiguration.USB_FORWARDING_PREF_STRING, SettingRules.usbForwardingApplies(prefs));
-            setShown(PreferenceConfiguration.CLIPBOARD_SYNC_PREF_STRING, SettingRules.clipboardSyncApplies(prefs));
-            setShown(PreferenceConfiguration.FRAME_WARP_PREF_STRING, SettingRules.frameWarpApplies(prefs));
+                    SettingRules.audioPassthroughApplies(Build.VERSION.SDK_INT));
             placeRows();
         }
 

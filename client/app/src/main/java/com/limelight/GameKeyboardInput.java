@@ -59,7 +59,7 @@ final class GameKeyboardInput {
 
     // Asks a host that announces text field notices (0x553B) to say when a text field gains or loses
     // focus, so the soft keyboard follows it (setting "Keyboard follows text fields"), and reports
-    // the keyboard layout to a host that takes it (0x553E). The C engine supports neither.
+    // the keyboard layout to a host that takes it (0x553E).
     void requestTextInput() {
         reportedKeyboardLayout = null;
         hostKeyboard.reset();

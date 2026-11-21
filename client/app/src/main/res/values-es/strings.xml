@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">Croma completo</string>
-    <string name="summary_packed_444">Requiere la opción de croma completo de Rubylight, el nuevo motor de streaming y un decodificador HEVC/AV1 por hardware compatible. Si el PC o este dispositivo no lo admite, la transmisión empieza sin él. HDR también requiere una superficie de visualización HDR de 10 bits compatible.</string>
+    <string name="summary_packed_444">Requiere la opción de croma completo de Rubylight y un decodificador HEVC/AV1 por hardware compatible. Si el PC o este dispositivo no lo admite, la transmisión empieza sin él. HDR también requiere una superficie de visualización HDR de 10 bits compatible.</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">Muestra los giros de cámara del ratón y del joystick derecho en la siguiente actualización de la pantalla desplazando la imagen; el HUD se queda en su sitio y los bordes son aproximados durante el giro. Requiere un PC compatible y el Nuevo motor de transmisión. En una pantalla Dolby Vision, la transmisión es HDR10 con esta opción activada.</string>
+    <string name="summary_frame_warp">Muestra los giros de cámara del ratón y del joystick derecho en la siguiente actualización de la pantalla desplazando la imagen; el HUD se queda en su sitio y los bordes son aproximados durante el giro. Requiere un PC compatible. En una pantalla Dolby Vision, la transmisión es HDR10 con esta opción activada.</string>
     <string name="frame_warp_overlay_mouse">Frame Warp: fijado %1$s px/cuenta, retraso %2$s ms, desplazamiento %3$s px (pico %4$s)</string>
     <string name="frame_warp_overlay_stick">Frame Warp: fijado %1$s px/s, retraso %2$s ms, desplazamiento %3$s px (pico %4$s)</string>
     <string name="frame_warp_overlay_learning">Frame Warp: aprendiendo</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp: el PC no lo ofrece</string>
     <string name="frame_warp_overlay_off">Frame Warp: desactivado en esta transmisión</string>
-    <string name="frame_warp_needs_engine">Frame Warp requiere el nuevo motor de streaming. Esta transmisión funciona sin él.</string>
     <string name="frame_warp_unavailable">Frame Warp está desactivado en esta transmisión: %1$s</string>
     <string name="frame_warp_reason_hdr">este dispositivo solo muestra HDR directamente desde el decodificador</string>
     <string name="frame_warp_reason_full_chroma">el croma completo está activado</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">Pide vídeo de rango completo, para conservar todo el detalle en sombras y luces. Si el PC y la pantalla no lo usan ambos, los negros se empastan o las luces se queman; déjalo desactivado salvo que lo usen.</string>
     <string name="title_enable_post_stream_toast">Mostrar tiempo de decodificación al terminar</string>
     <string name="summary_enable_post_stream_toast">Muestra el tiempo medio de decodificación al terminar una transmisión: solo la de este dispositivo, no la latencia de extremo a extremo.</string>
-    <string name="title_rust_engine">Nuevo motor de transmisión</string>
-    <string name="summary_rust_engine">Para solucionar problemas. Déjalo activado; desactívalo solo si una transmisión no se inicia o funciona mal. El motor clásico carece de funciones más recientes, como Frame Warp y Paso directo de audio.</string>
     <string name="toast_controller_type_changed">Los controles de movimiento pueden cambiar el tipo de mando.</string>
     <string name="local_network_rationale">Permite el acceso a la red local para encontrar tus PCs.</string>
     <string name="resolution_360p">360p</string>

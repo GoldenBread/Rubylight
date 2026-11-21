@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">Volle Farbauflösung</string>
-    <string name="summary_packed_444">Benötigt Rubylights Option für volle Farbauflösung, die neue Streaming-Engine und einen kompatiblen HEVC/AV1-Hardwaredecoder. Kann der PC oder dieses Gerät das nicht, startet der Stream ohne sie. HDR benötigt zusätzlich eine kompatible 10-Bit-HDR-Anzeigefläche.</string>
+    <string name="summary_packed_444">Benötigt Rubylights Option für volle Farbauflösung und einen kompatiblen HEVC/AV1-Hardwaredecoder. Kann der PC oder dieses Gerät das nicht, startet der Stream ohne sie. HDR benötigt zusätzlich eine kompatible 10-Bit-HDR-Anzeigefläche.</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">Zeigt Kameradrehungen mit Maus und rechtem Stick schon bei der nächsten Bildwiederholung, indem es das Bild verschiebt; das HUD bleibt an seinem Platz, und die Ränder sind beim Drehen nur angenähert. Braucht Unterstützung durch den PC und die „Neue Streaming-Engine“. Auf einem Dolby-Vision-Bildschirm läuft der Stream damit in HDR10.</string>
+    <string name="summary_frame_warp">Zeigt Kameradrehungen mit Maus und rechtem Stick schon bei der nächsten Bildwiederholung, indem es das Bild verschiebt; das HUD bleibt an seinem Platz, und die Ränder sind beim Drehen nur angenähert. Braucht Unterstützung durch den PC. Auf einem Dolby-Vision-Bildschirm läuft der Stream damit in HDR10.</string>
     <string name="frame_warp_overlay_mouse">Frame Warp: erfasst %1$s px/Zähler, Verzögerung %2$s ms, Verschiebung %3$s px (Spitze %4$s)</string>
     <string name="frame_warp_overlay_stick">Frame Warp: erfasst %1$s px/s, Verzögerung %2$s ms, Verschiebung %3$s px (Spitze %4$s)</string>
     <string name="frame_warp_overlay_learning">Frame Warp: lernt</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp: vom PC nicht angeboten</string>
     <string name="frame_warp_overlay_off">Frame Warp: für diesen Stream aus</string>
-    <string name="frame_warp_needs_engine">Frame Warp benötigt die neue Streaming-Engine. Dieser Stream läuft ohne.</string>
     <string name="frame_warp_unavailable">Frame Warp ist für diesen Stream aus: %1$s</string>
     <string name="frame_warp_reason_hdr">dieses Gerät zeigt HDR nur direkt vom Decoder</string>
     <string name="frame_warp_reason_full_chroma">Volle Farbauflösung ist an</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">Fordert Video im vollen Farbbereich an, für alle Details in Schatten und Lichtern. Nutzen PC und Bildschirm ihn nicht beide, versinken Schatten im Schwarz oder überstrahlen helle Stellen; dann lass es aus.</string>
     <string name="title_enable_post_stream_toast">Dekodierzeit nach dem Stream anzeigen</string>
     <string name="summary_enable_post_stream_toast">Zeigt die mittlere Dekodierzeit, wenn ein Stream endet: nur das Dekodieren auf diesem Gerät, nicht die Gesamtlatenz.</string>
-    <string name="title_rust_engine">Neue Streaming-Engine</string>
-    <string name="summary_rust_engine">Zur Fehlersuche. Lass es an; schalte es nur aus, wenn ein Stream nicht startet oder sich falsch verhält. Der klassischen Engine fehlen neuere Funktionen wie „Frame Warp“ und „Audio-Passthrough“.</string>
     <string name="toast_controller_type_changed">Bewegungssteuerung kann den Controllertyp ändern.</string>
     <string name="local_network_rationale">Erlaube den Netzwerkzugriff, um deine PCs zu finden.</string>
     <string name="resolution_360p">360p</string>

@@ -65,7 +65,6 @@
         <item>check_updates_now</item>
     </string-array>
     <string-array name="settings_tier_advanced" translatable="false">
-        <item>checkbox_rust_engine</item>
         <item>low_latency_decoding</item>
         <item>low_latency_customize</item>
         <item>gpu_driver</item>

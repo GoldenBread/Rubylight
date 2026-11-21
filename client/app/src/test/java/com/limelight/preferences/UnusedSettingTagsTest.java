@@ -46,17 +46,6 @@ public class UnusedSettingTagsTest {
     }
 
     @Test
-    public void neverSaysItNeedsTheNewStreamingEngine() {
-        assertNull(reason(AutoBitrateChoice.SETTINGS_KEY));
-        prefs.edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.KEEP).commit();
-        assertNull("the new engine is on by default", reason(AutoBitrateChoice.SETTINGS_KEY));
-        prefs.edit().putBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, false).commit();
-        assertEquals("Not used without New streaming engine", reason(AutoBitrateChoice.SETTINGS_KEY));
-        prefs.edit().putString(AutoBitrateChoice.SETTINGS_KEY, AutoBitrateChoice.SOONER).commit();
-        assertNull("only Never needs it here", reason(AutoBitrateChoice.SETTINGS_KEY));
-    }
-
-    @Test
     public void thermalProtectionNamesTheThreeItActsThrough() {
         assertEquals("Not used without Lower bitrate, Automatic quality or Boost GPU performance for PyroWave",
                 reason(PreferenceConfiguration.THERMAL_PROTECTION_PREF_STRING));
@@ -194,10 +183,6 @@ public class UnusedSettingTagsTest {
         prefs.edit().putBoolean(PreferenceConfiguration.VULKAN_RENDER_PREF_STRING, true).commit();
         assertTrue(reason(key).startsWith("Not used with "));
         assertNotEquals("Not used with Frame Warp", reason(key));
-        // Frame Warp needs the new streaming engine; on the C engine nothing warps the held frame.
-        prefs.edit().putBoolean(PreferenceConfiguration.VULKAN_RENDER_PREF_STRING, false)
-                .putBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, false).commit();
-        assertNull(reason(key));
     }
 
     @Test

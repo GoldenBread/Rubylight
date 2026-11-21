@@ -53,7 +53,7 @@ public class AdvancedOptionsTest {
     /** The controls Advanced shows with its More row open. The individual decoding switches sit behind Customize. */
     private static final String[] ADVANCED_CONTROLS = {
             "low_latency_customize", "checkbox_texture_view", "checkbox_vulkan_render",
-            "checkbox_enable_sops", "checkbox_rust_engine"
+            "checkbox_enable_sops"
     };
 
     /** Opens Customize under Low-latency decoding, once. */
@@ -316,9 +316,7 @@ public class AdvancedOptionsTest {
                     // Do not rerun the older migration that enables the latency switches.
                     .putInt(PreferenceConfiguration.PREFS_VERSION_PREF_STRING, PreferenceConfiguration.PROFILE_NATIVE_VERSION)
                     .putString("performance_overlay_mode", "debug")
-                    .putString("list_fec_choice", "20")
-                    // Choices made after the new engine became the default are kept, off included.
-                    .putBoolean(PreferenceConfiguration.RUST_ENGINE_DEFAULT_ON_PREF_STRING, true);
+                    .putString("list_fec_choice", "20");
             for (Map.Entry<String, Boolean> entry : choices.entrySet()) editor.putBoolean(entry.getKey(), entry.getValue());
             for (Map.Entry<String, Boolean> entry : debugChoices.entrySet()) editor.putBoolean(entry.getKey(), entry.getValue());
             editor.commit();
@@ -348,7 +346,6 @@ public class AdvancedOptionsTest {
                 assertTrue(config.unlockFps);
                 assertFalse(config.networkPriority);
                 assertTrue(config.gpuMaxClocks);
-                assertFalse(config.rustEngine);
                 assertEquals("debug", prefs().getString("performance_overlay_mode", null));
             }
         }

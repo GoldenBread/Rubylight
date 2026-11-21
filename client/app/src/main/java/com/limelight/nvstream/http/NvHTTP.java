@@ -1250,11 +1250,6 @@ public class NvHTTP {
         return getXmlString(serverInfo, "gputype", false);
     }
 
-    public String getGfeVersion(String serverInfo) throws XmlPullParserException, IOException {
-        // ServerCodecModeSupport wasn't present on old GFE versions
-        return getXmlString(serverInfo, "GfeVersion", false);
-    }
-    
     public boolean supports4K(String serverInfo) throws XmlPullParserException, IOException {
         // Only allow 4K on GFE 3.x. GfeVersion wasn't present on very old versions of GFE.
         String gfeVersionStr = getXmlString(serverInfo, "GfeVersion", false);

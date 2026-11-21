@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">Sắc độ đầy đủ</string>
-    <string name="summary_packed_444">Cần tùy chọn sắc độ đầy đủ của Rubylight, bộ máy truyền phát mới và bộ giải mã phần cứng HEVC/AV1 tương thích. Nếu PC hoặc thiết bị này không hỗ trợ, luồng sẽ bắt đầu mà không có tùy chọn này. HDR cũng cần bề mặt hiển thị HDR 10 bit tương thích.</string>
+    <string name="summary_packed_444">Cần tùy chọn sắc độ đầy đủ của Rubylight và bộ giải mã phần cứng HEVC/AV1 tương thích. Nếu PC hoặc thiết bị này không hỗ trợ, luồng sẽ bắt đầu mà không có tùy chọn này. HDR cũng cần bề mặt hiển thị HDR 10 bit tương thích.</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">Dịch chuyển hình ảnh để các cú xoay camera bằng cần analog phải hoặc chuột hiện ngay ở lần làm mới màn hình kế tiếp; HUD giữ nguyên vị trí, còn các mép hình chỉ gần đúng khi đang xoay. Cần PC hỗ trợ và “Công cụ stream mới”. Trên màn hình Dolby Vision, khi bật, luồng ở HDR10.</string>
+    <string name="summary_frame_warp">Dịch chuyển hình ảnh để các cú xoay camera bằng cần analog phải hoặc chuột hiện ngay ở lần làm mới màn hình kế tiếp; HUD giữ nguyên vị trí, còn các mép hình chỉ gần đúng khi đang xoay. Cần PC hỗ trợ. Trên màn hình Dolby Vision, khi bật, luồng ở HDR10.</string>
     <string name="frame_warp_overlay_mouse">Frame Warp: đã khóa %1$s px/đơn vị, độ trễ %2$s ms, dịch %3$s px (đỉnh %4$s)</string>
     <string name="frame_warp_overlay_stick">Frame Warp: đã khóa %1$s px/giây, độ trễ %2$s ms, dịch %3$s px (đỉnh %4$s)</string>
     <string name="frame_warp_overlay_learning">Frame Warp: đang học</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp: PC không cung cấp</string>
     <string name="frame_warp_overlay_off">Frame Warp: tắt cho luồng này</string>
-    <string name="frame_warp_needs_engine">Frame Warp cần bộ máy truyền phát mới. Luồng này chạy không có nó.</string>
     <string name="frame_warp_unavailable">Frame Warp đã tắt cho luồng này: %1$s</string>
     <string name="frame_warp_reason_hdr">thiết bị này chỉ hiển thị HDR trực tiếp từ bộ giải mã</string>
     <string name="frame_warp_reason_full_chroma">sắc độ đầy đủ đang bật</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">Yêu cầu video dải màu đầy đủ, để giữ trọn chi tiết vùng tối và vùng sáng. Nếu PC và màn hình không cùng dùng dải này, vùng đen bị bệt hoặc vùng sáng bị cháy; nên để tắt trừ khi cả hai cùng dùng.</string>
     <string name="title_enable_post_stream_toast">Hiện thời gian giải mã sau khi stream</string>
     <string name="summary_enable_post_stream_toast">Hiển thị thời gian giải mã trung bình khi stream kết thúc: chỉ phần giải mã của thiết bị này, không phải độ trễ đầu-cuối.</string>
-    <string name="title_rust_engine">Công cụ stream mới</string>
-    <string name="summary_rust_engine">Dùng để khắc phục sự cố. Nên để bật; chỉ tắt nếu stream không khởi động được hoặc chạy sai. Công cụ cũ thiếu các tính năng mới như “Frame Warp” và “Truyền thẳng âm thanh”.</string>
     <string name="toast_controller_type_changed">Điều khiển chuyển động có thể thay đổi loại tay cầm điều khiển.</string>
     <string name="local_network_rationale">Cho phép truy cập mạng cục bộ để tìm PC của bạn.</string>
     <string name="resolution_360p">360p</string>

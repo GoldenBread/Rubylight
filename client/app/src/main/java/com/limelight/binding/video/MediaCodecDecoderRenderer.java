@@ -1449,7 +1449,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // Only with the setting on: MoonBridge's statics load the native engine.
         boolean warpOffered = false;
         if (prefs.frameWarp) {
-            if (MoonBridge.frameWarpNeedsEngine()) notifyFrameWarp(context.getString(R.string.frame_warp_needs_engine));
             warpOffered = MoonBridge.isFrameWarpStream();
         }
         VideoRendererChoice choice = VideoRendererChoice.choose(prefs.vulkanRender,
@@ -2184,7 +2183,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int gatePackedHdr(int formats, int width, int height, int fps) {
         packedHdrDrop = null;
         packedTenBitOffered = false;
-        if (!prefs.experimentalPacked444 || !prefs.rustEngine ||
+        if (!prefs.experimentalPacked444 ||
                 (formats & MoonBridge.VIDEO_FORMAT_MASK_10BIT) == 0) return formats;
         int modes = preparePacked444Modes(formats, width, height, fps);
         if (modes == 0) return formats;
@@ -2364,7 +2363,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /** Frame Warp is asked for the next stream, as NvConnection asks it (MoonBridge.requestFrameWarp). */
     static boolean frameWarpAsked(PreferenceConfiguration prefs, boolean frameWarpListed) {
-        return prefs.frameWarp && prefs.rustEngine && frameWarpListed;
+        return prefs.frameWarp && frameWarpListed;
     }
 
     /**
@@ -2647,7 +2646,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             packing = null;
             return 0;
         }
-        if ((version != 1 && version != 2) || !prefs.experimentalPacked444 || !prefs.rustEngine ||
+        if ((version != 1 && version != 2) || !prefs.experimentalPacked444 ||
                 width < 64 || height < 64 || width > 16384 || height > 8192) return -1;
         packing = new Packed444(version, width, height, colorSpace, colorRange);
         packingFailed = false;
@@ -5220,7 +5219,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 " | " + (pyroWave ? "PyroWave" : activeDecoderName + " " + configuredMime()) +
                 " | " + initialWidth + "x" + initialHeight + " " + refreshRate + " fps" +
                 " HDR " + onOff(Boolean.TRUE.equals(currentHdrMode)) +
-                " | engine " + (prefs.rustEngine ? "new" : "classic") +
+                " | engine " + StreamEngine.label() +
                 " | low latency " + onOff(lowLatency) + ", vendor " + onOff(prefs.vendorLowLatency) +
                 ", hints " + onOff(prefs.phonePerformanceHints) + ", RFI " + onOff(rfi) +
                 ", keyframe net " + onOff(safetyNet != null) +

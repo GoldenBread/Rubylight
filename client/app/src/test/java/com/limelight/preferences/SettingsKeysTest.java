@@ -191,7 +191,9 @@ public class SettingsKeysTest {
             // Vibration, Trackpad acceleration and Glide after a flick: their switches folded into the lists (FoldedChoice).
             "checkbox_disable_rumble", "checkbox_trackpad_acceleration_v2", "checkbox_trackpad_momentum",
             "checkbox_always_dark", "checkbox_oled_black", // the theme's switches, one value now (AppTheme.THEME)
-            "list_osc_style")); // "Controller style", gone with the classic on-screen controller (retireOscStyle)
+            "list_osc_style", // "Controller style", gone with the classic on-screen controller (retireOscStyle)
+            // "New streaming engine" and its default migration's marker, gone with the classic engine (retireEngineChoice).
+            "checkbox_rust_engine", "rust_engine_default_on"));
 
     @Test
     public void everyKeyInPreferencesXmlIsUniqueAndNoRetiredKeyIsBack() throws Exception {
@@ -517,7 +519,6 @@ public class SettingsKeysTest {
         reads.put("list_decode_queue_frames", new Read("15", "5", c -> c.decodeQueueFrames));
         reads.put("checkbox_internet_play", new Read(true, false, c -> c.internetPlay));
         reads.put("checkbox_enable_post_stream_toast", new Read(false, true, c -> c.enableLatencyToast));
-        reads.put("checkbox_rust_engine", new Read(false, true, c -> c.rustEngine));
         reads.put("experimental_packed_444", new Read(false, true, c -> c.experimentalPacked444));
         reads.put("checkbox_frame_warp", new Read(false, true, c -> c.frameWarp));
         reads.put("checkbox_experimental_chipset_tuning", new Read(false, true, c -> c.experimentalChipsetTuning));

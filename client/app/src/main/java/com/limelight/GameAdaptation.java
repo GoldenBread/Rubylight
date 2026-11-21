@@ -805,9 +805,9 @@ final class GameAdaptation {
         }, "FoundationAbr").start();
     }
 
-    // The host offered this stream 0x553C, which only the Rust engine asks for (rlRateChange).
+    // The host offered this stream 0x553C (rlRateChange).
     private boolean offersRateChange() {
-        return game.connected && game.app != null && game.app.getRole() == NvApp.Role.STREAM && MoonBridge.isRustStream() &&
+        return game.connected && game.app != null && game.app.getRole() == NvApp.Role.STREAM &&
                 MoonBridge.hostSupportsControlMessage(MoonBridge.CONTROL_MESSAGE_RATE_CHANGE);
     }
 

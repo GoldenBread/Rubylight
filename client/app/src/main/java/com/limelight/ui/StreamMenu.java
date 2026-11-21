@@ -650,7 +650,7 @@ public final class StreamMenu {
             layout = StreamMenuModel.layout(offers(offered), saved == null ? null : saved.size(), buttonChoices(activity));
             labels = StreamMenuModel.labels();
         } catch (StreamMenuModel.Refused e) {
-            // Without the model the stream still runs (the C engine needs no libnightjar_core): every entry stays
+            // Without the model the stream still runs: every entry stays
             // reachable as a plain list, in this client's order and words, above the ways out.
             LimeLog.warning("Stream menu: the model failed: " + e.getMessage());
             layout = null;

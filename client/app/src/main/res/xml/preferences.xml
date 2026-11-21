@@ -304,7 +304,7 @@
             android:title="@string/title_checkbox_keyboard_follows_text_fields"
             android:dialogMessage="@string/summary_checkbox_keyboard_follows_text_fields"
             android:defaultValue="true" />
-        <!-- Rust engine only (SettingRules.clipboardSyncApplies); a Rubylight PC offers it to launches that ask. -->
+        <!-- A Rubylight PC offers it to launches that ask. -->
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_clipboard_sync"
             android:title="@string/title_clipboard_sync"
@@ -697,7 +697,7 @@
             android:title="@string/title_usb_switch_pro"
             android:dialogMessage="@string/summary_usb_switch_pro"
             android:defaultValue="false" />
-        <!-- Rust engine only (SettingRules.usbForwardingApplies); the stream menu offers it when the PC does. -->
+        <!-- The stream menu offers it when the PC does. -->
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_usb_forwarding"
             android:title="@string/title_usb_forwarding"
@@ -771,7 +771,7 @@
             android:title="@string/title_checkbox_enable_audiofx"
             android:dialogMessage="@string/summary_checkbox_enable_audiofx"
             android:defaultValue="false" />
-        <!-- Rust engine and Android 10 or later only (SettingRules.audioPassthroughApplies). -->
+        <!-- Android 10 or later only (SettingRules.audioPassthroughApplies). -->
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_audio_passthrough"
             android:title="@string/title_checkbox_audio_passthrough"
@@ -805,7 +805,7 @@
         <Preference android:key="more_streaming" android:title="@string/settings_more" android:persistent="false" />
     </PreferenceCategory>
     <PreferenceCategory android:key="category_streaming_connection" android:title="@string/settings_category_connection">
-        <!-- Rust engine only (SettingRules.clientRoamingApplies). Off, Except mobile data or Any network: writes
+        <!-- Off, Except mobile data or Any network: writes
              checkbox_client_roaming and checkbox_roaming_metered (SwitchPairChoice). -->
         <Preference android:key="checkbox_client_roaming" android:title="@string/title_client_roaming"
             android:dialogMessage="@string/summary_roaming" android:persistent="false" />
@@ -816,7 +816,6 @@
             android:entries="@array/network_grace_names"
             android:entryValues="@array/network_grace_values"
             android:defaultValue="0" />
-        <!-- Rust engine only (SettingRules.receiveCoalescingApplies). -->
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="checkbox_receive_coalescing"
             android:title="@string/title_receive_coalescing"
@@ -955,11 +954,6 @@
 
     <!-- Advanced -->
     <PreferenceCategory android:key="category_advanced_settings">
-        <com.limelight.preferences.MaterialSwitchPreference
-            android:key="checkbox_rust_engine"
-            android:title="@string/title_rust_engine"
-            android:dialogMessage="@string/summary_rust_engine"
-            android:defaultValue="true" />
         <!-- Sets the decoder, chipset and phone switches below together (StreamSettings). -->
         <com.limelight.preferences.MaterialSwitchPreference
             android:key="low_latency_decoding"

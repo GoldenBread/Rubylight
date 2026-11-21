@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">Tam kroma</string>
-    <string name="summary_packed_444">Rubylight’ın tam kroma seçeneği, yeni akış motoru ve uyumlu bir HEVC/AV1 donanım çözücüsü gerekir. Bilgisayar veya bu cihaz desteklemiyorsa akış onsuz başlar. HDR ayrıca uyumlu bir 10 bit HDR görüntüleme yüzeyi gerektirir.</string>
+    <string name="summary_packed_444">Rubylight’ın tam kroma seçeneği ve uyumlu bir HEVC/AV1 donanım çözücüsü gerekir. Bilgisayar veya bu cihaz desteklemiyorsa akış onsuz başlar. HDR ayrıca uyumlu bir 10 bit HDR görüntüleme yüzeyi gerektirir.</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">Fare ve sağ çubukla yapılan kamera dönüşlerini, görüntüyü kaydırarak bir sonraki yenilemede gösterir; HUD yerinde kalır, dönerken kenarlar yaklaşık çizilir. Bilgisayar desteği ve “Yeni yayın motoru” gerekir. Dolby Vision ekranda açıkken yayın HDR10 olur.</string>
+    <string name="summary_frame_warp">Fare ve sağ çubukla yapılan kamera dönüşlerini, görüntüyü kaydırarak bir sonraki yenilemede gösterir; HUD yerinde kalır, dönerken kenarlar yaklaşık çizilir. Bilgisayar desteği gerekir. Dolby Vision ekranda açıkken yayın HDR10 olur.</string>
     <string name="frame_warp_overlay_mouse">Frame Warp: kilitli %1$s px/sayım, gecikme %2$s ms, kayma %3$s px (en çok %4$s)</string>
     <string name="frame_warp_overlay_stick">Frame Warp: kilitli %1$s px/sn, gecikme %2$s ms, kayma %3$s px (en çok %4$s)</string>
     <string name="frame_warp_overlay_learning">Frame Warp: öğreniyor</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp: bilgisayar sunmuyor</string>
     <string name="frame_warp_overlay_off">Frame Warp: bu akışta kapalı</string>
-    <string name="frame_warp_needs_engine">Frame Warp yeni akış motorunu gerektirir. Bu akış onsuz çalışıyor.</string>
     <string name="frame_warp_unavailable">Frame Warp bu akışta kapalı: %1$s</string>
     <string name="frame_warp_reason_hdr">bu cihaz HDR’yi yalnızca doğrudan çözücüden gösterir</string>
     <string name="frame_warp_reason_full_chroma">tam kroma açık</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">Gölgelerde ve parlak alanlarda tam ayrıntı için tam aralıklı video ister. Bilgisayar ve ekranın ikisi birden bunu kullanmıyorsa siyahlar ezilir veya parlak alanlar patlar; o zaman kapalı bırakın.</string>
     <string name="title_enable_post_stream_toast">Yayından sonra kod çözme süresini göster</string>
     <string name="summary_enable_post_stream_toast">Yayın bittiğinde ortalama kod çözme süresini gösterir: yalnızca bu cihazın kod çözmesi, uçtan uca gecikme değil.</string>
-    <string name="title_rust_engine">Yeni yayın motoru</string>
-    <string name="summary_rust_engine">Sorun giderme içindir. Açık bırakın; yalnızca yayın başlamıyor veya düzgün çalışmıyorsa kapatın. Klasik motorda “Frame Warp” ve “Ses geçişi” gibi yeni özellikler yoktur.</string>
     <string name="toast_controller_type_changed">Hareket kontrolleri kumanda türünü değiştirebilir.</string>
     <string name="local_network_rationale">Bilgisayarlarınızı bulmak için yerel ağ erişimine izin verin.</string>
     <string name="resolution_360p">360p</string>

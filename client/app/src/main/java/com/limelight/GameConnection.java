@@ -538,7 +538,7 @@ final class GameConnection {
                 .setBitrateLimit(StreamRateChanges.clientLimitKbps(game.prefConfig.layers == null ? null : game.prefConfig.layers.network,
                         game.prefConfig.mobileBitrateLimit))
                 .setFecChoice(game.prefConfig.fecChoice)
-                .setRateChange(!smallStream && game.prefConfig.rustEngine)
+                .setRateChange(!smallStream)
                 .setEnableSops(!smallStream && game.prefConfig.enableSops)
                 .enableLocalAudioPlayback(smallStream || game.prefConfig.playHostAudio)
                 .setMaxPacketSize(1392)
@@ -546,7 +546,7 @@ final class GameConnection {
                 .setSupportedVideoFormats(supportedVideoFormats)
                 .setSdr10Bit(game.streamSdr10)
                 // Packed full chroma only ever through Sharper colored text's decision before the launch.
-                .setPacked444(mediaStream && game.prefConfig.experimentalPacked444 && game.prefConfig.rustEngine)
+                .setPacked444(mediaStream && game.prefConfig.experimentalPacked444)
                 .setSharpColor(mediaStream && (game.prefConfig.enableYuv444 || game.prefConfig.experimentalPacked444),
                         game.prefConfig.videoFormat == PreferenceConfiguration.FormatOption.FORCE_PYROWAVE)
                 .setAttachedGamepadMask(gamepadMask)
@@ -555,7 +555,7 @@ final class GameConnection {
                 .setVirtualDisplayDpi(game.prefConfig.virtualDisplayDpi)
                 .setImageEnhancements(game.prefConfig.rtxHdr, game.prefConfig.rtxVideo)
                 .setVrr(!smallStream && game.prefConfig.vrr)
-                .setClipboardSync(game.prefConfig.clipboardSync && game.prefConfig.rustEngine)
+                .setClipboardSync(game.prefConfig.clipboardSync)
                 .setHostDisplay(game.prefConfig.hostDisplay)
                 .setAudioConfiguration(smallStream ? MoonBridge.AUDIO_CONFIGURATION_STEREO : game.prefConfig.audioConfiguration)
                 .setColorSpace(game.decoderRenderer.getPreferredColorSpace())
@@ -698,7 +698,7 @@ final class GameConnection {
 
     // Asks a host that announces link notices (0x5538) to say when it lowers the video bitrate
     // because of the network, once per connection. The overlay then shows it until the host is
-    // back at the requested rate. The C engine does not support it.
+    // back at the requested rate.
     private void requestLinkNotice() {
         game.linkNotice = null;
         game.linkLoweredTold = false;
@@ -708,17 +708,13 @@ final class GameConnection {
         MoonBridge.sendLinkNoticeRequest(true);
     }
 
-    // Clipboard sync (0x5508), when this stream's launch asked a Rubylight PC for it. The C engine has none.
+    // Clipboard sync (0x5508), when this stream's launch asked a Rubylight PC for it.
     private void startClipboardSync() {
         if (game.clipboardSync != null) {
             game.clipboardSync.stop();
             game.clipboardSync = null;
         }
         if (game.conn == null || !game.conn.askedForClipboardSync()) return;
-        if (!MoonBridge.isRustStream()) {
-            LimeLog.warning("Clipboard sync: needs the New streaming engine; this stream has none");
-            return;
-        }
         game.clipboardSync = com.limelight.utils.ClipboardSync.forStream(game,
                 text -> game.messages.alert(text, Toast.LENGTH_LONG));
         game.clipboardSync.connectionStarted(game.hasWindowFocus());

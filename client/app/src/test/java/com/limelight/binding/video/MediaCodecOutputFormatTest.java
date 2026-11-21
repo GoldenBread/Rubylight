@@ -50,7 +50,7 @@ public class MediaCodecOutputFormatTest {
     }
 
     @Test
-    public void packedChromaRequiresOptInAndTheRustEngine() {
+    public void packedChromaRequiresOptIn() {
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
             PreferenceConfiguration prefs = new PreferenceConfiguration();
@@ -59,8 +59,6 @@ public class MediaCodecOutputFormatTest {
                     null, 0, false, false, "", null);
             assertEquals(-1, renderer.setChromaPacking(1, 2560, 1440, 1, 0));
             prefs.experimentalPacked444 = true;
-            assertEquals(-1, renderer.setChromaPacking(1, 2560, 1440, 1, 0));
-            prefs.rustEngine = true;
             assertEquals(-1, renderer.setChromaPacking(3, 2560, 1440, 1, 0));
             assertEquals(0, renderer.setChromaPacking(2, 2560, 1440, 1, 0));
             assertEquals(2, ((Packed444) ReflectionHelpers.getField(renderer, "packing")).version);
@@ -80,7 +78,6 @@ public class MediaCodecOutputFormatTest {
                 PreferenceConfiguration prefs = new PreferenceConfiguration();
                 prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
                 prefs.experimentalPacked444 = true;
-                prefs.rustEngine = true;
                 final int probed = modes;
                 MediaCodecDecoderRenderer renderer = new MediaCodecDecoderRenderer(activity.get(), prefs,
                         null, 0, false, true, "", null) {
@@ -123,7 +120,6 @@ public class MediaCodecOutputFormatTest {
             ReflectionHelpers.setStaticField(MediaCodecHelper.class, "initialized", true);
             PreferenceConfiguration prefs = new PreferenceConfiguration();
             prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
-            prefs.rustEngine = true;
             java.util.concurrent.atomic.AtomicInteger probes = new java.util.concurrent.atomic.AtomicInteger();
             MediaCodecDecoderRenderer renderer = packedRenderer(activity.get(), prefs, fps -> {
                 probes.incrementAndGet();
@@ -164,7 +160,6 @@ public class MediaCodecOutputFormatTest {
                 PreferenceConfiguration prefs = new PreferenceConfiguration();
                 prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
                 prefs.experimentalPacked444 = true;
-                prefs.rustEngine = true;
                 MediaCodecDecoderRenderer[] holder = new MediaCodecDecoderRenderer[1];
                 holder[0] = packedRenderer(activity.get(), prefs, fps -> {
                     // What the real probe leaves behind: 8-bit verified, 10-bit not, and why.
@@ -205,7 +200,6 @@ public class MediaCodecOutputFormatTest {
             PreferenceConfiguration prefs = new PreferenceConfiguration();
             prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
             prefs.experimentalPacked444 = true;
-            prefs.rustEngine = true;
             MediaCodecDecoderRenderer renderer = packedRenderer(activity.get(), prefs, fps -> 0b0011);
             renderer.prepareVideoFormats(hevc | hevc10, 1920, 1080, 60);
             assertNull(renderer.packedHdrDropReason());
@@ -242,7 +236,6 @@ public class MediaCodecOutputFormatTest {
                 PreferenceConfiguration prefs = new PreferenceConfiguration();
                 prefs.videoFormat = PreferenceConfiguration.FormatOption.AUTO;
                 prefs.experimentalPacked444 = true;
-                prefs.rustEngine = true;
                 int device = (int) c[0];
                 MediaCodecDecoderRenderer renderer = packedRenderer(activity.get(), prefs, fps -> device);
                 renderer.setHostPacked444Modes((int) c[1]);

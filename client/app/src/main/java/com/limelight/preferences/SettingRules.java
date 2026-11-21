@@ -51,7 +51,7 @@ final class SettingRules {
     static int vulkanPathTitle(SharedPreferences prefs) {
         if (android.os.Build.VERSION.SDK_INT < VideoRendererChoice.MIN_SDK) return 0;
         if (prefs.getBoolean(PreferenceConfiguration.VULKAN_RENDER_PREF_STRING, false)) return R.string.title_vulkan_render;
-        if (frameWarpApplies(prefs) && prefs.getBoolean(PreferenceConfiguration.FRAME_WARP_PREF_STRING, false)) {
+        if (prefs.getBoolean(PreferenceConfiguration.FRAME_WARP_PREF_STRING, false)) {
             return R.string.title_frame_warp;
         }
         return 0;
@@ -77,10 +77,6 @@ final class SettingRules {
      */
     static String unusedReason(Context context, String key, SharedPreferences prefs) {
         switch (key) {
-            case AutoBitrateChoice.SETTINGS_KEY:
-                // Never's bitrate change goes out only on the new streaming engine (GameAdaptation.offersRateChange).
-                return AutoBitrateChoice.KEEP.equals(AutoBitrateChoice.read(prefs)) && !keepBitrateApplies(prefs)
-                        ? context.getString(R.string.tag_unused_without, context.getString(R.string.title_rust_engine)) : null;
             case "checkbox_texture_view":
                 // PreferenceConfiguration.readPreferences keeps the stream's own surface under these.
                 if (prefs.getBoolean("checkbox_enable_hdr", false)) return unusedWith(context, R.string.title_enable_hdr);
@@ -233,38 +229,9 @@ final class SettingRules {
         return !"off".equals(prefs.getString(ADAPTIVE_QUALITY, "off"));
     }
 
-    /** Only the new streaming engine sends bitrate changes, so Never: keep my bitrate needs it. */
-    static boolean keepBitrateApplies(SharedPreferences prefs) {
-        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
-    }
-
-    /** Only the new streaming engine roams; the C engine ignores the choice. */
-    static boolean clientRoamingApplies(SharedPreferences prefs) {
-        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
-    }
-
-    /**
-     * Passthrough needs the new streaming engine, and Android 10 or later to tell which formats the
-     * audio output plays as is.
-     */
-    static boolean audioPassthroughApplies(SharedPreferences prefs, int sdk) {
-        return sdk >= android.os.Build.VERSION_CODES.Q &&
-                prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
-    }
-
-    /** Only the new streaming engine forwards USB devices. */
-    static boolean usbForwardingApplies(SharedPreferences prefs) {
-        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
-    }
-
-    /** Only the new streaming engine syncs the clipboard. */
-    static boolean clipboardSyncApplies(SharedPreferences prefs) {
-        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
-    }
-
-    /** Only the new streaming engine knows the shift each picture still needs. */
-    static boolean frameWarpApplies(SharedPreferences prefs) {
-        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
+    /** Passthrough needs Android 10 or later to tell which formats the audio output plays as is. */
+    static boolean audioPassthroughApplies(int sdk) {
+        return sdk >= android.os.Build.VERSION_CODES.Q;
     }
 
     /**
@@ -279,11 +246,6 @@ final class SettingRules {
     static boolean mobileBitrateShown(Context context, SharedPreferences prefs) {
         return hasMobileData(context)
                 || !"0".equals(prefs.getString(PreferenceConfiguration.MOBILE_BITRATE_PREF_STRING, "0"));
-    }
-
-    /** Grouping incoming video packets (UDP_GRO) is the new streaming engine's. */
-    static boolean receiveCoalescingApplies(SharedPreferences prefs) {
-        return prefs.getBoolean(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, true);
     }
 
     /** The bitrate slider is the player's while Automatic bitrate is off. */

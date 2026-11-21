@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">全色度</string>
-    <string name="summary_packed_444">需要启用 Rubylight 的全色度选项和新串流引擎，并使用兼容的 HEVC/AV1 硬件解码器。如果电脑或此设备不支持，串流将以普通色度开始。HDR 还需要兼容的 10 位 HDR 显示表面。</string>
+    <string name="summary_packed_444">需要启用 Rubylight 的全色度选项，并使用兼容的 HEVC/AV1 硬件解码器。如果电脑或此设备不支持，串流将以普通色度开始。HDR 还需要兼容的 10 位 HDR 显示表面。</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">通过平移画面，在下一次刷新时就显示鼠标和右摇杆的视角转动；HUD 保持不动，转动时画面边缘为近似填补。需要电脑支持和“新串流引擎”。在 Dolby Vision 屏幕上开启后，视频流为 HDR10。</string>
+    <string name="summary_frame_warp">通过平移画面，在下一次刷新时就显示鼠标和右摇杆的视角转动；HUD 保持不动，转动时画面边缘为近似填补。需要电脑支持。在 Dolby Vision 屏幕上开启后，视频流为 HDR10。</string>
     <string name="frame_warp_overlay_mouse">Frame Warp：已锁定 %1$s px/计数，延迟 %2$s ms，平移 %3$s px（峰值 %4$s）</string>
     <string name="frame_warp_overlay_stick">Frame Warp：已锁定 %1$s px/秒，延迟 %2$s ms，平移 %3$s px（峰值 %4$s）</string>
     <string name="frame_warp_overlay_learning">Frame Warp：学习中</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp：电脑未提供</string>
     <string name="frame_warp_overlay_off">Frame Warp：此串流中已关闭</string>
-    <string name="frame_warp_needs_engine">Frame Warp 需要新串流引擎。此串流不使用它。</string>
     <string name="frame_warp_unavailable">此串流中 Frame Warp 已关闭：%1$s</string>
     <string name="frame_warp_reason_hdr">此设备只能直接从解码器显示 HDR</string>
     <string name="frame_warp_reason_full_chroma">已开启全色度</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">请求全范围视频，以保留完整的暗部和高光细节。如果电脑和屏幕没有都使用全范围，暗部会死黑或高光会过曝；除非两者都使用，否则请保持关闭。</string>
     <string name="title_enable_post_stream_toast">串流结束后显示解码时间</string>
     <string name="summary_enable_post_stream_toast">串流结束时显示平均解码时间：仅为此设备的解码耗时，不是端到端延迟。</string>
-    <string name="title_rust_engine">新串流引擎</string>
-    <string name="summary_rust_engine">用于排查问题。请保持开启；仅在串流无法启动或表现异常时关闭。经典引擎缺少 Frame Warp、“音频直通”等较新的功能。</string>
     <string name="toast_controller_type_changed">体感控制可能会改变手柄类型。</string>
     <string name="local_network_rationale">允许访问本地网络以查找你的电脑。</string>
     <string name="resolution_360p">360p</string>

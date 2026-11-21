@@ -86,10 +86,6 @@ public class FrameWarpHdrFormatTest {
                 off.pickHdrFormat(OFFERED, MoonBridge.VIDEO_FORMAT_H265_MAIN10, false, true));
         assertFalse(off.vulkanForFrameWarp());
         assertEquals(HdrFormatPolicy.DrawnSurface.NONE, MediaCodecDecoderRenderer.vulkanSurface(prefs(false, false), true));
-        PreferenceConfiguration classic = prefs(true, false);
-        classic.rustEngine = false;
-        assertEquals("the classic engine draws no Frame Warp", HdrFormatPolicy.DV_81,
-                renderer(classic).pickHdrFormat(OFFERED, MoonBridge.VIDEO_FORMAT_H265_MAIN10, false, true));
     }
 
     @Test
@@ -104,7 +100,6 @@ public class FrameWarpHdrFormatTest {
         prefs.width = 3040;
         prefs.height = 1904;
         prefs.frameWarp = frameWarp;
-        prefs.rustEngine = true;
         prefs.vulkanRender = vulkanRender;
         return prefs;
     }

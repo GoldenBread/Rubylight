@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">フルクロマ</string>
-    <string name="summary_packed_444">Rubylight のフルクロマ設定、新しいストリーミングエンジン、対応する HEVC/AV1 ハードウェアデコーダーが必要です。PC またはこのデバイスが対応していない場合、ストリームはフルクロマなしで開始します。HDR には対応する 10 ビット HDR 表示サーフェスも必要です。</string>
+    <string name="summary_packed_444">Rubylight のフルクロマ設定と、対応する HEVC/AV1 ハードウェアデコーダーが必要です。PC またはこのデバイスが対応していない場合、ストリームはフルクロマなしで開始します。HDR には対応する 10 ビット HDR 表示サーフェスも必要です。</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">マウスや右スティックでの視点の回転を、映像をずらして次のリフレッシュで表示します。HUD は動かず、回転中は画面の端が近似表示になります。PC の対応と「新しいストリーミングエンジン」が必要です。Dolby Vision対応の画面では、オンにするとストリームはHDR10になります。</string>
+    <string name="summary_frame_warp">マウスや右スティックでの視点の回転を、映像をずらして次のリフレッシュで表示します。HUD は動かず、回転中は画面の端が近似表示になります。PC の対応が必要です。Dolby Vision対応の画面では、オンにするとストリームはHDR10になります。</string>
     <string name="frame_warp_overlay_mouse">Frame Warp: 確定 %1$s px/カウント、遅延 %2$s ms、シフト %3$s px（最大 %4$s）</string>
     <string name="frame_warp_overlay_stick">Frame Warp: 確定 %1$s px/秒、遅延 %2$s ms、シフト %3$s px（最大 %4$s）</string>
     <string name="frame_warp_overlay_learning">Frame Warp: 学習中</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp: PC が対応していません</string>
     <string name="frame_warp_overlay_off">Frame Warp: このストリームではオフ</string>
-    <string name="frame_warp_needs_engine">Frame Warp には新しいストリーミングエンジンが必要です。このストリームでは使われません。</string>
     <string name="frame_warp_unavailable">このストリームでは Frame Warp はオフです: %1$s</string>
     <string name="frame_warp_reason_hdr">このデバイスは HDR をデコーダーから直接しか表示できません</string>
     <string name="frame_warp_reason_full_chroma">フルクロマがオンです</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">フルレンジの映像を要求し、暗部とハイライトの階調をすべて表示します。PC と画面の両方がフルレンジを使っていないと、黒つぶれや白飛びが起きます。両方が使っている場合以外は、オフのままにしてください。</string>
     <string name="title_enable_post_stream_toast">ストリーミング後にデコード時間を表示</string>
     <string name="summary_enable_post_stream_toast">ストリーム終了時に平均デコード時間を表示します。これはこのデバイスのデコード時間だけで、エンドツーエンドの遅延ではありません。</string>
-    <string name="title_rust_engine">新しいストリーミングエンジン</string>
-    <string name="summary_rust_engine">トラブルシューティング用です。オンのままにし、ストリームが開始できない、または正しく動作しない場合にのみオフにしてください。クラシックエンジンでは、「Frame Warp」や「オーディオパススルー」などの新しい機能は使えません。</string>
     <string name="toast_controller_type_changed">モーション操作によってコントローラの種類が変わる場合があります。</string>
     <string name="local_network_rationale">PC を見つけるには、ローカル ネットワークへのアクセスを許可してください。</string>
     <string name="resolution_360p">360p</string>

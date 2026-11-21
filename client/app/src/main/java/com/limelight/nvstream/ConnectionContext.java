@@ -22,7 +22,6 @@ public class ConnectionContext {
     
     // This is the version quad from the appversion tag of /serverinfo
     public String serverAppVersion;
-    public String serverGfeVersion;
     public int serverCodecModeSupport;
     // What the host can do, from this connection's serverinfo reply
     public HostCapabilities hostCaps = HostCapabilities.UNKNOWN;

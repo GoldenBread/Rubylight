@@ -82,7 +82,6 @@ public class RecentStreamRowTest {
         prefs.videoFormat = PreferenceConfiguration.FormatOption.FORCE_HEVC;
         prefs.codecLowLatency = true;
         prefs.vendorLowLatency = true;
-        prefs.rustEngine = true;
         renderer = new MediaCodecDecoderRenderer(activity.get(), prefs, null, 0, false, false, "", null);
         ReflectionHelpers.setField(renderer, "renderTarget", surface);
         ReflectionHelpers.setField(renderer, "videoFormat", MoonBridge.VIDEO_FORMAT_H265);
@@ -120,7 +119,7 @@ public class RecentStreamRowTest {
         renderer.cleanup();
         String section = RecentStreams.section();
         for (String part : new String[] {"1970-01-01T00:00:00Z 97 s", "c2.mtk.hevc.decoder video/hevc", "3840x2160 60 fps",
-                "HDR off", "engine new", "low latency on", "vendor on", "RFI off", "keyframe net on",
+                "HDR off", "engine Rust", "low latency on", "vendor on", "RFI off", "keyframe net on",
                 "frames in 3 ", "keyframes 2, largest 512 B", "climbs 0, settled 0, repairs climb 0 end 0 quiet 0 limit 0",
                 "gap frames 0", "held 0 frames 0 ms", "input waits 0", "input buffer 4096 B", "receive buffer unknown",
                 "hottest normal, thermal protection off", "link wired 1000 Mbps"}) {

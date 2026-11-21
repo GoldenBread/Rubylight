@@ -31,21 +31,12 @@ import static org.junit.Assert.*;
  * whose return type, match the Java declaration, and no export lacks a native;</li>
  * <li>startConnection, whose many int parameters the types alone cannot tell apart, also has the
  * same names in the same order;</li>
- * <li>every MoonBridge c* native has a RustBridge counterpart with the same signature, or is on
- * the explicit list below;</li>
+ * <li>MoonBridge declares only the slim C library's natives (USB audio, controller tables);</li>
  * <li>every MoonBridge callback the Rust bridge looks up exists with the same signature.</li>
  * </ul>
  */
 public class RustEngineJniParityTest {
     private static final String CLASS_PREFIX = "Java_com_limelight_nvstream_jni_RustBridge_";
-
-    /** MoonBridge c* natives that the Rust engine does not need, and why. */
-    private static final Map<String, String> C_ONLY = new TreeMap<>();
-    static {
-        C_ONLY.put("cSetDecodeQueueBound", "folded into RustBridge.startConnection (decodeQueueBound)");
-        C_ONLY.put("cSetNetworkGracePeriodMs", "folded into RustBridge.startConnection (networkGracePeriodMs)");
-        C_ONLY.put("cStartConnection", "RustBridge.startConnection has its own parameter list");
-    }
 
     /** A Rust name that differs from the Java one for the same startConnection parameter. */
     private static final Map<String, String> RENAMED = new TreeMap<>();
@@ -271,39 +262,21 @@ public class RustEngineJniParityTest {
         assertEquals(declared, passed);
     }
 
-    @Test public void everyMoonBridgeNativeHasARustBridgeCounterpartOrIsListedAsCOnly() throws Exception {
+    /** The natives of the slim C library (libmoonlight-core): everything else streaming is RustBridge's. */
+    private static final TreeSet<String> SLIM_NATIVES = new TreeSet<>(Arrays.asList(
+            "openUsbMicrophone", "readUsbMicrophone", "openUsbHaptics", "writeUsbHaptics", "closeUsbHaptics",
+            "restoreUsbAudio", "guessControllerType", "guessControllerHasPaddles", "guessControllerHasShareButton"));
+
+    @Test public void moonBridgeKeepsOnlyTheSlimLibrarysNatives() throws Exception {
         Class<?> moonBridge = Class.forName("com.limelight.nvstream.jni.MoonBridge", false,
                 RustEngineJniParityTest.class.getClassLoader());
-        Map<String, Method> rust = new TreeMap<>();
-        for (Method method : RustBridge.class.getDeclaredMethods()) {
-            if (Modifier.isNative(method.getModifiers())) {
-                rust.put(method.getName(), method);
-            }
-        }
-        TreeSet<String> missing = new TreeSet<>();
-        TreeSet<String> staleListEntries = new TreeSet<>(C_ONLY.keySet());
+        TreeSet<String> natives = new TreeSet<>();
         for (Method method : moonBridge.getDeclaredMethods()) {
-            String name = method.getName();
-            if (!Modifier.isNative(method.getModifiers()) || !name.matches("c[A-Z]\\w*")) {
-                continue;
-            }
-            staleListEntries.remove(name);
-            if (C_ONLY.containsKey(name)) {
-                continue;
-            }
-            String counterpart = Character.toLowerCase(name.charAt(1)) + name.substring(2);
-            Method other = rust.get(counterpart);
-            if (other == null) {
-                missing.add(name);
-            } else {
-                assertEquals("signature of RustBridge." + counterpart + " against MoonBridge." + name,
-                        descriptor(method), descriptor(other));
+            if (Modifier.isNative(method.getModifiers())) {
+                natives.add(method.getName());
             }
         }
-        assertTrue("MoonBridge natives with no RustBridge counterpart (add one, or list the reason in C_ONLY): "
-                + missing, missing.isEmpty());
-        assertTrue("C_ONLY entries that are not MoonBridge natives any more: " + staleListEntries,
-                staleListEntries.isEmpty());
+        assertEquals("a streaming native belongs in RustBridge and nightjar-android", SLIM_NATIVES, natives);
     }
 
     /** The {@code pub const NAME: i32 = value;} constants of a Rust file whose names start with {@code prefix}. */

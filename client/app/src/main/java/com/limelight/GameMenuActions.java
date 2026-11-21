@@ -313,7 +313,7 @@ final class GameMenuActions {
         options.canSendInput = game.conn.canSendInput();
         options.nativeHostControl = game.conn.hasNativeHostControl();
         options.hostMenu = game.conn.hasNativeCouchMenu();
-        options.usbForwarding = game.prefConfig.usbForwarding && MoonBridge.isRustStream() && game.conn.offersUsbForwarding();
+        options.usbForwarding = game.prefConfig.usbForwarding && game.conn.offersUsbForwarding();
         options.imageClipboard = game.conn.hasImageClipboard();
         options.sessionGuests = game.streamGuests != null && game.streamGuests.manages();
         options.microphoneOffered = game.conn.getMicrophoneStatus().canMute();
@@ -841,7 +841,7 @@ final class GameMenuActions {
 
     /** Once the PC is known to take this device's USB devices: forwards the ones ticked to go automatically. */
     void startUsbAutoForwarding() {
-        if (!game.connected || game.isFinishing() || !game.prefConfig.usbForwarding || !MoonBridge.isRustStream()
+        if (!game.connected || game.isFinishing() || !game.prefConfig.usbForwarding
                 || !game.conn.offersUsbForwarding()) {
             return;
         }

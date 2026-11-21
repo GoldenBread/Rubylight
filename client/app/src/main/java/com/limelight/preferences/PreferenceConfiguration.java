@@ -159,8 +159,9 @@ public class PreferenceConfiguration {
     private static final String TRACKPAD_SCROLL_SPEED_PREF_STRING = "seekbar_trackpad_scroll_speed";
     private static final String NATIVE_TOUCHPAD_PREF_STRING = "checkbox_native_touchpad";
     private static final String LATENCY_TOAST_PREF_STRING = "checkbox_enable_post_stream_toast";
-    // Off: streams use the C engine. The Rust engine is a beta and falls back per stream.
-    static final String RUST_ENGINE_PREF_STRING = "checkbox_rust_engine";
+    // Retired with the classic streaming engine: only read by retireEngineChoice, never reused.
+    static final String RETIRED_RUST_ENGINE_PREF_STRING = "checkbox_rust_engine";
+    static final String RETIRED_RUST_ENGINE_DEFAULT_ON_PREF_STRING = "rust_engine_default_on";
     static final String PACKED_444_PREF_STRING = "experimental_packed_444";
     static final String FRAME_WARP_PREF_STRING = "checkbox_frame_warp";
     private static final String CHIPSET_TUNING_PREF_STRING = "checkbox_experimental_chipset_tuning";
@@ -418,7 +419,6 @@ public class PreferenceConfiguration {
     /** The corner the performance overlay prefers: top_left, top_right, bottom_left or bottom_right. */
     public volatile String overlayPosition = "top_left";
     public boolean enableLatencyToast;
-    public boolean rustEngine;
     public boolean experimentalPacked444;
     /** Shifts each picture by the camera turn the host has not drawn yet (docs/frame-warp.md). */
     public boolean frameWarp;
@@ -1436,23 +1436,14 @@ public class PreferenceConfiguration {
         return wasOff;
     }
 
-    // Set once the new streaming engine became the default, so a later choice of the classic engine is kept.
-    static final String RUST_ENGINE_DEFAULT_ON_PREF_STRING = "rust_engine_default_on";
-
-    // The new streaming engine used to start off, and first launch stored that default like a choice.
-    // It now starts on; a stored "off" is switched on once because it cannot be told apart from the old
-    // default. Choosing the classic engine afterwards is kept.
-    static boolean migrateRustEngineDefault(SharedPreferences prefs) {
-        if (prefs.getBoolean(RUST_ENGINE_DEFAULT_ON_PREF_STRING, false)) {
-            return false;
+    /**
+     * "New streaming engine" is gone with the classic engine: there is one engine now, so the choice and the
+     * marker of its default migration are dropped.
+     */
+    static void retireEngineChoice(SharedPreferences prefs) {
+        if (prefs.contains(RETIRED_RUST_ENGINE_PREF_STRING) || prefs.contains(RETIRED_RUST_ENGINE_DEFAULT_ON_PREF_STRING)) {
+            prefs.edit().remove(RETIRED_RUST_ENGINE_PREF_STRING).remove(RETIRED_RUST_ENGINE_DEFAULT_ON_PREF_STRING).apply();
         }
-        boolean wasOff = prefs.contains(RUST_ENGINE_PREF_STRING) && !prefs.getBoolean(RUST_ENGINE_PREF_STRING, false);
-        SharedPreferences.Editor editor = prefs.edit().putBoolean(RUST_ENGINE_DEFAULT_ON_PREF_STRING, true);
-        if (wasOff) {
-            editor.putBoolean(RUST_ENGINE_PREF_STRING, true);
-        }
-        editor.apply();
-        return wasOff;
     }
 
     // Set once Android's low-latency mode was switched off on the decoders of erratum 23, so a later On is kept.
@@ -1611,9 +1602,7 @@ public class PreferenceConfiguration {
             com.limelight.LimeLog.info("\"Render through OpenGL\" was on; it is now \"Render through Vulkan\"");
         }
         retireOscStyle(context, prefs);
-        if (migrateRustEngineDefault(prefs)) {
-            com.limelight.LimeLog.info("New streaming engine switched to its new default: on");
-        }
+        retireEngineChoice(prefs);
         if (migrateCodecLowLatencyCorruption(prefs)) {
             com.limelight.LimeLog.info("Low latency: Android's mode switched off once, this TV's decoder can corrupt the picture with it");
         }
@@ -1874,7 +1863,6 @@ public class PreferenceConfiguration {
         config.nativeTouchpad = prefs.getBoolean(NATIVE_TOUCHPAD_PREF_STRING, false);
         config.trackpadScrollSpeed = Math.max(10, Math.min(300, prefs.getInt(TRACKPAD_SCROLL_SPEED_PREF_STRING, DEFAULT_TRACKPAD_SCROLL_SPEED)));
         config.enableLatencyToast = prefs.getBoolean(LATENCY_TOAST_PREF_STRING, DEFAULT_LATENCY_TOAST);
-        config.rustEngine = prefs.getBoolean(RUST_ENGINE_PREF_STRING, true);
         // Sharper colored text: one choice stored in the two older switches (sharpColor).
         config.experimentalPacked444 = sharpColor(prefs);
         config.frameWarp = prefs.getBoolean(FRAME_WARP_PREF_STRING, false);

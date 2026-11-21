@@ -237,8 +237,8 @@ public class SettingsStructureTest {
             assertTrue(keys(video).contains(StreamSettings.SHARP_COLOR_KEY));
             assertNull(open(screen, "display").findPreference("checkbox_yuv444"));
             PreferenceScreen advanced = open(screen, "advanced").getPreferenceScreen();
-            // The engine leads Advanced's main rows, then the decoding switches; the GPU rows show only on a GPU that has them.
-            assertEquals(Arrays.asList(PreferenceConfiguration.RUST_ENGINE_PREF_STRING, StreamSettings.LOW_LATENCY_DECODING_KEY,
+            // The decoding switches lead Advanced's main rows; the GPU rows show only on a GPU that has them.
+            assertEquals(Arrays.asList(StreamSettings.LOW_LATENCY_DECODING_KEY,
                     StreamSettings.LOW_LATENCY_CUSTOMIZE_KEY, "checkbox_texture_view", "checkbox_vulkan_render"),
                     keys((PreferenceGroup) advanced.getPreference(0)));
         }
@@ -334,7 +334,7 @@ public class SettingsStructureTest {
     }
 
     @Test
-    public void roamingIsOneChoiceAndOnlyTheNewEngineShowsIt() {
+    public void roamingIsOneChoice() {
         mobileData(true);
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen streaming = open(controller.get(), "streaming").getPreferenceScreen();
@@ -342,17 +342,10 @@ public class SettingsStructureTest {
             assertEquals(controller.get().getString(R.string.roaming_not_metered), String.valueOf(roaming.getSummary()));
             assertNull("one row", streaming.findPreference("checkbox_roaming_metered"));
         }
-        // The C engine does not roam: the row is hidden.
-        prefs().edit().putBoolean("checkbox_rust_engine", false).commit();
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
-            PreferenceScreen streaming = open(controller.get(), "streaming").getPreferenceScreen();
-            assertNull(streaming.findPreference("checkbox_client_roaming"));
-        }
     }
 
     @Test
-    public void playOverTheInternetIsOnInConnectionForBothEngines() {
-        prefs().edit().putBoolean("checkbox_rust_engine", false).commit();
+    public void playOverTheInternetIsOnInConnection() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
             assertNotNull(resultGroup(search(screen, "Play over the internet"), "checkbox_internet_play"));
@@ -365,7 +358,7 @@ public class SettingsStructureTest {
     }
 
     @Test
-    public void groupingIncomingVideoPacketsIsOnInConnectionWithTheRustEngineOnly() {
+    public void groupingIncomingVideoPacketsIsOnInConnection() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             StreamSettings screen = controller.get();
             assertNotNull(resultGroup(search(screen, "Group incoming video packets"), "checkbox_receive_coalescing"));
@@ -376,16 +369,10 @@ public class SettingsStructureTest {
             assertTrue(keys(connection).contains("checkbox_receive_coalescing"));
             assertTrue(((SwitchPreference) connection.findPreference("checkbox_receive_coalescing")).isChecked());
         }
-        // The C engine has its own receive path: the row is hidden.
-        prefs().edit().putBoolean("checkbox_rust_engine", false).commit();
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
-            PreferenceScreen streaming = open(controller.get(), "streaming").getPreferenceScreen();
-            assertNull(streaming.findPreference("checkbox_receive_coalescing"));
-        }
     }
 
     @Test
-    public void usbForwardingIsOffAndShowsOnlyWithTheRustEngine() {
+    public void usbForwardingIsOffAndShown() {
         shadowOf(RuntimeEnvironment.getApplication().getPackageManager())
                 .setSystemFeature(PackageManager.FEATURE_USB_HOST, true);
         touchscreen();
@@ -395,27 +382,17 @@ public class SettingsStructureTest {
             assertFalse(forwarding.isChecked());
             assertEquals("Forward USB devices", String.valueOf(forwarding.getTitle()));
         }
-        // The C engine forwards nothing: the row is hidden.
-        prefs().edit().putBoolean("checkbox_rust_engine", false).commit();
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
-            assertNull(open(controller.get(), "input").getPreferenceScreen().findPreference("checkbox_usb_forwarding"));
-        }
     }
 
     // Moonlight V+'s clipboard sync is an established feature there: off until asked, but no Experimental label.
     @Test
-    public void clipboardSyncIsOffAndShowsOnlyWithTheRustEngine() {
+    public void clipboardSyncIsOffAndShown() {
         try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
             PreferenceScreen input = open(controller.get(), "input").getPreferenceScreen();
             SwitchPreference sync = (SwitchPreference) input.findPreference("checkbox_clipboard_sync");
             assertFalse(sync.isChecked());
             assertEquals(controller.get().getString(R.string.title_clipboard_sync), String.valueOf(sync.getTitle()));
             assertFalse(String.valueOf(sync.getTitle()).contains("Experimental"));
-        }
-        // The C engine has no clipboard sync: the row is hidden.
-        prefs().edit().putBoolean("checkbox_rust_engine", false).commit();
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
-            assertNull(open(controller.get(), "input").getPreferenceScreen().findPreference("checkbox_clipboard_sync"));
         }
     }
 

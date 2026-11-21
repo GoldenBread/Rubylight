@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">Full chroma</string>
-    <string name="summary_packed_444">Requires Rubylight’s full chroma option, the New streaming engine, and a compatible hardware HEVC/AV1 decoder. If the PC or this device can’t do it, the stream starts without it. HDR also requires a compatible 10-bit HDR display surface.</string>
+    <string name="summary_packed_444">Requires Rubylight’s full chroma option and a compatible hardware HEVC/AV1 decoder. If the PC or this device can’t do it, the stream starts without it. HDR also requires a compatible 10-bit HDR display surface.</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">Shows mouse and right-stick camera turns on the next refresh by shifting the picture; the HUD stays in place, and edges are approximate while turning. Needs PC support and the New streaming engine. A Dolby Vision screen streams HDR10 with it on.</string>
+    <string name="summary_frame_warp">Shows mouse and right-stick camera turns on the next refresh by shifting the picture; the HUD stays in place, and edges are approximate while turning. Needs PC support. A Dolby Vision screen streams HDR10 with it on.</string>
     <string name="frame_warp_overlay_mouse">Frame Warp: locked %1$s px/count, lag %2$s ms, shift %3$s px (peak %4$s)</string>
     <string name="frame_warp_overlay_stick">Frame Warp: locked %1$s px/s, lag %2$s ms, shift %3$s px (peak %4$s)</string>
     <string name="frame_warp_overlay_learning">Frame Warp: learning</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp: not offered by the PC</string>
     <string name="frame_warp_overlay_off">Frame Warp: off for this stream</string>
-    <string name="frame_warp_needs_engine">Frame Warp needs the New streaming engine. This stream runs without it.</string>
     <string name="frame_warp_unavailable">Frame Warp is off for this stream: %1$s</string>
     <string name="frame_warp_reason_hdr">this device shows HDR only straight from the decoder</string>
     <string name="frame_warp_reason_full_chroma">Full chroma is on</string>
@@ -299,8 +298,6 @@
     <string name="summary_full_range">Asks for full-range video, for full shadow and highlight detail. Blacks crush or highlights clip unless the PC and the screen both use full range; leave it off unless you know both do.</string>
     <string name="title_enable_post_stream_toast">Show decode time after streaming</string>
     <string name="summary_enable_post_stream_toast">Shows the average decode time when a stream ends: this device’s decoding only, not the end-to-end latency.</string>
-    <string name="title_rust_engine">New streaming engine</string>
-    <string name="summary_rust_engine">For troubleshooting. Leave it on; turn it off only if a stream fails to start or misbehaves. The classic engine lacks newer features such as Frame Warp and Audio passthrough.</string>
 
 
     <!-- Toasts -->

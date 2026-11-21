@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">全色度</string>
-    <string name="summary_packed_444">需要啟用 Rubylight 的全色度選項和新串流引擎，並使用相容的 HEVC/AV1 硬體解碼器。如果電腦或此裝置不支援，串流將以一般色度開始。HDR 還需要相容的 10 位元 HDR 顯示表面。</string>
+    <string name="summary_packed_444">需要啟用 Rubylight 的全色度選項，並使用相容的 HEVC/AV1 硬體解碼器。如果電腦或此裝置不支援，串流將以一般色度開始。HDR 還需要相容的 10 位元 HDR 顯示表面。</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">藉由平移畫面，在下一次螢幕更新時就顯示滑鼠和右搖桿的視角轉動；HUD 保持不動，轉動時畫面邊緣為近似填補。需要電腦支援和「新串流引擎」。在 Dolby Vision 螢幕上開啟後，串流為 HDR10。</string>
+    <string name="summary_frame_warp">藉由平移畫面，在下一次螢幕更新時就顯示滑鼠和右搖桿的視角轉動；HUD 保持不動，轉動時畫面邊緣為近似填補。需要電腦支援。在 Dolby Vision 螢幕上開啟後，串流為 HDR10。</string>
     <string name="frame_warp_overlay_mouse">Frame Warp：已鎖定 %1$s px/計數，延遲 %2$s ms，平移 %3$s px（峰值 %4$s）</string>
     <string name="frame_warp_overlay_stick">Frame Warp：已鎖定 %1$s px/秒，延遲 %2$s ms，平移 %3$s px（峰值 %4$s）</string>
     <string name="frame_warp_overlay_learning">Frame Warp：學習中</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp：電腦未提供</string>
     <string name="frame_warp_overlay_off">Frame Warp：此串流中已關閉</string>
-    <string name="frame_warp_needs_engine">Frame Warp 需要新串流引擎。此串流不使用它。</string>
     <string name="frame_warp_unavailable">此串流中 Frame Warp 已關閉：%1$s</string>
     <string name="frame_warp_reason_hdr">此裝置只能直接從解碼器顯示 HDR</string>
     <string name="frame_warp_reason_full_chroma">已開啟全色度</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">要求全範圍視訊，以保留完整的暗部和高光細節。如果電腦和螢幕沒有都使用全範圍，暗部會死黑或高光會過曝；除非兩者都使用，否則請保持關閉。</string>
     <string name="title_enable_post_stream_toast">串流後顯示解碼時間</string>
     <string name="summary_enable_post_stream_toast">串流結束時顯示平均解碼時間：僅為此裝置的解碼時間，不是端對端延遲。</string>
-    <string name="title_rust_engine">新串流引擎</string>
-    <string name="summary_rust_engine">用於疑難排解。請保持開啟；僅在串流無法啟動或運作異常時關閉。經典引擎缺少 Frame Warp、「音訊直通」等較新的功能。</string>
     <string name="toast_controller_type_changed">動作控制可能會變更控制器類型。</string>
     <string name="local_network_rationale">請允許存取區域網路，以尋找你的電腦。</string>
     <string name="resolution_360p">360p</string>

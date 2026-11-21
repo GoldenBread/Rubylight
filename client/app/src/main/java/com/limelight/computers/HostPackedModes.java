@@ -31,7 +31,7 @@ public final class HostPackedModes {
     /**
      * Remembers what a DESCRIBE offered. No modes (or an attribute the client could not read)
      * forgets the PC instead: that is a host with full chroma off, which serverinfo then omits too.
-     * A negative value is no DESCRIBE at all (the C engine does not read it) and changes nothing.
+     * A negative value is no DESCRIBE at all and changes nothing.
      * Mode bits this client does not know are left out.
      */
     public static void store(Context context, String hostUuid, int describeModes) {

@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="title_packed_444">Pełna chrominancja</string>
-    <string name="summary_packed_444">Wymaga opcji pełnej chrominancji w Rubylight, nowego silnika streamingu i zgodnego sprzętowego dekodera HEVC/AV1. Jeśli komputer lub to urządzenie jej nie obsługuje, strumień startuje bez niej. HDR wymaga też zgodnej 10-bitowej powierzchni wyświetlania HDR.</string>
+    <string name="summary_packed_444">Wymaga opcji pełnej chrominancji w Rubylight i zgodnego sprzętowego dekodera HEVC/AV1. Jeśli komputer lub to urządzenie jej nie obsługuje, strumień startuje bez niej. HDR wymaga też zgodnej 10-bitowej powierzchni wyświetlania HDR.</string>
     <string name="title_frame_warp">Frame Warp</string>
-    <string name="summary_frame_warp">Pokazuje obroty kamery myszą i prawą gałką już przy następnym odświeżeniu, przesuwając obraz; HUD zostaje na miejscu, a krawędzie są podczas obrotu przybliżone. Wymaga obsługi przez komputer i opcji „Nowy silnik strumieniowania”. Na ekranie Dolby Vision strumień jest wtedy w HDR10.</string>
+    <string name="summary_frame_warp">Pokazuje obroty kamery myszą i prawą gałką już przy następnym odświeżeniu, przesuwając obraz; HUD zostaje na miejscu, a krawędzie są podczas obrotu przybliżone. Wymaga obsługi przez komputer. Na ekranie Dolby Vision strumień jest wtedy w HDR10.</string>
     <string name="frame_warp_overlay_mouse">Frame Warp: dopasowany %1$s px/jednostkę, opóźnienie %2$s ms, przesunięcie %3$s px (szczyt %4$s)</string>
     <string name="frame_warp_overlay_stick">Frame Warp: dopasowany %1$s px/s, opóźnienie %2$s ms, przesunięcie %3$s px (szczyt %4$s)</string>
     <string name="frame_warp_overlay_learning">Frame Warp: uczy się</string>
     <string name="frame_warp_overlay_not_offered">Frame Warp: komputer go nie oferuje</string>
     <string name="frame_warp_overlay_off">Frame Warp: wyłączony dla tego strumienia</string>
-    <string name="frame_warp_needs_engine">Frame Warp wymaga nowego silnika streamingu. Ten strumień działa bez niego.</string>
     <string name="frame_warp_unavailable">Frame Warp jest wyłączony dla tego strumienia: %1$s</string>
     <string name="frame_warp_reason_hdr">to urządzenie pokazuje HDR tylko bezpośrednio z dekodera</string>
     <string name="frame_warp_reason_full_chroma">pełna chrominancja jest włączona</string>
@@ -255,8 +254,6 @@
     <string name="summary_full_range">Żąda wideo w pełnym zakresie, co daje pełne szczegóły w cieniach i światłach. Jeśli komputer i ekran nie używają go oba, czernie się zlewają lub światła są przepalone; zostaw wyłączone, chyba że oba go używają.</string>
     <string name="title_enable_post_stream_toast">Pokaż czas dekodowania po strumieniowaniu</string>
     <string name="summary_enable_post_stream_toast">Pokazuje średni czas dekodowania po zakończeniu strumienia: samo dekodowanie na tym urządzeniu, a nie całkowite opóźnienie (end-to-end).</string>
-    <string name="title_rust_engine">Nowy silnik strumieniowania</string>
-    <string name="summary_rust_engine">Do rozwiązywania problemów. Zostaw włączone; wyłącz tylko wtedy, gdy strumień się nie uruchamia lub działa nieprawidłowo. Klasyczny silnik nie ma nowszych funkcji, takich jak „Frame Warp” i „Przekazywanie dźwięku bez zmian”.</string>
     <string name="toast_controller_type_changed">Sterowanie ruchem może zmienić typ kontrolera.</string>
     <string name="local_network_rationale">Zezwól na dostęp do sieci lokalnej, aby znaleźć komputery.</string>
     <string name="resolution_360p">360p</string>

@@ -4,25 +4,28 @@ import com.limelight.BuildConfig;
 import com.limelight.LimeLog;
 
 /**
- * The Rust streaming engine (nightjar-core, protocol/android in this repository), loaded from
- * libnightjar_core.so. MoonBridge routes a stream here when the user turned the engine on and
- * the stream needs nothing it lacks; the natives mirror MoonBridge's streaming natives and call
- * back into MoonBridge's bridge* methods, so renderers and listeners serve both engines.
+ * The streaming engine (nightjar-core, protocol/android in this repository), loaded from
+ * libnightjar_core.so. It is the only engine: MoonBridge starts every stream here, or fails the
+ * start with the reason ({@link #startRefusal}). The natives mirror MoonBridge's streaming calls
+ * and call back into MoonBridge's bridge* methods, so renderers and listeners serve it.
  */
 final class RustBridge {
     private RustBridge() {}
 
     private static Boolean available;
+    private static String loadFailure;
 
-    /** Loads the library once; false (and the C engine) when it is missing or broken. */
+    /** Loads the library once; false when it is missing or broken ({@link #loadFailure} says why). */
     static synchronized boolean isAvailable() {
         if (available == null) {
             boolean loaded;
             try {
                 System.loadLibrary("nightjar_core");
                 loaded = init(BuildConfig.VERSION_NAME);
+                if (!loaded) loadFailure = "its initialisation failed";
             } catch (UnsatisfiedLinkError e) {
-                LimeLog.warning("Rust engine unavailable: " + e.getMessage());
+                LimeLog.warning("Streaming engine unavailable: " + e.getMessage());
+                loadFailure = "the library did not load (" + e.getMessage() + ")";
                 loaded = false;
             }
             available = loaded;
@@ -30,20 +33,39 @@ final class RustBridge {
         return available;
     }
 
-    // GFE 3.22 (app version 7.1.431) introduced the encrypted control stream; the Rust engine
+    /** Why {@link #isAvailable} is false, or null while it is true. */
+    static synchronized String loadFailure() {
+        return available != null && !available ? loadFailure : null;
+    }
+
+    // GFE 3.22 (app version 7.1.431) introduced the encrypted control stream; the engine
     // does not speak the older generations.
     private static final int[] MIN_APP_VERSION = {7, 1, 431};
 
     /**
-     * Why this stream cannot use the Rust engine, or null when it can. The library is checked
-     * separately (isAvailable), so this stays testable without it.
+     * Why the engine cannot start this stream, as the sentence the connecting screen shows, or null
+     * when it can. The library is checked separately ({@link #startRefusal}), so this stays
+     * testable without it.
      */
-    static String fallbackReason(String appVersion, int serverCodecModeSupport, boolean inputOnly) {
+    static String hostRefusal(String appVersion, int serverCodecModeSupport, boolean inputOnly) {
         if (!appVersionAtLeast(appVersion, MIN_APP_VERSION)) {
-            return "the host is older than GFE 3.22 (app version " + appVersion + ")";
+            return "This PC's streaming software is older than GFE 3.22 (app version " + appVersion +
+                    "), which Nightjar does not support. Update it, or use Sunshine, Apollo or Rubylight.";
         }
         if (!inputOnly && serverCodecModeSupport == 0) {
-            return "the host reports no codec support";
+            return "This PC reports no video codec it can encode, so the stream cannot start. " +
+                    "Check the PC's GPU and streaming software.";
+        }
+        return null;
+    }
+
+    /** Why the next stream cannot start (the host's, or the library's), or null when it can. */
+    static String startRefusal(String appVersion, int serverCodecModeSupport, boolean inputOnly) {
+        String refusal = hostRefusal(appVersion, serverCodecModeSupport, inputOnly);
+        if (refusal != null) return refusal;
+        if (!isAvailable()) {
+            return "Nightjar's streaming engine (libnightjar_core.so) cannot start: " + loadFailure() +
+                    ". Reinstall Nightjar, and send a problem report if this stays.";
         }
         return null;
     }

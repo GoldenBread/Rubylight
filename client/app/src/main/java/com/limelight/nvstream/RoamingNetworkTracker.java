@@ -4,7 +4,7 @@ import com.limelight.nvstream.jni.MoonBridge;
 
 /**
  * Client roaming (Experimental): which default-network callbacks are a network change the
- * Rust engine must hear about. Plain Java, so the decisions are tested on the JVM;
+ * engine must hear about. Plain Java, so the decisions are tested on the JVM;
  * {@link RoamingNetworkWatch} feeds it from ConnectivityManager.
  *
  * <p>The network the stream started on is no change. A new default network is one, and so is
@@ -15,18 +15,8 @@ import com.limelight.nvstream.jni.MoonBridge;
  * return the stream's connection cannot carry on over lets the stream reconnect at once
  * instead of waiting for its connection to time out. A network is often back before it has an
  * address toward the PC (IPv6 first, DHCP later), and then the connection carries on for now;
- * so for {@link #RECHECK_MS} each change of its addresses asks again, and an answer that is no
- * longer "carries on" is reported as the return.
- *
- * <p>An engine that cannot tell whether its connection carries on (the C engine, whose sockets
- * stay on the address they started from) gets the answer from here: a return whose addresses
- * share none with the lost network's cannot carry on, so the stream reconnects at once instead
- * of freezing until its connection times out. So does a switch to another default network while
- * the old one is still up (mobile data already connected when Wi-Fi goes), which Android reports
- * without a loss: it is compared with the old network's addresses, and reported as a return
- * once it cannot carry on. A VPN on either side of a change is never judged here: a split
- * tunnel keeps the stream's LAN route, and an always-on VPN coming back changes nothing under
- * it, so the stream's own addresses stay those of the network under the VPN.
+ * so for {@link #RECHECK_MS} each change of its addresses asks the engine again, and an answer
+ * that is no longer "carries on" is reported as the return.
  */
 final class RoamingNetworkTracker {
     interface Reporter {
@@ -44,16 +34,6 @@ final class RoamingNetworkTracker {
          * metered the new network's.
          */
         default void streamNetworkReturned(int change, boolean metered) {}
-
-        /**
-         * Whether networkChanged's answer tells if the connection carries on. False for an engine
-         * that always answers that it does (the C engine): then a return onto other addresses
-         * is reported as NETWORK_CANNOT_CONTINUE.
-         */
-        default boolean answersForTheRoute() { return true; }
-
-        /** Calls settle() after delayMs (replacing a call still waiting); the C engine's check needs it. */
-        default void settleAfter(long delayMs) {}
     }
 
     /** Elapsed milliseconds on a monotonic clock. */
@@ -67,26 +47,9 @@ final class RoamingNetworkTracker {
      */
     static final long RECHECK_MS = 10000;
 
-    /**
-     * For an engine that cannot tell, a network the stream switched or returned to that has
-     * routable addresses but none of the PC's family: one that translates IPv4 (a NAT64 prefix:
-     * 464XLAT, whose CLAT IPv4 address is not among its link addresses) cannot carry on, at once.
-     * A cellular network whose prefix is not known (before Android 11, or not discovered yet) gets
-     * this long, within {@link #RECHECK_MS}, before it is taken for one. Any other network
-     * (Wi-Fi, Ethernet) carries on: its IPv4 lease may still come, however late.
-     */
-    static final long SETTLE_MS = 2000;
-
     private final Reporter reporter;
     private final Clock clock;
-    // Inet4Address or Inet6Address: the family of the PC's address, so only addresses of the family
-    // the stream reaches the PC with decide whether it carries on; null when unknown (a host name).
-    private final Class<?> pcFamily;
     private Object current;
-    // Whether the current default network is a VPN (NetworkCapabilities.TRANSPORT_VPN).
-    private boolean currentVpn;
-    // Whether the current default network is cellular (NetworkCapabilities.TRANSPORT_CELLULAR).
-    private boolean currentCellular;
     private boolean lost;
     private boolean stopped;
     // The network that came back with the connection carrying on, while it is asked again.
@@ -94,16 +57,7 @@ final class RoamingNetworkTracker {
     private boolean recheckMetered;
     private long recheckUntil;
     private Object recheckAddresses;
-    // When the network under recheck was first seen without an address of the PC's family; -1 if not.
-    private long settleFrom = -1;
-    // The newest addresses reported for each network, and those of the network the stream's
-    // connection left (lost, or switched away from). A network replaced without a loss gets no
-    // onLost, so its entry goes at the switch; MAX_NETWORKS bounds the rest.
-    private final java.util.Map<Object, Object> addressesOf = new java.util.HashMap<>();
-    // The networks among those whose link properties have a NAT64 prefix.
-    private final java.util.Set<Object> nat64Networks = new java.util.HashSet<>();
-    static final int MAX_NETWORKS = 8;
-    private Object lostAddresses;
+    private boolean recheckNat64;
 
     /** streamNetwork: the default network when the stream started, or null if unknown. */
     RoamingNetworkTracker(Object streamNetwork, Reporter reporter) {
@@ -111,82 +65,43 @@ final class RoamingNetworkTracker {
     }
 
     RoamingNetworkTracker(Object streamNetwork, Reporter reporter, Clock clock) {
-        this(streamNetwork, reporter, clock, null);
-    }
-
-    /** pcFamily: Inet4Address.class or Inet6Address.class for the PC's address, or null if unknown. */
-    RoamingNetworkTracker(Object streamNetwork, Reporter reporter, Clock clock, Class<?> pcFamily) {
         this.reporter = reporter;
         this.clock = clock;
-        this.pcFamily = pcFamily;
         current = streamNetwork;
     }
 
     /** The default network's capabilities, from onCapabilitiesChanged (or onAvailable). */
     synchronized void capabilities(Object network, boolean notMetered) {
-        capabilities(network, notMetered, false);
-    }
-
-    /** As above; vpn: the network has NetworkCapabilities.TRANSPORT_VPN. */
-    synchronized void capabilities(Object network, boolean notMetered, boolean vpn) {
-        capabilities(network, notMetered, vpn, false);
-    }
-
-    /** As above; cellular: the network has NetworkCapabilities.TRANSPORT_CELLULAR. */
-    synchronized void capabilities(Object network, boolean notMetered, boolean vpn, boolean cellular) {
         if (stopped) {
             return;
         }
         if (current == null) {
             // Nothing known about the stream's network: the first one seen is where it runs.
             current = network;
-            currentVpn = vpn;
-            currentCellular = cellular;
             return;
         }
         if (network.equals(current) && !lost) {
-            currentVpn = vpn;
-            currentCellular = cellular;
             if (network.equals(recheck)) {
                 recheckMetered = !notMetered;
             }
             return;
         }
         boolean returned = lost;
-        Object previous = current;
-        boolean previousVpn = currentVpn;
         current = network;
-        currentVpn = vpn;
-        currentCellular = cellular;
         lost = false;
         recheck = null;
-        settleFrom = -1;
         // Under the lock, so stop() returning means no report is still on its way.
         int change = reporter.networkChanged(!notMetered);
-        // Without a loss only an engine that cannot tell is asked about here: one that tells
-        // roams or answers on its own.
-        boolean switched = !returned && !reporter.answersForTheRoute() && !previousVpn;
-        Object previousAddresses = returned ? null : addressesOf.remove(previous);
-        if (!returned) nat64Networks.remove(previous);
-        if (switched) {
-            // Onto a VPN too: the network under it keeps the stream's addresses.
-            lostAddresses = previousAddresses;
-            switched = !vpn;
-        }
-        if (returned || switched) {
-            change = routeAnswer(change, addressesOf.get(network));
+        if (returned) {
             if (change == MoonBridge.NETWORK_CARRIES_ON) {
                 // The same address back, or no route yet: ask again when its addresses change.
                 recheck = network;
                 recheckMetered = !notMetered;
                 recheckUntil = clock.millis() + RECHECK_MS;
                 recheckAddresses = null;
-                settleWithout(addressesOf.get(network));
+                recheckNat64 = false;
             }
-            // A switch that carries on for now is no news; one that cannot is reported as a return.
-            if (returned || change != MoonBridge.NETWORK_CARRIES_ON) {
-                reporter.streamNetworkReturned(change, !notMetered);
-            }
+            reporter.streamNetworkReturned(change, !notMetered);
         }
     }
 
@@ -202,153 +117,35 @@ final class RoamingNetworkTracker {
 
     /** As above; nat64: the link properties have a NAT64 prefix (the network translates IPv4). */
     synchronized void addresses(Object network, Object addresses, boolean nat64) {
-        if (stopped) {
-            return;
-        }
-        if (!addressesOf.containsKey(network) && addressesOf.size() >= MAX_NETWORKS) {
-            // Networks whose loss never came: start over rather than grow.
-            addressesOf.clear();
-            nat64Networks.clear();
-        }
-        addressesOf.put(network, addresses);
-        // A prefix found after the addresses is news for the check below too.
-        boolean nat64Changed = nat64 ? nat64Networks.add(network) : nat64Networks.remove(network);
-        if (lost || recheck == null || !network.equals(recheck)) {
+        if (stopped || lost || recheck == null || !network.equals(recheck)) {
             return;
         }
         if (clock.millis() > recheckUntil) {
             recheck = null;
             return;
         }
+        // A prefix found after the addresses is news too.
+        boolean nat64Changed = nat64 != recheckNat64;
+        recheckNat64 = nat64;
         if (addresses.equals(recheckAddresses) && !nat64Changed) {
             return;
         }
         recheckAddresses = addresses;
-        int change = routeAnswer(reporter.networkChanged(recheckMetered), addresses);
+        int change = reporter.networkChanged(recheckMetered);
         if (change != MoonBridge.NETWORK_CARRIES_ON) {
             recheck = null;
             reporter.streamNetworkReturned(change, recheckMetered);
-        } else {
-            settleWithout(addresses);
         }
-    }
-
-    /** Starts the settle wait for the network under recheck when these addresses lack the PC's family. */
-    private void settleWithout(Object addresses) {
-        if (settleFrom < 0 && currentCellular && lacksPcFamily(addresses)) {
-            settleFrom = clock.millis();
-            reporter.settleAfter(SETTLE_MS);
-        }
-    }
-
-    /**
-     * From settleAfter: the network under recheck that still has no routable address of the PC's
-     * family {@link #SETTLE_MS} after it was first seen so, within {@link #RECHECK_MS}, cannot
-     * carry an engine that cannot tell on (IPv6-only mobile data for an IPv4 PC, reached through
-     * CLAT only by a new connection), so it is reported as a return that cannot carry on.
-     */
-    synchronized void settle() {
-        if (stopped || lost || recheck == null || settleFrom < 0) {
-            return;
-        }
-        long now = clock.millis();
-        if (now > recheckUntil) {
-            recheck = null;
-            return;
-        }
-        if (now < settleFrom + SETTLE_MS) {
-            reporter.settleAfter(settleFrom + SETTLE_MS - now);
-            return;
-        }
-        if (!currentCellular || !lacksPcFamily(addressesOf.get(recheck))) {
-            // An address of the PC's family came; its own check answered.
-            settleFrom = -1;
-            return;
-        }
-        int change = reporter.networkChanged(recheckMetered);
-        if (change == MoonBridge.NETWORK_CARRIES_ON) {
-            change = MoonBridge.NETWORK_CANNOT_CONTINUE;
-        }
-        recheck = null;
-        settleFrom = -1;
-        reporter.streamNetworkReturned(change, recheckMetered);
-    }
-
-    /**
-     * For an engine that cannot tell: the addresses have routable ones, but none of the PC's
-     * family (known from its literal), while the stream's own addresses are known.
-     */
-    private boolean lacksPcFamily(Object addresses) {
-        if (reporter.answersForTheRoute() || currentVpn || pcFamily == null || lostAddresses == null ||
-                !(addresses instanceof java.util.Collection)) {
-            return false;
-        }
-        boolean otherFamily = false;
-        for (Object address : (java.util.Collection<?>) addresses) {
-            if (!routable(address)) continue;
-            if (pcFamily.isInstance(address)) return false;
-            otherFamily = true;
-        }
-        return otherFamily;
     }
 
     /** The default network went away; the same network coming back is then a change. */
     synchronized void lost(Object network) {
-        if (stopped) {
-            return;
-        }
-        Object addresses = addressesOf.remove(network);
-        nat64Networks.remove(network);
-        if (lost || !network.equals(current)) {
+        if (stopped || lost || !network.equals(current)) {
             return;
         }
         lost = true;
         recheck = null;
-        // A VPN lost leaves the network under it: the stream's addresses stay that network's.
-        if (!currentVpn) {
-            lostAddresses = addresses;
-        }
         reporter.streamNetworkLost();
-    }
-
-    /**
-     * The engine's answer for a returned network with these addresses. An engine that cannot
-     * tell carries on while the network has no routable address yet (link-local only), while
-     * an address of the lost network is back, or when the lost network's addresses are unknown;
-     * routable addresses without any of the lost ones strand its connection. Only addresses of
-     * the PC's family count when it is known: a new temporary IPv6 address arriving before the
-     * same IPv4 lease says nothing about an IPv4 stream.
-     */
-    private int routeAnswer(int change, Object addresses) {
-        if (change != MoonBridge.NETWORK_CARRIES_ON || reporter.answersForTheRoute() || currentVpn ||
-                addresses == null || lostAddresses == null) {
-            return change;
-        }
-        if (!(addresses instanceof java.util.Collection) || !(lostAddresses instanceof java.util.Collection)) {
-            return addresses.equals(lostAddresses) ? change : MoonBridge.NETWORK_CANNOT_CONTINUE;
-        }
-        boolean routable = false;
-        for (Object address : (java.util.Collection<?>) addresses) {
-            if (!routable(address) || (pcFamily != null && !pcFamily.isInstance(address))) continue;
-            if (((java.util.Collection<?>) lostAddresses).contains(address)) return change;
-            routable = true;
-        }
-        // No address of the PC's family on a network that translates IPv4: only a new connection
-        // reaches the PC, through its CLAT.
-        return routable || (nat64Networks.contains(current) && lacksPcFamily(addresses)) ?
-                MoonBridge.NETWORK_CANNOT_CONTINUE : change;
-    }
-
-    /** Whether an address can carry a route toward the PC: not link-local, loopback or unspecified. */
-    private static boolean routable(Object address) {
-        if (!(address instanceof java.net.InetAddress)) return true;
-        java.net.InetAddress inet = (java.net.InetAddress) address;
-        return !inet.isLinkLocalAddress() && !inet.isLoopbackAddress() && !inet.isAnyLocalAddress();
-    }
-
-    /** The networks whose addresses are kept (for tests). */
-    synchronized int keptNetworks() {
-        return addressesOf.size();
     }
 
     /** The stream ends: nothing is reported after this returns. */
