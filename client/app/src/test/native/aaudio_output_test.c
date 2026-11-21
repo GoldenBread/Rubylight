@@ -332,6 +332,41 @@ static void stallsAreToldApartFromStoppedStreams(void) {
     streamState = AAUDIO_STREAM_STATE_STARTED;
 }
 
+static void* abortAfterAWhile(void* context) {
+    struct timespec pause = {0, 10000000};
+    nanosleep(&pause, NULL);
+    Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAbortAudio(NULL, NULL, (jlong)(intptr_t)context);
+    return NULL;
+}
+
+// stop() and cleanup() abort a write waiting on a full ring from their own thread: it returns at
+// its next 1 ms step as stopped, long before its 100 ms, with the rest of the packet unwritten.
+static void anAbortEndsAWriteWaitingOnAFullRing(void) {
+    static AudioOutput output;
+    static int16_t ring[256 * 2], input[240 * 2];
+    FakeShorts packet = {240 * 2, input};
+    const struct JNINativeInterface functions = {
+        .GetArrayLength = arrayLength,
+        .GetShortArrayRegion = shortRegion,
+    };
+    JNIEnv env = &functions;
+    jlong handle = (jlong)(intptr_t)&output;
+    memset(&output, 0, sizeof(output));
+    output.stream = (AAudioStream*)&output;
+    output.AAudioStream_getState = fakeState;
+    audioQueueInit(&output.queue, ring, 256, 100);
+    pthread_t aborter;
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    assert(pthread_create(&aborter, NULL, abortAfterAWhile, (void*)(intptr_t)handle) == 0);
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(&env, NULL, handle, (jshortArray)&packet, 240 * 2) == AUDIO_WRITE_STOPPED);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    assert(pthread_join(aborter, NULL) == 0);
+    long elapsedMs = (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
+    assert(elapsedMs < AUDIO_WRITE_STALL_WAITS);
+    assert(atomic_load(&output.queue.writtenFrames) == 100);
+}
+
 int main(void) {
     AudioOutput output = {0};
     int16_t ring[4096 * 2], input[48000 * 2], pcm[192 * 2];
@@ -401,6 +436,7 @@ int main(void) {
     gapsAreJitterOrStalls();
     writesComeOverInPieces();
     stallsAreToldApartFromStoppedStreams();
+    anAbortEndsAWriteWaitingOnAFullRing();
     puts("AAudio output tests passed");
     return 0;
 }

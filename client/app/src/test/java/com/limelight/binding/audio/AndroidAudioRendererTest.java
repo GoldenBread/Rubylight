@@ -15,6 +15,8 @@ import org.robolectric.util.ReflectionHelpers;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
@@ -115,8 +117,29 @@ public class AndroidAudioRendererTest {
             return fallbackSucceeds;
         }
 
+        // A native write that waits for room in a full output, as nativeWriteAudio does for up to 100 ms
+        // (here 10 s), until abortNativeAudio() cuts it short.
+        private final CountDownLatch writeWaiting = new CountDownLatch(1), writeAborted = new CountDownLatch(1);
+        private boolean stallWrites;
+        private volatile boolean writeWasAborted;
+        private volatile int aborts;
+
+        @Override void abortNativeAudio() {
+            aborts++;
+            writeAborted.countDown();
+        }
+
         @Override int writeNativeAudio(short[] data, int length) {
             nativeWrites++;
+            if (stallWrites) {
+                writeWaiting.countDown();
+                try {
+                    writeWasAborted = writeAborted.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return NATIVE_WRITE_STOPPED;
+            }
             if (stallNextNativeWrites > 0) {
                 stallNextNativeWrites--;
                 return NATIVE_WRITE_STALLED;
@@ -824,6 +847,31 @@ public class AndroidAudioRendererTest {
         assertNull(renderer.fallbackReason);
         assertEquals(Long.valueOf(0), ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
         ReflectionHelpers.setField(renderer, "nativeAudio", 0L);
+    }
+
+    @Test public void stopAndCleanupDoNotWaitBehindAWriteStalledOnAFullOutput() throws Exception {
+        ScriptedRenderer renderer = disconnectedAAudio();
+        renderer.stallWrites = true;
+        renderer.reopenSucceeds = true;
+        Thread decoder = new Thread(renderer::play);
+        decoder.start();
+        assertTrue(renderer.writeWaiting.await(5, TimeUnit.SECONDS));
+        // The write holds the renderer's monitor: stop() has to reach the output first.
+        long start = System.nanoTime();
+        renderer.stop();
+        decoder.join(5000);
+        assertFalse(decoder.isAlive());
+        assertTrue("the write was cut short by the abort, not its own wait", renderer.writeWasAborted);
+        assertTrue("stop() waited behind the write", System.nanoTime() - start < 5_000_000_000L);
+        // A write the stop cut short is no disconnect: nothing reopens, the buffer is dropped.
+        assertEquals(0, renderer.reopens);
+        assertEquals(0, renderer.closes);
+        assertEquals(Long.valueOf(1), ReflectionHelpers.<Long>getField(renderer, "droppedWrites"));
+        assertEquals(1, renderer.aborts);
+        // cleanup() aborts first too, then closes the output under the monitor (no native stats here).
+        ReflectionHelpers.setField(renderer, "nativeAudio", 0L);
+        renderer.cleanup();
+        assertEquals("stop() and cleanup() each abort before taking the monitor", 2, renderer.aborts);
     }
 
     @Test public void aShortAAudioStallDropsTheBufferWithoutReopening() {

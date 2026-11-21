@@ -33,7 +33,13 @@ public class AndroidAudioRenderer implements AudioRenderer {
     private short[] stereo;
 
     private AudioTrack track;
-    private long nativeAudio;
+    private volatile long nativeAudio;
+    // Guards the native output's lifetime against abortNativeAudio, which stop() and cleanup() call
+    // without the renderer monitor while a write that holds it waits on a stalled output. Never held
+    // across a write.
+    private final Object nativeLock = new Object();
+    // stop() or cleanup() was called: a write the abort cut short is no disconnect to reopen from.
+    private volatile boolean stopRequested;
     // The AudioTrack buffer, or the AAudio device buffer (hardware xruns; its starvation means fallback).
     private AudioBufferPolicy bufferPolicy;
     // AAudio only: the jitter reserve in the ring ahead of the stream (network starvation, never fallback).
@@ -107,6 +113,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
     private static native int nativeAudioQueued(long handle);
     private static native boolean nativeAudioSkipLate(long handle, int frames, int pendingFrames);
     private static native void nativeCloseAudio(long handle);
+    private static native void nativeAbortAudio(long handle);
 
     public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
         this(context, enableAudioFx, null);
@@ -162,6 +169,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
         this.samplesPerFrame = samplesPerFrame;
         this.channels = audioConfiguration.channelCount;
         stopped = false;
+        stopRequested = false;
         lastBufferCheckMs = 0;
         reserveStarvationShown = false;
         largestReserveFrames = 0;
@@ -213,7 +221,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
         if (!AudioBufferPolicy.useAAudio(Build.VERSION.SDK_INT, channels, enableAudioFx, sampleRate, nativeRate)) {
             return false;
         }
-        nativeAudio = nativeOpenAudio(sampleRate, MoonBridge.audioConcealer());
+        long opened = nativeOpenAudio(sampleRate, MoonBridge.audioConcealer());
+        synchronized (nativeLock) {
+            nativeAudio = opened;
+        }
         if (nativeAudio == 0) return false;
         int[] stats = nativeAudioStats(nativeAudio);
         long now = SystemClock.uptimeMillis();
@@ -245,8 +256,20 @@ public class AndroidAudioRenderer implements AudioRenderer {
     }
 
     void closeNativeAudio() {
-        if (nativeAudio != 0) nativeCloseAudio(nativeAudio);
-        nativeAudio = 0;
+        synchronized (nativeLock) {
+            if (nativeAudio != 0) nativeCloseAudio(nativeAudio);
+            nativeAudio = 0;
+        }
+    }
+
+    /**
+     * Cuts a native write short that waits for room in a stalled output, so stop() and cleanup() do not
+     * queue behind its retries on the monitor. The output stays open until cleanup() or a reopen closes it.
+     */
+    void abortNativeAudio() {
+        synchronized (nativeLock) {
+            if (nativeAudio != 0) nativeAbortAudio(nativeAudio);
+        }
     }
 
     /**
@@ -465,6 +488,10 @@ public class AndroidAudioRenderer implements AudioRenderer {
             }
             if (nativeAudio != 0) {
                 int written = writeNativeAudio(audioData, length);
+                if (written != NATIVE_WRITE_DONE && stopRequested) {
+                    droppedWrites++;
+                    return;
+                }
                 if (written == NATIVE_WRITE_DONE) {
                     nativeStalls = 0;
                     echoReference(audioData, length, queuedFrames);
@@ -488,7 +515,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
                     if (writeNativeAudio(audioData, length) == NATIVE_WRITE_DONE) {
                         echoReference(audioData, length, outputQueuedFrames());
                         tuneBuffer();
-                    } else {
+                    } else if (!stopRequested) {
                         // The next buffer reopens again, or falls back if it keeps dying.
                         droppedWrites++;
                     }
@@ -893,6 +920,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
     @Override
     public synchronized int setupEncoded(MoonBridge.AudioConfiguration audioConfiguration, int codec) {
         stopped = false;
+        stopRequested = false;
         encodedFailureShown = false;
         channels = audioConfiguration.channelCount;
         sampleRate = AudioPassthrough.SAMPLE_RATE;
@@ -1019,20 +1047,28 @@ public class AndroidAudioRenderer implements AudioRenderer {
     }
 
     @Override
-    public synchronized void stop() {
-        stopped = true;
-        audioFxWanted = false;
-        setAudioFxSession(false);
+    public void stop() {
+        // Before the monitor: a write stalled on a full output holds it for up to 100 ms.
+        stopRequested = true;
+        abortNativeAudio();
+        synchronized (this) {
+            stopped = true;
+            audioFxWanted = false;
+            setAudioFxSession(false);
+        }
     }
 
     @Override
-    public synchronized void cleanup() {
+    public void cleanup() {
+        stopRequested = true;
+        abortNativeAudio();
+        cleanupLocked();
+    }
+
+    private synchronized void cleanupLocked() {
         stopped = true;
         logSummary();
-        if (nativeAudio != 0) {
-            nativeCloseAudio(nativeAudio);
-            nativeAudio = 0;
-        }
+        closeNativeAudio();
         reservePolicy = null;
         stallWatch = null;
         reserveFrames = 0;

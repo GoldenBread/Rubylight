@@ -343,6 +343,14 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(JNIEnv* e
     return audioStreamStopped(output) ? AUDIO_WRITE_STOPPED : AUDIO_WRITE_STALLED;
 }
 
+// stop() and cleanup(), from another thread than the writer's: a write waiting on a full ring ends at
+// its next 1 ms step, answering AUDIO_WRITE_STOPPED, instead of holding the renderer for its whole wait.
+JNIEXPORT void JNICALL
+Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAbortAudio(JNIEnv* env, jclass clazz, jlong handle) {
+    AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    if (output) atomic_store(&output->stopped, true);
+}
+
 JNIEXPORT jintArray JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioStats(JNIEnv* env, jclass clazz, jlong handle) {
     AudioOutput* output = (AudioOutput*)(intptr_t)handle;
