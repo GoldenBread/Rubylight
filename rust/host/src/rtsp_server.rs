@@ -145,6 +145,7 @@ async fn connection(
                     )
                 })??;
         let req = rtsp::Request::parse(&raw)?;
+        let began = std::time::Instant::now();
         h.request_codec_probe();
         let mut headers = vec![];
         let mut body = Vec::new();
@@ -531,6 +532,7 @@ async fn connection(
             }
             Ok(())
         })();
+        tracing::info!(method = %req.method, ok = result.is_ok(), ms = began.elapsed().as_millis() as u64, "RTSP request timing");
         if let Err(error) = result {
             tracing::warn!(client = %launch.client.name, method = %req.method, error = %format!("{error:#}"), "RTSP request rejected");
             h.record_launch_failure(&launch.client.uuid, &format!("{error:#}"));

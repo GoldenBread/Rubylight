@@ -222,6 +222,7 @@ impl SessionThread<'_> {
         mut encoder: &mut Option<Encoder>,
     ) -> Result<Option<Captured<'a>>> {
         let SessionThread { m, h, s } = *self;
+        let first_wait = Instant::now();
         let (latest, capture_wake) = m.open_session_capture(&s, &c, &prepared, latest)?;
         let first = {
             let waiting_since = Instant::now();
@@ -260,6 +261,7 @@ impl SessionThread<'_> {
                 if let Some(image) = latest.wait_for_frame(&timer, &capture_wake, (Instant::now() + Duration::from_millis(50)).min(deadline))? { break image; }
             }
         };
+        tracing::info!(ms = first_wait.elapsed().as_millis() as u64, "first frame timing");
         require_hdr_source(&s, || first.gpu.display_in_hdr(), false)?;
         s.source_checked.store(true, Ordering::Release);
         m.configure_encoder(&s, &c, &first, &prepared, &mut encoder)

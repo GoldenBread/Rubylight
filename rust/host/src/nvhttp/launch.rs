@@ -45,7 +45,21 @@ pub(crate) fn check_streaming_session(h: &Shared, phase: &'static str) -> Result
     );
     result
 }
+/// Runs `work` and logs how long it took, so a launch's waits show in the log: the codec wait,
+/// the previous streams' teardown, the display and the app. Moonlight times a launch request out,
+/// and none of these had a measurement.
+pub(crate) fn timed<T>(step: &'static str, work: impl FnOnce() -> T) -> T {
+    let began = Instant::now();
+    let result = work();
+    tracing::info!(
+        step,
+        ms = began.elapsed().as_millis() as u64,
+        "launch step timing"
+    );
+    result
+}
 pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool) -> Response {
+    let began = Instant::now();
     let requested = args
         .get("appid")
         .and_then(|id| id.parse::<u32>().ok())
@@ -166,7 +180,9 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
         let (role, app, app_id, coop) =
             resolve_launch_app(&h, &args, &client, requested, control, owner, resume)?;
         if role != Role::InputOnly {
-            h.wait_for_startup_codecs_blocking(STARTUP_CODEC_WAIT);
+            timed("codec wait", || {
+                h.wait_for_startup_codecs_blocking(STARTUP_CODEC_WAIT)
+            });
         }
         if role != Role::InputOnly
             && h.codecs.load(std::sync::atomic::Ordering::Acquire) & 0x0783_0301 == 0
@@ -235,6 +251,11 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
     if result.is_ok() {
         attempt.succeeded();
     }
+    tracing::info!(
+        ok = result.is_ok(),
+        ms = began.elapsed().as_millis() as u64,
+        "launch request timing"
+    );
     let driver_ready = result.is_ok() && butterpollo_windows::display::virtual_display_available();
     launch_response(result, requested, reply, resume, driver_ready)
 }
@@ -312,7 +333,9 @@ fn launch_back_half(
     drop(canceled);
     if !stopping.is_empty() {
         tracing::info!(client = %launch.client.name, "waiting for previous streams to release their resources");
-        if !wait_for_teardown(&h.sessions, &stopping, Duration::from_secs(5)) {
+        if !timed("previous streams' teardown", || {
+            wait_for_teardown(&h.sessions, &stopping, Duration::from_secs(5))
+        }) {
             return Err(LaunchFailure(503, STILL_CLOSING).into());
         }
     }
@@ -388,7 +411,9 @@ fn launch_back_half(
             fixture.prepare(&launch);
         }
         if launch.preparation.lock().unwrap().is_none() {
-            let prepared = prepare_launch_display(h, args, &launch);
+            let prepared = timed("display preparation", || {
+                prepare_launch_display(h, args, &launch)
+            });
             match prepared {
                 Ok(prepared) => *launch.preparation.lock().unwrap() = Some(Box::new(prepared)),
                 Err(error) => {
@@ -417,7 +442,9 @@ fn launch_back_half(
         // Nucleus Co-op started the game when it admitted the launch.
         Ok(None)
     } else {
-        prepare_launch_app(h, args, app.as_ref(), &launch, resume)
+        timed("app preparation", || {
+            prepare_launch_app(h, args, app.as_ref(), &launch, resume)
+        })
     };
     let prepared_app = match prepared_app {
         Ok(prepared_app) => prepared_app,
