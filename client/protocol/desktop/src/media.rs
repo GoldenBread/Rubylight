@@ -195,6 +195,12 @@ pub struct Pictures {
     pub waiting: usize,
     /// Where VAAPI opens. Linux only.
     pub vaapi_node: VaapiNode,
+    /// The size the stream was negotiated for (`setup.width`/`height`), given to a V4L2 M2M
+    /// decoder before it opens: FFmpeg copies it into its queues, which with no size counts the
+    /// driver's first format event as a resolution change and reinitialises the buffers there
+    /// (Nightjar issue 77 on Qualcomm Iris). 0 leaves the size to the driver, as before.
+    pub width: u32,
+    pub height: u32,
 }
 
 /// The device VAAPI opens on (`Pictures::vaapi_node`, [`vaapi_node`]).
@@ -832,6 +838,18 @@ pub fn packet_timebase(hardware: Hardware) -> Option<(i32, i32)> {
     (hardware == Hardware::V4l2m2m).then_some((1, 1_000_000))
 }
 
+/// The size a V4L2 M2M decoder is opened with (`Pictures::width`/`height`), when it is known.
+/// FFmpeg copies it into its output and capture queues at open (`v4l2_m2m_dec.c`, the
+/// `avctx->coded_width`/`coded_height` assignments), so the driver's first
+/// `V4L2_EVENT_SOURCE_CHANGE` finds the size it already has and only starts decoding; without it,
+/// the same event counts as a resolution change and FFmpeg reinitialises the capture buffers there
+/// (Nightjar issue 77). Only V4L2 M2M: FFmpeg's other decoders take a preset size as a hint, and
+/// their bitstreams set it anyway.
+fn v4l2_open_size(hardware: Hardware, pictures: Pictures) -> Option<(c_int, c_int)> {
+    (hardware == Hardware::V4l2m2m && pictures.width > 0 && pictures.height > 0)
+        .then_some((pictures.width as c_int, pictures.height as c_int))
+}
+
 /// What FFmpeg's V4L2 M2M decoder makes of a packet's `pts` by the time it is a picture's, for a
 /// decoder opened with `timebase` (`packet_timebase`; none leaves `time_base` at 0/1):
 /// `v4l2_set_pts` rescales it to microseconds, `v4l2_get_pts` back (`av_rescale_q`, which
@@ -1085,10 +1103,20 @@ impl VideoDecoder {
             if video.name == "libdav1d" {
                 av_dict_set(&mut options, c"max_frame_delay".as_ptr(), c"1".as_ptr(), 0);
             }
+            let v4l2_size = v4l2_open_size(hardware, pictures);
+            if let Some((width, height)) = v4l2_size {
+                context.width = width;
+                context.height = height;
+                context.coded_width = width;
+                context.coded_height = height;
+            }
             let status = avcodec_open2(video.context, found, &mut options);
             av_dict_free(&mut options);
             if status < 0 {
                 return Err(format!("Opening the decoder: {}", error(status)));
+            }
+            if let Some((width, height)) = v4l2_size {
+                eprintln!("nightjar: V4L2 M2M {} opened for {width}x{height}", video.name);
             }
             video.name.push_str(match hardware {
                 Hardware::D3d11(_) => " d3d11va",

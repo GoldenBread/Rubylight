@@ -34,6 +34,24 @@ fn a_v4l2_picture_keeps_the_pts_of_its_frame() {
     assert_eq!(packet_timebase(Hardware::Vaapi), None);
 }
 
+/// Nightjar issue 77: on Qualcomm Iris a V4L2 M2M decoder opened without a size takes the driver's
+/// first format event as a resolution change and reinitialises its buffers, where the CLI, which
+/// opens with the stream's size, only starts decoding. The stream's size is given to V4L2 M2M
+/// alone: FFmpeg's other decoders read theirs from the bitstream.
+#[test]
+fn only_a_v4l2_decoder_is_opened_for_the_streams_size() {
+    let stream = Pictures { width: 1920, height: 1080, ..Pictures::default() };
+    assert_eq!(v4l2_open_size(Hardware::V4l2m2m, stream), Some((1920, 1080)));
+    assert_eq!(v4l2_open_size(Hardware::None, stream), None, "software reads it from the bitstream");
+    assert_eq!(v4l2_open_size(Hardware::Vaapi, stream), None);
+    assert_eq!(
+        v4l2_open_size(Hardware::V4l2m2m, Pictures::default()),
+        None,
+        "a stream whose size is not known yet leaves it to the driver"
+    );
+    assert_eq!(v4l2_open_size(Hardware::V4l2m2m, Pictures { width: 0, height: 1080, ..stream }), None);
+}
+
 /// A decoder that failed is opened again for the same stream: emptying it for a stream that
 /// starts over (`flush`) leaves no picture of the last stream, and a new context (`reopen`)
 /// takes the next key frame as the first one did.

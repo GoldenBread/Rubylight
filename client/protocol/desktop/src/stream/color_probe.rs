@@ -86,6 +86,25 @@ const BASE_FIXTURES: [(u32, media::Codec, &str, &[u8]); 4] = [
 pub const BASE_FORMATS: u32 =
     VIDEO_FORMAT_H265 | VIDEO_FORMAT_H265_MAIN10 | VIDEO_FORMAT_AV1_MAIN8 | VIDEO_FORMAT_AV1_MAIN10;
 
+/// The size of every fixture above, which its decoder is opened for (Nightjar issue 77): on
+/// Qualcomm Iris a V4L2 M2M decoder opened without a size reinitialises its buffers on the
+/// driver's first format event, and the probe then saw no picture.
+const FIXTURE_WIDTH: u32 = 256;
+const FIXTURE_HEIGHT: u32 = 256;
+
+/// What a fixture of `format` is decoded as, opened for [`FIXTURE_WIDTH`]x[`FIXTURE_HEIGHT`].
+fn fixture_pictures(format: u32, vaapi_node: media::VaapiNode) -> media::Pictures {
+    media::Pictures {
+        ten_bit: format & VIDEO_FORMAT_MASK_10BIT != 0,
+        chroma444: format & VIDEO_FORMAT_MASK_YUV444 != 0,
+        packed: false,
+        waiting: 0,
+        vaapi_node,
+        width: FIXTURE_WIDTH,
+        height: FIXTURE_HEIGHT,
+    }
+}
+
 /// What [`probe_base`] found: the formats of [`BASE_FORMATS`] the stream's decoder decodes, why
 /// the others are not offered, and the backend that decoded each (what reference frame
 /// invalidation is asked for by, `connect::video_capabilities`).
@@ -131,13 +150,7 @@ pub fn probe_base(hardware: media::Hardware, wanted: u32) -> Base {
         if format & wanted == 0 {
             continue;
         }
-        let pictures = media::Pictures {
-            ten_bit: format & VIDEO_FORMAT_MASK_10BIT != 0,
-            chroma444: false,
-            packed: false,
-            waiting: 0,
-            vaapi_node,
-        };
+        let pictures = fixture_pictures(format, vaapi_node);
         match decode(hardware, pictures, codec, data) {
             Ok((_, backend)) => {
                 eprintln!("nightjar: decoder probe: {name} {} ok", backend.label());
@@ -172,13 +185,7 @@ pub fn probe(
             continue;
         }
         let yuv444 = format & VIDEO_FORMAT_MASK_YUV444 != 0;
-        let pictures = media::Pictures {
-            ten_bit: format & VIDEO_FORMAT_MASK_10BIT != 0,
-            chroma444: yuv444,
-            packed: false,
-            waiting: 0,
-            vaapi_node,
-        };
+        let pictures = fixture_pictures(format, vaapi_node);
         match decode(hardware, pictures, codec, data)
             .and_then(|(info, backend)| {
                 drawable(&info, yuv444, &planes)?;
@@ -503,6 +510,11 @@ mod tests {
             let (info, _) = decode(media::Hardware::None, media::Pictures::default(), codec, data)
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
             assert!(info.width >= 256 && info.height >= 256, "{name}: {}x{}", info.width, info.height);
+            assert_eq!(
+                (info.width as u32, info.height as u32),
+                (FIXTURE_WIDTH, FIXTURE_HEIGHT),
+                "{name}: the probe opens the decoder for this size"
+            );
             let limit = if format & VIDEO_FORMAT_MASK_YUV444 == 0 { 8 } else { 80 };
             assert!(data.len() <= limit * 1024, "{name}: {} bytes", data.len());
         }
@@ -561,6 +573,20 @@ mod tests {
         // The retry is bounded, and the wait is longer than the quarter second that proved too short.
         assert_eq!(V4L2_PROBE_RETRIES, 1);
         assert!(ASYNC_PROBE_WAIT >= std::time::Duration::from_millis(1_000));
+    }
+
+    /// The probe opens each fixture for its own size, as a stream's decoder is opened for the
+    /// stream's (Nightjar issue 77: a V4L2 M2M decoder opened without one reinitialises its
+    /// buffers on the driver's first format event and makes no picture).
+    #[test]
+    fn every_fixture_is_opened_for_its_size() {
+        let plain = fixture_pictures(VIDEO_FORMAT_H265, media::VaapiNode::Default);
+        assert_eq!((plain.width, plain.height), (FIXTURE_WIDTH, FIXTURE_HEIGHT));
+        assert!(!plain.ten_bit && !plain.chroma444 && !plain.packed);
+        let rext = fixture_pictures(VIDEO_FORMAT_H265_REXT10_444, media::VaapiNode::Mapped(128));
+        assert!(rext.ten_bit && rext.chroma444);
+        assert_eq!((rext.width, rext.height), (FIXTURE_WIDTH, FIXTURE_HEIGHT));
+        assert_eq!(rext.vaapi_node, media::VaapiNode::Mapped(128));
     }
 
     #[test]

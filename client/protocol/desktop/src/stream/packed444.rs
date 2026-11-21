@@ -84,7 +84,7 @@ fn fixture_label(mode: usize) -> String {
 
 /// The fixture `data` decoded with `hardware` as a packed 4:2:0 picture of the mode's depth.
 fn decode(hardware: media::Hardware, codec: media::Codec, data: &[u8], ten_bit: bool) -> Result<media::Frame, String> {
-    let pictures = media::Pictures { ten_bit, chroma444: false, packed: true, waiting: 0, vaapi_node: media::vaapi_node(hardware) };
+    let pictures = media::Pictures { ten_bit, chroma444: false, packed: true, waiting: 0, vaapi_node: media::vaapi_node(hardware), width: 128, height: 128 };
     let mut decoder = media::VideoDecoder::open_first(codec, pictures, hardware, true, |_, _| {})?;
     #[cfg(target_os = "linux")]
     if let media::Hardware::Auto(gpu, _) = hardware {

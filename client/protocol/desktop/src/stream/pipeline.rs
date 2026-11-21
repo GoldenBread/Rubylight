@@ -1364,6 +1364,8 @@ impl Decoder {
             waiting: self.pool_waiting,
             // The device the probes ask, the packed one too: the GPU renderer's when it maps pictures.
             vaapi_node: media::vaapi_node(self.hardware),
+            width: setup.width.max(0) as u32,
+            height: setup.height.max(0) as u32,
         }
     }
 
