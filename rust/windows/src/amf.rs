@@ -510,9 +510,6 @@ impl Drop for Encoder {
     fn drop(&mut self) {
         // Its last query returns before the component terminates.
         self.output_thread.take();
-        // The focus map's kept surface, released with the runtime loaded;
-        // AMF holds its own references to the ones frames carried.
-        self.focus.release_map();
         let in_flight = self.in_flight.len();
         let lost = self.device_removed();
         if !self.component.is_null() {
