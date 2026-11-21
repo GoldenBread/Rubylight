@@ -620,11 +620,13 @@ pub(crate) const SETTINGS_W: f32 = 1300.0;
 /// The monitor's height in egui points, with the OS scale divided out (`gui::Gui` fills
 /// `monitor_size` from the window's display). Where the platform reports none, the window's own
 /// screen rect stands in; with neither, Auto stays at 100 %.
-fn monitor_height_points(ctx: &egui::Context) -> Option<f32> {
-    ctx.input(|i| {
+fn auto_zoom_now(ctx: &egui::Context) -> u32 {
+    let (height, os_scale) = ctx.input(|i| {
         let viewport = i.viewport();
-        viewport.monitor_size.or_else(|| viewport.outer_rect.map(|rect| rect.size())).map(|size| size.y)
-    })
+        let height = viewport.monitor_size.or_else(|| viewport.outer_rect.map(|rect| rect.size())).map(|size| size.y);
+        (height, viewport.native_pixels_per_point.unwrap_or(1.0))
+    });
+    crate::config::auto_zoom(height, os_scale)
 }
 
 impl Launcher {
@@ -740,7 +742,7 @@ impl Launcher {
             self.look = Some((look, still));
         }
         let zoom = if s.ui_zoom == 0 {
-            crate::config::auto_zoom(monitor_height_points(ctx)) as f32 / 100.0
+            auto_zoom_now(ctx) as f32 / 100.0
         } else {
             crate::config::nearest_zoom(s.ui_zoom) as f32 / 100.0
         };
@@ -774,7 +776,7 @@ impl Launcher {
         });
         let Some(step) = step else { return false };
         let stored = self.settings.ui_zoom;
-        let current = if stored == 0 { crate::config::auto_zoom(monitor_height_points(ctx)) } else { stored };
+        let current = if stored == 0 { auto_zoom_now(ctx) } else { stored };
         let zoom = if step == 0 { 0 } else { step_zoom(current, step) };
         let changed = zoom != stored;
         self.settings.ui_zoom = zoom;

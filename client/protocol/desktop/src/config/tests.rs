@@ -589,14 +589,14 @@ fn zoom_steps_stay_inside_the_range_and_odd_values_snap() {
 
 #[test]
 fn auto_zoom_follows_the_screens_height_in_points() {
-    assert_eq!(auto_zoom(Some(800.0)), 100, "a Deck's 1280x800 panel stays at 100 %");
-    assert_eq!(auto_zoom(Some(1080.0)), 100, "1080p and an OS-scaled screen stay at 100 %");
-    assert_eq!(auto_zoom(Some(1440.0)), 133, "1440p at OS scale 1");
-    assert_eq!(auto_zoom(Some(2160.0)), 200, "4K at OS scale 1");
-    assert_eq!(auto_zoom(Some(1440.0)), 133, "4K at OS scale 1.5 is 1440 points");
-    assert_eq!(auto_zoom(Some(1080.0)), 100, "4K at OS scale 2 is 1080 points");
-    assert_eq!(auto_zoom(Some(3000.0)), 250, "clamped at 250 %");
-    assert_eq!(auto_zoom(None), 100, "an unknown screen size stays at 100 %");
+    assert_eq!(auto_zoom(Some(800.0), 1.0), 100, "a Deck's 1280x800 panel stays at 100 %");
+    assert_eq!(auto_zoom(Some(1080.0), 1.0), 100, "1080p stays at 100 %");
+    assert_eq!(auto_zoom(Some(1440.0), 1.0), 100, "1440p unscaled keeps today's size");
+    assert_eq!(auto_zoom(Some(2160.0), 1.0), 200, "4K unscaled, a docked Deck on a TV");
+    assert_eq!(auto_zoom(Some(1440.0), 1.5), 100, "4K at OS scale 1.5: the OS already scales");
+    assert_eq!(auto_zoom(Some(1080.0), 2.0), 100, "4K at OS scale 2");
+    assert_eq!(auto_zoom(Some(4320.0), 1.0), 250, "clamped at 250 %");
+    assert_eq!(auto_zoom(None, 1.0), 100, "an unknown screen size stays at 100 %");
 }
 
 #[test]
