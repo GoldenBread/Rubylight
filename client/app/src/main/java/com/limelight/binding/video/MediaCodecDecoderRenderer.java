@@ -247,6 +247,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     // When the input thread's wait for a buffer began, the wait the hang check times, or -1 while it
     // is not waiting; a wait this long stops a decoder from being recorded as running well.
     private volatile long inputWaitSinceMs = -1;
+    // When the decoder first had no input buffer for a frame since it last gave one, else -1. The
+    // hang limit counts from it: the wait is split between the receive thread's few ms and the
+    // worker's (SubmitHandoff).
+    private volatile long noInputSinceMs = -1;
+    // Takes the units a stalled decoder cannot take now off the receive thread (SubmitHandoff).
+    private volatile SubmitHandoff<HandedUnit> submitHandoff;
     private static final long RECORD_INPUT_WAIT_MS = 500;
     // A decoder whose format had vendor low-latency keys and that hangs again before it ran well since
     // its hang reset is set up once more without them instead (resetHungDecoder); whether the last
@@ -3497,6 +3503,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 // Input and output buffers are invalidated by stop() and reset().
                 nextInputBuffer = null;
                 nextInputBufferIndex = -1;
+                // The new codec's wait for a buffer counts from its own first miss.
+                noInputSinceMs = -1;
                 synchronized (outputBufferQueue) {
                     outputBufferQueue.clear();
                 }
@@ -4793,13 +4801,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         startTime = SystemClock.uptimeMillis();
         inputWaitSinceMs = startTime;
         long waitedMs = 0;
+        // The hang limit runs from the first try that found no buffer, also one the receive thread
+        // made before it handed the frame to the worker (see SubmitHandoff).
+        long streakStart = !prefetch && noInputSinceMs >= 0 ? noInputSinceMs : startTime;
 
         try {
             // If we don't have an input buffer index yet, fetch one now
             int attempts = 0;
             while (nextInputBufferIndex < 0 && !stopping &&
                     codecRecoveryType.get() == CR_RECOVERY_TYPE_NONE &&
-                    InputBufferWait.askAgain(prefetch, attempts, SystemClock.uptimeMillis() - startTime)) {
+                    InputBufferWait.askAgain(prefetch, attempts, SystemClock.uptimeMillis() - streakStart)) {
                 // Under input pressure, recheck recovery and shutdown without a 10 ms wait.
                 nextInputBufferIndex = videoDecoder.dequeueInputBuffer(InputBufferWait.timeoutUs(prefetch));
                 attempts++;
@@ -4842,8 +4853,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             return true;
         }
 
-        // Measured once, above: the hang check times the same wait the flag was cleared for.
-        int deltaMs = (int) waitedMs;
+        // Measured once: the hang check times the wait since the streak began, the flag above the
+        // wait of this call.
+        int deltaMs = (int) (SystemClock.uptimeMillis() - streakStart);
+        if (nextInputBuffer != null) {
+            noInputSinceMs = -1;
+        } else if (noInputSinceMs < 0) {
+            noInputSinceMs = streakStart;
+        }
 
         if (deltaMs >= 20) {
             String stallLine = inputStalls.onStall(SystemClock.uptimeMillis(), deltaMs);
@@ -4868,6 +4885,38 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
 
         return true;
+    }
+
+    /**
+     * For the receive thread, before a unit's own fetch: whether the decoder has an input buffer
+     * within {@link InputBufferWait#RECEIVE_WAIT_MS}. Its only effects are holding the buffer for
+     * that fetch, which then returns at once, and the start of the no-input streak the hang
+     * detection counts from. Whatever else needs the unit's own path (an exception, a pending
+     * recovery) answers true.
+     */
+    private boolean inputReadyForReceiveThread() {
+        MediaCodec decoder = videoDecoder;
+        if (nextInputBuffer != null || nextInputBufferIndex >= 0 || decoder == null || stopping ||
+                codecRecoveryType.get() != CR_RECOVERY_TYPE_NONE) {
+            return true;
+        }
+        long start = SystemClock.uptimeMillis();
+        try {
+            int attempts = 0;
+            while (nextInputBufferIndex < 0 && !stopping && codecRecoveryType.get() == CR_RECOVERY_TYPE_NONE &&
+                    InputBufferWait.askAgainOnReceive(attempts, SystemClock.uptimeMillis() - start)) {
+                nextInputBufferIndex = decoder.dequeueInputBuffer(InputBufferWait.WAIT_STEP_US);
+                attempts++;
+            }
+        } catch (IllegalStateException e) {
+            return true;
+        }
+        if (nextInputBufferIndex >= 0) {
+            noInputSinceMs = -1;
+            return true;
+        }
+        if (noInputSinceMs < 0) noInputSinceMs = start;
+        return stopping || codecRecoveryType.get() != CR_RECOVERY_TYPE_NONE;
     }
 
     // Asks for a reset of a decoder that took no input for deltaMs, through the recovery attempts:
@@ -4988,6 +5037,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
             return;
         }
+        MediaCodecInfo runner = decoderForNegotiated(videoFormat);
+        if (submitHandoff == null && (runner != null ? MediaCodecHelper.decoderCanDirectSubmit(runner.getName()) : directSubmit)) {
+            enableSubmitHandoff();
+        }
         applyOutputPacingFallback();
         hostFrameTimes = prefs.hostFrameTimes;
         // A host that announced clock sync is probed for the timing CSV; frames are scheduled by
@@ -5029,6 +5082,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     public void prepareForStop() {
         // Let the decoding code know to ignore codec exceptions now
         stopping = true;
+        SubmitHandoff<HandedUnit> handoff = submitHandoff;
+        if (handoff != null) handoff.close(0);
         if (vulkanRenderer == null && prefs.upscalingMode != UpscalingPolicy.Mode.OFF &&
                 Looper.myLooper() == Looper.getMainLooper()) {
             // stop() repeats this on the shutdown worker, away from EGL startup/recovery on the UI.
@@ -5246,6 +5301,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         addRecentStreamRow();
         pyroWaveRenderer.cleanup(frameLatencyStats);
         reconfigureLimits = null;
+        SubmitHandoff<HandedUnit> handoff = submitHandoff;
+        if (handoff != null) handoff.close(1000);
         if (videoDecoder != null) {
             videoDecoder.release();
             videoDecoder = null;
@@ -5750,6 +5807,83 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                 int frameNumber, int frameType, char frameHostProcessingLatency,
                                 long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
                                 long presentationTimeUs) {
+        SubmitHandoff<HandedUnit> handoff = submitHandoff;
+        if (handoff == null || stopping) {
+            return submitInPlace(decodeUnitData, decodeUnitLength, decodeUnitType, frameNumber, frameType,
+                    frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs);
+        }
+        // With direct submit this is the thread that reads the video socket: it takes the unit in
+        // place when the decoder has a buffer within a few ms, else a worker does the waiting.
+        return handoff.submit(this::inputReadyForReceiveThread,
+                () -> submitInPlace(decodeUnitData, decodeUnitLength, decodeUnitType, frameNumber, frameType,
+                        frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs),
+                () -> new HandedUnit(copyOfUnit(decodeUnitData, decodeUnitLength), decodeUnitLength, decodeUnitType,
+                        frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
+                        receiveTimeNs, presentationTimeUs),
+                decodeUnitType == MoonBridge.BUFFER_TYPE_PICDATA ? 1 : 0);
+    }
+
+    /** A unit as the worker thread takes it: the engine reuses its buffers once the call returns. */
+    private static final class HandedUnit {
+        final byte[] data;
+        final int length, type, frameNumber, frameType;
+        final char hostProcessingLatency;
+        final long receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs;
+
+        HandedUnit(byte[] data, int length, int type, int frameNumber, int frameType, char hostProcessingLatency,
+                   long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs, long presentationTimeUs) {
+            this.data = data;
+            this.length = length;
+            this.type = type;
+            this.frameNumber = frameNumber;
+            this.frameType = frameType;
+            this.hostProcessingLatency = hostProcessingLatency;
+            this.receiveTimeUs = receiveTimeUs;
+            this.enqueueTimeUs = enqueueTimeUs;
+            this.receiveTimeNs = receiveTimeNs;
+            this.presentationTimeUs = presentationTimeUs;
+        }
+    }
+
+    /** The unit's bytes, from the array or the picture handed over in place (which stays as it was). */
+    private byte[] copyOfUnit(byte[] array, int length) {
+        if (array != null) return Arrays.copyOf(array, length);
+        byte[] copy = new byte[length];
+        ByteBuffer direct = directInput;
+        if (direct != null) {
+            ByteBuffer view = direct.duplicate();
+            view.position(0);
+            view.get(copy, 0, Math.min(length, view.remaining()));
+        }
+        return copy;
+    }
+
+    private int submitHanded(HandedUnit u) {
+        return submitInPlace(u.data, u.length, u.type, u.frameNumber, u.frameType, u.hostProcessingLatency,
+                u.receiveTimeUs, u.enqueueTimeUs, u.receiveTimeNs, u.presentationTimeUs);
+    }
+
+    /**
+     * Hands the units a decoder cannot take within a few ms to a worker thread, from the thread that
+     * submits them: with direct submit that reads the video socket, which the wait for an input
+     * buffer must not hold. The bound is the decode queue's setting. Only for a decoder that submits
+     * directly; the others submit from the engine's decode thread, where waiting is harmless.
+     */
+    void enableSubmitHandoff() {
+        int bound = prefs.decodeQueueFrames <= 0 || prefs.decodeQueueFrames > 15 ? 15 : prefs.decodeQueueFrames;
+        submitHandoff = new SubmitHandoff<>(bound, "InputSubmit", this::submitHanded);
+    }
+
+    /** The engine's decoder drops plus the frames this renderer dropped when its decoder stalled. */
+    private long decoderDropsTotal() {
+        SubmitHandoff<HandedUnit> handoff = submitHandoff;
+        return MoonBridge.getDecoderDrops() + (handoff == null ? 0 : handoff.drops());
+    }
+
+    private int submitInPlace(byte[] decodeUnitData, int decodeUnitLength, int decodeUnitType,
+                              int frameNumber, int frameType, char frameHostProcessingLatency,
+                              long receiveTimeUs, long enqueueTimeUs, long receiveTimeNs,
+                              long presentationTimeUs) {
         if (!submitHints) {
             return queueDecodeUnit(decodeUnitData, decodeUnitLength, decodeUnitType, frameNumber, frameType,
                     frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs);
@@ -5783,11 +5917,11 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         if (lastFrameNumber == 0) {
             activeWindowVideoStats.measurementStartTimestamp = SystemClock.uptimeMillis();
-            lastDecoderDrops = MoonBridge.getDecoderDrops();
+            lastDecoderDrops = decoderDropsTotal();
         } else if (frameNumber != lastFrameNumber && frameNumber != lastFrameNumber + 1) {
             // We can receive the same "frame" multiple times if it's an IDR frame.
             // In that case, each frame start NALU is submitted independently.
-            long decoderDrops = MoonBridge.getDecoderDrops();
+            long decoderDrops = decoderDropsTotal();
             // The frames dropped while waiting for the keyframe the net asked for were no network loss.
             if (safetyNet != null && frameType == MoonBridge.FRAME_TYPE_IDR &&
                     safetyNet.takeAnsweredGap(frameNumber - lastFrameNumber - 1)) {

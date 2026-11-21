@@ -8,10 +8,20 @@ package com.limelight.binding.video;
  * thread that receives the next frame's packets, and waiting there, with no frame waiting for the
  * buffer, held those packets in the socket. The next frame's submit does the waiting instead, so
  * the input stall count and the hang detection see only waits a frame really had.
+ *
+ * <p>A frame's wait itself must not hold that thread either: it waits at most
+ * {@link #RECEIVE_WAIT_MS} there, then {@link SubmitHandoff} lets a worker thread do the wait. The
+ * hang limit counts from the first try that found no buffer, wherever the later ones ran.
  */
 final class InputBufferWait {
     static final long WAIT_STEP_US = 1000;
     static final long HANG_MS = 5000;
+    /**
+     * The most the thread that receives the video packets waits for a buffer before the frame goes
+     * to {@link SubmitHandoff}'s worker: a few ms is as long as the socket may go undrained.
+     */
+    static final long RECEIVE_WAIT_MS = 3;
+    static final int RECEIVE_TRIES = 3;
 
     private InputBufferWait() {}
 
@@ -29,6 +39,11 @@ final class InputBufferWait {
             return attempts == 0;
         }
         return attempts == 0 || waitedMs < HANG_MS;
+    }
+
+    /** Whether the receive thread asks again after {@code attempts} tries that found no buffer. */
+    static boolean askAgainOnReceive(int attempts, long waitedMs) {
+        return attempts == 0 || (attempts < RECEIVE_TRIES && waitedMs < RECEIVE_WAIT_MS);
     }
 
     /**
