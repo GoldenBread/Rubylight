@@ -93,8 +93,12 @@ Step "download $Version"
 Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $out, $qa | Out-Null
 # Releases before rc.30 carry only the Butterpollo names.
-gh release download $tag -R $repo -D $out -p 'rubylight-setup-*.exe' -p 'rubylight-*-windows-x64.zip' -p 'butterpollo-setup-*.exe' -p 'butterpollo-rust-*-windows-x64.zip' -p SHA256SUMS
-if (-not (Test-Path $installer)) {
+# A release candidate (.github/scripts/rc.mjs) carries rubylight-rc-* names.
+gh release download $tag -R $repo -D $out -p 'rubylight-setup-*.exe' -p 'rubylight-*-windows-x64.zip' -p 'rubylight-rc-*' -p 'butterpollo-setup-*.exe' -p 'butterpollo-rust-*-windows-x64.zip' -p SHA256SUMS
+if (-not (Test-Path $installer) -and (Test-Path "$out\rubylight-rc-setup-$Version.exe")) {
+    $installer = "$out\rubylight-rc-setup-$Version.exe"
+    $zip = "$out\rubylight-rc-$Version-x64.zip"
+} elseif (-not (Test-Path $installer)) {
     $installer = "$out\butterpollo-setup-$Version.exe"
     $zip = "$out\butterpollo-rust-$Version-windows-x64.zip"
 }
