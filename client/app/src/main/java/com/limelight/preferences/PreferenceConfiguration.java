@@ -1889,7 +1889,7 @@ public class PreferenceConfiguration {
         config.submitHint = prefs.getBoolean(SUBMIT_HINT_PREF_STRING, false);
         config.coveringDecoderSize = prefs.getBoolean(COVERING_DECODER_SIZE_PREF_STRING, false);
         config.pyroWavePreacquire = prefs.getBoolean(PYROWAVE_PREACQUIRE_PREF_STRING, false);
-        config.receiveDecodePriority = prefs.getBoolean(RECEIVE_DECODE_PRIORITY_PREF_STRING, false);
+        config.receiveDecodePriority = prefs.getBoolean(RECEIVE_DECODE_PRIORITY_PREF_STRING, true);
         config.codecDirect = prefs.getBoolean(CODEC_DIRECT_PREF_STRING, context.getResources().getBoolean(com.limelight.R.bool.default_codec_direct));
         config.clientRoaming = prefs.getBoolean(CLIENT_ROAMING_PREF_STRING, true);
         config.roamingMetered = prefs.getBoolean(ROAMING_METERED_PREF_STRING, false);

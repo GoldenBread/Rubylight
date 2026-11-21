@@ -9,5 +9,5 @@
     <string name="title_codec_direct">Video verisi doğrudan kod çözücüye</string>
     <string name="summary_codec_direct">Sorun giderme içindir. Kareler doğrudan kod çözücüye gider, böylece bir kopyalama eksilir; açık bırakın, yalnızca bu cihazda video durur veya hatalı görünürse kapatın.</string>
     <string name="title_receive_decode_priority">Alımda kod çözücü önceliği</string>
-    <string name="summary_receive_decode_priority">Karşılaştırma içindir. Videoyu alan iş parçacığı kod çözücünün önceliğiyle çalışır; cihazlarımızdaki ölçümlerde yük altında daha yavaş çıktı. Kapalı bırakın.</string>
+    <string name="summary_receive_decode_priority">Varsayılan olarak açık. “Yayın trafiğine öncelik ver” açıkken ve kareler doğrudan kod çözücüye giderken, videoyu alan iş parçacığı kod çözücünün önceliğiyle çalışır; karşılaştırmak için kapatın.</string>
 </resources>

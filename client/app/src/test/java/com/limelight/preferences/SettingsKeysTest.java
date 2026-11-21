@@ -151,6 +151,12 @@ public class SettingsKeysTest {
         assertFalse(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).codecDirect);
     }
 
+    @Test public void decoderPriorityForReceivingIsOnUntilTurnedOff() {
+        assertTrue(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).receiveDecodePriority);
+        prefs().edit().putBoolean("checkbox_receive_decode_priority", false).commit();
+        assertFalse(PreferenceConfiguration.readPreferences(RuntimeEnvironment.getApplication()).receiveDecodePriority);
+    }
+
     @Test public void tapGestureActionsPersistIndependentlyAndMatchThePickerValues() {
         String[] actions = RuntimeEnvironment.getApplication().getResources()
                 .getStringArray(R.array.three_finger_tap_values);

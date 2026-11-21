@@ -9,5 +9,5 @@
     <string name="title_codec_direct">Dados de vídeo direto ao decodificador</string>
     <string name="summary_codec_direct">Para solução de problemas. Os quadros vão direto para o decodificador, poupando uma cópia; deixe ativado e desative só se o vídeo parar ou mostrar erros neste dispositivo.</string>
     <string name="title_receive_decode_priority">Prioridade de decodificador ao receber</string>
-    <string name="summary_receive_decode_priority">Para comparação. A thread que recebe o vídeo roda com a prioridade do decodificador; nas medições, foi mais lento sob carga nos nossos dispositivos. Deixe desativado.</string>
+    <string name="summary_receive_decode_priority">Ativado por padrão. Com “Priorizar tráfego da transmissão” ativado e os quadros indo direto ao decodificador, a thread que recebe o vídeo roda com a prioridade do decodificador; desative para comparar.</string>
 </resources>

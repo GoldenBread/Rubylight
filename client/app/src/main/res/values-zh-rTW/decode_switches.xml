@@ -9,5 +9,5 @@
     <string name="title_codec_direct">影片資料直達解碼器</string>
     <string name="summary_codec_direct">用於疑難排解。影格直接送入解碼器，省去一次複製；請保持開啟，僅在此裝置上視訊停止或出現錯誤時關閉。</string>
     <string name="title_receive_decode_priority">接收使用解碼器優先順序</string>
-    <string name="summary_receive_decode_priority">用於比較。接收視訊的執行緒以解碼器的優先順序執行；在我們的裝置上，高負載時測得更慢。請保持關閉。</string>
+    <string name="summary_receive_decode_priority">預設開啟。開啟「優先處理串流流量」且畫面直接送入解碼器時，接收視訊的執行緒以解碼器的優先順序執行；可關閉以做比較。</string>
 </resources>

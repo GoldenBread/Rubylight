@@ -9,5 +9,5 @@
     <string name="title_codec_direct">Datos de vídeo directos al decodificador</string>
     <string name="summary_codec_direct">Para solucionar problemas. Los fotogramas van directamente al decodificador, lo que ahorra una copia; déjalo activado y desactívalo solo si el vídeo se detiene o muestra errores en este dispositivo.</string>
     <string name="title_receive_decode_priority">Prioridad de decodificador al recibir</string>
-    <string name="summary_receive_decode_priority">Para comparar. El hilo que recibe el vídeo usa la prioridad del decodificador; fue más lento bajo carga al medirlo en nuestros dispositivos. Déjalo desactivado.</string>
+    <string name="summary_receive_decode_priority">Activado por defecto. Con «Priorizar el tráfico de la transmisión» activado y los fotogramas yendo directamente al decodificador, el hilo que recibe el vídeo usa la prioridad del decodificador; desactívalo para comparar.</string>
 </resources>

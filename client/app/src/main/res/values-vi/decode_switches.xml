@@ -9,5 +9,5 @@
     <string name="title_codec_direct">Dữ liệu video thẳng vào bộ giải mã</string>
     <string name="summary_codec_direct">Dùng để khắc phục sự cố. Khung hình đi thẳng vào bộ giải mã, bớt một lần sao chép; nên để bật, chỉ tắt nếu video dừng hoặc bị lỗi hình trên thiết bị này.</string>
     <string name="title_receive_decode_priority">Ưu tiên bộ giải mã khi nhận</string>
-    <string name="summary_receive_decode_priority">Dùng để so sánh. Luồng nhận video chạy với mức ưu tiên của bộ giải mã; đo trên thiết bị của chúng tôi thì chậm hơn khi tải nặng. Nên để tắt.</string>
+    <string name="summary_receive_decode_priority">Bật theo mặc định. Khi “Ưu tiên lưu lượng stream” bật và khung hình đi thẳng vào bộ giải mã, luồng nhận video chạy với mức ưu tiên của bộ giải mã; tắt để so sánh.</string>
 </resources>

@@ -9,5 +9,5 @@
     <string name="title_codec_direct">Données vidéo directes au décodeur</string>
     <string name="summary_codec_direct">Pour le dépannage. Les images vont directement dans le décodeur, ce qui économise une copie ; laissez-le activé et ne le désactivez que si la vidéo s’arrête ou affiche des erreurs sur cet appareil.</string>
     <string name="title_receive_decode_priority">Priorité du décodeur à la réception</string>
-    <string name="summary_receive_decode_priority">Pour comparer. Le thread qui reçoit la vidéo tourne à la priorité du décodeur ; c’était plus lent en charge dans nos mesures sur nos appareils. Laissez-le désactivé.</string>
+    <string name="summary_receive_decode_priority">Activé par défaut. Avec « Prioriser le trafic du stream » activé et les images envoyées directement au décodeur, le thread qui reçoit la vidéo tourne à la priorité du décodeur ; désactivez-le pour comparer.</string>
 </resources>

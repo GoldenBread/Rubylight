@@ -9,5 +9,5 @@
     <string name="title_codec_direct">视频数据直达解码器</string>
     <string name="summary_codec_direct">用于排查问题。帧直接送入解码器，省去一次复制；请保持开启，仅在此设备上视频停止或出现错误时关闭。</string>
     <string name="title_receive_decode_priority">接收使用解码器优先级</string>
-    <string name="summary_receive_decode_priority">用于对比。接收视频的线程以解码器的优先级运行；在我们的设备上，高负载时测得更慢。请保持关闭。</string>
+    <string name="summary_receive_decode_priority">默认开启。开启“优先处理串流流量”且画面直接送入解码器时，接收视频的线程以解码器的优先级运行；可关闭以作对比。</string>
 </resources>

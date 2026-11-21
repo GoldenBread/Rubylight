@@ -327,7 +327,7 @@ Tier: Main rows show when a section opens; More rows fold behind the section's l
 | --- | --- | --- | --- | --- |
 | Speed up frame hand-off<br>`checkbox_submit_hint` | More | Off | On; Off | Off by default, under Debug's More rows. Also reports the threads that hand frames to the decoder (the receive thread and the input worker) to Android's performance hints. On a Retroid Pocket 6 it made no measurable difference, idle or with its CPUs fully loaded; turn it on to compare. |
 | Video data straight to the decoder<br>`checkbox_codec_direct` | More | @bool/default_codec_direct | On; Off | On by default, under Debug's More rows. H.264, HEVC and AV1 frames go into the decoder's buffer in place, one copy fewer. Turn it off if video stops or shows errors on this device. |
-| Decoder priority for receiving<br>`checkbox_receive_decode_priority` | More | Off | On; Off | Off by default, under Debug's More rows. With Prioritize stream traffic on and frames going to the decoder directly, gives the receive thread the decoder's priority. On a Retroid Pocket 6 it made no measurable difference, idle or with its CPUs fully loaded (an earlier slower reading under load did not repeat); turn it on to compare. |
+| Decoder priority for receiving<br>`checkbox_receive_decode_priority` | More | On | On; Off | On by default, under Debug's More rows. With Prioritize stream traffic on and frames going to the decoder directly, gives the receive thread the decoder's priority. Measured on the Retroid Pocket 6 with all CPUs loaded, the p95 receive-to-release was 3.39 and 3.29 ms On against 3.61 and 3.68 ms Off, two legs each, with the median unchanged at about 1.39 ms; turn it off to compare. |
 
 #### Diagnostics
 

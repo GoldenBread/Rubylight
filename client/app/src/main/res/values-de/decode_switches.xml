@@ -9,5 +9,5 @@
     <string name="title_codec_direct">Videodaten direkt zum Decoder</string>
     <string name="summary_codec_direct">Zur Fehlersuche. Frames gehen direkt in den Decoder, was eine Kopie spart; lass es an und schalte es nur aus, wenn das Video auf diesem Gerät stehen bleibt oder Fehler zeigt.</string>
     <string name="title_receive_decode_priority">Decoder-Priorität beim Empfang</string>
-    <string name="summary_receive_decode_priority">Zum Vergleichen. Der Thread, der Video empfängt, läuft mit der Priorität des Decoders; auf unseren Geräten war es in Messungen unter Last langsamer. Lass es aus.</string>
+    <string name="summary_receive_decode_priority">Standardmäßig an. Wenn „Stream-Daten bevorzugen“ an ist und Frames direkt zum Decoder gehen, läuft der Thread, der Video empfängt, mit der Priorität des Decoders; schalte es zum Vergleichen aus.</string>
 </resources>
