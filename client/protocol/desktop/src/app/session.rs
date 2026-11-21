@@ -384,6 +384,9 @@ impl App {
         }
         // Show decode time after streaming, Android's post-stream toast; a reconnect isn't an end.
         let decode_time = streaming.decode_time_line().filter(|_| self.launcher.settings.post_stream_decode_time && reconnect.is_none());
+        // A reconnect of the same stream starts on the decoder this one leaves when its
+        // parameters still hold: a new codec context, device and frames pool are not made again.
+        streaming.keep_decoder_for_reconnect(reconnect.is_some());
         // Kept for the next stream, which turns the PC's automatic bitrate on only after it is off.
         let stopped_host = streaming.host_id;
         let (stop, teardown) = streaming.finish(self.window, &mut self.pads);

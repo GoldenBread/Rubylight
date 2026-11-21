@@ -203,6 +203,10 @@ pub struct Shared {
     /// When the last of the pictures in a row the presenter could not show was ready (session
     /// clock, us; 0 for none): the decoder that made it gives way (`Decoder::presenter_refused`).
     pub present_refused: AtomicU64,
+    /// The stream ends into a reconnect (`Streaming::keep_decoder_for_reconnect`): the decoder's
+    /// device and codec context are kept for the session that follows it, when they serve it
+    /// (`Decoder::cleanup`).
+    pub keep_decoder: std::sync::atomic::AtomicBool,
     waker: Waker,
 }
 
@@ -262,6 +266,7 @@ impl Shared {
             history: Mutex::new(DecodedHistory::default()),
             echo_cancel_noted: std::sync::atomic::AtomicBool::new(false),
             present_refused: AtomicU64::new(0),
+            keep_decoder: std::sync::atomic::AtomicBool::new(false),
             waker,
         })
     }
@@ -441,6 +446,9 @@ pub struct Decoder {
     failing: Failing,
     /// The frame being submitted failed for data lost on the way (`Failure::Loss`).
     lost: bool,
+    /// A PyroWave GPU decode failed on its device since the decoder was installed: the stream
+    /// that follows opens its own instead of starting on one that failed.
+    pyrowave_failed: bool,
     /// Pictures from a hardware pool that may wait for the presenter ([`pool_waiting`]).
     pool_waiting: usize,
     /// The times of the frames sent to the FFmpeg decoder whose pictures have not come out, in
@@ -449,6 +457,10 @@ pub struct Decoder {
     /// The FFmpeg decoder made a picture since it was opened: from then on a frame without one
     /// is a decode failure (synchronous decoders).
     pictured: bool,
+    /// The decoder was taken from the stream before (`decoder_cache`): its frames pool may not
+    /// fit this stream even when the announced parameters match (a coded size or profile the key
+    /// cannot see), so the first failed frame opens the context again at once.
+    reused: bool,
     /// A packed full chroma stream's VAAPI pictures are mapped into Vulkan: a failed import in
     /// `receive` drops the map, and the doctor learns the pictures go through memory from then.
     packed_mapped: bool,
@@ -758,6 +770,10 @@ const PYROWAVE_DUMP_FRAMES: u32 = 120;
 
 impl Decoder {
     pub fn new(shared: Arc<Shared>, hardware: Hardware) -> Self {
+        // Slice threads only (`thread_type`): a 4K host stream carries four slices (the host's
+        // automatic slice delivery), and a timed 4K software decode gained nothing beyond four
+        // threads, so the cap is the stream's slice count, not this machine's cores. More threads
+        // also cannot help a one-slice 1080p stream, and frame threading would add frames of latency.
         let threads = std::thread::available_parallelism().map_or(2, |n| n.get().min(4)) as i32;
         Self {
             shared,
@@ -775,9 +791,11 @@ impl Decoder {
             dump: std::env::var_os("NIGHTJAR_PYROWAVE_DUMP").filter(|dir| !dir.is_empty()).map(|dir| (dir.into(), 0)),
             failing: Failing::default(),
             lost: false,
+            pyrowave_failed: false,
             pool_waiting: media::EXTRA_HW_FRAMES as usize - media::HELD_BEYOND_WAITING,
             in_flight: VecDeque::new(),
             pictured: false,
+            reused: false,
             packed_mapped: false,
             vaapi_mapped: false,
             stands_in: None,
@@ -796,12 +814,19 @@ impl Decoder {
         match self.failing.failed(now_us, self.decoder.is_some()) {
             Escalation::Wait => {}
             Escalation::Reopen => {
-                eprintln!("nightjar: the video decoder failed {frames} frames in a row over {for_ms} ms with no picture; opening it again");
+                eprintln!("nightjar: the video decoder failed {frames} frames in a row over {for_ms} ms with no picture; opening it again on its device");
                 let setup = self.setup.expect("decoder setup precedes frames");
-                self.decoder = None;
-                if self.setup(&setup).is_err() || self.decoder.is_none() {
-                    self.failing.given_up = true;
-                    self.shared.notify(Notice::DecoderFailed(crate::strings::tr("The video decoder stopped working and could not be opened again.").to_owned()));
+                // The codec context is what a failed decoder needs anew; its hardware device (a
+                // VA-API, Vulkan, D3D11VA or VideoToolbox device costs what the start did) is kept.
+                if !self.reopen_on_device(now_us) {
+                    // The device itself may be gone (a driver reset): a decoder on a new one is
+                    // the last try before the stream ends.
+                    eprintln!("nightjar: opening it anew");
+                    self.decoder = None;
+                    if self.setup(&setup).is_err() || self.decoder.is_none() {
+                        self.failing.given_up = true;
+                        self.shared.notify(Notice::DecoderFailed(crate::strings::tr("The video decoder stopped working and could not be opened again.").to_owned()));
+                    }
                 }
             }
             Escalation::GiveUp if self.never_pictured_hardware().is_some() => {
@@ -821,6 +846,24 @@ impl Decoder {
         }
     }
 
+    /// Opens the stream's decoder context again on the device it has; false when it cannot (the
+    /// caller then tries a new decoder or lets the stream end).
+    fn reopen_on_device(&mut self, now_us: u64) -> bool {
+        let reopened = self.decoder.as_mut().map_or_else(|| Err("no decoder to open again".to_owned()), media::VideoDecoder::reopen);
+        match reopened {
+            Ok(()) => {
+                self.in_flight.clear();
+                self.pictured = false;
+                self.installed_us = now_us;
+                true
+            }
+            Err(error) => {
+                eprintln!("nightjar: the decoder could not be opened again on its device ({error})");
+                false
+            }
+        }
+    }
+
     /// The stream's hardware decoder when it has made no picture since it was opened.
     fn never_pictured_hardware(&self) -> Option<Hardware> {
         self.decoder.as_ref().map(|decoder| decoder.hardware).filter(|&backend| backend != Hardware::None && !self.pictured)
@@ -831,7 +874,16 @@ impl Decoder {
     fn after_frame(&mut self, decoded: bool, need_idr: bool, now_us: u64) {
         if decoded {
             self.failing.decoded();
+            self.reused = false;
         } else if need_idr && !self.lost {
+            if self.reused {
+                // The frames pool of the last stream may not fit this one even though its
+                // announced parameters matched (a coded size or profile the key cannot see):
+                // one frame is too much to wait, so the context is opened again at once.
+                self.reused = false;
+                eprintln!("nightjar: the first picture on the decoder of the last stream failed; opening its context again on the same device");
+                if self.reopen_on_device(now_us) { return; }
+            }
             self.frame_failed(now_us);
         }
     }
@@ -872,6 +924,7 @@ impl Decoder {
             Failure::Device(error) => {
                 eprintln!("nightjar: PyroWave GPU decode failed: {error}");
                 counters.decode_errors.fetch_add(1, Ordering::Relaxed);
+                self.pyrowave_failed = true;
                 self.shared.notify(pyrowave_gpu_failed(&error));
                 DecodeStatus::NeedIdr
             }
@@ -1045,20 +1098,36 @@ impl VideoDecoder for Decoder {
         if setup.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 {
             let (width, height) = (setup.width as usize, setup.height as usize);
             let chroma444 = setup.format & VIDEO_FORMAT_MASK_YUV444 != 0;
-            let created = match self.gpu {
-                Some(device) => gpu_pyrowave(device, setup, {
-                    // The presenter holds the shown picture's plane set while it draws the planes into the back buffer.
-                    #[cfg(windows)]
-                    { super::direct_planes::plane_sets(self.shared.queue_limit) }
-                    #[cfg(not(windows))]
-                    { self.shared.queue_limit + 2 }
-                })
-                    .map(|decoder| (decoder, if cfg!(target_os = "macos") { "PyroWave (GPU decode, SDK, KosmicKrisp, planes read back)" } else { "PyroWave (GPU decode, SDK)" }))
-                    .or_else(|error| mac_cpu_instead(&error, width, height, chroma444).ok_or(error))
-                    .map_err(|error| pyrowave_gpu_failed(&error)),
-                None => super::pyrowave::Pyrowave::cpu(width, height, chroma444)
-                    .map(|decoder| (decoder, "PyroWave (Rust, GPU wavelets)"))
-                    .map_err(|error| Notice::DecoderFallback(error.into())),
+            let ten_bit = setup.format & VIDEO_FORMAT_MASK_10BIT != 0;
+            let slots = {
+                // The presenter holds the shown picture's plane set while it draws the planes into the back buffer.
+                #[cfg(windows)]
+                { super::direct_planes::plane_sets(self.shared.queue_limit) }
+                #[cfg(not(windows))]
+                { self.shared.queue_limit + 2 }
+            };
+            let key = super::decoder_cache::PyroWaveKey {
+                width, height, chroma444, ten_bit,
+                gpu: self.gpu.is_some(),
+                device: self.gpu.map_or(0, |device| device.0 as usize),
+                slots,
+            };
+            super::decoder_cache::only_pyrowave();
+            let (created, reused) = match super::decoder_cache::take_pyrowave(key) {
+                Some((mut decoder, name)) => {
+                    decoder.flush();
+                    eprintln!("nightjar: reusing the PyroWave decoder of the last stream for {width}x{height} ({}), flushed", if chroma444 { "4:4:4" } else { "4:2:0" });
+                    (Ok((decoder, name)), true)
+                }
+                None => (match self.gpu {
+                    Some(device) => gpu_pyrowave(device, setup, slots)
+                        .map(|decoder| (decoder, if cfg!(target_os = "macos") { "PyroWave (GPU decode, SDK, KosmicKrisp, planes read back)" } else { "PyroWave (GPU decode, SDK)" }.to_owned()))
+                        .or_else(|error| mac_cpu_instead(&error, width, height, chroma444).map(|(decoder, name)| (decoder, name.to_owned())).ok_or(error))
+                        .map_err(|error| pyrowave_gpu_failed(&error)),
+                    None => super::pyrowave::Pyrowave::cpu(width, height, chroma444)
+                        .map(|decoder| (decoder, "PyroWave (Rust, GPU wavelets)".to_owned()))
+                        .map_err(|error| Notice::DecoderFallback(error.into())),
+                }, false),
             };
             return match created {
                 Ok((mut decoder, name)) => {
@@ -1066,10 +1135,10 @@ impl VideoDecoder for Decoder {
                         if let Err(error) = decoder.set_beam_race(self.slices) { eprintln!("nightjar: beam race: {error}"); }
                     }
                     self.pyrowave = Some(decoder);
-                    if name == MAC_CPU_INSTEAD {
+                    if !reused && name == MAC_CPU_INSTEAD {
                         self.shared.notify(Notice::DecoderFallback(crate::strings::tr("PyroWave GPU decoding did not start on this Mac, so the processor decodes this stream.").to_owned()));
                     }
-                    *lock(&self.shared.decoder_name) = name.into();
+                    *lock(&self.shared.decoder_name) = name;
                     Ok(())
                 }
                 Err(notice) => { self.shared.notify(notice); Err(-1) }
@@ -1081,15 +1150,35 @@ impl VideoDecoder for Decoder {
             return Err(-1);
         }
         let codec = codec_of(setup);
+        let pictures = self.pictures(setup);
+        let order = self.hardware.order();
+        let request = super::decoder_cache::MediaKey {
+            codec,
+            requested: self.hardware,
+            opened: self.hardware,
+            format: setup.format,
+            width: setup.width,
+            height: setup.height,
+            chroma_packing: setup.chroma_packing,
+            pictures,
+            threads: self.software_threads,
+        };
+        super::decoder_cache::only_media();
+        if let Some(mut decoder) = super::decoder_cache::take_media(request, &order) {
+            decoder.flush();
+            eprintln!("nightjar: reusing the {} decoder of the last stream for this one, flushed", decoder.name);
+            self.reused = true;
+            self.install(decoder, setup);
+            return Ok(());
+        }
         let opened = match self.hardware {
             Hardware::None => {
                 media::VideoDecoder::open(codec, Hardware::None, self.software_threads, false)
             }
-            hardware => {
+            _ => {
                 // Backends FFmpeg took to software for this stream before are not tried again.
-                let all = hardware.order();
-                let any = !all.is_empty();
-                let order: Vec<_> = all.into_iter().filter(|&backend| !self.refused.contains(&(backend, setup.format))).collect();
+                let any = !order.is_empty();
+                let order: Vec<_> = order.into_iter().filter(|&backend| !self.refused.contains(&(backend, setup.format))).collect();
                 if any && order.is_empty() && setup.chroma_packing == 0 {
                     // Every hardware decoder gave way to software this stream, which was said then.
                     return match media::VideoDecoder::open(codec, Hardware::None, self.software_threads, false) {
@@ -1097,7 +1186,7 @@ impl VideoDecoder for Decoder {
                         Err(e) => { no_decoder(&self.shared, &e); Err(-1) }
                     };
                 }
-                media::VideoDecoder::open_any(codec, self.pictures(setup), order, setup.chroma_packing != 0, log_unavailable).or_else(|e| {
+                media::VideoDecoder::open_any(codec, pictures, order, setup.chroma_packing != 0, log_unavailable).or_else(|e| {
                     if setup.chroma_packing != 0 {
                         return Err(e);
                     }
@@ -1161,7 +1250,6 @@ impl VideoDecoder for Decoder {
 
     fn cleanup(&mut self) {
         lock(&self.shared.frames).clear();
-        self.decoder = None;
         self.in_flight.clear();
         if let Some(summary) = self.pyrowave.as_ref().and_then(|decoder| decoder.stage_summary()) {
             eprintln!("nightjar: PyroWave decode stages {summary}");
@@ -1169,6 +1257,54 @@ impl VideoDecoder for Decoder {
         for line in self.pyrowave.as_ref().map(super::pyrowave::Pyrowave::gpu_report).unwrap_or_default() {
             eprintln!("nightjar: {line}");
         }
+        // A reconnect follows this stream, and no decoder failure ended it: keep what is safe to
+        // keep for the next session (`decoder_cache`), which flushes it before its first frame.
+        // A decoder that failed since its last picture is not kept, even below the retry's
+        // threshold: a stream can end into a reconnect while frames fail.
+        let keep = self.shared.keep_decoder.load(Ordering::Relaxed) && self.failing == Failing::default();
+        if let (true, Some(setup)) = (keep, self.setup) {
+            if let Some(decoder) = self.decoder.take() {
+                // V4L2 M2M's driver queues outlive avcodec_flush_buffers: a reused decoder would
+                // hand the new stream a capture buffer of the last one.
+                if !decoder.refused() && !decoder.asynchronous() {
+                    let key = super::decoder_cache::MediaKey {
+                        codec: codec_of(&setup),
+                        requested: self.hardware,
+                        opened: decoder.hardware,
+                        format: setup.format,
+                        width: setup.width,
+                        height: setup.height,
+                        chroma_packing: setup.chroma_packing,
+                        pictures: self.pictures(&setup),
+                        threads: self.software_threads,
+                    };
+                    eprintln!("nightjar: keeping the {} decoder for the stream that follows", decoder.name);
+                    super::decoder_cache::park_media(key, decoder);
+                }
+            }
+            if !self.pyrowave_failed {
+                if let Some(decoder) = self.pyrowave.take().filter(super::pyrowave::Pyrowave::reusable) {
+                    let key = super::decoder_cache::PyroWaveKey {
+                        width: setup.width as usize,
+                        height: setup.height as usize,
+                        chroma444: setup.format & VIDEO_FORMAT_MASK_YUV444 != 0,
+                        ten_bit: setup.format & VIDEO_FORMAT_MASK_10BIT != 0,
+                        gpu: decoder.is_gpu(),
+                        device: self.gpu.map_or(0, |device| device.0 as usize),
+                        slots: {
+                            #[cfg(windows)]
+                            { super::direct_planes::plane_sets(self.shared.queue_limit) }
+                            #[cfg(not(windows))]
+                            { self.shared.queue_limit + 2 }
+                        },
+                    };
+                    let name = lock(&self.shared.decoder_name).clone();
+                    eprintln!("nightjar: keeping the PyroWave decoder for the stream that follows");
+                    super::decoder_cache::park_pyrowave(key, decoder, name);
+                }
+            }
+        }
+        self.decoder = None;
         self.pyrowave = None;
     }
 }

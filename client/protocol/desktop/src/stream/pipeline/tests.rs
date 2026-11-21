@@ -19,6 +19,116 @@ fn audio_setup(codec: u8) -> AudioSetup {
     }
 }
 
+/// A resume or reconnect opens its own session: when the stream before ended into it, the
+/// decoder is kept and the next session takes it back, parameter for parameter.
+#[test]
+fn a_reconnect_takes_the_decoder_the_stream_before_kept() {
+    let _serial = super::super::decoder_cache::serialize();
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 96, height: 64, fps: 60, chroma_packing: 0, logical_width: 96, logical_height: 64, color_space: 1, color_range: 0 };
+    let (mut first, shared) = decoder();
+    first.setup(&setup).unwrap();
+    shared.keep_decoder.store(true, Ordering::Relaxed);
+    first.cleanup();
+    let before = super::super::decoder_cache::TAKEN.load(Ordering::Relaxed);
+    let (mut second, _) = decoder();
+    second.setup(&setup).unwrap();
+    assert_eq!(super::super::decoder_cache::TAKEN.load(Ordering::Relaxed), before + 1, "the next stream took the kept decoder");
+    assert_eq!(second.decoder.as_ref().map(|d| d.hardware), Some(Hardware::None));
+    assert!(second.setup.is_some());
+}
+
+/// A stream whose codec, format or size changed may not start on the decoder of the one before.
+#[test]
+fn a_changed_stream_opens_its_own_decoder() {
+    let _serial = super::super::decoder_cache::serialize();
+    let kept = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 112, height: 64, fps: 60, chroma_packing: 0, logical_width: 112, logical_height: 64, color_space: 1, color_range: 0 };
+    let changed = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H265, ..kept };
+    let (mut first, shared) = decoder();
+    first.setup(&kept).unwrap();
+    shared.keep_decoder.store(true, Ordering::Relaxed);
+    first.cleanup();
+    let before = super::super::decoder_cache::TAKEN.load(Ordering::Relaxed);
+    let (mut second, _) = decoder();
+    second.setup(&changed).unwrap();
+    assert_eq!(super::super::decoder_cache::TAKEN.load(Ordering::Relaxed), before, "no decoder of the last stream serves this one");
+    assert_eq!(second.decoder.as_ref().map(|d| d.hardware), Some(Hardware::None), "and one of its own opened");
+}
+
+/// PyroWave's SDK decoder is kept too: its textures and fences are the start's cost.
+#[test]
+fn a_reconnect_takes_the_pyrowave_decoder_the_stream_before_kept() {
+    let _serial = super::super::decoder_cache::serialize();
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_PYROWAVE, width: 96, height: 64, fps: 60, chroma_packing: 0, logical_width: 96, logical_height: 64, color_space: 1, color_range: 0 };
+    let (mut first, shared) = decoder();
+    first.setup(&setup).unwrap();
+    shared.keep_decoder.store(true, Ordering::Relaxed);
+    first.cleanup();
+    let before = super::super::decoder_cache::PYROWAVE_TAKEN.load(Ordering::Relaxed);
+    let (mut second, _) = decoder();
+    second.setup(&setup).unwrap();
+    assert_eq!(super::super::decoder_cache::PYROWAVE_TAKEN.load(Ordering::Relaxed), before + 1, "the next stream took the kept PyroWave decoder");
+    assert!(second.pyrowave.is_some());
+    assert_eq!(*lock(&second.shared.decoder_name), "PyroWave (Rust, GPU wavelets)");
+}
+
+/// A stream that ends for good keeps nothing: the decoder goes as it did before.
+#[test]
+fn a_stream_that_ends_for_good_drops_its_decoder() {
+    let _serial = super::super::decoder_cache::serialize();
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 128, height: 96, fps: 60, chroma_packing: 0, logical_width: 128, logical_height: 96, color_space: 1, color_range: 0 };
+    let (mut first, _shared) = decoder();
+    first.setup(&setup).unwrap();
+    first.cleanup();
+    let before = super::super::decoder_cache::TAKEN.load(Ordering::Relaxed);
+    let (mut second, _) = decoder();
+    second.setup(&setup).unwrap();
+    assert_eq!(super::super::decoder_cache::TAKEN.load(Ordering::Relaxed), before, "nothing was kept");
+}
+
+/// A decoder taken from the last stream whose first frame fails (a frames pool the key could not
+/// see fits badly) opens its context again at once, not after the retry's second.
+#[test]
+fn a_reused_decoders_first_failed_frame_opens_it_again_at_once() {
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 192, height: 96, fps: 60, chroma_packing: 0, logical_width: 192, logical_height: 96, color_space: 1, color_range: 0 };
+    let (mut decoder, _) = decoder();
+    decoder.setup(&setup).unwrap();
+    decoder.reused = true;
+    decoder.after_frame(false, true, 0);
+    assert!(!decoder.reused);
+    assert_eq!(decoder.failing, Failing::default(), "the reopen is not counted as a failure run");
+    assert!(decoder.decoder.is_some(), "the stream goes on with the same device");
+}
+
+/// V4L2 M2M decoders keep the driver's capture and output queues across
+/// `avcodec_flush_buffers`: a reused one could hand the new stream a picture of the last.
+#[test]
+fn a_v4l2_m2m_decoder_is_not_kept_for_a_reconnect() {
+    let _serial = super::super::decoder_cache::serialize();
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 160, height: 96, fps: 60, chroma_packing: 0, logical_width: 160, logical_height: 96, color_space: 1, color_range: 0 };
+    let (mut first, shared) = decoder();
+    first.setup(&setup).unwrap();
+    first.hardware = Hardware::V4l2m2m;
+    first.decoder.as_mut().expect("a decoder").hardware = Hardware::V4l2m2m;
+    shared.keep_decoder.store(true, Ordering::Relaxed);
+    first.cleanup();
+    assert!(!super::super::decoder_cache::media_parked(), "the driver's queues outlive a flush");
+}
+
+/// A decoder that failed before the stream ended is not handed to the reconnect, even when the
+/// failures were still below the retry's threshold.
+#[test]
+fn a_decoder_that_failed_before_the_stream_ended_is_not_kept() {
+    let _serial = super::super::decoder_cache::serialize();
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 176, height: 96, fps: 60, chroma_packing: 0, logical_width: 176, logical_height: 96, color_space: 1, color_range: 0 };
+    let (mut first, shared) = decoder();
+    first.setup(&setup).unwrap();
+    shared.keep_decoder.store(true, Ordering::Relaxed);
+    first.frame_failed(0);
+    assert!(!first.failing.reopened, "one failed frame is below the retry");
+    first.cleanup();
+    assert!(!super::super::decoder_cache::media_parked(), "a decoder that failed is not reused");
+}
+
 #[test]
 fn a_muted_stream_opens_no_audio_output() {
     use rubylight_protocol::audio_ext::{CODEC_AC3, CODEC_OPUS, CODEC_PCM};

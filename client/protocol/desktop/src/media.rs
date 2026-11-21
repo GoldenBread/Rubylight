@@ -669,6 +669,11 @@ pub(crate) fn error(code: i32) -> String {
 
 pub struct VideoDecoder {
     context: *mut AVCodecContext,
+    /// The codec `context` was opened for: kept to open a new context after a failure, on the
+    /// same hardware device (`reopen`).
+    found: *const AVCodec,
+    /// The `AVCodecContext::extra_hw_frames` the decoder was opened with (`reopen`).
+    extra_hw_frames: i32,
     packet: *mut AVPacket,
     /// Packet buffers of `pool_size` bytes, reused frame to frame: a buffer allocated per frame
     /// costs page faults once frames are large (from about 1 MiB, high bitrates and key frames,
@@ -930,6 +935,8 @@ impl VideoDecoder {
             }
             let mut video = Self {
                 context: avcodec_alloc_context3(found),
+                found,
+                extra_hw_frames: 0,
                 packet: av_packet_alloc(),
                 pool: ptr::null_mut(),
                 pool_size: 0,
@@ -1061,6 +1068,7 @@ impl VideoDecoder {
                 }
                 context.get_format = Some(select_format);
                 context.extra_hw_frames = pool_extra(pictures.waiting) + mapped_extra(hardware, pictures);
+                video.extra_hw_frames = context.extra_hw_frames;
             }
             context.thread_count = if hardware == Hardware::None {
                 threads
@@ -1092,6 +1100,74 @@ impl VideoDecoder {
                 Hardware::None | Hardware::V4l2m2m | Hardware::Auto(..) => "",
             });
             Ok(video)
+        }
+    }
+
+    /// Empties the decoder for a stream that starts over on it (a reconnect reusing it): no
+    /// picture of the last stream can come out, and the maps to the renderer are made again for
+    /// the stream's own (`pipeline::Decoder::install`).
+    pub fn flush(&mut self) {
+        // SAFETY: the context is allocated and opened; flushing it drops its queued packets and
+        // reference pictures.
+        unsafe { avcodec_flush_buffers(self.context) };
+        self.lent = None;
+        self.spare = None;
+        self.refused = false;
+        self.told = false;
+        self._format.software.set(false);
+        #[cfg(unix)]
+        {
+            self.dmabuf = None;
+            self.vulkan_map = None;
+            self.cuda_map = None;
+            self.cuda_fallback = None;
+        }
+    }
+
+    /// Opens the codec context again for the same stream parameters, on the same hardware device:
+    /// after a decoder failed, a new context is what recovers, but a VA-API, Vulkan, D3D11VA or
+    /// VideoToolbox device costs what the stream's start did to make. The pictures' pool and any
+    /// frame in flight go with the old context.
+    pub fn reopen(&mut self) -> Result<(), String> {
+        unsafe {
+            let mut previous = self.context;
+            let before = &mut *previous;
+            let device = std::mem::replace(&mut before.hw_device_ctx, ptr::null_mut());
+            let (threads, timebase) = (before.thread_count, before.pkt_timebase);
+            let fresh = avcodec_alloc_context3(self.found);
+            if fresh.is_null() {
+                before.hw_device_ctx = device;
+                return Err("Could not allocate the video decoder again.".into());
+            }
+            self.context = fresh;
+            avcodec_free_context(&mut previous);
+            self.lent = None;
+            self.spare = None;
+            self.refused = false;
+            self.told = false;
+            let context = &mut *fresh;
+            context.opaque = (&mut *self._format as *mut Format).cast();
+            context.hw_device_ctx = device;
+            self._format.software.set(false);
+            if self.extra_hw_frames != 0 {
+                context.extra_hw_frames = self.extra_hw_frames;
+                context.get_format = Some(select_format);
+            }
+            context.thread_count = threads;
+            context.thread_type = FF_THREAD_SLICE as i32;
+            context.pkt_timebase = timebase;
+            context.flags |= AV_CODEC_FLAG_LOW_DELAY as i32;
+            context.flags2 |= AV_CODEC_FLAG2_FAST as i32;
+            let mut options = ptr::null_mut();
+            if self.name == "libdav1d" {
+                av_dict_set(&mut options, c"max_frame_delay".as_ptr(), c"1".as_ptr(), 0);
+            }
+            let status = avcodec_open2(self.context, self.found, &mut options);
+            av_dict_free(&mut options);
+            if status < 0 {
+                return Err(format!("Opening the decoder again: {}", error(status)));
+            }
+            Ok(())
         }
     }
 

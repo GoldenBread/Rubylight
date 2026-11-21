@@ -34,6 +34,25 @@ fn a_v4l2_picture_keeps_the_pts_of_its_frame() {
     assert_eq!(packet_timebase(Hardware::Vaapi), None);
 }
 
+/// A decoder that failed is opened again for the same stream: emptying it for a stream that
+/// starts over (`flush`) leaves no picture of the last stream, and a new context (`reopen`)
+/// takes the next key frame as the first one did.
+#[test]
+fn a_flushed_and_reopened_decoder_decodes_the_next_stream() {
+    let fixture = include_bytes!("../../tests/fixtures/h264-444-8.bin");
+    let mut decoder = VideoDecoder::open(Codec::H264, Hardware::None, 2, false).expect("a software H.264 decoder");
+    assert_eq!(decoder.send(fixture, 1), 0);
+    assert!(matches!(decoder.receive(), Received::Frame(_)), "the first stream's key frame");
+    decoder.flush();
+    assert_eq!(decoder.send(fixture, 2), 0, "a stream that starts over sends its own key frame");
+    let Received::Frame(frame) = decoder.receive() else { panic!("no picture after flushing") };
+    assert_eq!(frame.info().pts, 2, "the new stream's frame number, not one left from the last");
+    decoder.reopen().expect("the decoder opens again");
+    assert_eq!(decoder.send(fixture, 3), 0, "the reopened context takes the stream's key frame");
+    let Received::Frame(frame) = decoder.receive() else { panic!("no picture after reopening") };
+    assert_eq!(frame.info().pts, 3);
+}
+
 #[test]
 fn software_decodes_packed_fixtures_and_preserves_timestamps() {
     for (codec, bytes, ten_bit) in [

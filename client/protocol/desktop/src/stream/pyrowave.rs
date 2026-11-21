@@ -134,6 +134,23 @@ impl Decoder {
             #[cfg(test)] scratch: vec![0.0; stride * rows], #[cfg(test)] line: vec![0.0; stride.max(rows)] })
     }
 
+    /// The stream starts over on this decoder (a reconnect that reuses it): drops any frame in
+    /// flight, so no picture of the last stream can come out.
+    pub fn flush(&mut self) {
+        self.early = Early::Off;
+        self.missed_start = false;
+        self.source = Source::Frame;
+        self.early_blocks = 0;
+        self.early_done = 0;
+        self.early_bytes = 0;
+        self.first_block_us = 0;
+        self.loss_percent = 0.0;
+        self.packet.clear();
+        self.records = Records::with_geometry(self.width as u32, self.height as u32, self.chroma444);
+        for plane in &mut self.planes { plane.fill(0.0); }
+        self.seen.fill(false);
+    }
+
     #[cfg(test)]
     pub fn decode(&mut self, data: &[u8]) -> Result<(), &'static str> {
         self.coefficients(data)?;
@@ -692,6 +709,32 @@ impl Pyrowave {
         }
     }
 
+    /// The stream starts over on this decoder (a reconnect that reuses it): drops any frame in
+    /// flight, so no picture of the last stream can come out.
+    pub fn flush(&mut self) {
+        match self {
+            Self::Cpu(decoder) => decoder.flush(),
+            Self::Gpu(stream) => stream.flush(),
+        }
+    }
+
+    /// Whether this decoder runs on the GPU, and so must match the renderer's device to be reused.
+    pub fn is_gpu(&self) -> bool {
+        matches!(self, Self::Gpu(_))
+    }
+
+    /// Whether a stream may start over on this decoder: a GPU decoder whose device the watchdog
+    /// took for hung is never called again.
+    pub fn reusable(&self) -> bool {
+        match self {
+            Self::Cpu(_) => true,
+            #[cfg(unix)]
+            Self::Gpu(stream) => !stream.gpu.stalled(),
+            #[cfg(not(unix))]
+            Self::Gpu(_) => true,
+        }
+    }
+
     pub fn stage_summary(&self) -> Option<String> {
         match self {
             Self::Cpu(decoder) => decoder.stage_summary(),
@@ -978,6 +1021,35 @@ impl GpuStream {
     #[cfg(all(test, not(target_os = "macos")))]
     pub fn planes(&self) -> &std::sync::Arc<super::gpu_planes::Planes> {
         &self.planes
+    }
+
+    /// The stream starts over on this decoder (a reconnect that reuses it): drops the packets and
+    /// any slice of a frame still in flight, and any plane set they pinned, so no picture of the
+    /// last stream can come out.
+    pub fn flush(&mut self) {
+        self.gpu.clear();
+        let config = self.gpu.config();
+        // A fresh recovery cache: no block of the last stream's frames can stand in for one the
+        // new stream loses.
+        self.records = Records::with_geometry(config.width, config.height, config.chroma444);
+        self.early = Early::Off;
+        self.missed_start = false;
+        self.early_bytes = 0;
+        self.first_block_us = 0;
+        self.pushed.clear();
+        self.source = Source::Frame;
+        if let Some(race) = &mut self.race {
+            race.lease = None;
+            race.events.clear();
+            race.header_pushed = false;
+            race.bands.clear();
+            race.failure = None;
+            race.no_plane = false;
+            // A new stream's first frames are sliced as a fresh decoder's are, whatever order the
+            // last stream's frames arrived in.
+            race.ordered_run = ORDERED_FRAMES_TO_RESUME;
+            race.slicing = true;
+        }
     }
 
     pub fn chunk(&mut self, first: bool, flags: u32, payload: &[u8]) {

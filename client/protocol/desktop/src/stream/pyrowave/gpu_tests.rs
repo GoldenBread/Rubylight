@@ -712,3 +712,32 @@ fn both_pictures_match_the_float_planes_on_average_on_dumped_real_frames() {
         assert!(gpu_mean.abs() < FLOAT_PLANES_MEAN_LIMIT, "frame {n}: the GPU path is {gpu_mean:+.3} codes off the float planes on average");
     }
 }
+
+/// Times making the PyroWave decoders a reconnect used to make again: the SDK's GPU decoder
+/// with its textures and fences, and the CPU one with its planes, at 4K. Ignored like the other
+/// GPU tests (`cargo test -p nightjar-desktop --release -- --ignored --test-threads=1
+/// stream::pyrowave::gpu_tests::decoder_creation_costs`).
+#[test]
+#[ignore = "measurement: needs the PyroWave SDK, a GPU and a Direct3D 11 renderer"]
+fn decoder_creation_costs() {
+    let _gpu = gpu_lock();
+    let rig = Rig::new();
+    let api = sdk();
+    let device = rig.device();
+    let mut times: Vec<f64> = Vec::new();
+    for _ in 0..5 {
+        let started = std::time::Instant::now();
+        drop(GpuDecoder::with_api(api.clone(), &device, GpuConfig { width: 3840, height: 2160, chroma444: false, ten_bit: true, slots: 8 }).expect("the 4K 10-bit GPU decoder"));
+        times.push(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(f64::total_cmp);
+    eprintln!("nightjar: PyroWave SDK decoder 3840x2160 10-bit, 8 plane sets: median {:.2} ms, min {:.2} ms, max {:.2} ms", times[2], times[0], times[4]);
+    times.clear();
+    for _ in 0..10 {
+        let started = std::time::Instant::now();
+        drop(Decoder::new(3840, 2160, false).expect("the 4K CPU decoder"));
+        times.push(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(f64::total_cmp);
+    eprintln!("nightjar: PyroWave CPU decoder 3840x2160: median {:.2} ms, p10 {:.2} ms, p90 {:.2} ms", times[5], times[1], times[9]);
+}

@@ -758,3 +758,59 @@ fn the_back_buffer_view_is_kept_for_its_swap_chain_and_size_and_let_go_otherwise
     held.release();
     assert!(!held.is_held(), "a frame that does not draw with it lets it go");
 }
+
+/// Times what a resume or reconnect used to pay for a decoder: opening one, and opening its
+/// codec context again on the device it already has. Software and D3D11VA, the backends this
+/// PC has; run it in release (`cargo test -p nightjar-desktop --release -- --ignored --nocapture
+/// decoder_open_costs`). Not a check: a measurement, so it asserts only that the decoder opens.
+#[test]
+#[ignore = "measurement: times decoder opens (release build)"]
+fn decoder_open_costs() {
+    use crate::media::{Codec, Hardware, VideoDecoder};
+    use std::time::Instant;
+
+    fn median(what: &str, mut run: impl FnMut()) {
+        let mut ms: Vec<f64> = Vec::new();
+        for _ in 0..20 {
+            let started = Instant::now();
+            run();
+            ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        ms.sort_by(f64::total_cmp);
+        eprintln!("nightjar: {what}: median {:.2} ms, p10 {:.2} ms, p90 {:.2} ms", ms[10], ms[2], ms[18]);
+    }
+
+    let fixture = include_bytes!("../../../tests/fixtures/hevc-420-8.bin");
+    fn first_picture(fixture: &[u8], mut open: impl FnMut() -> VideoDecoder) {
+        let mut decoder = open();
+        assert_eq!(decoder.send(fixture, 0), 0);
+        assert!(matches!(decoder.receive(), crate::media::Received::Frame(_)), "the fixture's picture");
+    }
+
+    median("software HEVC open", || drop(VideoDecoder::open(Codec::Hevc, Hardware::None, 8, false).expect("software HEVC")));
+    median("software HEVC open and first picture", || first_picture(fixture, || VideoDecoder::open(Codec::Hevc, Hardware::None, 8, false).expect("software HEVC")));
+    let mut software = VideoDecoder::open(Codec::Hevc, Hardware::None, 8, false).expect("software HEVC");
+    median("software HEVC reopen, context only", || software.reopen().expect("a software reopen"));
+
+    // SAFETY: Plain D3D11 calls on a device made and used on this thread; the decoders hold
+    // their own reference to it.
+    unsafe {
+        let (mut device, mut context) = (None, None);
+        D3D11CreateDevice(None, windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(),
+            D3D11_CREATE_DEVICE_VIDEO_SUPPORT, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION,
+            Some(&mut device), None, Some(&mut context)).expect("a video Direct3D 11 device");
+        let device = device.unwrap();
+        median("D3D11VA HEVC open", || drop(VideoDecoder::open(Codec::Hevc, Hardware::D3d11(device.as_raw()), 1, true).expect("D3D11VA HEVC")));
+        median("D3D11VA HEVC open and first picture", || first_picture(fixture, || VideoDecoder::open(Codec::Hevc, Hardware::D3d11(device.as_raw()), 1, true).expect("D3D11VA HEVC")));
+        let mut d3d11 = VideoDecoder::open(Codec::Hevc, Hardware::D3d11(device.as_raw()), 1, true).expect("D3D11VA HEVC");
+        median("D3D11VA HEVC reopen, device kept", || d3d11.reopen().expect("a D3D11VA reopen"));
+        // The lifecycle, not only the timing: a flushed decoder takes the next stream's key frame
+        // on the same device, and so does one opened again after a failure.
+        d3d11.flush();
+        assert_eq!(d3d11.send(fixture, 1), 0);
+        assert!(matches!(d3d11.receive(), crate::media::Received::Frame(_)), "a flushed D3D11VA decoder decodes the next stream");
+        d3d11.reopen().expect("a D3D11VA reopen");
+        assert_eq!(d3d11.send(fixture, 2), 0);
+        assert!(matches!(d3d11.receive(), crate::media::Received::Frame(_)), "a reopened D3D11VA decoder decodes the next stream");
+    }
+}

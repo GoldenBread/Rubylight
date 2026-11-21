@@ -104,6 +104,7 @@ pub mod ui_pq;
 mod vulkan_tests_unix;
 mod negotiate;
 mod connect;
+mod decoder_cache;
 mod stats;
 mod input;
 mod render;
@@ -2555,6 +2556,14 @@ impl Streaming {
 
     pub fn since_start(&self) -> Duration {
         self.started.elapsed()
+    }
+
+    /// The stream ends into a reconnect, on its own or by the player's choice: the decoder's
+    /// device and codec context are kept for the session that follows it when it is the same
+    /// stream (`stream::pipeline::Decoder::cleanup`). Off by default, so a stream that ends for
+    /// good drops its decoder as before.
+    pub fn keep_decoder_for_reconnect(&self, keep: bool) {
+        self.shared.keep_decoder.store(keep, Ordering::Relaxed);
     }
 
     /// Ends the stream: releases input, stops the session on a reaper thread. Returns the request
