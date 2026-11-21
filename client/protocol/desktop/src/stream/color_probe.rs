@@ -646,9 +646,10 @@ mod tests {
     }
 
     /// Nightjar issue 77: an Iris whose V4L2 M2M decoder never answers must not add more than a
-    /// couple of seconds to a start, though one start checks five HEVC fixtures. The two checks
-    /// share a budget; a retry's settle comes out of it too, and once it is spent each attempt
-    /// still gets the old quarter second, without a retry.
+    /// couple of seconds to a start, though one start checks up to five asynchronous fixtures. The
+    /// two checks share a budget; a retry's settle comes out of it too, and once it is spent each
+    /// attempt still gets the old quarter second, without a retry: at most the budget more than
+    /// before it, about 3 s in all.
     #[test]
     fn the_v4l2_probe_time_of_a_start_is_bounded_across_formats() {
         use std::time::Duration;
@@ -665,6 +666,8 @@ mod tests {
         assert_eq!(budget.left(), Duration::ZERO, "the two attempts spend the start's budget");
         assert!(!budget.retry(), "a second retry has nothing left");
         assert_eq!(budget.wait(), ASYNC_PROBE_FLOOR, "later formats still get the old quarter second");
+        // The worst start: the first fixture's two attempts spend the budget, four more wait the floor.
+        assert!(V4L2_PROBE_BUDGET + ASYNC_PROBE_FLOOR * 4 <= Duration::from_secs(3));
         // A slow picture is charged too, so slow successes cannot add up past the budget.
         let mut slow = ProbeBudget::default();
         slow.spent(Duration::from_millis(1_400));

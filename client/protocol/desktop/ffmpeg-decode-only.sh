@@ -13,7 +13,7 @@
 # The result is libavcodec and libavutil only, with the H.264, HEVC and AV1 decoders, their
 # hardware paths (D3D11VA and DXVA2 on Windows; VAAPI, Vulkan video, NVDEC and the V4L2
 # memory-to-memory decoders on Linux) and dav1d: no encoders, muxers,
-# filters, swscale, swresample, or programs. It has the same sonames as the distributions'
+# filters, swscale, swresample, or programs (NIGHTJAR_FFMPEG_PROGRAMS=1 below adds them). It has the same sonames as the distributions'
 # FFmpeg 9, so `NIGHTJAR_FFMPEG_DIR=<prefix>` builds nightjar against it. On Windows, Opus (and its
 # header) is copied into the prefix next to it. On Linux the libraries get the run path $ORIGIN, so
 # libavcodec finds libavutil and libdav1d (copied into the prefix) in the folder it is in, and the
@@ -140,8 +140,11 @@ if [[ -n $linux ]]; then
   # nothing else would notice a configure line that lost --enable-libdrm.
   readelf -d "$prefix/lib/libavutil.so" | grep -q 'NEEDED.*\[libdrm\.so' || { echo "libavutil.so does not link libdrm (apt install libdrm-dev)" >&2; exit 1; }
   for lib in "$prefix"/lib/lib*.so.*.*; do
-    readelf -d "$lib" | grep -Eq '(RPATH|RUNPATH).*\[\$ORIGIN\]' || { echo "${lib##*/} has no run path \$ORIGIN" >&2; exit 1; }
+    readelf -d "$lib" | grep -Eq '(RPATH|RUNPATH).*\[\$ORIGIN(:|\])' || { echo "${lib##*/} has no run path \$ORIGIN" >&2; exit 1; }
   done
+  if [[ ${NIGHTJAR_FFMPEG_PROGRAMS:-0} == 1 ]]; then
+    readelf -d "$prefix/bin/ffmpeg" | grep -Eq '(RPATH|RUNPATH).*\$ORIGIN/\.\./lib' || { echo "ffmpeg has no run path \$ORIGIN/../lib" >&2; exit 1; }
+  fi
   # libavcodec needs dav1d at run time: ship the one it was built against, next to it (a copy
   # from an earlier run would hide the system's from ldd).
   rm -f "$prefix"/lib/libdav1d.so*
