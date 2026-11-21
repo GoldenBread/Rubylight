@@ -11,7 +11,7 @@ use crate::{
     enet_host_check_events, enet_host_compress, enet_host_connect, enet_host_create,
     enet_host_destroy, enet_host_flush, enet_host_service,
     error::{BadParameter, HostNewError, NoAvailablePeers},
-    enet_time_get, time_since_epoch, Compressor, ENetEvent, ENetHost, ENetPeer, Event, Packet,
+    enet_time_get, monotonic_time, Compressor, ENetEvent, ENetHost, ENetPeer, Event, Packet,
     Peer, PeerID, PeerState, Socket, ENET_EVENT_TYPE_CONNECT, ENET_EVENT_TYPE_DISCONNECT,
     ENET_EVENT_TYPE_RECEIVE,
 };
@@ -39,7 +39,7 @@ pub struct HostSettings {
     /// checksum.
     pub checksum: Option<Box<dyn Fn(&[&[u8]]) -> u32>>,
     /// A custom time function to use, or [`None`] to use the default one. Should return an
-    /// an accurate, incrementally increasing [`Duration`]. Defaults to [`time_since_epoch`].
+    /// an accurate, incrementally increasing [`Duration`]. Defaults to [`monotonic_time`].
     pub time: Box<dyn Fn() -> Duration>,
     /// Seed the host with a specific random seed, or set to [`None`] to use a random seed.
     pub seed: Option<u32>,
@@ -54,7 +54,7 @@ impl Default for HostSettings {
             outgoing_bandwidth_limit: None,
             compressor: None,
             checksum: None,
-            time: Box::new(time_since_epoch),
+            time: Box::new(monotonic_time),
             seed: None,
         }
     }

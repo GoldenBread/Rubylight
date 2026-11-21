@@ -11,6 +11,9 @@
 #   the source. A multi-homed host may answer from another address than the one connected to.
 # - src/peer.rs: `Peer::has_unsent_reliable` added (marked "Nightjar addition"), so the driver can
 #   keep input merging in its own queue while the reliable window is full (nightjar#97).
+# - src/time.rs `monotonic_time` and src/host.rs: `HostSettings::default().time` is the monotonic
+#   clock (Instant since the first call) instead of the wall clock, which an NTP adjustment or a
+#   clock step moves backward and makes every reliable command look overdue.
 # - src/lib.rs: `#![allow(warnings)]` added, the upstream lint output is not ours to fix.
 # - src/lib.rs: the `mod test` declaration is dropped together with src/test and src/test.rs, and
 #   the dev-dependencies (rand, rand_chacha) with them.
