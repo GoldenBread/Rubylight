@@ -861,3 +861,81 @@ fn a_fallback_to_a_backend_without_rfi_turns_rfi_recovery_off() {
     let (decoder, _) = decoder();
     assert!(VideoDecoder::recovers_with_rfi(&decoder));
 }
+
+/// The presenter's waker counts: what `Shared::queue` wakes it for.
+fn counting_shared(limit: usize) -> (Arc<Shared>, Arc<std::sync::atomic::AtomicUsize>) {
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = wakes.clone();
+    (Shared::new(Arc::new(move || { counted.fetch_add(1, Ordering::SeqCst); }), limit), wakes)
+}
+
+#[test]
+fn the_presenter_is_woken_when_a_picture_finds_the_queue_empty_not_for_each_picture() {
+    use super::super::present::tests::decoded;
+    let (shared, wakes) = counting_shared(2);
+    shared.queue(decoded(1));
+    assert_eq!(wakes.load(Ordering::SeqCst), 1, "the first picture wakes it");
+    // It has not taken them yet: its wake is on its way, and it takes all of them.
+    shared.queue(decoded(2));
+    shared.queue(decoded(3));
+    assert_eq!(wakes.load(Ordering::SeqCst), 1, "pictures joining the queue add no wake");
+    assert_eq!(lock(&shared.frames).iter().map(|d| d.ready_us).collect::<Vec<_>>(), [2, 3], "the queue is still bounded");
+    // The presenter takes the queue (`Streaming::pump`); the next picture wakes it again.
+    lock(&shared.frames).clear();
+    shared.queue(decoded(4));
+    assert_eq!(wakes.load(Ordering::SeqCst), 2);
+    // A queue the decoder emptied itself (`evict_oldest` on the last picture) is empty too.
+    assert!(shared.evict_oldest());
+    shared.queue(decoded(5));
+    assert_eq!(wakes.load(Ordering::SeqCst), 3);
+}
+
+/// A presenter that sleeps until woken and then takes everything queued, as `Streaming::pump` and
+/// its loop do, never leaves a picture behind while it sleeps: no wake is lost to the pictures
+/// that did not send one.
+#[test]
+fn a_presenter_that_sleeps_between_wakes_misses_no_picture() {
+    use super::super::present::tests::decoded;
+    use std::sync::{Condvar, atomic::AtomicBool};
+    const PICTURES: u64 = 2_000;
+    let signal = Arc::new((Mutex::new(false), Condvar::new()));
+    let woken = signal.clone();
+    let shared = Shared::new(Arc::new(move || {
+        *lock(&woken.0) = true;
+        woken.1.notify_one();
+    }), usize::MAX);
+    let done = Arc::new(AtomicBool::new(false));
+    let decoder = {
+        let (shared, done) = (shared.clone(), done.clone());
+        std::thread::spawn(move || {
+            for i in 0..PICTURES {
+                shared.queue(decoded(i));
+                if i % 64 == 0 { std::thread::yield_now(); }
+            }
+            done.store(true, Ordering::SeqCst);
+        })
+    };
+    let (mut taken, mut sleeps) = (0u64, 0u64);
+    let mut mine = VecDeque::new();
+    while taken < PICTURES {
+        // The loop's wait: asleep until a wake; the timeout is the failure, not a poll.
+        {
+            let (flag, condvar) = &*signal;
+            let mut woke = lock(flag);
+            while !*woke {
+                let (next, timeout) = condvar.wait_timeout(woke, std::time::Duration::from_secs(10)).unwrap();
+                woke = next;
+                assert!(!timeout.timed_out(), "asleep with {} of {PICTURES} pictures taken, queue {}, decoder done {}",
+                    taken, lock(&shared.frames).len(), done.load(Ordering::SeqCst));
+            }
+            *woke = false;
+            sleeps += 1;
+        }
+        std::mem::swap(&mut *lock(&shared.frames), &mut mine);
+        taken += mine.len() as u64;
+        mine.clear();
+    }
+    decoder.join().unwrap();
+    assert_eq!(taken, PICTURES);
+    assert!(sleeps <= PICTURES);
+}

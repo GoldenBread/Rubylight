@@ -386,16 +386,24 @@ impl Shared {
         frames.len() + lock(&self.pacer_backlog).len()
     }
 
-    /// Queues a picture for the presenter, which loses the oldest past the queue's limit, and wakes it.
+    /// Queues a picture for the presenter, which loses the oldest past the queue's limit, and wakes
+    /// it when the queue was empty. A picture that joins others needs no wake of its own: the
+    /// presenter takes the whole queue under this lock (`Streaming::pump`) after each wake it
+    /// gets, and the wake of the picture that found the queue empty is sent (below) after that
+    /// picture is in it, so it takes this one too. A wake that comes after the presenter already
+    /// took the picture only finds a queue to pump that is empty.
     fn queue(&self, decoded: Decoded) {
         let mut frames = lock(&self.frames);
+        let was_empty = frames.is_empty();
         frames.push_back(decoded);
         while frames.len() > self.queue_limit {
             frames.pop_front();
             self.counters.replaced.fetch_add(1, Ordering::Relaxed);
         }
         drop(frames);
-        self.wake();
+        if was_empty {
+            self.wake();
+        }
     }
 
     /// Hands slices that finished decoding to the presenter and wakes it. The queue is bounded: a
