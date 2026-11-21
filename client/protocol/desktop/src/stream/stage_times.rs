@@ -39,6 +39,15 @@ impl<const N: usize> Stages<N> {
         self.frame[stage] = self.frame[stage].saturating_add(nanos(since.elapsed()));
     }
 
+    /// Adds the time since `since` to `stage` and returns the instant it read, where the next stage
+    /// begins: two stages that follow each other share one clock reading instead of taking one at
+    /// the end of the first and another at the start of the second.
+    pub fn lap(&mut self, stage: usize, since: Instant) -> Instant {
+        let now = Instant::now();
+        self.add_between(stage, since, now);
+        now
+    }
+
     /// Adds the time from `from` to `to` to `stage` of the frame in progress.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn add_between(&mut self, stage: usize, from: Instant, to: Instant) {
@@ -136,6 +145,19 @@ mod tests {
         assert_eq!(stages.frame[1], 250_000, "a span adds its length; a backwards one adds nothing");
         stages.reset();
         assert_eq!(stages.frame, [0, 0]);
+    }
+
+    #[test]
+    fn a_lap_ends_one_stage_where_the_next_begins() {
+        let mut stages = Stages::new(["a", "b"]);
+        let start = Instant::now() - std::time::Duration::from_millis(10);
+        let middle = stages.lap(0, start);
+        assert!(middle > start);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let end = stages.lap(1, middle);
+        // No gap between the stages: together they cover the time from the start to the end.
+        assert_eq!(stages.frame[0] + stages.frame[1], end.duration_since(start).as_nanos() as u64);
+        assert!(stages.frame[0] >= 10_000_000 && stages.frame[1] >= 2_000_000, "{:?}", stages.frame);
     }
 
     #[test]

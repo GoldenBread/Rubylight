@@ -242,9 +242,9 @@ impl Decoder {
             let step = Instant::now();
             let push = |packet: &[u8]| { self.packet.extend_from_slice(packet); true };
             let valid = if records { self.records.push_frame(data, push) } else { push_container(data, push) };
-            self.stages.get_mut().add(ASSEMBLE, step);
+            // The clear starts where the assembly ended: one clock reading for both.
+            let step = self.stages.get_mut().lap(ASSEMBLE, step);
             if !valid { return Err("Malformed PyroWave frame container"); }
-            let step = Instant::now();
             for plane in &mut self.planes { plane.fill(0.0); }
             self.seen.fill(false);
             self.stages.get_mut().add(CLEAR, step);
@@ -293,8 +293,7 @@ impl Decoder {
     pub fn coefficient_frame(&self) -> Result<crate::media::Frame, String> {
         let step = Instant::now();
         let frame = crate::media::Frame::wavelet(self.stride, self.rows)?;
-        self.stages.borrow_mut().add(ALLOC, step);
-        let step = Instant::now();
+        let step = self.stages.borrow_mut().lap(ALLOC, step);
         let info = frame.info();
         #[cfg(target_arch = "x86_64")]
         let fast_half = std::is_x86_feature_detected!("f16c");
@@ -1227,8 +1226,7 @@ impl GpuStream {
             // The set of a sliced frame holds its slices (see `decode_due_slice`); a set that holds nothing is overwritten.
             let decoded = if sliced { self.gpu.decode_again(lease.set(), after) } else { self.gpu.decode(lease.set(), after) };
             let fence_value = decoded.map_err(|e| Failure::Device(e.to_string()))?;
-            self.stages.add(GPU_SUBMIT, step);
-            let step = Instant::now();
+            let step = self.stages.lap(GPU_SUBMIT, step);
             self.gpu.wait(fence_value, GPU_DECODE_TIMEOUT).map_err(|e| Failure::Device(e.to_string()))?;
             self.stages.add(GPU_WAIT, step);
             fence_value
