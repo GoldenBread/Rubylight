@@ -622,6 +622,9 @@ impl Harness {
         Arc::get_mut(&mut h).unwrap().reconnect_fixture = Some(fixture.clone());
         h.codecs.store(1 | 0x200, Ordering::Release);
         h.startup_codecs.send_replace(true);
+        // No startup pass runs here: `/serverinfo` would otherwise wait its whole deadline
+        // for a packed probe that never publishes.
+        h.startup_packed.send_replace(true);
         let app = App::desktop();
         *h.apps.write().unwrap() = vec![app.clone()];
         *h.current_app.lock().unwrap() = Some(crate::process::RunningApp::with_environment(
