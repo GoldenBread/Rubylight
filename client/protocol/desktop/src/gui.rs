@@ -238,16 +238,18 @@ pub fn follow_focus_under(ui: &mut egui::Ui, area: impl std::hash::Hash + std::f
     ui.data_mut(|d| d.insert_temp(key, last));
 }
 
-/// Set by the launcher while Text and button size is Auto, for the passes that run without it.
-pub(crate) const AUTO_ZOOM_ID: &str = "nightjar-ui-zoom-auto";
+/// Whether Text and button size is Auto, kept in egui's memory by the launcher for the passes that
+/// run without it (keyed by type, as `CoversUsed` is).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct AutoZoom(pub bool);
 
 impl Gui {
     /// While the size is Auto, sizes the next pass for the screen the window is on now: an Exclusive
     /// fullscreen stream switches the display to the stream's mode, and the overlay drawn over it must
     /// follow that mode, not the desktop's the launcher last saw.
     pub(crate) fn follow_auto_zoom(&self, window: *mut SDL_Window) {
-        let auto = self.ctx.data(|d| d.get_temp::<bool>(AUTO_ZOOM_ID.into())).unwrap_or(false);
-        if !auto {
+        let auto = self.ctx.data(|d| d.get_temp::<AutoZoom>(egui::Id::NULL)).unwrap_or_default();
+        if !auto.0 {
             return;
         }
         let scale = Scale::of(window);
