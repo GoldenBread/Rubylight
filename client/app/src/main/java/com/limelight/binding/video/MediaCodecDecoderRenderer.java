@@ -5,7 +5,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
-import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -5868,7 +5867,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         ByteBuffer direct = directInput;
         if (direct != null) {
             ByteBuffer view = direct.duplicate();
-            ((Buffer) view).position(0);
+            view.position(0);
             view.get(copy, 0, Math.min(length, view.remaining()));
         }
         return copy;
