@@ -7,7 +7,7 @@ use libloading::Library;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 use windows::{
     Win32::Foundation::{HLOCAL, LUID, LocalFree},
@@ -44,6 +44,17 @@ trait Associations {
     fn get(&self, monitor: &Monitor, system: bool) -> Result<Option<String>>;
     fn add(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()>;
     fn remove(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()>;
+}
+impl<T: Associations + ?Sized> Associations for &T {
+    fn get(&self, monitor: &Monitor, system: bool) -> Result<Option<String>> {
+        (**self).get(monitor, system)
+    }
+    fn add(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()> {
+        (**self).add(monitor, system, name)
+    }
+    fn remove(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()> {
+        (**self).remove(monitor, system, name)
+    }
 }
 impl Associations for Api {
     fn get(&self, monitor: &Monitor, system: bool) -> Result<Option<String>> {
@@ -280,7 +291,41 @@ struct State {
     applied: String,
     system: bool,
 }
-static LEASES: Mutex<BTreeMap<String, State>> = Mutex::new(BTreeMap::new());
+/// One slot per display. The map's lock only finds or makes a slot; the Windows colour calls
+/// (the MHC round trip, which can block for seconds) and the journal write run under the one
+/// display's own lock, so a stream on another display is not held up behind them. A display's
+/// slot stays locked from deciding to lease it until its profile is applied, so two clients
+/// cannot both lease the same display.
+type Slot = Arc<Mutex<Option<State>>>;
+static LEASES: Mutex<BTreeMap<String, Slot>> = Mutex::new(BTreeMap::new());
+fn slot_for(id: &str) -> Slot {
+    LEASES
+        .lock()
+        .unwrap()
+        .entry(id.to_owned())
+        .or_default()
+        .clone()
+}
+/// Runs `work` on the display's lease state under the display's own lock only.
+fn with_slot<T>(id: &str, work: impl FnOnce(&mut Option<State>) -> Result<T>) -> Result<T> {
+    let slot = slot_for(id);
+    let result = work(&mut slot.lock().unwrap());
+    drop(slot);
+    if result.is_err() {
+        forget_slot(id);
+    }
+    result
+}
+/// Forgets the display's slot once nothing holds or waits for it.
+fn forget_slot(id: &str) {
+    let mut leases = LEASES.lock().unwrap();
+    if leases
+        .get(id)
+        .is_some_and(|slot| Arc::strong_count(slot) == 1 && slot.lock().unwrap().is_none())
+    {
+        leases.remove(id);
+    }
+}
 pub struct Lease {
     identity: String,
 }
@@ -291,49 +336,27 @@ impl Lease {
             .into_iter()
             .find(|m| m.display_name == output || m.device_id == output)
             .context("ICC output disappeared")?;
-        let mut leases = LEASES.lock().unwrap();
-        if let Some(state) = leases.get_mut(&monitor.device_id) {
-            if !state.applied.eq_ignore_ascii_case(&applied) {
-                bail!("another client owns a different ICC profile on this output");
-            }
-            state.users += 1;
-        } else {
-            let api = Api::load()?;
-            let system = crate::process::is_system();
-            let current = api.get(&monitor, system)?;
-            let previous = previous_profile(
-                crate::display_recovery::pending(&monitor.device_id).profile,
-                current.clone(),
-            );
-            if !current
-                .as_ref()
-                .is_some_and(|name| name.eq_ignore_ascii_case(&applied))
-            {
-                crate::display_recovery::profile(
-                    &monitor.device_id,
-                    &monitor.display_name,
-                    current,
-                    &applied,
-                    system,
-                )?;
-                // Preserve the recovery entry if a failed call partially changes Windows.
-                if let Err(error) = api.add(&monitor, system, &applied) {
-                    if restore(&monitor, previous.as_deref(), &applied, system).is_ok() {
-                        let _ = crate::display_recovery::release_profile(&monitor.device_id);
-                    }
-                    return Err(error);
-                }
-            }
-            leases.insert(
-                monitor.device_id.clone(),
-                State {
-                    users: 1,
-                    previous,
-                    applied,
-                    system,
+        let system = crate::process::is_system();
+        with_slot(&monitor.device_id, |held| {
+            acquire_state(
+                held,
+                &monitor,
+                applied,
+                system,
+                Api::load,
+                |before, applied| {
+                    crate::display_recovery::profile(
+                        &monitor.device_id,
+                        &monitor.display_name,
+                        before,
+                        applied,
+                        system,
+                    )
                 },
-            );
-        }
+                || crate::display_recovery::pending(&monitor.device_id).profile,
+                || crate::display_recovery::release_profile(&monitor.device_id),
+            )
+        })?;
         Ok(Self {
             identity: monitor.device_id,
         })
@@ -353,10 +376,9 @@ impl Lease {
             *self = Self::acquire(output, selection)?;
             return Ok(());
         }
-        let mut leases = LEASES.lock().unwrap();
-        let state = leases
-            .get_mut(&self.identity)
-            .context("the HDR profile lease is gone")?;
+        let slot = slot_for(&self.identity);
+        let mut held = slot.lock().unwrap();
+        let state = held.as_mut().context("the HDR profile lease is gone")?;
         let api = Api::load()?;
         let system = state.system;
         switch_state(&api, &monitor, state, applied, |before, applied| {
@@ -369,6 +391,51 @@ impl Lease {
             )
         })
     }
+}
+/// Leases the display whose slot is `held`: another client's lease of the same profile is
+/// shared, of another one refused; with none, `applied` is put on the display, journalled
+/// before Windows changes. The caller holds the display's slot for the whole call.
+#[allow(clippy::too_many_arguments)] // The Windows calls, each a closure so tests can stand in.
+fn acquire_state<A: Associations>(
+    held: &mut Option<State>,
+    monitor: &Monitor,
+    applied: String,
+    system: bool,
+    load: impl FnOnce() -> Result<A>,
+    record: impl Fn(Option<String>, &str) -> Result<()>,
+    pending: impl FnOnce() -> Option<Option<String>>,
+    release: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if let Some(state) = held {
+        if !state.applied.eq_ignore_ascii_case(&applied) {
+            bail!("another client owns a different ICC profile on this output");
+        }
+        state.users += 1;
+        return Ok(());
+    }
+    let api = load()?;
+    let current = api.get(monitor, system)?;
+    let previous = previous_profile(pending(), current.clone());
+    if !current
+        .as_ref()
+        .is_some_and(|name| name.eq_ignore_ascii_case(&applied))
+    {
+        record(current, &applied)?;
+        // Preserve the recovery entry if a failed call partially changes Windows.
+        if let Err(error) = api.add(monitor, system, &applied) {
+            if restore_with(&api, monitor, previous.as_deref(), &applied, system).is_ok() {
+                let _ = release();
+            }
+            return Err(error);
+        }
+    }
+    *held = Some(State {
+        users: 1,
+        previous,
+        applied,
+        system,
+    });
+    Ok(())
 }
 /// `state`'s profile becomes `applied` on `monitor`, journalled before Windows changes. A
 /// lease another client shares keeps its profile. When the change fails, the profile the
@@ -453,37 +520,46 @@ fn restore_with(
 }
 impl Drop for Lease {
     fn drop(&mut self) {
-        let mut leases = LEASES.lock().unwrap();
-        let Some(state) = leases.get_mut(&self.identity) else {
-            return;
-        };
-        state.users -= 1;
-        if state.users != 0 {
-            return;
-        }
-        let state = leases.remove(&self.identity).unwrap();
-        let result = (|| {
-            // Windows keeps the profile with the display. One that is off or
-            // unplugged now keeps its journal entry for the next recovery.
-            let Some(monitor) = crate::display::monitors()?
-                .into_iter()
-                .find(|m| m.device_id == self.identity)
-            else {
-                tracing::info!(display = %self.identity, "display is gone; its colour profile is restored when it returns");
-                return Ok(());
+        let slot = slot_for(&self.identity);
+        let result = {
+            let mut held = slot.lock().unwrap();
+            let Some(state) = held.as_mut() else {
+                return;
             };
-            restore(
-                &monitor,
-                state.previous.as_deref(),
-                &state.applied,
-                state.system,
-            )?;
-            crate::display_recovery::release_profile(&self.identity)
-        })();
+            state.users -= 1;
+            if state.users != 0 {
+                return;
+            }
+            // Under the display's lock: a stream that wants the display meanwhile waits
+            // and then finds it restored, not half way.
+            let result = restore_lease(&self.identity, state);
+            *held = None;
+            result
+        };
+        drop(slot);
+        forget_slot(&self.identity);
         if let Err(error) = result {
             tracing::warn!(%error, "HDR profile restoration deferred to recovery");
         }
     }
+}
+fn restore_lease(identity: &str, state: &State) -> Result<()> {
+    // Windows keeps the profile with the display. One that is off or
+    // unplugged now keeps its journal entry for the next recovery.
+    let Some(monitor) = crate::display::monitors()?
+        .into_iter()
+        .find(|m| m.device_id == identity)
+    else {
+        tracing::info!(display = %identity, "display is gone; its colour profile is restored when it returns");
+        return Ok(());
+    };
+    restore(
+        &monitor,
+        state.previous.as_deref(),
+        &state.applied,
+        state.system,
+    )?;
+    crate::display_recovery::release_profile(identity)
 }
 #[cfg(test)]
 mod tests {
@@ -703,6 +779,128 @@ mod tests {
         assert_eq!(
             fake.get(&display, true).unwrap(),
             Some("old-cal.icm".into())
+        );
+    }
+    /// Associations that can be shared across threads, one `add` of which waits: `entered` is
+    /// told when it is called, and it returns when `release` is sent.
+    struct Gated {
+        associations: Mutex<BTreeMap<(String, bool), String>>,
+        blocked: &'static str,
+        entered: Mutex<std::sync::mpsc::Sender<()>>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+    impl Associations for Gated {
+        fn get(&self, monitor: &Monitor, system: bool) -> Result<Option<String>> {
+            Ok(self
+                .associations
+                .lock()
+                .unwrap()
+                .get(&(monitor.device_id.clone(), system))
+                .cloned())
+        }
+        fn add(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()> {
+            if name == self.blocked {
+                self.entered.lock().unwrap().send(()).unwrap();
+                self.release.lock().unwrap().recv().unwrap();
+            }
+            self.associations
+                .lock()
+                .unwrap()
+                .insert((monitor.device_id.clone(), system), name.into());
+            Ok(())
+        }
+        fn remove(&self, _: &Monitor, _: bool, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+    type Gate = (
+        std::sync::Arc<Gated>,
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    );
+    fn gated(blocked: &'static str) -> Gate {
+        let (entered, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release) = std::sync::mpsc::channel();
+        let api = std::sync::Arc::new(Gated {
+            associations: Mutex::default(),
+            blocked,
+            entered: Mutex::new(entered),
+            release: Mutex::new(release),
+        });
+        (api, entered_rx, release_tx)
+    }
+    fn lease_on(api: &Gated, display: &Monitor, profile: &str) -> Result<()> {
+        with_slot(&display.device_id, |held| {
+            acquire_state(
+                held,
+                display,
+                profile.into(),
+                true,
+                || Ok(api),
+                |_, _| Ok(()),
+                || None,
+                || Ok(()),
+            )
+        })
+    }
+    #[test]
+    fn a_blocked_colour_call_does_not_hold_up_another_displays_lease() {
+        let (first, second) = (monitor("mhc-first", false), monitor("mhc-second", false));
+        let (api, entered, release) = gated("a-cal.icm");
+        let blocked = {
+            let (api, first) = (api.clone(), first.clone());
+            std::thread::spawn(move || lease_on(&api, &first, "a-cal.icm"))
+        };
+        entered
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the first lease reached its colour call");
+        // The first display's call is in flight: the second display leases meanwhile.
+        let other = {
+            let (api, second) = (api.clone(), second.clone());
+            std::thread::spawn(move || lease_on(&api, &second, "b-cal.icm"))
+        };
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(other.join().unwrap()));
+        let result = finished.recv_timeout(std::time::Duration::from_secs(5));
+        release.send(()).unwrap();
+        result
+            .expect("the second display's lease was held up behind the first's colour call")
+            .unwrap();
+        blocked.join().unwrap().unwrap();
+    }
+    #[test]
+    fn two_clients_cannot_lease_the_same_display_with_different_profiles() {
+        let display = monitor("mhc-shared", false);
+        let (api, entered, release) = gated("a-cal.icm");
+        let first = {
+            let (api, display) = (api.clone(), display.clone());
+            std::thread::spawn(move || lease_on(&api, &display, "a-cal.icm"))
+        };
+        entered
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the first lease reached its colour call");
+        // A second client arrives while the first applies: it waits for the display, then
+        // finds it leased with another profile, or shares the same one.
+        let different = {
+            let (api, display) = (api.clone(), display.clone());
+            std::thread::spawn(move || lease_on(&api, &display, "b-cal.icm"))
+        };
+        let same = {
+            let (api, display) = (api.clone(), display.clone());
+            std::thread::spawn(move || lease_on(&api, &display, "A-CAL.icm"))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        release.send(()).unwrap();
+        first.join().unwrap().unwrap();
+        assert!(different.join().unwrap().is_err());
+        same.join().unwrap().unwrap();
+        let slot = slot_for("mhc-shared");
+        let held = slot.lock().unwrap();
+        let state = held.as_ref().unwrap();
+        assert_eq!((state.users, state.applied.as_str()), (2, "a-cal.icm"));
+        assert_eq!(
+            api.get(&display, true).unwrap().as_deref(),
+            Some("a-cal.icm")
         );
     }
     #[test]
