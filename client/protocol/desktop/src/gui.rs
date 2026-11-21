@@ -238,7 +238,26 @@ pub fn follow_focus_under(ui: &mut egui::Ui, area: impl std::hash::Hash + std::f
     ui.data_mut(|d| d.insert_temp(key, last));
 }
 
+/// Set by the launcher while Text and button size is Auto, for the passes that run without it.
+pub(crate) const AUTO_ZOOM_ID: &str = "nightjar-ui-zoom-auto";
+
 impl Gui {
+    /// While the size is Auto, sizes the next pass for the screen the window is on now: an Exclusive
+    /// fullscreen stream switches the display to the stream's mode, and the overlay drawn over it must
+    /// follow that mode, not the desktop's the launcher last saw.
+    pub(crate) fn follow_auto_zoom(&self, window: *mut SDL_Window) {
+        let auto = self.ctx.data(|d| d.get_temp::<bool>(AUTO_ZOOM_ID.into())).unwrap_or(false);
+        if !auto {
+            return;
+        }
+        let scale = Scale::of(window);
+        let height = monitor_size(window, &scale).map(|size| size.y);
+        let zoom = crate::config::auto_zoom(height, scale.pixels_per_point) as f32 / 100.0;
+        if (self.ctx.zoom_factor() - zoom).abs() > f32::EPSILON {
+            self.ctx.set_zoom_factor(zoom);
+        }
+    }
+
     pub fn new() -> Self {
         let ctx = egui::Context::default();
         // The UI zoom is ours (85-250 % steps, saved in the settings); egui's own Ctrl+=/-/0 would

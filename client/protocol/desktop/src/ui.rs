@@ -741,6 +741,8 @@ impl Launcher {
             crate::theme::set_theme_look(ctx, look, still);
             self.look = Some((look, still));
         }
+        // The stream's overlay runs without the launcher and resolves Auto itself (`Gui::follow_auto_zoom`).
+        ctx.data_mut(|d| d.insert_temp(crate::gui::AUTO_ZOOM_ID.into(), s.ui_zoom == 0));
         let zoom = if s.ui_zoom == 0 {
             auto_zoom_now(ctx) as f32 / 100.0
         } else {

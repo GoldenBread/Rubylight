@@ -41,6 +41,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
     gui.set_over_video(true);
     // A stream started from the command line never drew the launcher, which loads these too.
     theme::fonts_for(&gui.ctx, strings::current());
+    gui.follow_auto_zoom(window);
     let mut shortcuts_changed = false;
     let toast = s.toast.as_ref().map(|(t, _)| t.clone());
     let input_only = s.facts.role == nightjar_core::http::AppRole::InputOnly;
