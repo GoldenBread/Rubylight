@@ -63,4 +63,12 @@ public class GlesUpscalerCapabilityTest {
         assertFalse(GlesUpscaler.mayMove(true, 0f, 0f, -1, 0xFFFF_FFFFL));
         assertTrue(GlesUpscaler.mayMove(true, 0f, 0f, -1, 0L));
     }
+
+    @Test
+    public void aFenceWaitThatEndedWithoutTheSignalGoesOnAtOnceAfterAFullSliceAndPausesAfterAnEarlyReturn() {
+        assertEquals(0, GlesUpscaler.repostDelayMs(4_000_000L));
+        assertEquals(0, GlesUpscaler.repostDelayMs(2_000_000L));
+        assertEquals("a driver that ignores the timeout must not spin the thread", 1, GlesUpscaler.repostDelayMs(0));
+        assertEquals(1, GlesUpscaler.repostDelayMs(100_000L));
+    }
 }

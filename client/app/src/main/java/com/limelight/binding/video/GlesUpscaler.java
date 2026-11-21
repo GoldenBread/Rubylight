@@ -45,7 +45,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
     // The stream's part of the decoded picture (UpscalingPolicy.pictureCrop), from the decoder's
     // output format: AV1 from AMD encoders keeps its alignment padding.
     private volatile float[] pictureCrop = {1f, 1f, 0f, 0f};
-    private final Runnable pollCompletion = this::pollCompletion;
+    private final Runnable pollCompletion = this::awaitFence;
     private EGLDisplay display = EGL14.EGL_NO_DISPLAY;
     private EGLContext eglContext = EGL14.EGL_NO_CONTEXT;
     private EGLSurface window = EGL14.EGL_NO_SURFACE;
@@ -614,8 +614,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         frameAvailable = true;
         try {
             handler.removeCallbacks(pollCompletion);
-            pollCompletion();
-            // A frame behind a pending draw waits for it here, up to 4 ms, rather than for the next 1 ms poll.
+            // A frame behind a pending draw waits for it here (one slice; a longer wait goes on in the posted poll).
             awaitFence();
             if (fence != 0 || !frameAvailable || policy.getReason() != UpscalingPolicy.Reason.NONE) return;
             drawFrame();
@@ -688,7 +687,7 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         if (frameWarp) lastTargetNs = presentNs > 0 ? presentNs : System.nanoTime();
         require(EGL14.eglSwapBuffers(display, window), "EGL swap");
         GLES30.glFlush();
-        pollCompletion();
+        awaitFence();
     }
 
     /** The single-pass (or FSR's two-pass) draw of the latched picture into the window. */
@@ -712,24 +711,34 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
         if (checkErrors) require(GLES30.glGetError() == GLES30.GL_NO_ERROR, "Upscaling draw");
     }
 
-    private void pollCompletion() {
-        if (closed || fence == 0 || policy.getReason() != UpscalingPolicy.Reason.NONE) return;
-        checkFence(GLES30.glClientWaitSync(fence, 0, 0));
-    }
-
-    /** Waits up to {@link #FENCE_WAIT_NS} on this thread for the pending draw, then completes it as the poll would. */
+    /**
+     * Completes the pending draw once its fence signals. This thread has nothing else to do while a draw is on the GPU
+     * (a frame behind it cannot be latched, and Frame Warp's refresh redraw skips while a fence is pending), so it
+     * waits for the fence here: one wakeup per frame instead of one per millisecond. The wait is cut into slices of
+     * {@link #FENCE_WAIT_NS}, so a lost fence cannot hang the thread: after a slice that ends without the signal the
+     * stall check runs and the wait goes on from a posted message, behind whatever else is queued (close(), a
+     * Frame Warp or HDR update).
+     */
     private void awaitFence() {
         if (closed || fence == 0 || policy.getReason() != UpscalingPolicy.Reason.NONE) return;
-        checkFence(GLES30.glClientWaitSync(fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_WAIT_NS));
+        long waitStartNs = System.nanoTime();
+        checkFence(GLES30.glClientWaitSync(fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_WAIT_NS),
+                System.nanoTime() - waitStartNs);
     }
 
-    private void checkFence(int status) {
+    /** How long to leave a draw's fence alone after a wait of {@code waitedNs} ended without it: none after a full wait. */
+    static long repostDelayMs(long waitedNs) {
+        // A driver that returns early from the wait would otherwise spin this thread.
+        return waitedNs >= FENCE_WAIT_NS / 2 ? 0 : 1;
+    }
+
+    private void checkFence(int status, long waitedNs) {
         long elapsed = System.nanoTime() - workStartNs;
         if (status == GLES30.GL_ALREADY_SIGNALED || status == GLES30.GL_CONDITION_SATISFIED) {
             GLES30.glDeleteSync(fence);
             fence = 0;
             workStartNs = 0;
-            // From the latch to the fence: the draw, swap blocking and up to one wait or polling interval,
+            // From the latch to the fence: the draw, swap blocking and the wait for the fence,
             // but not the wait for the render thread before the latch. A conservative estimate of
             // the reconstruction, not a scanout timestamp; the policy only acts on a sustained trend.
             policy.recordFrame(System.nanoTime() - gpuStartNs, pendingDrops);
@@ -740,7 +749,9 @@ final class GlesUpscaler implements AutoCloseable, SurfaceTexture.OnFrameAvailab
             policy.fail(UpscalingPolicy.Reason.GPU_ERROR);
         } else {
             policy.checkStall(elapsed);
-            if (policy.getReason() == UpscalingPolicy.Reason.NONE) handler.postDelayed(pollCompletion, 1);
+            if (policy.getReason() == UpscalingPolicy.Reason.NONE) {
+                handler.postDelayed(pollCompletion, repostDelayMs(waitedNs));
+            }
         }
     }
 
