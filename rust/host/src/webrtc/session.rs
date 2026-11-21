@@ -110,7 +110,11 @@ impl Links {
     }
 
     pub fn take(&self, launch: &str) -> Option<MediaHandle> {
-        self.media.lock().unwrap().remove(launch)
+        // Also on a session thread's teardown after a panic: recover a poisoned lock.
+        self.media
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(launch)
     }
 
     /// The audio end of a transport that has not been taken yet, for the audio thread. The video

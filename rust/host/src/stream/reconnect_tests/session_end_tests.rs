@@ -197,11 +197,14 @@ async fn an_encoder_error_reaches_the_client_with_its_reason() -> Result<()> {
 }
 
 /// A panic on the session thread ends the session like a failure: its teardown runs, the
-/// session leaves `h.sessions`, and the next launch streams.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_panic_on_the_session_thread_runs_the_teardown() -> Result<()> {
+/// session leaves `h.sessions`, and the next launch streams. `holding_sessions` panics with
+/// the registry locked, which poisons it: the teardown and the next launch still work.
+async fn a_session_thread_panic(holding_sessions: bool) -> Result<()> {
     let h = Harness::new(10_000, 1).await?;
     let (session, client) = streaming(&h).await?;
+    h.fixture
+        .panic_holding_sessions
+        .store(holding_sessions, Ordering::Release);
     h.fixture.session_panics.store(true, Ordering::Release);
     until("the panic ends the session", WAIT, || session.stopping()).await;
     assert_eq!(session.termination_reason(), FAILED);
@@ -221,11 +224,22 @@ async fn a_panic_on_the_session_thread_runs_the_teardown() -> Result<()> {
     );
     drop(client);
     h.empty().await?;
+    assert!(!h.h.sessions.is_poisoned());
     assert!(h.h.sessions.lock().unwrap().idle());
     h.fixture.session_panics.store(false, Ordering::Release);
     let (next, client) = streaming(&h).await?;
     h.end(&next, client).await?;
     h.finish().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panic_on_the_session_thread_runs_the_teardown() -> Result<()> {
+    a_session_thread_panic(false).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panic_holding_the_sessions_lock_still_runs_the_teardown() -> Result<()> {
+    a_session_thread_panic(true).await
 }
 
 /// The host stopping, as `main` stops it, ends its streams first.

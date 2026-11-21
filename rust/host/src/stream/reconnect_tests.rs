@@ -57,6 +57,8 @@ pub(crate) struct Fixture {
     fail_encoder: AtomicBool,
     /// The stream thread panics, as a bug in the encoder or capture path would.
     session_panics: AtomicBool,
+    /// The panic comes with `h.sessions` locked, which poisons it.
+    panic_holding_sessions: AtomicBool,
     hold_teardown: AtomicBool,
     in_teardown: AtomicBool,
     reset: Mutex<Option<String>>,
@@ -397,6 +399,10 @@ impl Fixture {
         *s.media_epoch.write().unwrap() = Some(Instant::now());
         while !h.stop.load(Ordering::Acquire) && !s.stopping() {
             if self.session_panics.load(Ordering::Acquire) {
+                let _sessions = self
+                    .panic_holding_sessions
+                    .load(Ordering::Acquire)
+                    .then(|| h.sessions.lock().unwrap());
                 panic!("the fixture's stream thread panicked");
             }
             if self.fail_encoder.load(Ordering::Acquire) {

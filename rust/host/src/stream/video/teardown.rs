@@ -2,6 +2,7 @@
 //! records and leases released in a fixed order.
 use super::*;
 use butterpollo_core::stutter_report::Stage;
+use std::sync::PoisonError;
 
 // The moved code still borrows `m`, `h`, `s` and the other values it now receives by
 // reference, as it did when it owned them.
@@ -67,7 +68,9 @@ impl SessionThread<'_> {
         }
         // A failed stream must not count as a healthy fast-rate probe.
         drop(keyframe_loss_memory);
-        h.sessions.lock().unwrap().begin_teardown(&s);
+        // A panic on the session thread may have poisoned what the teardown takes; it
+        // must still finish, so its own locks recover.
+        h.sessions.lock().unwrap_or_else(PoisonError::into_inner).begin_teardown(&s);
         // For the Sessions page: one entry per stream, with why it ended.
         let reason = if s.failed() {
             butterpollo_core::session_history::REASON_FAILED
@@ -76,7 +79,7 @@ impl SessionThread<'_> {
         };
         h.record_session(&s, reason);
         h.session_webhook("session.ended", &s);
-        for (audio, peer) in m.peers.lock().unwrap().remove(&s.launch.id) {
+        for (audio, peer) in m.peers.lock().unwrap_or_else(PoisonError::into_inner).remove(&s.launch.id) {
             if audio { &m.audio } else { &m.video }.forget(peer);
         }
         // Keep capture and display leases owned until the encoder has
@@ -103,12 +106,12 @@ impl SessionThread<'_> {
         if s.launch.role == Role::RemoteMonitor
             && h.config
                 .read()
-                .unwrap()
+                .unwrap_or_else(PoisonError::into_inner)
                 .removes_remote_monitor_at_stream_end()
         {
             crate::remote_display::disconnect(&h, Some(&s.launch.client.uuid));
         }
-        h.sessions.lock().unwrap().teardown.remove(&s.launch.id);
+        h.sessions.lock().unwrap_or_else(PoisonError::into_inner).teardown.remove(&s.launch.id);
         tracing::info!(client=%s.launch.client.name,"CLIENT DISCONNECTED");
     }
 }

@@ -318,10 +318,10 @@ pub fn disconnect(h: &Shared, client: Option<&str>) {
     let canceled = h
         .sessions
         .lock()
-        .unwrap()
+        .unwrap_or_else(PoisonError::into_inner)
         .stop_role(Role::RemoteMonitor, client);
     drop(canceled);
-    let mut monitors = h.monitors.lock().unwrap();
+    let mut monitors = h.monitors.lock().unwrap_or_else(PoisonError::into_inner);
     h.monitors_creating.cancel(client);
     let (kept, removed): (
         std::collections::BTreeMap<_, _>,

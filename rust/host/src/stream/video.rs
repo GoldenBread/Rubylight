@@ -712,6 +712,9 @@ impl Media {
                 let result = ran.unwrap_or_else(|panic| {
                     let what = crate::webrtc::input::panic_text(panic.as_ref());
                     tracing::error!(client=%s.launch.client.name, panic=%what, "session thread panicked; ending the session");
+                    // A panic with the registry locked poisoned it for every later user,
+                    // so a new session could not start.
+                    h.sessions.clear_poison();
                     Err(anyhow::anyhow!("the stream thread panicked: {what}"))
                 });
                 session.teardown(result, workers, leases);

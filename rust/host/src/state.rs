@@ -563,7 +563,10 @@ impl Host {
     /// late teardown does not describe the new one.
     pub fn record_failure(&self, s: &Session) {
         let Some(reason) = s.failure() else { return };
-        let mut failures = self.last_failures.lock().unwrap();
+        let mut failures = self
+            .last_failures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if failures
             .get(&s.launch.client.uuid)
             .is_some_and(|last| last.since > s.started)
