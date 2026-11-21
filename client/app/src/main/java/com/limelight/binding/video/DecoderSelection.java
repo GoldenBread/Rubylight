@@ -48,20 +48,18 @@ final class DecoderSelection {
             // Fall-through to try the Android M API if there's no performance point data
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                // We'll ask the decoder what it can do for us at this resolution and see if our
-                // requested frame rate falls below or inside the range of achievable frame rates.
-                Range<Double> fpsRange = caps.getAchievableFrameRatesFor(prefs.width, prefs.height);
-                if (fpsRange != null) {
-                    return prefs.fps <= fpsRange.getUpper();
-                }
-
-                // Fall-through to try the Android L API if there's no performance point data
-            } catch (IllegalArgumentException e) {
-                // Video size not supported at any frame rate
-                return false;
+        try {
+            // We'll ask the decoder what it can do for us at this resolution and see if our
+            // requested frame rate falls below or inside the range of achievable frame rates.
+            Range<Double> fpsRange = caps.getAchievableFrameRatesFor(prefs.width, prefs.height);
+            if (fpsRange != null) {
+                return prefs.fps <= fpsRange.getUpper();
             }
+
+            // Fall-through to try the Android L API if there's no performance point data
+        } catch (IllegalArgumentException e) {
+            // Video size not supported at any frame rate
+            return false;
         }
 
         // As a last resort, we will use areSizeAndRateSupported() which is explicitly NOT a

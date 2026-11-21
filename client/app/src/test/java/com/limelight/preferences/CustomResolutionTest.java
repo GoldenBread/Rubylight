@@ -133,15 +133,6 @@ public class CustomResolutionTest {
     }
 
     @Test
-    @Config(sdk = 23)
-    public void olderAndroidCanSaveAndReadCustomDimensions() {
-        try (ActivityController<StreamSettings> controller = Robolectric.buildActivity(StreamSettings.class).setup()) {
-            save(controller.get(), 1872, 1080);
-            assertSize(PreferenceConfiguration.readPreferences(app), 1872, 1080);
-        }
-    }
-
-    @Test
     public void manualSizeEqualToPanelStaysFixedButPickingPanelFollowsScreen() {
         String panel = PreferenceConfiguration.nativeResolution(app);
         int w = PreferenceConfiguration.getWidthFromResolutionString(panel);

@@ -179,8 +179,7 @@ public final class SimpleProfile {
             MediaCodecInfo.CodecCapabilities capabilities = info.getCapabilitiesForType(mime);
             for (MediaCodecInfo.CodecProfileLevel level : capabilities.profileLevels) {
                 if ("video/hevc".equals(mime)) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-                            (level.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 ||
+                    if ((level.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 ||
                                     level.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 ||
                                     level.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)) {
                         return true;

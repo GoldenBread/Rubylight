@@ -457,7 +457,7 @@ public class MediaCodecHelper {
 
             // Older MediaTek SoCs have issues with HEVC rendering but the newer chips with
             // PowerVR GPUs have good HEVC support.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isPowerVR(glRenderer)) {
+            if (isPowerVR(glRenderer)) {
                 LimeLog.info("Added omx.mtk to HEVC decoders based on PowerVR GPU");
                 whitelistedHevcDecoders.add("omx.mtk");
 
@@ -592,8 +592,7 @@ public class MediaCodecHelper {
         //
         // NB: Even on Android 10, this optimization still provides significant
         // performance gains on Pixel 2.
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                isDecoderInList(qualcommDecoderPrefixes, decoderName) &&
+        return isDecoderInList(qualcommDecoderPrefixes, decoderName) &&
                 !isAdreno620;
     }
 
@@ -745,8 +744,7 @@ public class MediaCodecHelper {
         }
 
         boolean requiredVdec = requiresHevcVdecLowLatency(decoderInfo.getName(), videoFormat.getString(MediaFormat.KEY_MIME));
-        if (requiredVdec || (useVendorOptions && tryNumber < 2 && usesVdecLowLatency(decoderInfo.getName()) &&
-                (!Build.MANUFACTURER.equalsIgnoreCase("xiaomi") || Build.VERSION.SDK_INT > Build.VERSION_CODES.M))) {
+        if (requiredVdec || (useVendorOptions && tryNumber < 2 && usesVdecLowLatency(decoderInfo.getName()))) {
             // MediaTek decoders don't use vendor-defined keys for low latency mode. Instead, they have a modified
             // version of AOSP's ACodec.cpp which supports the "vdec-lowlatency" option. This option is passed down
             // to the decoder as OMX.MTK.index.param.video.LowLatencyDecode.
@@ -779,22 +777,20 @@ public class MediaCodecHelper {
             // the real-time priority next to a rate the decoder cannot meet is the pair that crashes
             // decoders after start(), outside the fallback ladder, so it is not sent to them (the fork
             // does send it to MediaTek).
-            boolean rateOnly = useVendorOptions && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                    (isDecoderInList(tegraDecoderPrefixes, decoderInfo.getName()) ||
+            boolean rateOnly = useVendorOptions && (isDecoderInList(tegraDecoderPrefixes, decoderInfo.getName()) ||
                             isDecoderInList(mediaTekDecoderPrefixes, decoderInfo.getName()));
             if (rateOnly || MediaCodecHelper.decoderSupportsMaxOperatingRate(decoderInfo.getName())) {
                 videoFormat.setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE);
                 setNewOption = true;
             }
-            else if (chipsetTuning && useVendorOptions && tryNumber < 1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                    isDecoderInList(exynosDecoderPrefixes, decoderInfo.getName())) {
+            else if (chipsetTuning && useVendorOptions && tryNumber < 1 && isDecoderInList(exynosDecoderPrefixes, decoderInfo.getName())) {
                 // Experimental: a rate the decoder declares it can meet, so real-time priority
                 // does not come with an unattainable rate. We have no Exynos device to run this on.
                 videoFormat.setInteger(MediaFormat.KEY_OPERATING_RATE, googleOperatingRate(videoFormat, decoderInfo));
                 videoFormat.setInteger(MediaFormat.KEY_PRIORITY, 0);
                 setNewOption = true;
             }
-            else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            else {
                 videoFormat.setInteger(MediaFormat.KEY_PRIORITY, 0);
                 setNewOption = true;
             }
@@ -855,8 +851,7 @@ public class MediaCodecHelper {
         // own key. The rate comes from the decoder's own capabilities, so it can meet it. Behind
         // the performance hints like the other priority-0 decoders.
         // Experimental: we have no Tensor device to run this on.
-        if (useVendorOptions && performanceHints && tryNumber < 2 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                isDecoderInList(googleDecoderPrefixes, decoderInfo.getName())) {
+        if (useVendorOptions && performanceHints && tryNumber < 2 && isDecoderInList(googleDecoderPrefixes, decoderInfo.getName())) {
             int rate = googleOperatingRate(videoFormat, decoderInfo);
             videoFormat.setInteger(MediaFormat.KEY_OPERATING_RATE, rate);
             videoFormat.setInteger(MediaFormat.KEY_PRIORITY, 0);

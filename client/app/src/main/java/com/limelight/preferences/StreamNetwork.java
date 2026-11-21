@@ -6,10 +6,8 @@ import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.net.NetworkInfo;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
-import android.os.Build;
 
 /**
  * The network this device streams over, as profiles see it. The Wi-Fi name is read only when a
@@ -31,7 +29,7 @@ public final class StreamNetwork {
     }
 
     public static boolean canReadWifiName(Context context) {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || context.checkSelfPermission(
+        return context.checkSelfPermission(
                 Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
@@ -42,19 +40,11 @@ public final class StreamNetwork {
         ConnectivityManager connectivity = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (connectivity != null) {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    Network active = connectivity.getActiveNetwork();
-                    NetworkCapabilities caps = active == null ? null : connectivity.getNetworkCapabilities(active);
-                    if (caps != null) {
-                        cellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR);
-                        wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
-                    }
-                } else {
-                    NetworkInfo info = connectivity.getActiveNetworkInfo();
-                    if (info != null) {
-                        cellular = info.getType() == ConnectivityManager.TYPE_MOBILE;
-                        wifi = info.getType() == ConnectivityManager.TYPE_WIFI;
-                    }
+                Network active = connectivity.getActiveNetwork();
+                NetworkCapabilities caps = active == null ? null : connectivity.getNetworkCapabilities(active);
+                if (caps != null) {
+                    cellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR);
+                    wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
                 }
                 metered = connectivity.isActiveNetworkMetered();
             } catch (SecurityException | IllegalStateException e) {

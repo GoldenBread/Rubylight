@@ -902,7 +902,7 @@ final class GameTouchInput {
         {
             // A touchpad's finger touches carry no action button; only its clicks do. Clicks are handled
             // below like a mouse, and the touches go to the trackpad gesture handling.
-            boolean hasActionButton = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || event.getActionButton() != 0;
+            boolean hasActionButton = event.getActionButton() != 0;
 
             // This case is for mice and non-finger touch devices
             if (eventSource == InputDevice.SOURCE_MOUSE ||
@@ -1525,7 +1525,7 @@ final class GameTouchInput {
         if (line != null) {
             android.view.Display display = game.videoOutput.getVideoDisplay();
             LimeLog.info(line + ", display at " + display.getRefreshRate() + " Hz" +
-                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? " of " + display.getMode().getRefreshRate() + " Hz" : ""));
+                    (" of " + display.getMode().getRefreshRate() + " Hz"));
         }
     }
 

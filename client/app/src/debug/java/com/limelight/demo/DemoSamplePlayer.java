@@ -10,7 +10,6 @@ import android.os.Looper;
 import android.view.Choreographer;
 import android.view.Surface;
 
-import androidx.annotation.RequiresApi;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -48,7 +47,6 @@ final class DemoSamplePlayer implements Choreographer.FrameCallback {
     }
 
     /** Starts decoding into the surface from the given sample time; frames show once {@link #setRunning} is true. */
-    @RequiresApi(23)
     void start(AssetFileDescriptor asset, Surface surface, long positionUs) throws IOException {
         extractor = new MediaExtractor();
         extractor.setDataSource(asset.getFileDescriptor(), asset.getStartOffset(), asset.getLength());

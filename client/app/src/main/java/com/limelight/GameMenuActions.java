@@ -887,11 +887,9 @@ final class GameMenuActions {
                     }
                     if (!send) {
                         ClipData clip = ClipData.newPlainText(BuildConfig.BRAND_NAME, incoming);
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            PersistableBundle extras = new PersistableBundle();
-                            extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
-                            clip.getDescription().setExtras(extras);
-                        }
+                        PersistableBundle extras = new PersistableBundle();
+                        extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
+                        clip.getDescription().setExtras(extras);
                         try {
                             clipboard.setPrimaryClip(clip);
                         } catch (RuntimeException e) {
@@ -992,11 +990,9 @@ final class GameMenuActions {
         }
         try {
             ClipData clip = ClipData.newUri(game.getContentResolver(), BuildConfig.BRAND_NAME, ClipboardImages.share(game, image));
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                PersistableBundle extras = new PersistableBundle();
-                extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
-                clip.getDescription().setExtras(extras);
-            }
+            PersistableBundle extras = new PersistableBundle();
+            extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
+            clip.getDescription().setExtras(extras);
             clipboard.setPrimaryClip(clip);
         } catch (RuntimeException e) {
             ClipboardImages.discard(image);

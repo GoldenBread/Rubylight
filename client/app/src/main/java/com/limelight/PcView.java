@@ -777,10 +777,8 @@ public class PcView extends NightjarActivity implements AdapterFragmentCallbacks
         View help = findViewById(R.id.pc_list_help);
         pcList.setNextFocusDownId(shown ? R.id.pc_list_help : View.NO_ID);
         help.setNextFocusUpId(R.id.fragmentView);
-        // Android 5.0 has no traversal order: a screen reader there reads the views in layout order, footer last.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            help.setAccessibilityTraversalAfter(R.id.fragmentView);
-        }
+        // A screen reader reads the views in layout order, footer last, unless told where the footer comes.
+        help.setAccessibilityTraversalAfter(R.id.fragmentView);
     }
 
     private boolean focusIsLoose() {

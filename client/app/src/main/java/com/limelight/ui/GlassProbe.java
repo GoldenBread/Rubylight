@@ -8,7 +8,6 @@ import android.os.SystemClock;
 import android.view.FrameMetrics;
 import android.view.Window;
 
-import androidx.annotation.RequiresApi;
 import androidx.core.content.res.ResourcesCompat;
 
 import com.limelight.R;
@@ -20,7 +19,6 @@ import com.limelight.R;
  * within the first moves. Idle screens draw nothing and count nothing, so the probe simply finishes on a later scroll,
  * or the next time.
  */
-@RequiresApi(Build.VERSION_CODES.N)
 public final class GlassProbe implements Window.OnFrameMetricsAvailableListener {
     /** What to do with the verdict; called on the main thread. */
     public interface Verdict {

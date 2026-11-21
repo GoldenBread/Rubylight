@@ -536,7 +536,7 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
             line.setVisibility(View.VISIBLE);
             ((android.widget.LinearLayout.LayoutParams) title.getLayoutParams()).topMargin =
                     Math.round(getResources().getDisplayMetrics().density * (form == GlassForm.TELEVISION ? 16 : 10));
-            if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) title.forceHasOverlappingRendering(false);
+            title.forceHasOverlappingRendering(false);
             if (form == GlassForm.HANDHELD) {
                 // Alone at the foot, it is as wide as what it says.
                 android.widget.FrameLayout.LayoutParams place = (android.widget.FrameLayout.LayoutParams) findViewById(R.id.library_resume).getLayoutParams();
@@ -1469,9 +1469,7 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
         applyGridPadding();
         if (GlassForm.of(this) == GlassForm.PHONE) {
             listView.setNextFocusUpId(R.id.library_back);
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP_MR1) {
-                listView.setAccessibilityTraversalAfter(R.id.library_back);
-            }
+            listView.setAccessibilityTraversalAfter(R.id.library_back);
         }
         listView.setAdapter(appGridAdapter);
         if (ambience != null) ambience.bind(listView, appGridAdapter);

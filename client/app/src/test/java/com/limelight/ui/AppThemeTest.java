@@ -255,7 +255,7 @@ public class AppThemeTest {
     }
 
     @Test
-    @Config(sdk = 23)
+    @Config(sdk = 25)
     public void olderAndroidKeepsPreferenceTextReadableAndNavigationBarBlack() {
         black(true);
         ActivityController<Screen> controller = Robolectric.buildActivity(Screen.class).setup();

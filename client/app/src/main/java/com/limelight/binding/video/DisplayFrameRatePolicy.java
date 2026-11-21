@@ -43,15 +43,15 @@ public final class DisplayFrameRatePolicy {
     }
 
     /**
-     * Whether Variable refresh rate can be turned on: Android 6 and newer, where the stream picks the
+     * Whether Variable refresh rate can be turned on: always on the Android versions we run on, where the stream picks the
      * screen's mode. A screen with ARR (Android 16) follows the stream (useAdaptiveRefreshRate); any
-     * other runs at its top rate, with frames on its refresh grid (ArrState.PANEL_WITHOUT_ARR). Before
-     * Android 6 the setting is greyed and reads as off, in the main settings and in a PC, game or
+     * other runs at its top rate, with frames on its refresh grid (ArrState.PANEL_WITHOUT_ARR). Where
+     * this is false the setting is greyed and reads as off, in the main settings and in a PC, game or
      * profile layer alike; the saved choice is kept.
      */
     public static boolean vrrOffered(Context context) {
         if (vrrOfferedOverride != null) return vrrOfferedOverride;
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
+        return true;
     }
 
     public enum ArrState {
@@ -139,7 +139,6 @@ public final class DisplayFrameRatePolicy {
      */
     public static float[] seamlessRates(Display display) {
         if (display == null) return new float[0];
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return new float[] {display.getRefreshRate()};
         Display.Mode mode = display.getMode();
         float[] alternatives = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ?
                 mode.getAlternativeRefreshRates() : new float[0];
@@ -285,15 +284,8 @@ public final class DisplayFrameRatePolicy {
      * size (0) every mode counts.
      */
     public static float maxRefreshRate(Display display, int streamWidth, int streamHeight) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            return maxRefreshRate(RefreshSwitchMonitor.activeMode(display), RefreshSwitchMonitor.modes(display),
-                    streamWidth, streamHeight);
-        }
-        float maximum = display.getRefreshRate();
-        for (float rate : display.getSupportedRefreshRates()) {
-            maximum = Math.max(maximum, rate);
-        }
-        return maximum;
+        return maxRefreshRate(RefreshSwitchMonitor.activeMode(display), RefreshSwitchMonitor.modes(display),
+                streamWidth, streamHeight);
     }
 
     /** As above, from the modes as Android lists them (active: the current mode). */

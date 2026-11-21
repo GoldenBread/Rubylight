@@ -146,8 +146,7 @@ public class UiHelper {
                 WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
         boolean oledBlack = com.limelight.ui.AppTheme.isOledBlack(activity);
         int fallbackBarColor = oledBlack ? Color.BLACK : Color.rgb(17, 26, 31);
-        activity.getWindow().setStatusBarColor(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                Color.TRANSPARENT : fallbackBarColor);
+        activity.getWindow().setStatusBarColor(Color.TRANSPARENT);
         activity.getWindow().setNavigationBarColor(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ?
                 Color.TRANSPARENT : fallbackBarColor);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

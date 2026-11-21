@@ -31,12 +31,12 @@ import org.robolectric.annotation.Config;
 public class HapticsTest {
     @Test
     public void eachKindTakesTheNewestConstantTheDeviceKnows() {
-        assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.KEY, 21));
+        assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.KEY, 25));
         assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.KEY, 34));
-        assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.NAVIGATION, 21));
+        assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.NAVIGATION, 25));
         assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.NAVIGATION, 36));
 
-        assertEquals(HapticFeedbackConstants.CLOCK_TICK, Haptics.constant(Haptics.Kind.STEP, 21));
+        assertEquals(HapticFeedbackConstants.CLOCK_TICK, Haptics.constant(Haptics.Kind.STEP, 25));
         assertEquals(HapticFeedbackConstants.CLOCK_TICK, Haptics.constant(Haptics.Kind.STEP, 33));
         assertEquals(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK, Haptics.constant(Haptics.Kind.STEP, 34));
 
@@ -48,15 +48,14 @@ public class HapticsTest {
 
     @Test
     public void theWasdStickHasADirectionAndAClearlyDifferentDiagonal() {
-        assertEquals(HapticFeedbackConstants.CLOCK_TICK, Haptics.constant(Haptics.Kind.DIRECTION, 21));
-        assertEquals(HapticFeedbackConstants.CONTEXT_CLICK, Haptics.constant(Haptics.Kind.DIRECTION, 23));
+        assertEquals(HapticFeedbackConstants.CONTEXT_CLICK, Haptics.constant(Haptics.Kind.DIRECTION, 25));
         assertEquals(HapticFeedbackConstants.CONTEXT_CLICK, Haptics.constant(Haptics.Kind.DIRECTION, 36));
-        assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.DIAGONAL, 21));
+        assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.DIAGONAL, 25));
         assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.DIAGONAL, 36));
-        for (int sdk = 21; sdk <= 36; sdk++) {
+        for (int sdk = 25; sdk <= 36; sdk++) {
             assertNotEquals("API " + sdk, Haptics.constant(Haptics.Kind.DIRECTION, sdk), Haptics.constant(Haptics.Kind.DIAGONAL, sdk));
         }
-        assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.CLICK, 21));
+        assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.CLICK, 25));
         assertEquals(HapticFeedbackConstants.VIRTUAL_KEY, Haptics.constant(Haptics.Kind.CLICK, 36));
     }
 

@@ -1,5 +1,6 @@
 package com.limelight.preferences;
 
+import androidx.annotation.RequiresApi;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -33,7 +34,6 @@ import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
-import androidx.annotation.RequiresApi;
 import com.limelight.ui.NightjarActivity;
 
 import com.google.android.material.chip.Chip;

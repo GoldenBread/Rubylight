@@ -6,7 +6,6 @@ import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.Display;
 
-import androidx.annotation.RequiresApi;
 
 import com.limelight.LimeLog;
 
@@ -53,19 +52,16 @@ public final class RefreshSwitchMonitor {
         return RefreshSwitchDiagnosis.describe(context, settled);
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
     static RefreshSwitchDiagnosis.PanelMode activeMode(Display display) {
         return panelMode(display.getMode());
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
     static List<RefreshSwitchDiagnosis.PanelMode> modes(Display display) {
         List<RefreshSwitchDiagnosis.PanelMode> modes = new ArrayList<>();
         for (Display.Mode mode : display.getSupportedModes()) modes.add(panelMode(mode));
         return modes;
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
     private static RefreshSwitchDiagnosis.PanelMode panelMode(Display.Mode mode) {
         return new RefreshSwitchDiagnosis.PanelMode(mode.getModeId(), mode.getPhysicalWidth(),
                 mode.getPhysicalHeight(), mode.getRefreshRate(),

@@ -23,14 +23,14 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class,
         shadows = {com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
-                NvConnectionMicrophoneAppOpsTest.LollipopAppOps.class},
+                NvConnectionMicrophoneAppOpsTest.UnknownOpAppOps.class},
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class NvConnectionMicrophoneAppOpsTest {
     private final int realSdk = Build.VERSION.SDK_INT;
 
-    /** Android 5.x has no op string for record audio: looking it up throws, as on those devices. */
+    /** A device that has no op string for record audio: looking it up throws. */
     @Implements(AppOpsManager.class)
-    public static class LollipopAppOps extends ShadowAppOpsManager {
+    public static class UnknownOpAppOps extends ShadowAppOpsManager {
         static boolean unknownRecordAudio;
 
         private static void lookup(String op) {
@@ -60,28 +60,12 @@ public class NvConnectionMicrophoneAppOpsTest {
     @After
     public void restorePlatform() {
         ReflectionHelpers.setStaticField(Build.VERSION.class, "SDK_INT", realSdk);
-        LollipopAppOps.unknownRecordAudio = false;
-    }
-
-    @Test
-    public void unmutingOnAndroid5DoesNotLookUpTheMarshmallowRecordAudioOp() {
-        for (int sdk : new int[] {Build.VERSION_CODES.LOLLIPOP, Build.VERSION_CODES.LOLLIPOP_MR1}) {
-            ReflectionHelpers.setStaticField(Build.VERSION.class, "SDK_INT", sdk);
-            LollipopAppOps.unknownRecordAudio = true;
-            NvConnection connection = connection();
-            connection.setMicrophoneMuted(true);
-            // Unmuting re-checks microphone access before the phone capture restarts.
-            connection.setMicrophoneMuted(false);
-            assertTrue("RECORD_AUDIO is an install-time grant before Android 6.0",
-                    connection.controllerMicrophonePermitted());
-            assertTrue(connection.beginControllerMicrophone());
-            connection.endControllerMicrophone();
-        }
+        UnknownOpAppOps.unknownRecordAudio = false;
     }
 
     @Test
     public void anUnknownRecordAudioOpDeniesTheMicrophoneInsteadOfCrashing() {
-        LollipopAppOps.unknownRecordAudio = true;
+        UnknownOpAppOps.unknownRecordAudio = true;
         NvConnection connection = connection();
         connection.setMicrophoneMuted(false);
         assertFalse(connection.controllerMicrophonePermitted());

@@ -1,6 +1,5 @@
 package com.limelight.nvstream;
 
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
@@ -22,7 +21,6 @@ import com.limelight.nvstream.jni.MoonBridge;
  * before its address toward the PC is asked about again as its addresses arrive.
  * The callbacks run on ConnectivityManager's thread, never the stream's.
  */
-@TargetApi(Build.VERSION_CODES.N)
 final class RoamingNetworkWatch {
     private final ConnectivityManager connMgr;
     private final RoamingNetworkTracker tracker;
@@ -91,9 +89,6 @@ final class RoamingNetworkWatch {
 
     /** The default network now, to pass to start() as the one the stream starts on; may be null. */
     static Network defaultNetwork(Context context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            return null;
-        }
         ConnectivityManager connMgr = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         return connMgr == null ? null : connMgr.getActiveNetwork();
     }
@@ -103,10 +98,6 @@ final class RoamingNetworkWatch {
      * the stream does not roam onto another network.
      */
     static RoamingNetworkWatch start(Context context, Network streamNetwork, NvConnectionListener listener) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            LimeLog.warning("Roaming: needs Android 7 to follow network changes; not roaming");
-            return null;
-        }
         ConnectivityManager connMgr = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (connMgr == null) {
             LimeLog.warning("Roaming: no ConnectivityManager; not roaming");

@@ -29,7 +29,6 @@
     <string name="desktop_zoom_disable">ピンチズームとパンを無効にする</string>
     <string name="desktop_zoom_reset">ズームをリセット</string>
     <string name="desktop_zoom_help">2 本の指でピンチすると最大 4 倍までズームし、2 本の指でドラッグするとパンします。1 本の指では選択中のタッチモードがそのまま使えます。ズーム操作が有効な間は、2 本指スクロールは使えません。</string>
-    <string name="desktop_zoom_surface_help">Android 5 と 6 でズームを使うには、ストリーミング設定で TextureView を有効にして再接続してください。</string>
     <string name="desktop_output">映像出力（ストリームに再接続します）</string>
     <string name="desktop_output_device">このデバイス</string>
     <string name="desktop_touchpad_help">映像は外部ディスプレイに表示されています。この画面はタッチパッドとして使用できます。キーボード、ゲームボタン、ストリームメニューは引き続きここで使用できます。</string>

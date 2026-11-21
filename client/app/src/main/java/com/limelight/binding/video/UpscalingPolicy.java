@@ -2,7 +2,6 @@ package com.limelight.binding.video;
 
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
-import android.os.Build;
 
 public final class UpscalingPolicy {
     public enum Mode {
@@ -152,7 +151,7 @@ public final class UpscalingPolicy {
                 return null;
             }
         } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && format.containsKey(MediaFormat.KEY_COLOR_TRANSFER)) {
+            if (format.containsKey(MediaFormat.KEY_COLOR_TRANSFER)) {
                 int transfer = format.getInteger(MediaFormat.KEY_COLOR_TRANSFER);
                 if (transfer == MediaFormat.COLOR_TRANSFER_ST2084 || transfer == MediaFormat.COLOR_TRANSFER_HLG) {
                     policy.fail(Reason.HDR);

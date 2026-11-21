@@ -524,7 +524,7 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         BackdropView backdrop = findViewById(R.id.home_backdrop);
         View hero = findViewById(R.id.home_hero);
         // It fades at each change of game; its lines do not overlap, so that needs no offscreen layer.
-        if (hero != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) hero.forceHasOverlappingRendering(false);
+        if (hero != null) hero.forceHasOverlappingRendering(false);
         int canvas = isTelevision() ? AppTheme.tvCanvas(this)
                 : com.google.android.material.color.MaterialColors.getColor(backdrop, R.attr.glassCanvas);
         chrome.setUpBackdrop(backdrop, canvas);

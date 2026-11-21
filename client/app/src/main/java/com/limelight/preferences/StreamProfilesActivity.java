@@ -2,7 +2,6 @@ package com.limelight.preferences;
 
 import android.Manifest;
 import android.content.Context;
-import android.os.Build;
 import android.os.Bundle;
 import android.preference.Preference;
 import android.preference.PreferenceCategory;
@@ -458,10 +457,8 @@ public class StreamProfilesActivity extends NightjarActivity {
             UiHelper.showDialog(activity, new NavigationDialogBuilder(activity).setTitle(R.string.profiles_location_title)
                     .setMessage(R.string.profiles_location_message)
                     .setPositiveButton(R.string.profiles_location_continue, (dialog, which) -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            activity.requestPermissions(new String[] {Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION}, LOCATION_REQUEST);
-                        }
+                        activity.requestPermissions(new String[] {Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION}, LOCATION_REQUEST);
                     }).setNegativeButton(android.R.string.cancel, null).create());
         }
 

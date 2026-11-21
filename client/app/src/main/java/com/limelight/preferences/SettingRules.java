@@ -176,7 +176,6 @@ final class SettingRules {
      * same). VRR, adaptive refresh and the pacings that take over return before this.
      */
     static String fractionalVsyncRefreshReason(Context context, SharedPreferences prefs) {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return null;
         if (prefs.getBoolean(PreferenceConfiguration.REDUCE_REFRESH_RATE_PREF_STRING, false)) return null;
         android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
         if (display == null) return null;

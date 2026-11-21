@@ -4,7 +4,6 @@ import android.content.Context;
 import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -44,9 +43,9 @@ public class MicRoute {
         audio = (AudioManager) context.getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
     }
 
-    /** Whether game audio plays privately now. Before Android 6 the route is unknown and reads as the speaker. */
+    /** Whether game audio plays privately now. The route reads as the speaker when no output device is attached. */
     public boolean privateOutput() {
-        if (audio == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false;
+        if (audio == null) return false;
         AudioDeviceInfo[] devices = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
         int[] types = new int[devices.length];
         for (int i = 0; i < devices.length; i++) types[i] = devices[i].getType();
@@ -55,7 +54,7 @@ public class MicRoute {
 
     /** Runs {@code changed} when an output device comes or goes; null stops watching. */
     public void watch(Runnable changed) {
-        if (audio == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        if (audio == null) return;
         if (callback != null) {
             audio.unregisterAudioDeviceCallback(callback);
             callback = null;

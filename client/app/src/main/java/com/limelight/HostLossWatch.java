@@ -5,7 +5,6 @@ import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.RouteInfo;
-import android.os.Build;
 import android.os.SystemClock;
 
 import com.limelight.nvstream.jni.MoonBridge;
@@ -161,22 +160,8 @@ final class HostLossWatch {
         }
         @Override public boolean saidGoodbye() { return MoonBridge.hostSaidGoodbye(); }
         @Override public String gatewayToward(InetAddress host) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Network network = connectivity.getActiveNetwork();
-                return network == null ? null : gatewayOn(network, host);
-            }
-            // No active Network before Android 6: any VPN rules the path as above, else the network
-            // whose own link holds the PC.
-            Network[] networks = connectivity.getAllNetworks();
-            for (Network network : networks) {
-                NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
-                if (capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return null;
-            }
-            for (Network network : networks) {
-                String gateway = gatewayOn(network, host);
-                if (gateway != null) return gateway;
-            }
-            return null;
+            Network network = connectivity.getActiveNetwork();
+            return network == null ? null : gatewayOn(network, host);
         }
 
         private String gatewayOn(Network network, InetAddress host) {

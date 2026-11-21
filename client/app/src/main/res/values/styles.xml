@@ -203,7 +203,7 @@
         <item name="colorOnSurfaceInverse">@color/night_inverse_on_surface</item>
         <item name="colorOutline">@color/night_outline</item>
         <item name="colorOutlineVariant">@color/night_outline_variant</item>
-        <!-- Transparent streaming background to avoid extra overdraw; values-v24 uses black. -->
+        <!-- Transparent streaming background to avoid extra overdraw; StreamTheme overrides it with black. -->
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:textColorPrimary">@color/night_on_surface</item>
         <item name="android:textColorSecondary">@color/night_on_surface_variant</item>
@@ -269,7 +269,10 @@
     </style>
 
     <!-- Stream activity theme (Game and the debug stream fixtures). -->
-    <style name="StreamTheme" parent="Theme.Nightjar.Stream" />
+    <style name="StreamTheme" parent="Theme.Nightjar.Stream">
+        <!-- Black behind the stream so switching apps shows no transparent window. -->
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
 
     <!-- The stream menu's blur: an empty see-through window under the panel, rounded as the panel is. -->
     <style name="StreamMenuBlurWindow" parent="@android:style/Theme.Translucent.NoTitleBar">

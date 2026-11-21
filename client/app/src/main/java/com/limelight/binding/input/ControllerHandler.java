@@ -2939,7 +2939,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 break;
 
             case MotionEvent.ACTION_BUTTON_PRESS:
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && event.getActionButton() == MotionEvent.BUTTON_PRIMARY) {
+                if (event.getActionButton() == MotionEvent.BUTTON_PRIMARY) {
                     context.inputMap |= ControllerPacket.TOUCHPAD_FLAG;
                     sendControllerInputPacket(context);
                     return !prefConfig.gamepadTouchpadAsMouse; // Report as unhandled event to trigger mouse handling
@@ -2947,7 +2947,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 return false;
 
             case MotionEvent.ACTION_BUTTON_RELEASE:
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && event.getActionButton() == MotionEvent.BUTTON_PRIMARY) {
+                if (event.getActionButton() == MotionEvent.BUTTON_PRIMARY) {
                     context.inputMap &= ~ControllerPacket.TOUCHPAD_FLAG;
                     sendControllerInputPacket(context);
                     return !prefConfig.gamepadTouchpadAsMouse; // Report as unhandled event to trigger mouse handling

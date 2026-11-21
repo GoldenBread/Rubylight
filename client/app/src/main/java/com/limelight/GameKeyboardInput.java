@@ -101,7 +101,7 @@ final class GameKeyboardInput {
             android.icu.util.ULocale locale = subtype.getPhysicalKeyboardHintLanguageTag();
             if (locale != null) hint = locale.toLanguageTag();
         }
-        String language = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N ? subtype.getLanguageTag() : null;
+        String language = subtype.getLanguageTag();
         return KeyboardLayoutTag.pick(hint, language, subtype.getLocale());
     }
 

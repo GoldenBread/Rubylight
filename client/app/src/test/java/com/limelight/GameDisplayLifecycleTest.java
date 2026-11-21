@@ -34,7 +34,7 @@ import static org.junit.Assert.*;
 public class GameDisplayLifecycleTest {
     private static final String OUTPUT_DISPLAY = "rubylight.outputDisplay";
 
-    @Test @Config(sdk = 23)
+    @Test @Config(sdk = 25)
     public void refreshDiagnosticsAvoidArrApisOnOlderAndroid() {
         Game game = Robolectric.buildActivity(Game.class).get();
         ReflectionHelpers.setField(game, "prefConfig", new PreferenceConfiguration());
@@ -44,7 +44,7 @@ public class GameDisplayLifecycleTest {
                         game.getWindowManager().getDefaultDisplay()));
 
         String log = LimeLog.getRedactedLog();
-        assertTrue(log.contains("api=23, display=0"));
+        assertTrue(log.contains("api=25, display=0"));
         assertTrue(log.contains("arrSupported=unavailable, selected=disabled"));
         assertTrue(log.contains("windowMode=0, windowHz=0.0"));
     }

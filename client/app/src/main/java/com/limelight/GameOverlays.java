@@ -14,7 +14,6 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.text.TextUtils;
 import android.graphics.Rect;
-import android.os.Build;
 import android.os.SystemClock;
 import android.view.Display;
 import android.view.View;
@@ -274,7 +273,6 @@ final class GameOverlays {
     void refuseHdr(HdrPolicy.Refusal refusal) {
         int text;
         switch (refusal) {
-            case ANDROID_TOO_OLD: text = R.string.stream_hdr_android_unsupported; break;
             case MODE_WITHOUT_HDR10: text = R.string.stream_hdr_mode_unsupported; break;
             case DECODER_WITHOUT_HDR10: text = R.string.stream_hdr_decoder_unsupported; break;
             case DISPLAY_WITHOUT_HDR10: text = R.string.stream_hdr_display_unsupported; break;
@@ -362,8 +360,7 @@ final class GameOverlays {
     private String displayRefreshOverlayLine() {
         if (!game.prefConfig.vrr) return "";
         Display display = game.videoOutput.getVideoDisplay();
-        float modeRefreshRate = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                display.getMode().getRefreshRate() : display.getRefreshRate();
+        float modeRefreshRate = display.getMode().getRefreshRate();
         return "\n" + game.getString(R.string.perf_overlay_vrr, modeRefreshRate, display.getRefreshRate(),
                 game.useArr ? "ARR" : game.getString(R.string.perf_overlay_vrr_max_hz));
     }

@@ -37,7 +37,6 @@ import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.utils.ProblemReport;
 import com.limelight.utils.RecentStreams;
 
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.Context;
@@ -1297,8 +1296,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 configuredFormat.setInteger(MediaFormat.KEY_FRAME_RATE, refreshRate);
                 Display display = outputDisplay;
                 if (display != null) {
-                    updateUpscalingFrameRate(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                            display.getMode().getRefreshRate() : display.getRefreshRate());
+                    updateUpscalingFrameRate(display.getMode().getRefreshRate());
                 }
             }
         }
@@ -1441,8 +1439,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     private void setupUpscaling() {
         Display display = outputDisplay;
-        float panelHz = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                display.getMode().getRefreshRate() : display.getRefreshRate();
+        float panelHz = display.getMode().getRefreshRate();
         upscalingPolicy = new UpscalingPolicy(Math.max(1, Math.min(refreshRate, Math.round(panelHz))));
         wantVulkan = false;
         frameWarp = false;
@@ -1570,8 +1567,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 getPreferredColorRange() == MoonBridge.COLOR_RANGE_FULL,
                 (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0,
                 getStreamTransfer() == MediaFormat.COLOR_TRANSFER_HLG,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                        outputDisplay.getMode().getRefreshRate() : outputDisplay.getRefreshRate(),
+                outputDisplay.getMode().getRefreshRate(),
                 vulkanCodecName(), videoDecoder.getName(), null, false,
                 frameWarp ? MoonBridge.frameWarpApi() : 0);
         if (renderer != null && frameWarp && !renderer.drawsFrameWarp()) {
@@ -1760,7 +1756,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      * straight from the decoder to the surface (API 23+), not through the upscaler.
      */
     private boolean reportsRenderTimes() {
-        return upscaler == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
+        return upscaler == null;
     }
 
     /** Whether releaseOutputFrame() renders the frame; after an upscaler failure it drops it. */
@@ -2633,7 +2629,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         MediaFormat format = outputFormat;
         if (format == null || packing != null || upscaler != null || dolbyVisionActive ||
                 (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0 ||
-                Build.VERSION.SDK_INT < Build.VERSION_CODES.N ||
                 !format.containsKey(MediaFormat.KEY_COLOR_TRANSFER)) {
             return null;
         }
@@ -2746,9 +2741,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
 
         // Avoid setting KEY_FRAME_RATE on Lollipop and earlier to reduce compatibility risk
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            videoFormat.setInteger(MediaFormat.KEY_FRAME_RATE, refreshRate);
-        }
+        videoFormat.setInteger(MediaFormat.KEY_FRAME_RATE, refreshRate);
 
         int maxInputSize = maxInputSize(prefs.bitrate, prefs.fps, initialWidth, initialHeight);
         if (maxInputSize > 0) {
@@ -2763,27 +2756,25 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
 
         // Android 7.0 adds color options to the MediaFormat
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            videoFormat.setInteger(MediaFormat.KEY_COLOR_RANGE,
-                    getPreferredColorRange() == MoonBridge.COLOR_RANGE_FULL ?
-                    MediaFormat.COLOR_RANGE_FULL : MediaFormat.COLOR_RANGE_LIMITED);
+        videoFormat.setInteger(MediaFormat.KEY_COLOR_RANGE,
+                getPreferredColorRange() == MoonBridge.COLOR_RANGE_FULL ?
+                MediaFormat.COLOR_RANGE_FULL : MediaFormat.COLOR_RANGE_LIMITED);
 
-            // If the stream is HDR-capable, the decoder will detect transitions in color standards
-            // rather than us hardcoding them into the MediaFormat.
-            if (!assumesHdr()) {
-                // Set color format keys when not in HDR mode, since we know they won't change
-                videoFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
-                switch (getPreferredColorSpace()) {
-                    case MoonBridge.COLORSPACE_REC_601:
-                        videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT601_NTSC);
-                        break;
-                    case MoonBridge.COLORSPACE_REC_709:
-                        videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709);
-                        break;
-                    case MoonBridge.COLORSPACE_REC_2020:
-                        videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT2020);
-                        break;
-                }
+        // If the stream is HDR-capable, the decoder will detect transitions in color standards
+        // rather than us hardcoding them into the MediaFormat.
+        if (!assumesHdr()) {
+            // Set color format keys when not in HDR mode, since we know they won't change
+            videoFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
+            switch (getPreferredColorSpace()) {
+                case MoonBridge.COLORSPACE_REC_601:
+                    videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT601_NTSC);
+                    break;
+                case MoonBridge.COLORSPACE_REC_709:
+                    videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709);
+                    break;
+                case MoonBridge.COLORSPACE_REC_2020:
+                    videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT2020);
+                    break;
             }
         }
 
@@ -2841,7 +2832,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                     upscalingPolicy.getReason() != UpscalingPolicy.Reason.NONE) {
                 throw new IllegalStateException("Packed full-chroma reconstruction is unavailable");
             }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        } else {
             boolean hdr = currentHdrMode != null ? currentHdrMode : assumesHdr();
             applyConfigureColor(format, hdr, getPreferredColorSpace(), currentHdrMetadata, getStreamTransfer());
         }
@@ -3332,7 +3323,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     private void setFrameRenderedListener() {
         // MediaCodec's callback on the GPU path refers to the intermediate texture, not the display.
-        if (upscaler == null && vulkanRenderer == null && latencyHandler != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (upscaler == null && vulkanRenderer == null && latencyHandler != null) {
             videoDecoder.setOnFrameRenderedListener(new MediaCodec.OnFrameRenderedListener() {
                 @Override
                 public void onFrameRendered(MediaCodec mediaCodec, long presentationTimeUs, long renderTimeNanos) {
@@ -3931,8 +3922,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // A fold or mode change can invalidate a fixed-refresh latch estimate.
         boolean arrSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA &&
                 streamDisplay.hasArrSupport();
-        float physicalRefreshRate = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                streamDisplay.getMode().getRefreshRate() : streamDisplay.getRefreshRate();
+        float physicalRefreshRate = streamDisplay.getMode().getRefreshRate();
         updateUpscalingFrameRate(physicalRefreshRate);
         synchronized (vsyncMonitor) {
             outputHasArrSupport = arrSupported;
@@ -5086,9 +5076,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         Display display = outputDisplay;
         if (display == null) return 0;
         float highest = display.getRefreshRate();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            for (Display.Mode mode : display.getSupportedModes()) highest = Math.max(highest, mode.getRefreshRate());
-        }
+        for (Display.Mode mode : display.getSupportedModes()) highest = Math.max(highest, mode.getRefreshRate());
         return highest;
     }
 
@@ -5395,34 +5383,32 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             }
             // HDR metadata is only supported in Android 7.0 and later, so don't bother
             // restarting the codec on anything earlier than that.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                byte[] metadata = enabled && hdrMetadata != null && hdrMetadata.length >= 24 ? hdrMetadata : null;
-                boolean previousMode = currentHdrMode != null ? currentHdrMode : assumesHdr();
-                currentHdrMode = enabled;
-                // The Vulkan renderer switches its output between SDR and HDR10 itself
-                VulkanRendererBridge vulkan = vulkanRenderer;
-                if (vulkan != null) vulkan.setHdrMode(enabled, metadata);
-                if (enabled && upscaler != null) upscalingPolicy.fail(UpscalingPolicy.Reason.HDR);
-                HdrChange change = hdrChange(previousMode, enabled, currentHdrMetadata, metadata, Build.VERSION.SDK_INT);
-                if (change == HdrChange.NONE) {
-                    return;
-                }
-                currentHdrMetadata = metadata == null ? null : metadata.clone();
-                if (change == HdrChange.PARAMETERS &&
-                        (!decoderCarriesHdrMetadata(vulkan != null) || setRunningHdrStaticInfo(currentHdrMetadata))) {
-                    return;
-                }
-
-                // If we reach this point, we need to restart the MediaCodec instance to
-                // pick up the HDR metadata change. This will happen on the next input
-                // or output buffer.
-
-                // HACK: Reset codec recovery attempt counter, since this is an expected "recovery"
-                codecRecoveryAttempts = 0;
-
-                // The host's first HDR report restarts a 10-bit stream once: it adds metadata or turns HDR off.
-                requestRestart(enabled ? (metadata != null ? "HDR metadata" : "HDR on") : "HDR off");
+            byte[] metadata = enabled && hdrMetadata != null && hdrMetadata.length >= 24 ? hdrMetadata : null;
+            boolean previousMode = currentHdrMode != null ? currentHdrMode : assumesHdr();
+            currentHdrMode = enabled;
+            // The Vulkan renderer switches its output between SDR and HDR10 itself
+            VulkanRendererBridge vulkan = vulkanRenderer;
+            if (vulkan != null) vulkan.setHdrMode(enabled, metadata);
+            if (enabled && upscaler != null) upscalingPolicy.fail(UpscalingPolicy.Reason.HDR);
+            HdrChange change = hdrChange(previousMode, enabled, currentHdrMetadata, metadata, Build.VERSION.SDK_INT);
+            if (change == HdrChange.NONE) {
+                return;
             }
+            currentHdrMetadata = metadata == null ? null : metadata.clone();
+            if (change == HdrChange.PARAMETERS &&
+                    (!decoderCarriesHdrMetadata(vulkan != null) || setRunningHdrStaticInfo(currentHdrMetadata))) {
+                return;
+            }
+
+            // If we reach this point, we need to restart the MediaCodec instance to
+            // pick up the HDR metadata change. This will happen on the next input
+            // or output buffer.
+
+            // HACK: Reset codec recovery attempt counter, since this is an expected "recovery"
+            codecRecoveryAttempts = 0;
+
+            // The host's first HDR report restarts a 10-bit stream once: it adds metadata or turns HDR off.
+            requestRestart(enabled ? (metadata != null ? "HDR metadata" : "HDR on") : "HDR off");
         }
     }
 
@@ -5772,8 +5758,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                     PerformanceOverlay.compactText(context, PerformanceOverlay.renderedFps(frameRates),
                             PerformanceOverlay.healthFps(frameRates), frameRates[0],
                             PerformanceOverlay.panelHz(vsyncNs, outputDisplay == null ? -1 :
-                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                                            outputDisplay.getMode().getRefreshRate() : outputDisplay.getRefreshRate()),
+                                    outputDisplay.getMode().getRefreshRate()),
                             networkMs,
                             fps.lossPercent, decodeTimeMs));
         }
@@ -6764,37 +6749,31 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             if (renderer.avcDecoder != null) {
                 Range<Integer> avcWidthRange = renderer.avcDecoder.getCapabilitiesForType("video/avc").getVideoCapabilities().getSupportedWidths();
                 str += "AVC supported width range: "+avcWidthRange+DELIMITER;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    try {
-                        Range<Double> avcFpsRange = renderer.avcDecoder.getCapabilitiesForType("video/avc").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
-                        str += "AVC achievable FPS range: "+avcFpsRange+DELIMITER;
-                    } catch (IllegalArgumentException e) {
-                        str += "AVC achievable FPS range: UNSUPPORTED!"+DELIMITER;
-                    }
+                try {
+                    Range<Double> avcFpsRange = renderer.avcDecoder.getCapabilitiesForType("video/avc").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
+                    str += "AVC achievable FPS range: "+avcFpsRange+DELIMITER;
+                } catch (IllegalArgumentException e) {
+                    str += "AVC achievable FPS range: UNSUPPORTED!"+DELIMITER;
                 }
             }
             if (hevcShown != null) {
                 Range<Integer> hevcWidthRange = hevcShown.getCapabilitiesForType("video/hevc").getVideoCapabilities().getSupportedWidths();
                 str += "HEVC supported width range: "+hevcWidthRange+DELIMITER;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    try {
-                        Range<Double> hevcFpsRange = hevcShown.getCapabilitiesForType("video/hevc").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
-                        str += "HEVC achievable FPS range: " + hevcFpsRange + DELIMITER;
-                    } catch (IllegalArgumentException e) {
-                        str += "HEVC achievable FPS range: UNSUPPORTED!"+DELIMITER;
-                    }
+                try {
+                    Range<Double> hevcFpsRange = hevcShown.getCapabilitiesForType("video/hevc").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
+                    str += "HEVC achievable FPS range: " + hevcFpsRange + DELIMITER;
+                } catch (IllegalArgumentException e) {
+                    str += "HEVC achievable FPS range: UNSUPPORTED!"+DELIMITER;
                 }
             }
             if (av1Shown != null) {
                 Range<Integer> av1WidthRange = av1Shown.getCapabilitiesForType("video/av01").getVideoCapabilities().getSupportedWidths();
                 str += "AV1 supported width range: "+av1WidthRange+DELIMITER;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    try {
-                        Range<Double> av1FpsRange = av1Shown.getCapabilitiesForType("video/av01").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
-                        str += "AV1 achievable FPS range: " + av1FpsRange + DELIMITER;
-                    } catch (IllegalArgumentException e) {
-                        str += "AV1 achievable FPS range: UNSUPPORTED!"+DELIMITER;
-                    }
+                try {
+                    Range<Double> av1FpsRange = av1Shown.getCapabilitiesForType("video/av01").getVideoCapabilities().getAchievableFrameRatesFor(renderer.initialWidth, renderer.initialHeight);
+                    str += "AV1 achievable FPS range: " + av1FpsRange + DELIMITER;
+                } catch (IllegalArgumentException e) {
+                    str += "AV1 achievable FPS range: UNSUPPORTED!"+DELIMITER;
                 }
             }
             str += "Configured format: "+renderer.configuredFormat+DELIMITER;
@@ -6841,9 +6820,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 str += "Recoverable: " + ce.isRecoverable() + DELIMITER;
                 str += "Transient: " + ce.isTransient() + DELIMITER;
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    str += "Codec Error Code: " + ce.getErrorCode() + DELIMITER;
-                }
+                str += "Codec Error Code: " + ce.getErrorCode() + DELIMITER;
             }
 
             str += originalException.toString();

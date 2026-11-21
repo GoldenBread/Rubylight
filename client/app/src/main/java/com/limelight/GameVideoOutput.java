@@ -88,26 +88,22 @@ final class GameVideoOutput {
         Display display = getVideoDisplay();
         boolean displayHdr = false;
         float maxNits = 0, maxAverageNits = 0, minNits = 0;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            // getHdrCapabilities() returns null on some devices (Lenovo Mirage Solo, Android 8.0).
-            Display.HdrCapabilities hdrCaps = display.getHdrCapabilities();
-            if (hdrCaps != null) {
-                // HLG alone makes this an HDR output only while the stream is HLG: never for a PQ stream.
-                displayHdr = HdrPolicy.reportsHdrOutput(hdrCaps.getSupportedHdrTypes(), game.decoderRenderer != null ?
-                        game.decoderRenderer.getStreamTransfer() : MediaFormat.COLOR_TRANSFER_ST2084);
-                maxNits = hdrCaps.getDesiredMaxLuminance();
-                maxAverageNits = hdrCaps.getDesiredMaxAverageLuminance();
-                minNits = hdrCaps.getDesiredMinLuminance();
-            }
+        // getHdrCapabilities() returns null on some devices (Lenovo Mirage Solo, Android 8.0).
+        Display.HdrCapabilities hdrCaps = display.getHdrCapabilities();
+        if (hdrCaps != null) {
+            // HLG alone makes this an HDR output only while the stream is HLG: never for a PQ stream.
+            displayHdr = HdrPolicy.reportsHdrOutput(hdrCaps.getSupportedHdrTypes(), game.decoderRenderer != null ?
+                    game.decoderRenderer.getStreamTransfer() : MediaFormat.COLOR_TRANSFER_ST2084);
+            maxNits = hdrCaps.getDesiredMaxLuminance();
+            maxAverageNits = hdrCaps.getDesiredMaxAverageLuminance();
+            minNits = hdrCaps.getDesiredMinLuminance();
         }
         String output = Integer.toString(display.getDisplayId());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Display.Mode mode = display.getMode();
-            // Foldable panels can share a logical display ID. Pixel geometry distinguishes them
-            // without reacting to brightness, rotation, or an automatic refresh-rate change.
-            output += ":" + Math.min(mode.getPhysicalWidth(), mode.getPhysicalHeight()) + "x" +
-                    Math.max(mode.getPhysicalWidth(), mode.getPhysicalHeight());
-        }
+        Display.Mode mode = display.getMode();
+        // Foldable panels can share a logical display ID. Pixel geometry distinguishes them
+        // without reacting to brightness, rotation, or an automatic refresh-rate change.
+        output += ":" + Math.min(mode.getPhysicalWidth(), mode.getPhysicalHeight()) + "x" +
+                Math.max(mode.getPhysicalWidth(), mode.getPhysicalHeight());
         DisplayCapsReporter.Caps sent = game.displayCapsReporter.update(output, game.streamHdr && displayHdr,
                 maxNits, maxAverageNits, minNits, hdrSdrRatio(display));
         if (sent != null) {
@@ -130,21 +126,18 @@ final class GameVideoOutput {
     // the DisplayCaps control message instead), as Moonlight V+ sends it. Null when unknown.
     static HdrBrightness launchLuminance(Display display) {
         float maxNits = Float.NaN, maxAverageNits = Float.NaN, minNits = Float.NaN;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            Display.HdrCapabilities hdrCaps = display.getHdrCapabilities();
-            if (hdrCaps != null) {
-                maxNits = hdrCaps.getDesiredMaxLuminance();
-                maxAverageNits = hdrCaps.getDesiredMaxAverageLuminance();
-                minNits = hdrCaps.getDesiredMinLuminance();
-            }
+        Display.HdrCapabilities hdrCaps = display.getHdrCapabilities();
+        if (hdrCaps != null) {
+            maxNits = hdrCaps.getDesiredMaxLuminance();
+            maxAverageNits = hdrCaps.getDesiredMaxAverageLuminance();
+            minNits = hdrCaps.getDesiredMinLuminance();
         }
         return HdrBrightness.fromDisplay(maxNits, minNits, maxAverageNits, hdrSdrRatio(display));
     }
 
     void updateInputPollingRate() {
         Display display = game.getWindowManager().getDefaultDisplay();
-        game.conn.setInputPollingRate(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                display.getMode().getRefreshRate() : display.getRefreshRate());
+        game.conn.setInputPollingRate(display.getMode().getRefreshRate());
     }
 
     private final DisplayRefreshDiagnostics displayRefreshDiagnostics = new DisplayRefreshDiagnostics();
@@ -269,11 +262,6 @@ final class GameVideoOutput {
     }
 
     void toggleDesktopZoom() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N && !game.prefConfig.useTextureView) {
-            game.menuActions.showStreamDialog(new NavigationDialogBuilder(game).setMessage(R.string.desktop_zoom_surface_help)
-                    .setPositiveButton(android.R.string.ok, null).create());
-            return;
-        }
         game.desktopGestures.setEnabled(!game.desktopGestures.enabled());
         if (game.desktopGestures.enabled()) game.messages.alert(R.string.desktop_zoom_help, Toast.LENGTH_LONG);
     }
@@ -341,7 +329,7 @@ final class GameVideoOutput {
         boolean show = holder != null && game.prefConfig != null && game.prefConfig.tvDisplayCompatibility
                 && game.connected && game.foreground && !game.isDestroyed()
                 && (game.app == null || game.app.getRole() != NvApp.Role.INPUT_ONLY)
-                && !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInPictureInPictureMode());
+                && !game.isInPictureInPictureMode();
         if (compositorHeartbeat != null && (!show || compositorHeartbeat.holder() != holder)) {
             compositorHeartbeat.stop();
             compositorHeartbeat = null;
@@ -381,7 +369,7 @@ final class GameVideoOutput {
 
     void setPreferredOrientationForCurrentDisplay() {
         boolean freeWindow = game.getIntent().getIntExtra(EXTRA_OUTPUT_DISPLAY, Display.DEFAULT_DISPLAY) != Display.DEFAULT_DISPLAY ||
-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInMultiWindowMode());
+                game.isInMultiWindowMode();
         boolean largeScreen = game.getResources().getConfiguration().smallestScreenWidthDp >= 600 ||
                 game.getPackageManager().hasSystemFeature("android.hardware.type.pc");
         boolean squarish = !freeWindow && !largeScreen &&
@@ -525,7 +513,7 @@ final class GameVideoOutput {
         }
 
         boolean autoEnter = game.externalPresentation == null && PictureInPicturePolicy.shouldAutoEnter(game.connected, game.app.getRole(), game.suppressPipRefCount,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInMultiWindowMode());
+                game.isInMultiWindowMode());
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
@@ -540,14 +528,12 @@ final class GameVideoOutput {
     }
 
     private boolean shouldIgnoreInsetsForResolution(int width, int height) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Display display = game.getWindowManager().getDefaultDisplay();
-            for (Display.Mode candidate : display.getSupportedModes()) {
-                // Ignore insets if this is an exact match for the display resolution
-                if ((width == candidate.getPhysicalWidth() && height == candidate.getPhysicalHeight()) ||
-                        (height == candidate.getPhysicalWidth() && width == candidate.getPhysicalHeight())) {
-                    return true;
-                }
+        Display display = game.getWindowManager().getDefaultDisplay();
+        for (Display.Mode candidate : display.getSupportedModes()) {
+            // Ignore insets if this is an exact match for the display resolution
+            if ((width == candidate.getPhysicalWidth() && height == candidate.getPhysicalHeight()) ||
+                    (height == candidate.getPhysicalWidth() && width == candidate.getPhysicalHeight())) {
+                return true;
             }
         }
 
@@ -570,7 +556,7 @@ final class GameVideoOutput {
     private static final double PANEL_SHAPE_TOLERANCE = 0.005;
 
     boolean isWindowedStream() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInMultiWindowMode() && !game.windowCoversDisplay();
+        return game.isInMultiWindowMode() && !game.windowCoversDisplay();
     }
 
     /** A free-form or pop-up window maximised to the whole display reports multi-window mode too. */
@@ -642,8 +628,8 @@ final class GameVideoOutput {
             getVideoWindow().setAttributes(windowLayoutParams);
             displayRefreshRate = game.panelMaxRefreshRate;
         }
-        // On M, we can explicitly set the optimal display mode
-        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        // Set the optimal display mode explicitly
+        else {
             Display.Mode bestMode = display.getMode();
             boolean isNativeResolutionStream = PreferenceConfiguration.isNativeResolution(game.prefConfig.width, game.prefConfig.height);
 
@@ -694,31 +680,6 @@ final class GameVideoOutput {
             }
 
             displayRefreshRate = bestMode.getRefreshRate();
-        }
-        // On L, we can at least tell the OS that we want a refresh rate
-        else {
-            float bestRefreshRate = display.getRefreshRate();
-            for (float candidate : display.getSupportedRefreshRates()) {
-                LimeLog.info("Examining refresh rate: "+candidate);
-
-                if (candidate > bestRefreshRate) {
-                    // Ensure the frame rate stays around 60 Hz for <= 60 FPS streams
-                    if (game.prefConfig.fps <= 60) {
-                        if (candidate >= 63) {
-                            continue;
-                        }
-                    }
-
-                    bestRefreshRate = candidate;
-                }
-            }
-
-            LimeLog.info("Selected refresh rate: "+bestRefreshRate);
-            windowLayoutParams.preferredRefreshRate = bestRefreshRate;
-            displayRefreshRate = bestRefreshRate;
-
-            // Apply the refresh rate change
-            getVideoWindow().setAttributes(windowLayoutParams);
         }
 
         if (game.prefConfig.useTextureView && !game.useArr) {
@@ -1055,9 +1016,9 @@ final class GameVideoOutput {
     void logDisplayRefreshPolicy(Display display, boolean arrSupported) {
         WindowManager.LayoutParams attributes = getVideoWindow().getAttributes();
         String changed = displayRefreshDiagnostics.update(Build.VERSION.SDK_INT, display.getDisplayId(),
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? display.getMode().getModeId() : 0,
+                display.getMode().getModeId(),
                 arrSupported, game.prefConfig.vrr, game.useArr,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? attributes.preferredDisplayModeId : 0,
+                attributes.preferredDisplayModeId,
                 attributes.preferredRefreshRate, game.appSurfaceFrameRateVote);
         if (changed != null) LimeLog.info(changed);
     }
@@ -1072,7 +1033,7 @@ final class GameVideoOutput {
         lastPaneWidth = width;
         lastPaneHeight = height;
         // Full-screen sizes come from the display; only a window follows its own pane.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInMultiWindowMode()) {
+        if (game.isInMultiWindowMode()) {
             scheduleReconfigureCheck();
         }
     }

@@ -14,7 +14,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 
-import androidx.annotation.RequiresApi;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -188,7 +187,6 @@ public class EchoProbeActivity extends Activity {
     }
 
     private static String routeOf(AudioRecord record) {
-        if (Build.VERSION.SDK_INT < 24) return "?";
         AudioDeviceInfo device = record.getRoutedDevice();
         return device == null ? "none" : device.getType() + "/" + device.getProductName();
     }
@@ -251,12 +249,10 @@ public class EchoProbeActivity extends Activity {
             }
             default:
                 // The AudioTrack arms use AudioTrack.Builder; minSdk is 21.
-                if (Build.VERSION.SDK_INT < 23) throw new IllegalStateException("the " + play + " arm needs Android 6 or newer");
                 playTrack(play.equals("voice"), stereo, chunk);
         }
     }
 
-    @RequiresApi(23)
     private static void playTrack(boolean voice, short[] stereo, int chunk) throws InterruptedException {
         AudioAttributes.Builder attributes = new AudioAttributes.Builder()
                 .setUsage(voice ? AudioAttributes.USAGE_VOICE_COMMUNICATION : AudioAttributes.USAGE_GAME);

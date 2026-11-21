@@ -11,14 +11,12 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.net.Uri;
-import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.text.Layout;
 import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.text.TextUtils;
 
-import androidx.annotation.RequiresApi;
 
 import com.limelight.grid.assets.DiskAssetLoader;
 import com.limelight.grid.assets.PlaceholderArt;
@@ -98,14 +96,12 @@ public class PosterContentProvider extends ContentProvider {
      * Writes the poster with the game's title the provider serves while the game has no cover of its
      * own (TvChannelHelper, for a channel's card).
      */
-    @RequiresApi(Build.VERSION_CODES.M)
     public static void writeTitlePoster(Context context, String uuid, String appId, String title) throws IOException {
         writeTitlePoster(titlePosterFile(context, uuid, appId), title.trim(),
                 context.getColor(R.color.night_primary_container), context.getColor(R.color.night_on_primary_container));
     }
 
     /** The title on the app's colours at the size the cached covers have (2:3, as the channel's cards). */
-    @RequiresApi(Build.VERSION_CODES.M)
     static void writeTitlePoster(File target, String title, int background, int text) throws IOException {
         File dir = target.getParentFile();
         if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {

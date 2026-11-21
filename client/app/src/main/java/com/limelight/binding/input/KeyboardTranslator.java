@@ -1,7 +1,7 @@
 package com.limelight.binding.input;
 
-import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
+import android.annotation.SuppressLint;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.util.SparseArray;

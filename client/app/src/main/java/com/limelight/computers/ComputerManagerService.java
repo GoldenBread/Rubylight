@@ -60,7 +60,6 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.os.Binder;
-import android.os.Build;
 import android.os.IBinder;
 import android.os.SystemClock;
 import android.preference.PreferenceManager;
@@ -499,7 +498,7 @@ public class ComputerManagerService extends Service {
 
     private void populateExternalAddress(ComputerDetails details) {
         boolean activeNetworkIsVpn = NetHelper.isActiveNetworkVpn(this);
-        if (activeNetworkIsVpn && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+        if (activeNetworkIsVpn) {
             // STUN must use an underlying LAN, not the VPN's public endpoint. Only the STUN socket
             // goes there (as Moonlight V+ does): binding the process would move a running stream's
             // sockets off the VPN for the length of the query.
@@ -1273,24 +1272,22 @@ public class ComputerManagerService extends Service {
         releaseLocalDatabaseReference();
 
         // Monitor for network changes to invalidate our PC state
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            networkCallback = new ConnectivityManager.NetworkCallback() {
-                @Override
-                public void onAvailable(Network network) {
-                    LimeLog.info("Resetting PC state for new available network");
-                    applyNetworkChange(true, SystemClock.elapsedRealtime());
-                }
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+                LimeLog.info("Resetting PC state for new available network");
+                applyNetworkChange(true, SystemClock.elapsedRealtime());
+            }
 
-                @Override
-                public void onLost(Network network) {
-                    LimeLog.info("Offlining PCs due to network loss");
-                    applyNetworkChange(false, SystemClock.elapsedRealtime());
-                }
-            };
+            @Override
+            public void onLost(Network network) {
+                LimeLog.info("Offlining PCs due to network loss");
+                applyNetworkChange(false, SystemClock.elapsedRealtime());
+            }
+        };
 
-            ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            connMgr.registerDefaultNetworkCallback(networkCallback);
-        }
+        ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        connMgr.registerDefaultNetworkCallback(networkCallback);
     }
 
     /**
@@ -1337,10 +1334,8 @@ public class ComputerManagerService extends Service {
             discoveryServiceConnection.notifyAll();
         }
         onUnbind(null);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            connMgr.unregisterNetworkCallback(networkCallback);
-        }
+        ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        connMgr.unregisterNetworkCallback(networkCallback);
 
         if (discoveryServiceBound) {
             unbindService(discoveryServiceConnection);

@@ -43,9 +43,8 @@ public final class Haptics {
     static int constant(Kind kind, int sdk) {
         switch (kind) {
             case DIRECTION:
-                // One light tick for one key; the clock tick before Android 6.
-                return sdk >= Build.VERSION_CODES.M ? HapticFeedbackConstants.CONTEXT_CLICK
-                        : HapticFeedbackConstants.CLOCK_TICK;
+                // One light tick for one key.
+                return HapticFeedbackConstants.CONTEXT_CLICK;
             case DIAGONAL:
                 // Two keys: a full click, firmer than the direction's tick. Android 11's confirm plays the same click.
                 return HapticFeedbackConstants.VIRTUAL_KEY;

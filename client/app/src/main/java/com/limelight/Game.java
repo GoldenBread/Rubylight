@@ -549,15 +549,13 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         // Where the display is now stays requested until RESTORE_DISPLAY_MODE: on Android 12+ the
         // refresh rate may have been switched by the surface's frame-rate vote, which would
         // otherwise be dropped together with the HDR output.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                android.view.Window window = videoOutput.getVideoWindow();
-                WindowManager.LayoutParams attributes = window.getAttributes();
-                attributes.preferredDisplayModeId = videoOutput.getVideoDisplay().getMode().getModeId();
-                window.setAttributes(attributes);
-            } catch (RuntimeException e) {
-                LimeLog.warning("Exit: could not pin the display mode: " + e);
-            }
+        try {
+            android.view.Window window = videoOutput.getVideoWindow();
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.preferredDisplayModeId = videoOutput.getVideoDisplay().getMode().getModeId();
+            window.setAttributes(attributes);
+        } catch (RuntimeException e) {
+            LimeLog.warning("Exit: could not pin the display mode: " + e);
         }
         if (streamView != null) streamView.setVisibility(View.GONE);
         if (renderView != null && renderView != streamView) renderView.setVisibility(View.GONE);
@@ -570,7 +568,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
         try {
             android.view.Window window = videoOutput.getVideoWindow();
             WindowManager.LayoutParams attributes = window.getAttributes();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) attributes.preferredDisplayModeId = 0;
+            attributes.preferredDisplayModeId = 0;
             attributes.preferredRefreshRate = 0;
             window.setAttributes(attributes);
         } catch (RuntimeException e) {
@@ -750,7 +748,7 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
 
     /** Split screen, a freeform window or picture-in-picture: the stream does not fill the screen. */
     boolean inWindow() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && (isInMultiWindowMode() || isInPictureInPictureMode());
+        return (isInMultiWindowMode() || isInPictureInPictureMode());
     }
 
     /**
@@ -897,7 +895,6 @@ public class Game extends Activity implements SurfaceHolder.Callback, TextureVie
     };
 
     @Override
-    @TargetApi(Build.VERSION_CODES.N)
     public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
         super.onMultiWindowModeChanged(isInMultiWindowMode);
         reapplySystemKeys();

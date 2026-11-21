@@ -413,11 +413,6 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
     }
 
     private void play(SurfaceHolder holder) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            // The paced player needs MediaCodec callbacks (Android 6).
-            label.setText(R.string.demo_playback_error);
-            return;
-        }
         String codec = sample();
         player = new DemoSamplePlayer(getWindowManager().getDefaultDisplay().getRefreshRate(),
                 () -> playbackFailed(holder, codec));
@@ -566,7 +561,7 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
 
     @Override public boolean isWindowedStream() {
         androidx.window.layout.WindowMetricsCalculator metrics = androidx.window.layout.WindowMetricsCalculator.getOrCreate();
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInMultiWindowMode() &&
+        return isInMultiWindowMode() &&
                 !metrics.computeCurrentWindowMetrics(this).getBounds()
                 .equals(metrics.computeMaximumWindowMetrics(this).getBounds());
     }
@@ -577,7 +572,7 @@ public final class DemoGameActivity extends Activity implements SurfaceHolder.Ca
         placeOverlay();
         // Portrait and landscape have their own layouts.
         controls.onOrientationChanged();
-        if (showControls && (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !isInPictureInPictureMode())) controls.show();
+        if (showControls && (!isInPictureInPictureMode())) controls.show();
         else controls.hide();
     }
 }

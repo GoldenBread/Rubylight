@@ -176,28 +176,16 @@ public final class WiredLink {
     }
 
     /** The active network as the only route, for Android 9 and older. */
-    @SuppressWarnings("deprecation")
     private static List<Route> activeNetworkRoute(ConnectivityManager connectivity) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Network active = connectivity.getActiveNetwork();
-            NetworkCapabilities capabilities = active == null ? null : connectivity.getNetworkCapabilities(active);
-            if (capabilities == null) {
-                return new ArrayList<>();
-            }
-            return activeNetworkRoute(capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN));
-        }
-        // Android 5: only the legacy network type is there, and a VPN shows no medium.
-        android.net.NetworkInfo info = connectivity.getActiveNetworkInfo();
-        if (info == null) {
+        Network active = connectivity.getActiveNetwork();
+        NetworkCapabilities capabilities = active == null ? null : connectivity.getNetworkCapabilities(active);
+        if (capabilities == null) {
             return new ArrayList<>();
         }
-        int type = info.getType();
-        return activeNetworkRoute(type == ConnectivityManager.TYPE_ETHERNET,
-                type == ConnectivityManager.TYPE_WIFI, type == ConnectivityManager.TYPE_MOBILE,
-                type == ConnectivityManager.TYPE_VPN);
+        return activeNetworkRoute(capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN));
     }
 
     /**

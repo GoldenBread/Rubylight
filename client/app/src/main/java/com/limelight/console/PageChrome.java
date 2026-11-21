@@ -42,12 +42,9 @@ public final class PageChrome {
         host.setTier(tier);
         placeTabs(tabsId, topRowId, bottomRowId, fadeId);
         host.setSafeAreaListener(layout::onSafeArea);
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-            probe = GlassProbe.start(activity, tier, this::stepDown);
-        }
+        probe = GlassProbe.start(activity, tier, this::stepDown);
     }
 
-    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.N)
     private void stepDown(GlassTier lower) {
         host.setTier(lower);
         probe = GlassProbe.continueAt(activity, lower, this::stepDown);
@@ -62,7 +59,7 @@ public final class PageChrome {
     }
 
     public void stop() {
-        if (probe != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) probe.stop();
+        if (probe != null) probe.stop();
     }
 
     private void placeTabs(int tabsId, int topRowId, int bottomRowId, int fadeId) {

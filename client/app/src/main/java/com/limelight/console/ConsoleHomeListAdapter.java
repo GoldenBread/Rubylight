@@ -2,7 +2,6 @@ package com.limelight.console;
 
 import android.content.Context;
 import android.content.res.ColorStateList;
-import android.os.Build;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -580,13 +579,11 @@ final class ConsoleHomeListAdapter extends RecyclerView.Adapter<RecyclerView.Vie
                 listener.onHostOptions(card);
                 return true;
             });
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                // A mouse's right button.
-                itemView.setOnContextClickListener(v -> {
-                    listener.onHostOptions(card);
-                    return true;
-                });
-            }
+            // A mouse's right button.
+            itemView.setOnContextClickListener(v -> {
+                listener.onHostOptions(card);
+                return true;
+            });
             // The dots are marked by the D-pad, never a focus stop of their own (a style can make buttons focusable).
             more.setFocusable(false);
             more.setContentDescription(context.getString(R.string.library_more_for, card.name));

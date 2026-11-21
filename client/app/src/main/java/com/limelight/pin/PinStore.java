@@ -2,7 +2,6 @@ package com.limelight.pin;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.os.Build;
 import android.os.SystemClock;
 import android.provider.Settings;
 
@@ -69,12 +68,10 @@ public final class PinStore {
         }
 
         @Override public long boot() {
-            if (Build.VERSION.SDK_INT >= 24) {
-                try {
-                    return Settings.Global.getInt(context.getContentResolver(), Settings.Global.BOOT_COUNT);
-                } catch (Settings.SettingNotFoundException | RuntimeException ignored) {
-                    // Fall through to the boot time estimate.
-                }
+            try {
+                return Settings.Global.getInt(context.getContentResolver(), Settings.Global.BOOT_COUNT);
+            } catch (Settings.SettingNotFoundException | RuntimeException ignored) {
+                // Fall through to the boot time estimate.
             }
             return bootEstimate(System.currentTimeMillis(), SystemClock.elapsedRealtime());
         }

@@ -4,7 +4,6 @@ import android.content.Context;
 import android.icu.text.DisplayContext;
 import android.icu.text.RelativeDateTimeFormatter;
 import android.icu.util.ULocale;
-import android.os.Build;
 import android.text.format.DateUtils;
 
 import androidx.core.os.ConfigurationCompat;
@@ -40,7 +39,7 @@ final class PlayedWhen {
     static CharSequence of(Context context, long thenMs, long nowMs) {
         Locale locale = ConfigurationCompat.getLocales(context.getResources().getConfiguration()).get(0);
         int days = daysBetween(thenMs, nowMs, TimeZone.getDefault());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && days >= 0 && days < 14) {
+        if (days >= 0 && days < 14) {
             if (days >= 2 && days < 7) return sentence(new android.icu.text.SimpleDateFormat("cccc", locale).format(new Date(thenMs)), locale);
             RelativeDateTimeFormatter words = RelativeDateTimeFormatter.getInstance(ULocale.forLocale(locale), null,
                     RelativeDateTimeFormatter.Style.LONG, DisplayContext.CAPITALIZATION_FOR_BEGINNING_OF_SENTENCE);

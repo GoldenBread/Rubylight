@@ -172,8 +172,7 @@ public final class TileGrid extends ViewGroup {
          */
         @Override
         protected void onMeasure(int widthSpec, int heightSpec) {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M
-                    && MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED) {
+            if (MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED) {
                 float room = MeasureSpec.getSize(widthSpec) - getCompoundPaddingLeft() - getCompoundPaddingRight();
                 CharSequence text = getText();
                 int end = text.toString().indexOf('\n');
@@ -230,11 +229,9 @@ public final class TileGrid extends ViewGroup {
         tile.setSingleLine(false);
         tile.setMaxLines(detail == null ? 2 : 3);
         tile.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            // Layout's constant (API 23) is LineBreaker's (API 29) by value; lint knows only the newer one.
-            //noinspection WrongConstant
-            tile.setBreakStrategy(android.text.Layout.BREAK_STRATEGY_BALANCED);
-        }
+        // Layout's constant (API 23) is LineBreaker's (API 29) by value; lint knows only the newer one.
+        //noinspection WrongConstant
+        tile.setBreakStrategy(android.text.Layout.BREAK_STRATEGY_BALANCED);
         tile.setIconResource(icon);
         tile.setIconGravity(MaterialButton.ICON_GRAVITY_TOP);
         tile.setIconSize(res.getDimensionPixelSize(R.dimen.stream_tile_icon));

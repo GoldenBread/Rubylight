@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Landscape: who asks and the PIN beside the pad, so a handheld shows all four rows without scrolling. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent" android:layout_height="wrap_content"
     android:fillViewport="true">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -11,7 +10,7 @@
         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
             android:orientation="vertical">
             <TextView android:id="@+id/pairing_pin_from" android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:breakStrategy="balanced" tools:targetApi="m" android:maxLines="2" android:ellipsize="end"
+                android:breakStrategy="balanced" android:maxLines="2" android:ellipsize="end"
                 android:textAppearance="@style/TextAppearance.Nightjar.Body" android:textColor="?attr/colorOnSurface" />
             <com.limelight.ui.PinSlots android:id="@+id/pairing_pin_value" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/space_m" />

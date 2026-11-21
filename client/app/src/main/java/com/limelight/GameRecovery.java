@@ -12,7 +12,6 @@ import com.limelight.utils.LaunchSource;
 import com.limelight.ui.NavigationDialogBuilder;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.os.Build;
 import android.os.SystemClock;
 import android.widget.Toast;
 import java.io.IOException;
@@ -239,8 +238,8 @@ final class GameRecovery {
      * new stream rather than handing this one a new intent.
      */
     void handOff(Intent next) {
-        boolean multiWindow = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInMultiWindowMode();
-        boolean pictureInPicture = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && game.isInPictureInPictureMode();
+        boolean multiWindow = game.isInMultiWindowMode();
+        boolean pictureInPicture = game.isInPictureInPictureMode();
         boolean inPlace = handsOffInPlace(game.isTaskRoot(), multiWindow, pictureInPicture);
         Intent start = handOffIntent(next, game.getComponentName(), inPlace);
         if (inPlace) {

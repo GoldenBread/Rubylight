@@ -432,8 +432,7 @@ public class ShortcutTrampoline extends Activity {
 
         // Beacon, ES-DE, Daijisho and other frontends hand us a game entry file instead of extras
         boolean frontend = Intent.ACTION_VIEW.equals(getIntent().getAction()) && getIntent().getData() != null;
-        Uri referrer = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP_MR1 ?
-                getReferrer() : null;
+        Uri referrer = getReferrer();
         launchSource = LaunchSource.external(frontend, referrer != null ? referrer.getHost() : null);
         if (frontend) {
             Intent entryIntent = readFrontendEntry(getIntent().getData());

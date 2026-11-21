@@ -364,10 +364,8 @@ public class StreamSettings extends NightjarActivity {
         // returns from it to the list.
         if (searchQuery.isEmpty()) unfoldRailFor(section);
         applyRailFold();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Display.Mode mode = getWindowManager().getDefaultDisplay().getMode();
-            previousDisplayPixelCount = mode.getPhysicalWidth() * mode.getPhysicalHeight();
-        }
+        Display.Mode mode = getWindowManager().getDefaultDisplay().getMode();
+        previousDisplayPixelCount = mode.getPhysicalWidth() * mode.getPhysicalHeight();
         android.app.FragmentTransaction transaction = getFragmentManager().beginTransaction();
         if (twoPane && getFragmentManager().findFragmentById(R.id.settings_sections) == null) {
             transaction.add(R.id.settings_sections, new RootFragment());
@@ -1210,7 +1208,7 @@ public class StreamSettings extends NightjarActivity {
         if (getFragmentManager().findFragmentById(R.id.stream_settings) == null
                 || (twoPane && getFragmentManager().findFragmentById(R.id.settings_sections) == null)) {
             reloadSettings();
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        } else {
             Display.Mode mode = getWindowManager().getDefaultDisplay().getMode();
             previousDisplayPixelCount = mode.getPhysicalWidth() * mode.getPhysicalHeight();
         }
@@ -1227,17 +1225,15 @@ public class StreamSettings extends NightjarActivity {
             return;
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Display.Mode mode = getWindowManager().getDefaultDisplay().getMode();
+        Display.Mode mode = getWindowManager().getDefaultDisplay().getMode();
 
-            // If the display's physical pixel count has changed, we consider that it's a new display
-            // and we should reload our settings (which include display-dependent values).
-            //
-            // NB: We aren't using displayId here because that stays the same (DEFAULT_DISPLAY) when
-            // switching between screens on a foldable device.
-            if (mode.getPhysicalWidth() * mode.getPhysicalHeight() != previousDisplayPixelCount) {
-                reloadSettings();
-            }
+        // If the display's physical pixel count has changed, we consider that it's a new display
+        // and we should reload our settings (which include display-dependent values).
+        //
+        // NB: We aren't using displayId here because that stays the same (DEFAULT_DISPLAY) when
+        // switching between screens on a foldable device.
+        if (mode.getPhysicalWidth() * mode.getPhysicalHeight() != previousDisplayPixelCount) {
+            reloadSettings();
         }
     }
 
@@ -2235,9 +2231,6 @@ public class StreamSettings extends NightjarActivity {
         }
 
         private boolean hasMicPermission() {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-                return true;
-            }
             return getActivity().checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
         }
 
@@ -2807,7 +2800,6 @@ public class StreamSettings extends NightjarActivity {
                 setAutomaticBitrate(settings, (Boolean) value);
                 return true;
             });
-            findPreference("checkbox_codec_performance").setEnabled(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M);
             findPreference("checkbox_phone_performance_hints").setEnabled(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S);
             if (!PyroWaveDecoderRenderer.hasAdrenoGpu()) {
                 removeSetting(PreferenceConfiguration.GPU_MAX_CLOCKS_PREF_STRING);
@@ -3161,9 +3153,7 @@ public class StreamSettings extends NightjarActivity {
                 if (!Boolean.TRUE.equals(value) || hasMicPermission()) {
                     return true;
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO}, MIC_PERMISSION_REQUEST);
-                }
+                requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO}, MIC_PERMISSION_REQUEST);
                 return false;
             });
 
@@ -3212,103 +3202,92 @@ public class StreamSettings extends NightjarActivity {
             boolean television = getActivity().getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEVISION);
 
             // Hide non-supported resolution/FPS combinations
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                int maxSupportedResW = 0;
+            int maxSupportedResW = 0;
 
-                // Add a native resolution with any insets included for users that don't want content
-                // behind the notch of their display
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    DisplayCutout cutout;
+            // Add a native resolution with any insets included for users that don't want content
+            // behind the notch of their display
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                DisplayCutout cutout;
 
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        // Use the much nicer Display.getCutout() API on Android 10+
-                        cutout = display.getCutout();
-                    }
-                    else {
-                        // Android 9 only
-                        WindowInsets insets = getActivity().getWindow().getDecorView().getRootWindowInsets();
-                        cutout = insets == null ? null : insets.getDisplayCutout();
-                    }
-
-                    if (cutout != null) {
-                        int widthInsets = cutout.getSafeInsetLeft() + cutout.getSafeInsetRight();
-                        int heightInsets = cutout.getSafeInsetBottom() + cutout.getSafeInsetTop();
-
-                        if (widthInsets != 0 || heightInsets != 0) {
-                            DisplayMetrics metrics = new DisplayMetrics();
-                            display.getRealMetrics(metrics);
-
-                            int width = Math.max(metrics.widthPixels - widthInsets, metrics.heightPixels - heightInsets);
-                            int height = Math.min(metrics.widthPixels - widthInsets, metrics.heightPixels - heightInsets);
-
-                            addNativeResolutionEntries(width, height, true);
-                        }
-                    }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // Use the much nicer Display.getCutout() API on Android 10+
+                    cutout = display.getCutout();
+                }
+                else {
+                    // Android 9 only
+                    WindowInsets insets = getActivity().getWindow().getDecorView().getRootWindowInsets();
+                    cutout = insets == null ? null : insets.getDisplayCutout();
                 }
 
-                // Always allow resolutions that are smaller or equal to the active
-                // display resolution because decoders can report total non-sense to us.
-                // For example, a p201 device reports:
-                // AVC Decoder: OMX.amlogic.avc.decoder.awesome
-                // HEVC Decoder: OMX.amlogic.hevc.decoder.awesome
-                // AVC supported width range: 64 - 384
-                // HEVC supported width range: 64 - 544
-                for (Display.Mode candidate : display.getSupportedModes()) {
-                    // Some devices report their dimensions in the portrait orientation
-                    // where height > width. Normalize these to the conventional width > height
-                    // arrangement before we process them.
+                if (cutout != null) {
+                    int widthInsets = cutout.getSafeInsetLeft() + cutout.getSafeInsetRight();
+                    int heightInsets = cutout.getSafeInsetBottom() + cutout.getSafeInsetTop();
 
-                    int width = Math.max(candidate.getPhysicalWidth(), candidate.getPhysicalHeight());
-                    int height = Math.min(candidate.getPhysicalWidth(), candidate.getPhysicalHeight());
+                    if (widthInsets != 0 || heightInsets != 0) {
+                        DisplayMetrics metrics = new DisplayMetrics();
+                        display.getRealMetrics(metrics);
 
-                    // Some TVs report strange values here, so let's avoid native resolutions on a TV
-                    // unless they report greater than 4K resolutions.
-                    if (!television || (width > 3840 || height > 2160)) {
-                        addNativeResolutionEntries(width, height, false);
-                    }
+                        int width = Math.max(metrics.widthPixels - widthInsets, metrics.heightPixels - heightInsets);
+                        int height = Math.min(metrics.widthPixels - widthInsets, metrics.heightPixels - heightInsets);
 
-                    if ((width >= 3840 || height >= 2160) && maxSupportedResW < 3840) {
-                        maxSupportedResW = 3840;
-                    }
-                    else if ((width >= 2560 || height >= 1440) && maxSupportedResW < 2560) {
-                        maxSupportedResW = 2560;
-                    }
-                    else if ((width >= 1920 || height >= 1080) && maxSupportedResW < 1920) {
-                        maxSupportedResW = 1920;
-                    }
-
-                    if (candidate.getRefreshRate() > maxSupportedFps) {
-                        maxSupportedFps = candidate.getRefreshRate();
+                        addNativeResolutionEntries(width, height, true);
                     }
                 }
+            }
 
-                // The decoders' width ranges can only raise the slot. Reading them builds a
-                // MediaCodecList, a blocking call to the media service that hit an ANR on a
-                // MediaTek Android 15 device (V+ c519d37): probe off the main thread and drop
-                // the sizes the decoders can't take once it's done.
-                final int displayResW = maxSupportedResW;
-                final android.app.Activity activity = getActivity();
-                final Context appContext = activity.getApplicationContext();
-                final DecoderWidthProbe probe = decoderWidthProbe;
-                decoderProbe = new Thread(() -> {
-                    int decoderResW = probe.probe(appContext);
-                    activity.runOnUiThread(() -> {
-                        if (isAdded() && getActivity() == activity && !activity.isFinishing()) {
-                            removeUndecodableResolutions(Math.max(displayResW, decoderResW));
-                        }
-                    });
-                }, "Decoder resolution probe");
-                decoderProbe.start();
+            // Always allow resolutions that are smaller or equal to the active
+            // display resolution because decoders can report total non-sense to us.
+            // For example, a p201 device reports:
+            // AVC Decoder: OMX.amlogic.avc.decoder.awesome
+            // HEVC Decoder: OMX.amlogic.hevc.decoder.awesome
+            // AVC supported width range: 64 - 384
+            // HEVC supported width range: 64 - 544
+            for (Display.Mode candidate : display.getSupportedModes()) {
+                // Some devices report their dimensions in the portrait orientation
+                // where height > width. Normalize these to the conventional width > height
+                // arrangement before we process them.
+
+                int width = Math.max(candidate.getPhysicalWidth(), candidate.getPhysicalHeight());
+                int height = Math.min(candidate.getPhysicalWidth(), candidate.getPhysicalHeight());
+
+                // Some TVs report strange values here, so let's avoid native resolutions on a TV
+                // unless they report greater than 4K resolutions.
+                if (!television || (width > 3840 || height > 2160)) {
+                    addNativeResolutionEntries(width, height, false);
+                }
+
+                if ((width >= 3840 || height >= 2160) && maxSupportedResW < 3840) {
+                    maxSupportedResW = 3840;
+                }
+                else if ((width >= 2560 || height >= 1440) && maxSupportedResW < 2560) {
+                    maxSupportedResW = 2560;
+                }
+                else if ((width >= 1920 || height >= 1080) && maxSupportedResW < 1920) {
+                    maxSupportedResW = 1920;
+                }
+
+                if (candidate.getRefreshRate() > maxSupportedFps) {
+                    maxSupportedFps = candidate.getRefreshRate();
+                }
             }
-            else {
-                // We can get the true metrics via the getRealMetrics() function (unlike the lies
-                // that getWidth() and getHeight() tell to us).
-                DisplayMetrics metrics = new DisplayMetrics();
-                display.getRealMetrics(metrics);
-                int width = Math.max(metrics.widthPixels, metrics.heightPixels);
-                int height = Math.min(metrics.widthPixels, metrics.heightPixels);
-                addNativeResolutionEntries(width, height, false);
-            }
+
+            // The decoders' width ranges can only raise the slot. Reading them builds a
+            // MediaCodecList, a blocking call to the media service that hit an ANR on a
+            // MediaTek Android 15 device (V+ c519d37): probe off the main thread and drop
+            // the sizes the decoders can't take once it's done.
+            final int displayResW = maxSupportedResW;
+            final android.app.Activity activity = getActivity();
+            final Context appContext = activity.getApplicationContext();
+            final DecoderWidthProbe probe = decoderWidthProbe;
+            decoderProbe = new Thread(() -> {
+                int decoderResW = probe.probe(appContext);
+                activity.runOnUiThread(() -> {
+                    if (isAdded() && getActivity() == activity && !activity.isFinishing()) {
+                        removeUndecodableResolutions(Math.max(displayResW, decoderResW));
+                    }
+                });
+            }, "Decoder resolution probe");
+            decoderProbe.start();
             // TVs can report a smaller panel than the screen they drive, so they keep every size.
             ((ResolutionPreference) findPreference(PreferenceConfiguration.RESOLUTION_PREF_STRING))
                     .ensureSelectedResolutionEntry();
@@ -3350,36 +3329,29 @@ public class StreamSettings extends NightjarActivity {
                 removeValue(PreferenceConfiguration.AUDIO_CONFIG_PREF_STRING, PreferenceConfiguration.AUDIO_CONFIG_714, () -> { });
             }
 
-            // Variable refresh rate needs Android 6 (vrrOffered): before it, it can't be turned on, and a
+            // Variable refresh rate is gated by vrrOffered: where it is false it can't be turned on, and a
             // choice saved before reads as off (PreferenceConfiguration and SettingRules do the same).
             // The row shows off without saving that, so the choice returns on a newer Android.
             Preference vrr = findPreference(PreferenceConfiguration.VRR_PREF_STRING);
             if (vrr != null && !DisplayFrameRatePolicy.vrrOffered(getActivity())) {
-                LimeLog.info("Hiding variable refresh rate: needs Android 6");
+                LimeLog.info("Hiding variable refresh rate: not offered");
                 vrr.setPersistent(false);
                 removeSetting(PreferenceConfiguration.VRR_PREF_STRING);
             }
 
-            // Remove HDR preference for devices below Nougat
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-                LimeLog.info("Excluding HDR toggle based on OS");
+            // We must now ensure our display is compatible with HDR10 (the capabilities are
+            // null on some devices, e.g. Lenovo Mirage Solo, Android 8.0)
+            boolean foundHdr10 = HdrPolicy.hasHdr10(HdrPolicy.displayHdrTypes(display));
+
+            if (!foundHdr10) {
+                LimeLog.info("Excluding HDR toggle based on display capabilities");
                 removeSetting("checkbox_enable_hdr");
             }
-            else {
-                // We must now ensure our display is compatible with HDR10 (the capabilities are
-                // null on some devices, e.g. Lenovo Mirage Solo, Android 8.0)
-                boolean foundHdr10 = HdrPolicy.hasHdr10(HdrPolicy.displayHdrTypes(display));
-
-                if (!foundHdr10) {
-                    LimeLog.info("Excluding HDR toggle based on display capabilities");
-                    removeSetting("checkbox_enable_hdr");
-                }
-                else if (PreferenceConfiguration.isShieldAtvFirmwareWithBrokenHdr()) {
-                    LimeLog.info("Disabling HDR toggle on old broken SHIELD TV firmware");
-                    hdr.setEnabled(false);
-                    hdr.setChecked(false);
-                    hdr.setSummary("Update the firmware on your NVIDIA SHIELD Android TV to enable HDR");
-                }
+            else if (PreferenceConfiguration.isShieldAtvFirmwareWithBrokenHdr()) {
+                LimeLog.info("Disabling HDR toggle on old broken SHIELD TV firmware");
+                hdr.setEnabled(false);
+                hdr.setChecked(false);
+                hdr.setSummary("Update the firmware on your NVIDIA SHIELD Android TV to enable HDR");
             }
 
             // Add a listener to the FPS and resolution preference

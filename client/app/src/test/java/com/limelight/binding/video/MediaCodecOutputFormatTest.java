@@ -35,7 +35,7 @@ public class MediaCodecOutputFormatTest {
     }
 
     @Test
-    @Config(sdk = {23, 28, 29})
+    @Config(sdk = {28, 29})
     public void packedSamplesBypassDecoderColorConversion() {
         MediaFormat format = MediaFormat.createVideoFormat("video/hevc", 2560, 2880);
         format.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT2020);

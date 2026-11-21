@@ -22,8 +22,6 @@ public final class HdrPolicy {
     public enum Refusal {
         NONE,
         SETTING_OFF,
-        /** Before Android 7 there are no HDR keys on MediaFormat. */
-        ANDROID_TOO_OLD,
         /** The screen reports no HDR10, or no HDR capabilities at all. */
         DISPLAY_WITHOUT_HDR10,
         /** Android 14 and newer: the mode the screen is in has no HDR10, but another mode does. */
@@ -67,7 +65,6 @@ public final class HdrPolicy {
     public static Refusal displayRefusal(int sdk, boolean enabled, int[] displayTypes, int[] anyModeTypes,
                                          int hostHdrFormats, HdrFormatPolicy.DrawnSurface surface) {
         if (!enabled) return Refusal.SETTING_OFF;
-        if (sdk < 24) return Refusal.ANDROID_TOO_OLD;
         if (hasHdr10(displayTypes)) return Refusal.NONE;
         boolean hlg = HdrFormatPolicy.hlgInstead(hostHdrFormats, displayTypes);
         if (hlg && surface != HdrFormatPolicy.DrawnSurface.PQ_ONLY) return Refusal.NONE;
@@ -95,7 +92,6 @@ public final class HdrPolicy {
 
     /** The screen's HDR types, null when Android gives none (before Android 7, and a few devices return null). */
     public static int[] displayHdrTypes(Display display) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null;
         Display.HdrCapabilities capabilities = display.getHdrCapabilities();
         return capabilities == null ? null : effectiveHdrTypes(capabilities.getSupportedHdrTypes());
     }

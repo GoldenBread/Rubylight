@@ -5,7 +5,6 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.net.NetworkInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -74,26 +73,15 @@ public final class WifiDiagnostics {
             if (connectivity == null) return null;
             WifiFacts.Link link;
             WifiInfo info = null;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Network network = connectivity.getActiveNetwork();
-                NetworkCapabilities caps = network != null ? connectivity.getNetworkCapabilities(network) : null;
-                if (caps == null) return network == null ? WifiFacts.notWifi(WifiFacts.Link.NONE) : null;
-                link = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? WifiFacts.Link.WIFI :
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ? WifiFacts.Link.ETHERNET :
-                        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ? WifiFacts.Link.CELLULAR :
-                        WifiFacts.Link.OTHER;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && caps.getTransportInfo() instanceof WifiInfo) {
-                    info = (WifiInfo) caps.getTransportInfo();
-                }
-            } else {
-                NetworkInfo active = connectivity.getActiveNetworkInfo();
-                if (active == null) return WifiFacts.notWifi(WifiFacts.Link.NONE);
-                switch (active.getType()) {
-                    case ConnectivityManager.TYPE_WIFI: link = WifiFacts.Link.WIFI; break;
-                    case ConnectivityManager.TYPE_ETHERNET: link = WifiFacts.Link.ETHERNET; break;
-                    case ConnectivityManager.TYPE_MOBILE: link = WifiFacts.Link.CELLULAR; break;
-                    default: link = WifiFacts.Link.OTHER; break;
-                }
+            Network network = connectivity.getActiveNetwork();
+            NetworkCapabilities caps = network != null ? connectivity.getNetworkCapabilities(network) : null;
+            if (caps == null) return network == null ? WifiFacts.notWifi(WifiFacts.Link.NONE) : null;
+            link = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? WifiFacts.Link.WIFI :
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ? WifiFacts.Link.ETHERNET :
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ? WifiFacts.Link.CELLULAR :
+                    WifiFacts.Link.OTHER;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && caps.getTransportInfo() instanceof WifiInfo) {
+                info = (WifiInfo) caps.getTransportInfo();
             }
             if (link != WifiFacts.Link.WIFI && link != WifiFacts.Link.OTHER) return WifiFacts.notWifi(link);
             if (info == null && wifiManager != null) info = wifiManager.getConnectionInfo();

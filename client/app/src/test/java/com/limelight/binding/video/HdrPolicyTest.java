@@ -37,14 +37,6 @@ public class HdrPolicyTest {
     }
 
     @Test
-    public void beforeAndroid7NoHdrIsAskedFor() {
-        for (int sdk : new int[] {21, 23}) {
-            assertEquals(Refusal.ANDROID_TOO_OLD, HdrPolicy.displayRefusal(sdk, true, new int[] {HDR10}, null));
-        }
-        assertEquals(Refusal.NONE, HdrPolicy.displayRefusal(24, true, new int[] {HDR10}, null));
-    }
-
-    @Test
     public void onAndroid14ACapabilityListWithoutHdr10IsAModeProblemWhenAnotherModeHasIt() {
         // From Android 14 the display's capabilities follow the active mode: HDR10 missing there
         // while another mode lists it is a refusal with its own reason, never a request.
@@ -135,8 +127,6 @@ public class HdrPolicyTest {
                 HdrFormatPolicy.DV_81));
         assertEquals(Refusal.DISPLAY_WITHOUT_HDR10, HdrPolicy.displayRefusal(33, true, NO_TYPES, null,
                 HdrFormatPolicy.ALL));
-        assertEquals(Refusal.ANDROID_TOO_OLD, HdrPolicy.displayRefusal(23, true, new int[] {HLG}, null,
-                HdrFormatPolicy.HLG));
     }
 
     @Test

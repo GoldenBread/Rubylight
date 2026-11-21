@@ -122,8 +122,7 @@ public class LatencyBenchmarkActivity extends NightjarActivity implements Choreo
 
     private float panelHz() {
         Display display = getWindowManager().getDefaultDisplay();
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                display.getMode().getRefreshRate() : display.getRefreshRate();
+        return display.getMode().getRefreshRate();
     }
 
     private String audioProperty(String name) {

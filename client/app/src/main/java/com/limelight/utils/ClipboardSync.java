@@ -3,7 +3,6 @@ package com.limelight.utils;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.os.Build;
 import android.os.PersistableBundle;
 
 import com.limelight.BuildConfig;
@@ -198,11 +197,9 @@ public final class ClipboardSync {
         @Override
         public boolean write(String text) {
             ClipData clip = ClipData.newPlainText(BuildConfig.BRAND_NAME, text);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                PersistableBundle extras = new PersistableBundle();
-                extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
-                clip.getDescription().setExtras(extras);
-            }
+            PersistableBundle extras = new PersistableBundle();
+            extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
+            clip.getDescription().setExtras(extras);
             try {
                 manager.setPrimaryClip(clip);
                 return true;

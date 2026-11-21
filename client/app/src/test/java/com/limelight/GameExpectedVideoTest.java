@@ -59,8 +59,7 @@ public class GameExpectedVideoTest {
     }
 
     @Test public void everyRefusalReasonNotesItsOwnTextOnce() {
-        for (HdrPolicy.Refusal refusal : new HdrPolicy.Refusal[] {HdrPolicy.Refusal.ANDROID_TOO_OLD,
-                HdrPolicy.Refusal.MODE_WITHOUT_HDR10, HdrPolicy.Refusal.DECODER_WITHOUT_HDR10,
+        for (HdrPolicy.Refusal refusal : new HdrPolicy.Refusal[] {HdrPolicy.Refusal.MODE_WITHOUT_HDR10, HdrPolicy.Refusal.DECODER_WITHOUT_HDR10,
                 HdrPolicy.Refusal.DISPLAY_WITHOUT_HDR10, HdrPolicy.Refusal.HLG_NEEDS_DIRECT_OUTPUT}) {
             Game game = game();
             StreamMessages messages = ReflectionHelpers.getField(game, "messages");

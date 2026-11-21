@@ -655,14 +655,8 @@ public class PreferenceConfiguration {
     public static boolean isSquarishScreen(Display display) {
         int width, height;
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            width = display.getMode().getPhysicalWidth();
-            height = display.getMode().getPhysicalHeight();
-        }
-        else {
-            width = display.getWidth();
-            height = display.getHeight();
-        }
+        width = display.getMode().getPhysicalWidth();
+        height = display.getMode().getPhysicalHeight();
 
         return isSquarishScreen(width, height);
     }
@@ -793,11 +787,9 @@ public class PreferenceConfiguration {
                 return false;
             }
 
-            // API 21 uses LEANBACK instead of TELEVISION
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                if (manager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
-                    return false;
-                }
+            // Some TV boxes report LEANBACK instead of TELEVISION
+            if (manager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
+                return false;
             }
         }
 
@@ -1134,7 +1126,7 @@ public class PreferenceConfiguration {
             HostStreamProfile profile = layers.values;
             boolean followedScreen = config.resolutionFollowsScreen;
             profile.applyTo(config);
-            // A PC, game or profile layer saved with VRR on can't turn it on before Android 6 (vrrOffered).
+            // A PC, game or profile layer saved with VRR on can't turn it on where vrrOffered is false.
             config.vrr &= com.limelight.binding.video.DisplayFrameRatePolicy.vrrOffered(context);
             config.resolveHostFrameTimes();
             StreamLayers.Source resolution = layers.source(HostStreamProfile.Field.RESOLUTION);
@@ -1211,16 +1203,12 @@ public class PreferenceConfiguration {
         android.graphics.Point real = new android.graphics.Point();
         display.getRealSize(real);
         int[] size;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Display.Mode[] supported = display.getSupportedModes();
-            int[][] modes = new int[supported.length][];
-            for (int i = 0; i < supported.length; i++) {
-                modes[i] = new int[] {supported[i].getPhysicalWidth(), supported[i].getPhysicalHeight()};
-            }
-            size = panelSize(real.x, real.y, modes);
-        } else {
-            size = new int[] {real.x, real.y};
+        Display.Mode[] supported = display.getSupportedModes();
+        int[][] modes = new int[supported.length][];
+        for (int i = 0; i < supported.length; i++) {
+            modes[i] = new int[] {supported[i].getPhysicalWidth(), supported[i].getPhysicalHeight()};
         }
+        size = panelSize(real.x, real.y, modes);
         if (size == null || size[0] <= 0 || size[1] <= 0) {
             return null;
         }
@@ -1914,7 +1902,7 @@ public class PreferenceConfiguration {
         config.virtualDisplayScale = Math.max(50, Math.min(200, prefs.getInt(VIRTUAL_DISPLAY_SCALE_PREF_STRING, 100)));
         config.virtualDisplayDpi = virtualDisplayDpi(prefs.getString(VIRTUAL_DISPLAY_DPI_PREF_STRING, "0"));
         config.enableYuv444 = config.experimentalPacked444;
-        // Variable refresh rate needs Android 6 (vrrOffered); the settings screen hides it before.
+        // Variable refresh rate is gated by vrrOffered; the settings screen hides it where it is false.
         config.vrr = prefs.getBoolean(VRR_PREF_STRING, false) && com.limelight.binding.video.DisplayFrameRatePolicy.vrrOffered(context);
         config.upscalingMode = UpscalingPolicy.Mode.fromPreference(prefs.getString(UPSCALING_PREF_STRING, "off"));
         config.upscalingSharpness = Math.max(0, Math.min(100, prefs.getInt(UPSCALING_SHARPNESS_PREF_STRING, 50)));

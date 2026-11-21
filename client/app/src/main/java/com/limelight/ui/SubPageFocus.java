@@ -2,7 +2,6 @@ package com.limelight.ui;
 
 import android.app.Activity;
 import android.content.res.Configuration;
-import android.os.Build;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AbsListView;
@@ -82,8 +81,8 @@ public final class SubPageFocus {
             return;
         }
         view.setTag(R.id.focus_ring, Boolean.TRUE);
-        // Before API 23 a view has no foreground; those versions keep the Material state layer.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && view.getForeground() == null) {
+
+        if (view.getForeground() == null) {
             view.setForeground(view.getContext().getDrawable(R.drawable.focus_ring_row));
             insetText(view);
         }
