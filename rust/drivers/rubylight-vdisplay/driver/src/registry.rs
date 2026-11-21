@@ -68,13 +68,14 @@ fn record_modes(reg: &mut Registry, monitor: &Monitor) {
 }
 
 /// Register `owner`'s pending monitor for `session_id` under the id [`modes::choose_id`]
-/// picks, with the id's history unioned into `modes`. Choosing and inserting share one guard,
-/// so two concurrent ADDs never take the same id.
+/// picks, with the id's history unioned into `modes` at no rate above `requested_mhz`.
+/// Choosing and inserting share one guard, so two concurrent ADDs never take the same id.
 pub fn insert(
     owner: u32,
     session_id: u64,
     preferred_id: u32,
     exact: bool,
+    requested_mhz: u32,
     mut modes: Vec<Mode>,
 ) -> Result<Arc<Monitor>, IdError> {
     let mut reg = registry();
@@ -85,7 +86,7 @@ pub fn insert(
         .collect();
     let id = modes::choose_id(&live, preferred_id, exact)?;
     if let Some((_, prev)) = reg.mode_history.iter().find(|(i, _)| *i == id) {
-        modes::union_modes(&mut modes, prev);
+        modes::union_history(&mut modes, prev, requested_mhz);
     }
     let monitor = Arc::new(Monitor::pending(owner, id, session_id, modes));
     reg.monitors.push(monitor.clone());

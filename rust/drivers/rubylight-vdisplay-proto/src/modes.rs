@@ -76,9 +76,39 @@ pub fn union_modes(into: &mut Vec<Mode>, from: &[Mode]) {
 /// game picking a display's fastest mode cannot run faster than the stream asked for.
 pub const REQUESTED_RESOLUTION_RATES: [u32; 4] = [60_000, 120_000, 240_000, 480_000];
 
+/// Union `history` into `modes`, keeping only rates at or below `fastest_mhz` and dropping a
+/// history mode left with no rate. Windows pins a monitor's settable set when it arrives, so
+/// a rate an earlier stream advertised stays available unless it is filtered here: a game in
+/// exclusive fullscreen put a virtual display at 1000 Hz even when the stream asked for 2x,
+/// 4x or Off (issue #119), so a history rate must not outlive the rate this stream asks for.
+pub fn union_history(into: &mut Vec<Mode>, history: &[Mode], fastest_mhz: u32) {
+    let capped: Vec<Mode> = history
+        .iter()
+        .filter_map(|m| {
+            let refresh_mhz: Vec<u32> = m
+                .refresh_mhz
+                .iter()
+                .copied()
+                .filter(|&rate| rate <= fastest_mhz)
+                .collect();
+            if refresh_mhz.is_empty() {
+                None
+            } else {
+                Some(Mode {
+                    width: m.width,
+                    height: m.height,
+                    refresh_mhz,
+                })
+            }
+        })
+        .collect();
+    union_modes(into, &capped);
+}
+
 /// The list a monitor advertises: the requested mode first, then the requested resolution
 /// at the slower [`REQUESTED_RESOLUTION_RATES`], then the fallbacks, then whatever it
-/// advertised before (`history`, empty when it is created).
+/// advertised before (`history`, empty when it is created) at no rate above the requested
+/// one.
 #[must_use]
 pub fn advertised_modes(requested: Mode, history: &[Mode]) -> Vec<Mode> {
     let fastest = requested.refresh_mhz.iter().copied().max().unwrap_or(0);
@@ -90,10 +120,17 @@ pub fn advertised_modes(requested: Mode, history: &[Mode]) -> Vec<Mode> {
             .filter(|&rate| rate < fastest)
             .collect(),
     };
+    let mut fallbacks = default_modes();
+    for mode in &mut fallbacks {
+        if (mode.width, mode.height) == (requested.width, requested.height) {
+            mode.refresh_mhz.retain(|&rate| rate <= fastest);
+        }
+    }
+    fallbacks.retain(|mode| !mode.refresh_mhz.is_empty());
     let mut modes = vec![requested];
     union_modes(&mut modes, &[same_resolution]);
-    union_modes(&mut modes, &default_modes());
-    union_modes(&mut modes, history);
+    union_modes(&mut modes, &fallbacks);
+    union_history(&mut modes, history, fastest);
     modes
 }
 
@@ -295,13 +332,57 @@ mod tests {
 
     #[test]
     fn adding_1440p_fallbacks_preserves_a_remembered_custom_refresh() {
-        let history = [mode(2560, 1440, &[165_000, 120_000])];
+        // A remembered rate above the request is dropped (issue #119); one below it stays.
+        let history = [mode(2560, 1440, &[165_000, 119_880])];
         let list = advertised_modes(mode(3840, 2160, &[120_000]), &history);
         assert_eq!(
             list[1],
-            mode(2560, 1440, &[60_000, 120_000, 240_000, 165_000])
+            mode(2560, 1440, &[60_000, 120_000, 240_000, 119_880])
         );
         assert_eq!(list.iter().filter(|m| m.width == 2560).count(), 1);
+    }
+
+    #[test]
+    fn a_rate_above_the_request_is_not_advertised_from_history() {
+        // Issue #119: an earlier stream left the display at 1000 Hz; a 288 Hz request must
+        // not offer it again, at any resolution.
+        let history = [
+            mode(2560, 1440, &[1_000_000, 144_000]),
+            mode(1920, 1080, &[1_000_000, 120_000]),
+        ];
+        let list = advertised_modes(mode(2560, 1440, &[288_000]), &history);
+        assert!(flatten(&list).all(|m| m.refresh_mhz <= 288_000), "{list:?}");
+        let available: Vec<_> = flatten(&list)
+            .map(|m| (m.width, m.height, m.refresh_mhz))
+            .collect();
+        assert!(available.contains(&(2560, 1440, 144_000)));
+        assert!(available.contains(&(1920, 1080, 120_000)));
+        assert!(!available.contains(&(2560, 1440, 1_000_000)));
+    }
+
+    #[test]
+    fn a_history_mode_with_only_faster_rates_disappears() {
+        let list = advertised_modes(
+            mode(2560, 1440, &[144_000]),
+            &[mode(3840, 2160, &[1_000_000, 480_000])],
+        );
+        assert!(!list.iter().any(|m| (m.width, m.height) == (3840, 2160)));
+    }
+
+    #[test]
+    fn a_vrr_request_keeps_every_remembered_rate() {
+        let history = [
+            mode(3840, 2160, &[1_000_000, 480_000]),
+            mode(2560, 1440, &[1_000_000]),
+        ];
+        let list = advertised_modes(mode(2560, 1440, &[1_000_000]), &history);
+        let available: Vec<_> = flatten(&list)
+            .map(|m| (m.width, m.height, m.refresh_mhz))
+            .collect();
+        assert!(available.contains(&(3840, 2160, 1_000_000)));
+        assert!(available.contains(&(3840, 2160, 480_000)));
+        assert!(available.contains(&(2560, 1440, 480_000)));
+        assert!(available.contains(&(2560, 1440, 1_000_000)));
     }
 
     #[test]
@@ -312,6 +393,24 @@ mod tests {
             mode(1920, 1080, &[480_000, 60_000, 120_000, 240_000])
         );
         assert_eq!(list.iter().filter(|m| m.width == 1920).count(), 1);
+    }
+
+    #[test]
+    fn a_requested_fallback_resolution_offers_no_faster_default_rate() {
+        // Issue #119: 1440p at 144 Hz (Off) or 120 Hz and 1080p at 60 Hz must not inherit 240 Hz
+        // or 120 Hz from default_modes() onto the requested resolution.
+        assert_eq!(
+            advertised_modes(mode(2560, 1440, &[144_000]), &[])[0],
+            mode(2560, 1440, &[144_000, 60_000, 120_000])
+        );
+        assert_eq!(
+            advertised_modes(mode(2560, 1440, &[120_000]), &[])[0],
+            mode(2560, 1440, &[120_000, 60_000])
+        );
+        assert_eq!(
+            advertised_modes(mode(1920, 1080, &[60_000]), &[])[0],
+            mode(1920, 1080, &[60_000])
+        );
     }
 
     #[test]

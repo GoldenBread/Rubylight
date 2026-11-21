@@ -414,6 +414,7 @@ pub fn create_monitor(owner: u32, req: &AddRequest) -> Result<(u32, u32, u32, i3
         req.session_id,
         req.preferred_monitor_id,
         req.flags & control::ADD_FLAG_EXACT_ID != 0,
+        req.refresh_mhz,
         modes::advertised_modes(requested, &[]),
     )
     .map_err(|e| match e {

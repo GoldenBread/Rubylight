@@ -852,7 +852,7 @@ impl SessionThread<'_> {
                         // stands down while the game's is too slow for it.
                         if let Some(now_mhz) = display_mhz {
                             if let Some(was_mhz) = display_refresh_mhz.filter(|was| *was != now_mhz) {
-                                tracing::info!(
+                                tracing::warn!(
                                     client = %s.launch.client.name,
                                     from_hz = was_mhz / 1000,
                                     to_hz = now_mhz / 1000,
