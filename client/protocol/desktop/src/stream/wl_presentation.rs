@@ -550,7 +550,8 @@ pub(crate) mod wayland {
         /// Asks for the feedback of the next commit, the coming present's: call right before it.
         /// `frame` and `ready_us` come back with the answer; `now_us` is the session clock.
         pub fn request(&mut self, frame: u32, ready_us: u64, now_us: u64) {
-            self.pump(now_us);
+            // The poll before the present read what had arrived; only a full queue reads again.
+            if self.pending.len() >= MAX_PENDING { self.pump(now_us); }
             if self.pending.len() >= MAX_PENDING {
                 if let Some(oldest) = self.pending.pop_front() { self.finish(oldest, Some(Outcome::Unanswered)); }
             }
