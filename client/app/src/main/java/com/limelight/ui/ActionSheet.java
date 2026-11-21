@@ -454,6 +454,11 @@ public final class ActionSheet extends BottomSheetDialog {
 
     /** A row of equal toggle buttons above the actions, for settings changed without leaving the sheet. */
     public LinearLayout addToggleRow() {
+        return addToggleRow(null);
+    }
+
+    /** {@link #addToggleRow()} in {@code group}, a column of {@link #addColumns}, or the sheet's own content for null. */
+    public LinearLayout addToggleRow(android.view.ViewGroup group) {
         LinearLayout row = new ToggleRow(getContext(), spacing, compactTile());
         row.setPadding(spacing, spacing, spacing, spacing);
         // A focused toggle grows past the row's padding on TV; clipping there cut off its rounded ends.
@@ -461,9 +466,28 @@ public final class ActionSheet extends BottomSheetDialog {
             row.setClipToPadding(false);
             row.setClipChildren(false);
         }
-        content.addView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+        (group == null ? content : group).addView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         return row;
+    }
+
+    /**
+     * {@code count} columns side by side, each an equal share of the sheet's width, for a page whose parts go across
+     * instead of down: a TV's View sheet, whose panel hanging under its button has no room below.
+     */
+    public LinearLayout[] addColumns(int count) {
+        Context context = getContext();
+        LinearLayout columns = new LinearLayout(context);
+        columns.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout[] parts = new LinearLayout[count];
+        for (int i = 0; i < count; i++) {
+            parts[i] = new LinearLayout(context);
+            parts[i].setOrientation(LinearLayout.VERTICAL);
+            columns.addView(parts[i], new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        }
+        content.addView(columns, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        return parts;
     }
 
     /** A toggle in {@code row}, filled while on. A click flips {@code isChecked()} before its listener runs. */
@@ -1053,8 +1077,10 @@ public final class ActionSheet extends BottomSheetDialog {
         return group;
     }
 
-    public void addSection(android.view.ViewGroup parent, int title) {
-        parent.addView(sectionHeading(getContext().getText(title)));
+    public TextView addSection(android.view.ViewGroup parent, int title) {
+        TextView heading = sectionHeading(getContext().getText(title));
+        parent.addView(heading);
+        return heading;
     }
 
     public MaterialButton addAction(android.view.ViewGroup parent, int icon, CharSequence label) {

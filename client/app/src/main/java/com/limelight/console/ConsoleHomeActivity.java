@@ -347,16 +347,21 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
                 ? new ActionSheet(this, getString(R.string.home_view))
                 : ActionSheet.under(this, getString(R.string.home_view), findViewById(R.id.console_view));
         viewSheet = sheet;
-        sheet.addSection(R.string.home_view_layout);
+        // A TV's panel hangs under View with no room below: its parts go in two columns so the whole sheet fits with
+        // nothing to scroll. Phones and tablets keep one column.
+        android.widget.LinearLayout[] columns = isTelevision() ? sheet.addColumns(2) : null;
+        android.widget.LinearLayout left = columns == null ? null : columns[0];
+        android.widget.LinearLayout right = columns == null ? null : columns[1];
+        addSection(sheet, left, R.string.home_view_layout);
         // A list's lines have one size, so Size shows only for the covers' layouts.
         View[] sizeSection = new View[2];
-        addChoices(sheet, new int[] {R.drawable.ic_library, R.drawable.ic_view_list, R.drawable.ic_view_rows},
+        addChoices(sheet, left, new int[] {R.drawable.ic_library, R.drawable.ic_view_list, R.drawable.ic_view_rows},
                 new int[] {R.string.home_view_layout_grid, R.string.home_view_layout_list, R.string.home_view_layout_rows},
                 view.layout.ordinal(), at -> {
                     view = view.with(HomeView.Layout.values()[at]);
                     for (View part : sizeSection) part.setVisibility(view.layout == HomeView.Layout.LIST ? View.GONE : View.VISIBLE);
                 });
-        sheet.addSection(R.string.home_view_group);
+        addSection(sheet, left, R.string.home_view_group);
         HomeView.Group[] groups = HomeView.offeredGroups(model.hasCollections(), model.hasInstallationSplit());
         int[] groupIcons = new int[groups.length];
         int[] groupLabels = new int[groups.length];
@@ -371,12 +376,12 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
                     : groups[i] == HomeView.Group.INSTALLATION ? R.string.home_view_group_installation : R.string.home_view_group_none;
         }
         // Collection chosen while no PC names any shows by store, and says so.
-        addChoices(sheet, groupIcons, groupLabels, Math.max(0, java.util.Arrays.asList(groups).indexOf(view.group)),
+        addChoices(sheet, left, groupIcons, groupLabels, Math.max(0, java.util.Arrays.asList(groups).indexOf(view.group)),
                 at -> view = view.with(groups[at]));
-        sheet.addSection(R.string.home_view_sort);
-        addSortChoices(sheet);
-        sizeSection[0] = sheet.addSection(R.string.home_view_size);
-        sizeSection[1] = addChoices(sheet, new int[] {R.drawable.ic_view_size_small, R.drawable.ic_view_size_medium, R.drawable.ic_view_size_large},
+        addSection(sheet, right, R.string.home_view_sort);
+        addSortChoices(sheet, right);
+        sizeSection[0] = addSection(sheet, right, R.string.home_view_size);
+        sizeSection[1] = addChoices(sheet, right, new int[] {R.drawable.ic_view_size_small, R.drawable.ic_view_size_medium, R.drawable.ic_view_size_large},
                 new int[] {R.string.home_view_size_small, R.string.home_view_size_medium, R.string.home_view_size_large},
                 view.size.ordinal(), at -> view = view.with(HomeView.Size.values()[at]));
         for (View part : sizeSection) part.setVisibility(view.layout == HomeView.Layout.LIST ? View.GONE : View.VISIBLE);
@@ -390,15 +395,20 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
         sheet.show();
     }
 
+    /** A heading in one of the sheet's columns, or in the sheet itself for null. */
+    private static View addSection(ActionSheet sheet, android.view.ViewGroup column, int title) {
+        return column == null ? sheet.addSection(title) : sheet.addSection(column, title);
+    }
+
     /**
      * Sort by: Title, Last played or Play time, one row. Choosing the one already chosen turns its order around, as a
      * column header does; the chosen one's arrow shows which way. One row, not two, so the sheet still fits a TV whole.
      */
-    private void addSortChoices(ActionSheet sheet) {
+    private void addSortChoices(ActionSheet sheet, android.view.ViewGroup column) {
         // Play time only while some PC sends it, as Group by offers Collection only with collections.
         java.util.List<HomeView.Sort> sorts = new java.util.ArrayList<>(java.util.Arrays.asList(HomeView.Sort.TITLE, HomeView.Sort.LAST_PLAYED));
         if (model.hasPlaytime()) sorts.add(HomeView.Sort.PLAYTIME);
-        android.widget.LinearLayout row = sheet.addToggleRow();
+        android.widget.LinearLayout row = sheet.addToggleRow(column);
         com.google.android.material.button.MaterialButton[] toggles =
                 new com.google.android.material.button.MaterialButton[sorts.size()];
         Runnable mark = () -> {
@@ -437,8 +447,8 @@ public class ConsoleHomeActivity extends NightjarActivity implements HostFeed.Li
     }
 
     /** One choice of the View sheet: a row of toggles of which exactly one is on; the row is returned. */
-    private static android.widget.LinearLayout addChoices(ActionSheet sheet, int[] icons, int[] labels, int chosen, java.util.function.IntConsumer choose) {
-        android.widget.LinearLayout row = sheet.addToggleRow();
+    private static android.widget.LinearLayout addChoices(ActionSheet sheet, android.view.ViewGroup column, int[] icons, int[] labels, int chosen, java.util.function.IntConsumer choose) {
+        android.widget.LinearLayout row = sheet.addToggleRow(column);
         com.google.android.material.button.MaterialButton[] toggles =
                 new com.google.android.material.button.MaterialButton[labels.length];
         for (int i = 0; i < labels.length; i++) {

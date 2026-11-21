@@ -3,6 +3,8 @@ package com.limelight.console;
 import static com.limelight.nativeapi.NativeApiFixtures.library;
 import static com.limelight.nativeapi.NativeApiFixtures.nativeHost;
 import static com.limelight.nativeapi.NativeApiFixtures.ok;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -19,6 +21,7 @@ import android.preference.PreferenceManager;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.recyclerview.widget.GridLayoutManager;
@@ -135,6 +138,19 @@ public class HomeViewScreenTest {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) {
                 MaterialButton found = button(group.getChildAt(i), label);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /** A section's plain heading, not the toggle of the same words, if any. */
+    private static TextView heading(View view, String label) {
+        if (view.getClass() == TextView.class && label.contentEquals(((TextView) view).getText())) return (TextView) view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                TextView found = heading(group.getChildAt(i), label);
                 if (found != null) return found;
             }
         }
@@ -594,6 +610,35 @@ public class HomeViewScreenTest {
             int[] at = new int[2];
             body.getLocationInWindow(at);
             assertTrue("the panel stays on screen: " + (at[1] + body.getHeight()), at[1] + body.getHeight() <= 1080);
+        } finally {
+            sheet.dismiss();
+            shadowOf(Looper.getMainLooper()).idle();
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w960dp-h540dp-land-television-xhdpi")
+    public void onATelevisionTheViewSheetSetsItsPartsInTwoColumns() {
+        HomeShellTest.Home home = home().get();
+        home.findViewById(R.id.console_view).performClick();
+        ActionSheet sheet = openSheet();
+        assertNotNull(sheet);
+        try {
+            View content = sheet.findViewById(android.R.id.content);
+            ViewGroup layout = (ViewGroup) heading(content, home.getString(R.string.home_view_layout)).getParent();
+            ViewGroup group = (ViewGroup) heading(content, home.getString(R.string.home_view_group)).getParent();
+            ViewGroup sort = (ViewGroup) heading(content, home.getString(R.string.home_view_sort)).getParent();
+            ViewGroup size = (ViewGroup) heading(content, home.getString(R.string.home_view_size)).getParent();
+            // Layout and Group by on the left, Sort by and Card size on the right.
+            assertSame(layout, group);
+            assertSame(sort, size);
+            assertNotSame(layout, sort);
+            ViewGroup columns = (ViewGroup) layout.getParent();
+            assertSame(columns, sort.getParent());
+            assertEquals(LinearLayout.HORIZONTAL, ((LinearLayout) columns).getOrientation());
+            // TalkBack and the D-pad meet the left column before the right, as the eye reads them.
+            assertEquals(2, columns.getChildCount());
+            assertTrue(columns.indexOfChild(layout) < columns.indexOfChild(sort));
         } finally {
             sheet.dismiss();
             shadowOf(Looper.getMainLooper()).idle();
