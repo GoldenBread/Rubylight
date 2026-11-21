@@ -141,10 +141,14 @@ mod tests {
         let server = thread::spawn(move || {
             let mut buffer = [0u8; 2048];
             echo.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-            let (read, from) = echo.recv_from(&mut buffer).unwrap();
-            assert_eq!(read, UDP_TEST_BYTES);
-            assert!(buffer.starts_with(b"moonlight-ctest"));
-            echo.send_to(&buffer[..1], from).unwrap();
+            // Stays up for every packet the client sends: a closed port answers the later ones
+            // with an ICMP error, which the client reads as a failed port.
+            for _ in 0..UDP_TEST_PACKETS {
+                let (read, from) = echo.recv_from(&mut buffer).unwrap();
+                assert_eq!(read, UDP_TEST_BYTES);
+                assert!(buffer.starts_with(b"moonlight-ctest"));
+                echo.send_to(&buffer[..1], from).unwrap();
+            }
         });
         let ports = [
             (0x100, Transport::Udp, answering),

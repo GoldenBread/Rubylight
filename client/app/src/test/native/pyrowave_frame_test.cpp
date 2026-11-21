@@ -4,7 +4,6 @@
 #include <vector>
 #include <algorithm>
 #include "../../main/jni/pyrowave-renderer/frame.h"
-#include "../../main/jni/moonlight-core/pyrowave_protocol.h"
 #include "../../../../protocol/ffi/include/rubylight_protocol.h"
 
 static std::vector<std::vector<uint8_t>> recordPackets(unsigned sequence, uint8_t value) {

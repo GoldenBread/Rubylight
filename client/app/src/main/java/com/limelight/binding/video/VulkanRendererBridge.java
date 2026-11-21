@@ -134,14 +134,15 @@ public class VulkanRendererBridge {
      * Notes a frame's network timing as it's handed to the decoder, for the capture latency
      * statistics and the frame pacing trace, if one is being recorded. hostPtsUs is the
      * timestamp the frame is queued to the decoder with, which comes back on the decoded image.
-     * All times in microseconds; receive and enqueue times are moonlight-common-c's. hostProcessingLatency is
+     * All times in microseconds; receive and enqueue times are the engine's session clock. hostProcessingLatency is
      * the host's, in tenths of a millisecond (0 if the host doesn't report it).
      */
     public void noteFrameReceived(long hostPtsUs, long receiveTimeUs, long enqueueTimeUs, char hostProcessingLatency) {
         if (!gate.enter()) return;
         try {
             if (handle != 0) {
-                nativeNoteReceived(handle, hostPtsUs, receiveTimeUs, enqueueTimeUs, hostProcessingLatency);
+                nativeNoteReceived(handle, hostPtsUs, receiveTimeUs, enqueueTimeUs, hostProcessingLatency,
+                        com.limelight.nvstream.jni.RustBridge.sessionNowUs());
             }
         } finally {
             gate.exit();
@@ -442,7 +443,7 @@ public class VulkanRendererBridge {
                                             boolean frontBuffer, long frameWarpApi);
     private static native Surface nativeGetDecoderSurface(long handle);
     private static native void nativeNoteReceived(long handle, long hostPtsUs, long receiveTimeUs, long enqueueTimeUs,
-                                                  char hostProcessingLatency);
+                                                  char hostProcessingLatency, long sessionNowUs);
     private static native void nativeSetHdrMode(long handle, boolean enabled, byte[] hdrMetadata);
     private static native void nativeNoteHdr10Plus(long handle, long hostPtsUs, byte[] t35);
     private static native int nativeHdr10PlusState(long handle);

@@ -231,6 +231,16 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_interruptConne
     engine::interrupt();
 }
 
+/// The session clock in microseconds, the one the engine stamps packets with: the Vulkan
+/// renderer maps its frames' receive times to the local clock with it.
+#[no_mangle]
+pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sessionNowUs(
+    _: JNIEnv,
+    _: JClass,
+) -> jlong {
+    nightjar_core::session::now_us() as jlong
+}
+
 /// Whether the Rust engine's connection ended with this session's host's disconnect, not a
 /// silence.
 #[no_mangle]

@@ -621,7 +621,7 @@ public class NvConnection {
             }
         }
 
-        // If we can't determine the connection type, let moonlight-common-c decide.
+        // If we can't determine the connection type, let the engine decide.
         return StreamConfiguration.STREAM_CFG_AUTO;
     }
     

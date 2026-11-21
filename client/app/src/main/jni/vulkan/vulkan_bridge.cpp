@@ -141,11 +141,12 @@ Java_com_limelight_binding_video_VulkanRendererBridge_nativeSetVsyncOffset(JNIEn
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_limelight_binding_video_VulkanRendererBridge_nativeNoteReceived(
-        JNIEnv*, jclass, jlong handle, jlong hostPtsUs, jlong receiveUs, jlong enqueueUs, jchar hostProcessingLatency) {
+        JNIEnv*, jclass, jlong handle, jlong hostPtsUs, jlong receiveUs, jlong enqueueUs, jchar hostProcessingLatency,
+        jlong sessionNowUs) {
     VulkanRenderer* renderer = fromHandle(handle);
     if (renderer) {
         renderer->noteReceived(hostPtsUs * 1000, receiveUs * 1000, enqueueUs * 1000,
-                               static_cast<int64_t>(hostProcessingLatency) * 100'000);
+                               static_cast<int64_t>(hostProcessingLatency) * 100'000, sessionNowUs * 1000);
     }
 }
 

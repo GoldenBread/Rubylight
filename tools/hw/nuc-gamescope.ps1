@@ -249,8 +249,6 @@ $appFiles = @(
     'client/app/src/main/assets/packed444',
     'client/app/src/main/res/values',
     'client/app/src/main/res/xml/preferences.xml',
-    'client/app/src/main/jni/moonlight-core/cursor_shape.h',
-    'client/app/src/main/jni/moonlight-core/android_microphone.c',
     'client/app/src/main/java/com/limelight/binding/video/FrameLatencyStats.java',
     'client/app/src/test/resources/protocol'
 ) -join ' '

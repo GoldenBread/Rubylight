@@ -258,95 +258,13 @@ def verifyReleaseSigning = tasks.register('verifyReleaseSigning') {
     }
 }
 
-// The patches only touch moonlight-common-c/src. When the set of patches changes (or the stamp is
-// missing), src is reset to the pinned commit and every patch is applied again in order, so an
-// edited patch never meets a tree that still carries its old version. scripts/test-native.sh uses
-// the same list and stamp. Change the patches, not the submodule: local edits to src are discarded.
-def nativePatchNames = ['bughunt-stream.patch', 'bughunt-input.patch', 'controller-haptics.patch', 'host-termination.patch',
-                        'disconnect-intercept.patch', 'control-payload.patch', 'control-teardown.patch', 'host-timing.patch',
-                        'network-grace.patch', 'cursor-shape.patch', 'network-grace-input.patch',
-                        'pyrowave-link-hints.patch', 'video-recv-buffer.patch', 'clock-sync.patch', 'prefix-sei.patch',
-                        'fec-report.patch', 'wire-bytes.patch', 'surround-714.patch', 'socket-dscp.patch', 'host-gone.patch',
-                        'decoder-drops.patch', 'decode-queue-bound.patch', 'resolve-probe.patch']
-
-// A typed task so the configuration cache can store it: the patches and their order are its
-// inputs, the stamp its output, and it reaches git through ExecOperations, not the Project.
-abstract class PrepareNativePatches extends DefaultTask {
-    @Input
-    abstract ListProperty<String> getPatchNames()
-
-    @InputFiles @PathSensitive(PathSensitivity.NAME_ONLY)
-    abstract ConfigurableFileCollection getPatches()
-
-    @Internal
-    abstract DirectoryProperty getCommonDir()
-
-    @OutputFile
-    abstract RegularFileProperty getStampFile()
-
-    @javax.inject.Inject
-    abstract org.gradle.process.ExecOperations getExecOperations()
-
-    @TaskAction
-    void patch() {
-        def common = commonDir.get().asFile
-        if (!new File(common, 'src/Limelight.h').exists()) {
-            throw new GradleException('moonlight-common-c is not checked out. Run: git submodule update --init --recursive')
-        }
-        def patchFiles = patches.files.toList()
-        def digest = java.security.MessageDigest.getInstance('SHA-256')
-        patchFiles.each { digest.update(it.bytes) }
-        def stamp = digest.digest().encodeHex().toString()
-        def stamped = stampFile.get().asFile
-        if (stamped.exists() && stamped.text.trim() == stamp) {
-            return
-        }
-
-        def reset = runGit(common, ['checkout', '--', 'src'])
-        if (reset[0] != 0) {
-            throw new GradleException("Could not reset moonlight-common-c/src before patching: ${reset[1]}")
-        }
-        patchFiles.each { patch ->
-            def applied = runGit(common, ['apply', patch.absolutePath])
-            if (applied[0] != 0) {
-                throw new GradleException("Native patch ${patch.name} does not apply: ${applied[1]}")
-            }
-        }
-        stamped.parentFile.mkdirs()
-        stamped.text = stamp + '\n'
-    }
-
-    // Not private: closures in the subclass Gradle generates cannot call private methods.
-    List runGit(File directory, List<String> arguments) {
-        def errors = new ByteArrayOutputStream()
-        def result = execOperations.exec {
-            workingDir directory
-            commandLine(['git'] + arguments)
-            errorOutput = errors
-            ignoreExitValue = true
-        }
-        [result.exitValue, errors.toString()]
-    }
-}
-
-def prepareNativePatches = tasks.register('prepareNativePatches', PrepareNativePatches) {
-    def core = file('src/main/jni/moonlight-core')
-    patchNames.set(nativePatchNames)
-    patches.from(nativePatchNames.collect { new File(core, "patches/$it") })
-    commonDir.set(new File(core, 'moonlight-common-c'))
-    stampFile.set(layout.buildDirectory.file('native-patches.stamp'))
-}
-
 tasks.configureEach { task ->
     if (task.name ==~ /pre.*ReleaseBuild/) {
         task.dependsOn verifyReleaseSigning
     }
-    if (task.name == 'preBuild' || task.name.startsWith('configureNdkBuild') || task.name.startsWith('buildNdkBuild')) {
-        task.dependsOn prepareNativePatches
-    }
 }
 
-// The Rust streaming engine (protocol/android, behind the "New streaming engine" setting):
+// The Rust streaming engine (protocol/android, the only streaming engine):
 // libnightjar_core.so per ABI, built by cargo with the NDK's clang as compiler and linker and
 // packaged like jniLibs. It is not committed: it is a few MB per ABI and changes with every
 // engine change. Needs rustup with the four Android targets (see protocol/README.md).

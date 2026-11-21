@@ -185,30 +185,15 @@ mod tests {
     }
 
     #[test]
-    fn constants_match_the_client_header() {
-        let header = include_str!("../../../app/src/main/jni/moonlight-core/cursor_shape.h");
-        for (name, value) in [
-            (
-                "REQUEST_TYPE",
-                format!("{CURSOR_SHAPE_REQUEST_MESSAGE_TYPE:#06x}"),
-            ),
-            ("MESSAGE_TYPE", format!("{CURSOR_SHAPE_MESSAGE_TYPE:#06x}")),
-            ("VERSION", format!("{VERSION}")),
-            ("REQUEST_BYTES", format!("{CURSOR_SHAPE_REQUEST_BYTES}")),
-            ("MAX_EDGE", format!("{MAX_EDGE}")),
-            ("HEADER_BYTES", format!("{CURSOR_SHAPE_HEADER_BYTES}")),
-            (
-                "IMAGE_HEADER_BYTES",
-                format!("{CURSOR_SHAPE_IMAGE_HEADER_BYTES}"),
-            ),
-        ] {
-            let line = format!("#define RL_CURSOR_SHAPE_{name} {value}\n");
-            assert!(header.replace("\r\n", "\n").contains(&line), "{line}");
-        }
-        assert!(
-            header.contains("(RL_CURSOR_SHAPE_HEADER_BYTES + RL_CURSOR_SHAPE_IMAGE_HEADER_BYTES")
-        );
-        assert!(header.contains("RL_CURSOR_SHAPE_MAX_EDGE * RL_CURSOR_SHAPE_MAX_EDGE * 4)"));
+    fn constants_match_the_document() {
+        // docs/protocol/cursor-shape.md, version 1 (the values the client's header held).
+        assert_eq!(CURSOR_SHAPE_REQUEST_MESSAGE_TYPE, 0x5540);
+        assert_eq!(CURSOR_SHAPE_MESSAGE_TYPE, 0x5541);
+        assert_eq!(VERSION, 1);
+        assert_eq!(CURSOR_SHAPE_REQUEST_BYTES, 4);
+        assert_eq!(MAX_EDGE, 96);
+        assert_eq!(CURSOR_SHAPE_HEADER_BYTES, 8);
+        assert_eq!(CURSOR_SHAPE_IMAGE_HEADER_BYTES, 12);
         // The largest message the document names.
         assert_eq!(MAX_PAYLOAD, 36_884);
     }

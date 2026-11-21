@@ -127,7 +127,9 @@ public:
     void setVsyncOffsetNs(int64_t offsetNs) { vsyncOffsetNs_ = offsetNs; }
 
     // Network timing of a frame, for pacer traces and the capture latency statistics
-    void noteReceived(int64_t hostPtsNs, int64_t receiveNs, int64_t enqueueNs, int64_t hostProcessingNs);
+    // sessionNowNs: the session clock (the one receiveNs and enqueueNs are on) as it reads now.
+    void noteReceived(int64_t hostPtsNs, int64_t receiveNs, int64_t enqueueNs, int64_t hostProcessingNs,
+                      int64_t sessionNowNs);
 
     // HDR10+ metadata from the frame queued to the decoder with this timestamp on, until the next
     // call: the T.35 payload of its HDR10+ SEI or metadata OBU, from the country code on. Passed to

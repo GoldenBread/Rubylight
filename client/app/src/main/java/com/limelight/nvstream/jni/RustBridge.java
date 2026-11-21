@@ -151,6 +151,8 @@ final class RustBridge {
     static native boolean reportFrameSlack(long slackNs, long periodNs);
     static native void flushPhaseLockReport();
     static native int getPhaseLockLeadUs();
+    /** The session clock's microseconds now: what frame receive and enqueue times are measured on. */
+    static native long sessionNowUs();
     static native boolean hostSupportsControlMessage(int messageType);
     // Frame Warp (protocol/android/src/frame_warp.rs); MoonBridge has what they mean.
     static native boolean frameWarpOffered();

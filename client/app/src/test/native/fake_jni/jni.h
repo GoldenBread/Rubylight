@@ -1,4 +1,4 @@
-// The part of <jni.h> that android_control.c uses, so native tests can call its JNI entry
+// The part of <jni.h> that the native library's JNI entry points use, so native tests can call them
 // points without a JDK. Arrays are FakeByteArray pointers.
 #pragma once
 #include <stdint.h>

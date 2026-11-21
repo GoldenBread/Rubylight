@@ -50,7 +50,7 @@ type EncoderCreate = unsafe extern "C" fn(i32, i32, i32, *mut i32) -> *mut c_voi
 type EncoderCtl = unsafe extern "C" fn(*mut c_void, i32, ...) -> i32;
 type Encode = unsafe extern "C" fn(*mut c_void, *const f32, i32, *mut u8, i32) -> i32;
 
-/// Nightjar's microphone encoder (client/app/src/main/jni/moonlight-core/android_microphone.c).
+/// Nightjar's microphone encoder (client/protocol/android/src/opus.rs).
 struct ClientEncoder {
     state: *mut c_void,
     encode: Encode,

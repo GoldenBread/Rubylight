@@ -29,7 +29,6 @@
 
 #include <sys/system_properties.h>
 
-#include <Limelight.h>
 
 #define LOG_TAG "VulkanRenderer"
 #define ALOGE(...) recordError(ANDROID_LOG_ERROR, __VA_ARGS__)
@@ -2412,10 +2411,11 @@ void VulkanRenderer::collectPresentTimings() {
     }
 }
 
-void VulkanRenderer::noteReceived(int64_t hostPtsNs, int64_t receiveNs, int64_t enqueueNs, int64_t hostProcessingNs) {
+void VulkanRenderer::noteReceived(int64_t hostPtsNs, int64_t receiveNs, int64_t enqueueNs, int64_t hostProcessingNs,
+                                  int64_t sessionNowNs) {
     // Called as the frame goes to the decoder, so the time on our clock is when decoding starts
     const int64_t queuedNs = nowNs();
-    const int64_t commonToLocalNs = queuedNs - static_cast<int64_t>(LiGetMicroseconds()) * 1000;
+    const int64_t commonToLocalNs = queuedNs - sessionNowNs;
 
     // Where its capture latency counts from. A frame the host gave no processing time for repeats
     // an earlier one, so it has no capture of its own.
@@ -2443,10 +2443,8 @@ void VulkanRenderer::noteReceived(int64_t hostPtsNs, int64_t receiveNs, int64_t 
     if (!traceRecording_.load(std::memory_order_relaxed)) {
         return;
     }
-    uint32_t rttMs = 0, rttVarianceMs = 0;
-    if (!LiGetEstimatedRttInfo(&rttMs, &rttVarianceMs)) {
-        rttMs = 0;
-    }
+    // The trace has no round-trip time of the engine's to read here.
+    const uint32_t rttMs = 0;
     std::lock_guard<std::mutex> lock(mutex_);
     trace_.received(hostPtsNs, receiveNs, enqueueNs, queuedNs, commonToLocalNs, hostProcessingNs, rttMs);
 }

@@ -1,6 +1,6 @@
 //! The PCM layout shared by Nonary's controller haptics (0x5601) and Rubylight's controller
-//! speaker and microphone messages (0x5533, 0x5534), from `ControllerHaptics.h`
-//! (Nonary/moonlight-common-c 4ea115e8, GPL-3.0).
+//! speaker and microphone messages (0x5533, 0x5534), from Nonary's `ControllerHaptics.h`
+//! (Nonary/moonlight-common-c 4ea115e8, GPL-3.0), the layout's definition.
 //!
 //! Little-endian: version 1, format 1 (48 kHz S16LE stereo), controller, sequence, frame
 //! count, reserved 0, then interleaved left/right samples.

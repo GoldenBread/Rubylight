@@ -1,7 +1,7 @@
 r"""What Nightjar does when its host goes away: a PC shutting down or a host that stops or restarts ends the stream at
 once, a host that crashes recovers, and a blip on either side is ridden out (catalog case nj-host-gone).
 
-  host_gone.py run --event kill|stop|restart|path|wifi|suspend|pathblip [--hold S] [--engine rust|classic] [--tag T]
+  host_gone.py run --event kill|stop|restart|path|wifi|suspend|pathblip [--hold S] [--tag T]
   host_gone.py restart-time [--count N]
 
 One locked run on the Retroid against the isolated test host of fec_wifi_ab.py (run its setup once): a stream, then the
@@ -101,14 +101,12 @@ def blackhole(on):
                    check=True, capture_output=True)
 
 
-def set_prefs(engine):
+def set_prefs():
     path = f'shared_prefs/{fec.PACKAGE}_preferences.xml'
     prefs = fec.run_as(f'cat {path}').replace('\r\n', '\n')
     for key, kind, value in (('list_resolution', 'string', '1920x1080'), ('list_fps', 'string', '60'),
                              ('checkbox_enable_hdr', 'boolean', 'false'), ('checkbox_link_probe', 'boolean', 'false')):
         prefs = fec.pset(prefs, key, kind, value)
-    if engine:
-        prefs = fec.pset(prefs, 'checkbox_rust_engine', 'boolean', 'true' if engine == 'rust' else 'false')
     local = OUT / 'prefs.xml'
     local.write_text(prefs, newline='\n')
     fec.adb('push', str(local), '/data/local/tmp/nj-gone-prefs.xml')
@@ -155,12 +153,12 @@ def verdict(event, result):
 
 def run(args):
     OUT.mkdir(parents=True, exist_ok=True)
-    tag = args.tag or f'{args.event}-{args.hold or 0}s-{args.engine or "default"}-{datetime.datetime.now():%H%M%S}'
+    tag = args.tag or f'{args.event}-{args.hold or 0}s-{datetime.datetime.now():%H%M%S}'
     fec.installed_host_idle()
     fec.take_locks(args.lock_wait)
     host = logcat = None
     routed = False
-    result = {'tag': tag, 'event': args.event, 'hold': args.hold, 'engine': args.engine}
+    result = {'tag': tag, 'event': args.event, 'hold': args.hold}
     try:
         fec.installed_host_idle()
         if args.apk:
@@ -169,7 +167,7 @@ def run(args):
             result['apk'] = str(args.apk)
         fec.sh('input keyevent KEYCODE_WAKEUP'); fec.sh('svc power stayon true'); fec.sh('wm dismiss-keyguard', check=False)
         fec.sh(f'am force-stop {fec.PACKAGE}')
-        set_prefs(args.engine)
+        set_prefs()
         host = fec.start_host(tag)
         fec.adb('logcat', '-c')
         logcat = subprocess.Popen([fec.ADB, '-s', fec.SERIAL, 'logcat', '-v', 'epoch'],
@@ -263,7 +261,6 @@ def main():
     r = sub.add_parser('run')
     r.add_argument('--event', required=True, choices=['kill', 'stop', 'restart', 'path', 'pathblip', 'wifi', 'suspend'])
     r.add_argument('--hold', type=float, default=0)
-    r.add_argument('--engine', choices=['rust', 'classic'])
     r.add_argument('--tag')
     r.add_argument('--apk', help=f'installed first ({fec.PACKAGE}: build with -PdebugIdSuffix=.njrf)')
     r.add_argument('--warmup', type=float, default=15)

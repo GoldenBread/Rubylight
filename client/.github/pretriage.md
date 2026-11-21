@@ -128,8 +128,8 @@ fields render as:
   host-specific extras are gated by host capabilities, never by brand checks, and user-facing text
   stays host-neutral; Linux-only desktop code is gated with `target_os = "linux"` so macOS keeps
   building; preference keys are never renamed and settings never deleted; the application id and
-  signing stay unchanged; native moonlight-common-c changes go in `moonlight-core/patches`; no
-  "Experimental" labels in UI text; copyright and license notices kept (GPL-3.0).
+  signing stay unchanged; no "Experimental"
+  labels in UI text; copyright and license notices kept (GPL-3.0).
 - `fix` as **Suggested changes**: what would resolve the issues, with file and function.
 - `unknown` as **Verify**: what to check on devices before merging.
 
