@@ -28,6 +28,39 @@ impl RendererState {
     }
 }
 
+/// Why `rebuild_renderer` did not make the renderer asked for.
+#[cfg(unix)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Rebuild {
+    /// Something still uses the old renderer's device (a teardown, a decoder dropping). Nothing was
+    /// tried, so it is no failure of the renderer: the switch may be asked again later.
+    Busy(String),
+    /// The renderer asked for could not be made.
+    Failed(String),
+}
+
+#[cfg(unix)]
+impl Rebuild {
+    pub(crate) fn text(&self) -> &str {
+        match self {
+            Self::Busy(why) | Self::Failed(why) => why,
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl RendererState {
+    /// What a stream that asked for the GPU renderer is told when the switch was refused. Only a
+    /// renderer that could not be made is remembered (`gpu_failed`); a busy device is not.
+    #[cfg(unix)]
+    pub(crate) fn rebuild_refused(&mut self, error: &Rebuild) -> String {
+        if let Rebuild::Failed(why) = error {
+            self.gpu_failed = Some(why.clone());
+        }
+        error.text().to_owned()
+    }
+}
+
 /// SDL's events after which the renderer's device is gone: made again by SDL with every texture
 /// lost (`SDL_EVENT_RENDER_DEVICE_RESET`), or not at all (`SDL_EVENT_RENDER_DEVICE_LOST`), when
 /// SDL's Direct3D 11 renderer draws and presents nothing ever again.
@@ -237,9 +270,9 @@ impl App {
         let busy = self.streaming.is_some() || self.attempts.is_busy() || self.probe.is_some() || !self.ending_probes.is_empty()
             || self.pending_replace.is_some() || self.teardowns_busy();
         let Some(switch) = handheld::renderer_switch(state.choice, now, need, settings.hdr && !planes, display_hdr && !planes, busy) else { return };
-        if let Err(why) = self.rebuild_renderer(true, settings.hdr, display_hdr, vulkan_video, switch.reason()) {
-            self.renderer_state.gpu_failed = Some(why.clone());
-            self.gpu_failure = Some(why);
+        if let Err(error) = self.rebuild_renderer(true, settings.hdr, display_hdr, vulkan_video, switch.reason()) {
+            // A busy device refuses this stream only; the next one asks again.
+            self.gpu_failure = Some(self.renderer_state.rebuild_refused(&error));
         }
     }
 
@@ -262,7 +295,7 @@ impl App {
                 self.gpu_failure = Some(teardown_switch_text().to_owned());
                 return;
             }
-            self.gpu_failure = self.rebuild_renderer(shaders, settings.hdr, true, false, "the stream format").err();
+            self.gpu_failure = self.rebuild_renderer(shaders, settings.hdr, true, false, "the stream format").err().map(|error| error.text().to_owned());
         }
     }
 
@@ -324,17 +357,42 @@ impl App {
             }
             return;
         }
-        self.renderer_choice_blocked = None;
-        self.renderer_state.choice = choice;
-        let Some(gpu) = handheld::renderer_for_choice(choice, sdl::renderer_name(self.renderer) == "gpu") else { return };
+        // A decoder still dropping on the old device defers the change; it is asked again after a pause.
+        if self.renderer_choice_retry.is_some_and(|at| Instant::now() < at) {
+            return;
+        }
+        self.renderer_choice_retry = None;
+        let Some(gpu) = handheld::renderer_for_choice(choice, sdl::renderer_name(self.renderer) == "gpu") else {
+            self.renderer_choice_blocked = None;
+            self.renderer_state.choice = choice;
+            return;
+        };
         match self.rebuild_renderer(gpu, false, false, self.renderer_state.vulkan_video, "the Renderer setting") {
-            Ok(()) if gpu => self.renderer_state.gpu_failed = None,
-            Ok(()) => {}
-            Err(why) => {
+            Ok(()) => {
+                self.renderer_choice_blocked = None;
+                self.renderer_state.choice = choice;
                 if gpu {
-                    self.renderer_state.gpu_failed = Some(why.clone());
+                    self.renderer_state.gpu_failed = None;
                 }
-                self.launcher.message(tr("Renderer"), trf("The renderer could not be made: {}.", &[&why]));
+            }
+            Err(Rebuild::Busy(_)) => {
+                // The choice stays unapplied (`renderer_state.choice` is the one last applied).
+                self.renderer_choice_retry = Some(Instant::now() + Duration::from_secs(2));
+                if self.renderer_choice_blocked != Some(choice) {
+                    self.renderer_choice_blocked = Some(choice);
+                    self.launcher.notify(
+                        tr("Renderer not changed"),
+                        tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar."),
+                    );
+                }
+            }
+            Err(error @ Rebuild::Failed(_)) => {
+                self.renderer_choice_blocked = None;
+                self.renderer_state.choice = choice;
+                if gpu {
+                    self.renderer_state.gpu_failed = Some(error.text().to_owned());
+                }
+                self.launcher.message(tr("Renderer"), trf("The renderer could not be made: {}.", &[&error.text()]));
             }
         }
     }
@@ -346,16 +404,16 @@ impl App {
     /// of the old kind is (the GPU renderer once more without Vulkan video's options, never OpenGL in
     /// its place), and the error says why; with none at all Nightjar ends, loudly.
     #[cfg(unix)]
-    fn rebuild_renderer(&mut self, gpu: bool, hdr: bool, display_hdr: bool, vulkan_video: bool, reason: &str) -> Result<(), String> {
+    fn rebuild_renderer(&mut self, gpu: bool, hdr: bool, display_hdr: bool, vulkan_video: bool, reason: &str) -> Result<(), Rebuild> {
         // A session still stopping on this renderer's GPU device keeps it: the caller says the
         // change waits, with the message a start that has ended gets.
         if self.teardowns_busy() {
-            return Err(tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.").to_owned());
+            return Err(Rebuild::Busy(tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.").to_owned()));
         }
         // A decoder kept for a reconnect may borrow or hold this device: it goes first, within the
         // leaving deadline; one that does not let go keeps the renderer, as a stuck teardown does.
         if !stream::decoder_cache::clear(Instant::now() + stream::LEAVE_WAIT) {
-            return Err(tr("A decoder kept from the last stream is still being released, so the graphics card cannot be switched yet. The change is kept and applied once it is released; if it is not, restart Nightjar.").to_owned());
+            return Err(Rebuild::Busy(tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.").to_owned()));
         }
         let from = sdl::renderer_name(self.renderer);
         let wanted = if gpu { "gpu" } else if cfg!(target_os = "macos") { "metal" } else { "opengl" };
@@ -436,7 +494,7 @@ impl App {
             }
             Some(why) => {
                 eprintln!("nightjar: renderer {from:?} could not switch to {wanted:?} for {reason} ({why}); drawing with {to:?}");
-                Err(why)
+                Err(Rebuild::Failed(why))
             }
         }
     }

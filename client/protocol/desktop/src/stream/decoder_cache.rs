@@ -204,25 +204,41 @@ impl<K: Send + 'static, D: Send + 'static> Cache<K, D> {
     /// both count. When it did not, the decoder may still hold the renderer's device: the caller
     /// leaves the device alone. The drop goes on in the helper.
     pub fn clear_until(&self, deadline: std::time::Instant) -> bool {
-        let old = loop {
+        // The helper is registered in `drops` while the parked lock is still held, so a concurrent
+        // `clear_until` that then gets the lock sees the drop.
+        let spawn = |parked: &mut Option<Parked<K, D>>| -> bool {
+            let Some(old) = parked.take() else { return true };
+            match std::thread::Builder::new().name("decoder-clear".into()).spawn(move || drop(old)) {
+                Ok(handle) => {
+                    self.drops.lock().unwrap_or_else(|poison| poison.into_inner()).push(handle);
+                    true
+                }
+                Err(_) => {
+                    eprintln!("nightjar: no thread to drop the parked decoder on");
+                    false
+                }
+            }
+        };
+        loop {
             match self.parked.try_lock() {
-                Ok(mut parked) => break parked.take(),
-                Err(std::sync::TryLockError::Poisoned(poison)) => break poison.into_inner().take(),
+                Ok(mut parked) => {
+                    if !spawn(&mut parked) {
+                        return false;
+                    }
+                    break;
+                }
+                Err(std::sync::TryLockError::Poisoned(poison)) => {
+                    if !spawn(&mut poison.into_inner()) {
+                        return false;
+                    }
+                    break;
+                }
                 Err(std::sync::TryLockError::WouldBlock) => {
                     if std::time::Instant::now() >= deadline {
                         eprintln!("nightjar: a parked decoder is still being dropped at the deadline");
                         return false;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(2));
-                }
-            }
-        };
-        if let Some(old) = old {
-            match std::thread::Builder::new().name("decoder-clear".into()).spawn(move || drop(old)) {
-                Ok(handle) => self.drops.lock().unwrap_or_else(|poison| poison.into_inner()).push(handle),
-                Err(_) => {
-                    eprintln!("nightjar: no thread to drop the parked decoder on");
-                    return false;
                 }
             }
         }

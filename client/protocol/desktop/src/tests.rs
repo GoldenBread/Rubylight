@@ -661,3 +661,17 @@ fn macos_fullscreen_leaves_spaces_for_the_notch() {
     assert_eq!(crate::sdl::fullscreen_spaces_hint(true), Some(c"0"), "SDL's own fullscreen covers the notch area");
     assert_eq!(crate::sdl::fullscreen_spaces_hint(false), None, "Windows and Linux keep SDL's defaults");
 }
+
+/// A device still in use is not a renderer failure: only the stream that asked is refused, and the
+/// GPU renderer stays on offer for the next one.
+#[cfg(unix)]
+#[test]
+fn a_busy_switch_does_not_mark_the_gpu_renderer_failed() {
+    use super::Rebuild;
+    let mut state = super::RendererState::for_launcher(crate::config::Renderer::Auto, false, None);
+    let said = state.rebuild_refused(&Rebuild::Busy("busy".into()));
+    assert_eq!(said, "busy");
+    assert!(state.gpu_failed.is_none(), "busy is no failure");
+    assert_eq!(state.rebuild_refused(&Rebuild::Failed("no vulkan".into())), "no vulkan");
+    assert_eq!(state.gpu_failed.as_deref(), Some("no vulkan"), "a renderer that could not be made is remembered");
+}

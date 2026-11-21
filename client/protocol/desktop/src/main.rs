@@ -241,6 +241,9 @@ struct App {
     /// A Renderer change a start that is still ending blocks, said once.
     #[cfg(target_os = "linux")]
     renderer_choice_blocked: Option<config::Renderer>,
+    /// When a Renderer change that found a decoder still dropping asks again.
+    #[cfg(target_os = "linux")]
+    renderer_choice_retry: Option<Instant>,
     /// The stream start that waits for the PIN screen.
     pin_pending: Option<PinPending>,
     /// Selecting a game waits for the PC to say who plays it.
@@ -1011,6 +1014,8 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         graphics_card_blocked: None,
         #[cfg(target_os = "linux")]
         renderer_choice_blocked: None,
+        #[cfg(target_os = "linux")]
+        renderer_choice_retry: None,
         pin_pending: None,
         select_read: false,
         move_watch: Default::default(),
