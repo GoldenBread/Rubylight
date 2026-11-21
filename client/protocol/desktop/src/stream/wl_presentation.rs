@@ -187,14 +187,14 @@ impl Glass {
     }
 
     /// The pictures answered since the last call, tallied for the end of the stream.
-    pub fn poll(&mut self, now_us: u64) -> Vec<Shown> {
+    pub fn poll(&mut self, now_us: u64) -> &[Shown] {
         if let Some(Ok(probe)) = &mut self.scanout {
             probe.poll();
         }
         super::wl_scanout::pump_installed();
-        let Some(Ok(feedback)) = &mut self.feedback else { return Vec::new() };
+        let Some(Ok(feedback)) = &mut self.feedback else { return &[] };
         let shown = feedback.poll(now_us);
-        for answer in &shown {
+        for answer in shown {
             self.stats.add(answer.outcome);
             if answer.glass_us().is_some() { self.last_timed_us = Some(now_us); }
         }
@@ -379,7 +379,9 @@ pub(crate) mod wayland {
         api: *const Api,
     }
 
-    /// One request in flight; its address is the listener's data, so it stays boxed.
+    /// One request in flight; its address is the listener's data, so it lives in `Feedback::slots`
+    /// (a boxed slice that never moves), one slot per request that can be in flight.
+    #[derive(Clone, Copy)]
     struct Pending {
         proxy: *mut Proxy,
         frame: u32,
@@ -405,8 +407,14 @@ pub(crate) mod wayland {
         globals: Box<Globals>,
         clock: libc::clockid_t,
         monotonic: bool,
-        pending: VecDeque<Box<Pending>>,
+        /// The requests in flight (slot numbers), oldest first, and the slots not in use.
+        pending: VecDeque<usize>,
+        free: Vec<usize>,
+        slots: Box<[Pending]>,
+        /// The answers since the last `poll`, and the ones it handed out: both keep their
+        /// storage, so a poll allocates nothing.
         done: Vec<Shown>,
+        out: Vec<Shown>,
     }
 
     // SAFETY: libwayland's proxies and queues may be used from any thread; the feedback is used
@@ -439,7 +447,7 @@ pub(crate) mod wayland {
 
     #[allow(clippy::too_many_arguments)]
     unsafe extern "C" fn presented(data: *mut c_void, _feedback: *mut Proxy, hi: u32, lo: u32, ns: u32, _refresh: u32, _seq_hi: u32, _seq_lo: u32, flags: u32) {
-        // SAFETY: the Pending box the feedback was given; it is destroyed with the proxy.
+        // SAFETY: the Pending slot the feedback was given; the slot outlives the proxy.
         unsafe { (*data.cast::<Pending>()).answer = Some(Answer::Presented { ns: timestamp_ns(hi, lo, ns), flags }) };
     }
 
@@ -507,8 +515,11 @@ pub(crate) mod wayland {
                     globals: Box::new(Globals { presentation: null_mut(), clock: None, api: null() }),
                     clock: libc::CLOCK_MONOTONIC,
                     monotonic: false,
-                    pending: VecDeque::new(),
-                    done: Vec::new(),
+                    pending: VecDeque::with_capacity(MAX_PENDING),
+                    free: (0..MAX_PENDING).rev().collect(),
+                    slots: vec![Pending { proxy: null_mut(), frame: 0, ready_us: 0, requested_us: 0, requested_ns: 0, answer: None }; MAX_PENDING].into_boxed_slice(),
+                    done: Vec::with_capacity(MAX_PENDING),
+                    out: Vec::with_capacity(MAX_PENDING),
                 };
                 feedback.globals.api = &*feedback.api;
                 // Through a wrapper the registry is on the private queue from its creation, before
@@ -541,17 +552,21 @@ pub(crate) mod wayland {
         pub fn request(&mut self, frame: u32, ready_us: u64, now_us: u64) {
             self.pump(now_us);
             if self.pending.len() >= MAX_PENDING {
-                if let Some(oldest) = self.pending.pop_front() { self.finish(&oldest, Some(Outcome::Unanswered)); }
+                if let Some(oldest) = self.pending.pop_front() { self.finish(oldest, Some(Outcome::Unanswered)); }
             }
             let Some(requested_ns) = clock_ns(self.clock) else { return };
-            let mut pending = Box::new(Pending { proxy: null_mut(), frame, ready_us, requested_us: now_us, requested_ns, answer: None });
-            // SAFETY: live objects on the private queue; the box outlives the proxy (`finish`).
+            // The slots are as many as the requests allowed in flight, so one is free here.
+            let Some(slot) = self.free.pop() else { return };
+            // SAFETY: live objects on the private queue; the slot outlives the proxy (`finish`).
             unsafe {
                 let presentation = self.globals.presentation;
                 let proxy = (self.api.marshal_flags)(presentation, PRESENTATION_FEEDBACK, &FEEDBACK_INTERFACE.0, (self.api.get_version)(presentation), 0, self.surface, null_mut::<c_void>());
-                if proxy.is_null() { return; }
-                pending.proxy = proxy;
-                (self.api.add_listener)(proxy, (&FEEDBACK_LISTENER as *const FeedbackListener).cast(), (&mut *pending as *mut Pending).cast());
+                if proxy.is_null() {
+                    self.free.push(slot);
+                    return;
+                }
+                self.slots[slot] = Pending { proxy, frame, ready_us, requested_us: now_us, requested_ns, answer: None };
+                (self.api.add_listener)(proxy, (&FEEDBACK_LISTENER as *const FeedbackListener).cast(), (&mut self.slots[slot] as *mut Pending).cast());
             }
             // No commit here: the present's own swap commits the surface and carries the request.
             // The match is by order, not by identity: the feedback belongs to the surface's next
@@ -560,13 +575,16 @@ pub(crate) mod wayland {
             // presentation the WSI defers past this call, MAILBOX replacing a picture before the
             // compositor latched it) takes the request instead, and is answered as this frame or
             // as discarded. The statistics carry that error; they never stall a present.
-            self.pending.push_back(pending);
+            self.pending.push_back(slot);
         }
 
-        /// Reads what arrived without blocking and returns the requests answered since the last call.
-        pub fn poll(&mut self, now_us: u64) -> Vec<Shown> {
+        /// Reads what arrived without blocking and returns the requests answered since the last
+        /// call, valid until the next one.
+        pub fn poll(&mut self, now_us: u64) -> &[Shown] {
             self.pump(now_us);
-            std::mem::take(&mut self.done)
+            self.out.clear();
+            std::mem::swap(&mut self.done, &mut self.out);
+            &self.out
         }
 
         fn pump(&mut self, now_us: u64) {
@@ -586,18 +604,20 @@ pub(crate) mod wayland {
             // One pass over the queue in place: each request leaves from the front and the
             // waiting ones go back to the back, in order, without a queue of its own.
             for _ in 0..self.pending.len() {
-                let Some(pending) = self.pending.pop_front() else { break };
+                let Some(slot) = self.pending.pop_front() else { break };
+                let pending = &self.slots[slot];
                 let expired = now_us.saturating_sub(pending.requested_us) * 1000 > TIMEOUT_NS;
                 match (pending.answer, expired) {
-                    (Some(_), _) => self.finish(&pending, None),
-                    (None, true) => self.finish(&pending, Some(Outcome::Unanswered)),
-                    (None, false) => self.pending.push_back(pending),
+                    (Some(_), _) => self.finish(slot, None),
+                    (None, true) => self.finish(slot, Some(Outcome::Unanswered)),
+                    (None, false) => self.pending.push_back(slot),
                 }
             }
         }
 
-        /// Destroys the request's proxy (its box may go after this) and keeps its answer.
-        fn finish(&mut self, pending: &Pending, outcome: Option<Outcome>) {
+        /// Destroys the request's proxy, keeps its answer and frees its slot.
+        fn finish(&mut self, slot: usize, outcome: Option<Outcome>) {
+            let pending = self.slots[slot];
             // SAFETY: the feedback proxy, destroyed once; later events for it are dropped.
             unsafe { (self.api.destroy)(pending.proxy) };
             let outcome = outcome.unwrap_or(match pending.answer {
@@ -606,6 +626,7 @@ pub(crate) mod wayland {
                 None => Outcome::Unanswered,
             });
             self.done.push(Shown { frame: pending.frame, ready_us: pending.ready_us, requested_us: pending.requested_us, outcome });
+            self.free.push(slot);
         }
     }
 
@@ -613,7 +634,7 @@ pub(crate) mod wayland {
         fn drop(&mut self) {
             // SAFETY: our own objects, destroyed once, children first.
             unsafe {
-                for pending in std::mem::take(&mut self.pending) { (self.api.destroy)(pending.proxy); }
+                while let Some(slot) = self.pending.pop_front() { (self.api.destroy)(self.slots[slot].proxy); }
                 if !self.globals.presentation.is_null() {
                     (self.api.marshal_flags)(self.globals.presentation, PRESENTATION_DESTROY, null(), (self.api.get_version)(self.globals.presentation), MARSHAL_FLAG_DESTROY);
                 }
@@ -707,12 +728,12 @@ mod tests {
                 feedback.request(frame, now_us(), now_us());
                 SDL_RenderPresent(renderer);
                 std::thread::sleep(std::time::Duration::from_millis(16));
-                answers.extend(feedback.poll(now_us()));
+                answers.extend_from_slice(feedback.poll(now_us()));
             }
             for _ in 0..20 {
                 SDL_PumpEvents();
                 std::thread::sleep(std::time::Duration::from_millis(16));
-                answers.extend(feedback.poll(now_us()));
+                answers.extend_from_slice(feedback.poll(now_us()));
             }
             let mut stats = Stats::default();
             answers.iter().for_each(|answer| stats.add(answer.outcome));
