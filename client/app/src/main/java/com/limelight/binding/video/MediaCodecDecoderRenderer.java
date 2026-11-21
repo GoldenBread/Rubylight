@@ -4351,7 +4351,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                         System.nanoTime() - workStartNs;
                                 if (submitHints) {
                                     // The submissions since the last report are this frame's work too.
-                                    performanceHints.setSubmitThread(submitWork.threadId());
+                                    performanceHints.setSubmitThreads(submitWork.threadId(), submitWork.secondThreadId());
                                     workNs += submitWork.take();
                                 }
                                 performanceHints.reportWorkDuration(workNs, refreshRate);

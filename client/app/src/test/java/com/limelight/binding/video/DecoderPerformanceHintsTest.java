@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -59,11 +60,23 @@ public class DecoderPerformanceHintsTest {
         // A clock that steps back is no negative work.
         work.add(43, -5);
         assertEquals(0, work.take());
-        assertEquals("a new submit thread is the one put in the session", 43, work.threadId());
+        assertEquals("a second submit thread joins the first", 43, work.secondThreadId());
+        assertEquals(42, work.threadId());
+        work.add(42, 1);
+        work.add(43, 1);
+        assertEquals("only two distinct threads are kept", 42, work.threadId());
         // A recovery drops what its flushed frames took.
         work.add(43, 1_000);
         work.reset();
         assertEquals(0, work.take());
+    }
+
+    @Test
+    public void theSessionListsTheCreatingThreadAndEachSubmitThreadOnce() {
+        assertArrayEquals(new int[] { 7 }, DecoderPerformanceHints.threadList(7, 0, 0));
+        assertArrayEquals(new int[] { 7, 8 }, DecoderPerformanceHints.threadList(7, 7, 8));
+        assertArrayEquals(new int[] { 7, 8, 9 }, DecoderPerformanceHints.threadList(7, 8, 9));
+        assertArrayEquals(new int[] { 7, 8 }, DecoderPerformanceHints.threadList(7, 8, 8));
     }
 
     // The submit side must measure CPU time and only when the switch is on: off, a frame costs
