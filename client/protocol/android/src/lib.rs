@@ -249,6 +249,45 @@ fn java_address(env: &mut JNIEnv, text: &JString) -> Option<std::net::IpAddr> {
     env.get_string(text).ok().and_then(|text| String::from(text).parse().ok())
 }
 
+/// [`nightjar_core::connectivity::test_client_connectivity`] for the connection test dialogs:
+/// the flags of the ports that did not answer, 0 for none, -1 (`ML_TEST_RESULT_INCONCLUSIVE`)
+/// when the test could not run. Blocks for up to three seconds.
+#[no_mangle]
+pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_testClientConnectivity(
+    mut env: JNIEnv,
+    _: JClass,
+    test_server: JString,
+    reference_port: jint,
+    test_flags: jint,
+) -> jint {
+    let Some(server) = string(&mut env, &test_server) else {
+        return -1;
+    };
+    nightjar_core::connectivity::test_client_connectivity(&server, reference_port as u16, test_flags as u32) as jint
+}
+
+/// [`nightjar_core::stun::find_external_ipv4`]: this device's WAN IPv4 address as text, or null
+/// when the STUN server did not answer in three seconds.
+#[no_mangle]
+pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_findExternalAddressIP4(
+    mut env: JNIEnv,
+    _: JClass,
+    stun_host_name: JString,
+    stun_port: jint,
+) -> jstring {
+    let Some(server) = string(&mut env, &stun_host_name) else {
+        return std::ptr::null_mut();
+    };
+    match nightjar_core::stun::find_external_ipv4(&server, stun_port as u16, nightjar_core::stun::STUN_TIMEOUT) {
+        Ok(Some(address)) => env.new_string(address.to_string()).map_or(std::ptr::null_mut(), |text| text.into_raw()),
+        Ok(None) => std::ptr::null_mut(),
+        Err(e) => {
+            platform::warn(&format!("STUN {server}:{stun_port} failed: {e}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// One round of [`nightjar_core::host_loss`] for `HostLossWatch`, which runs it over both engines:
 /// blocks for about 750 ms. Returns [`nightjar_core::host_loss::Round::code`]. `gateway` may be
 /// null; a host that does not parse proves nothing.

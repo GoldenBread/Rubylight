@@ -117,6 +117,9 @@ final class RustBridge {
     static native boolean sendServerCommand(byte[] payload);
     static native int getPendingAudioDuration();
 
+    // nightjar-core's connectivity test and STUN lookup (protocol/android/src/lib.rs).
+    static native int testClientConnectivity(String testServerHostName, int referencePort, int testFlags);
+    static native String findExternalAddressIP4(String stunHostName, int stunPort);
     static native long audioConcealer();
     static native int getPendingVideoFrames();
     static native long getDecoderDrops();

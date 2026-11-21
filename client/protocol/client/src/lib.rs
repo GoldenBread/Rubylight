@@ -3,6 +3,7 @@
 
 pub mod audio;
 pub mod color;
+pub mod connectivity;
 pub mod control;
 pub mod crypto;
 pub mod fec;

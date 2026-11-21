@@ -1066,9 +1066,14 @@ public class MoonBridge {
     }
     private static native boolean cSendServerCommand(byte[] payload);
 
-    public static native String getStageName(int stage);
+    public static String getStageName(int stage) {
+        return PortFlags.stageName(stage);
+    }
 
-    public static native String findExternalAddressIP4(String stunHostName, int stunPort);
+    /** This device's WAN IPv4 address from a STUN server, or null (also when the Rust library did not load). */
+    public static String findExternalAddressIP4(String stunHostName, int stunPort) {
+        return RustBridge.isAvailable() ? RustBridge.findExternalAddressIP4(stunHostName, stunPort) : null;
+    }
 
     public static int getPendingAudioDuration() {
         return rustStream ? RustBridge.getPendingAudioDuration() : cGetPendingAudioDuration();
@@ -1094,13 +1099,26 @@ public class MoonBridge {
     }
     private static native long cGetDecoderDrops();
 
-    public static native int testClientConnectivity(String testServerHostName, int referencePort, int testFlags);
+    /**
+     * The flags of the stream's ports this device cannot reach on the test server, 0 for none, or
+     * ML_TEST_RESULT_INCONCLUSIVE when the test could not run (also when the Rust library did not load).
+     */
+    public static int testClientConnectivity(String testServerHostName, int referencePort, int testFlags) {
+        return RustBridge.isAvailable() ? RustBridge.testClientConnectivity(testServerHostName, referencePort, testFlags)
+                : ML_TEST_RESULT_INCONCLUSIVE;
+    }
 
-    public static native int getPortFlagsFromStage(int stage);
+    public static int getPortFlagsFromStage(int stage) {
+        return PortFlags.fromStage(stage);
+    }
 
-    public static native int getPortFlagsFromTerminationErrorCode(int errorCode);
+    public static int getPortFlagsFromTerminationErrorCode(int errorCode) {
+        return PortFlags.fromTerminationErrorCode(errorCode);
+    }
 
-    public static native String stringifyPortFlags(int portFlags, String separator);
+    public static String stringifyPortFlags(int portFlags, String separator) {
+        return PortFlags.stringify(portFlags, separator);
+    }
 
     /** Whether this session's host's own disconnect ended the connection, not a silence past the timeout. */
     public static boolean hostSaidGoodbye() {
@@ -1134,7 +1152,9 @@ public class MoonBridge {
     }
     private static native long cGetEstimatedRttInfo();
 
-    public static native String getLaunchUrlQueryParameters();
+    public static String getLaunchUrlQueryParameters() {
+        return PortFlags.LAUNCH_URL_QUERY_PARAMETERS;
+    }
 
     public static native byte guessControllerType(int vendorId, int productId);
 
