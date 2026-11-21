@@ -62,6 +62,8 @@ final class SubmitHandoff<U> {
     private final String threadName;
     private final Runnable threadInit;
     private final AtomicLong drops = new AtomicLong();
+    // Units the worker took from the queue (the others were submitted in place on the receive thread).
+    private final AtomicLong handed = new AtomicLong();
     // Frames the engine dropped while the decoder waited for a key frame: not network loss.
     private final AtomicBoolean keyGap = new AtomicBoolean();
     // All below under lock.
@@ -184,6 +186,7 @@ final class SubmitHandoff<U> {
             }
             int status = MoonBridge.DR_NEED_IDR;
             try {
+                handed.incrementAndGet();
                 status = worker.submit(entry.unit);
             } catch (Throwable t) {
                 // The unit failed like any other: the thread stays, or the stream would freeze with
@@ -210,6 +213,11 @@ final class SubmitHandoff<U> {
      */
     long drops() {
         return drops.get();
+    }
+
+    /** Units handed to the worker so far. */
+    long handedUnits() {
+        return handed.get();
     }
 
     /**
@@ -252,11 +260,18 @@ final class SubmitHandoff<U> {
      */
     boolean close(long joinMs) {
         Thread joined;
+        boolean first;
         synchronized (lock) {
+            first = !closed;
             closed = true;
             queue.clear();
             joined = thread;
             lock.notifyAll();
+        }
+        if (first) {
+            // Once per stream: whether the worker was used at all.
+            LimeLog.info("Input hand-off: " + handed.get() + " units handed to the " + threadName + " worker, " +
+                    drops.get() + " frames dropped there");
         }
         if (joined == null) return true;
         if (joinMs > 0 && joined != Thread.currentThread()) {

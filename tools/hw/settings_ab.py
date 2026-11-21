@@ -40,6 +40,29 @@ def set_prefs(setting, arm):
         raise SystemExit('prefs did not take')
 
 
+def cpu_busy_percent():
+    """Whole-device CPU use over one second, from /proc/stat."""
+    def read():
+        v = [int(x) for x in f.sh('head -1 /proc/stat', check=False).split()[1:9]]
+        return sum(v), v[3] + v[4]
+    t0, i0 = read(); time.sleep(1.0); t1, i1 = read()
+    return round(100 * (1 - (i1 - i0) / max(1, t1 - t0)), 1)
+
+
+def check_load(jobs):
+    """Stops the run unless `jobs` busy shells run and the CPUs are busy; returns the CPU use in percent."""
+    time.sleep(1.0)
+    ps = f.sh('ps -A -o PID,STAT,NAME,ARGS', check=False)
+    # The subshells share the parent's command line, which holds the loop text.
+    busy = sum(1 for line in ps.splitlines() if 'while :' in line and 'ps -A' not in line)
+    cpu = cpu_busy_percent()
+    f.log(f'load check: {busy} sh processes, CPU {cpu}%')
+    if busy < jobs or cpu < 70:
+        f.sh('pkill -f "while :" ; true', check=False)
+        raise SystemExit(f'load did not start: {busy} sh processes, CPU {cpu}%')
+    return cpu
+
+
 def run(args):
     tag = f'{args.setting}-{args.arm}-{"load" if args.load else "idle"}-{args.rep}'
     OUT.mkdir(parents=True, exist_ok=True)
@@ -50,6 +73,7 @@ def run(args):
     f.installed_host_idle()
     f.take_locks(args.lock_wait)
     host = motion = None
+    load_cpu = None
     try:
         f.installed_host_idle()
         f.sh('input keyevent KEYCODE_WAKEUP'); f.sh('svc power stayon true'); f.sh('wm dismiss-keyguard', check=False)
@@ -72,9 +96,11 @@ def run(args):
              '--es AppName Desktop --ez HDR false')
         time.sleep(10)
         if args.load:
-            loops = '; '.join('(while :; do :; done) &' for _ in range(STRESS_JOBS))
+            loops = ' '.join('(while :; do :; done) &' for _ in range(STRESS_JOBS))
             # Detached busy loops; the stream's own threads compete with them for the CPUs.
             f.sh(f"nohup sh -c '{loops} sleep {args.seconds}; kill 0' >/dev/null 2>&1 &", check=False)
+            load_cpu = check_load(STRESS_JOBS)
+            f.log(f'{tag}: load verified, device CPU {load_cpu}% busy')
         time.sleep(args.seconds / 2 - 10)
         mode = s.active_hz(f.sh('dumpsys display', check=False))
         time.sleep(args.seconds - args.seconds / 2)
@@ -104,7 +130,7 @@ def run(args):
         f.sh('svc power stayon false', check=False)
     s.OUT = OUT
     result = s.analyse(tag, f'{args.setting}-{args.arm}', args.rep, args.seconds, mode)
-    result.update(setting=args.setting, on=args.arm == 'on', load=args.load)
+    result.update(setting=args.setting, on=args.arm == 'on', load=args.load, load_cpu_percent=load_cpu)
     with open(OUT / 'results.jsonl', 'a') as out:
         out.write(json.dumps(result) + '\n')
     f.log(json.dumps(result))

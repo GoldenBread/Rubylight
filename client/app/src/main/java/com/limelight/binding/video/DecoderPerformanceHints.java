@@ -47,6 +47,8 @@ final class DecoderPerformanceHints implements AutoCloseable {
         // Remembered even when refused, so a refusal is logged once and not retried every frame.
         submitThreadId = first;
         submitThreadId2 = second;
+        // Once per new pair, not per frame: shows whether the second submit thread (the InputSubmit worker) was seen.
+        LimeLog.info("Performance hint submit threads: " + first + ", " + second);
         int[] threads = threadList(ownThreadId, first, second);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             try {

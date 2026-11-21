@@ -3355,6 +3355,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             // PyroWave has its own session on its submit path.
             this.submitHints = prefs.phonePerformanceHints && (format & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) == 0 &&
                     MediaCodecHelper.debugSwitch(DecoderPerformanceHints.SUBMIT_SWITCH, prefs.submitHint);
+            LimeLog.info("Speed up frame hand-off: " + (submitHints ? "on" : "off"));
             if (streamStartMs < 0) {
                 streamStartMs = System.currentTimeMillis();
                 streamStartUptimeMs = SystemClock.uptimeMillis();
