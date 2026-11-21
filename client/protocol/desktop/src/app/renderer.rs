@@ -355,7 +355,7 @@ impl App {
         // A decoder kept for a reconnect may borrow or hold this device: it goes first, within the
         // leaving deadline; one that does not let go keeps the renderer, as a stuck teardown does.
         if !stream::decoder_cache::clear(Instant::now() + stream::LEAVE_WAIT) {
-            return Err(tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.").to_owned());
+            return Err(tr("A decoder kept from the last stream is still being released, so the graphics card cannot be switched yet. The change is kept and applied once it is released; if it is not, restart Nightjar.").to_owned());
         }
         let from = sdl::renderer_name(self.renderer);
         let wanted = if gpu { "gpu" } else if cfg!(target_os = "macos") { "metal" } else { "opengl" };
@@ -495,8 +495,12 @@ impl App {
         // The colorspace it was made in: scRGB when the start asked for the GPU renderer.
         let linear = sdl::renderer_linear(old);
         // A decoder kept for a reconnect holds a reference to the old device, which the remake waits to see go.
+        // Every Windows decoder holds its own: FFmpeg's D3D11VA through `DeviceRef`'s clone, and
+        // PyroWave's GPU decoder through the D3D11 textures and fences it made on the device (its
+        // Vulkan side is a device of its own). So a drop that is slow costs the remake's wait, not
+        // a use after free, and the process goes on.
         if !stream::decoder_cache::clear(Instant::now() + stream::LEAVE_WAIT) {
-            no_renderer("a decoder kept from the last stream did not let go of the lost device in time");
+            eprintln!("nightjar: a decoder kept from the last stream is still letting go of the lost device; the remake waits for its references");
         }
         // SAFETY: the renderer run() made, its gui textures freed. No stream runs in the launcher's
         // frame, and a launch or a decoder still on the old device holds that device itself.

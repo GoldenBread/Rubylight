@@ -89,11 +89,15 @@ const KEEP_FOR: std::time::Duration = std::time::Duration::from_secs(60);
 /// A place for one decoder of a kind.
 pub(super) struct Cache<K, D> {
     parked: Mutex<Option<Parked<K, D>>>,
+    /// The helper threads `clear_until` dropped a decoder on, until they end: a drop that missed
+    /// its deadline goes on here, and a later `clear_until` waits for it before it says the
+    /// renderer's device is free.
+    drops: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
 impl<K, D> Cache<K, D> {
     pub const fn new() -> Self {
-        Self { parked: Mutex::new(None) }
+        Self { parked: Mutex::new(None), drops: Mutex::new(Vec::new()) }
     }
 
     /// Keeps `decoder` for the next stream, replacing one parked before (the tests' shorthand).
@@ -213,21 +217,32 @@ impl<K: Send + 'static, D: Send + 'static> Cache<K, D> {
                 }
             }
         };
-        let Some(old) = old else { return true };
-        let (done, finished) = std::sync::mpsc::channel();
-        let spawned = std::thread::Builder::new().name("decoder-clear".into()).spawn(move || {
-            drop(old);
-            let _ = done.send(());
-        });
-        if spawned.is_err() {
-            eprintln!("nightjar: no thread to drop the parked decoder on");
-            return false;
+        if let Some(old) = old {
+            match std::thread::Builder::new().name("decoder-clear".into()).spawn(move || drop(old)) {
+                Ok(handle) => self.drops.lock().unwrap_or_else(|poison| poison.into_inner()).push(handle),
+                Err(_) => {
+                    eprintln!("nightjar: no thread to drop the parked decoder on");
+                    return false;
+                }
+            }
         }
-        let stopped = finished.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).is_ok();
-        if !stopped {
-            eprintln!("nightjar: a parked decoder did not drop in time; its GPU device stays");
+        // This drop and any an earlier call left running past its deadline: the cache is empty
+        // meanwhile, but the decoder may still hold the renderer's device.
+        loop {
+            let running = {
+                let mut drops = self.drops.lock().unwrap_or_else(|poison| poison.into_inner());
+                drops.retain(|handle| !handle.is_finished());
+                !drops.is_empty()
+            };
+            if !running {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                eprintln!("nightjar: a parked decoder did not drop in time; its GPU device stays");
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        stopped
     }
 }
 
@@ -337,6 +352,8 @@ pub fn retire() {
 #[must_use]
 pub fn clear(deadline: std::time::Instant) -> bool {
     retire();
+    // A drop gets a floor even when the leaving deadline is spent: a fast drop is not a stuck one.
+    let deadline = deadline.max(std::time::Instant::now() + std::time::Duration::from_millis(500));
     let media = with_media(|cache| cache.clear_until(deadline));
     let pyrowave = with_pyrowave(|cache| cache.clear_until(deadline));
     media && pyrowave
@@ -532,11 +549,13 @@ mod tests {
         assert!(!cache.clear_until(short()), "a slow drop is reported");
         assert!(!done.load(Ordering::SeqCst), "and not waited for");
         assert!(!cache.is_parked(), "the cache is empty meanwhile");
+        assert!(!cache.clear_until(short()), "a second clear still sees the drop running");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while !done.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(done.load(Ordering::SeqCst), "the drop goes on in the helper");
+        assert!(cache.clear_until(std::time::Instant::now() + std::time::Duration::from_secs(5)), "true once the drop ended");
         // A drop in progress under the lock is reported too.
         let cache: &'static Cache<u8, Slow> = Box::leak(Box::new(Cache::new()));
         let done = Arc::new(AtomicBool::new(false));
