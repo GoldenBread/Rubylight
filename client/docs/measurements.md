@@ -119,3 +119,17 @@ Measured on a Retroid Pocket 6 (120 Hz panel), median time from receipt to Surfa
 | 60 fps | 20.03 ms | 17.97 ms | 8.7 / 8.6 ms |
 
 Present times come from `dumpsys SurfaceFlinger --latency`, not from the moment the client hands a frame over: a frame released at once waits in SurfaceFlinger's queue, while a frame released with a due time does not, so hand-over times would make the scheduler appear about 15 ms later than it is. Absolute values varied between sessions, so compare arms within one session.
+
+## Two Debug settings after the input hand-off
+
+Measured on a Retroid Pocket 6 (120 Hz panel, HEVC 1080p60 20 Mbps, Smoothest pacing, Direct submit and Prioritize stream traffic on, 90 s per leg in the order off, on, on, off, idle and with 8 busy loops running on the device), receive to release from Nightjar's latency CSV. **Speed up frame hand-off** and **Decoder priority for receiving** were each compared with the other off.
+
+| Setting | Load | Off p50 / p95 ms (two legs) | On p50 / p95 ms (two legs) | Drops |
+| --- | --- | --- | --- | --- |
+| Speed up frame hand-off | idle | 2.47 / 4.67, 2.58 / 4.51 | 2.47 / 4.52, 2.54 / 4.60 | 0 / 0 |
+| Speed up frame hand-off | load | 2.65 / 4.79, 2.61 / 5.66 | 2.52 / 4.44, 2.43 / 4.50 | 0 / 0 |
+| Decoder priority for receiving | idle | 2.59 / 5.55, 2.63 / 4.73 | 2.56 / 9.45, 2.58 / 4.65 | 0 / 0 |
+| Decoder priority for receiving | load | 2.57 / 4.39, 2.46 / 4.65 | 2.47 / 4.51, 2.57 / 4.61 | 0 / 0 |
+
+Neither setting moved the median or the p95 beyond the spread between legs of one arm (p95 4.4 to 5.7 ms off; the one 9.45 ms p95 was a single idle leg of the priority arm that its twin did not repeat), and no leg dropped a frame, so an earlier reading that the priority setting was slower under load did not repeat. The busy loops did not slow the stream either, so this load was light for a device with eight cores. The log of an on leg shows the receive thread raised to nice -8.
+
