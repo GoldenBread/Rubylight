@@ -521,8 +521,14 @@ impl Session {
         }
         tracing::info!(
             pid = process.pid,
+            output = %gpu.display.display_name,
+            window = window.is_some(),
             width,
             height,
+            format,
+            pixel = ?Pixel::try_from_dxgi_raw(format),
+            in_hdr = gpu.display_in_hdr(),
+            sdr_white_nits = gpu.sdr_white_nits(),
             compute = owned.compute.is_some(),
             worker_compute,
             zero_copy = returns.is_some(),

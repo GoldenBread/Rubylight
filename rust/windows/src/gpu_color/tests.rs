@@ -1691,7 +1691,11 @@ fn gpu_hdr_preserves_absolute_luminance_gamut_and_linear_resize() -> Result<()> 
         },
         (64, 64, Pixel::Bgra8),
     )?;
-    for (white, pq) in [(100., 0.5080784f32), (200., 0.5791332f32)] {
+    for (white, pq) in [
+        (100., 0.5080784f32),
+        (200., 0.5791332f32),
+        (480., 0.6721828f32),
+    ] {
         sdr_convert.set_luminance([white, 1.]);
         let output = readback(&gpu, sdr_convert.convert(&sdr)?.as_ref())?;
         assert!(output[32 * 64 + 32].abs_diff((64. + 876. * pq).round() as u16) <= 2);
@@ -1823,4 +1827,19 @@ fn every_d3d11_uav_fits_feature_level_11_0() {
         );
     }
     assert!(seen >= 10, "found {seen} UAVs");
+}
+
+#[test]
+fn sdr_white_scale_constants_follow_windows_nits() {
+    let config = butterpollo_core::rtsp::Negotiated {
+        width: 1920,
+        height: 1080,
+        codec: 1,
+        hdr: true,
+        ..Default::default()
+    };
+    let c280 = constants(&config, (1920, 1080, Pixel::Bgra8), [280., 1.], None);
+    let c480 = constants(&config, (1920, 1080, Pixel::Bgra8), [480., 1.], None);
+    assert_eq!(c280[9], 3.5f32.to_bits());
+    assert_eq!(c480[9], 6.0f32.to_bits());
 }

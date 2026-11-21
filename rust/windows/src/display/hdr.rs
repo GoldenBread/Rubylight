@@ -8,6 +8,26 @@ pub fn set_hdr(m: &Monitor, enabled: bool) -> Result<()> {
     }
     color_state::set(m.adapter, m.target, enabled)
 }
+
+/// Target `(adapter, target)` for reading SDR white level on `output`, only
+/// while Windows reports HDR enabled on that monitor.
+fn hdr_white_target<'a>(monitors: &'a [Monitor], output: &str) -> Option<&'a Monitor> {
+    let monitor = if output.is_empty() {
+        monitors.iter().find(|m| m.primary)
+    } else {
+        monitors.iter().find(|m| m.matches(output))
+    }?;
+    monitor.hdr_enabled.then_some(monitor)
+}
+
+/// Windows' "SDR content brightness" in nits for `output` (or the primary when
+/// `output` is empty), when the display is currently running in HDR.
+pub fn sdr_white_nits(output: &str) -> Option<f32> {
+    let topology = Topology::query().ok()?;
+    let monitors = topology.monitors();
+    let monitor = hdr_white_target(&monitors, output)?;
+    color_state::sdr_white_nits(monitor.adapter, monitor.target)
+}
 /// What a stream's HDR request needs from a display. One without HDR is
 /// left alone and the stream continues in SDR, as libdisplaydevice leaves
 /// a display without an HDR state: the launch must not fail on it.
@@ -113,5 +133,30 @@ mod tests {
         .unwrap();
         restore_hdr(&recorded, false, true, &[monitor("pc", 2, true)], untouched).unwrap();
         restore_hdr(&recorded, false, true, &[], untouched).unwrap();
+    }
+
+    #[test]
+    fn hdr_white_target_matches_named_or_primary_hdr_monitor_only() {
+        let mut primary_hdr = monitor("pc", 1, true);
+        primary_hdr.primary = true;
+        let mut secondary_sdr = monitor("tv", 2, false);
+        secondary_sdr.primary = false;
+        let monitors = [primary_hdr.clone(), secondary_sdr];
+
+        assert_eq!(
+            hdr_white_target(&monitors, "").map(|m| m.device_id.as_str()),
+            Some("pc")
+        );
+        assert_eq!(
+            hdr_white_target(&monitors, "pc").map(|m| m.device_id.as_str()),
+            Some("pc")
+        );
+        assert_eq!(
+            hdr_white_target(&monitors, r"\\.\DISPLAY1").map(|m| m.device_id.as_str()),
+            Some("pc")
+        );
+        // Monitor without HDR active or missing named output must return None, not primary.
+        assert!(hdr_white_target(&monitors, "tv").is_none());
+        assert!(hdr_white_target(&monitors, "missing").is_none());
     }
 }

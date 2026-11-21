@@ -83,6 +83,7 @@ impl SessionThread<'_> {
         let mut last_stamp = start;
         let mut live_at = due;
         let mut rebuild_encoder = false;
+        let mut applied_luminance: Option<(f32, f32)> = None;
         // Where this thread is, should it stop making progress.
         let progress = crate::stall_watch::register(
             "session",
@@ -1593,9 +1594,16 @@ impl SessionThread<'_> {
                 let active = encoder
                     .as_mut()
                     .expect("a missing encoder is rebuilt above");
-                // RTX HDR's picture is scaled to its SDR white and peak.
-                if let Some((white, scale)) = enhancer.luminance() {
+                // RTX HDR's picture uses its own SDR white and scale; otherwise
+                // match Windows' "SDR content brightness" (DISPLAYCONFIG_SDR_WHITE_LEVEL).
+                let wanted_luminance = enhancer
+                    .luminance()
+                    .or_else(|| stream.hdr.then(|| (image.gpu.sdr_white_nits(), 1.0)));
+                if let Some((white, scale)) = wanted_luminance
+                    && (rebuilt || applied_luminance != Some((white, scale)))
+                {
                     active.set_luminance(white, scale);
+                    applied_luminance = Some((white, scale));
                 }
                 if menu.dirty || (rebuilt && menu.has_overlay()) {
                     active.set_overlay(menu.for_encoder([stream.width, stream.height]));

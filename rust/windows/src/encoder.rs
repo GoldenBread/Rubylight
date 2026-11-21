@@ -248,9 +248,19 @@ impl Encoder {
             Self::Pyrowave(_) => {}
         }
     }
+    /// Clamp encoder `[white_nits, linear_scale]` allowing Windows' desktop HDR
+    /// SDR content brightness range (`80..=1000` nits) alongside RTX HDR.
+    fn clamp_luminance(white_nits: f32, linear_scale: f32) -> [f32; 2] {
+        let white_nits = if white_nits.is_finite() {
+            white_nits.clamp(80., 1000.)
+        } else {
+            100.
+        };
+        [white_nits, linear_scale.clamp(1., 2.)]
+    }
     /// SDR white is absolute luminance; the scRGB scale expands a 1000-nit ceiling.
     pub fn set_luminance(&mut self, white_nits: f32, linear_scale: f32) {
-        let luminance = [white_nits.clamp(100., 200.), linear_scale.clamp(1., 2.)];
+        let luminance = Self::clamp_luminance(white_nits, linear_scale);
         match self {
             Self::Amf(e) => e.luminance = luminance,
             Self::Nvenc(e) => e.set_luminance(luminance),
@@ -290,7 +300,7 @@ impl Encoder {
         warnings.clear("hdr_dynamic_metadata");
         warnings.clear("encoder_vpe");
         require_encoding_gpu(&image.gpu)?;
-        if config.codec == 3 {
+        let mut created = if config.codec == 3 {
             if config.hdr {
                 // The colour conversion (`gpu_color::constants`) encodes this curve.
                 tracing::info!(
@@ -303,16 +313,13 @@ impl Encoder {
                     "PyroWave stream: no HDR dynamic metadata (HDR10+, HDR Vivid) is sent"
                 );
             }
-            return Ok(Self::Pyrowave(Box::new(
-                crate::pyrowave::Encoder::new_device_reported(
-                    config,
-                    image.gpu.clone(),
-                    tuning,
-                    warnings.clone(),
-                )?,
-            )));
-        }
-        if backend(&image.gpu, tuning)? == "nvenc" {
+            Self::Pyrowave(Box::new(crate::pyrowave::Encoder::new_device_reported(
+                config,
+                image.gpu.clone(),
+                tuning,
+                warnings.clone(),
+            )?))
+        } else if backend(&image.gpu, tuning)? == "nvenc" {
             // As on AMF: convert on the compute queue and encode on its D3D12
             // device, or on the graphics queue when that is unavailable.
             let compute = if !config.yuv444
@@ -353,75 +360,80 @@ impl Encoder {
                 }
                 created => created,
             };
-            return match created {
+            match created {
                 Ok(mut encoder) => {
                     if compute.is_some() && !encoder.converts_on_compute() {
                         encoder.mark_compute_fallback();
                     }
-                    Ok(Self::Nvenc(Box::new(encoder)))
+                    Self::Nvenc(Box::new(encoder))
                 }
-                Err(error) => Err(nvenc_failed(error, &image.gpu.display.adapter)),
-            };
-        }
-        // AMF's video converter (`amd_vpe`) runs on the encoder's D3D11
-        // context, which a compute-queue encoder does not have.
-        let vpe = match crate::amf::vpe_wanted_for(tuning, config) {
-            Ok(wanted) => wanted,
-            Err(refusal) => {
-                tracing::info!(
-                    reason = refusal.code(),
-                    "amd_vpe is on, but AMF's video converter cannot write this stream's layout; converting with the shaders"
-                );
-                false
-            }
-        };
-        // Colour conversion on a compute queue keeps running beside a
-        // game that fills the GPU's graphics queue.
-        // AMF rejects 4:4:4 regardless of which queue converts the input.
-        let compute = if vpe {
-            tracing::info!(
-                "amd_vpe is on: AMF converts on the encoder's D3D11 context instead of the compute queue"
-            );
-            None
-        } else if !config.yuv444
-            && crate::compute::enabled(tuning)
-            && crate::compute::shareable(&image.texture)
-        {
-            match crate::compute::Compute::for_device(&image.gpu.device) {
-                Ok(compute) => Some(compute),
-                Err(error) => {
-                    warnings.set("encoder_conversion", format!("AMF compute conversion unavailable ({error:#}); converting on the graphics queue. A busy game can delay frames; lower its GPU load or update the AMD driver."));
-                    None
-                }
+                Err(error) => return Err(nvenc_failed(error, &image.gpu.display.adapter)),
             }
         } else {
-            if !config.yuv444 && crate::compute::enabled(tuning) {
-                warnings.set("encoder_conversion", "AMF compute conversion unavailable: the capture texture cannot be shared. Converting on the graphics queue; lower game GPU load or update the AMD driver if frames are delayed.");
+            // AMF's video converter (`amd_vpe`) runs on the encoder's D3D11
+            // context, which a compute-queue encoder does not have.
+            let vpe = match crate::amf::vpe_wanted_for(tuning, config) {
+                Ok(wanted) => wanted,
+                Err(refusal) => {
+                    tracing::info!(
+                        reason = refusal.code(),
+                        "amd_vpe is on, but AMF's video converter cannot write this stream's layout; converting with the shaders"
+                    );
+                    false
+                }
+            };
+            // Colour conversion on a compute queue keeps running beside a
+            // game that fills the GPU's graphics queue.
+            // AMF rejects 4:4:4 regardless of which queue converts the input.
+            let compute = if vpe {
+                tracing::info!(
+                    "amd_vpe is on: AMF converts on the encoder's D3D11 context instead of the compute queue"
+                );
+                None
+            } else if !config.yuv444
+                && crate::compute::enabled(tuning)
+                && crate::compute::shareable(&image.texture)
+            {
+                match crate::compute::Compute::for_device(&image.gpu.device) {
+                    Ok(compute) => Some(compute),
+                    Err(error) => {
+                        warnings.set("encoder_conversion", format!("AMF compute conversion unavailable ({error:#}); converting on the graphics queue. A busy game can delay frames; lower its GPU load or update the AMD driver."));
+                        None
+                    }
+                }
+            } else {
+                if !config.yuv444 && crate::compute::enabled(tuning) {
+                    warnings.set("encoder_conversion", "AMF compute conversion unavailable: the capture texture cannot be shared. Converting on the graphics queue; lower game GPU load or update the AMD driver if frames are delayed.");
+                }
+                None
+            };
+            let created = match crate::amf::Encoder::new_gpu(
+                config,
+                image.gpu.clone(),
+                tuning,
+                compute.clone(),
+            ) {
+                Err(error) if compute.is_some() && retries_on_graphics(&error) => {
+                    warnings.set("encoder_conversion", format!("AMF compute queue initialization failed ({error:#}); retrying conversion on the graphics queue. Lower game GPU load or update the AMD driver if frames are delayed."));
+                    crate::amf::Encoder::new_gpu(config, image.gpu.clone(), tuning, None)
+                }
+                created => created,
+            };
+            match created {
+                Ok(mut encoder) => {
+                    attach_warnings(&mut encoder.warnings, warnings);
+                    Self::Amf(Box::new(encoder))
+                }
+                Err(error) => {
+                    warnings.clear("encoder_conversion");
+                    return Err(amf_failed(error, &image.gpu.display.adapter));
+                }
             }
-            None
         };
-        let created = match crate::amf::Encoder::new_gpu(
-            config,
-            image.gpu.clone(),
-            tuning,
-            compute.clone(),
-        ) {
-            Err(error) if compute.is_some() && retries_on_graphics(&error) => {
-                warnings.set("encoder_conversion", format!("AMF compute queue initialization failed ({error:#}); retrying conversion on the graphics queue. Lower game GPU load or update the AMD driver if frames are delayed."));
-                crate::amf::Encoder::new_gpu(config, image.gpu.clone(), tuning, None)
-            }
-            created => created,
-        };
-        match created {
-            Ok(mut encoder) => {
-                attach_warnings(&mut encoder.warnings, warnings);
-                Ok(Self::Amf(Box::new(encoder)))
-            }
-            Err(error) => {
-                warnings.clear("encoder_conversion");
-                Err(amf_failed(error, &image.gpu.display.adapter))
-            }
+        if config.hdr {
+            created.set_luminance(image.gpu.sdr_white_nits(), 1.0);
         }
+        Ok(created)
     }
     pub fn encode_gpu(
         &mut self,
@@ -981,5 +993,14 @@ mod tests {
             .err()
             .expect("an encoder on a missing GPU");
         assert!(format!("{error:#}").contains("No Such GPU"), "{error:#}");
+    }
+
+    #[test]
+    fn encoder_luminance_allows_windows_sdr_white_range() {
+        assert_eq!(Encoder::clamp_luminance(80., 1.), [80., 1.]);
+        assert_eq!(Encoder::clamp_luminance(280., 1.), [280., 1.]);
+        assert_eq!(Encoder::clamp_luminance(480., 1.), [480., 1.]);
+        assert_eq!(Encoder::clamp_luminance(1500., 3.), [1000., 2.]);
+        assert_eq!(Encoder::clamp_luminance(f32::NAN, 1.), [100., 1.]);
     }
 }

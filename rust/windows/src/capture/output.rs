@@ -72,6 +72,8 @@ pub(super) trait Source {
     fn describe(&self, output: &Self::Output) -> Option<Description>;
     /// The output's refresh rate in Hz, 0 when unknown.
     fn refresh_hz(&self, identity: &Identity) -> u32;
+    /// Windows' "SDR content brightness" in nits, 100.0 when unavailable.
+    fn sdr_white_nits(&self, identity: &Identity) -> f32;
 }
 
 struct Cache<S: Source> {
@@ -83,6 +85,8 @@ struct Cache<S: Source> {
     metadata: butterpollo_core::hdr::Metadata,
     /// The refresh rate in Hz at the last check, 0 when unknown.
     refresh: u32,
+    /// Windows "SDR content brightness" in nits at the last check.
+    sdr_white_nits: f32,
 }
 
 impl<S: Source> Cache<S> {
@@ -95,6 +99,7 @@ impl<S: Source> Cache<S> {
             snapshot: Ok(None),
             metadata: Default::default(),
             refresh: 0,
+            sdr_white_nits: 100.0,
         }
     }
 
@@ -103,6 +108,7 @@ impl<S: Source> Cache<S> {
             self.next_check = now + CHECK_INTERVAL;
             // Read with the colour, at its interval only.
             self.refresh = self.source.refresh_hz(&self.identity);
+            self.sdr_white_nits = self.source.sdr_white_nits(&self.identity);
             let mut attempts = 0;
             let result = loop {
                 attempts += 1;
@@ -229,6 +235,10 @@ impl Source for Dxgi {
     fn refresh_hz(&self, identity: &Identity) -> u32 {
         current_refresh_hz(&identity.name)
     }
+
+    fn sdr_white_nits(&self, identity: &Identity) -> f32 {
+        crate::display::sdr_white_nits(&identity.name).unwrap_or(100.0)
+    }
 }
 
 /// The current mode's refresh rate of the display named `name` (its GDI
@@ -253,10 +263,13 @@ pub(crate) fn current_refresh_hz(name: &str) -> u32 {
 
 /// A check's result: the description or why it failed, the last known
 /// luminance, and the refresh rate in Hz (0 when unknown).
+/// The latest colour reading for a captured output: DXGI description, HDR
+/// metadata, refresh rate in Hz (0 when unknown), and SDR white level in nits.
 pub(super) type Snapshot = (
     std::result::Result<Option<Description>, String>,
     butterpollo_core::hdr::Metadata,
     u32,
+    f32,
 );
 
 /// With no read for this long the watcher stops; the next read checks at once.
@@ -337,7 +350,12 @@ where
     fn check(&self, now: Instant) -> Snapshot {
         let mut cache = self.cache.lock().unwrap();
         let _ = cache.poll(now);
-        (cache.snapshot.clone(), cache.metadata, cache.refresh)
+        (
+            cache.snapshot.clone(),
+            cache.metadata,
+            cache.refresh,
+            cache.sdr_white_nits,
+        )
     }
 
     fn next_check(&self) -> Instant {

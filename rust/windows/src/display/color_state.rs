@@ -90,6 +90,34 @@ fn settled(state: &State, enabled: bool) -> bool {
     state.enabled == enabled && state.requested == enabled
 }
 
+/// Convert `DISPLAYCONFIG_SDR_WHITE_LEVEL.SDRWhiteLevel` (thousandths of
+/// Windows' 80-nit reference SDR white) to nits, falling back to `100.0` when
+/// unset or zero and clamping valid readings to `80.0..=1000.0`.
+pub fn sdr_white_nits_from_level(raw: u32) -> f32 {
+    if raw == 0 {
+        return 100.0;
+    }
+    ((raw as f32 / 1000.0) * 80.0).clamp(80.0, 1000.0)
+}
+
+/// Query Windows' "SDR content brightness" (`DISPLAYCONFIG_SDR_WHITE_LEVEL`)
+/// in nits for `(adapter, target)`.
+pub(super) fn sdr_white_nits(adapter: LUID, target: u32) -> Option<f32> {
+    let mut level = DISPLAYCONFIG_SDR_WHITE_LEVEL {
+        header: header(
+            DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL,
+            size_of::<DISPLAYCONFIG_SDR_WHITE_LEVEL>(),
+            adapter,
+            target,
+        ),
+        SDRWhiteLevel: 0,
+    };
+    // SAFETY: `header` carries `DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL`
+    // and the byte size of `level`, so Windows writes only inside `level`.
+    let code = unsafe { DisplayConfigGetDeviceInfo(&mut level.header) };
+    (code == 0 && level.SDRWhiteLevel > 0).then(|| sdr_white_nits_from_level(level.SDRWhiteLevel))
+}
+
 fn apply(adapter: LUID, target: u32, enabled: bool, modern: bool) -> Result<()> {
     if modern {
         let state = SetHdr {
@@ -346,5 +374,15 @@ mod tests {
         let error = format!("{:#}", result.unwrap_err());
         assert!(error.contains("previous request could not be restored"));
         assert!(error.contains("driver refused restoration"));
+    }
+
+    #[test]
+    fn sdr_white_level_converts_windows_scale_to_nits() {
+        assert_eq!(sdr_white_nits_from_level(0), 100.0);
+        assert_eq!(sdr_white_nits_from_level(1000), 80.0);
+        assert_eq!(sdr_white_nits_from_level(1250), 100.0);
+        assert_eq!(sdr_white_nits_from_level(3500), 280.0);
+        assert_eq!(sdr_white_nits_from_level(6000), 480.0);
+        assert_eq!(sdr_white_nits_from_level(20_000), 1000.0);
     }
 }

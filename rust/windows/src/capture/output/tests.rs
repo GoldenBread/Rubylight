@@ -11,6 +11,7 @@ struct Fake {
     reads: Cell<usize>,
     refresh: u32,
     refresh_reads: Cell<usize>,
+    sdr_white: f32,
 }
 
 impl Source for Fake {
@@ -31,6 +32,9 @@ impl Source for Fake {
     fn refresh_hz(&self, _: &Identity) -> u32 {
         self.refresh_reads.set(self.refresh_reads.get() + 1);
         self.refresh
+    }
+    fn sdr_white_nits(&self, _: &Identity) -> f32 {
+        self.sdr_white
     }
 }
 
@@ -64,6 +68,7 @@ fn cache(now: Instant, initial: Option<Description>) -> Cache<Fake> {
             reads: Cell::new(0),
             refresh: 120,
             refresh_reads: Cell::new(0),
+            sdr_white: 100.0,
         },
         identity(),
         initial,
@@ -314,7 +319,7 @@ fn hot_reads_take_the_watchers_last_check_without_querying() {
     assert_eq!(reads(&watched), 1);
     // The watcher's check publishes the change, as a poll did.
     assert!(watched.tick(later));
-    let (current, metadata, _) = watched.read_with(later, |_| unreachable!());
+    let (current, metadata, _, _) = watched.read_with(later, |_| unreachable!());
     assert_eq!(current, Ok(Some(new)));
     assert!(mode_changed(Some(old.color_space), current.unwrap()));
     assert_eq!(metadata, new.metadata);
@@ -333,7 +338,7 @@ fn a_failed_check_is_published_with_the_last_known_metadata() {
         cache.source.candidates.clear();
     }
     assert!(watched.tick(now + CHECK_INTERVAL));
-    let (current, metadata, _) = watched.read_with(now + CHECK_INTERVAL, |_| unreachable!());
+    let (current, metadata, _, _) = watched.read_with(now + CHECK_INTERVAL, |_| unreachable!());
     assert!(current.is_err());
     assert_eq!(metadata, old.metadata);
 }
@@ -353,7 +358,7 @@ fn an_unread_watcher_stops_and_the_next_read_checks_at_once() {
         cache.source.candidates = vec![(identity(), Some(new))];
     }
     let mut spawned = false;
-    let (current, _, _) = watched.read_with(now + IDLE * 2, |_| {
+    let (current, _, _, _) = watched.read_with(now + IDLE * 2, |_| {
         spawned = true;
         Ok(())
     });
@@ -462,4 +467,26 @@ fn the_display_is_in_hdr_by_its_color_space_not_its_frame_format() {
     assert_eq!(in_hdr(Some(description(false, 80.))), Some(false));
     // An output that cannot say is not assumed to be in HDR.
     assert_eq!(in_hdr(None), None);
+}
+
+#[test]
+fn sdr_white_nits_updates_when_the_check_interval_ticks() {
+    let now = Instant::now();
+    let watched = watched(now, Some(description(true, 1000.)));
+    assert_eq!(watched.read_with(now, |_| Ok(())).3, 100.0);
+    watched.cache.lock().unwrap().source.sdr_white = 280.0;
+    // Cached within CHECK_INTERVAL; updated once CHECK_INTERVAL elapses.
+    assert_eq!(
+        watched
+            .read_with(now + Duration::from_millis(500), |_| unreachable!())
+            .3,
+        100.0
+    );
+    assert!(watched.tick(now + CHECK_INTERVAL));
+    assert_eq!(
+        watched
+            .read_with(now + CHECK_INTERVAL, |_| unreachable!())
+            .3,
+        280.0
+    );
 }

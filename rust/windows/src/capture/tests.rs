@@ -1471,3 +1471,11 @@ fn wgc_window_capture_follows_resize_and_fails_on_minimise_and_close() -> Result
     assert!(error.starts_with("the game window closed"), "{error}");
     Ok(())
 }
+
+#[test]
+fn dxgi_pixel_format_mapping_recognizes_hdr_and_sdr_surfaces() {
+    assert_eq!(Pixel::try_from_dxgi_raw(87), Some(Pixel::Bgra8));
+    assert_eq!(Pixel::try_from_dxgi_raw(10), Some(Pixel::RgbaF16));
+    assert_eq!(Pixel::try_from_dxgi_raw(24), Some(Pixel::Rgba10Pq));
+    assert_eq!(Pixel::try_from_dxgi_raw(0), None);
+}

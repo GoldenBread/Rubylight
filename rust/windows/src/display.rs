@@ -23,7 +23,7 @@ pub mod self_test;
 mod topology;
 mod virtual_display;
 
-pub use hdr::set_hdr;
+pub use hdr::{sdr_white_nits, set_hdr};
 pub use modes::{
     dpi_scale, highest_refresh, largest_scale, mode, output_scale, set_dpi_scale, set_mode,
     virtual_scale,

@@ -384,6 +384,17 @@ impl Wgc {
                 .session
                 .StartCapture()
                 .context("Windows Graphics Capture did not start")?;
+            tracing::info!(
+                output = %capture.gpu.display.display_name,
+                window = window.is_some(),
+                width = size.Width,
+                height = size.Height,
+                format = format.0,
+                pixel = ?Pixel::try_from_dxgi_raw(format.0),
+                in_hdr = capture.gpu.display_in_hdr(),
+                sdr_white_nits = capture.gpu.sdr_white_nits(),
+                "Windows Graphics Capture opened"
+            );
             Ok(capture)
         }
     }

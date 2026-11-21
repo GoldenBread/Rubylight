@@ -545,6 +545,23 @@ pub enum Pixel {
     RgbaF16,
     Rgba10Pq,
 }
+
+impl Pixel {
+    /// Convert a DXGI texture format into a host [`Pixel`] when supported.
+    pub fn try_from_dxgi(format: DXGI_FORMAT) -> Option<Self> {
+        match format {
+            DXGI_FORMAT_B8G8R8A8_UNORM => Some(Self::Bgra8),
+            DXGI_FORMAT_R16G16B16A16_FLOAT => Some(Self::RgbaF16),
+            DXGI_FORMAT_R10G10B10A2_UNORM => Some(Self::Rgba10Pq),
+            _ => None,
+        }
+    }
+
+    /// [`Self::try_from_dxgi`] from a raw DXGI / WinRT `DirectXPixelFormat` integer.
+    pub fn try_from_dxgi_raw(format: i32) -> Option<Self> {
+        Self::try_from_dxgi(DXGI_FORMAT(format))
+    }
+}
 pub struct Image {
     pub width: u32,
     pub height: u32,
@@ -583,6 +600,11 @@ impl Device {
             .as_ref()
             .map(|color| color.read().1)
             .unwrap_or_default()
+    }
+    /// Read the selected output's Windows "SDR content brightness" in nits
+    /// (`DISPLAYCONFIG_SDR_WHITE_LEVEL`), defaulting to `100.0` when unavailable.
+    pub fn sdr_white_nits(&self) -> f32 {
+        self.color.as_ref().map_or(100.0, |color| color.read().3)
     }
     /// Whether Windows composes the captured output as HDR10 (BT.2020 PQ) right now. The pixel
     /// format of a frame does not say: Desktop Duplication hands over FP16 for an SDR output
@@ -969,10 +991,20 @@ impl Duplication {
         };
         // SAFETY: `duplicate` is a live output duplication, and GetDesc returns an owned struct.
         let desc = unsafe { duplicate.GetDesc() };
-        tracing::info!(api, output = %gpu.display.display_name,
-            width = desc.ModeDesc.Width, height = desc.ModeDesc.Height,
-            x = gpu.display.x, y = gpu.display.y, rotation = desc.Rotation.0,
-            format = desc.ModeDesc.Format.0, "Desktop Duplication opened");
+        tracing::info!(
+            api,
+            output = %gpu.display.display_name,
+            width = desc.ModeDesc.Width,
+            height = desc.ModeDesc.Height,
+            x = gpu.display.x,
+            y = gpu.display.y,
+            rotation = desc.Rotation.0,
+            format = desc.ModeDesc.Format.0,
+            pixel = ?Pixel::try_from_dxgi(desc.ModeDesc.Format),
+            in_hdr = gpu.display_in_hdr(),
+            sdr_white_nits = gpu.sdr_white_nits(),
+            "Desktop Duplication opened"
+        );
         duplication_upright(desc.Rotation, &gpu.display.display_name)?;
         Ok(Self {
             gpu,
@@ -1389,12 +1421,9 @@ impl GpuPool {
                     desc
                 }
             };
-            let pixel = match desc.Format {
-                DXGI_FORMAT_B8G8R8A8_UNORM => Pixel::Bgra8,
-                DXGI_FORMAT_R16G16B16A16_FLOAT => Pixel::RgbaF16,
-                DXGI_FORMAT_R10G10B10A2_UNORM => Pixel::Rgba10Pq,
-                _ => bail!("unsupported GPU capture format {:?}", desc.Format),
-            };
+            let pixel = Pixel::try_from_dxgi(desc.Format).ok_or_else(|| {
+                anyhow::anyhow!("unsupported GPU capture format {:?}", desc.Format)
+            })?;
             // A crop outside the source would copy only garbage: keep the
             // whole frame instead, as WGC's own size checks do.
             let crop = crop.filter(|crop| {
@@ -1530,12 +1559,9 @@ pub fn read_texture(
     unsafe {
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         texture.GetDesc(&mut desc);
-        let pixel = match desc.Format {
-            DXGI_FORMAT_B8G8R8A8_UNORM => Pixel::Bgra8,
-            DXGI_FORMAT_R16G16B16A16_FLOAT => Pixel::RgbaF16,
-            DXGI_FORMAT_R10G10B10A2_UNORM => Pixel::Rgba10Pq,
-            _ => bail!("unsupported capture texture format {:?}", desc.Format),
-        };
+        let pixel = Pixel::try_from_dxgi(desc.Format).ok_or_else(|| {
+            anyhow::anyhow!("unsupported capture texture format {:?}", desc.Format)
+        })?;
         let mut needs = true;
         if let Some(old) = staging {
             let mut d = D3D11_TEXTURE2D_DESC::default();
