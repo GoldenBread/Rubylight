@@ -239,16 +239,53 @@ fn decode(
         let mut decoder = media::VideoDecoder::open(codec, hardware, 1, false)?;
         return decode_with(&mut decoder, data).map(|info| (info, hardware));
     }
-    // The stream's decoder order, as the stream goes on after a backend that fails mid-stream.
-    first_that_decodes(hardware.order(), |order| {
-        let mut decoder = media::VideoDecoder::open_any(codec, pictures, order, true, |_, _| {})?;
-        // VAAPI's 4:4:4 picture is one interleaved surface the presenter draws only mapped into
-        // the GPU renderer's Vulkan images, as the stream maps it.
-        if pictures.chroma444 && decoder.hardware == media::Hardware::Vaapi {
-            super::pipeline::map_to_vulkan(hardware, &mut decoder);
+    let order = hardware.order();
+    let mut attempt_order = order.clone();
+    let mut attempt = 0;
+    loop {
+        // The stream's decoder order, as the stream goes on after a backend that fails mid-stream.
+        let tried = first_that_decodes(attempt_order.clone(), |order| {
+            let mut decoder = media::VideoDecoder::open_any(codec, pictures, order, true, |_, _| {})?;
+            // VAAPI's 4:4:4 picture is one interleaved surface the presenter draws only mapped
+            // into the GPU renderer's Vulkan images, as the stream maps it.
+            if pictures.chroma444 && decoder.hardware == media::Hardware::Vaapi {
+                super::pipeline::map_to_vulkan(hardware, &mut decoder);
+            }
+            Ok((decoder.hardware, decode_with(&mut decoder, data)))
+        });
+        match tried {
+            // A V4L2 M2M decoder that made no picture gets one more go on a decoder opened anew:
+            // on Qualcomm Iris the first open of a run sometimes never starts decoding (Nightjar
+            // issue 77: the fixture's picture never came), while a second open decodes it. The
+            // backends before it already did their part, so the retry starts at V4L2.
+            Err(reason) if attempt < V4L2_PROBE_RETRIES && retry_worthwhile(&order, &reason) => {
+                attempt += 1;
+                eprintln!(
+                    "nightjar: decoder probe: V4L2 M2M made no picture of the fixture ({reason}); trying it once more on a decoder opened anew"
+                );
+                std::thread::sleep(V4L2_PROBE_SETTLE);
+                attempt_order = order.iter().copied().skip_while(|&backend| backend != media::Hardware::V4l2m2m).collect();
+            }
+            other => return other,
         }
-        Ok((decoder.hardware, decode_with(&mut decoder, data)))
-    })
+    }
+}
+
+/// How many times a [V4L2 M2M](media::Hardware::V4l2m2m) decoder that made no picture of a
+/// fixture is opened anew ([`decode`]): one, so a stream's probes cannot hang on a device.
+const V4L2_PROBE_RETRIES: usize = 1;
+
+/// How long [`decode`] lets a V4L2 M2M decoder release its device between the two opens: on
+/// Qualcomm Iris the decoder's firmware and buffers are gone by then, as they are for a new process.
+const V4L2_PROBE_SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Whether a failed probe is worth the one more go of [`V4L2_PROBE_RETRIES`]: the order opens a
+/// V4L2 M2M decoder (the one that can behave so on Iris) and that decoder made no picture, rather
+/// than the device refusing to open (a retry cannot fix that) or another backend failing.
+fn retry_worthwhile(order: &[media::Hardware], reason: &str) -> bool {
+    let label = media::Hardware::V4l2m2m.label();
+    order.contains(&media::Hardware::V4l2m2m)
+        && reason.split("; ").any(|failure| failure.starts_with(label) && failure.contains("made no picture"))
 }
 
 /// The first backend of `order` that decodes: `attempt` opens the first of the backends it is
@@ -280,6 +317,16 @@ fn first_that_decodes<T>(
     Err(failures.join("; "))
 }
 
+/// How long [`decode_with`] waits for an asynchronous decoder's (V4L2 M2M's) picture of a
+/// fixture: a lone frame is held until the input ends and the driver then decodes it. A quarter
+/// second was too short on Qualcomm Iris, where the first picture of a decoder waits for its
+/// firmware (Nightjar issue 77); stock FFmpeg decodes the same fixture there in under 250 ms, so
+/// this stays well inside a stream's startup.
+const ASYNC_PROBE_WAIT: std::time::Duration = std::time::Duration::from_millis(1_500);
+
+/// How often [`decode_with`] asks an asynchronous decoder again for the picture.
+const ASYNC_PROBE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// Decodes the fixture `data` with `decoder`, required to stay its backend.
 fn decode_with(decoder: &mut media::VideoDecoder, data: &[u8]) -> Result<media::FrameInfo, String> {
     let status = decoder.send(data, 0);
@@ -287,22 +334,19 @@ fn decode_with(decoder: &mut media::VideoDecoder, data: &[u8]) -> Result<media::
         return Err(format!("the decoder rejected the fixture ({status})"));
     }
     // An asynchronous decoder (V4L2 M2M) holds a lone frame until it is told the input ended,
-    // then says "no picture yet" while the driver decodes: asked again for up to a quarter second.
-    let tries = if decoder.asynchronous() {
+    // then says "no picture yet" while the driver decodes.
+    let deadline = if decoder.asynchronous() {
         let status = decoder.drain();
         if status < 0 {
             return Err(format!("the decoder refused the end of input ({status})"));
         }
-        125
+        Some(std::time::Instant::now() + ASYNC_PROBE_WAIT)
     } else {
-        0
+        None
     };
     let mut received = decoder.receive();
-    for _ in 0..tries {
-        if !matches!(received, media::Received::None) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(2));
+    while matches!(received, media::Received::None) && deadline.is_some_and(|deadline| std::time::Instant::now() < deadline) {
+        std::thread::sleep(ASYNC_PROBE_POLL);
         received = decoder.receive();
     }
     match received {
@@ -490,6 +534,33 @@ mod tests {
         assert!(reason.contains("VAAPI failed") && reason.contains("NVDEC failed"), "{reason}");
         let unopened = first_that_decodes(vec![Vaapi], |_| Err::<(_, Result<(), _>), _>("nothing opens".to_owned()));
         assert_eq!(unopened, Err("nothing opens".to_owned()));
+    }
+
+    /// Nightjar issue 77: on Qualcomm Iris the HEVC and Main10 probes sometimes made no picture of
+    /// the fixture at all, while the same decoder decoded the stream once it was reopened. A V4L2
+    /// M2M "no picture" is retried once, in a bounded time; a device that does not open, another
+    /// backend's failure, or a picture in software is not (a second open cannot fix those).
+    #[test]
+    fn only_a_v4l2_decoder_that_made_no_picture_is_probed_again() {
+        use media::Hardware::{Cuda, None as Software, Vaapi, V4l2m2m};
+        let order = [Vaapi, V4l2m2m, Cuda];
+        let no_picture = format!("{}: the decoder made no picture of the fixture", V4l2m2m.label());
+        assert!(retry_worthwhile(&order, &no_picture));
+        // The device refused the open, or its picture came out in software: not a stale decoder.
+        assert!(!retry_worthwhile(&order, "V4L2 M2M: Opening the decoder: Device or resource busy"));
+        assert!(!retry_worthwhile(&order, "V4L2 M2M: the picture came out in memory, not the hardware decoder's"));
+        // Another backend's failure is not the one a second V4L2 open can fix.
+        assert!(!retry_worthwhile(&order, "VAAPI: the decoder made no picture of the fixture"));
+        assert!(!retry_worthwhile(
+            &order,
+            "VAAPI: the decoder made no picture of the fixture; V4L2 M2M: Opening the decoder: Device or resource busy"
+        ));
+        assert!(retry_worthwhile(&order, &format!("{no_picture}; NVDEC: the decoder failed on the fixture")));
+        assert!(!retry_worthwhile(&[Vaapi, Cuda], &no_picture), "no V4L2 decoder in the order");
+        assert!(!retry_worthwhile(&[Software], &no_picture));
+        // The retry is bounded, and the wait is longer than the quarter second that proved too short.
+        assert_eq!(V4L2_PROBE_RETRIES, 1);
+        assert!(ASYNC_PROBE_WAIT >= std::time::Duration::from_millis(1_000));
     }
 
     #[test]
