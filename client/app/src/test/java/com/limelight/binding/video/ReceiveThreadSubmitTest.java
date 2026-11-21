@@ -58,6 +58,7 @@ public class ReceiveThreadSubmitTest {
         static volatile boolean free;
         static final AtomicInteger receiveThreadTries = new AtomicInteger();
         static final List<Integer> queuedSizes = new CopyOnWriteArrayList<>();
+        static final List<String> queueThreads = new CopyOnWriteArrayList<>();
 
         @Implementation public void configure(MediaFormat format, Surface surface, MediaCrypto crypto, int flags) {}
         @Implementation public void start() {}
@@ -80,6 +81,7 @@ public class ReceiveThreadSubmitTest {
         }
         @Implementation public void queueInputBuffer(int index, int offset, int size, long timeUs, int flags) {
             queuedSizes.add(size);
+            queueThreads.add(Thread.currentThread().getName());
         }
     }
 
@@ -95,6 +97,7 @@ public class ReceiveThreadSubmitTest {
         StallingCodec.free = false;
         StallingCodec.receiveThreadTries.set(0);
         StallingCodec.queuedSizes.clear();
+        StallingCodec.queueThreads.clear();
         activity = Robolectric.buildActivity(Activity.class).create();
         texture = new SurfaceTexture(0);
         surface = new Surface(texture);
@@ -139,6 +142,15 @@ public class ReceiveThreadSubmitTest {
                 frame * 16_000L);
     }
 
+    private int submitIdrPicture() {
+        frame++;
+        byte[] picture = new byte[200];
+        picture[3] = 1;
+        return renderer.submitDecodeUnit(picture, picture.length, MoonBridge.BUFFER_TYPE_PICDATA, frame,
+                MoonBridge.FRAME_TYPE_IDR, (char) 0, frame * 16_000L, frame * 16_000L, frame * 16_000_000L,
+                frame * 16_000L);
+    }
+
     private static void await(java.util.function.BooleanSupplier condition, String what) throws InterruptedException {
         long deadline = System.nanoTime() + 20_000_000_000L;
         while (!condition.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(1);
@@ -172,6 +184,17 @@ public class ReceiveThreadSubmitTest {
     }
 
     @Test
+    public void aKeyFrameNeedingTwoBuffersIsTakenByTheWorkerEvenWithAFreeDecoder() throws Exception {
+        // The first key frame after a configure sends its parameter sets in a buffer of their own,
+        // then the picture: a second wait that could not be handed over half way through.
+        StallingCodec.free = true;
+        assertEquals(MoonBridge.DR_OK, submitIdrPicture());
+        await(() -> StallingCodec.queuedSizes.size() == 2, "the parameter sets and the picture reach the decoder");
+        assertEquals(0, StallingCodec.receiveThreadTries.get());
+        assertEquals(List.of(WORKER, WORKER), StallingCodec.queueThreads);
+    }
+
+    @Test
     public void aReallyHungDecoderStillEndsInTheHangDetectionOnTheWorker() throws Exception {
         assertEquals(MoonBridge.DR_OK, submitPFrame());
         // The worker waits out the hang limit counted from the receive thread's first try: its reset
@@ -179,7 +202,12 @@ public class ReceiveThreadSubmitTest {
         AtomicInteger recovery = ReflectionHelpers.getField(renderer, "codecRecoveryType");
         await(() -> recovery.get() != 0, "the hang detection asks for the reset");
         assertEquals(3, recovery.get());
-        await(() -> drops() == 1, "the frame that could not be submitted counts as dropped");
+        SubmitHandoff<?> handoff = ReflectionHelpers.getField(renderer, "submitHandoff");
+        await(handoff::takeKeyGapPeek, "the failed unit makes the hand-off wait for a key frame");
+        // The frame that reached the decoder's path is no drop; the next one is, with the news.
+        assertEquals(0, drops());
+        assertEquals(MoonBridge.DR_NEED_IDR, submitPFrame());
+        assertEquals(1, drops());
         assertFalse(StallingCodec.queuedSizes.contains(200));
         assertNotNull(ReflectionHelpers.getField(renderer, "submitHandoff"));
     }

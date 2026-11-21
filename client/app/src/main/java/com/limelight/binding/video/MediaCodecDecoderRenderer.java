@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -4889,12 +4890,27 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /**
      * For the receive thread, before a unit's own fetch: whether the decoder has an input buffer
-     * within {@link InputBufferWait#RECEIVE_WAIT_MS}. Its only effects are holding the buffer for
+     * within {@link InputBufferWait#RECEIVE_WAIT_MS}, for a unit that needs one (a key frame's picture
+     * with parameter sets of its own needs more, and is never taken here). Its only effects are holding the buffer for
      * that fetch, which then returns at once, and the start of the no-input streak the hang
      * detection counts from. Whatever else needs the unit's own path (an exception, a pending
      * recovery) answers true.
      */
-    private boolean inputReadyForReceiveThread() {
+    private boolean inputReadyForReceiveThread(int frameType, int unitType) {
+        if (frameType == MoonBridge.FRAME_TYPE_IDR) {
+            if (unitType == MoonBridge.BUFFER_TYPE_SPS || unitType == MoonBridge.BUFFER_TYPE_VPS ||
+                    unitType == MoonBridge.BUFFER_TYPE_PPS) {
+                // Kept for the picture's submit; takes no buffer of its own.
+                return true;
+            }
+            if ((videoFormat & (MoonBridge.VIDEO_FORMAT_MASK_H264 | MoonBridge.VIDEO_FORMAT_MASK_H265)) != 0 &&
+                    (!submittedCsd || !fusedIdrFrame)) {
+                // The parameter sets go in a buffer of their own before the picture (and the SPS
+                // replay in another), and a second wait could not be handed over half way: the
+                // worker takes the whole frame.
+                return false;
+            }
+        }
         MediaCodec decoder = videoDecoder;
         if (nextInputBuffer != null || nextInputBufferIndex >= 0 || decoder == null || stopping ||
                 codecRecoveryType.get() != CR_RECOVERY_TYPE_NONE) {
@@ -5302,7 +5318,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         pyroWaveRenderer.cleanup(frameLatencyStats);
         reconfigureLimits = null;
         SubmitHandoff<HandedUnit> handoff = submitHandoff;
-        if (handoff != null) handoff.close(1000);
+        if (handoff != null) awaitSubmitWorker(handoff);
         if (videoDecoder != null) {
             videoDecoder.release();
             videoDecoder = null;
@@ -5814,13 +5830,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
         // With direct submit this is the thread that reads the video socket: it takes the unit in
         // place when the decoder has a buffer within a few ms, else a worker does the waiting.
-        return handoff.submit(this::inputReadyForReceiveThread,
+        return handoff.submit(() -> inputReadyForReceiveThread(frameType, decodeUnitType),
                 () -> submitInPlace(decodeUnitData, decodeUnitLength, decodeUnitType, frameNumber, frameType,
                         frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs),
                 () -> new HandedUnit(copyOfUnit(decodeUnitData, decodeUnitLength), decodeUnitLength, decodeUnitType,
                         frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
                         receiveTimeNs, presentationTimeUs),
-                decodeUnitType == MoonBridge.BUFFER_TYPE_PICDATA ? 1 : 0);
+                decodeUnitType == MoonBridge.BUFFER_TYPE_PICDATA ? 1 : 0, frameType == MoonBridge.FRAME_TYPE_IDR);
     }
 
     /** A unit as the worker thread takes it: the engine reuses its buffers once the call returns. */
@@ -5852,7 +5868,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         ByteBuffer direct = directInput;
         if (direct != null) {
             ByteBuffer view = direct.duplicate();
-            view.position(0);
+            ((Buffer) view).position(0);
             view.get(copy, 0, Math.min(length, view.remaining()));
         }
         return copy;
@@ -5871,7 +5887,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
      */
     void enableSubmitHandoff() {
         int bound = prefs.decodeQueueFrames <= 0 || prefs.decodeQueueFrames > 15 ? 15 : prefs.decodeQueueFrames;
-        submitHandoff = new SubmitHandoff<>(bound, "InputSubmit", this::submitHanded);
+        submitHandoff = new SubmitHandoff<>(bound, "InputSubmit",
+                () -> Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY), this::submitHanded);
+    }
+
+    /**
+     * The worker may be inside a codec recovery (a reset or restart takes seconds), which the codec's
+     * release must not overlap, and a restart after the release would leave a decoder nobody owns:
+     * wait until it is done. The engine joined the thread that did this before cleanup.
+     */
+    private void awaitSubmitWorker(SubmitHandoff<HandedUnit> handoff) {
+        for (int waitedS = 1; !handoff.close(1000); waitedS++) {
+            LimeLog.warning("Waiting for the input worker before releasing the decoder (" + waitedS + " s)");
+            if (waitedS >= 30) {
+                LimeLog.severe("The input worker did not end in 30 s; releasing the decoder under it");
+                return;
+            }
+        }
     }
 
     /** The engine's decoder drops plus the frames this renderer dropped when its decoder stalled. */
@@ -5922,9 +5954,17 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             // We can receive the same "frame" multiple times if it's an IDR frame.
             // In that case, each frame start NALU is submitted independently.
             long decoderDrops = decoderDropsTotal();
+            SubmitHandoff<HandedUnit> handoff = submitHandoff;
             // The frames dropped while waiting for the keyframe the net asked for were no network loss.
             if (safetyNet != null && frameType == MoonBridge.FRAME_TYPE_IDR &&
                     safetyNet.takeAnsweredGap(frameNumber - lastFrameNumber - 1)) {
+                lastDecoderDrops = decoderDrops;
+                if (handoff != null) handoff.takeKeyGap();
+            } else if (handoff != null && frameType == MoonBridge.FRAME_TYPE_IDR && handoff.takeKeyGap()) {
+                // Nor were those the engine dropped while the decoder waited for the key frame the
+                // hand-off asked for (the queue overflowed, or a queued unit failed).
+                int gap = frameNumber - lastFrameNumber - 1;
+                recordFrameGap(activeWindowVideoStats, gap, Math.max(gap, decoderDrops - lastDecoderDrops));
                 lastDecoderDrops = decoderDrops;
             } else {
                 lastDecoderDrops += recordFrameGap(activeWindowVideoStats, frameNumber - lastFrameNumber - 1,
@@ -5934,6 +5974,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         // Reset CSD data for each IDR frame
         if (lastFrameNumber != frameNumber && frameType == MoonBridge.FRAME_TYPE_IDR) {
+            // The hand-off's wait for a key frame ends with it, with a gap before it or without.
+            SubmitHandoff<HandedUnit> handedOff = submitHandoff;
+            if (handedOff != null) handedOff.takeKeyGap();
             vpsBuffers.clear();
             spsBuffers.clear();
             ppsBuffers.clear();
