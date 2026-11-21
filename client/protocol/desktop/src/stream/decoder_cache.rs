@@ -194,6 +194,43 @@ impl<K, D> Cache<K, D> {
     }
 }
 
+impl<K: Send + 'static, D: Send + 'static> Cache<K, D> {
+    /// Drops the parked decoder, if any, on a helper thread, and says whether that finished by
+    /// `deadline`: the wait for a drop in progress (the timer's, a `take`'s) and the drop itself
+    /// both count. When it did not, the decoder may still hold the renderer's device: the caller
+    /// leaves the device alone. The drop goes on in the helper.
+    pub fn clear_until(&self, deadline: std::time::Instant) -> bool {
+        let old = loop {
+            match self.parked.try_lock() {
+                Ok(mut parked) => break parked.take(),
+                Err(std::sync::TryLockError::Poisoned(poison)) => break poison.into_inner().take(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if std::time::Instant::now() >= deadline {
+                        eprintln!("nightjar: a parked decoder is still being dropped at the deadline");
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            }
+        };
+        let Some(old) = old else { return true };
+        let (done, finished) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new().name("decoder-clear".into()).spawn(move || {
+            drop(old);
+            let _ = done.send(());
+        });
+        if spawned.is_err() {
+            eprintln!("nightjar: no thread to drop the parked decoder on");
+            return false;
+        }
+        let stopped = finished.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).is_ok();
+        if !stopped {
+            eprintln!("nightjar: a parked decoder did not drop in time; its GPU device stays");
+        }
+        stopped
+    }
+}
+
 /// The FFmpeg decoder of the last stream that may be followed by a reconnect. Unit tests keep
 /// their own: a test parses a stream the way the app does, and the process's cache would make the
 /// tests depend on each other's order.
@@ -292,13 +329,17 @@ pub fn retire() {
     { GENERATION.with(|generation| generation.set(generation.get() + 1)); }
 }
 
-/// Retires the generation and drops both parked decoders on the calling thread. The renderer's
-/// GPU device must outlive them (a Vulkan video or PyroWave decoder borrows it, a Direct3D 11 one
-/// holds a reference to it), so every place that destroys the renderer calls this first.
-pub fn clear() {
+/// Retires the generation and drops both parked decoders on a helper thread, within `deadline`.
+/// The renderer's GPU device must outlive them (a Vulkan video or PyroWave decoder borrows it, a
+/// Direct3D 11 one holds a reference to it), so every place that destroys the renderer calls
+/// this first. False when a drop did not finish: the device must then stay, as for a teardown
+/// that did not end.
+#[must_use]
+pub fn clear(deadline: std::time::Instant) -> bool {
     retire();
-    with_media(Cache::clear);
-    with_pyrowave(Cache::clear);
+    let media = with_media(|cache| cache.clear_until(deadline));
+    let pyrowave = with_pyrowave(|cache| cache.clear_until(deadline));
+    media && pyrowave
 }
 
 /// Whether either kind of decoder is parked (the tests of `clear`).
@@ -467,8 +508,44 @@ mod tests {
         }
         assert!(started.load(Ordering::SeqCst), "the timer starts dropping the decoder");
         assert!(!done.load(Ordering::SeqCst));
-        cache.clear();
+        assert!(cache.clear_until(std::time::Instant::now() + std::time::Duration::from_secs(5)));
         assert!(done.load(Ordering::SeqCst), "clear returns only after the drop in progress finished");
+    }
+
+    /// A drop that does not end by the deadline is reported, whether the timer or `clear` itself
+    /// is in it, and the decoder is gone once it does end.
+    #[test]
+    fn clear_reports_a_drop_that_misses_the_deadline() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        struct Slow(Arc<AtomicBool>);
+        impl Drop for Slow {
+            fn drop(&mut self) {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let short = || std::time::Instant::now() + std::time::Duration::from_millis(50);
+        let done = Arc::new(AtomicBool::new(false));
+        let cache: Cache<u8, Slow> = Cache::new();
+        cache.park_aged(0, Slow(done.clone()), std::time::Duration::ZERO);
+        assert!(!cache.clear_until(short()), "a slow drop is reported");
+        assert!(!done.load(Ordering::SeqCst), "and not waited for");
+        assert!(!cache.is_parked(), "the cache is empty meanwhile");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(done.load(Ordering::SeqCst), "the drop goes on in the helper");
+        // A drop in progress under the lock is reported too.
+        let cache: &'static Cache<u8, Slow> = Box::leak(Box::new(Cache::new()));
+        let done = Arc::new(AtomicBool::new(false));
+        cache.park_aged(0, Slow(done.clone()), KEEP_FOR + std::time::Duration::from_secs(1));
+        cache.expire_later();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!cache.clear_until(short()), "waiting for the timer's drop is bounded");
+        assert!(cache.clear_until(std::time::Instant::now() + std::time::Duration::from_secs(5)));
+        assert!(done.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -493,7 +570,7 @@ mod tests {
         park_media(media(0x0100, 640, 360), decoder(), generation());
         park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into(), generation());
         assert!(media_parked() && any_parked());
-        clear();
+        assert!(clear(std::time::Instant::now() + std::time::Duration::from_secs(10)));
         assert!(!any_parked(), "nothing outlives the renderer's device");
         assert!(!media_parked());
         park_media(media(0x0100, 640, 360), decoder(), generation());
@@ -503,7 +580,7 @@ mod tests {
         park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into(), generation());
         only_pyrowave();
         assert!(!media_parked() && with_pyrowave(|cache| cache.is_parked()), "a PyroWave stream drops the FFmpeg decoder at once");
-        clear();
+        assert!(clear(std::time::Instant::now() + std::time::Duration::from_secs(10)));
     }
 
     /// A session that stops after its renderer was torn down parks nothing, and a decoder parked

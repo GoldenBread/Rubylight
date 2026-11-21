@@ -121,10 +121,9 @@ impl App {
         // The launches are cancelled and waited for either way; the renderer goes only when no
         // decoder check is still inside a call that may use it.
         stream::end_all_before(self.attempts.take_all(), deadline.saturating_duration_since(Instant::now()), || {
-            if checks_stopped && teardowns_joined {
-                // A decoder kept for a reconnect borrows or holds the renderer's device: it goes
-                // before it, after the teardowns and launches above ended, which may have parked one.
-                stream::decoder_cache::clear();
+            // A decoder kept for a reconnect borrows or holds the renderer's device: it goes
+            // before it, after the teardowns and launches above ended, which may have parked one.
+            if checks_stopped && teardowns_joined && stream::decoder_cache::clear(deadline) {
                 // SAFETY: tearing down what run() created, with nothing else using it any more.
                 unsafe {
                     crate::sdl::destroy_renderer(renderer);

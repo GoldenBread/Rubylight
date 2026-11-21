@@ -352,6 +352,11 @@ impl App {
         if self.teardowns_busy() {
             return Err(tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.").to_owned());
         }
+        // A decoder kept for a reconnect may borrow or hold this device: it goes first, within the
+        // leaving deadline; one that does not let go keeps the renderer, as a stuck teardown does.
+        if !stream::decoder_cache::clear(Instant::now() + stream::LEAVE_WAIT) {
+            return Err(tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.").to_owned());
+        }
         let from = sdl::renderer_name(self.renderer);
         let wanted = if gpu { "gpu" } else if cfg!(target_os = "macos") { "metal" } else { "opengl" };
         // Waits for a settings probe still on the old device, and forgets what it found.
@@ -359,8 +364,6 @@ impl App {
         // And for the latency benchmark's decoders, which may decode on the old device.
         self.launcher.latency_bench.finish();
         self.gui.release_renderer();
-        // A decoder kept for a reconnect may borrow or hold this device: it goes first.
-        stream::decoder_cache::clear();
         // SAFETY: the renderer run() made, its textures freed, with no stream or launch using it.
         unsafe { crate::sdl::destroy_renderer(self.renderer) };
         if hdr {
@@ -492,7 +495,9 @@ impl App {
         // The colorspace it was made in: scRGB when the start asked for the GPU renderer.
         let linear = sdl::renderer_linear(old);
         // A decoder kept for a reconnect holds a reference to the old device, which the remake waits to see go.
-        stream::decoder_cache::clear();
+        if !stream::decoder_cache::clear(Instant::now() + stream::LEAVE_WAIT) {
+            no_renderer("a decoder kept from the last stream did not let go of the lost device in time");
+        }
         // SAFETY: the renderer run() made, its gui textures freed. No stream runs in the launcher's
         // frame, and a launch or a decoder still on the old device holds that device itself.
         unsafe { crate::sdl::destroy_renderer(old) };
