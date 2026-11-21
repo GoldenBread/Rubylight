@@ -1495,7 +1495,7 @@ fn run(queues: Queues, make: Make) -> Option<Summary> {
     Some(core.summary())
 }
 
-fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
     panic
         .downcast_ref::<&str>()
         .map(|s| (*s).to_owned())

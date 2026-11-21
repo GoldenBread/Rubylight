@@ -55,6 +55,8 @@ pub(crate) struct Fixture {
     video_after_input_release: AtomicUsize,
     /// The stream's encoder fails for good, as one that keeps failing past its recovery.
     fail_encoder: AtomicBool,
+    /// The stream thread panics, as a bug in the encoder or capture path would.
+    session_panics: AtomicBool,
     hold_teardown: AtomicBool,
     in_teardown: AtomicBool,
     reset: Mutex<Option<String>>,
@@ -394,6 +396,9 @@ impl Fixture {
         // probes are answered from here on.
         *s.media_epoch.write().unwrap() = Some(Instant::now());
         while !h.stop.load(Ordering::Acquire) && !s.stopping() {
+            if self.session_panics.load(Ordering::Acquire) {
+                panic!("the fixture's stream thread panicked");
+            }
             if self.fail_encoder.load(Ordering::Acquire) {
                 return Err(anyhow::anyhow!("AMF error AMF_FAIL (1)").context(
                     butterpollo_core::session::EncoderFailure("the encoder kept failing"),

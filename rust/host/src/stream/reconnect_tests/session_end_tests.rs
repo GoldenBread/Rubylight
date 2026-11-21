@@ -196,6 +196,38 @@ async fn an_encoder_error_reaches_the_client_with_its_reason() -> Result<()> {
     h.finish().await
 }
 
+/// A panic on the session thread ends the session like a failure: its teardown runs, the
+/// session leaves `h.sessions`, and the next launch streams.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panic_on_the_session_thread_runs_the_teardown() -> Result<()> {
+    let h = Harness::new(10_000, 1).await?;
+    let (session, client) = streaming(&h).await?;
+    h.fixture.session_panics.store(true, Ordering::Release);
+    until("the panic ends the session", WAIT, || session.stopping()).await;
+    assert_eq!(session.termination_reason(), FAILED);
+    until("the client hears the failure", WAIT, || {
+        client.reason.load(Ordering::Acquire) != 0
+    })
+    .await;
+    assert!(
+        session
+            .launch
+            .warnings
+            .snapshot()
+            .iter()
+            .any(|warning| format!("{warning:?}").contains("the fixture's stream thread panicked")),
+        "{:?}",
+        session.launch.warnings.snapshot()
+    );
+    drop(client);
+    h.empty().await?;
+    assert!(h.h.sessions.lock().unwrap().idle());
+    h.fixture.session_panics.store(false, Ordering::Release);
+    let (next, client) = streaming(&h).await?;
+    h.end(&next, client).await?;
+    h.finish().await
+}
+
 /// The host stopping, as `main` stops it, ends its streams first.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_host_stop_leaves_nothing_behind() -> Result<()> {

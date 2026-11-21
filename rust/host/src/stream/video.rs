@@ -666,7 +666,10 @@ impl Media {
                 session.record_last_seen();
                 let mut leases = Leases::default();
                 let mut workers = Workers::new(&s);
-                let result = (|| -> Result<()> {
+                // A panic ends the session like any failure: the teardown below releases its
+                // workers, leases and registration, which an unwind past it would leave in
+                // `h.sessions` with the control and audio threads still running.
+                let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
                     workers.coop_watch = crate::nucleus::Watch::start(&h, &s)?;
                     #[cfg(test)]
                     if let Some(fixture) = &h.reconnect_fixture {
@@ -705,7 +708,12 @@ impl Media {
                         capture,
                         media,
                     )
-                })();
+                }));
+                let result = ran.unwrap_or_else(|panic| {
+                    let what = crate::webrtc::input::panic_text(panic.as_ref());
+                    tracing::error!(client=%s.launch.client.name, panic=%what, "session thread panicked; ending the session");
+                    Err(anyhow::anyhow!("the stream thread panicked: {what}"))
+                });
                 session.teardown(result, workers, leases);
             })
     }
