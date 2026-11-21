@@ -28,9 +28,8 @@ import java.util.function.Supplier;
  * queued unit that fails drops the rest of the queue. Either way the units that follow are dropped
  * (they would reference frames the decoder never saw) until the first unit of a key frame other than
  * one that was itself dropped, and the engine is asked for one: at once on overflow, with the next
- * unit otherwise. The engines stop submitting the rest of a frame after a unit's {@code DR_NEED_IDR}
- * (the Rust engine's renderers.rs returns at the first parameter set that is not OK, as the C
- * bridge did), so a key frame cut short at the hand-off normally loses its remaining units
+ * unit otherwise. The engine stops submitting the rest of a frame after a unit's {@code DR_NEED_IDR}
+ * (the Rust engine's renderers.rs returns at the first parameter set that is not OK), so a key frame cut short at the hand-off normally loses its remaining units
  * there; when a later unit of it arrives anyway (a failure on the worker has no status for the engine
  * yet) it is dropped here, as the picture alone would have no parameter sets. A queued unit's status
  * cannot reach the engine in its own call, so a key frame that was queued is counted as submitted
