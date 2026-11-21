@@ -105,6 +105,7 @@ public class DecoderFailureTest {
         // Each reset "works" and the codec fails again at once, as the TV's out of memory did.
         ReflectionHelpers.setField(renderer, "recoveryCodec", new NoOpRecovery());
         ReflectionHelpers.setField(renderer, "recoveryBackoff", new DecoderRecoveryBackoff(new long[] {0, 0, 0, 0, 0}));
+        ReflectionHelpers.setField(renderer, "hangResetTimeoutMs", 10 * 60_000L);
     }
 
     @After
@@ -1032,6 +1033,8 @@ public class DecoderFailureTest {
         ReflectionHelpers.setField(stream, "initialHeight", 2160);
         ReflectionHelpers.setField(stream, "refreshRate", 60);
         ReflectionHelpers.setField(stream, "recoveryBackoff", new DecoderRecoveryBackoff(new long[] {0, 0, 0, 0, 0}));
+        // The reset watchdog runs on real time: a test that never lets it expire is not at the mercy of a loaded machine.
+        ReflectionHelpers.setField(stream, "hangResetTimeoutMs", 10 * 60_000L);
         assertEquals(0, stream.initializeDecoder(true));
         return stream;
     }
