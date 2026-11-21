@@ -195,6 +195,18 @@ public class ReceiveThreadSubmitTest {
     }
 
     @Test
+    public void aUnitWithoutItsDataIsDroppedWithAKeyFrameRequestNotSubmittedAsZeros() throws Exception {
+        // The engine's call with neither an array nor a picture in place: nothing to copy for the worker.
+        frame++;
+        assertEquals(MoonBridge.DR_NEED_IDR, renderer.submitDecodeUnit(null, 200, MoonBridge.BUFFER_TYPE_PICDATA,
+                frame, MoonBridge.FRAME_TYPE_PFRAME, (char) 0, 1, 1, 1, 1));
+        assertEquals(1, drops());
+        StallingCodec.free = true;
+        Thread.sleep(50);
+        assertTrue("no zeros reach the decoder", StallingCodec.queuedSizes.isEmpty());
+    }
+
+    @Test
     public void aReallyHungDecoderStillEndsInTheHangDetectionOnTheWorker() throws Exception {
         assertEquals(MoonBridge.DR_OK, submitPFrame());
         // The worker waits out the hang limit counted from the receive thread's first try: its reset

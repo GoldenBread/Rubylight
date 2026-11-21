@@ -5317,8 +5317,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         pyroWaveRenderer.cleanup(frameLatencyStats);
         reconfigureLimits = null;
         SubmitHandoff<HandedUnit> handoff = submitHandoff;
-        if (handoff != null) awaitSubmitWorker(handoff);
-        if (videoDecoder != null) {
+        boolean workerEnded = handoff == null || awaitSubmitWorker(handoff);
+        if (videoDecoder != null && workerEnded) {
             videoDecoder.release();
             videoDecoder = null;
         }
@@ -5328,12 +5328,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
         // Only once the decoder has let go of the renderer's surface
         VulkanRendererBridge vulkan = vulkanRenderer;
-        if (vulkan != null) {
+        if (vulkan != null && workerEnded) {
             vulkanRenderer = null;
             vulkan.destroy();
         }
         VulkanRendererBridge handedBack = handedBackVulkan;
-        if (handedBack != null) {
+        if (handedBack != null && workerEnded) {
             handedBackVulkan = null;
             handedBack.destroy();
         }
@@ -5832,10 +5832,14 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return handoff.submit(() -> inputReadyForReceiveThread(frameType, decodeUnitType),
                 () -> submitInPlace(decodeUnitData, decodeUnitLength, decodeUnitType, frameNumber, frameType,
                         frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs, receiveTimeNs, presentationTimeUs),
-                () -> new HandedUnit(copyOfUnit(decodeUnitData, decodeUnitLength), decodeUnitLength, decodeUnitType,
-                        frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
-                        receiveTimeNs, presentationTimeUs),
-                decodeUnitType == MoonBridge.BUFFER_TYPE_PICDATA ? 1 : 0, frameType == MoonBridge.FRAME_TYPE_IDR);
+                () -> {
+                    byte[] bytes = copyOfUnit(decodeUnitData, decodeUnitLength);
+                    return bytes == null ? null : new HandedUnit(bytes, decodeUnitLength, decodeUnitType,
+                            frameNumber, frameType, frameHostProcessingLatency, receiveTimeUs, enqueueTimeUs,
+                            receiveTimeNs, presentationTimeUs);
+                },
+                decodeUnitType == MoonBridge.BUFFER_TYPE_PICDATA ? 1 : 0, frameType == MoonBridge.FRAME_TYPE_IDR,
+                frameNumber);
     }
 
     /** A unit as the worker thread takes it: the engine reuses its buffers once the call returns. */
@@ -5860,17 +5864,32 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
     }
 
-    /** The unit's bytes, from the array or the picture handed over in place (which stays as it was). */
+    private boolean badUnitLogged;
+
+    /**
+     * The unit's bytes, from the array or the picture handed over in place (which stays as it was);
+     * null when there is neither, or the picture is shorter than the engine said: the unit is then
+     * dropped and a key frame requested, rather than zeros submitted as picture data.
+     */
     private byte[] copyOfUnit(byte[] array, int length) {
-        if (array != null) return Arrays.copyOf(array, length);
-        byte[] copy = new byte[length];
-        ByteBuffer direct = directInput;
+        if (array != null && array.length >= length) return Arrays.copyOf(array, length);
+        ByteBuffer direct = array == null ? directInput : null;
         if (direct != null) {
             ByteBuffer view = direct.duplicate();
             view.position(0);
-            view.get(copy, 0, Math.min(length, view.remaining()));
+            if (view.remaining() >= length) {
+                byte[] copy = new byte[length];
+                view.get(copy, 0, length);
+                return copy;
+            }
         }
-        return copy;
+        if (!badUnitLogged) {
+            badUnitLogged = true;
+            LimeLog.severe("A frame of " + length + " bytes reached the input hand-off without its data (" +
+                    (array != null ? "array of " + array.length : direct != null ? "short buffer" : "no buffer") +
+                    "); dropping it and asking for a key frame");
+        }
+        return null;
     }
 
     private int submitHanded(HandedUnit u) {
@@ -5893,19 +5912,34 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     /**
      * The worker may be inside a codec recovery (a reset or restart takes seconds), which the codec's
      * release must not overlap, and a restart after the release would leave a decoder nobody owns:
-     * wait until it is done. The engine joined the thread that did this before cleanup.
+     * wait until it is done. The engine joined the thread that did this before cleanup. Returns
+     * whether the worker ended. Called on the worker's own thread it cannot overlap itself and does
+     * not wait. A worker still busy after 30 s is left alone: its decoder (and the Vulkan renderer
+     * holding the decoder's surface) are not released, which leaks them until the process ends but
+     * cannot crash the stream's end the way a release during a configure or start can.
      */
-    private void awaitSubmitWorker(SubmitHandoff<HandedUnit> handoff) {
+    private boolean awaitSubmitWorker(SubmitHandoff<HandedUnit> handoff) {
+        if (handoff.onWorkerThread()) {
+            handoff.close(0);
+            return true;
+        }
         for (int waitedS = 1; !handoff.close(1000); waitedS++) {
             LimeLog.warning("Waiting for the input worker before releasing the decoder (" + waitedS + " s)");
             if (waitedS >= 30) {
-                LimeLog.severe("The input worker did not end in 30 s; releasing the decoder under it");
-                return;
+                LimeLog.severe("The input worker did not end in 30 s; leaving its decoder unreleased");
+                return false;
             }
         }
+        return true;
     }
 
-    /** The engine's decoder drops plus the frames this renderer dropped when its decoder stalled. */
+    /**
+     * The engine's decoder drops plus the frames this renderer dropped when its decoder stalled. They
+     * do not overlap: the engine counts frames refused by its own decode queue, which a direct-submit
+     * decoder (the only one with a hand-off) has none of, so what it counts there is 0; frames it drops
+     * after a DR_NEED_IDR are network loss to it, and the hand-off's key frame gap claims the ones
+     * that follow its own drops.
+     */
     private long decoderDropsTotal() {
         SubmitHandoff<HandedUnit> handoff = submitHandoff;
         return MoonBridge.getDecoderDrops() + (handoff == null ? 0 : handoff.drops());

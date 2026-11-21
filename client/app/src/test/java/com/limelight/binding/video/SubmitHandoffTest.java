@@ -24,6 +24,7 @@ public class SubmitHandoffTest {
     }
 
     private volatile String initThread;
+    private volatile int throwingUnit = -1;
     private final List<Integer> submitted = new CopyOnWriteArrayList<>();
     private final CountDownLatch release = new CountDownLatch(1);
     private final CountDownLatch started = new CountDownLatch(1);
@@ -37,6 +38,7 @@ public class SubmitHandoffTest {
                 Thread.currentThread().interrupt();
             }
             submitted.add(unit);
+            if (unit == throwingUnit) throw new IllegalStateException("the codec threw");
             return unit == failingUnit ? MoonBridge.DR_NEED_IDR : MoonBridge.DR_OK;
         });
         return handoff;
@@ -47,10 +49,15 @@ public class SubmitHandoffTest {
     }
 
     private int submit(int unit, boolean ready, List<Integer> inPlace, boolean key) {
+        return submitOf(unit, unit, ready, inPlace, key);
+    }
+
+    /** A unit of {@code frame}, as a key frame's parameter sets and picture are several. */
+    private int submitOf(int unit, int frame, boolean ready, List<Integer> inPlace, boolean key) {
         return handoff.submit(() -> ready, () -> {
             inPlace.add(unit);
             return MoonBridge.DR_OK;
-        }, () -> unit, 1, key);
+        }, () -> unit, 1, key, frame);
     }
 
     private static void awaitSize(List<Integer> list, int size) throws InterruptedException {
@@ -161,6 +168,80 @@ public class SubmitHandoffTest {
         assertEquals(MoonBridge.DR_OK, submit(2, true, inPlace, true));
         assertEquals(MoonBridge.DR_OK, submit(3, true, inPlace));
         assertEquals(List.of(2, 3), inPlace);
+    }
+
+    @Test
+    public void theRestOfAKeyFrameThatLostAUnitIsDroppedAndTheNextKeyFrameIsTaken() throws Exception {
+        holdingWorker(1, -1);
+        List<Integer> inPlace = new CopyOnWriteArrayList<>();
+        assertEquals(MoonBridge.DR_OK, submit(1, false, inPlace));
+        assertTrue(started.await(10, TimeUnit.SECONDS));
+        assertEquals(MoonBridge.DR_OK, submit(2, false, inPlace));
+        // The key frame 10's first unit overflows: dropped, and the engine is told.
+        assertEquals(MoonBridge.DR_NEED_IDR, submitOf(30, 10, false, inPlace, true));
+        release.countDown();
+        // Its other units, if they come anyway, would be a picture without parameter sets.
+        assertEquals(MoonBridge.DR_OK, submitOf(31, 10, true, inPlace, true));
+        assertEquals(MoonBridge.DR_OK, submitOf(32, 10, true, inPlace, true));
+        assertTrue(inPlace.isEmpty());
+        // A different key frame ends the wait (taken in place once the worker is idle).
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        while (handoff.busy() && System.nanoTime() < deadline) Thread.sleep(1);
+        assertEquals(MoonBridge.DR_OK, submitOf(40, 11, true, inPlace, true));
+        assertEquals(MoonBridge.DR_OK, submitOf(41, 11, true, inPlace, true));
+        assertEquals(List.of(40, 41), inPlace);
+    }
+
+    @Test
+    public void aKeyFrameThatWaitedInTheQueueWhenTheWorkerFailedIsLostWhole() throws Exception {
+        holdingWorker(4, 1);
+        List<Integer> inPlace = new CopyOnWriteArrayList<>();
+        assertEquals(MoonBridge.DR_OK, submit(1, false, inPlace));
+        assertTrue(started.await(10, TimeUnit.SECONDS));
+        assertEquals(MoonBridge.DR_OK, submitOf(30, 10, false, inPlace, true));
+        release.countDown();
+        awaitFailure();
+        // Frame 10's parameter sets were dropped from the queue; its picture must not reach the decoder.
+        assertEquals(MoonBridge.DR_NEED_IDR, submitOf(31, 10, true, inPlace, true));
+        assertEquals(MoonBridge.DR_OK, submitOf(50, 12, true, inPlace, true));
+        assertEquals(List.of(50), inPlace);
+    }
+
+    @Test
+    public void aWorkerThatThrowsKeepsRunningAndCountsTheUnitAsFailed() throws Exception {
+        throwingUnit = 1;
+        holdingWorker(4, -1);
+        List<Integer> inPlace = new CopyOnWriteArrayList<>();
+        assertEquals(MoonBridge.DR_OK, submit(1, false, inPlace));
+        release.countDown();
+        awaitFailure();
+        assertEquals(MoonBridge.DR_NEED_IDR, submit(2, true, inPlace));
+        // The stream goes on from a key frame, through the same worker.
+        assertEquals(MoonBridge.DR_OK, submit(3, false, inPlace, true));
+        awaitSize(submitted, 2);
+        assertEquals(List.of(1, 3), submitted);
+    }
+
+    @Test
+    public void aUnitThatCouldNotBeCopiedIsDroppedAndAsksForAKeyFrame() {
+        holdingWorker(4, -1);
+        List<Integer> inPlace = new CopyOnWriteArrayList<>();
+        assertEquals(MoonBridge.DR_NEED_IDR, handoff.submit(() -> false, () -> MoonBridge.DR_OK, () -> null, 1, false, 7));
+        assertEquals(1, handoff.drops());
+        assertEquals(MoonBridge.DR_OK, submit(8, true, inPlace));
+        assertTrue(inPlace.isEmpty());
+        assertTrue(handoff.takeKeyGap());
+    }
+
+    @Test
+    public void onlyTheWorkerThreadKnowsItself() throws Exception {
+        holdingWorker(4, -1);
+        List<Integer> inPlace = new CopyOnWriteArrayList<>();
+        assertFalse(handoff.onWorkerThread());
+        assertEquals(MoonBridge.DR_OK, submit(1, false, inPlace));
+        assertTrue(started.await(10, TimeUnit.SECONDS));
+        assertFalse(handoff.onWorkerThread());
+        release.countDown();
     }
 
     @Test
