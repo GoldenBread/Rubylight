@@ -18,11 +18,33 @@
 # header) is copied into the prefix next to it. On Linux the libraries get the run path $ORIGIN, so
 # libavcodec finds libavutil and libdav1d (copied into the prefix) in the folder it is in, and the
 # prefix's lib/ is what the package ships.
+#
+# NIGHTJAR_FFMPEG_PROGRAMS=1 also builds the `ffmpeg` command with these same patches, into
+# <prefix>/bin, for checking a decoder on a device (the same capture-buffer and drain behaviour as
+# Nightjar's decoder): it adds avformat and avfilter, the file protocol and the raw HEVC/H.264,
+# Matroska and MP4 demuxers, and the null muxer. Off, so the packages do not change.
 set -euo pipefail
 
 source_dir=${1:?FFmpeg source directory}
 prefix=${2:?install prefix}
 jobs=${JOBS:-$(nproc)}
+
+# The packages ship libraries only; NIGHTJAR_FFMPEG_PROGRAMS=1 adds the ffmpeg command for
+# investigating a decoder on a device (see above).
+if [[ ${NIGHTJAR_FFMPEG_PROGRAMS:-0} == 1 ]]; then
+  programs=(
+    --enable-ffmpeg
+    --enable-avformat --enable-avfilter --enable-swscale
+    --enable-protocol=file
+    --enable-demuxer=hevc,h264,mov,matroska
+    --enable-muxer=null
+    --enable-encoder=wrapped_avframe
+    --enable-filter=buffer,buffersink,abuffer,abuffersink,format,null,scale
+    --enable-bsf=hevc_mp4toannexb,h264_mp4toannexb,extract_extradata
+  )
+else
+  programs=(--disable-programs --disable-avdevice --disable-avformat --disable-avfilter --disable-swscale --disable-swresample)
+fi
 
 if [[ $(uname -s) == Linux ]]; then
   linux=1
@@ -78,9 +100,7 @@ cd "$build"
   --prefix="$prefix" \
   --enable-shared --disable-static \
   --disable-everything --disable-autodetect \
-  --disable-programs --disable-doc --disable-debug \
-  --disable-avdevice --disable-avformat --disable-avfilter \
-  --disable-swscale --disable-swresample --disable-network \
+  "${programs[@]}" --disable-doc --disable-debug --disable-network \
   --enable-avcodec --enable-avutil \
   --enable-decoder=h264,hevc,av1 --enable-parser=h264,hevc,av1 \
   --enable-libdav1d --enable-decoder=libdav1d \
@@ -102,9 +122,11 @@ mkdir -p "$prefix/licenses-ffmpeg" "$prefix/licenses-dav1d"
 cp "$source_dir/COPYING.LGPLv2.1" "$source_dir/LICENSE.md" "$prefix/licenses-ffmpeg/"
 ffmpeg_release=$(cat "$source_dir/RELEASE")
 built="with the .patch files in this folder applied"
+shipped="libavcodec and libavutil"
+if [[ ${NIGHTJAR_FFMPEG_PROGRAMS:-0} == 1 ]]; then shipped+=", and the ffmpeg command built with them"; fi
 cp "${patches[@]}" "$prefix/licenses-ffmpeg/"
 cat >"$prefix/licenses-ffmpeg/SOURCE.txt" <<EOF
-FFmpeg $ffmpeg_release, LGPL v2.1 or later, linked dynamically (libavcodec and libavutil).
+FFmpeg $ffmpeg_release, LGPL v2.1 or later, linked dynamically ($shipped).
 Source: https://ffmpeg.org/releases/ffmpeg-$ffmpeg_release.tar.xz
 SHA-256: ${FFMPEG_SHA256:-not recorded}
 Built $built by protocol/desktop/ffmpeg-decode-only.sh of the Nightjar repository
