@@ -5053,7 +5053,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             return;
         }
         MediaCodecInfo runner = decoderForNegotiated(videoFormat);
-        if (submitHandoff == null && (runner != null ? MediaCodecHelper.decoderCanDirectSubmit(runner.getName()) : directSubmit)) {
+        if ((submitHandoff == null || submitHandoff.isClosed()) && (runner != null ? MediaCodecHelper.decoderCanDirectSubmit(runner.getName()) : directSubmit)) {
             enableSubmitHandoff();
         }
         applyOutputPacingFallback();

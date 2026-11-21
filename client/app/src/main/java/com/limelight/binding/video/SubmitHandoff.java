@@ -19,8 +19,9 @@ import java.util.function.Supplier;
  * <p>A unit is submitted in place when the decoder has a buffer for it within
  * {@link InputBufferWait#RECEIVE_WAIT_MS}, and only if nothing is waiting before it. Otherwise
  * it is copied and queued for a worker thread, which submits the queue in order with the wait
- * and the hang detection the in-place path has. A decoder that keeps up never leaves the in-place
- * path, so nothing changes for it.
+ * and the hang detection the in-place path has. A decoder that keeps up stays on the in-place
+ * path, except for an H.264/HEVC key frame whose parameter sets need buffers of their own: the
+ * worker takes that whole frame, and the units after it queue until the worker has drained.
  *
  * <p>What the decoder never gets stays off it up to a key frame, as when the engine itself is told
  * {@code DR_NEED_IDR}: a unit that does not fit in the bound drops the queued ones with it, and a
@@ -236,6 +237,13 @@ final class SubmitHandoff<U> {
     boolean onWorkerThread() {
         synchronized (lock) {
             return thread == Thread.currentThread();
+        }
+    }
+
+    /** Whether {@link #close} has run: a closed hand-off passes every unit, so a new start needs a new one. */
+    boolean isClosed() {
+        synchronized (lock) {
+            return closed;
         }
     }
 
