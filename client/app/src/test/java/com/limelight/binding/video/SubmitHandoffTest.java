@@ -123,10 +123,18 @@ public class SubmitHandoffTest {
         assertEquals(3, handoff.drops());
         assertTrue(handoff.takeKeyGap());
         assertFalse("taken once", handoff.takeKeyGap());
-        // The key frame's first unit is taken again, whatever it is told.
+        // The key frame's first unit is taken again, whatever it is told: in place once the worker
+        // is done with unit 1 (while it is not, a unit waits in the queue, and one more overflows).
+        awaitIdle();
         assertEquals(MoonBridge.DR_OK, submit(5, true, inPlace, true));
         assertEquals(MoonBridge.DR_OK, submit(6, true, inPlace));
         assertEquals(List.of(5, 6), inPlace);
+    }
+
+    private void awaitIdle() throws Exception {
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        while (handoff.busy() && System.nanoTime() < deadline) Thread.sleep(1);
+        assertFalse(handoff.busy());
     }
 
     private void awaitFailure() throws Exception {
@@ -185,8 +193,7 @@ public class SubmitHandoffTest {
         assertEquals(MoonBridge.DR_OK, submitOf(32, 10, true, inPlace, true));
         assertTrue(inPlace.isEmpty());
         // A different key frame ends the wait (taken in place once the worker is idle).
-        long deadline = System.nanoTime() + 10_000_000_000L;
-        while (handoff.busy() && System.nanoTime() < deadline) Thread.sleep(1);
+        awaitIdle();
         assertEquals(MoonBridge.DR_OK, submitOf(40, 11, true, inPlace, true));
         assertEquals(MoonBridge.DR_OK, submitOf(41, 11, true, inPlace, true));
         assertEquals(List.of(40, 41), inPlace);
