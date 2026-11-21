@@ -666,6 +666,9 @@ impl Media {
                 session.record_last_seen();
                 let mut leases = Leases::default();
                 let mut workers = Workers::new(&s);
+                // Release builds set `panic = "abort"` (Cargo.toml): a panic there ends the host
+                // process, and the service supervisor starts it again, so this catch and the
+                // poison recovery in the teardown run only in unwinding builds (tests, debug).
                 // A panic ends the session like any failure: the teardown below releases its
                 // workers, leases and registration, which an unwind past it would leave in
                 // `h.sessions` with the control and audio threads still running.
