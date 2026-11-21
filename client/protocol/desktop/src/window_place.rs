@@ -118,7 +118,10 @@ pub fn current(window: *mut SDL_Window, previous: Option<&Placement>) -> Option<
         }
         placement.display = display;
         placement.display_bounds = bounds;
-        placement.maximized = flags & SDL_WINDOW_MAXIMIZED != 0;
+        // Fullscreen clears SDL's maximized flag; the windowed launcher's is what returns.
+        if flags & SDL_WINDOW_FULLSCREEN == 0 {
+            placement.maximized = flags & SDL_WINDOW_MAXIMIZED != 0;
+        }
         if flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED) == 0 {
             let (mut x, mut y, mut w, mut h) = (0, 0, 0, 0);
             SDL_GetWindowPosition(window, &mut x, &mut y);

@@ -770,6 +770,10 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         if !ids.is_null() {
             SDL_free(ids.cast());
         }
+        // SDL on Windows lists a touch screen only after its first WM_TOUCH; Windows knows sooner.
+        #[cfg(windows)]
+        let screen = screen
+            || windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_MAXIMUMTOUCHES) > 0;
         gui.prime_touch(screen);
     }
     // Before the window shows: UI Automation's adapter has to be on it from the start.
