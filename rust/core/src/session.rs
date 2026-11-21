@@ -1462,9 +1462,26 @@ impl<P, A> Session<P, A> {
         }
         (change, (applied != current).then_some((current, applied)))
     }
+    fn wireless_unknown_link(&self) -> bool {
+        self.config.client_wireless && self.client_link_mbps() == 0
+    }
+
+    fn pacing_ceiling(&self, base: u64, needed: u64) -> u64 {
+        if self.wireless_unknown_link() && self.automatic_pacing_enabled() {
+            crate::network_pacing::wireless_unknown_link_ceiling_bps(
+                base,
+                self.bitrate.load(Ordering::Acquire),
+                needed,
+            )
+        } else {
+            base
+        }
+    }
+
     pub fn configure_automatic_pacing(&self, enabled: bool) {
-        *self.automatic_pacing.lock().unwrap() =
-            crate::adaptive_pacing::AdaptivePacing::new(enabled);
+        let mut pacing = crate::adaptive_pacing::AdaptivePacing::new(enabled);
+        pacing.set_wireless_unknown_link(self.wireless_unknown_link());
+        *self.automatic_pacing.lock().unwrap() = pacing;
         self.automatic_pacing_on.store(enabled, Ordering::Release);
     }
     /// Whether the client reports a wireless route (`x-rl-video[0].clientWireless`)
@@ -1480,18 +1497,19 @@ impl<P, A> Session<P, A> {
         self.automatic_pacing_on.load(Ordering::Acquire)
     }
     pub fn video_pacing_bps(&self, base: u64, needed: u64) -> u64 {
-        let paced = self.automatic_pacing.lock().unwrap().rate(
-            base,
-            needed,
-            self.bitrate.load(Ordering::Acquire),
-        );
+        let ceiling = self.pacing_ceiling(base, needed);
+        let mut pacing = self.automatic_pacing.lock().unwrap();
+        pacing.set_wireless_unknown_link(self.wireless_unknown_link());
+        let paced = pacing.rate(ceiling, needed, self.bitrate.load(Ordering::Acquire));
+        drop(pacing);
         self.adaptive_pacing_bps(paced)
     }
     /// Encoder-side budget queries must not change the sender's feedback
     /// state when recovery parity differs from the current ordinary-frame FEC.
     pub fn preview_video_pacing_bps(&self, base: u64, needed: u64) -> u64 {
+        let ceiling = self.pacing_ceiling(base, needed);
         let paced = self.automatic_pacing.lock().unwrap().preview_rate(
-            base,
+            ceiling,
             needed,
             self.bitrate.load(Ordering::Acquire),
         );
@@ -1683,8 +1701,19 @@ impl<P, A> Session<P, A> {
         self.automatic_pacing.lock().unwrap().on_ping(now, payload);
     }
     pub fn tick_automatic_pacing(&self, now: Instant, rtt: Duration) -> Option<(u64, u64)> {
+        self.tick_automatic_pacing_step(now, rtt)
+            .map(|step| (step.old_bps, step.new_bps))
+    }
+
+    pub fn tick_automatic_pacing_step(
+        &self,
+        now: Instant,
+        rtt: Duration,
+    ) -> Option<crate::adaptive_pacing::PacingStep> {
         let period = self.stream_mode().period();
-        self.automatic_pacing.lock().unwrap().tick(
+        let mut pacing = self.automatic_pacing.lock().unwrap();
+        pacing.set_wireless_unknown_link(self.wireless_unknown_link());
+        pacing.tick_step(
             now,
             crate::adaptive_pacing::Traffic {
                 frames: self.stats.frames.load(Ordering::Relaxed),

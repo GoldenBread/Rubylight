@@ -999,3 +999,23 @@ fn enobufs_wait_widens_startup_window_without_changing_steady_state() {
         SEND_FRAME_WAIT
     );
 }
+
+#[test]
+fn wireless_unknown_link_ceiling_caps_without_exceeding_route() {
+    // 62.988 Mbps wireless stream on a wired 1 GbE host (800 Mbps route base):
+    // capped at 4x bitrate instead of ratcheting to 800 Mbps.
+    let cap = wireless_unknown_link_ceiling_bps(800_000_000, 62_988, 81_506_310);
+    assert_eq!(cap, 62_988 * 1000 * WIRELESS_UNKNOWN_LINK_MULTIPLIER);
+
+    // A slower physical route still wins over the 4x headroom cap.
+    assert_eq!(
+        wireless_unknown_link_ceiling_bps(100_000_000, 62_988, 81_506_310),
+        100_000_000
+    );
+
+    // Extreme FEC / wire demand keeps its 1.25x headroom inside base_bps.
+    assert_eq!(
+        wireless_unknown_link_ceiling_bps(800_000_000, 20_000, 120_000_000),
+        150_000_000
+    );
+}

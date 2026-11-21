@@ -798,12 +798,28 @@ impl Media {
                         );
                     }
                     if poll_feedback
-                        && let Some((old, new)) = s.tick_automatic_pacing(
+                        && let Some(step) = s.tick_automatic_pacing_step(
                             Instant::now(),
                             host.peer(*peer_id).round_trip_time(),
                         )
                     {
-                        tracing::info!(client = %s.launch.client.name, old_bps = old, new_bps = new, "automatic video burst pacing; encoder bitrate unchanged");
+                        if step.reason_changed {
+                            tracing::info!(
+                                client = %s.launch.client.name,
+                                old_bps = step.old_bps,
+                                new_bps = step.new_bps,
+                                reason = step.reason.as_str(),
+                                "automatic video burst pacing; encoder bitrate unchanged"
+                            );
+                        } else {
+                            tracing::debug!(
+                                client = %s.launch.client.name,
+                                old_bps = step.old_bps,
+                                new_bps = step.new_bps,
+                                reason = step.reason.as_str(),
+                                "automatic video burst pacing; encoder bitrate unchanged"
+                            );
+                        }
                     }
                     if poll_feedback {
                         s.tick_link_rate(Instant::now(), host.peer(*peer_id).round_trip_time());

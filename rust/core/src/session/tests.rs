@@ -1225,6 +1225,28 @@ fn a_wireless_client_stream_starts_at_the_controllers_seed_and_climbs_toward_the
             rate = next;
         }
         assert!(rate > 2 * 63_000_000, "never climbed: {rate}");
+        assert_eq!(rate, 4 * 63_000_000);
+        // When the client reports a 1 Gbps link speed, known-link behavior stays unchanged.
+        let known = Session::new(
+            launch("wireless-known-link", Role::Stream),
+            Negotiated {
+                codec: 1,
+                bitrate_kbps: 63_000,
+                client_wireless: true,
+                pyrowave_client_link_mbps: 1000,
+                ..Default::default()
+            },
+        );
+        known.configure_automatic_pacing(config.adaptive_packet_pacing(1, true));
+        known.video_pacing_bps(800_000_000, 75_000_000);
+        known.tick_automatic_pacing(start, Duration::from_millis(2));
+        for step in 1..=40u64 {
+            let now = start + Duration::from_millis(500 * step);
+            pacing_traffic(&known, 30 * step);
+            known.record_control_ping(now, &[4, 0, 0, 0, 0, 0, 0, 0]);
+            known.tick_automatic_pacing(now, Duration::from_millis(2));
+        }
+        assert_eq!(known.video_pacing_bps(800_000_000, 75_000_000), 800_000_000);
     }
     // Without the controller the hint sets the route pacing instead.
     for (setting, codec) in [

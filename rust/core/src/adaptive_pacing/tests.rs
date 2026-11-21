@@ -80,6 +80,31 @@ impl Stream {
         )
     }
 
+    fn tick_step(
+        &mut self,
+        ping: Option<&[u8]>,
+        frames: u64,
+        bytes: u64,
+        rtt: Duration,
+    ) -> Option<PacingStep> {
+        self.now += Duration::from_millis(500);
+        self.traffic.frames += frames;
+        self.traffic.bytes += bytes;
+        self.traffic.packets += 2_000;
+        self.last = self.last.wrapping_add(frames as u32);
+        if let Some(payload) = ping {
+            self.pacing.on_ping(self.now, payload);
+        }
+        self.pacing.tick_step(
+            self.now,
+            self.traffic,
+            Some(self.last),
+            self.period,
+            40_000,
+            rtt,
+        )
+    }
+
     fn healthy(&mut self) -> Option<(u64, u64)> {
         self.step(Some(&PING), 30, 2_500_000, Duration::from_millis(2))
     }
@@ -1086,4 +1111,134 @@ fn a_client_without_feedback_keeps_the_conservative_start_and_complete_frames() 
             assert!(result.first_idr_complete);
         }
     }
+}
+
+#[test]
+fn reason_logs_once_per_change_and_switches_when_trigger_changes() {
+    let mut stream = Stream::fresh(true);
+    let mut steps = Vec::new();
+    for _ in 0..60 {
+        if let Some(step) = stream.tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(2)) {
+            steps.push(step);
+        }
+    }
+    assert!(steps.len() >= 3, "{steps:?}");
+    assert!(stream.pacing.probe.is_none());
+    assert_eq!(steps[0].reason, PacingReason::StartupHeadroom);
+    assert!(steps[0].reason_changed);
+    for step in &steps[1..] {
+        assert_eq!(step.reason, PacingReason::StartupHeadroom);
+        assert!(
+            !step.reason_changed,
+            "same reason must not re-flag info log"
+        );
+    }
+
+    // Substantial loss switches the reason cleanly.
+    let end = stream.last.wrapping_add(30);
+    stream.report(end.wrapping_sub(1), end, Block::Unrecoverable);
+    stream.report(end, end, Block::Unrecoverable);
+    let cut = stream
+        .tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(2))
+        .expect("loss cut");
+    assert_eq!(cut.reason, PacingReason::PacketLoss);
+    assert!(cut.reason_changed);
+
+    // Next recovery probe reports RecoveryProbe once.
+    let mut recovery = None;
+    for _ in 0..20 {
+        if let Some(step) = stream.tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(2)) {
+            recovery = Some(step);
+            break;
+        }
+    }
+    let recovery = recovery.expect("recovery probe");
+    assert_eq!(recovery.reason, PacingReason::RecoveryProbe);
+    assert!(recovery.reason_changed);
+
+    // A loss during that probe restores the stable rate under ProbeLoss.
+    let end = stream.last.wrapping_add(1);
+    stream.report(end, end, Block::Recovered { lost: 1, data: 10 });
+    let reverted = stream
+        .tick_step(Some(&PING), 1, 100_000, Duration::from_millis(2))
+        .expect("probe revert");
+    assert_eq!(reverted.reason, PacingReason::ProbeLoss);
+    assert!(reverted.reason_changed);
+}
+
+#[test]
+fn wireless_unknown_link_steps_down_when_headroom_clears_while_wired_stays_put() {
+    let cap = network_pacing::wireless_unknown_link_ceiling_bps(FAST, 40_000, DEMAND);
+    assert_eq!(cap, 160_000_000);
+
+    // 1) Queue delay steps elevated wireless unknown-link pacing back down toward SEED.
+    let mut queued_stream = Stream::fresh(true);
+    queued_stream.pacing.set_wireless_unknown_link(true);
+    assert_eq!(queued_stream.pacing.rate(cap, DEMAND, 40_000), SEED);
+    for _ in 0..24 {
+        queued_stream.tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(2));
+    }
+    assert_eq!(queued_stream.pacing.rate(cap, DEMAND, 40_000), cap);
+    // Two ticks (< 1s hold) do not jump immediately; from 1s on it steps down.
+    let mut queue_steps = Vec::new();
+    for _ in 0..16 {
+        if let Some(step) =
+            queued_stream.tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(30))
+        {
+            queue_steps.push(step);
+        }
+    }
+    assert!(queue_steps.len() >= 2, "{queue_steps:?}");
+    assert_eq!(queue_steps[0].reason, PacingReason::QueueDelay);
+    assert!(queue_steps[0].reason_changed);
+    assert!(!queue_steps[1].reason_changed);
+    assert!(queue_steps[0].new_bps < queue_steps[0].old_bps);
+    assert_eq!(queued_stream.pacing.rate(cap, DEMAND, 40_000), SEED);
+
+    // 2) HeadroomCleared (!busy / idle) steps back down after 2s hold.
+    let mut idle_stream = Stream::fresh(true);
+    idle_stream.pacing.set_wireless_unknown_link(true);
+    idle_stream.pacing.rate(cap, DEMAND, 40_000);
+    for _ in 0..24 {
+        idle_stream.tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(2));
+    }
+    assert_eq!(idle_stream.pacing.rate(cap, DEMAND, 40_000), cap);
+    let mut idle_steps = Vec::new();
+    for _ in 0..20 {
+        if let Some(step) = idle_stream.tick_step(Some(&PING), 1, 1_000, Duration::from_millis(2)) {
+            idle_steps.push(step);
+        }
+    }
+    assert!(idle_steps.len() >= 2, "{idle_steps:?}");
+    assert_eq!(idle_steps[0].reason, PacingReason::HeadroomCleared);
+    assert!(idle_steps[0].reason_changed);
+    assert!(!idle_steps[1].reason_changed);
+    assert_eq!(idle_stream.pacing.rate(cap, DEMAND, 40_000), SEED);
+
+    // 3) Minor send loss steps back down immediately without halving.
+    let mut minor_loss = Stream::fresh(true);
+    minor_loss.pacing.set_wireless_unknown_link(true);
+    minor_loss.pacing.rate(cap, DEMAND, 40_000);
+    for _ in 0..24 {
+        minor_loss.tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(2));
+    }
+    minor_loss.traffic.send_losses += 1;
+    let loss_step = minor_loss
+        .tick_step(Some(&PING), 30, 2_500_000, Duration::from_millis(2))
+        .expect("minor loss step down");
+    assert_eq!(loss_step.reason, PacingReason::MinorLoss);
+    assert!(loss_step.reason_changed);
+    assert_eq!(loss_step.new_bps, cap - cap / 8);
+
+    // 4) Wired / known-link stream stays completely unchanged under idle, queue, or send losses.
+    let mut wired = Stream::new(true);
+    assert!(!wired.pacing.wireless_unknown_link);
+    for _ in 0..20 {
+        wired.traffic.send_losses += 1;
+        assert_eq!(
+            wired.tick_step(Some(&PING), 1, 1_000, Duration::from_millis(50)),
+            None
+        );
+    }
+    assert_eq!(wired.pacing.rate(FAST, DEMAND, 40_000), FAST);
 }

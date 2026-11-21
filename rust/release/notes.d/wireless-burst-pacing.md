@@ -1,0 +1,2 @@
+# Automatic wireless burst pacing
+- **Bounded Wi-Fi burst pacing and cleaner logs.** For wireless clients without a reported link speed, automatic burst pacing now caps at four times the encoder bitrate instead of climbing to the host's wired port speed, steps back down toward the conservative starting rate when queue delay, mild loss, or idle traffic ends the headroom window, and logs the reason once per transition instead of repeating at info level on every step.

@@ -96,6 +96,23 @@ pub fn rate_bps_following_client(
     }
 }
 
+/// Multiple of stream encoder bitrate used as the burst-pacing ceiling when a
+/// wireless client reports no link speed (`client_link_mbps == 0`), keeping
+/// clean Wi-Fi sessions from ratcheting up to wired port speeds.
+pub const WIRELESS_UNKNOWN_LINK_MULTIPLIER: u64 = 4;
+
+/// Ceiling for automatic burst pacing on a wireless client with an unknown
+/// downstream link: at most `WIRELESS_UNKNOWN_LINK_MULTIPLIER` times the
+/// encoder bitrate (or the 1.25x wire-demand headroom if higher), clamped below
+/// the route's `base_bps`.
+pub fn wireless_unknown_link_ceiling_bps(base_bps: u64, stream_kbps: u32, needed_bps: u64) -> u64 {
+    let headroom = u64::from(stream_kbps)
+        .saturating_mul(1000 * WIRELESS_UNKNOWN_LINK_MULTIPLIER)
+        .max(needed_bps.saturating_add(needed_bps / 4))
+        .max(1_000_000);
+    base_bps.min(headroom).max(1)
+}
+
 /// A client that says its link is slower than the stream still has to get the
 /// stream: pacing never falls below 1.1 times the encoder bitrate because of
 /// the client's hint (the host's own link keeps its plain cap). Zero when the

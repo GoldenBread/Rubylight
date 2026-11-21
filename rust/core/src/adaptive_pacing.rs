@@ -17,10 +17,55 @@ pub struct Traffic {
     pub send_losses: u64,
 }
 
+/// Reason why automatic burst pacing changed its rate on a control tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacingReason {
+    /// Clean startup feedback allowed a tentative headroom step.
+    StartupHeadroom,
+    /// Clean post-recovery feedback allowed a tentative probe step.
+    RecoveryProbe,
+    /// A tentative increase met loss and restored the previous stable rate.
+    ProbeLoss,
+    /// Sustained or unrecoverable frame loss cut the pacing rate in half.
+    PacketLoss,
+    /// Mild loss on a wireless client without a known link rate stepped pacing down.
+    MinorLoss,
+    /// Sustained RTT queue growth on an unknown-link wireless route stepped pacing down.
+    QueueDelay,
+    /// Clean-headroom signals (active traffic or fresh RTT) cleared on an unknown-link wireless route.
+    HeadroomCleared,
+}
+
+impl PacingReason {
+    /// Stable log key for this pacing transition reason.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StartupHeadroom => "startup_headroom",
+            Self::RecoveryProbe => "recovery_probe",
+            Self::ProbeLoss => "probe_loss",
+            Self::PacketLoss => "packet_loss",
+            Self::MinorLoss => "minor_loss",
+            Self::QueueDelay => "queue_delay",
+            Self::HeadroomCleared => "headroom_cleared",
+        }
+    }
+}
+
+/// One pacing rate step returned by [`AdaptivePacing::tick_step`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PacingStep {
+    pub old_bps: u64,
+    pub new_bps: u64,
+    pub reason: PacingReason,
+    /// True when `reason` differs from the previous logged step's reason.
+    pub reason_changed: bool,
+}
+
 pub struct AdaptivePacing {
     enabled: bool,
     initialized: bool,
     startup: bool,
+    wireless_unknown_link: bool,
     ceiling: u64,
     floor: u64,
     limit: Option<u64>,
@@ -37,6 +82,8 @@ pub struct AdaptivePacing {
     lost_packets: u64,
     any_loss: bool,
     clean_since: Option<Instant>,
+    unhealthy_since: Option<(PacingReason, Instant)>,
+    last_logged_reason: Option<PacingReason>,
     /// A rate increase is tentative until its feedback interval has elapsed.
     probe: Option<Probe>,
     /// A changed wire budget invalidates feedback for the old rate. The
@@ -63,6 +110,7 @@ impl AdaptivePacing {
             enabled,
             initialized: false,
             startup: enabled,
+            wireless_unknown_link: false,
             ceiling: 0,
             floor: 0,
             limit: None,
@@ -76,10 +124,27 @@ impl AdaptivePacing {
             lost_packets: 0,
             any_loss: false,
             clean_since: None,
+            unhealthy_since: None,
+            last_logged_reason: None,
             probe: None,
             awaiting_fence: false,
             recovery_hold: Duration::from_secs(8),
         }
+    }
+
+    /// Mark whether this stream goes to a wireless client whose downstream link
+    /// speed is unknown, enabling step-down when headroom triggers clear.
+    pub fn set_wireless_unknown_link(&mut self, wireless_unknown_link: bool) {
+        self.wireless_unknown_link = wireless_unknown_link;
+        if !wireless_unknown_link {
+            self.unhealthy_since = None;
+        }
+    }
+
+    fn seed_rate(&self, encoder_kbps: u32) -> u64 {
+        u64::from(encoder_kbps)
+            .saturating_mul(2000)
+            .clamp(self.floor, self.ceiling)
     }
 
     /// Whether this controller owns the stream's pacing.
@@ -104,11 +169,7 @@ impl AdaptivePacing {
         }
         if !self.initialized {
             self.initialized = true;
-            self.limit = Some(
-                u64::from(encoder_kbps)
-                    .saturating_mul(2000)
-                    .clamp(self.floor, self.ceiling),
-            );
+            self.limit = Some(self.seed_rate(encoder_kbps));
         } else if self.ceiling != previous_ceiling || self.floor != previous_floor {
             if self.ceiling != previous_ceiling {
                 // Route activity and RTT from before a changed ceiling do
@@ -137,6 +198,7 @@ impl AdaptivePacing {
                 }
             }
             self.clean_since = None;
+            self.unhealthy_since = None;
             self.last_sample = None;
             self.awaiting_fence = true;
         }
@@ -241,6 +303,21 @@ impl AdaptivePacing {
         encoder_kbps: u32,
         rtt: Duration,
     ) -> Option<(u64, u64)> {
+        self.tick_step(now, traffic, last_sent, period, encoder_kbps, rtt)
+            .map(|step| (step.old_bps, step.new_bps))
+    }
+
+    /// Like [`Self::tick`], also reporting the trigger reason and whether the
+    /// reason changed since the previous logged step.
+    pub fn tick_step(
+        &mut self,
+        now: Instant,
+        traffic: Traffic,
+        last_sent: Option<u32>,
+        period: Duration,
+        encoder_kbps: u32,
+        rtt: Duration,
+    ) -> Option<PacingStep> {
         if !self.enabled || self.ceiling == 0 {
             return None;
         }
@@ -283,13 +360,17 @@ impl AdaptivePacing {
         let queued = self.minimum_rtt.is_some_and(|minimum| {
             rtt > minimum.saturating_add((minimum / 2).max(Duration::from_millis(8)))
         });
+        let mut reason = None;
         if (substantial || (self.probe.is_some() && loss)) && recent && (frames > 0 || probe_loss) {
+            self.unhealthy_since = None;
             let next = if let Some(probe) = self.probe.take() {
                 // A failed probe restores the last working rate, and increases
                 // the quiet period before another attempt (up to a minute).
                 self.recovery_hold = (self.recovery_hold * 2).min(Duration::from_secs(60));
+                reason = Some(PacingReason::ProbeLoss);
                 probe.stable
             } else {
+                reason = Some(PacingReason::PacketLoss);
                 old / 2
             };
             self.limit = Some(next.clamp(self.floor, self.ceiling));
@@ -304,71 +385,132 @@ impl AdaptivePacing {
                     >= f64::from(encoder_kbps) * 1000. * seconds * 0.6;
             if loss || !ping || !busy || rtt.is_zero() || queued {
                 self.clean_since = None;
-            } else if self.limit.is_some() {
-                // The counters describe the interval just completed. Startup
-                // can use that first active interval; recovery retains its
-                // longer quiet hold after an established loss.
-                let clean =
-                    *self
-                        .clean_since
-                        .get_or_insert(if self.startup { previous } else { now });
-                if self.probe.as_ref().is_some_and(|probe| {
-                    let settle = if self.startup {
-                        probe.settle.max(startup_feedback_wait(rtt))
+                if self.wireless_unknown_link {
+                    let clear_reason = if loss {
+                        PacingReason::MinorLoss
+                    } else if queued {
+                        PacingReason::QueueDelay
                     } else {
-                        probe.settle
+                        PacingReason::HeadroomCleared
                     };
-                    now.saturating_duration_since(probe.started.max(clean)) >= settle
-                }) {
-                    self.probe = None;
-                    if old == self.ceiling {
-                        self.limit = None;
-                        self.startup = false;
+                    let started = match self.unhealthy_since {
+                        Some((prev, at)) if prev == clear_reason => at,
+                        _ => {
+                            self.unhealthy_since = Some((clear_reason, now));
+                            now
+                        }
+                    };
+                    let hold = match clear_reason {
+                        PacingReason::MinorLoss => Duration::ZERO,
+                        PacingReason::QueueDelay => Duration::from_secs(1),
+                        _ => Duration::from_secs(2),
+                    };
+                    let baseline = self.seed_rate(encoder_kbps);
+                    if old > baseline && now.saturating_duration_since(started) >= hold {
+                        let step = (old / 8).max(1_000_000);
+                        let next = old
+                            .saturating_sub(step)
+                            .max(baseline)
+                            .clamp(self.floor, self.ceiling);
+                        if next < old {
+                            self.limit = Some(next);
+                            self.probe = None;
+                            self.after_frame = last_sent;
+                            if matches!(
+                                clear_reason,
+                                PacingReason::MinorLoss | PacingReason::QueueDelay
+                            ) {
+                                self.startup = false;
+                            }
+                            reason = Some(clear_reason);
+                        }
                     }
                 }
-                let hold = if self.startup {
-                    startup_feedback_wait(rtt)
-                } else {
-                    self.recovery_hold
-                };
-                if self.probe.is_none() && now.saturating_duration_since(clean) >= hold {
-                    if old < self.ceiling {
-                        let step = if self.startup {
-                            // Smaller probes leave ordinary FEC more room to
-                            // repair losses while feedback returns. This is
-                            // headroom, not a guarantee of loss-free probing.
-                            (old / 8).max(1)
+            } else {
+                self.unhealthy_since = None;
+                if self.limit.is_some() {
+                    // The counters describe the interval just completed. Startup
+                    // can use that first active interval; recovery retains its
+                    // longer quiet hold after an established loss.
+                    let clean =
+                        *self
+                            .clean_since
+                            .get_or_insert(if self.startup { previous } else { now });
+                    if self.probe.as_ref().is_some_and(|probe| {
+                        let settle = if self.startup {
+                            probe.settle.max(startup_feedback_wait(rtt))
                         } else {
-                            (old / 20).max(1_000_000)
+                            probe.settle
                         };
-                        self.limit = Some(old.saturating_add(step).min(self.ceiling));
-                        self.probe = Some(Probe {
-                            stable: old,
-                            started: now,
-                            settle: if self.startup {
-                                hold
+                        now.saturating_duration_since(probe.started.max(clean)) >= settle
+                    }) {
+                        self.probe = None;
+                        if old == self.ceiling {
+                            self.limit = None;
+                            self.startup = false;
+                        }
+                    }
+                    let hold = if self.startup {
+                        startup_feedback_wait(rtt)
+                    } else {
+                        self.recovery_hold
+                    };
+                    if self.probe.is_none() && now.saturating_duration_since(clean) >= hold {
+                        if old < self.ceiling {
+                            let step = if self.startup {
+                                // Smaller probes leave ordinary FEC more room to
+                                // repair losses while feedback returns. This is
+                                // headroom, not a guarantee of loss-free probing.
+                                (old / 8).max(1)
                             } else {
-                                Duration::from_secs(2)
-                            },
-                        });
-                        self.after_frame = last_sent;
-                    } else if self.startup {
-                        // The initial wire-demand floor can already equal a
-                        // low physical ceiling. Confirm it without probing.
-                        self.limit = None;
-                        self.startup = false;
+                                (old / 20).max(1_000_000)
+                            };
+                            reason = Some(if self.startup {
+                                PacingReason::StartupHeadroom
+                            } else {
+                                PacingReason::RecoveryProbe
+                            });
+                            self.limit = Some(old.saturating_add(step).min(self.ceiling));
+                            self.probe = Some(Probe {
+                                stable: old,
+                                started: now,
+                                settle: if self.startup {
+                                    hold
+                                } else {
+                                    Duration::from_secs(2)
+                                },
+                            });
+                            self.after_frame = last_sent;
+                        } else if self.startup {
+                            // The initial wire-demand floor can already equal a
+                            // low physical ceiling. Confirm it without probing.
+                            self.limit = None;
+                            self.startup = false;
+                        }
                     }
                 }
             }
         }
         let next = self.current();
-        (next != old).then_some((old, next))
+        if next == old {
+            return None;
+        }
+        let reason = reason.unwrap_or(PacingReason::RecoveryProbe);
+        let reason_changed = self.last_logged_reason != Some(reason);
+        self.last_logged_reason = Some(reason);
+        Some(PacingStep {
+            old_bps: old,
+            new_bps: next,
+            reason,
+            reason_changed,
+        })
     }
 
     pub fn snapshot(&self) -> serde_json::Value {
         serde_json::json!({
             "automatic": self.enabled,
             "startup": self.startup,
+            "wireless_unknown_link": self.wireless_unknown_link,
             "probing": self.probe.is_some(),
             "limited": self.enabled && self.current() < self.ceiling,
             "current_kbps": self.current() / 1000,

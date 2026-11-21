@@ -337,9 +337,9 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
         pace(&session, &config, &packetizer, period, peer, route).bps,
         300_000_000
     );
-    // The controller owns it: base and ceiling stay the host route's
-    // 800 Mbps and the start is the controller's seed, exactly as with
-    // `host_adaptive_pacing` on a client that reports nothing.
+    // The controller owns it: unknown-link wireless clients cap their ceiling at
+    // 4x stream bitrate instead of ratcheting to the wired port speed, while
+    // wired `host_adaptive_pacing` and known-link streams keep 800 Mbps.
     let (owned, owned_config, owned_keyframe_loss) = wireless_hint_stream(&fixture, "", 1, true);
     let (host_opt_in, host_config, _) =
         wireless_hint_stream(&fixture, "host_adaptive_pacing=true", 1, false);
@@ -358,6 +358,10 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
     );
     assert_eq!(
         owned.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
+        160_000
+    );
+    assert_eq!(
+        host_opt_in.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
         800_000
     );
     // The encoder's recovery-frame cap is what `host_adaptive_pacing`
@@ -367,6 +371,33 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
         network_pacing::recovery_frame_cap(pace.bps, 40_000, period, 20, 1392, false)
     };
     assert_eq!(cap(&owned, &owned_config), cap(&host_opt_in, &host_config));
+    // A client that reports a 1 Gbps link speed keeps the known-link ceiling
+    // until a roam clears the initial link hint.
+    let known = fixture.launch(fixture.client(0), Role::Stream);
+    let known = Session::new(
+        known,
+        butterpollo_core::rtsp::Negotiated {
+            codec: 1,
+            client_wireless: true,
+            pyrowave_client_link_mbps: 1000,
+            ..Default::default()
+        },
+    );
+    known
+        .bitrate
+        .store(40_000, std::sync::atomic::Ordering::Release);
+    configure(&known, &owned_config);
+    pace(&known, &owned_config, &packetizer, period, peer, route);
+    assert_eq!(
+        known.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
+        800_000
+    );
+    known.roamed(peer.ip(), std::time::Instant::now());
+    pace(&known, &owned_config, &packetizer, period, peer, route);
+    assert_eq!(
+        known.automatic_pacing.lock().unwrap().snapshot()["ceiling_kbps"],
+        160_000
+    );
     // PyroWave is not owned by the controller unless it is opted in.
     let (pyrowave, _, _) = wireless_hint_stream(&fixture, "", 3, true);
     assert!(pyrowave.client_wireless_sets_route_pacing());
