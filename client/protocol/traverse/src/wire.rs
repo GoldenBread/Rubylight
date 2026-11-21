@@ -14,6 +14,11 @@
 //! | 24 | 16 | punches only: the device's session nonce, in the clear |
 //! | .. | .. | ciphertext, then the 16-byte tag; the AAD is every byte before it |
 //!
+//! A device's punch carries its clock, unix seconds big-endian, as the payload ([`punch_stamp`],
+//! [`punch_time`]); the host takes a fresh, newer one as proof that the device started again and
+//! replaces the path of its older session. Peers that send no payload (older ones), or read none,
+//! interoperate: their paths are replaced by the DHT record instead.
+//!
 //! The nonce is the sequence number (big-endian) and four zero bytes; the keys differ per
 //! direction and per connection, so no nonce repeats under a key. STUN never starts with `A7`,
 //! and a DHT message always starts with `d`, so the three share one socket.
@@ -89,6 +94,16 @@ pub fn punch_session(datagram: &[u8]) -> Option<[u8; SESSION_BYTES]> {
     datagram
         .get(HEADER_BYTES..HEADER_BYTES + SESSION_BYTES)
         .map(|bytes| bytes.try_into().unwrap())
+}
+
+/// The payload a device's punch carries: its clock in unix seconds.
+pub fn punch_stamp(unix: u64) -> [u8; 8] {
+    unix.to_be_bytes()
+}
+
+/// The device's clock a punch's opened payload holds; None for a punch without one.
+pub fn punch_time(payload: &[u8]) -> Option<u64> {
+    <[u8; 8]>::try_from(payload).ok().map(u64::from_be_bytes)
 }
 
 fn nonce(seq: u64) -> [u8; 12] {
@@ -274,6 +289,17 @@ impl Opener {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_punch_carries_the_devices_clock() {
+        assert_eq!(punch_time(&punch_stamp(1_700_000_000)), Some(1_700_000_000));
+        assert_eq!(punch_time(&[]), None);
+        assert_eq!(punch_time(&[0; 9]), None);
+        let sealer = Sealer::new(&[1; 32], [2; 8], [3; 16]);
+        let sealed = sealer.seal(Kind::Punch, 0, &punch_stamp(42));
+        let opened = Opener::new(&[1; 32], [2; 8]).open(&sealed).unwrap();
+        assert_eq!(punch_time(&opened.payload), Some(42));
+    }
 
     #[test]
     fn datagrams_open_once_and_only_on_their_path() {

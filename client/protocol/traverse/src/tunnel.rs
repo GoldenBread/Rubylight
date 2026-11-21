@@ -137,6 +137,10 @@ struct Shared {
     woken: Mutex<bool>,
     /// What the path thread sleeps until, u64::MAX while it is awake.
     sleeping_until: AtomicU64,
+    /// When the device's session began on its clock (unix seconds, 0 unknown): from the stamp
+    /// of the punch that started the path, or the device's record. The host replaces a connected
+    /// path only for a session that began later ([`Tunnel::set_epoch`]).
+    epoch: AtomicU64,
     /// How often the path thread went round.
     #[cfg(test)]
     rounds: AtomicU64,
@@ -224,6 +228,7 @@ impl Tunnel {
             wake: Condvar::new(),
             woken: Mutex::new(false),
             sleeping_until: AtomicU64::new(u64::MAX),
+            epoch: AtomicU64::new(0),
             #[cfg(test)]
             rounds: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
@@ -280,6 +285,16 @@ impl Tunnel {
             }
             _ => State::Punching,
         }
+    }
+
+    /// Notes when the device's session began, in unix seconds.
+    pub fn set_epoch(&self, unix: u64) {
+        self.shared.epoch.store(unix, Ordering::Relaxed);
+    }
+
+    /// When the device's session began (unix seconds), 0 when unknown.
+    pub fn epoch(&self) -> u64 {
+        self.shared.epoch.load(Ordering::Relaxed)
     }
 
     /// The path is connected and its peer was heard from lately ([`HEALTHY_FOR`]): there is
@@ -792,8 +807,17 @@ impl Tunnel {
                 .is_some_and(|since| now.saturating_sub(since) > UNUSED);
             let peer = inner.peer;
             drop(inner);
+            // A device's punch says when it was sent, so the host can tell a device that started
+            // again from an old punch replayed on the way ([`wire::punch_time`]).
+            let stamp =
+                (self.shared.role == Role::Client).then(|| wire::punch_stamp(node::unix_now()));
             for to in punches {
-                self.send_to(to, Kind::Punch, 0, &[]);
+                self.send_to(
+                    to,
+                    Kind::Punch,
+                    0,
+                    stamp.as_ref().map_or(&[][..], |s| &s[..]),
+                );
             }
             if failed {
                 self.close("no punch got through");
@@ -1116,6 +1140,58 @@ mod tests {
         assert!(host.is_closed());
         host_node.stop();
         device_node.stop();
+    }
+
+    /// A device's punches say when they were sent, the host's say nothing.
+    #[test]
+    fn only_a_devices_punches_carry_its_clock() {
+        let keys = Keys::new([7; 32]).path(&[1; 16], &[2; 16]);
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let stamp_of = |role: Role, bridge: Bridge| {
+            let node = Node::bind("127.0.0.1:0".parse().unwrap(), Vec::new()).unwrap();
+            let tunnel = Tunnel::start(
+                node.clone(),
+                role,
+                keys,
+                [2; 16],
+                vec![peer.local_addr().unwrap()],
+                bridge,
+            )
+            .unwrap();
+            let mut buffer = [0u8; 256];
+            let (length, _) = peer.recv_from(&mut buffer).unwrap();
+            let opener = match role {
+                Role::Client => &keys.client_to_host,
+                Role::Host => &keys.host_to_client,
+            };
+            let opened = Opener::new(opener, keys.tag)
+                .open(&buffer[..length])
+                .unwrap();
+            assert_eq!(opened.kind, Kind::Punch);
+            tunnel.close("test over");
+            node.stop();
+            wire::punch_time(&opened.payload)
+        };
+        let device = stamp_of(
+            Role::Client,
+            Bridge::Device {
+                local: "127.0.0.1".parse().unwrap(),
+                ports: Ports::default(),
+            },
+        );
+        let sent = device.expect("a device's punch carries its clock");
+        assert!(node::unix_now().abs_diff(sent) <= 5);
+        let host = stamp_of(
+            Role::Host,
+            Bridge::Host {
+                service: "127.0.0.1".parse().unwrap(),
+                source: "127.0.0.1".parse().unwrap(),
+                ports: Ports::default(),
+                device: "stamp test".into(),
+            },
+        );
+        assert_eq!(host, None);
     }
 
     #[test]

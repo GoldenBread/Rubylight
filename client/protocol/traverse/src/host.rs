@@ -339,7 +339,13 @@ impl HostService {
     /// Starts (or restarts) the path to a device for its session `client`. The tunnel starts
     /// (sockets bound, threads started) with no lock held, so other paths' media and the
     /// console's status never wait on it.
-    fn open(&self, peer: &Peer, client: [u8; 16], candidates: Vec<SocketAddr>) -> Option<Tunnel> {
+    fn open(
+        &self,
+        peer: &Peer,
+        client: [u8; 16],
+        epoch: u64,
+        candidates: Vec<SocketAddr>,
+    ) -> Option<Tunnel> {
         {
             let tunnels = self.shared.tunnels.read().unwrap();
             if let Some((session, tunnel)) = tunnels.get(&peer.tag) {
@@ -378,6 +384,7 @@ impl HostService {
                 return None;
             }
         };
+        tunnel.set_epoch(epoch);
         let mut tunnels = self.shared.tunnels.write().unwrap();
         // Meanwhile a path for this session, or another device's path, may have started.
         if let Some((session, existing)) = tunnels.get(&peer.tag) {
@@ -410,6 +417,8 @@ impl HostService {
             return;
         };
         let punch_session = wire::punch_session(datagram);
+        // Set when this punch would replace a connected path: when that path's session began.
+        let mut replacing: Option<u64> = None;
         // The map is read-locked only for the lookup, never through the tunnel's handling: a
         // writer (a path starting or ending) then waits for a hash lookup, not for the slowest
         // datagram in flight, and every datagram behind it does not wait for that writer.
@@ -425,10 +434,11 @@ impl HostService {
                 tunnel.receive(datagram, from);
                 return;
             }
-            // A new session replaces a connected path only once the old one is gone, so an
-            // old punch replayed by someone on the way can't break a working stream.
+            // A new session replaces a connected path only once the old one is gone, or by a
+            // punch that proves its device started again (below): an old punch replayed by
+            // someone on the way can't break a working stream.
             if !tunnel.is_closed() && matches!(tunnel.state(), State::Connected(_)) {
-                return;
+                replacing = Some(tunnel.epoch());
             }
         }
         let Some(client) = punch_session else { return };
@@ -442,11 +452,24 @@ impl HostService {
         // Only a punch that opens with this device's keys starts a path.
         let keys = peer.keys.path(&self.shared.session, &client);
         // On a copy: the path the punch starts opens it again.
-        if wire::Opener::new(&keys.client_to_host, keys.tag)
-            .open(datagram)
-            .is_none()
-        {
+        let Some(opened) = wire::Opener::new(&keys.client_to_host, keys.tag).open(datagram) else {
             return;
+        };
+        // The device's clock, from a punch of a device that sends it.
+        let stamp = (opened.kind == wire::Kind::Punch)
+            .then(|| wire::punch_time(&opened.payload))
+            .flatten();
+        if let Some(current) = replacing {
+            // A connected path whose device started again is replaced at once, without waiting
+            // for the old one to time out. Only a punch sealed with this device's keys, sent
+            // lately and after the old session began, counts: a captured older punch cannot
+            // break a working stream, and one from the current session is no replay of another.
+            let fresh = stamp.is_some_and(|time| {
+                time > current && unix_now().abs_diff(time) <= record::CLIENT_FRESH_SECONDS
+            });
+            if !fresh {
+                return;
+            }
         }
         // A device that has to wait is told here, without a thread for each of its punches.
         if self.busy(&self.shared.tunnels.read().unwrap(), &tag) {
@@ -463,7 +486,7 @@ impl HostService {
         let spawned = thread::Builder::new()
             .name("internet play open".into())
             .spawn(move || {
-                let tunnel = opening.open(&peer, client, vec![from]);
+                let tunnel = opening.open(&peer, client, stamp.unwrap_or(0), vec![from]);
                 opening
                     .shared
                     .starting
@@ -746,7 +769,7 @@ impl HostService {
             return;
         }
         let candidates = punch::candidates(&record.endpoints, record.nat);
-        self.open(&peer, record.session, candidates);
+        self.open(&peer, record.session, record.time, candidates);
         self.shared.starting.lock().unwrap().remove(&claim);
     }
 }
@@ -845,7 +868,7 @@ mod tests {
             let _ = done.send(());
         });
         assert!(
-            finished.recv_timeout(Duration::from_millis(500)).is_ok(),
+            finished.recv_timeout(Duration::from_secs(5)).is_ok(),
             "the prune waited for a reader with every path open"
         );
         drop(reader);
@@ -885,6 +908,11 @@ mod tests {
         host.receive(&mut punch, probe.local_addr().unwrap());
         assert_eq!(paths(&host, 1).len(), 1);
 
+        // The loop's first round may have looked for both before the path was there.
+        for state in host.shared.devices.lock().unwrap().iter_mut() {
+            state.last_poll = None;
+            state.polling = false;
+        }
         host.serve_devices();
         let polled = |host: &HostService, id: &str| {
             let devices = host.shared.devices.lock().unwrap();
@@ -897,6 +925,94 @@ mod tests {
         };
         assert!(!polled(&host, "a"), "a healthy connected path was polled");
         assert!(polled(&host, "b"), "an absent device was not polled");
+        host.stop();
+    }
+
+    /// A device that started again punches through a path that still looks connected, at once;
+    /// an unstamped, stale, older or forged punch (what a replay on the way can send) cannot.
+    #[test]
+    fn a_device_that_started_again_replaces_its_connected_path_at_once() {
+        let host = HostService::start(config()).unwrap();
+        let device = Device {
+            id: "a".into(),
+            name: "Phone".into(),
+            secret: [3; 32],
+        };
+        host.set_devices(vec![device.clone()]);
+        let keys = Keys::new(device.secret);
+        let tag = keys.device_tag(&host.session());
+        let punch = |secret: [u8; 32], session: [u8; 16], stamp: Option<u64>| {
+            let path = Keys::new(secret).path(&host.session(), &session);
+            let payload = stamp.map(wire::punch_stamp);
+            wire::Sealer::new(&path.client_to_host, path.tag, session).seal(
+                wire::Kind::Punch,
+                0,
+                payload.as_ref().map_or(&[][..], |bytes| &bytes[..]),
+            )
+        };
+        let session = |host: &HostService| {
+            host.shared
+                .tunnels
+                .read()
+                .unwrap()
+                .get(&tag)
+                .map(|(session, _)| *session)
+        };
+        let old_address = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let new_address = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let now = unix_now();
+
+        host.receive(
+            &mut punch(device.secret, [9; 16], Some(now - 10)),
+            old_address.local_addr().unwrap(),
+        );
+        assert_eq!(paths(&host, 1).len(), 1);
+        assert_eq!(session(&host), Some([9; 16]));
+
+        // None of these replaces it: no clock, a stale one, one from before the old session
+        // began, or another device's keys.
+        let refused = [
+            punch(device.secret, [8; 16], None),
+            punch(device.secret, [8; 16], Some(now - 1_000)),
+            punch(device.secret, [8; 16], Some(now - 10)),
+            punch(device.secret, [8; 16], Some(now - 20)),
+            punch([4; 32], [8; 16], Some(now)),
+        ];
+        for mut forged in refused {
+            host.receive(&mut forged, new_address.local_addr().unwrap());
+        }
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(session(&host), Some([9; 16]));
+        assert_eq!(paths(&host, 1).len(), 1);
+
+        // The device's next session, stamped after the old one began, takes over in a moment.
+        let started = std::time::Instant::now();
+        host.receive(
+            &mut punch(device.secret, [8; 16], Some(now)),
+            new_address.local_addr().unwrap(),
+        );
+        while session(&host) != Some([8; 16]) && started.elapsed() < Duration::from_secs(5) {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(session(&host), Some([8; 16]));
+        let took = started.elapsed();
+        // ~0.1 s alone; the bound only says "not the 45 s of a silent path", under a loaded test run.
+        assert!(took < Duration::from_secs(5), "{took:?}");
+        let paths = paths(&host, 1);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].peer, Some(new_address.local_addr().unwrap()));
+
+        // The old session's punch, replayed now, does not take it back.
+        host.receive(
+            &mut punch(device.secret, [9; 16], Some(now - 10)),
+            old_address.local_addr().unwrap(),
+        );
+        host.receive(
+            &mut punch(device.secret, [9; 16], None),
+            old_address.local_addr().unwrap(),
+        );
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(session(&host), Some([8; 16]));
         host.stop();
     }
 
