@@ -21,6 +21,8 @@ final class DecoderPerformanceHints implements AutoCloseable {
     private int ownThreadId;
     private int submitThreadId;
     private int submitThreadId2;
+    private boolean submitThreadsPending;
+    private long submitThreadsRetryNs;
 
     DecoderPerformanceHints(Context context, boolean enabled, int frameRate) {
         if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -40,23 +42,35 @@ final class DecoderPerformanceHints implements AutoCloseable {
      * last one; the same pair is a no-op. 0 is no thread.
      */
     void setSubmitThreads(int first, int second) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || session == null || (first == 0 && second == 0) ||
-                (first == submitThreadId && second == submitThreadId2)) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || session == null || (first == 0 && second == 0)) {
             return;
         }
-        // Remembered even when refused, so a refusal is logged once and not retried every frame.
-        submitThreadId = first;
-        submitThreadId2 = second;
-        // Once per new pair, not per frame: shows whether the second submit thread (the InputSubmit worker) was seen.
-        LimeLog.info("Performance hint submit threads: " + first + ", " + second);
+        boolean samePair = first == submitThreadId && second == submitThreadId2;
+        // A pair refused because the app was not in the foreground is tried again once a second.
+        if (samePair && (!submitThreadsPending || System.nanoTime() < submitThreadsRetryNs)) {
+            return;
+        }
+        if (!samePair) {
+            // Remembered even when refused, so a lasting refusal is logged once and not retried every frame.
+            submitThreadId = first;
+            submitThreadId2 = second;
+            // Once per new pair, not per frame: shows whether the second submit thread (the InputSubmit worker) was seen.
+            LimeLog.info("Performance hint submit threads: " + first + ", " + second);
+        }
+        submitThreadsPending = false;
         int[] threads = threadList(ownThreadId, first, second);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // This runs in the render loop's finally, so nothing may escape it.
             try {
                 session.setThreads(threads);
+            } catch (IllegalStateException e) {
+                // The session is not in the foreground (picture-in-picture): try again later.
+                submitThreadsPending = true;
+                submitThreadsRetryNs = System.nanoTime() + 1_000_000_000L;
+                if (!samePair) {
+                    LimeLog.warning("Performance hint session refused submit threads " + first + ", " + second + " for now: " + e);
+                }
             } catch (RuntimeException e) {
-                // IllegalStateException when the session is not in the foreground (picture-in-picture) and
-                // a RuntimeException from a failed native call: this runs in the render loop's finally, so
-                // nothing may escape it. The pair stays remembered; the next new pair tries again.
                 LimeLog.warning("Performance hint session refused submit threads " + first + ", " + second + ": " + e);
             }
         } else {

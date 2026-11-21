@@ -1424,6 +1424,25 @@ public class PreferenceConfiguration {
         return wasOff;
     }
 
+    // Set once Decoder priority for receiving became on by default, so a later choice of off is kept.
+    static final String RECEIVE_DECODE_PRIORITY_DEFAULT_ON_PREF_STRING = "receive_decode_priority_default_on";
+
+    // Decoder priority for receiving started off, and first launch or Settings stored that default like
+    // a choice. It now starts on; a stored "off" is switched on once because it cannot be told apart from
+    // the old default. Turning it off afterwards is kept.
+    static boolean migrateReceiveDecodePriorityDefault(SharedPreferences prefs) {
+        if (prefs.getBoolean(RECEIVE_DECODE_PRIORITY_DEFAULT_ON_PREF_STRING, false)) {
+            return false;
+        }
+        boolean wasOff = !prefs.getBoolean(RECEIVE_DECODE_PRIORITY_PREF_STRING, true);
+        SharedPreferences.Editor editor = prefs.edit().putBoolean(RECEIVE_DECODE_PRIORITY_DEFAULT_ON_PREF_STRING, true);
+        if (wasOff) {
+            editor.putBoolean(RECEIVE_DECODE_PRIORITY_PREF_STRING, true);
+        }
+        editor.apply();
+        return wasOff;
+    }
+
     /**
      * "New streaming engine" is gone with the classic engine: there is one engine now, so the choice and the
      * marker of its default migration are dropped.
@@ -1578,6 +1597,9 @@ public class PreferenceConfiguration {
         migrateToNativeDefaults(context);
         if (migrateAutoReconnectDefault(prefs)) {
             com.limelight.LimeLog.info("Stream recovery switched to its new default: on");
+        }
+        if (migrateReceiveDecodePriorityDefault(prefs)) {
+            com.limelight.LimeLog.info("Decoder priority for receiving switched to its new default: on");
         }
         FoldedChoice.migrate(prefs);
         PreferenceConfiguration config = new PreferenceConfiguration();
