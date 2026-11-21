@@ -34,6 +34,11 @@ pub const STUN_WAIT: Millis = 3_000;
 pub const PUT_WAIT: Millis = 3_000;
 /// The responsive DHT nodes kept to start later lookups from.
 const KEPT_NODES: usize = 64;
+/// The bootstrap names' addresses are kept this long: hostnames of DHT routers change rarely, and
+/// a lookup that reached no node resolves them again at once.
+const BOOTSTRAP_KEPT: Millis = 30 * 60_000;
+/// A resolution that found nothing (no DNS yet, or the name is gone) is tried again after this.
+const BOOTSTRAP_RETRY: Millis = 10_000;
 /// The receive buffer asked for every internet play socket: a single thread opens and forwards
 /// every channel's media, and the OS default (64 KiB on Windows) holds a few milliseconds of
 /// video. The OS may grant less; smaller sizes are tried down to [`RECEIVE_BUFFER_MIN`], as
@@ -75,6 +80,11 @@ struct Shared {
     /// Counts [`Node::set_handler`] calls, so the receive thread takes `state`'s lock for the
     /// handler only when it changed.
     handler_version: AtomicU64,
+    /// The bootstrap names' addresses and when they were resolved ([`Node::seeds`]).
+    resolved: Mutex<Option<(Millis, Vec<SocketAddr>)>>,
+    /// How many times the bootstrap names were resolved.
+    #[cfg(test)]
+    resolutions: AtomicU64,
 }
 
 type DhtAnswer = (Tid, SocketAddr, Message);
@@ -101,6 +111,9 @@ impl Node {
             bootstrap,
             state: Mutex::new(State::default()),
             handler_version: AtomicU64::new(0),
+            resolved: Mutex::new(None),
+            #[cfg(test)]
+            resolutions: AtomicU64::new(0),
         });
         let receiver = shared.clone();
         thread::Builder::new()
@@ -201,9 +214,46 @@ impl Node {
     }
 
     fn seeds(&self) -> Vec<SocketAddr> {
+        self.seeds_at(self.now())
+    }
+
+    /// The nodes a lookup starts from: those that answered before, and the bootstrap names'
+    /// addresses. The names resolve once and are kept ([`BOOTSTRAP_KEPT`]): resolving them for
+    /// every lookup put a DNS query on every poll of every device, which cannot help a lookup
+    /// that the known nodes serve.
+    fn seeds_at(&self, now: Millis) -> Vec<SocketAddr> {
         let mut seeds = self.shared.state.lock().unwrap().known.clone();
-        for entry in &self.shared.bootstrap {
-            seeds.extend(self.resolve(entry));
+        let kept = {
+            let resolved = self.shared.resolved.lock().unwrap();
+            resolved.as_ref().and_then(|(at, addresses)| {
+                let age = now.saturating_sub(*at);
+                let keep = if addresses.is_empty() {
+                    BOOTSTRAP_RETRY
+                } else {
+                    BOOTSTRAP_KEPT
+                };
+                (age < keep).then(|| addresses.clone())
+            })
+        };
+        let bootstrap = kept.unwrap_or_else(|| {
+            // Resolved with no lock held: a slow DNS answer holds no other lookup back.
+            #[cfg(test)]
+            self.shared.resolutions.fetch_add(1, Ordering::Relaxed);
+            let mut addresses = Vec::new();
+            for entry in &self.shared.bootstrap {
+                for address in self.resolve(entry) {
+                    if !addresses.contains(&address) {
+                        addresses.push(address);
+                    }
+                }
+            }
+            *self.shared.resolved.lock().unwrap() = Some((now, addresses.clone()));
+            addresses
+        });
+        for address in bootstrap {
+            if !seeds.contains(&address) {
+                seeds.push(address);
+            }
         }
         seeds
     }
@@ -258,13 +308,20 @@ impl Node {
         for tid in registered {
             state.dht.remove(&tid);
         }
-        for address in lookup.responsive() {
+        let responsive = lookup.responsive();
+        for &address in &responsive {
             if !state.known.contains(&address) {
                 state.known.push(address);
             }
         }
         let excess = state.known.len().saturating_sub(KEPT_NODES);
         state.known.drain(..excess);
+        drop(state);
+        if responsive.is_empty() {
+            // Nothing answered: the kept addresses may be stale, so the next lookup resolves
+            // the names again.
+            *self.shared.resolved.lock().unwrap() = None;
+        }
         lookup
     }
 
@@ -399,6 +456,43 @@ mod tests {
             size(&plain)
         );
         assert!(size(&sized) >= RECEIVE_BUFFER_MIN);
+    }
+
+    /// The bootstrap names resolve once, not for every lookup: again after a long time, or
+    /// once a lookup reached no node; a name that resolved to nothing is retried sooner.
+    #[test]
+    fn bootstrap_names_resolve_once_and_again_after_a_failure_or_a_long_time() {
+        let resolutions = |node: &Node| node.shared.resolutions.load(Ordering::Relaxed);
+        let dead: SocketAddr = "127.0.0.1:9".parse().unwrap();
+        let node = Node::bind("127.0.0.1:0".parse().unwrap(), vec![dead.to_string()]).unwrap();
+        assert_eq!(node.seeds_at(0), vec![dead]);
+        assert_eq!(node.seeds_at(1_000), vec![dead]);
+        assert_eq!(node.seeds_at(BOOTSTRAP_KEPT - 1), vec![dead]);
+        assert_eq!(resolutions(&node), 1);
+        assert_eq!(node.seeds_at(BOOTSTRAP_KEPT), vec![dead]);
+        assert_eq!(resolutions(&node), 2);
+        // A lookup that reached nobody (nothing listens there) makes the next one resolve again,
+        // while one that is served by the kept addresses does not resolve at all.
+        let before = resolutions(&node);
+        let (item, _) = node.get(&[1; 32], b"salt");
+        assert!(item.is_none());
+        assert_eq!(resolutions(&node), before);
+        node.seeds();
+        assert_eq!(resolutions(&node), before + 1);
+        node.stop();
+
+        // A name that gave nothing is asked again after a short wait, not for every lookup.
+        let node = Node::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            vec!["no port in this name".into()],
+        )
+        .unwrap();
+        assert!(node.seeds_at(0).is_empty());
+        assert!(node.seeds_at(BOOTSTRAP_RETRY - 1).is_empty());
+        assert_eq!(resolutions(&node), 1);
+        assert!(node.seeds_at(BOOTSTRAP_RETRY).is_empty());
+        assert_eq!(resolutions(&node), 2);
+        node.stop();
     }
 
     /// A STUN server on loopback answers the node's query with the address it saw.

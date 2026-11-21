@@ -105,16 +105,27 @@ struct DeviceState {
 }
 
 /// How often a device's record is looked for: more often while it is trying to connect, or was
-/// lately (its record answered this host, or it has a path open in `open`).
-fn poll_interval(state: &DeviceState, open: &[[u8; 8]], now: Millis) -> Millis {
+/// lately (its record answered this host, or it has a path in `open`), never while its path is
+/// connected and heard from (`healthy`): a record can add nothing to that path, and a device
+/// that starts again punches through at once ([`HostService::receive`]) or, once its old path
+/// goes quiet, is found here again.
+fn poll_interval(
+    state: &DeviceState,
+    open: &[[u8; 8]],
+    healthy: &[[u8; 8]],
+    now: Millis,
+) -> Option<Millis> {
+    if healthy.contains(&state.tag) {
+        return None;
+    }
     let heard = state
         .heard
         .is_some_and(|at| now.saturating_sub(at) < ACTIVE_FOR);
-    if heard || open.contains(&state.tag) {
+    Some(if heard || open.contains(&state.tag) {
         POLL_EVERY
     } else {
         POLL_IDLE
-    }
+    })
 }
 
 /// What starting a device's path needs, copied out of its state so no lock is held meanwhile.
@@ -557,15 +568,20 @@ impl HostService {
             (status.public.clone(), status.nat)
         };
         let window = record::window(unix_now());
-        let open: Vec<[u8; 8]> = self
-            .shared
-            .tunnels
-            .read()
-            .unwrap()
-            .iter()
-            .filter(|(_, (_, tunnel))| !tunnel.is_closed())
-            .map(|(tag, _)| *tag)
-            .collect();
+        let (open, healthy): (Vec<[u8; 8]>, Vec<[u8; 8]>) = {
+            let tunnels = self.shared.tunnels.read().unwrap();
+            let open = tunnels
+                .iter()
+                .filter(|(_, (_, tunnel))| !tunnel.is_closed())
+                .map(|(tag, _)| *tag)
+                .collect();
+            let healthy = tunnels
+                .iter()
+                .filter(|(_, (_, tunnel))| tunnel.healthy())
+                .map(|(tag, _)| *tag)
+                .collect();
+            (open, healthy)
+        };
         let now = self.shared.node.now();
         let mut devices = self.shared.devices.lock().unwrap();
         let publish: Vec<(String, Keys)> = devices
@@ -589,8 +605,10 @@ impl HostService {
             .filter(|&index| {
                 let state = &devices[index];
                 !state.polling
-                    && state.last_poll.map_or(true, |at| {
-                        now.saturating_sub(at) >= poll_interval(state, &open, now)
+                    && poll_interval(state, &open, &healthy, now).is_some_and(|every| {
+                        state
+                            .last_poll
+                            .map_or(true, |at| now.saturating_sub(at) >= every)
                     })
             })
             .collect();
@@ -780,13 +798,20 @@ mod tests {
             answered: None,
         };
         let now = 3_600_000;
-        assert_eq!(poll_interval(&state, &[], now), POLL_IDLE);
-        // An open path, or a record that answered lately, keeps it fast.
-        assert_eq!(poll_interval(&state, &[state.tag], now), POLL_EVERY);
+        assert_eq!(poll_interval(&state, &[], &[], now), Some(POLL_IDLE));
+        // A path that is still being punched, or a record that answered lately, keeps it fast.
+        assert_eq!(
+            poll_interval(&state, &[state.tag], &[], now),
+            Some(POLL_EVERY)
+        );
         state.heard = Some(now - ACTIVE_FOR + 1);
-        assert_eq!(poll_interval(&state, &[], now), POLL_EVERY);
+        assert_eq!(poll_interval(&state, &[], &[], now), Some(POLL_EVERY));
         state.heard = Some(now - ACTIVE_FOR);
-        assert_eq!(poll_interval(&state, &[], now), POLL_IDLE);
+        assert_eq!(poll_interval(&state, &[], &[], now), Some(POLL_IDLE));
+        // A connected path that is heard from needs no look at all.
+        assert_eq!(poll_interval(&state, &[state.tag], &[state.tag], now), None);
+        state.heard = Some(now);
+        assert_eq!(poll_interval(&state, &[state.tag], &[state.tag], now), None);
     }
 
     /// The loop's once-a-second prune never write-locks the map while every path is open, so the
@@ -831,6 +856,47 @@ mod tests {
         }
         host.prune_closed();
         assert!(host.shared.tunnels.read().unwrap().is_empty());
+        host.stop();
+    }
+
+    /// A device whose path is connected and heard from is not looked for in the DHT; one with
+    /// no path is.
+    #[test]
+    fn a_connected_path_is_not_polled_but_an_absent_device_is() {
+        let host = HostService::start(config()).unwrap();
+        let phone = Device {
+            id: "a".into(),
+            name: "Phone".into(),
+            secret: [3; 32],
+        };
+        let tablet = Device {
+            id: "b".into(),
+            name: "Tablet".into(),
+            secret: [5; 32],
+        };
+        host.set_devices(vec![phone.clone(), tablet.clone()]);
+        let path = Keys::new(phone.secret).path(&host.session(), &[9; 16]);
+        let probe = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut punch = wire::Sealer::new(&path.client_to_host, path.tag, [9; 16]).seal(
+            wire::Kind::Punch,
+            0,
+            &[],
+        );
+        host.receive(&mut punch, probe.local_addr().unwrap());
+        assert_eq!(paths(&host, 1).len(), 1);
+
+        host.serve_devices();
+        let polled = |host: &HostService, id: &str| {
+            let devices = host.shared.devices.lock().unwrap();
+            devices
+                .iter()
+                .find(|state| state.device.id == id)
+                .unwrap()
+                .last_poll
+                .is_some()
+        };
+        assert!(!polled(&host, "a"), "a healthy connected path was polled");
+        assert!(polled(&host, "b"), "an absent device was not polled");
         host.stop();
     }
 

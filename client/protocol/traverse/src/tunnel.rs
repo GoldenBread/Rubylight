@@ -39,6 +39,9 @@ pub const TARGET_RTSP: u8 = 2;
 /// A connected path sends a keepalive when it has sent nothing for this long: NATs drop idle
 /// UDP mappings after 30 s or more.
 const KEEPALIVE: Millis = 10_000;
+/// A connected path that heard something within this long is [`Tunnel::healthy`]: the peer's
+/// keepalive (every [`KEEPALIVE`]) and a margin for a lost one.
+pub const HEALTHY_FOR: Millis = KEEPALIVE + 5_000;
 /// A path that hears nothing for this long is gone.
 const IDLE: Millis = 45_000;
 /// The device closes a path that carried no connection and no media for this long: the host
@@ -277,6 +280,17 @@ impl Tunnel {
             }
             _ => State::Punching,
         }
+    }
+
+    /// The path is connected and its peer was heard from lately ([`HEALTHY_FOR`]): there is
+    /// nothing to look for in the DHT on its behalf.
+    pub fn healthy(&self) -> bool {
+        let silent = self
+            .shared
+            .node
+            .now()
+            .saturating_sub(self.shared.last_heard.load(Ordering::Relaxed));
+        !self.is_closed() && silent <= HEALTHY_FOR && matches!(self.state(), State::Connected(_))
     }
 
     /// More addresses for the peer, learned after the start.
