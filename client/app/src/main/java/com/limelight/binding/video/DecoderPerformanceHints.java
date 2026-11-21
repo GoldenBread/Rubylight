@@ -53,11 +53,20 @@ final class DecoderPerformanceHints implements AutoCloseable {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             try {
                 session.setThreads(threads);
-            } catch (IllegalArgumentException | SecurityException e) {
+            } catch (RuntimeException e) {
+                // IllegalStateException when the session is not in the foreground (picture-in-picture) and
+                // a RuntimeException from a failed native call: this runs in the render loop's finally, so
+                // nothing may escape it. The pair stays remembered; the next new pair tries again.
                 LimeLog.warning("Performance hint session refused submit threads " + first + ", " + second + ": " + e);
             }
         } else {
-            PerformanceHintManager.Session replacement = manager.createHintSession(threads, targetDurationNs);
+            PerformanceHintManager.Session replacement;
+            try {
+                replacement = manager.createHintSession(threads, targetDurationNs);
+            } catch (RuntimeException e) {
+                LimeLog.warning("Performance hint session could not add submit threads " + first + ", " + second + ": " + e);
+                return;
+            }
             if (replacement == null) {
                 LimeLog.warning("Performance hint session could not add submit threads " + first + ", " + second);
             } else {
@@ -108,12 +117,17 @@ final class DecoderPerformanceHints implements AutoCloseable {
 
         /** On a submit thread, after a decode unit: its thread id and the CPU time it took. */
         void add(int submitThreadId, long cpuNs) {
-            int first = threadId;
-            if (submitThreadId != first && submitThreadId != threadId2) {
-                if (first == 0) {
-                    threadId = submitThreadId;
-                } else {
-                    threadId2 = submitThreadId;
+            if (submitThreadId != threadId && submitThreadId != threadId2) {
+                // Both submit threads can see a new id at once; the lock keeps either from overwriting the other.
+                synchronized (this) {
+                    int first = threadId;
+                    if (submitThreadId != first && submitThreadId != threadId2) {
+                        if (first == 0) {
+                            threadId = submitThreadId;
+                        } else {
+                            threadId2 = submitThreadId;
+                        }
+                    }
                 }
             }
             if (cpuNs > 0) {

@@ -101,7 +101,7 @@ def run(args):
             f.sh(f"nohup sh -c '{loops} sleep {args.seconds}; kill 0' >/dev/null 2>&1 &", check=False)
             load_cpu = check_load(STRESS_JOBS)
             f.log(f'{tag}: load verified, device CPU {load_cpu}% busy')
-        time.sleep(args.seconds / 2 - 10)
+        time.sleep(max(0, args.seconds / 2 - 10))
         mode = s.active_hz(f.sh('dumpsys display', check=False))
         time.sleep(args.seconds - args.seconds / 2)
         try:

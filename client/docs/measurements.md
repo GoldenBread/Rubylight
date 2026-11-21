@@ -122,7 +122,7 @@ Present times come from `dumpsys SurfaceFlinger --latency`, not from the moment 
 
 ## Two Debug settings after the input hand-off
 
-Measured on a Retroid Pocket 6 (120 Hz panel, HEVC 1080p60 20 Mbps, Smoothest pacing, Direct submit and Prioritize stream traffic on, 90 s per leg, order off, on, on, off), receive to release from Nightjar's latency CSV. **Speed up frame hand-off** and **Decoder priority for receiving** were each compared with the other off. The load legs ran 8 busy shell loops on the device; the script checked before each leg that the loops were running and that the device's CPUs were at least 95 % busy (each check read 100 %, `tools/hw/settings_ab.py`). The idle legs came from an earlier build of the same branch, so compare off with on within a row, not idle with load.
+Measured on a Retroid Pocket 6 (120 Hz panel, HEVC 1080p60 20 Mbps, Smoothest pacing, Direct submit and Prioritize stream traffic on, 90 s per leg, order off, on, on, off), receive to release from Nightjar's latency CSV. **Speed up frame hand-off** and **Decoder priority for receiving** were each compared with the other off. The load legs ran 8 busy shell loops on the device; 10 s into each leg the script checked that the loops were running and that the device's CPUs were at least 95 % busy (each check read 100 %, `tools/hw/settings_ab.py`). The idle legs came from an earlier build of the same branch, so compare off with on within a row, not idle with load.
 
 | Setting | Load | Off p50 / p95 ms (two legs) | On p50 / p95 ms (two legs) | Catch-up drops |
 | --- | --- | --- | --- | --- |
