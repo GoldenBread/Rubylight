@@ -359,6 +359,56 @@ fn gamepad_timings_cover_one_window_then_start_again() {
 }
 
 #[test]
+fn idle_gamepad_timings_log_at_debug_only() {
+    use std::io::Write;
+    #[derive(Clone, Default)]
+    struct Buf(Arc<Mutex<Vec<u8>>>);
+    impl Write for Buf {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let capture = |level: tracing::Level, stats: Stats| -> String {
+        let buf = Buf::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(level)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || stats.log());
+        String::from_utf8(buf.0.lock().unwrap().clone()).unwrap()
+    };
+
+    let start = Instant::now();
+    let mut idle = Stats::default();
+    idle.poll(0, start);
+    assert!(!idle.has_activity());
+    assert!(capture(tracing::Level::INFO, idle).is_empty());
+
+    let mut idle_debug = Stats::default();
+    idle_debug.poll(0, start);
+    let logged = capture(tracing::Level::DEBUG, idle_debug);
+    assert!(logged.contains("gamepad timings") && logged.contains("feedback_polls=1"));
+
+    let mut batch_active = Stats::default();
+    batch_active.batch(start, 1, start + Duration::from_micros(10));
+    assert!(batch_active.has_activity());
+    let logged = capture(tracing::Level::INFO, batch_active);
+    assert!(logged.contains("gamepad timings") && logged.contains("batches=1"));
+
+    let mut feedback_active = Stats::default();
+    feedback_active.poll(2, start);
+    assert!(feedback_active.has_activity());
+    let logged = capture(tracing::Level::INFO, feedback_active);
+    assert!(logged.contains("gamepad timings") && logged.contains("feedback_drained=2"));
+}
+
+#[test]
 fn a_batchs_wait_counts_from_its_oldest_event() {
     let (pads, gate, _log) = fake();
     // The first state waits at the gate; the second queues behind it and

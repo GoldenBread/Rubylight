@@ -746,29 +746,45 @@ impl Stats {
         self.drained += drained;
         self.drained_max = self.drained_max.max(drained);
     }
+    fn has_activity(&self) -> bool {
+        !self.waits.is_empty() || self.drained > 0
+    }
     /// The line for the window that ended, once STATS_EVERY has passed.
     fn take_due(&mut self, now: Instant) -> Option<Self> {
         let since = self.since?;
         (now.saturating_duration_since(since) >= STATS_EVERY).then(|| std::mem::take(self))
     }
     fn log(mut self) {
+        let active = self.has_activity();
+        if !active && !tracing::enabled!(tracing::Level::DEBUG) {
+            return;
+        }
         let micros = |d: Option<&Duration>| d.map_or(0, |d| d.as_micros() as u64);
         self.waits.sort_unstable();
         let at = |q: usize| {
             self.waits
                 .get((self.waits.len().saturating_sub(1)) * q / 100)
         };
-        tracing::info!(
-            batches = self.waits.len(),
-            queued_p50_us = micros(at(50)),
-            queued_p99_us = micros(at(99)),
-            queued_max_us = micros(self.waits.last()),
-            queue_depth_max = self.depth_max,
-            feedback_polls = self.polls,
-            feedback_drained = self.drained,
-            feedback_drained_max = self.drained_max,
-            "gamepad timings"
-        );
+        macro_rules! emit {
+            ($level:ident) => {
+                tracing::$level!(
+                    batches = self.waits.len(),
+                    queued_p50_us = micros(at(50)),
+                    queued_p99_us = micros(at(99)),
+                    queued_max_us = micros(self.waits.last()),
+                    queue_depth_max = self.depth_max,
+                    feedback_polls = self.polls,
+                    feedback_drained = self.drained,
+                    feedback_drained_max = self.drained_max,
+                    "gamepad timings"
+                )
+            };
+        }
+        if active {
+            emit!(info);
+        } else {
+            emit!(debug);
+        }
     }
 }
 
