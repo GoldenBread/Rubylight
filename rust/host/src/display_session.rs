@@ -1250,17 +1250,23 @@ impl Ready {
             return Ok(());
         };
         tracing::info!(output = %prepared.output, profile = ?profile, "the device's HDR profile changed while its stream was paused; the resume applies it");
-        prepared.profile_choice = choice;
         prepared.recovery_profile = profile.clone();
         let state: &mut Prepared = &mut prepared;
-        butterpollo_windows::input::on_input_desktop(|| {
-            state._profile.take();
-            state._profile = profile.as_ref().and_then(|profile| {
-                hdr_profile::Lease::acquire(&state.output, profile)
-                    .inspect_err(|error| tracing::warn!(error = %format!("{error:#}"), "the HDR profile could not be applied on resume"))
-                    .ok()
-            });
+        // The new profile is applied before the old one is let go; a refusal keeps the old
+        // lease and fails the resume, which a stream without its profile would not.
+        let applied = butterpollo_windows::input::on_input_desktop(|| {
+            take_profile(
+                &mut state._profile,
+                profile.as_deref(),
+                |held, profile| match held {
+                    Some(lease) => lease.switch(&state.output, profile).map(|()| None),
+                    None => hdr_profile::Lease::acquire(&state.output, profile).map(Some),
+                },
+            )
         });
+        applied.context("the HDR profile could not be applied on resume")?;
+        // Only now, so that a failed resume sees the change again at the next one.
+        prepared.profile_choice = choice;
         Ok(())
     }
     /// Whether the device's next stream may reuse this one. A game window's
@@ -1524,6 +1530,24 @@ fn resumed_profile(
     (applies && launched != now).then(|| now.map(str::to_owned))
 }
 
+/// Puts `wanted` in `slot` through `change`, which gets the lease held (to switch in place,
+/// Ok(None)) or none (to acquire, Ok(Some)). The held lease is never let go first, so an error
+/// leaves the slot as it was. No profile wanted takes the lease off.
+fn take_profile<L>(
+    slot: &mut Option<L>,
+    wanted: Option<&str>,
+    change: impl FnOnce(Option<&mut L>, &str) -> Result<Option<L>>,
+) -> Result<()> {
+    let Some(wanted) = wanted else {
+        slot.take();
+        return Ok(());
+    };
+    if let Some(acquired) = change(slot.as_mut(), wanted)? {
+        *slot = Some(acquired);
+    }
+    Ok(())
+}
+
 /// A device's own display mode (`display_mode`): width, height and refresh.
 type DeviceMode = (u32, u32, Rate);
 
@@ -1784,8 +1808,15 @@ impl Prepared {
                 self.mode_report.publish(applied_mode(&self.output));
             }
             if let Some(profile) = &self.recovery_profile {
-                self._profile.take();
-                self._profile = Some(hdr_profile::Lease::acquire(&self.output, profile)?);
+                let output = &self.output;
+                take_profile(
+                    &mut self._profile,
+                    Some(profile),
+                    |held, profile| match held {
+                        Some(lease) => lease.switch(output, profile).map(|()| None),
+                        None => hdr_profile::Lease::acquire(output, profile).map(Some),
+                    },
+                )?;
             }
             self.recovery.finish();
         } else {

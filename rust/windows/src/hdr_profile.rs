@@ -338,6 +338,66 @@ impl Lease {
             identity: monitor.device_id,
         })
     }
+    /// Makes this lease hold `selection` on `output` without letting go of what it holds
+    /// first: a failure leaves the lease, its profile and its journal entry as they were.
+    /// Taking the lease off before acquiring the new one left a stream that ran with no
+    /// calibration and no journal entry when the acquisition failed.
+    pub fn switch(&mut self, output: &str, selection: &str) -> Result<()> {
+        let applied = installed(selection)?;
+        let monitor = crate::display::monitors()?
+            .into_iter()
+            .find(|m| m.display_name == output || m.device_id == output)
+            .context("ICC output disappeared")?;
+        if monitor.device_id != self.identity {
+            // Another display: its lease first, then this one's goes.
+            *self = Self::acquire(output, selection)?;
+            return Ok(());
+        }
+        let mut leases = LEASES.lock().unwrap();
+        let state = leases
+            .get_mut(&self.identity)
+            .context("the HDR profile lease is gone")?;
+        let api = Api::load()?;
+        let system = state.system;
+        switch_state(&api, &monitor, state, applied, |before, applied| {
+            crate::display_recovery::profile(
+                &monitor.device_id,
+                &monitor.display_name,
+                before,
+                applied,
+                system,
+            )
+        })
+    }
+}
+/// `state`'s profile becomes `applied` on `monitor`, journalled before Windows changes. A
+/// lease another client shares keeps its profile. When the change fails, the profile the
+/// display had and the journal entry that goes with it are put back.
+fn switch_state(
+    api: &impl Associations,
+    monitor: &Monitor,
+    state: &mut State,
+    applied: String,
+    record: impl Fn(Option<String>, &str) -> Result<()>,
+) -> Result<()> {
+    let current = api.get(monitor, state.system)?;
+    let has = current
+        .as_deref()
+        .is_some_and(|name| name.eq_ignore_ascii_case(&applied));
+    if state.applied.eq_ignore_ascii_case(&applied) && has {
+        return Ok(());
+    }
+    if state.users > 1 && !state.applied.eq_ignore_ascii_case(&applied) {
+        bail!("another client owns a different ICC profile on this output");
+    }
+    record(state.previous.clone(), &applied)?;
+    if !has && let Err(error) = api.add(monitor, state.system, &applied) {
+        let _ = restore_with(api, monitor, current.as_deref(), &applied, state.system);
+        let _ = record(state.previous.clone(), &state.applied);
+        return Err(error);
+    }
+    state.applied = applied;
+    Ok(())
 }
 /// The profile to put back after streaming. A display that was away when an
 /// earlier stream ended still has that stream's profile, and its journal
@@ -531,6 +591,119 @@ mod tests {
         restore_with(&fake, &display, Some("MINE.icm"), "mine.icm", true)?;
         assert_eq!(fake.get(&display, true)?, Some("mine.icm".into()));
         Ok(())
+    }
+    /// An association store whose `add` of one name fails, as a Windows call that is refused.
+    struct Refusing(Fake, &'static str);
+    impl Associations for Refusing {
+        fn get(&self, monitor: &Monitor, system: bool) -> Result<Option<String>> {
+            self.0.get(monitor, system)
+        }
+        fn add(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()> {
+            anyhow::ensure!(name != self.1, "refused");
+            self.0.add(monitor, system, name)
+        }
+        fn remove(&self, monitor: &Monitor, system: bool, name: &str) -> Result<()> {
+            self.0.remove(monitor, system, name)
+        }
+    }
+    fn state(applied: &str, users: usize) -> State {
+        State {
+            users,
+            previous: Some("orig.icm".into()),
+            applied: applied.into(),
+            system: true,
+        }
+    }
+    #[test]
+    fn switching_the_profile_journals_the_new_one_before_it_changes_windows() -> Result<()> {
+        let display = monitor("virtual", false);
+        let fake = Fake::default().with(&display, true, "old-cal.icm");
+        let journal = RefCell::new(Vec::new());
+        let mut held = state("old-cal.icm", 1);
+        switch_state(
+            &fake,
+            &display,
+            &mut held,
+            "new-cal.icm".into(),
+            |before, applied| {
+                // The journal is written while Windows still has the old profile.
+                assert_eq!(fake.get(&display, true)?, Some("old-cal.icm".into()));
+                journal.borrow_mut().push((before, applied.to_owned()));
+                Ok(())
+            },
+        )?;
+        assert_eq!(fake.get(&display, true)?, Some("new-cal.icm".into()));
+        assert_eq!(held.applied, "new-cal.icm");
+        assert_eq!(
+            journal.into_inner(),
+            vec![(Some("orig.icm".into()), "new-cal.icm".to_owned())]
+        );
+        Ok(())
+    }
+    #[test]
+    fn a_refused_switch_keeps_the_old_profile_and_its_journal_entry() {
+        let display = monitor("virtual", false);
+        let fake = Refusing(
+            Fake::default().with(&display, true, "old-cal.icm"),
+            "new-cal.icm",
+        );
+        let journal = RefCell::new(Some("old-cal.icm".to_owned()));
+        let mut held = state("old-cal.icm", 1);
+        let result = switch_state(
+            &fake,
+            &display,
+            &mut held,
+            "new-cal.icm".into(),
+            |_, applied| {
+                *journal.borrow_mut() = Some(applied.to_owned());
+                Ok(())
+            },
+        );
+        assert!(result.is_err(), "the refusal is reported");
+        assert_eq!(
+            held.applied, "old-cal.icm",
+            "the lease still holds the old profile"
+        );
+        assert_eq!(
+            fake.get(&display, true).unwrap(),
+            Some("old-cal.icm".into())
+        );
+        assert_eq!(journal.into_inner().as_deref(), Some("old-cal.icm"));
+        // A failing journal write changes nothing in Windows.
+        let fake = Fake::default().with(&display, true, "old-cal.icm");
+        let mut held = state("old-cal.icm", 1);
+        let result = switch_state(&fake, &display, &mut held, "new-cal.icm".into(), |_, _| {
+            anyhow::bail!("journal unwritable")
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            fake.get(&display, true).unwrap(),
+            Some("old-cal.icm".into())
+        );
+    }
+    #[test]
+    fn a_profile_another_client_shares_is_not_switched() {
+        let display = monitor("virtual", false);
+        let fake = Fake::default().with(&display, true, "old-cal.icm");
+        let mut held = state("old-cal.icm", 2);
+        let result = switch_state(&fake, &display, &mut held, "new-cal.icm".into(), |_, _| {
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            fake.get(&display, true).unwrap(),
+            Some("old-cal.icm".into())
+        );
+        // The same profile is shared as before, and a lost association is put back.
+        let fake = Fake::default();
+        switch_state(&fake, &display, &mut held, "old-cal.icm".into(), |_, _| {
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            fake.get(&display, true).unwrap(),
+            Some("old-cal.icm".into())
+        );
     }
     #[test]
     fn mhc2_peak_reads_calibration_and_rejects_truncated_or_negative_tags() {

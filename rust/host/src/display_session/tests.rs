@@ -3168,3 +3168,30 @@ fn a_capped_streams_display_keeps_its_size_for_the_mode_matches_and_resumes() {
     assert!(!display.matches(&coded_only));
     assert!(!display.resumes(&coded_only));
 }
+
+#[test]
+fn a_resume_that_cannot_apply_its_profile_keeps_the_lease_it_had() {
+    // Acquiring fails with none held: still none, and the error is reported.
+    let mut slot: Option<&str> = None;
+    assert!(take_profile(&mut slot, Some("new"), |_, _| anyhow::bail!("refused")).is_err());
+    assert_eq!(slot, None);
+    // A switch that fails leaves the old lease in place instead of dropping it first.
+    let mut slot = Some("old");
+    let seen = std::cell::Cell::new(None);
+    let result = take_profile(&mut slot, Some("new"), |held, _| {
+        seen.set(held.map(|lease| *lease));
+        anyhow::bail!("refused")
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        seen.get(),
+        Some("old"),
+        "the old lease is still held while the new one is tried"
+    );
+    assert_eq!(slot, Some("old"), "and still held after the refusal");
+    // A new lease replaces the old; none wanted takes it off.
+    take_profile(&mut slot, Some("new"), |_, _| Ok(Some("new"))).unwrap();
+    assert_eq!(slot, Some("new"));
+    take_profile(&mut slot, None, |_, _| unreachable!()).unwrap();
+    assert_eq!(slot, None);
+}
