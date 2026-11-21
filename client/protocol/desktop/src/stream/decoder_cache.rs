@@ -74,6 +74,8 @@ struct Parked<K, D> {
     decoder: D,
     /// The name the overlay's decoder line showed for it, as a PyroWave decoder makes its own.
     name: Option<String>,
+    /// The renderer generation it was made under (`generation`).
+    generation: u64,
     /// When it was parked: a decoder waits for the reconnect that follows its own stream, and
     /// no longer.
     at: std::time::Instant,
@@ -94,18 +96,29 @@ impl<K, D> Cache<K, D> {
         Self { parked: Mutex::new(None) }
     }
 
-    /// Keeps `decoder` for the next stream, replacing one parked before.
+    /// Keeps `decoder` for the next stream, replacing one parked before (the tests' shorthand).
+    #[cfg(test)]
     pub fn park(&self, key: K, decoder: D) {
-        self.park_named(key, decoder, None);
+        self.park_named(key, decoder, None, generation());
     }
 
-    pub fn park_named(&self, key: K, decoder: D, name: Option<String>) {
-        self.park_at(key, decoder, name, std::time::Instant::now());
+    /// Keeps `decoder`, made under renderer generation `made_under`, unless the renderer it was
+    /// made for is gone since: then it is dropped here (the caller's thread, as before the cache).
+    /// The check is under the lock `clear` takes after it bumps the generation, so a decoder
+    /// cannot be parked after the clear that should have taken it.
+    pub fn park_named(&self, key: K, decoder: D, name: Option<String>, made_under: u64) {
+        self.park_at(key, decoder, name, made_under, std::time::Instant::now());
     }
 
-    fn park_at(&self, key: K, decoder: D, name: Option<String>, at: std::time::Instant) {
-        let replaced = self.parked.lock().unwrap_or_else(|poison| poison.into_inner())
-            .replace(Parked { key, decoder, name, at });
+    fn park_at(&self, key: K, decoder: D, name: Option<String>, made_under: u64, at: std::time::Instant) {
+        let mut parked = self.parked.lock().unwrap_or_else(|poison| poison.into_inner());
+        if made_under != generation() {
+            drop(parked);
+            drop(decoder);
+            return;
+        }
+        let replaced = parked.replace(Parked { key, decoder, name, generation: made_under, at });
+        drop(parked);
         drop(replaced);
     }
 
@@ -113,7 +126,7 @@ impl<K, D> Cache<K, D> {
     #[cfg(test)]
     pub fn park_aged(&self, key: K, decoder: D, age: std::time::Duration) {
         let at = std::time::Instant::now().checked_sub(age).unwrap_or_else(std::time::Instant::now);
-        self.park_at(key, decoder, None, at);
+        self.park_at(key, decoder, None, generation(), at);
     }
 
     /// Drops the parked decoder after [`KEEP_FOR`] even if no stream starts: the timer of a parked
@@ -156,7 +169,7 @@ impl<K, D> Cache<K, D> {
     pub fn take(&self, usable: impl FnOnce(&K) -> bool) -> Option<(D, Option<String>)> {
         let mut parked = self.parked.lock().unwrap_or_else(|poison| poison.into_inner());
         let entry = parked.as_ref()?;
-        if entry.at.elapsed() >= KEEP_FOR {
+        if entry.at.elapsed() >= KEEP_FOR || entry.generation != generation() {
             let stale = parked.take();
             drop(parked);
             drop(stale);
@@ -235,8 +248,8 @@ pub(super) fn serialize() -> std::sync::MutexGuard<'static, ()> {
 }
 
 /// Keeps an FFmpeg decoder for the stream that follows this one.
-pub(super) fn park_media(key: MediaKey, decoder: VideoDecoder) {
-    with_media(|cache| cache.park(key, decoder));
+pub(super) fn park_media(key: MediaKey, decoder: VideoDecoder, made_under: u64) {
+    with_media(|cache| cache.park_named(key, decoder, None, made_under));
     #[cfg(not(test))]
     expire_media_later();
 }
@@ -252,10 +265,38 @@ pub(super) fn only_pyrowave() {
     with_media(Cache::clear);
 }
 
-/// Drops both parked decoders on the calling thread. The renderer's GPU device must outlive
-/// them (a Vulkan video or PyroWave decoder borrows it, a Direct3D 11 one holds a reference to
-/// it), so every place that destroys the renderer calls this first.
+/// The renderer generation: it counts the renderers whose GPU device is going. A decoder is made
+/// under the generation the session started in and parked only while it is still the current
+/// one, so a session that stops after its renderer was torn down (a launch's thread joining the
+/// last session's teardown) cannot park a decoder that borrows or holds the old device.
+#[cfg(not(test))]
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(test)]
+std::thread_local! {
+    static GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The current renderer generation.
+pub(super) fn generation() -> u64 {
+    #[cfg(not(test))]
+    { GENERATION.load(std::sync::atomic::Ordering::SeqCst) }
+    #[cfg(test)]
+    { GENERATION.with(std::cell::Cell::get) }
+}
+
+/// The renderer's GPU device is going: no decoder made so far may be parked from now on.
+pub fn retire() {
+    #[cfg(not(test))]
+    { GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+    #[cfg(test)]
+    { GENERATION.with(|generation| generation.set(generation.get() + 1)); }
+}
+
+/// Retires the generation and drops both parked decoders on the calling thread. The renderer's
+/// GPU device must outlive them (a Vulkan video or PyroWave decoder borrows it, a Direct3D 11 one
+/// holds a reference to it), so every place that destroys the renderer calls this first.
 pub fn clear() {
+    retire();
     with_media(Cache::clear);
     with_pyrowave(Cache::clear);
 }
@@ -281,8 +322,8 @@ pub(super) fn take_media(key: MediaKey, order: &[Hardware]) -> Option<VideoDecod
 }
 
 /// Keeps a PyroWave decoder, with the name the decoder line showed, for the stream that follows.
-pub(super) fn park_pyrowave(key: PyroWaveKey, decoder: Pyrowave, name: String) {
-    with_pyrowave(|cache| cache.park_named(key, decoder, Some(name)));
+pub(super) fn park_pyrowave(key: PyroWaveKey, decoder: Pyrowave, name: String, made_under: u64) {
+    with_pyrowave(|cache| cache.park_named(key, decoder, Some(name), made_under));
     #[cfg(not(test))]
     expire_pyrowave_later();
 }
@@ -421,20 +462,37 @@ mod tests {
     #[test]
     fn clear_empties_both_caches_and_a_stream_of_the_other_kind_drops_the_parked_one() {
         let _serial = serialize();
-        park_media(media(0x0100, 640, 360), decoder());
-        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into());
+        park_media(media(0x0100, 640, 360), decoder(), generation());
+        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into(), generation());
         assert!(media_parked() && any_parked());
         clear();
         assert!(!any_parked(), "nothing outlives the renderer's device");
         assert!(!media_parked());
-        park_media(media(0x0100, 640, 360), decoder());
-        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into());
+        park_media(media(0x0100, 640, 360), decoder(), generation());
+        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into(), generation());
         only_media();
         assert!(media_parked() && !with_pyrowave(|cache| cache.is_parked()), "an FFmpeg stream drops the PyroWave decoder at once");
-        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into());
+        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into(), generation());
         only_pyrowave();
         assert!(!media_parked() && with_pyrowave(|cache| cache.is_parked()), "a PyroWave stream drops the FFmpeg decoder at once");
         clear();
+    }
+
+    /// A session that stops after its renderer was torn down parks nothing, and a decoder parked
+    /// before it goes with the renderer: neither can outlive the GPU device it borrows or holds.
+    #[test]
+    fn a_decoder_made_for_a_renderer_that_is_gone_is_not_parked_or_taken() {
+        let cache: Cache<MediaKey, VideoDecoder> = Cache::new();
+        let key = media(0x0100, 800, 600);
+        let made_under = generation();
+        retire();
+        cache.park_named(key, decoder(), None, made_under);
+        assert!(!cache.is_parked(), "refused: the renderer it was made for is gone");
+        cache.park_named(key, decoder(), None, generation());
+        assert!(cache.is_parked(), "a decoder of the current renderer is kept");
+        retire();
+        assert!(cache.take(|parked| parked.serves(&key)).is_none(), "and not served once its renderer is gone");
+        assert!(!cache.is_parked(), "but dropped at once");
     }
 
     fn pyro(width: usize, height: usize, ten_bit: bool, slots: usize) -> PyroWaveKey {
@@ -445,7 +503,7 @@ mod tests {
     fn a_pyrowave_decoder_is_kept_only_for_the_same_picture_and_device() {
         let cache: Cache<PyroWaveKey, Pyrowave> = Cache::new();
         let key = pyro(3840, 2160, true, 8);
-        cache.park_named(key, Pyrowave::cpu(64, 64, false).expect("a small CPU decoder"), Some("PyroWave (Rust, GPU wavelets)".into()));
+        cache.park_named(key, Pyrowave::cpu(64, 64, false).expect("a small CPU decoder"), Some("PyroWave (Rust, GPU wavelets)".into()), generation());
         for changed in [
             pyro(1920, 1080, true, 8),
             pyro(3840, 2160, false, 8),
@@ -457,7 +515,7 @@ mod tests {
             cache.park(key, Pyrowave::cpu(64, 64, false).unwrap());
             assert!(cache.take(|parked| *parked == changed).is_none(), "a changed picture or device does not reuse the decoder");
         }
-        cache.park_named(key, Pyrowave::cpu(64, 64, false).unwrap(), Some("named".into()));
+        cache.park_named(key, Pyrowave::cpu(64, 64, false).unwrap(), Some("named".into()), generation());
         let (_, name) = cache.take(|parked| *parked == key).expect("the same stream reuses the decoder");
         assert_eq!(name.as_deref(), Some("named"), "the decoder line keeps saying what it decoded with");
     }

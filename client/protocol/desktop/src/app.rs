@@ -104,8 +104,9 @@ impl App {
             checks_stopped &= probe.finish_until(deadline);
         }
         let (renderer, window) = (self.renderer, self.window);
-        // A decoder kept for a reconnect borrows or holds the renderer's device: it goes before it.
-        stream::decoder_cache::clear();
+        // A session that stops from here on (a teardown, a launch ending into a reconnect) parks no
+        // decoder for the reconnect: the renderer's device is going.
+        stream::decoder_cache::retire();
         if !checks_stopped {
             eprintln!("nightjar: a decoder check did not end within {} ms of leaving; the window and its GPU device stay until the process exits, as it may still be using them", wait.as_millis());
         }
@@ -121,6 +122,9 @@ impl App {
         // decoder check is still inside a call that may use it.
         stream::end_all_before(self.attempts.take_all(), deadline.saturating_duration_since(Instant::now()), || {
             if checks_stopped && teardowns_joined {
+                // A decoder kept for a reconnect borrows or holds the renderer's device: it goes
+                // before it, after the teardowns and launches above ended, which may have parked one.
+                stream::decoder_cache::clear();
                 // SAFETY: tearing down what run() created, with nothing else using it any more.
                 unsafe {
                     crate::sdl::destroy_renderer(renderer);

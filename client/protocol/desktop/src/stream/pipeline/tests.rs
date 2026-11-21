@@ -85,6 +85,23 @@ fn a_stream_that_ends_for_good_drops_its_decoder() {
     assert_eq!(super::super::decoder_cache::TAKEN.load(Ordering::Relaxed), before, "nothing was kept");
 }
 
+/// A session that stops after its renderer was torn down (a launch's thread joining the last
+/// session's teardown on the way out) parks no decoder that borrows or holds the old device.
+#[test]
+fn a_session_that_stops_after_its_renderer_went_parks_nothing() {
+    let _serial = super::super::decoder_cache::serialize();
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 144, height: 96, fps: 60, chroma_packing: 0, logical_width: 144, logical_height: 96, color_space: 1, color_range: 0 };
+    let (mut first, shared) = decoder();
+    first.setup(&setup).unwrap();
+    shared.keep_decoder.store(true, Ordering::Relaxed);
+    super::super::decoder_cache::retire();
+    first.cleanup();
+    let before = super::super::decoder_cache::TAKEN.load(Ordering::Relaxed);
+    let (mut second, _) = decoder();
+    second.setup(&setup).unwrap();
+    assert_eq!(super::super::decoder_cache::TAKEN.load(Ordering::Relaxed), before, "nothing was parked for the new renderer");
+}
+
 /// A decoder taken from the last stream whose first frame fails (a frames pool the key could not
 /// see fits badly) opens its context again at once, not after the retry's second.
 #[test]
@@ -343,28 +360,37 @@ fn at_the_pool_limit_with_every_pacer_picture_due_the_oldest_pacer_picture_goes(
 #[test]
 fn frames_failing_for_a_second_open_the_decoder_again_once_then_end_the_stream() {
     let mut failing = Failing::default();
-    assert_eq!(failing.failed(0, true), Escalation::Wait);
-    assert_eq!(failing.failed(400_000, true), Escalation::Wait);
-    assert_eq!(failing.failed(1_000_000, true), Escalation::Reopen);
-    assert_eq!(failing.failed(1_100_000, true), Escalation::Wait, "the reopened decoder gets its own second");
-    assert_eq!(failing.failed(1_600_000, true), Escalation::Wait);
-    assert_eq!(failing.failed(2_100_000, true), Escalation::Rebuild, "a context on the same device made no picture: a new device is the last try");
-    assert_eq!(failing.failed(2_200_000, true), Escalation::Wait, "the rebuilt decoder gets its own second");
-    assert_eq!(failing.failed(2_700_000, true), Escalation::Wait);
-    assert_eq!(failing.failed(3_200_000, true), Escalation::GiveUp);
-    assert_eq!(failing.failed(4_000_000, true), Escalation::Wait, "said once");
+    assert_eq!(failing.failed(0, true, true), Escalation::Wait);
+    assert_eq!(failing.failed(400_000, true, true), Escalation::Wait);
+    assert_eq!(failing.failed(1_000_000, true, true), Escalation::Reopen);
+    assert_eq!(failing.failed(1_100_000, true, true), Escalation::Wait, "the reopened decoder gets its own second");
+    assert_eq!(failing.failed(1_600_000, true, true), Escalation::Wait);
+    assert_eq!(failing.failed(2_100_000, true, true), Escalation::Rebuild, "a context on the same device made no picture: a new device is the last try");
+    assert_eq!(failing.failed(2_200_000, true, true), Escalation::Wait, "the rebuilt decoder gets its own second");
+    assert_eq!(failing.failed(2_700_000, true, true), Escalation::Wait);
+    assert_eq!(failing.failed(3_200_000, true, true), Escalation::GiveUp);
+    assert_eq!(failing.failed(4_000_000, true, true), Escalation::Wait, "said once");
     // A picture between failures starts over, and two failures a pause apart are not enough.
     let mut failing = Failing::default();
-    failing.failed(0, true);
-    failing.failed(500_000, true);
+    failing.failed(0, true, true);
+    failing.failed(500_000, true, true);
     failing.decoded();
-    assert_eq!(failing.failed(1_200_000, true), Escalation::Wait);
-    assert_eq!(failing.failed(6_000_000, true), Escalation::Wait);
+    assert_eq!(failing.failed(1_200_000, true, true), Escalation::Wait);
+    assert_eq!(failing.failed(6_000_000, true, true), Escalation::Wait);
+    // A backend on the renderer's own device (D3D11VA, Vulkan video) is opened again once, and a
+    // rebuild would take the same device: it ends the stream, as before the rebuild existed.
+    let mut failing = Failing::default();
+    failing.failed(0, true, false);
+    failing.failed(500_000, true, false);
+    assert_eq!(failing.failed(1_000_000, true, false), Escalation::Reopen);
+    failing.failed(1_100_000, true, false);
+    failing.failed(1_600_000, true, false);
+    assert_eq!(failing.failed(2_100_000, true, false), Escalation::GiveUp);
     // A decoder that cannot be opened again ends the stream at once.
     let mut failing = Failing::default();
-    failing.failed(0, false);
-    failing.failed(500_000, false);
-    assert_eq!(failing.failed(1_000_000, false), Escalation::GiveUp);
+    failing.failed(0, false, false);
+    failing.failed(500_000, false, false);
+    assert_eq!(failing.failed(1_000_000, false, false), Escalation::GiveUp);
 }
 
 #[test]

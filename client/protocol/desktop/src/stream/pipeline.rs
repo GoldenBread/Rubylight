@@ -469,6 +469,8 @@ pub struct Decoder {
     /// fit this stream even when the announced parameters match (a coded size or profile the key
     /// cannot see), so the first failed frame opens the context again at once.
     reused: bool,
+    /// The renderer generation this session's decoder was made under (`decoder_cache::generation`).
+    generation: u64,
     /// A packed full chroma stream's VAAPI pictures are mapped into Vulkan: a failed import in
     /// `receive` drops the map, and the doctor learns the pictures go through memory from then.
     packed_mapped: bool,
@@ -732,8 +734,10 @@ enum Escalation {
     Wait,
     /// Open the decoder again (once), on the device it has.
     Reopen,
-    /// Make the decoder anew, on a new device (once, after the reopen gave no picture): opening
-    /// a codec context does not touch a hardware device, so only this tells a wedged device.
+    /// Make the decoder anew, with a new hardware device of its own (once, after the reopen gave
+    /// no picture): opening a codec context does not touch a hardware device, so only this tells
+    /// a wedged one. Not for a backend on the renderer's own device (D3D11VA, Vulkan video): a
+    /// new decoder would take the same one.
     Rebuild,
     /// End the stream: the decoder failed after it was opened again, or cannot be.
     GiveUp,
@@ -744,7 +748,7 @@ impl Failing {
         *self = Self::default();
     }
 
-    fn failed(&mut self, now_us: u64, reopenable: bool) -> Escalation {
+    fn failed(&mut self, now_us: u64, reopenable: bool, rebuildable: bool) -> Escalation {
         if self.given_up {
             return Escalation::Wait;
         }
@@ -757,7 +761,7 @@ impl Failing {
             *self = Self { reopened: true, ..Self::default() };
             return Escalation::Reopen;
         }
-        if reopenable && !self.rebuilt {
+        if reopenable && rebuildable && !self.rebuilt {
             *self = Self { reopened: true, rebuilt: true, ..Self::default() };
             return Escalation::Rebuild;
         }
@@ -813,6 +817,7 @@ impl Decoder {
             in_flight: VecDeque::new(),
             pictured: false,
             reused: false,
+            generation: 0,
             packed_mapped: false,
             vaapi_mapped: false,
             stands_in: None,
@@ -823,13 +828,17 @@ impl Decoder {
 
     /// A frame failed with no picture since the last one: after [`FAILING_FOR_US`] of that the
     /// FFmpeg decoder is opened again once on its device, and when that gives no picture either,
-    /// made anew on a new device once. When it still fails, a hardware decoder that made no
+    /// made anew with a new hardware device of its own once (not on the renderer's device, which
+    /// a rebuild would not change). When it still fails, a hardware decoder that made no
     /// picture since gives way to the next decoder; otherwise, or when PyroWave fails, the stream
     /// ends saying why instead of freezing.
     fn frame_failed(&mut self, now_us: u64) {
         let frames = self.failing.frames + 1;
         let for_ms = self.failing.since_us.map_or(0, |since| now_us.saturating_sub(since) / 1000);
-        match self.failing.failed(now_us, self.decoder.is_some()) {
+        // A decoder on the renderer's own device (D3D11VA, Vulkan video) gets no new one from a
+        // rebuild: the device is the renderer's, which the renderer's recovery replaces.
+        let rebuildable = self.decoder.as_ref().is_some_and(|decoder| !matches!(decoder.hardware, Hardware::D3d11(_) | Hardware::Vulkan(_)));
+        match self.failing.failed(now_us, self.decoder.is_some(), rebuildable) {
             Escalation::Wait => {}
             Escalation::Reopen => {
                 eprintln!("nightjar: the video decoder failed {frames} frames in a row over {for_ms} ms with no picture; opening it again on its device");
@@ -842,10 +851,11 @@ impl Decoder {
                 }
             }
             Escalation::Rebuild => {
-                // The reopened context made no picture: the device itself may be wedged (a driver
-                // reset; `avcodec_open2` does not touch it, FFmpeg sets it up at the first frame),
-                // and a decoder on a new one is the last try before the stream ends.
-                eprintln!("nightjar: the video decoder failed {frames} frames in a row over {for_ms} ms after it was opened again; opening it on a new device");
+                // The reopened context made no picture: the decoder's own hardware device (VA-API,
+                // VideoToolbox, V4L2) may be wedged (`avcodec_open2` does not touch it, FFmpeg sets
+                // it up at the first frame), and a decoder with a new one is the last try before
+                // the stream ends.
+                eprintln!("nightjar: the video decoder failed {frames} frames in a row over {for_ms} ms after it was opened again; making it anew with a new hardware device");
                 let setup = self.setup.expect("decoder setup precedes frames");
                 self.rebuild(&setup);
             }
@@ -1122,6 +1132,7 @@ fn gpu_pyrowave(device: GpuDevice, setup: &VideoSetup, slots: usize) -> Result<s
 impl VideoDecoder for Decoder {
     fn setup(&mut self, setup: &VideoSetup) -> Result<(), i32> {
         self.setup = Some(*setup);
+        self.generation = super::decoder_cache::generation();
         self.shared.fps_millihz.store(setup.fps.max(1) as u32 * 1000, Ordering::Relaxed);
         self.pool_waiting = pool_waiting(self.shared.host_times.load(Ordering::Relaxed), self.shared.queue_limit,
             setup.fps.max(1) as u32);
@@ -1309,7 +1320,7 @@ impl VideoDecoder for Decoder {
                         threads: self.software_threads,
                     };
                     eprintln!("nightjar: keeping the {} decoder for the stream that follows", decoder.name);
-                    super::decoder_cache::park_media(key, decoder);
+                    super::decoder_cache::park_media(key, decoder, self.generation);
                 }
             }
             if !self.pyrowave_failed {
@@ -1330,7 +1341,7 @@ impl VideoDecoder for Decoder {
                     };
                     let name = lock(&self.shared.decoder_name).clone();
                     eprintln!("nightjar: keeping the PyroWave decoder for the stream that follows");
-                    super::decoder_cache::park_pyrowave(key, decoder, name);
+                    super::decoder_cache::park_pyrowave(key, decoder, name, self.generation);
                 }
             }
         }
