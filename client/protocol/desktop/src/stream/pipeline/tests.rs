@@ -348,8 +348,11 @@ fn frames_failing_for_a_second_open_the_decoder_again_once_then_end_the_stream()
     assert_eq!(failing.failed(1_000_000, true), Escalation::Reopen);
     assert_eq!(failing.failed(1_100_000, true), Escalation::Wait, "the reopened decoder gets its own second");
     assert_eq!(failing.failed(1_600_000, true), Escalation::Wait);
-    assert_eq!(failing.failed(2_100_000, true), Escalation::GiveUp);
-    assert_eq!(failing.failed(3_000_000, true), Escalation::Wait, "said once");
+    assert_eq!(failing.failed(2_100_000, true), Escalation::Rebuild, "a context on the same device made no picture: a new device is the last try");
+    assert_eq!(failing.failed(2_200_000, true), Escalation::Wait, "the rebuilt decoder gets its own second");
+    assert_eq!(failing.failed(2_700_000, true), Escalation::Wait);
+    assert_eq!(failing.failed(3_200_000, true), Escalation::GiveUp);
+    assert_eq!(failing.failed(4_000_000, true), Escalation::Wait, "said once");
     // A picture between failures starts over, and two failures a pause apart are not enough.
     let mut failing = Failing::default();
     failing.failed(0, true);
@@ -375,13 +378,20 @@ fn a_decoder_that_keeps_failing_is_opened_again_and_then_ends_the_stream_saying_
     assert!(decoder.decoder.is_some(), "opened again");
     assert!(decoder.failing.reopened);
     assert!(notices(&shared).is_empty(), "the stream goes on");
-    for at in [1_100_000, 1_600_000, 2_200_000] {
+    // The reopened context made no picture: a decoder on a new device is tried before the end.
+    for at in [1_100_000, 1_600_000, 2_100_000] {
+        decoder.frame_failed(at);
+    }
+    assert!(decoder.decoder.is_some(), "made anew");
+    assert!(decoder.failing.rebuilt);
+    assert!(notices(&shared).is_empty(), "the stream goes on");
+    for at in [2_200_000, 2_700_000, 3_200_000] {
         decoder.frame_failed(at);
     }
     let ended = notices(&shared);
     let [Notice::DecoderFailed(text)] = ended.as_slice() else { panic!("expected exactly the DecoderFailed notice") };
     assert!(text.contains("stopped working"), "{text}");
-    decoder.frame_failed(3_000_000);
+    decoder.frame_failed(4_000_000);
     assert!(notices(&shared).is_empty(), "said once");
 }
 
@@ -410,7 +420,15 @@ fn a_hardware_decoder_that_never_made_a_picture_gives_way_to_the_next_decoder() 
         // The reopened decoder (V4L2 again on the device) makes no picture either.
         as_v4l2(&mut decoder);
         let _ = notices(&shared);
+        // And a decoder made anew on a new device is tried before it gives way.
         for at in [1_100_000, 1_600_000, 2_100_000] {
+            decoder.frame_failed(at);
+        }
+        assert!(decoder.failing.rebuilt, "made anew first");
+        assert!(decoder.refused.is_empty());
+        as_v4l2(&mut decoder);
+        let _ = notices(&shared);
+        for at in [2_200_000, 2_700_000, 3_200_000] {
             decoder.frame_failed(at);
         }
         let now = decoder.decoder.as_ref().expect("the next decoder");
@@ -419,11 +437,15 @@ fn a_hardware_decoder_that_never_made_a_picture_gives_way_to_the_next_decoder() 
         assert!(matches!(notices(&shared).as_slice(), [Notice::DecoderFallback(_)]), "the switch is said, the stream goes on");
         assert_eq!(decoder.failing, Failing::default(), "the next decoder gets its own second");
         // A software decoder that fails too is opened again once, then the stream ends.
-        for at in [2_200_000, 2_700_000, 3_200_000] {
+        for at in [3_300_000, 3_800_000, 4_300_000] {
             decoder.frame_failed(at);
         }
         assert!(decoder.failing.reopened && notices(&shared).is_empty());
-        for at in [3_300_000, 3_800_000, 4_300_000] {
+        for at in [4_400_000, 4_900_000, 5_400_000] {
+            decoder.frame_failed(at);
+        }
+        assert!(decoder.failing.rebuilt && notices(&shared).is_empty());
+        for at in [5_500_000, 6_000_000, 6_500_000] {
             decoder.frame_failed(at);
         }
         assert!(matches!(notices(&shared).as_slice(), [Notice::DecoderFailed(_)]));

@@ -717,11 +717,6 @@ impl Pyrowave {
         }
     }
 
-    /// Whether this decoder runs on the GPU, and so must match the renderer's device to be reused.
-    pub fn is_gpu(&self) -> bool {
-        matches!(self, Self::Gpu(_))
-    }
-
     /// Whether a stream may start over on this decoder: a GPU decoder whose device the watchdog
     /// took for hung is never called again.
     pub fn reusable(&self) -> bool {

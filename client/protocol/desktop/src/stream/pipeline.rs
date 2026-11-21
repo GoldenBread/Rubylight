@@ -719,6 +719,8 @@ struct Failing {
     frames: u32,
     /// The decoder was opened again in this run of failures.
     reopened: bool,
+    /// And, when that gave no picture either, made anew on a new device.
+    rebuilt: bool,
     /// The stream was told to end; nothing more is said.
     given_up: bool,
 }
@@ -728,8 +730,11 @@ struct Failing {
 enum Escalation {
     /// Ask for an IDR as usual.
     Wait,
-    /// Open the decoder again (once).
+    /// Open the decoder again (once), on the device it has.
     Reopen,
+    /// Make the decoder anew, on a new device (once, after the reopen gave no picture): opening
+    /// a codec context does not touch a hardware device, so only this tells a wedged device.
+    Rebuild,
     /// End the stream: the decoder failed after it was opened again, or cannot be.
     GiveUp,
 }
@@ -751,6 +756,10 @@ impl Failing {
         if reopenable && !self.reopened {
             *self = Self { reopened: true, ..Self::default() };
             return Escalation::Reopen;
+        }
+        if reopenable && !self.rebuilt {
+            *self = Self { reopened: true, rebuilt: true, ..Self::default() };
+            return Escalation::Rebuild;
         }
         self.given_up = true;
         Escalation::GiveUp
@@ -813,7 +822,8 @@ impl Decoder {
     }
 
     /// A frame failed with no picture since the last one: after [`FAILING_FOR_US`] of that the
-    /// FFmpeg decoder is opened again once. When it still fails, a hardware decoder that made no
+    /// FFmpeg decoder is opened again once on its device, and when that gives no picture either,
+    /// made anew on a new device once. When it still fails, a hardware decoder that made no
     /// picture since gives way to the next decoder; otherwise, or when PyroWave fails, the stream
     /// ends saying why instead of freezing.
     fn frame_failed(&mut self, now_us: u64) {
@@ -827,15 +837,17 @@ impl Decoder {
                 // The codec context is what a failed decoder needs anew; its hardware device (a
                 // VA-API, Vulkan, D3D11VA or VideoToolbox device costs what the start did) is kept.
                 if !self.reopen_on_device(now_us) {
-                    // The device itself may be gone (a driver reset): a decoder on a new one is
-                    // the last try before the stream ends.
                     eprintln!("nightjar: opening it anew");
-                    self.decoder = None;
-                    if self.setup(&setup).is_err() || self.decoder.is_none() {
-                        self.failing.given_up = true;
-                        self.shared.notify(Notice::DecoderFailed(crate::strings::tr("The video decoder stopped working and could not be opened again.").to_owned()));
-                    }
+                    self.rebuild(&setup);
                 }
+            }
+            Escalation::Rebuild => {
+                // The reopened context made no picture: the device itself may be wedged (a driver
+                // reset; `avcodec_open2` does not touch it, FFmpeg sets it up at the first frame),
+                // and a decoder on a new one is the last try before the stream ends.
+                eprintln!("nightjar: the video decoder failed {frames} frames in a row over {for_ms} ms after it was opened again; opening it on a new device");
+                let setup = self.setup.expect("decoder setup precedes frames");
+                self.rebuild(&setup);
             }
             Escalation::GiveUp if self.never_pictured_hardware().is_some() => {
                 // A hardware decoder that made no picture since it was opened again (V4L2 M2M on
@@ -851,6 +863,16 @@ impl Decoder {
                 eprintln!("nightjar: the video decoder failed {frames} frames in a row over {for_ms} ms with no picture; ending the stream");
                 self.shared.notify(Notice::DecoderFailed(trf("The video decoder stopped working: no picture for {} s.", &[&for_ms.div_ceil(1000)])));
             }
+        }
+    }
+
+    /// Drops the decoder, its device with it, and makes it anew; the stream ends saying why when
+    /// that fails.
+    fn rebuild(&mut self, setup: &VideoSetup) {
+        self.decoder = None;
+        if self.setup(setup).is_err() || self.decoder.is_none() {
+            self.failing.given_up = true;
+            self.shared.notify(Notice::DecoderFailed(crate::strings::tr("The video decoder stopped working and could not be opened again.").to_owned()));
         }
     }
 
@@ -1297,7 +1319,7 @@ impl VideoDecoder for Decoder {
                         height: setup.height as usize,
                         chroma444: setup.format & VIDEO_FORMAT_MASK_YUV444 != 0,
                         ten_bit: setup.format & VIDEO_FORMAT_MASK_10BIT != 0,
-                        gpu: decoder.is_gpu(),
+                        gpu: self.gpu.is_some(),
                         device: self.gpu.map_or(0, |device| device.0 as usize),
                         slots: {
                             #[cfg(windows)]

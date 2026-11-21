@@ -116,17 +116,6 @@ impl<K, D> Cache<K, D> {
         self.park_at(key, decoder, None, at);
     }
 
-    /// Drops the parked decoder once it waited longer than [`KEEP_FOR`]: the reconnect it was kept
-    /// for is over (a stream of the other kind may follow, which never takes it).
-    pub fn drop_if_stale(&self) {
-        let mut parked = self.parked.lock().unwrap_or_else(|poison| poison.into_inner());
-        if parked.as_ref().is_some_and(|entry| entry.at.elapsed() >= KEEP_FOR) {
-            let old = parked.take();
-            drop(parked);
-            drop(old);
-        }
-    }
-
     /// Drops the parked decoder after [`KEEP_FOR`] even if no stream starts: the timer of a parked
     /// one. A decoder parked later replaces this entry, and this timer leaves the newer one be.
     #[cfg_attr(test, allow(dead_code))] // Unit tests have no launcher idling; they call take or park_aged.
@@ -174,10 +163,21 @@ impl<K, D> Cache<K, D> {
             return None;
         }
         if !usable(&entry.key) {
+            // One session runs at a time, so a decoder that does not serve this stream serves no
+            // later one: its pool, textures and device go now, not beside the new decoder's.
+            let unused = parked.take();
+            drop(parked);
+            drop(unused);
             return None;
         }
         let entry = parked.take()?;
         Some((entry.decoder, entry.name))
+    }
+
+    /// Drops the parked decoder, if any, on the calling thread.
+    pub fn clear(&self) {
+        let old = self.parked.lock().unwrap_or_else(|poison| poison.into_inner()).take();
+        drop(old);
     }
 }
 
@@ -241,16 +241,29 @@ pub(super) fn park_media(key: MediaKey, decoder: VideoDecoder) {
     expire_media_later();
 }
 
-/// A stream that decodes with FFmpeg is starting: a PyroWave decoder parked longer than a
-/// reconnect could take is dropped with it (one stream does not change codec across one).
+/// A stream that decodes with FFmpeg is starting: a parked PyroWave decoder is of the other kind
+/// of stream, which never takes it, so it goes now.
 pub(super) fn only_media() {
-    with_pyrowave(|cache| cache.drop_if_stale());
+    with_pyrowave(Cache::clear);
 }
 
-/// A PyroWave stream is starting: an FFmpeg decoder parked longer than a reconnect could take is
-/// dropped with it, as above.
+/// A PyroWave stream is starting: a parked FFmpeg decoder goes, as above.
 pub(super) fn only_pyrowave() {
-    with_media(|cache| cache.drop_if_stale());
+    with_media(Cache::clear);
+}
+
+/// Drops both parked decoders on the calling thread. The renderer's GPU device must outlive
+/// them (a Vulkan video or PyroWave decoder borrows it, a Direct3D 11 one holds a reference to
+/// it), so every place that destroys the renderer calls this first.
+pub fn clear() {
+    with_media(Cache::clear);
+    with_pyrowave(Cache::clear);
+}
+
+/// Whether either kind of decoder is parked (the tests of `clear`).
+#[cfg(test)]
+pub(super) fn any_parked() -> bool {
+    media_parked() || with_pyrowave(|cache| cache.is_parked())
 }
 
 /// The parked FFmpeg decoder when it serves `key` and one of the backends `order` opens now: a
@@ -397,10 +410,31 @@ mod tests {
         cache.park(first, decoder());
         cache.park(second, decoder());
         assert!(cache.take(|parked| parked.serves(&second)).is_some(), "the newer stream's decoder is the one kept");
-        // Only the older one parked: it does not serve the newer stream, and stays for its own.
+        // Only the older one parked: it does not serve the newer stream, and one session runs at
+        // a time, so it serves no later stream either and is dropped, not kept beside the new one.
         cache.park(first, decoder());
         assert!(cache.take(|parked| parked.serves(&second)).is_none(), "the older stream's decoder does not serve the newer stream");
-        assert!(cache.take(|parked| parked.serves(&first)).is_some(), "and is still there for the stream it was opened for");
+        assert!(!cache.is_parked(), "and is released at once, with its pool and device");
+        assert!(cache.take(|parked| parked.serves(&first)).is_none());
+    }
+
+    #[test]
+    fn clear_empties_both_caches_and_a_stream_of_the_other_kind_drops_the_parked_one() {
+        let _serial = serialize();
+        park_media(media(0x0100, 640, 360), decoder());
+        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into());
+        assert!(media_parked() && any_parked());
+        clear();
+        assert!(!any_parked(), "nothing outlives the renderer's device");
+        assert!(!media_parked());
+        park_media(media(0x0100, 640, 360), decoder());
+        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into());
+        only_media();
+        assert!(media_parked() && !with_pyrowave(|cache| cache.is_parked()), "an FFmpeg stream drops the PyroWave decoder at once");
+        park_pyrowave(pyro(64, 64, false, 8), Pyrowave::cpu(64, 64, false).unwrap(), "PyroWave".into());
+        only_pyrowave();
+        assert!(!media_parked() && with_pyrowave(|cache| cache.is_parked()), "a PyroWave stream drops the FFmpeg decoder at once");
+        clear();
     }
 
     fn pyro(width: usize, height: usize, ten_bit: bool, slots: usize) -> PyroWaveKey {

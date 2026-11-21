@@ -359,6 +359,8 @@ impl App {
         // And for the latency benchmark's decoders, which may decode on the old device.
         self.launcher.latency_bench.finish();
         self.gui.release_renderer();
+        // A decoder kept for a reconnect may borrow or hold this device: it goes first.
+        stream::decoder_cache::clear();
         // SAFETY: the renderer run() made, its textures freed, with no stream or launch using it.
         unsafe { crate::sdl::destroy_renderer(self.renderer) };
         if hdr {
@@ -489,6 +491,8 @@ impl App {
         let kind = sdl::renderer_name(old);
         // The colorspace it was made in: scRGB when the start asked for the GPU renderer.
         let linear = sdl::renderer_linear(old);
+        // A decoder kept for a reconnect holds a reference to the old device, which the remake waits to see go.
+        stream::decoder_cache::clear();
         // SAFETY: the renderer run() made, its gui textures freed. No stream runs in the launcher's
         // frame, and a launch or a decoder still on the old device holds that device itself.
         unsafe { crate::sdl::destroy_renderer(old) };

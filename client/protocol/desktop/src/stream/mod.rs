@@ -104,7 +104,7 @@ pub mod ui_pq;
 mod vulkan_tests_unix;
 mod negotiate;
 mod connect;
-mod decoder_cache;
+pub(crate) mod decoder_cache;
 mod stats;
 mod input;
 mod render;

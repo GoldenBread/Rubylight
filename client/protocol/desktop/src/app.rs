@@ -104,6 +104,8 @@ impl App {
             checks_stopped &= probe.finish_until(deadline);
         }
         let (renderer, window) = (self.renderer, self.window);
+        // A decoder kept for a reconnect borrows or holds the renderer's device: it goes before it.
+        stream::decoder_cache::clear();
         if !checks_stopped {
             eprintln!("nightjar: a decoder check did not end within {} ms of leaving; the window and its GPU device stay until the process exits, as it may still be using them", wait.as_millis());
         }
