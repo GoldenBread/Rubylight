@@ -32,7 +32,7 @@ pub enum PacingReason {
     MinorLoss,
     /// Sustained RTT queue growth on an unknown-link wireless route stepped pacing down.
     QueueDelay,
-    /// Clean-headroom signals (active traffic or fresh RTT) cleared on an unknown-link wireless route.
+    /// Control-channel liveness or RTT feedback cleared on an unknown-link wireless route.
     HeadroomCleared,
 }
 
@@ -387,43 +387,50 @@ impl AdaptivePacing {
                 self.clean_since = None;
                 if self.wireless_unknown_link {
                     let clear_reason = if loss {
-                        PacingReason::MinorLoss
+                        Some(PacingReason::MinorLoss)
                     } else if queued {
-                        PacingReason::QueueDelay
+                        Some(PacingReason::QueueDelay)
+                    } else if !ping || rtt.is_zero() {
+                        Some(PacingReason::HeadroomCleared)
                     } else {
-                        PacingReason::HeadroomCleared
+                        None
                     };
-                    let started = match self.unhealthy_since {
-                        Some((prev, at)) if prev == clear_reason => at,
-                        _ => {
-                            self.unhealthy_since = Some((clear_reason, now));
-                            now
-                        }
-                    };
-                    let hold = match clear_reason {
-                        PacingReason::MinorLoss => Duration::ZERO,
-                        PacingReason::QueueDelay => Duration::from_secs(1),
-                        _ => Duration::from_secs(2),
-                    };
-                    let baseline = self.seed_rate(encoder_kbps);
-                    if old > baseline && now.saturating_duration_since(started) >= hold {
-                        let step = (old / 8).max(1_000_000);
-                        let next = old
-                            .saturating_sub(step)
-                            .max(baseline)
-                            .clamp(self.floor, self.ceiling);
-                        if next < old {
-                            self.limit = Some(next);
-                            self.probe = None;
-                            self.after_frame = last_sent;
-                            if matches!(
-                                clear_reason,
-                                PacingReason::MinorLoss | PacingReason::QueueDelay
-                            ) {
-                                self.startup = false;
+                    if let Some(clear_reason) = clear_reason {
+                        let started = match self.unhealthy_since {
+                            Some((prev, at)) if prev == clear_reason => at,
+                            _ => {
+                                self.unhealthy_since = Some((clear_reason, now));
+                                now
                             }
-                            reason = Some(clear_reason);
+                        };
+                        let hold = match clear_reason {
+                            PacingReason::MinorLoss => Duration::ZERO,
+                            PacingReason::QueueDelay => Duration::from_secs(1),
+                            _ => Duration::from_secs(2),
+                        };
+                        let baseline = self.seed_rate(encoder_kbps);
+                        if old > baseline && now.saturating_duration_since(started) >= hold {
+                            let step = (old / 8).max(1_000_000);
+                            let next = old
+                                .saturating_sub(step)
+                                .max(baseline)
+                                .clamp(self.floor, self.ceiling);
+                            if next < old {
+                                self.limit = Some(next);
+                                self.probe = None;
+                                self.after_frame = last_sent;
+                                self.unhealthy_since = Some((clear_reason, now));
+                                if matches!(
+                                    clear_reason,
+                                    PacingReason::MinorLoss | PacingReason::QueueDelay
+                                ) {
+                                    self.startup = false;
+                                }
+                                reason = Some(clear_reason);
+                            }
                         }
+                    } else {
+                        self.unhealthy_since = None;
                     }
                 }
             } else {
