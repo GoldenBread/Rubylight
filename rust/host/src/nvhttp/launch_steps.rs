@@ -171,7 +171,7 @@ pub(super) fn resolve_launch_app(
             "a microphone-only session is a launch, not a resume or a remote session action"
         );
         ensure!(
-            client.allows(butterpollo_core::state::LAUNCH_APPS),
+            client.allows(butterpollo_session::state::LAUNCH_APPS),
             "a microphone-only session needs the launch permission"
         );
         return Ok((role, None, requested, None));
@@ -180,7 +180,7 @@ pub(super) fn resolve_launch_app(
     // of its own, whichever endpoint or tile carries the request, so a device that may only
     // view streams starts neither. A resume of the monitor a device has is decided below.
     ensure!(
-        role == Role::Stream || client.allows(butterpollo_core::state::LAUNCH_APPS),
+        role == Role::Stream || client.allows(butterpollo_session::state::LAUNCH_APPS),
         "a remote monitor or remote input session needs the launch permission"
     );
     let app_id = if resume {
@@ -267,9 +267,9 @@ pub(super) fn build_launch_session(
         key_id,
     )
 }
-/// `rlMicOnly=1` on /launch ([`butterpollo_core::mic::ONLY_OPTION`]).
+/// `rlMicOnly=1` on /launch ([`butterpollo_session::mic::ONLY_OPTION`]).
 fn mic_only_requested(args: &Args) -> bool {
-    args.get(butterpollo_core::mic::ONLY_OPTION)
+    args.get(butterpollo_session::mic::ONLY_OPTION)
         .is_some_and(|v| v == "1")
 }
 pub(super) fn build_launch(
@@ -283,7 +283,7 @@ pub(super) fn build_launch(
 ) -> Launch {
     if role == Role::InputOnly && mic_only_requested(args) {
         // Its input is refused like a device's without the permission.
-        client.perm &= butterpollo_core::mic::ONLY_PERMISSION;
+        client.perm &= butterpollo_session::mic::ONLY_PERMISSION;
     }
     Launch {
         id: uuid::Uuid::new_v4().to_string(),
@@ -312,11 +312,11 @@ pub(super) fn build_launch(
             .and_then(|mode| mode.rsplit('x').next())
             .and_then(|rate| {
                 if rate.contains('.') {
-                    butterpollo_core::framegen::Rate::parse(rate).ok()
+                    butterpollo_media_policy::framegen::Rate::parse(rate).ok()
                 } else {
                     rate.parse()
                         .ok()
-                        .map(butterpollo_core::framegen::Rate::from_client)
+                        .map(butterpollo_media_policy::framegen::Rate::from_client)
                 }
             })
             .map_or(0, |rate| rate.0),
@@ -324,7 +324,7 @@ pub(super) fn build_launch(
         // A guest's id is the host's to set (`multiclient`), never the client's.
         options: args
             .iter()
-            .filter(|(k, _)| k.as_str() != butterpollo_core::multiclient::LAUNCH_OPTION)
+            .filter(|(k, _)| k.as_str() != butterpollo_session::multiclient::LAUNCH_OPTION)
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
         preparing: Default::default(),
@@ -464,7 +464,7 @@ pub(super) fn validate_background_launch(h: &Shared, launch: &Launch) -> Result<
         return Ok(false);
     }
     let background =
-        butterpollo_core::background::enabled(&crate::stream::effective_config(h, launch)?);
+        butterpollo_session::background::enabled(&crate::stream::effective_config(h, launch)?);
     let current = h.current_app.lock().unwrap();
     if let Some(app) = current.as_ref().filter(|app| app.id == launch.app_id) {
         if app.background != background {
@@ -499,11 +499,11 @@ pub(super) fn prepare_launch_display(
         bail!("launch mode must be WIDTHxHEIGHTxFPS");
     }
     let rate = if dimensions[2].contains('.') {
-        butterpollo_core::framegen::Rate::parse(dimensions[2])?
+        butterpollo_media_policy::framegen::Rate::parse(dimensions[2])?
     } else {
-        butterpollo_core::framegen::Rate::from_client(dimensions[2].parse()?)
+        butterpollo_media_policy::framegen::Rate::from_client(dimensions[2].parse()?)
     };
-    let mut stream = butterpollo_core::rtsp::Negotiated {
+    let mut stream = butterpollo_media_policy::rtsp::Negotiated {
         // Encoders need even sizes. Moonlight rounds only the
         // height, and only later; a 2556x1179 phone was refused.
         width: dimensions[0]
@@ -521,7 +521,7 @@ pub(super) fn prepare_launch_display(
         vrr_low_latency: launch.vrr_requested,
         ..Default::default()
     };
-    butterpollo_core::stream_policy::apply_color(&mut stream, &config);
+    butterpollo_media_policy::stream_policy::apply_color(&mut stream, &config);
     // The display keeps the mode the launch asked for; the host's cap shrinks
     // only the picture the encoder codes.
     crate::stream::cap_stream_resolution(&mut stream, &config, &launch.warnings);
@@ -580,7 +580,7 @@ pub(super) fn prepare_launch_app(
     let mut background = false;
     if launch.role != Role::InputOnly {
         let config = crate::stream::effective_config(h, launch)?;
-        background = butterpollo_core::background::enabled(&config);
+        background = butterpollo_session::background::enabled(&config);
         if config.boolean("stream_audio", true)
             && config.get("audio_capture_mode", "system") == "system"
             && !(launch.role == Role::RemoteMonitor

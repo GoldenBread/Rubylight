@@ -86,13 +86,13 @@ enum Layout {
     Planes444,
 }
 impl Layout {
-    fn of(config: &butterpollo_core::rtsp::Negotiated) -> Self {
+    fn of(config: &butterpollo_media_policy::rtsp::Negotiated) -> Self {
         match (config.yuv444, config.ten_bit()) {
             (false, false) => Self::Nv12,
             (false, true) => Self::P010,
-            (true, _) => match butterpollo_core::nvenc::input_444(config.ten_bit()) {
-                butterpollo_core::nvenc::Input444::Ayuv => Self::Ayuv,
-                butterpollo_core::nvenc::Input444::Planar16 => Self::Planes444,
+            (true, _) => match butterpollo_media_policy::nvenc::input_444(config.ten_bit()) {
+                butterpollo_media_policy::nvenc::Input444::Ayuv => Self::Ayuv,
+                butterpollo_media_policy::nvenc::Input444::Planar16 => Self::Planes444,
             },
         }
     }
@@ -169,7 +169,7 @@ fn source_view(
 /// `cbuffer Config` in color.hlsl, for a `source` (width, height, pixel)
 /// converted to the stream, as both converters fill it.
 pub(crate) fn constants(
-    config: &butterpollo_core::rtsp::Negotiated,
+    config: &butterpollo_media_policy::rtsp::Negotiated,
     source: (u32, u32, Pixel),
     luminance: [f32; 2],
     pointer: Option<&crate::cursor::Cursor>,
@@ -198,7 +198,7 @@ pub(crate) fn constants(
 }
 /// `cbuffer Config`'s `hdr`: 0 for SDR, 1 for PQ, 2 for HLG (`hlg` in
 /// color.hlsl), which Dolby Vision 8.4's base layer is too.
-fn hdr_constant(config: &butterpollo_core::rtsp::Negotiated) -> u32 {
+fn hdr_constant(config: &butterpollo_media_policy::rtsp::Negotiated) -> u32 {
     if config.hlg() {
         2
     } else {
@@ -223,7 +223,7 @@ fn pointer_constants(pointer: Option<&crate::cursor::Cursor>) -> [u32; 8] {
 impl Converter {
     pub fn new(
         gpu: &Device,
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         source: (u32, u32, Pixel),
     ) -> Result<Self> {
         if config.width == 0
@@ -582,7 +582,7 @@ pub(crate) struct PlanarConverter {
 impl PlanarConverter {
     pub fn new(
         gpu: &Device,
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         source: (u32, u32, Pixel),
     ) -> Result<Self> {
         let mut base = Converter::new(gpu, config, source)?;

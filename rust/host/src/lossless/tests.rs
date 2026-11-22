@@ -1,7 +1,7 @@
 use super::*;
 fn sample(pid: u32, path: &str, cpu_time: u64, memory_mb: u64) -> Sample {
     Sample {
-        process: butterpollo_core::steam::Process {
+        process: butterpollo_session::steam::Process {
             pid,
             parent: 0,
             started: 1,
@@ -297,9 +297,9 @@ fn dead_launchers_and_reused_pids_do_not_keep_their_old_scores() {
 const SETTINGS: &str = "\u{feff}<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Settings xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n  <Hotkey>S</Hotkey>\n  <HotkeyModifierKeys>Alt Control</HotkeyModifierKeys>\n  <GameProfiles>\n    <Profile>\n      <Title>Default</Title>\n      <ScalingType>Off</ScalingType>\n      <CaptureApi>DXGI</CaptureApi>\n    </Profile>\n    <Profile>\n      <Title>Elden Ring</Title>\n      <Path>eldenring.exe</Path>\n    </Profile>\n    <Profile>\n      <Title>Vibeshine</Title>\n      <Path>old.exe</Path>\n    </Profile>\n  </GameProfiles>\n</Settings>";
 #[test]
 fn the_profile_is_added_from_the_default_and_removed_again() {
-    let options = butterpollo_core::lossless::options(
+    let options = butterpollo_media_policy::lossless::options(
         &serde_json::json!({"frame-generation-mode": "lossless-scaling", "lossless-scaling-profile": "recommended"}),
-        &butterpollo_core::config::Config::default(),
+        &butterpollo_config::config::Config::default(),
         120.,
     )
     .unwrap();

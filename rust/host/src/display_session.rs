@@ -2,13 +2,13 @@
 //! The same leases move from an authorized pending launch into its transport.
 use crate::state::{Launch, Shared};
 use anyhow::{Context, Result};
-use butterpollo_core::{
-    config::Config,
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::{
     display_policy::{Arrangement, HostDisplay},
     framegen::{Policy, Rate},
     rtsp::Negotiated,
-    session::{Preparation, Role, Transport, Warnings},
 };
+use butterpollo_session::session::{Preparation, Role, Transport, Warnings};
 use butterpollo_windows::{
     display::{Guard, Retained},
     display_arrangement, hdr_profile, limiter, vulkan,
@@ -39,11 +39,11 @@ fn stream_mode(stream: &Negotiated) -> (u32, u32, u32, bool, bool) {
 
 fn virtual_display_mode<'a>(
     config: &'a Config,
-    client: &'a butterpollo_core::state::Client,
-    app: Option<&'a butterpollo_core::state::App>,
+    client: &'a butterpollo_session::state::Client,
+    app: Option<&'a butterpollo_session::state::App>,
     windows_11: bool,
 ) -> &'a str {
-    if butterpollo_core::background::enabled(config) {
+    if butterpollo_session::background::enabled(config) {
         return "per_client";
     }
     client
@@ -113,7 +113,7 @@ fn joined_display(ask: &JoinAsk, game: Option<JoinedGame>) -> Option<String> {
 }
 /// Whether `client` is a device's second screen (Dual screen mode).
 fn is_second_screen(client: &str) -> bool {
-    butterpollo_core::state::device_uuid(client) != client
+    butterpollo_session::state::device_uuid(client) != client
 }
 /// The PC monitor a device's second screen shows when its streams show physical
 /// displays: the first of `active` (by display name, with whether it is one of
@@ -162,7 +162,7 @@ fn second_monitor(configured: &str) -> Option<String> {
 fn asked_game_display(
     h: &Shared,
     launch: &Launch,
-    app: Option<&butterpollo_core::state::App>,
+    app: Option<&butterpollo_session::state::App>,
     virtual_mode: bool,
     display_mode: &str,
     identity: &str,
@@ -195,7 +195,7 @@ pub(crate) fn take_retained_display(
     h: &Shared,
     launch: &Launch,
     config: &Config,
-    app: Option<&butterpollo_core::state::App>,
+    app: Option<&butterpollo_session::state::App>,
     serves: impl FnOnce(&Ready) -> bool,
     live: impl FnOnce(&str) -> bool,
 ) -> std::result::Result<Arc<Ready>, Option<Arc<Ready>>> {
@@ -319,9 +319,9 @@ pub(crate) fn record_game_display(h: &Shared, launch: &Launch, display: &Ready) 
 fn virtual_display_identity(
     config: &Config,
     launch: &Launch,
-    app: Option<&butterpollo_core::state::App>,
+    app: Option<&butterpollo_session::state::App>,
 ) -> String {
-    if !butterpollo_core::background::enabled(config)
+    if !butterpollo_session::background::enabled(config)
         && app.is_some_and(|a| crate::process::app_bool(a, "use-app-identity", false))
     {
         let app_id = app
@@ -329,7 +329,7 @@ fn virtual_display_identity(
             .and_then(serde_json::Value::as_str)
             .unwrap_or("application");
         if app.is_some_and(|a| crate::process::app_bool(a, "per-client-app-identity", false)) {
-            butterpollo_core::display_policy::app_client_identity(
+            butterpollo_media_policy::display_policy::app_client_identity(
                 app_id,
                 launch
                     .options
@@ -346,14 +346,14 @@ fn virtual_display_identity(
 }
 pub(crate) fn virtual_display_layout<'a>(
     config: &'a Config,
-    client: &'a butterpollo_core::state::Client,
-    app: Option<&'a butterpollo_core::state::App>,
+    client: &'a butterpollo_session::state::Client,
+    app: Option<&'a butterpollo_session::state::App>,
     requested: Option<HostDisplay>,
 ) -> &'a str {
     // A background stream must not move the PC's windows or let its mouse
     // wander onto the device's display, whatever the device asks for.
-    if butterpollo_core::background::enabled(config) {
-        return butterpollo_core::background::LAYOUT;
+    if butterpollo_session::background::enabled(config) {
+        return butterpollo_session::background::LAYOUT;
     }
     if let Some(HostDisplay::Virtual(arrangement)) = requested {
         return arrangement.name();
@@ -431,7 +431,7 @@ fn layout_owner(
 pub(crate) fn launch_display_layout<'a>(
     config: &'a Config,
     launch: &'a Launch,
-    app: Option<&'a butterpollo_core::state::App>,
+    app: Option<&'a butterpollo_session::state::App>,
     requested: Option<HostDisplay>,
 ) -> &'a str {
     let layout = virtual_display_layout(config, &launch.client, app, requested);
@@ -442,11 +442,11 @@ pub(crate) fn launch_display_layout<'a>(
 }
 
 /// The device setting naming the app or host layout a learned device layout replaced, and the
-/// one marking a layout the user picked (both in `butterpollo_core::state`).
-pub(crate) use butterpollo_core::state::{LEARNED_OVER, SET_BY_USER};
+/// one marking a layout the user picked (both in `butterpollo_session::state`).
+pub(crate) use butterpollo_session::state::{LEARNED_OVER, SET_BY_USER};
 /// Whether the device's own virtual display layout is one the user set rather
 /// than one learned from a stream.
-fn has_user_layout(client: &butterpollo_core::state::Client) -> bool {
+fn has_user_layout(client: &butterpollo_session::state::Client) -> bool {
     client
         .extra
         .get("virtual_display_layout")
@@ -460,12 +460,12 @@ fn has_user_layout(client: &butterpollo_core::state::Client) -> bool {
 }
 /// What a device with `remember_display_mode` keeps per screen (a second screen reads its own:
 /// `Client::second_screen`).
-pub(crate) use butterpollo_core::state::{REMEMBERED_RESOLUTION, REMEMBERED_SCALE};
+pub(crate) use butterpollo_session::state::{REMEMBERED_RESOLUTION, REMEMBERED_SCALE};
 
 /// The virtual display layout without the device's own: the app's, then the host's.
 fn inherited_layout<'a>(
     config: &'a Config,
-    app: Option<&'a butterpollo_core::state::App>,
+    app: Option<&'a butterpollo_session::state::App>,
 ) -> &'a str {
     app.and_then(|app| app.extra.get("virtual-display-layout"))
         .and_then(serde_json::Value::as_str)
@@ -497,7 +497,7 @@ fn primary_layout(layout: &str) -> bool {
 /// follows that layout until it changes, and an app that asks for the primary still gets it
 /// while the others keep "extended". Returns the devices whose layout changed.
 pub(crate) fn migrate_legacy_extended_layouts(
-    clients: &mut [butterpollo_core::state::Client],
+    clients: &mut [butterpollo_session::state::Client],
     host_layout: &str,
 ) -> Vec<String> {
     let mut changed = Vec::new();
@@ -650,14 +650,14 @@ impl ModeReportState {
                     requested.1 = None;
                 }
                 if self.hdr_fell_back {
-                    butterpollo_core::display_policy::report_mode_keeping_hdr(
+                    butterpollo_media_policy::display_policy::report_mode_keeping_hdr(
                         &self.warnings,
                         requested,
                         *actual,
                         self.stream_rate,
                     );
                 } else {
-                    butterpollo_core::display_policy::report_mode(
+                    butterpollo_media_policy::display_policy::report_mode(
                         &self.warnings,
                         requested,
                         *actual,
@@ -809,7 +809,7 @@ fn wake_layout_passed(seen: &mut u64, now: u64) -> bool {
 fn notice_departure(
     seen: &mut u64,
     departures: u64,
-    watch: &mut butterpollo_core::display_policy::LayoutWatch,
+    watch: &mut butterpollo_media_policy::display_policy::LayoutWatch,
     now: std::time::Instant,
 ) -> bool {
     if departures != *seen {
@@ -824,7 +824,7 @@ fn notice_departure(
 fn departure_unsettled(
     seen: u64,
     departures: u64,
-    watch: &butterpollo_core::display_policy::LayoutWatch,
+    watch: &butterpollo_media_policy::display_policy::LayoutWatch,
 ) -> bool {
     departures != seen || watch.departure_pending()
 }
@@ -855,7 +855,7 @@ fn brings_back_game(remote_monitor: bool, active: bool) -> bool {
 /// monitors, and what the watch leaves on for the rest of the stream. A failed layout stays
 /// due for the next try; a repair that failed goes on the stream's card.
 fn lay_out_after_departure(
-    watch: &mut butterpollo_core::display_policy::LayoutWatch,
+    watch: &mut butterpollo_media_policy::display_policy::LayoutWatch,
     mut retained: Vec<String>,
     now: std::time::Instant,
     report: &ModeReport,
@@ -928,8 +928,8 @@ impl Preparation<StreamPreparation> for StreamPreparation {
 impl StreamPreparation {
     pub fn report_limiter(
         &self,
-        warnings: &butterpollo_core::session::Warnings,
-        config: &butterpollo_core::config::Config,
+        warnings: &butterpollo_session::session::Warnings,
+        config: &butterpollo_config::config::Config,
     ) {
         let explicit = config.boolean("frame_limiter_enable", false);
         let framegen = self.display.framegen.lock().unwrap().clone();
@@ -1054,7 +1054,8 @@ impl Ready {
         let worker = std::thread::Builder::new()
             .name("game-display-lease".into())
             .spawn(move || {
-                let mut heartbeat = butterpollo_core::display_policy::HeartbeatThrottle::default();
+                let mut heartbeat =
+                    butterpollo_media_policy::display_policy::HeartbeatThrottle::default();
                 while !worker_stop.load(Ordering::Acquire) {
                     // Windows refuses display configuration from the normal
                     // desktop while it is locked (issue #6).
@@ -1259,7 +1260,7 @@ impl Ready {
     /// would change the display under the game running on it.
     pub fn follow_settings(
         &self,
-        app: Option<&butterpollo_core::state::App>,
+        app: Option<&butterpollo_session::state::App>,
         launch: &Launch,
         stream: &Negotiated,
         config: &Config,
@@ -1411,7 +1412,7 @@ impl Ready {
 /// and restoration must finish before publishing a new capture identity.
 ///
 /// The app's window, while a stream shows it in place of its display
-/// (`butterpollo_core::app_window`), is laid over the display's target:
+/// (`butterpollo_media_policy::app_window`), is laid over the display's target:
 /// the heartbeat goes on publishing the display, which the stream shows
 /// again once the window is taken off.
 #[derive(Clone)]
@@ -1505,10 +1506,10 @@ pub struct Prepared {
     scales_set: Mutex<Vec<i64>>,
     revision: u64,
     recovery: Recovery,
-    layout_watch: butterpollo_core::display_policy::LayoutWatch,
+    layout_watch: butterpollo_media_policy::display_policy::LayoutWatch,
     /// The primary a primary layout made, which Windows or a game can move back to a monitor
     /// while the stream goes on.
-    primary_watch: butterpollo_core::display_policy::PrimaryWatch,
+    primary_watch: butterpollo_media_policy::display_policy::PrimaryWatch,
     /// [`display_arrangement::departures`] when this stream last looked.
     departures: u64,
     /// [`display_arrangement::wake_layouts`] when this stream last looked.
@@ -1524,7 +1525,7 @@ pub struct Prepared {
     /// change is only this stream's to undo when it was.
     shown_primary: Option<bool>,
     /// A change that arrived while the stream was paused, to arm at the resume.
-    paused_change: Option<butterpollo_core::display_policy::PrimaryChange>,
+    paused_change: Option<butterpollo_media_policy::display_policy::PrimaryChange>,
     /// The start applied the layout but Windows kept the primary elsewhere (and only the
     /// primary): a successful restore clears the start's display_layout warning.
     start_primary_mismatch: bool,
@@ -1591,7 +1592,7 @@ type DeviceMode = (u32, u32, Rate);
 /// the app's frame generation, the device's own display mode, VRR and
 /// Lossless Scaling. Also returns that display mode.
 fn frame_policy(
-    app: Option<&butterpollo_core::state::App>,
+    app: Option<&butterpollo_session::state::App>,
     launch: &Launch,
     stream: &Negotiated,
     config: &Config,
@@ -1606,7 +1607,7 @@ fn frame_policy(
         .or_else(|| option("frame-generation-provider"))
         .unwrap_or("none");
     let generation_enabled = if option("frame-generation-mode").is_some() {
-        butterpollo_core::framegen::generation_provider(generation) != "none"
+        butterpollo_media_policy::framegen::generation_provider(generation) != "none"
     } else {
         app.as_ref().is_some_and(|a| {
             [
@@ -1630,7 +1631,7 @@ fn frame_policy(
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .and_then(|text| {
-            let mode = butterpollo_core::display_policy::parse_display_mode(text);
+            let mode = butterpollo_media_policy::display_policy::parse_display_mode(text);
             if mode.is_none() {
                 tracing::warn!(
                     display_mode = text,
@@ -1659,10 +1660,10 @@ fn frame_policy(
     )?;
     if let Some((_, _, rate)) = device_mode {
         // A saved display mode must not cap a faster stream's game at its refresh rate.
-        framegen.display_rate = butterpollo_core::framegen::display_rate(
+        framegen.display_rate = butterpollo_media_policy::framegen::display_rate(
             rate,
             virtual_mode,
-            butterpollo_core::framegen::virtual_refresh(config),
+            butterpollo_media_policy::framegen::virtual_refresh(config),
         );
     }
     framegen = framegen.with_vrr(
@@ -1675,7 +1676,11 @@ fn frame_policy(
         .as_ref()
         .and_then(|a| serde_json::to_value(a).ok())
         .and_then(|a| {
-            butterpollo_core::lossless::options(&a, config, f64::from(stream.fps_millihz()) / 1000.)
+            butterpollo_media_policy::lossless::options(
+                &a,
+                config,
+                f64::from(stream.fps_millihz()) / 1000.,
+            )
         })
         .and_then(|options| options.frame_limit)
     {
@@ -1692,7 +1697,7 @@ fn frame_policy(
     let provider = butterpollo_windows::limiter::provider_usable(config);
     if !provider
         && framegen.follows_display
-        && framegen.provider != butterpollo_core::framegen::Provider::Rtss
+        && framegen.provider != butterpollo_media_policy::framegen::Provider::Rtss
     {
         butterpollo_windows::limiter::warn_automatic_cap_needs_rtss_once(config);
     }
@@ -1707,7 +1712,7 @@ fn frame_policy(
 #[cfg(not(any(test, feature = "test-harness")))]
 fn streams_on_nvidia(config: &Config) -> bool {
     butterpollo_windows::capture::stream_gpu_vendor(config)
-        .is_some_and(butterpollo_core::encoder_gpu::is_nvidia)
+        .is_some_and(butterpollo_media_policy::encoder_gpu::is_nvidia)
 }
 /// Tests stream on no NVIDIA GPU.
 #[cfg(any(test, feature = "test-harness"))]
@@ -1756,7 +1761,7 @@ impl Prepared {
             revision: 0,
             recovery: Recovery::new(),
             layout_watch: Default::default(),
-            primary_watch: butterpollo_core::display_policy::PrimaryWatch::starting(
+            primary_watch: butterpollo_media_policy::display_policy::PrimaryWatch::starting(
                 std::time::Instant::now(),
             ),
             departures: display_arrangement::departures(),
@@ -1937,7 +1942,7 @@ impl Prepared {
     /// monitor on; the virtual display stays on, so the recovery above never
     /// starts.
     fn keep_layout(&mut self, active: bool) -> Result<()> {
-        use butterpollo_core::display_policy::LayoutAction;
+        use butterpollo_media_policy::display_policy::LayoutAction;
         let now = std::time::Instant::now();
         if self.recovery.pending || !self.layout_watch.due(now) {
             return Ok(());
@@ -2001,11 +2006,11 @@ impl Prepared {
         // Windows rearranging: only then can it have moved the primary by itself. A display
         // change is the one that can repeat; the others count for the log but not the limit.
         let change = if departed || woke {
-            Some(butterpollo_core::display_policy::PrimaryChange::Display)
+            Some(butterpollo_media_policy::display_policy::PrimaryChange::Display)
         } else if returned_from_secure {
-            Some(butterpollo_core::display_policy::PrimaryChange::Secure)
+            Some(butterpollo_media_policy::display_policy::PrimaryChange::Secure)
         } else if session_changed {
-            Some(butterpollo_core::display_policy::PrimaryChange::Session)
+            Some(butterpollo_media_policy::display_policy::PrimaryChange::Session)
         } else {
             None
         };
@@ -2071,16 +2076,16 @@ impl Prepared {
     /// alone. The start arms it by itself.
     fn primary_change_arms(
         last_shown: Option<bool>,
-        change: Option<butterpollo_core::display_policy::PrimaryChange>,
+        change: Option<butterpollo_media_policy::display_policy::PrimaryChange>,
     ) -> bool {
         change.is_some() && last_shown == Some(true)
     }
     /// The change to arm at a resume: one that arrived while the stream was paused, else the
     /// one now. A paused stream has nobody to show a restore to, so it waits for the resume.
     fn resumed_primary_change(
-        paused: Option<butterpollo_core::display_policy::PrimaryChange>,
-        change: Option<butterpollo_core::display_policy::PrimaryChange>,
-    ) -> Option<butterpollo_core::display_policy::PrimaryChange> {
+        paused: Option<butterpollo_media_policy::display_policy::PrimaryChange>,
+        change: Option<butterpollo_media_policy::display_policy::PrimaryChange>,
+    ) -> Option<butterpollo_media_policy::display_policy::PrimaryChange> {
         paused.or(change)
     }
     /// Put the stream's display back as the primary one when Windows moved it while changing
@@ -2094,11 +2099,11 @@ impl Prepared {
     fn keep_primary(
         &mut self,
         now: std::time::Instant,
-        change: Option<butterpollo_core::display_policy::PrimaryChange>,
+        change: Option<butterpollo_media_policy::display_policy::PrimaryChange>,
         active: bool,
         secure: bool,
     ) {
-        use butterpollo_core::display_policy::{PrimaryAction, PrimaryChange};
+        use butterpollo_media_policy::display_policy::{PrimaryAction, PrimaryChange};
         let Some(arrangement) = &self._arrangement else {
             return;
         };
@@ -2168,7 +2173,10 @@ impl Prepared {
         if shown.is_some() {
             self.shown_primary = shown;
         }
-        if !butterpollo_core::display_policy::primary_moved(arrangement.arrangement(), shown) {
+        if !butterpollo_media_policy::display_policy::primary_moved(
+            arrangement.arrangement(),
+            shown,
+        ) {
             // The display is the primary one, or off or still being laid out. A look that
             // finds it primary only clears a pending settle; the change's window stays open
             // for a move that follows it.
@@ -2298,8 +2306,8 @@ impl Prepared {
             .get("virtualDisplay")
             .map(|value| value != "0");
         let client_display = client_display(launch);
-        let background = butterpollo_core::background::enabled(config);
-        let mut display_request = butterpollo_core::display_policy::VirtualDisplayRequest {
+        let background = butterpollo_session::background::enabled(config);
+        let mut display_request = butterpollo_media_policy::display_policy::VirtualDisplayRequest {
             client_requested: client_virtual == Some(true)
                 || matches!(client_display, Some(HostDisplay::Virtual(_))),
             // Streaming the PC's own monitor would show the device whatever
@@ -2368,9 +2376,9 @@ impl Prepared {
             launch.warnings.set("display_virtual", "Windows was locked and the virtual display could not be set up there, so this stream shows the physical display. Start the stream again after signing in to use the virtual display.");
         } else if display_request.requested()
             && !virtual_mode
-            && let Some(reason) = butterpollo_core::os_gate::missing(
+            && let Some(reason) = butterpollo_session::os_gate::missing(
                 butterpollo_windows::display::windows_build(),
-                butterpollo_core::os_gate::Feature::VirtualDisplay,
+                butterpollo_session::os_gate::Feature::VirtualDisplay,
             )
         {
             launch.warnings.set("display_virtual", format!("Using the physical display because this Windows cannot load the virtual display driver. {reason} Update to Windows 11 23H2 or later to use a virtual display."));
@@ -2426,13 +2434,15 @@ impl Prepared {
             .and_then(|value| value.parse().ok())
             .unwrap_or(100);
         let (display_width, display_height) = stream.display_size();
-        let (render_width, render_height) = butterpollo_core::display_policy::render_dimensions(
-            display_width,
-            display_height,
-            client_scale,
-            app_scale,
-        );
-        let mut request = config.display_request_rate(
+        let (render_width, render_height) =
+            butterpollo_media_policy::display_policy::render_dimensions(
+                display_width,
+                display_height,
+                client_scale,
+                app_scale,
+            );
+        let mut request = butterpollo_media_policy::display_policy::display_request_rate(
+            config,
             render_width,
             render_height,
             framegen.display_rate,
@@ -2465,7 +2475,7 @@ impl Prepared {
                 .extra
                 .get(REMEMBERED_RESOLUTION)
                 .and_then(serde_json::Value::as_str)
-                .and_then(butterpollo_core::display_policy::parse_resolution)
+                .and_then(butterpollo_media_policy::display_policy::parse_resolution)
         {
             request.resolution = Some(resolution);
         }
@@ -2509,7 +2519,8 @@ impl Prepared {
         // read once it is on. Its mode is asked for in the shape it has before
         // the turn, and its highest refresh looked up at that mode.
         let physical = !virtual_mode && retained.is_none();
-        let follow = (config.dd_rotation_option() == butterpollo_core::config::DisplayAdjust::Auto
+        let follow = (config.dd_rotation_option()
+            == butterpollo_config::config::DisplayAdjust::Auto
             && retained.is_none()
             && joined_mode.is_none())
         .then_some(if virtual_mode {
@@ -2659,9 +2670,9 @@ impl Prepared {
         {
             None
         } else {
-            butterpollo_core::display_policy::Arrangement::parse(configured)
+            butterpollo_media_policy::display_policy::Arrangement::parse(configured)
                 .inspect_err(|_| {
-                    butterpollo_core::config::invalid(
+                    butterpollo_config::config::invalid(
                         if virtual_layout {
                             "virtual_display_layout"
                         } else {
@@ -2672,7 +2683,7 @@ impl Prepared {
                 })
                 .ok()
                 .or(virtual_layout
-                    .then_some(butterpollo_core::display_policy::Arrangement::Exclusive))
+                    .then_some(butterpollo_media_policy::display_policy::Arrangement::Exclusive))
                 .map(|parsed| {
                     if monitors_kept {
                         Arrangement::Primary
@@ -2697,7 +2708,7 @@ impl Prepared {
                     &retained,
                     virtual_mode && display.is_some(),
                     original,
-                    butterpollo_core::state::device_uuid(&launch.client.uuid),
+                    butterpollo_session::state::device_uuid(&launch.client.uuid),
                 ) {
                     Ok(lease) => Some(lease),
                     // The remote monitor still works where the remote monitor
@@ -2741,7 +2752,7 @@ impl Prepared {
                         .into_iter()
                         .map(|m| (m.display_name, m.primary))
                         .collect();
-                    match butterpollo_core::display_policy::layout_mismatch(
+                    match butterpollo_media_policy::display_policy::layout_mismatch(
                         expected, &output, &active,
                     ) {
                         None => true,
@@ -2876,7 +2887,7 @@ impl Prepared {
                 revision,
                 recovery: Recovery::new(),
                 layout_watch: Default::default(),
-                primary_watch: butterpollo_core::display_policy::PrimaryWatch::starting(
+                primary_watch: butterpollo_media_policy::display_policy::PrimaryWatch::starting(
                     std::time::Instant::now(),
                 ),
                 departures: display_arrangement::departures(),
@@ -2973,7 +2984,8 @@ pub fn retime(
             return Ok(Raise::NotOwned);
         }
         let (display_width, display_height) = prepared.recovery_dimensions;
-        let request = config.display_request_rate(
+        let request = butterpollo_media_policy::display_policy::display_request_rate(
+            config,
             display_width,
             display_height,
             framegen.display_rate,

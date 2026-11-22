@@ -10,7 +10,8 @@
 use super::game_audio::{moves_game_sound, routable};
 use crate::state::Shared;
 use anyhow::Result;
-use butterpollo_core::{audio_scope::Identity, config::Config};
+use butterpollo_config::config::Config;
+use butterpollo_session::audio_scope::Identity;
 use butterpollo_windows::{
     audio_app_route::{AppRoute, Closing, no_sound_yet},
     nucleus::session::Told,

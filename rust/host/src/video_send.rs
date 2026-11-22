@@ -6,8 +6,8 @@ mod streamed;
 mod transport;
 use crate::state::{Session, Shared};
 use anyhow::{Result, bail};
-use butterpollo_core::{
-    config::Config,
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::{
     packet::{ConventionalPlan, PacketBlock, VideoPacketizer},
     performance::{Claim, Claims},
 };
@@ -40,7 +40,7 @@ pub(crate) fn reached_socket(
     ipv6: bool,
 ) -> (usize, u64) {
     let packets = offered.saturating_sub(refused as usize);
-    let wire = bytes + packets * butterpollo_core::network_pacing::overhead(ipv6);
+    let wire = bytes + packets * butterpollo_media_policy::network_pacing::overhead(ipv6);
     (packets, wire as u64)
 }
 
@@ -52,7 +52,7 @@ pub(crate) fn oversized_warning(s: &Session) {
     s.launch.warnings.event(
         "network_mtu",
         "Video packets larger than the network path's MTU were refused and dropped. A network adapter, switch or the device's link does not carry jumbo frames; lower the device's video packet size or make every hop's MTU carry the offered packet size plus 64 bytes of headers.",
-        butterpollo_core::session::EVENT_PERIOD,
+        butterpollo_session::session::EVENT_PERIOD,
     );
 }
 
@@ -84,7 +84,7 @@ fn mtu_warning(mtu: u32, packet_size: usize) -> String {
 /// is warned; the shared video socket stays untouched. A stock packet size
 /// fits every path the stream offered, so only jumbo sizes are checked.
 pub(crate) fn check_route_mtu(s: &Session, packet_size: usize, mtu: Option<u32>) {
-    if packet_size <= usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET) {
+    if packet_size <= usize::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET) {
         return;
     }
     let Some(mtu) = mtu else {
@@ -94,7 +94,7 @@ pub(crate) fn check_route_mtu(s: &Session, packet_size: usize, mtu: Option<u32>)
         s.launch.warnings.event(
             "network_mtu",
             mtu_warning(mtu, packet_size),
-            butterpollo_core::session::EVENT_PERIOD,
+            butterpollo_session::session::EVENT_PERIOD,
         );
     }
 }
@@ -390,14 +390,14 @@ pub struct Handoff {
     pub present_stamper: Option<butterpollo_windows::present_timing::Stamper>,
     pub last_stamp: Instant,
     pub pacing_due: Instant,
-    pub send_loss: butterpollo_core::stream_policy::SendLossRecovery,
+    pub send_loss: butterpollo_media_policy::stream_policy::SendLossRecovery,
     /// FEC blocks per streamed frame; 0 when the stream does not stream.
     /// A rebuilt encoder's count follows through [`Sender::follow_slice_blocks`].
     pub slice_blocks: usize,
     /// Slices per frame the encoder was asked for.
     pub slices: usize,
     /// `BUTTERPOLLO_TEST_SEND_JITTER`'s stalls, for the paced sender.
-    pub send_jitter: Option<butterpollo_core::stream_policy::SendJitter>,
+    pub send_jitter: Option<butterpollo_media_policy::stream_policy::SendJitter>,
     /// The stream's route, shared with the encode loop.
     pub link: Arc<link_watch::LinkWatch>,
 }
@@ -573,7 +573,7 @@ impl Sender {
                     });
                     if let Some(error) = dropped? {
                         shared.abandon_whole();
-                        s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_core::session::EVENT_PERIOD);
+                        s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_session::session::EVENT_PERIOD);
                         s.request_host_keyframe();
                         return Ok(packetizer.frame);
                     }
@@ -581,7 +581,7 @@ impl Sender {
                         && fec_reported.is_none_or(|at: Instant| at.elapsed() >= Duration::from_secs(1))
                     {
                         fec_reported = Some(Instant::now());
-                        s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_core::session::EVENT_PERIOD);
+                        s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_session::session::EVENT_PERIOD);
                     }
                     tracing::trace!(target: "pacing", stream_id = %s.launch.id,
                         frame = wire_frame, presentation = ?frame.presentation,
@@ -617,7 +617,7 @@ impl Sender {
                     shared.state.lock().unwrap().recycle(unused, &mut spill);
                 }
                 if let Err(error) = prepared {
-                    s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_core::session::EVENT_PERIOD);
+                    s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_session::session::EVENT_PERIOD);
                     s.request_host_keyframe();
                     let mut spill = Vec::new();
                     shared.state.lock().unwrap().recycle(blocks, &mut spill);
@@ -627,7 +627,7 @@ impl Sender {
                     && fec_reported.is_none_or(|at: Instant| at.elapsed() >= Duration::from_secs(1))
                 {
                     fec_reported = Some(Instant::now());
-                    s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_core::session::EVENT_PERIOD);
+                    s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_session::session::EVENT_PERIOD);
                 }
                 tracing::trace!(target: "pacing", stream_id = %s.launch.id,
                     frame = wire_frame, presentation = ?frame.presentation,

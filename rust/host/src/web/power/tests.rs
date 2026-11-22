@@ -1,7 +1,7 @@
 use super::super::parity_tests::{request, value};
 use super::*;
 use crate::{state::test_support::Fixture, wake::fake::Fake};
-use butterpollo_core::session::Role;
+use butterpollo_session::session::Role;
 use std::time::{Duration, Instant};
 
 async fn post_fix(f: &Fixture, body: Value) -> Response {

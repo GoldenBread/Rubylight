@@ -1,6 +1,6 @@
 //! Native codec fixtures, consumed by the independent C decoder probe.
 use anyhow::{Context, Result};
-use butterpollo_core::rtsp::Negotiated;
+use butterpollo_media_policy::rtsp::Negotiated;
 use butterpollo_windows::{
     capture::{ComGuard, Device, GpuImage, Image, Pixel},
     encoder::Encoder,
@@ -74,7 +74,7 @@ fn main() -> Result<()> {
                 );
                 std::fs::write(output.join(format!("{name}.bin")), payload.to_vec())?;
                 // Transport fixture includes the actual NV headers and parity shards.
-                let mut wire = butterpollo_core::packet::VideoPacketizer {
+                let mut wire = butterpollo_media_policy::packet::VideoPacketizer {
                     sequence: 0,
                     frame: 1,
                     iv_counter: 0,
@@ -87,7 +87,7 @@ fn main() -> Result<()> {
                     payload,
                     9000,
                     500,
-                    butterpollo_core::packet::PyrowaveFec {
+                    butterpollo_media_policy::packet::PyrowaveFec {
                         records,
                         critical_percentage: 20,
                         detail_percentage: 0,
@@ -108,7 +108,7 @@ fn main() -> Result<()> {
                     payload,
                     9000,
                     500,
-                    butterpollo_core::packet::PyrowaveFec {
+                    butterpollo_media_policy::packet::PyrowaveFec {
                         records,
                         critical_percentage: 20,
                         detail_percentage: 0,

@@ -243,7 +243,7 @@ fn remove_journal(journal: &Path) -> Result<()> {
 pub(super) const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// How often a waiting start or check tries the lock again.
 const LOCK_POLL: Duration = Duration::from_millis(50);
-/// The folder below the data root ([`butterpollo_core::paths::data_root`])
+/// The folder below the data root ([`butterpollo_session::paths::data_root`])
 /// that keeps the locks.
 const LOCK_FOLDER: &str = "nucleus-locks";
 
@@ -264,7 +264,7 @@ impl Locks {
     /// `%ProgramData%\Butterpollo\nucleus-locks`.
     #[cfg(not(test))]
     fn installed() -> Self {
-        Self::administrators(butterpollo_core::paths::data_root().join(LOCK_FOLDER))
+        Self::administrators(butterpollo_session::paths::data_root().join(LOCK_FOLDER))
     }
 
     /// Tests keep theirs in a folder of their own.

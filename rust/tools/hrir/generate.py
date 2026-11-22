@@ -115,7 +115,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', type=pathlib.Path, required=True)
     parser.add_argument('--out-dir', type=pathlib.Path,
-                        default=pathlib.Path(__file__).resolve().parents[2] / 'core/src/audio_dsp')
+                        default=pathlib.Path(__file__).resolve().parents[2] / 'core/media-policy/src/audio_dsp')
     args = parser.parse_args()
 
     raw = args.input.read_bytes()

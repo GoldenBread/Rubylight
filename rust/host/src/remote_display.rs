@@ -1,10 +1,10 @@
 use crate::state::Shared;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
+use butterpollo_media_policy::{
     rtsp::Negotiated,
-    session::{Role, Warnings},
     topology::{Kind, Layout, Node},
 };
+use butterpollo_session::session::{Role, Warnings};
 use butterpollo_windows::{
     display::{self, Retained},
     display_arrangement,
@@ -40,7 +40,7 @@ fn nodes(h: &Shared) -> Result<Vec<Node>> {
         node.label = paired
             .clients
             .iter()
-            .find(|c| c.uuid == butterpollo_core::state::device_uuid(id))
+            .find(|c| c.uuid == butterpollo_session::state::device_uuid(id))
             .map_or(id.clone(), |c| c.name.clone());
     }
     Ok(nodes)
@@ -241,7 +241,7 @@ pub fn activate(
         .unwrap()
         .clients
         .iter()
-        .find(|c| c.uuid == butterpollo_core::state::device_uuid(client))
+        .find(|c| c.uuid == butterpollo_session::state::device_uuid(client))
         .cloned();
     let options = display::VirtualOptions {
         peak_nits: identity
@@ -270,7 +270,7 @@ pub fn activate(
         client,
         display_width,
         display_height,
-        butterpollo_core::framegen::Rate(config.fps_millihz()),
+        butterpollo_media_policy::framegen::Rate(config.fps_millihz()),
         config.hdr,
         &options,
         Some(Box::new(move || {

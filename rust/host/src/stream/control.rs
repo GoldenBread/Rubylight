@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn server_command(
     h: &Shared,
-    client: &butterpollo_core::state::Client,
+    client: &butterpollo_session::state::Client,
     payload: &[u8],
     authenticated: bool,
     command_at: &mut Option<Instant>,
@@ -50,7 +50,7 @@ pub(super) fn control_wait_timeout(remaining: Duration, events: usize) -> i32 {
 /// Whether the ENet control worker should see a peer for `session`. A WebRTC
 /// session carries control and input on its DataChannels, so it never has one.
 pub(super) fn expects_enet_control(session: &Session) -> bool {
-    session.launch.transport != butterpollo_core::session::Transport::WebRtc
+    session.launch.transport != butterpollo_session::session::Transport::WebRtc
 }
 
 /// How often the control worker looks for sessions without a control peer when no peer
@@ -413,7 +413,9 @@ impl Media {
                                     ciphers: Default::default(),
                                     hdr_metadata: None,
                                     hdr_seen: 0,
-                                    legacy: butterpollo_core::packet::LegacyInput::new(l.key_id),
+                                    legacy: butterpollo_media_policy::packet::LegacyInput::new(
+                                        l.key_id,
+                                    ),
                                     seen: Instant::now(),
                                     input_released: false,
                                     // The session can finish before the first
@@ -489,7 +491,7 @@ impl Media {
                             if let Some(session) = session
                                 && session.launch.role == Role::RemoteMonitor
                                 && h.config.read().unwrap().remove_remote_monitor()
-                                    == butterpollo_core::config::RemoveRemoteMonitor::Disconnect
+                                    == butterpollo_config::config::RemoveRemoteMonitor::Disconnect
                             {
                                 // Laying the displays out again takes long enough to hold up
                                 // every other client's input, so it runs beside this loop.
@@ -712,7 +714,7 @@ impl Media {
                         while let Some(report) = s.host_timings.take_report() {
                             if let Ok(message) = p.encrypt(
                                 &s,
-                                butterpollo_core::host_timing::HOST_TIMING_MESSAGE_TYPE,
+                                butterpollo_media_policy::host_timing::HOST_TIMING_MESSAGE_TYPE,
                                 &report,
                             ) {
                                 let _ = host.peer_mut(*peer_id).send(
@@ -734,7 +736,7 @@ impl Media {
                         if let Some(report) = rates
                             && let Ok(message) = p.encrypt(
                                 &s,
-                                butterpollo_core::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE,
+                                butterpollo_media_policy::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE,
                                 &report,
                             )
                         {
@@ -755,13 +757,13 @@ impl Media {
                         let reliable = [
                             outgoing.model.map(|model| {
                                 (
-                                    butterpollo_core::frame_warp::FRAME_WARP_MODEL_MESSAGE_TYPE,
+                                    butterpollo_media_policy::frame_warp::FRAME_WARP_MODEL_MESSAGE_TYPE,
                                     model.to_vec(),
                                 )
                             }),
                             outgoing.mask.map(|mask| {
                                 (
-                                    butterpollo_core::frame_warp::FRAME_WARP_MASK_MESSAGE_TYPE,
+                                    butterpollo_media_policy::frame_warp::FRAME_WARP_MASK_MESSAGE_TYPE,
                                     mask,
                                 )
                             }),
@@ -776,7 +778,7 @@ impl Media {
                         for tags in outgoing.tags {
                             if let Ok(message) = p.encrypt(
                                 &s,
-                                butterpollo_core::frame_warp::FRAME_WARP_TAGS_MESSAGE_TYPE,
+                                butterpollo_media_policy::frame_warp::FRAME_WARP_TAGS_MESSAGE_TYPE,
                                 &tags,
                             ) {
                                 let _ = host.peer_mut(*peer_id).send(
@@ -836,7 +838,7 @@ impl Media {
                         if let Some(notice) = notice {
                             match p.encrypt(
                                 &s,
-                                butterpollo_core::link_notice::LINK_NOTICE_MESSAGE_TYPE,
+                                butterpollo_media_policy::link_notice::LINK_NOTICE_MESSAGE_TYPE,
                                 &notice,
                             ) {
                                 Ok(message) => {
@@ -858,7 +860,7 @@ impl Media {
                         while let Some(result) = s.rate_changes.take() {
                             match p.encrypt(
                                 &s,
-                                butterpollo_core::rate_change::RATE_CHANGE_MESSAGE_TYPE,
+                                butterpollo_media_policy::rate_change::RATE_CHANGE_MESSAGE_TYPE,
                                 &result.encode(),
                             ) {
                                 Ok(message) => {
@@ -882,7 +884,7 @@ impl Media {
                         if let Some(notice) = notice {
                             match p.encrypt(
                                 &s,
-                                butterpollo_core::text_input::TEXT_INPUT_MESSAGE_TYPE,
+                                butterpollo_input_policy::text_input::TEXT_INPUT_MESSAGE_TYPE,
                                 &notice,
                             ) {
                                 Ok(message) => {
@@ -909,7 +911,7 @@ impl Media {
                     {
                         match p.encrypt(
                             &s,
-                            butterpollo_core::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE,
+                            rubylight_protocol::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE,
                             &frame,
                         ) {
                             Ok(message) => {
@@ -943,7 +945,7 @@ impl Media {
                         if let Some(shape) = shape {
                             match p.encrypt(
                                 &s,
-                                butterpollo_core::client_cursor::CURSOR_SHAPE_MESSAGE_TYPE,
+                                butterpollo_input_policy::client_cursor::CURSOR_SHAPE_MESSAGE_TYPE,
                                 &shape,
                             ) {
                                 Ok(message) => {
@@ -969,7 +971,7 @@ impl Media {
                                 .and_then(|payload| {
                                     p.encrypt(
                                         &s,
-                                        butterpollo_core::usb_forward::USB_MESSAGE_TYPE,
+                                        rubylight_protocol::usb::USB_MESSAGE_TYPE,
                                         &payload,
                                     )
                                 })
@@ -1081,13 +1083,13 @@ impl Media {
                         && let Some(i) = &mut p.injector
                         && let Err(e) = i.flush_virtual_left_release().and_then(|()| i.due())
                     {
-                        s.launch.warnings.event("input_repeat", format!("Input release or repeat failed ({e:#}); held controls may not update. Unlock the desktop or reconnect."), butterpollo_core::session::EVENT_PERIOD);
+                        s.launch.warnings.event("input_repeat", format!("Input release or repeat failed ({e:#}); held controls may not update. Unlock the desktop or reconnect."), butterpollo_session::session::EVENT_PERIOD);
                     }
                     if poll_feedback
                         && let Some(i) = &mut p.injector
                         && let Err(e) = i.refresh()
                     {
-                        s.launch.warnings.event("input_pointer", format!("Touch/pen pointer refresh failed ({e:#}); pointer updates may be missing. Unlock the desktop or disable native touch/pen if Windows does not support it."), butterpollo_core::session::EVENT_PERIOD);
+                        s.launch.warnings.event("input_pointer", format!("Touch/pen pointer refresh failed ({e:#}); pointer updates may be missing. Unlock the desktop or disable native touch/pen if Windows does not support it."), butterpollo_session::session::EVENT_PERIOD);
                     }
                     // The gamepad thread polls feedback every 8 ms; pass on
                     // what it found, and the sensors an arrived pad has.
@@ -1326,7 +1328,8 @@ fn handle_control_packet(
                 Ok((kind, payload))
             })
     } else {
-        butterpollo_core::packet::control_header(b).map(|(kind, payload)| (kind, payload.to_vec()))
+        butterpollo_media_policy::packet::control_header(b)
+            .map(|(kind, payload)| (kind, payload.to_vec()))
     };
     let (kind, payload) = match parsed {
         Ok(v) => v,
@@ -1352,7 +1355,7 @@ fn handle_control_packet(
                     };
                     let policy = controller_audio::status_policy(
                         &config,
-                        s.launch.role,
+                        s.launch.role.into(),
                         s.launch.client.perm & ((1 << 25) | (1 << 26)) != 0,
                         flags,
                     );
@@ -1419,12 +1422,12 @@ fn handle_control_packet(
         // 0x5502 in the other direction is controller feedback.
         0x5502 => s.record_fec_status(&payload),
         // Per-packet arrival feedback, unreliable and dropped when invalid.
-        butterpollo_core::congestion::TRANSPORT_FEEDBACK_MESSAGE_TYPE => {
+        butterpollo_media_policy::congestion::TRANSPORT_FEEDBACK_MESSAGE_TYPE => {
             if !s.record_transport_feedback(&payload) {
                 tracing::trace!(bytes = payload.len(), "transport feedback ignored");
             }
         }
-        butterpollo_core::statistical_fec::FEC_REPORT_MESSAGE_TYPE => {
+        butterpollo_media_policy::statistical_fec::FEC_REPORT_MESSAGE_TYPE => {
             match s.record_fec_report(&payload) {
                 Ok((report, used)) => tracing::debug!(
                     seq = report.seq,
@@ -1441,7 +1444,7 @@ fn handle_control_packet(
                 }
             }
         }
-        butterpollo_core::phase_sync::REPORT_MESSAGE_TYPE => {
+        butterpollo_media_policy::phase_sync::REPORT_MESSAGE_TYPE => {
             match s
                 .phase_sync
                 .lock()
@@ -1459,10 +1462,10 @@ fn handle_control_packet(
             }
         }
         // Deferred until the socket is unheld so `host_send_us` matches actual send time.
-        butterpollo_core::clock_sync::CLOCK_SYNC_MESSAGE_TYPE => {
+        butterpollo_media_policy::clock_sync::CLOCK_SYNC_MESSAGE_TYPE => {
             clock_syncs.push((peer.id(), kind, p.seen, payload));
         }
-        butterpollo_core::host_timing::HOST_TIMING_MESSAGE_TYPE => {
+        butterpollo_media_policy::host_timing::HOST_TIMING_MESSAGE_TYPE => {
             match s.host_timings.on_request(&payload) {
                 Some(enabled) => tracing::info!(
                     client = %s.launch.client.name,
@@ -1472,7 +1475,7 @@ fn handle_control_packet(
                 None => tracing::debug!(len = payload.len(), "invalid host timing request"),
             }
         }
-        butterpollo_core::link_notice::LINK_NOTICE_MESSAGE_TYPE => {
+        butterpollo_media_policy::link_notice::LINK_NOTICE_MESSAGE_TYPE => {
             match s.link_notices.on_request(&payload) {
                 Some(enabled) => tracing::info!(
                     client = %s.launch.client.name,
@@ -1482,7 +1485,7 @@ fn handle_control_packet(
                 None => tracing::debug!(len = payload.len(), "invalid link notice request"),
             }
         }
-        butterpollo_core::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE => {
+        butterpollo_media_policy::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE => {
             let counts = s.pipeline_counts();
             match s
                 .pipeline_rates
@@ -1498,7 +1501,7 @@ fn handle_control_packet(
         }
         // Keyboard follows focus: only for a device that may type, and
         // the text around the cursor only over encrypted control.
-        butterpollo_core::text_input::TEXT_INPUT_MESSAGE_TYPE => {
+        butterpollo_input_policy::text_input::TEXT_INPUT_MESSAGE_TYPE => {
             let Ok(config) = p.config(h, s) else {
                 return;
             };
@@ -1529,7 +1532,7 @@ fn handle_control_packet(
         // client, which never asks: its first frame starts the sync.
         // Encrypted only, as USB: a plain frame anyone on the network
         // could send would set the PC's clipboard and start sending it.
-        butterpollo_core::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE if encrypted => {
+        rubylight_protocol::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE if encrypted => {
             let Ok(config) = p.config(h, s) else {
                 return;
             };
@@ -1543,7 +1546,7 @@ fn handle_control_packet(
             p.clipboard_sync.receive(s, &payload, allowed, control_wake);
         }
         // The latest report wins; the injector maps keys with it.
-        butterpollo_core::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE => {
+        butterpollo_input_policy::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE => {
             let Ok(config) = p.config(h, s) else {
                 return;
             };
@@ -1556,11 +1559,11 @@ fn handle_control_packet(
                 tracing::debug!("keyboard layout report without the keyboard permission");
                 return;
             }
-            match butterpollo_core::keyboard_layout::KeyboardLayout::decode(&payload) {
+            match butterpollo_input_policy::keyboard_layout::KeyboardLayout::decode(&payload) {
                 Some(layout) => {
                     // Resolved once here; the layout is read on this
                     // loop, never with input.
-                    let klid = butterpollo_core::keyboard_layout::reported_klid(&layout);
+                    let klid = butterpollo_input_policy::keyboard_layout::reported_klid(&layout);
                     let before = std::mem::replace(&mut *s.keyboard_layout.lock().unwrap(), klid);
                     if before != klid {
                         tracing::info!(
@@ -1580,7 +1583,7 @@ fn handle_control_packet(
         }
         // The device draws the cursor (0x5540): the stream leaves it
         // out of the video, and the pass below sends its shapes.
-        butterpollo_core::client_cursor::CURSOR_SHAPE_REQUEST_MESSAGE_TYPE => {
+        butterpollo_input_policy::client_cursor::CURSOR_SHAPE_REQUEST_MESSAGE_TYPE => {
             let Ok(config) = p.config(h, s) else {
                 return;
             };
@@ -1607,7 +1610,7 @@ fn handle_control_packet(
         // Frame Warp (0x5543): while offered, the host learns the game's
         // camera response and tags every frame for a client that asked;
         // the pass below sends the model, mask and tags.
-        butterpollo_core::frame_warp::FRAME_WARP_REQUEST_MESSAGE_TYPE => {
+        butterpollo_media_policy::frame_warp::FRAME_WARP_REQUEST_MESSAGE_TYPE => {
             let Ok(config) = p.config(h, s) else {
                 return;
             };
@@ -1636,8 +1639,8 @@ fn handle_control_packet(
         }
         // The registry checks the setting and the device's permission and
         // queues the answer, which the pass below sends.
-        butterpollo_core::usb_forward::USB_MESSAGE_TYPE if encrypted => {
-            match butterpollo_core::usb_forward::UsbMessage::decode(&payload) {
+        rubylight_protocol::usb::USB_MESSAGE_TYPE if encrypted => {
+            match rubylight_protocol::usb::UsbMessage::decode(&payload) {
                 Some(message) => {
                     let (enabled, limit) = {
                         let config = h.config.read().unwrap();
@@ -1655,7 +1658,7 @@ fn handle_control_packet(
                 }
             }
         }
-        butterpollo_core::display_caps::DISPLAY_CAPS_MESSAGE_TYPE => {
+        butterpollo_media_policy::display_caps::DISPLAY_CAPS_MESSAGE_TYPE => {
             match s.record_display_caps(&payload) {
                 Some(update) if update.changed => {
                     tracing::info!(
@@ -1673,7 +1676,7 @@ fn handle_control_packet(
             }
         }
         // The session loop applies it once the client stops sending.
-        butterpollo_core::reconfigure::RECONFIGURE_MESSAGE_TYPE => {
+        butterpollo_media_policy::reconfigure::RECONFIGURE_MESSAGE_TYPE => {
             let outcome = {
                 let mut reconfigure = s.reconfigure.lock().unwrap();
                 let outcome = reconfigure.on_payload(Instant::now(), &payload);
@@ -1684,8 +1687,8 @@ fn handle_control_packet(
         }
         // A bitrate applies now, without a keyframe; a rate switches
         // like a 0x5532 request and is answered once it runs.
-        butterpollo_core::rate_change::RATE_CHANGE_MESSAGE_TYPE => {
-            use butterpollo_core::rate_change;
+        butterpollo_media_policy::rate_change::RATE_CHANGE_MESSAGE_TYPE => {
+            use butterpollo_media_policy::rate_change;
             if !matches!(rate_change::launch_choice(&s.launch.options), Ok(true)) {
                 tracing::debug!("rate change not offered");
                 return;
@@ -1722,8 +1725,10 @@ fn handle_control_packet(
                             current,
                             s.config.fps_millihz(),
                         ),
-                        fps_refusal: butterpollo_core::reconfigure::refusal(&s.config, enabled)
-                            .map(|_| rate_change::refusal_reason(enabled)),
+                        fps_refusal: butterpollo_media_policy::reconfigure::refusal(
+                            &s.config, enabled,
+                        )
+                        .map(|_| rate_change::refusal_reason(enabled)),
                     };
                     rate_change::decide(&request, &stream, &config)
                 }
@@ -1739,7 +1744,7 @@ fn handle_control_packet(
             if let Some(encoder_kbps) = decision.bitrate_kbps {
                 // Asked and applied in the client's unit: the encoder's
                 // share of it is no cap.
-                butterpollo_core::stream_policy::report_bitrate(
+                butterpollo_media_policy::stream_policy::report_bitrate(
                     &s.launch.warnings,
                     request.bitrate_kbps,
                     decision.result.bitrate_kbps,
@@ -1804,7 +1809,7 @@ fn handle_control_packet(
                         haptics_negotiated(&s.config, peer.channel_count()),
                     );
                     if let input::Input::Arrival { capabilities, .. } = &event
-                        && let Some(hint) = butterpollo_core::input_policy::steam_input_hint(
+                        && let Some(hint) = butterpollo_input_policy::input_policy::steam_input_hint(
                             &s.launch.client.name,
                             *capabilities,
                         )
@@ -1880,7 +1885,8 @@ fn send_clock_syncs(
             continue;
         };
         let epoch = *s.media_epoch.read().unwrap();
-        if let Some(reply) = butterpollo_core::clock_sync::reply(epoch, received_at, &payload)
+        if let Some(reply) =
+            butterpollo_media_policy::clock_sync::reply(epoch, received_at, &payload)
             && let Ok(message) = p.encrypt(&s, kind, &reply)
         {
             let _ = host.peer_mut(peer_id).send(
@@ -1908,9 +1914,7 @@ fn tell_client_stopping(
         let sent = usb
             .encode()
             .context("the USB message does not encode")
-            .and_then(|payload| {
-                p.encrypt(s, butterpollo_core::usb_forward::USB_MESSAGE_TYPE, &payload)
-            })
+            .and_then(|payload| p.encrypt(s, rubylight_protocol::usb::USB_MESSAGE_TYPE, &payload))
             .and_then(|message| {
                 host.peer_mut(peer_id)
                     .send(0, &Packet::new(message, PacketKind::Reliable))
@@ -2002,12 +2006,12 @@ fn apply_input(
         s.launch.warnings.event(
             "couch_menu",
             reason,
-            butterpollo_core::session::EVENT_PERIOD,
+            butterpollo_session::session::EVENT_PERIOD,
         );
     }
     menus.send(h, s, batch.nav);
     for e in batch.errors {
-        s.launch.warnings.event("input_injection", format!("Input injection failed ({e:#}); keyboard, mouse, touch or pen actions may be missing. Unlock the desktop and check Windows input permissions or disable native touch/pen if unsupported."), butterpollo_core::session::EVENT_PERIOD);
+        s.launch.warnings.event("input_injection", format!("Input injection failed ({e:#}); keyboard, mouse, touch or pen actions may be missing. Unlock the desktop and check Windows input permissions or disable native touch/pen if unsupported."), butterpollo_session::session::EVENT_PERIOD);
     }
     p.inputs.clear();
 }
@@ -2072,20 +2076,20 @@ pub(super) struct ControlPeer {
     /// Whether finding the co-op player was tried.
     coop_tried: bool,
     sequence: u32,
-    received: butterpollo_core::packet::ReplayWindow,
+    received: butterpollo_media_policy::packet::ReplayWindow,
     /// The session key's control cipher, expanded once rather than per message.
-    ciphers: butterpollo_core::packet::ControlCiphers,
+    ciphers: butterpollo_media_policy::packet::ControlCiphers,
     hdr_metadata: Option<[u8; 27]>,
     /// The session's `hdr_revision` the metadata above was read at: the loop
     /// reads the metadata only when the number moved.
     hdr_seen: u64,
-    legacy: butterpollo_core::packet::LegacyInput,
+    legacy: butterpollo_media_policy::packet::LegacyInput,
     seen: Instant,
     input_released: bool,
     session: Option<Arc<Session>>,
     inputs: Vec<input::Input>,
     /// How evenly its pointer moves arrive, for the log.
-    pointer_gaps: butterpollo_core::arrival_gaps::ArrivalGaps,
+    pointer_gaps: butterpollo_media_policy::arrival_gaps::ArrivalGaps,
     /// The longest injection pass since the last "pointer arrivals" line.
     inject_max: Duration,
     /// Input permissions this device lacked and was warned about.
@@ -2557,7 +2561,7 @@ pub(super) fn pad_reports(
     negotiated: bool,
     controller_audio: &[u8; 16],
     pcm: &mut controller_audio::PcmTraffic,
-    arbiter: &mut butterpollo_core::audio_haptics::Arbiter,
+    arbiter: &mut butterpollo_input_policy::audio_haptics::Arbiter,
     rumble: &mut RumbleForwarded,
 ) -> PadSends {
     let mut sends = PadSends::default();
@@ -2620,7 +2624,7 @@ pub(super) fn motion_requests(id: u8, capabilities: u16) -> Vec<(u16, Vec<u8>)> 
 }
 
 pub(super) fn haptics_negotiated(
-    config: &butterpollo_core::rtsp::Negotiated,
+    config: &butterpollo_media_policy::rtsp::Negotiated,
     channels: usize,
 ) -> bool {
     config.encryption & 1 != 0
@@ -2718,10 +2722,10 @@ pub(crate) fn feedback_packets(id: u16, kind: u16, data: &[u8]) -> Vec<(u16, Vec
 /// A congestion control decision, for the log: a cut is a warning, a release information.
 fn log_congestion_change(
     s: &Session,
-    change: &butterpollo_core::congestion::Change,
+    change: &butterpollo_media_policy::congestion::Change,
     applied: Option<(u32, u32)>,
 ) {
-    use butterpollo_core::congestion::ChangeKind;
+    use butterpollo_media_policy::congestion::ChangeKind;
     let (old_kbps, new_kbps) = applied.unwrap_or((0, 0));
     let shadow = s.congestion.lock().unwrap().shadow();
     macro_rules! line {

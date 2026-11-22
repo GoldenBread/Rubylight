@@ -13,7 +13,7 @@ use super::{
     owner::{self, Owner},
 };
 use anyhow::{Context, Result, bail};
-use butterpollo_core::state;
+use butterpollo_session::state;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},

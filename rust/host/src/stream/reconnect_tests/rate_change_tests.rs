@@ -1,10 +1,10 @@
 //! Rate changes (0x553C) through the real HTTP, RTSP, ENet and session workers: offered only
 //! to a stream whose client launched with `rlRateChange=1`, a bitrate set at once and capped
 //! by `max_bitrate`, a rate queued as a mode switch. The fixture replaces the session loop, so
-//! the switch itself and its answer are covered by `butterpollo_core::rate_change`'s tests
+//! the switch itself and its answer are covered by `butterpollo_media_policy::rate_change`'s tests
 //! and the hardware queue.
 use super::*;
-use butterpollo_core::rate_change::{
+use butterpollo_media_policy::rate_change::{
     Outcome, RATE_CHANGE_MESSAGE_TYPE, RateChangeRequest, RateChangeResult, Reason,
 };
 

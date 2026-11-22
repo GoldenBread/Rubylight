@@ -4,9 +4,9 @@
 use super::gamepads::PadMemory;
 use super::{Event, Gamepads};
 use anyhow::Result;
-use butterpollo_core::input::Batch;
-use butterpollo_core::steam_feedback::{SteamHaptic, SteamPads};
-use butterpollo_core::{controller_audio, haptics};
+use butterpollo_input_policy::input::Batch;
+use butterpollo_input_policy::steam_feedback::{SteamHaptic, SteamPads};
+use butterpollo_input_policy::{controller_audio, haptics};
 use std::{
     collections::VecDeque,
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
@@ -74,7 +74,7 @@ pub enum PadReport {
 
 /// The pads the thread drives: VHF, or a stand-in in tests.
 pub(super) trait Pads {
-    fn warnings(&mut self, _warnings: Arc<butterpollo_core::session::Warnings>) {}
+    fn warnings(&mut self, _warnings: Arc<butterpollo_session::session::Warnings>) {}
     fn apply(&mut self, event: &Event) -> Result<()>;
     fn refresh(&mut self) -> Result<()>;
     /// Controllers whose client should be asked for motion again, with their
@@ -139,7 +139,7 @@ pub(super) trait Pads {
     fn remember(&mut self, _memory: PadMemory) {}
 }
 impl Pads for Gamepads {
-    fn warnings(&mut self, warnings: Arc<butterpollo_core::session::Warnings>) {
+    fn warnings(&mut self, warnings: Arc<butterpollo_session::session::Warnings>) {
         self.set_warnings(warnings);
     }
     fn apply(&mut self, event: &Event) -> Result<()> {
@@ -213,7 +213,7 @@ impl Pads for Gamepads {
 }
 
 struct Shared {
-    warnings: Mutex<Arc<butterpollo_core::session::Warnings>>,
+    warnings: Mutex<Arc<butterpollo_session::session::Warnings>>,
     queue: Mutex<Queue>,
     /// Signalled with `wake` for the gamepad thread, which waits on it and
     /// the drivers' feedback events together; `wake` stays for
@@ -374,7 +374,7 @@ pub struct GamepadThread {
     /// The back grips no setting maps; pressing one the controller's pad lacks shows a hint.
     unmapped_grips: u32,
     /// The `gamepad` profile and the controllers' identities, for the grips each pad has
-    /// ([`butterpollo_core::input_policy::pad_back_grips`]).
+    /// ([`butterpollo_input_policy::input_policy::pad_back_grips`]).
     profile: u16,
     identities: Mutex<std::collections::BTreeMap<u16, (u16, u16)>>,
 }
@@ -382,8 +382,8 @@ impl GamepadThread {
     /// The driver is opened with the first controller event, on the thread.
     pub fn new(
         profile: u16,
-        policy: butterpollo_core::input_policy::Policy,
-        warnings: Arc<butterpollo_core::session::Warnings>,
+        policy: butterpollo_input_policy::input_policy::Policy,
+        warnings: Arc<butterpollo_session::session::Warnings>,
     ) -> std::io::Result<Self> {
         let unmapped_grips = policy.unmapped_back_grips();
         let pad_warnings = warnings.clone();
@@ -406,7 +406,7 @@ impl GamepadThread {
     #[cfg(test)]
     fn spawn_reported<P: Pads + 'static>(
         open: impl FnMut() -> Result<P> + Send + 'static,
-        warnings: Arc<butterpollo_core::session::Warnings>,
+        warnings: Arc<butterpollo_session::session::Warnings>,
     ) -> std::io::Result<Self> {
         Self::spawn_polled(
             open,
@@ -422,7 +422,7 @@ impl GamepadThread {
     /// The thread with feedback polled as `poll` says; tests stretch it.
     fn spawn_polled<P: Pads + 'static>(
         open: impl FnMut() -> Result<P> + Send + 'static,
-        warnings: Arc<butterpollo_core::session::Warnings>,
+        warnings: Arc<butterpollo_session::session::Warnings>,
         poll: Polling,
     ) -> std::io::Result<Self> {
         // SAFETY: CreateEventW returned a new auto-reset event, which only
@@ -469,7 +469,7 @@ impl GamepadThread {
     /// The back grips controller `id`'s pad has itself: every one on a Steam Controller,
     /// whether `gamepad` or Automatic chose it.
     fn pad_back_grips(&self, id: u16) -> u32 {
-        use butterpollo_core::input_policy::{VHF_STEAM_CONTROLLER, pad_back_grips};
+        use butterpollo_input_policy::input_policy::{VHF_STEAM_CONTROLLER, pad_back_grips};
         let steam = id < 16 && self.shared.steam_pads.load(Ordering::Acquire) & (1 << id) != 0;
         pad_back_grips(
             if steam {
@@ -481,7 +481,7 @@ impl GamepadThread {
         )
     }
     /// Queue an event for the pads; never waits for the driver.
-    pub fn set_warnings(&self, warnings: Arc<butterpollo_core::session::Warnings>) {
+    pub fn set_warnings(&self, warnings: Arc<butterpollo_session::session::Warnings>) {
         *self.shared.warnings.lock().unwrap() = warnings;
     }
     pub fn send(&self, event: Event) {
@@ -502,8 +502,8 @@ impl GamepadThread {
         {
             self.shared.warnings.lock().unwrap().event(
                 "input_back_grips",
-                butterpollo_core::input_policy::BACK_GRIP_HINT,
-                butterpollo_core::session::EVENT_PERIOD,
+                butterpollo_input_policy::input_policy::BACK_GRIP_HINT,
+                butterpollo_session::session::EVENT_PERIOD,
             );
         }
         let mut queue = self.shared.queue.lock().unwrap();
@@ -511,7 +511,7 @@ impl GamepadThread {
             queue.oldest = Some(Instant::now());
         }
         if !enqueue(&mut queue.events, event) && !std::mem::replace(&mut queue.full, true) {
-            self.shared.warnings.lock().unwrap().event("input_gamepad_queue", "Virtual gamepad driver is not keeping up; controller input was dropped. Check the virtual gamepad driver or choose another supported profile.", butterpollo_core::session::EVENT_PERIOD);
+            self.shared.warnings.lock().unwrap().event("input_gamepad_queue", "Virtual gamepad driver is not keeping up; controller input was dropped. Check the virtual gamepad driver or choose another supported profile.", butterpollo_session::session::EVENT_PERIOD);
         }
         drop(queue);
         self.shared.wake();
@@ -1136,7 +1136,7 @@ fn run<P: Pads>(
             if let Err(error) = released
                 && !pads.lost()
             {
-                shared.warnings.lock().unwrap().event("input_gamepad_injection", format!("Controller release failed ({error:#}); held controls may remain active. Check the virtual gamepad driver."), butterpollo_core::session::EVENT_PERIOD);
+                shared.warnings.lock().unwrap().event("input_gamepad_injection", format!("Controller release failed ({error:#}); held controls may remain active. Check the virtual gamepad driver."), butterpollo_session::session::EVENT_PERIOD);
             }
         }
         if release {
@@ -1241,7 +1241,7 @@ fn run<P: Pads>(
                 continue;
             }
             match applied {
-                Err(error) => shared.warnings.lock().unwrap().event("input_gamepad_injection", format!("Controller input failed ({error:#}); some controls may not work. Check the selected gamepad profile and virtual driver."), butterpollo_core::session::EVENT_PERIOD),
+                Err(error) => shared.warnings.lock().unwrap().event("input_gamepad_injection", format!("Controller input failed ({error:#}); some controls may not work. Check the selected gamepad profile and virtual driver."), butterpollo_session::session::EVENT_PERIOD),
                 Ok(()) => {
                     if losses.recovered(Instant::now()) {
                         shared.warnings.lock().unwrap().clear(DRIVER_LOST);

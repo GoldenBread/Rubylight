@@ -2,9 +2,9 @@
 //! player, each instance's game window, and keeping those windows parked
 //! beside the PC's desktop at their stream's size.
 use anyhow::Result;
-use butterpollo_core::audio_scope::Identity;
-use butterpollo_core::nucleus::window::{self, Rect, Window};
-use butterpollo_core::steam::Process;
+use butterpollo_session::audio_scope::Identity;
+use butterpollo_session::nucleus::window::{self, Rect, Window};
+use butterpollo_session::steam::Process;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What a session reads and changes on the desktop: Win32 on the PC, fakes

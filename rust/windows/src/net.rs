@@ -46,9 +46,9 @@ pub fn host_name() -> Option<String> {
 /// loopback or when no physical adapter is connected.
 pub fn local_mac(address: std::net::IpAddr) -> Result<String> {
     if address.to_canonical().is_loopback() {
-        return Ok(butterpollo_core::wake::format_mac(None));
+        return Ok(butterpollo_session::wake::format_mac(None));
     }
-    Ok(butterpollo_core::wake::reported_mac(
+    Ok(butterpollo_session::wake::reported_mac(
         &crate::wake::adapters()?,
         address,
         crate::wake::armed,

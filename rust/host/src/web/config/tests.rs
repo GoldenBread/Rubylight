@@ -1,6 +1,6 @@
 use super::*;
 use crate::state::{Host, test_support::Fixture};
-use butterpollo_core::config::Config;
+use butterpollo_config::config::Config;
 use butterpollo_windows::capture::{Display, Gpu};
 
 fn hybrid_gpus() -> Vec<Gpu> {
@@ -169,7 +169,7 @@ fn only_a_save_with_a_restart_bound_setting_asks_for_a_restart() {
 fn restart_keys_are_current_names_listed_once() {
     let mut seen = std::collections::BTreeSet::new();
     for key in RESTART_KEYS {
-        assert_eq!(butterpollo_core::config::current_name(key), *key);
+        assert_eq!(butterpollo_config::config::current_name(key), *key);
         assert!(seen.insert(*key), "{key} twice");
     }
 }
@@ -187,7 +187,7 @@ fn saving_full_chroma_off_withdraws_its_modes_at_once() {
         .values
         .insert("packed_444".into(), "true".into());
     host.packed_modes
-        .store(butterpollo_core::packed444::ALL_MODES, Ordering::Release);
+        .store(rubylight_protocol::packed444::ALL_MODES, Ordering::Release);
     handle(
         host,
         "PATCH",
@@ -200,7 +200,7 @@ fn saving_full_chroma_off_withdraws_its_modes_at_once() {
 
 #[test]
 fn saving_a_library_setting_scans_the_launchers_again() {
-    use butterpollo_core::native::Scan;
+    use butterpollo_session::native::Scan;
     let fixture = Fixture::new();
     let host = &fixture.host;
     let seeded = Scan::new(["epic:kept".to_owned()]);
@@ -392,7 +392,7 @@ fn turning_usb_forwarding_off_in_the_console_detaches_attached_devices() {
             &crate::usb_forward::tests::client(true),
             true,
             4,
-            butterpollo_core::usb_forward::UsbMessage::AttachRequest {
+            rubylight_protocol::usb::UsbMessage::AttachRequest {
                 request_id,
                 vid: 0x0781,
                 pid: 0x5581,

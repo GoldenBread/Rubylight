@@ -5,8 +5,8 @@ use crate::{
     pyro_abi as p,
 };
 use anyhow::{Context, Result, ensure};
-use butterpollo_core::{
-    config::Config,
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::{
     packet::{PyrowaveFec, VideoPacketizer},
     pyrowave,
     rtsp::Negotiated,
@@ -731,7 +731,7 @@ fn picture(config: &Negotiated, phase: u32, scene: Scene) -> (Image, Vec<Vec<u16
                     let sample = source[(y as usize + dy) * width as usize + x as usize + dx];
                     for c in 0..3 {
                         let value = if filter_in_light {
-                            butterpollo_core::image_quality::depq(sample[c])
+                            butterpollo_media_policy::image_quality::depq(sample[c])
                         } else {
                             sample[c]
                         };
@@ -740,7 +740,7 @@ fn picture(config: &Negotiated, phase: u32, scene: Scene) -> (Image, Vec<Vec<u16
                 }
             }
             if filter_in_light {
-                rgb = rgb.map(butterpollo_core::image_quality::pq);
+                rgb = rgb.map(butterpollo_media_policy::image_quality::pq);
             }
             let values = yuv(rgb);
             for c in 1..3 {
@@ -1165,7 +1165,7 @@ fn record_framing_keeps_the_wire_budget_and_decoded_pixels() -> Result<()> {
         pyrowave_records: true,
         ..Default::default()
     };
-    let period = butterpollo_core::framegen::Rate(config.fps_millihz()).period();
+    let period = butterpollo_media_policy::framegen::Rate(config.fps_millihz()).period();
     let mut encoder = super::Encoder::new_device(&config, gpu.clone(), &Config::default())?;
     let mut decoder = Decoder::new(&gpu, &config)?;
     for scene in [Scene::Desktop, Scene::Game] {
@@ -1207,7 +1207,9 @@ fn record_framing_keeps_the_wire_budget_and_decoded_pixels() -> Result<()> {
                 let packets = packetizer.encode_pyrowave(&framed, 0, 0, fec(percentage))?;
                 let wire: usize = packets
                     .iter()
-                    .map(|packet| packet.len() + butterpollo_core::network_pacing::overhead(true))
+                    .map(|packet| {
+                        packet.len() + butterpollo_media_policy::network_pacing::overhead(true)
+                    })
                     .sum();
                 assert!(
                     wire <= allowance,
@@ -1217,7 +1219,9 @@ fn record_framing_keeps_the_wire_budget_and_decoded_pixels() -> Result<()> {
                     packetizer.encode_pyrowave(&aligned, 0, 0, fec(percentage))?;
                 let wire: usize = aligned_packets
                     .iter()
-                    .map(|packet| packet.len() + butterpollo_core::network_pacing::overhead(true))
+                    .map(|packet| {
+                        packet.len() + butterpollo_media_policy::network_pacing::overhead(true)
+                    })
                     .sum();
                 aligned_wire = aligned_wire.max(wire);
             }
@@ -1292,7 +1296,7 @@ fn quality_sweep(width: u32, height: u32, critical_fec: usize) -> Result<()> {
                                 .ceil() as u32;
                             let budget = pyrowave::budget(
                                 kbps,
-                                butterpollo_core::framegen::Rate(fps * 1000).period(),
+                                butterpollo_media_policy::framegen::Rate(fps * 1000).period(),
                                 config.packet_size,
                                 true,
                                 critical_fec as u32,

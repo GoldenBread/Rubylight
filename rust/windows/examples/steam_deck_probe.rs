@@ -7,7 +7,7 @@
 //! For the given time (default 60 s) it presses A every second, sweeps the
 //! left stick, turns the gyro and strokes the right trackpad, prints rumble
 //! Steam sends, then detaches the controller and stops any reattach.
-use butterpollo_core::{
+use butterpollo_input_policy::{
     input::Input,
     steam_deck::{REPORT_PERIOD, SteamDeck},
     usbip::{BUS_ID, Export},

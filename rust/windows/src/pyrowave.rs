@@ -7,7 +7,7 @@ use crate::{
     pyro_abi as p,
 };
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
+use butterpollo_media_policy::{
     pyrowave::{self, PACKET_BOUNDARY},
     rtsp::Negotiated,
 };
@@ -402,7 +402,7 @@ fn interval(config: &Negotiated) -> pyrowave::Interval {
     // A pause must not buy a larger burst when capture resumes, including for
     // legacy clients without record framing or critical FEC.
     pyrowave::Interval::new(
-        butterpollo_core::framegen::Rate(config.fps_millihz()).period(),
+        butterpollo_media_policy::framegen::Rate(config.fps_millihz()).period(),
         true,
     )
 }
@@ -586,7 +586,7 @@ impl Slot {
         config: &Negotiated,
         source: (u32, u32, Pixel),
         use_compute: bool,
-        warnings: &butterpollo_core::session::Warnings,
+        warnings: &butterpollo_session::session::Warnings,
     ) -> Result<Self> {
         let converter = PlanarConverter::new(d3d, config, source)?;
         let mut interop = Vec::with_capacity(converter.textures.len());
@@ -615,7 +615,7 @@ impl Slot {
     }
 }
 pub struct Encoder {
-    warnings: Arc<butterpollo_core::session::Warnings>,
+    warnings: Arc<butterpollo_session::session::Warnings>,
     api: Arc<Api>,
     device: p::pyrowave_device,
     encoder: p::pyrowave_encoder,
@@ -677,15 +677,15 @@ impl Encoder {
     pub fn new_device(
         config: &Negotiated,
         d3d: Device,
-        tuning: &butterpollo_core::config::Config,
+        tuning: &butterpollo_config::config::Config,
     ) -> Result<Self> {
         Self::new_device_reported(config, d3d, tuning, Default::default())
     }
     pub fn new_device_reported(
         config: &Negotiated,
         d3d: Device,
-        tuning: &butterpollo_core::config::Config,
-        warnings: Arc<butterpollo_core::session::Warnings>,
+        tuning: &butterpollo_config::config::Config,
+        warnings: Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
         let api = Api::load()?;
         // SAFETY: `d3d.device` is a live D3D11 device; GetAdapter and GetDesc only read it.
@@ -886,7 +886,7 @@ impl Encoder {
                 self.warnings.event(
                     "pyrowave_output_event",
                     format!("PyroWave could not arm its output event ({error:#}); polling for output instead. Report this with the host log."),
-                    butterpollo_core::session::EVENT_PERIOD,
+                    butterpollo_session::session::EVENT_PERIOD,
                 );
                 None
             }
@@ -1288,11 +1288,11 @@ impl Encoder {
                         self.warnings.event(
                             "pyrowave_row_order",
                             row_order_dropped_message(self.config.packet_size),
-                            butterpollo_core::session::EVENT_PERIOD,
+                            butterpollo_session::session::EVENT_PERIOD,
                         );
                         if self
                             .row_order_notice
-                            .due(Instant::now(), butterpollo_core::session::EVENT_PERIOD)
+                            .due(Instant::now(), butterpollo_session::session::EVENT_PERIOD)
                         {
                             tracing::warn!(
                                 "PyroWave row order dropped: {} bytes framed ({} unframed) against a budget of {budget} bytes and a wire allowance of {allowance} bytes",
@@ -1329,11 +1329,11 @@ impl Encoder {
             self.warnings.event(
                 "pyrowave_frame_size",
                 frame_size_message(limit),
-                butterpollo_core::session::EVENT_PERIOD,
+                butterpollo_session::session::EVENT_PERIOD,
             );
             if self
                 .size_notice
-                .due(Instant::now(), butterpollo_core::session::EVENT_PERIOD)
+                .due(Instant::now(), butterpollo_session::session::EVENT_PERIOD)
             {
                 tracing::warn!(
                     "PyroWave frame of {} bytes dropped over the transport limit of {limit}",

@@ -1,6 +1,6 @@
 //! Keeps a background stream's game windows on the stream's display without
 //! activating them, so the person using the PC keeps their focus.
-use butterpollo_core::background::{Rect, placement};
+use butterpollo_session::background::{Rect, placement};
 use std::{
     collections::{BTreeMap, BTreeSet},
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},

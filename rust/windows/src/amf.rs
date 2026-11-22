@@ -2,7 +2,7 @@
 //!
 //! Calls AMF's C ABI directly, takes D3D11 or D3D12
 //! textures from capture and Radeon compute without a copy, and applies the
-//! per-codec settings from `butterpollo_core::encoder_policy`.
+//! per-codec settings from `butterpollo_media_policy::encoder_policy`.
 mod create;
 pub(crate) mod dynamic;
 pub mod focus;
@@ -25,8 +25,10 @@ use crate::{
     encoder::{Encoded, Unit},
 };
 use anyhow::{Context, Result, bail};
-use butterpollo_core::encoder_backlog::{self, AMF_SURFACE_LIMIT, AmfBacklog, QUERY_TIMEOUT};
-use butterpollo_core::encoder_policy::KeyframeCapScale;
+use butterpollo_media_policy::encoder_backlog::{
+    self, AMF_SURFACE_LIMIT, AmfBacklog, QUERY_TIMEOUT,
+};
+use butterpollo_media_policy::encoder_policy::KeyframeCapScale;
 #[cfg(test)]
 use create::{OutputRange, transfer_characteristic};
 #[cfg(test)]
@@ -190,10 +192,10 @@ pub(crate) fn over_cap_target(bytes: u64, target: Option<u64>) -> bool {
     target.is_some_and(|target| target > 0 && bytes * 10 > target * 11)
 }
 pub struct Encoder {
-    pub(crate) warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+    pub(crate) warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     component: *mut AMFComponent,
     context: *mut AMFContext,
-    config: butterpollo_core::rtsp::Negotiated,
+    config: butterpollo_media_policy::rtsp::Negotiated,
     codec: u8,
     _device: Device,
     _library: libloading::Library,
@@ -223,10 +225,10 @@ pub struct Encoder {
     /// An input is prepared and not yet accepted: no re-encode may change the
     /// references its plan names.
     preparing: bool,
-    references: butterpollo_core::ltr::References,
+    references: butterpollo_media_policy::ltr::References,
     /// AMF's H.264 and HEVC headers as a client that dropped frames until a
     /// long-term reference repair needs them: only on a stream with LTR.
-    repair_headers: Option<butterpollo_core::bitstream::RepairHeaders>,
+    repair_headers: Option<butterpollo_media_policy::bitstream::RepairHeaders>,
     /// A header rewrite failed: outputs are dropped until the keyframe it
     /// asked for, as their headers no longer match what the client has.
     repair_dropping: bool,
@@ -404,7 +406,7 @@ impl Encoder {
     }
     /// False asks for a keyframe: no long-term reference repairs the range,
     /// or the client's decoder could not order the recovery frame
-    /// ([`butterpollo_core::ltr::Counter`]).
+    /// ([`butterpollo_media_policy::ltr::Counter`]).
     pub fn invalidate_ref_frames(&mut self, first: u64, last: u64) -> bool {
         self.references.invalidate(first, last)
     }

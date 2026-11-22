@@ -1,7 +1,7 @@
 //! The composite DualSense's USB attachment; never changes audio defaults.
 use super::{gamepads::Slot, usbip_pad::UsbPad};
 use anyhow::Result;
-use butterpollo_core::{
+use butterpollo_input_policy::{
     dualsense::{DualSense, REPORT_PERIOD},
     haptics,
     input::Input,

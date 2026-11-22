@@ -1,14 +1,12 @@
-//! Client microphones (`butterpollo_core::mic` has the wire format). One
+//! Client microphones (`butterpollo_session::mic` has the wire format). One
 //! receiver serves every session on the microphone port. The client
 //! speaking is decoded as its packets arrive and played into Steam
 //! Streaming Microphone by a render thread that runs only while it speaks;
 //! a second client is heard once the first has been quiet for a second.
 use crate::state::{Session, Shared};
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
-    config::Config,
-    mic::{self, Arrival, Playout, Sequencer},
-};
+use butterpollo_config::config::Config;
+use butterpollo_session::mic::{self, Arrival, Playout, Sequencer};
 use butterpollo_windows::{
     audio::OpusDecoder,
     audio_route,
@@ -100,7 +98,7 @@ struct Speaker {
     started: Instant,
     stats: Stats,
     /// How evenly its packets arrive, for the log.
-    gaps: butterpollo_core::arrival_gaps::ArrivalGaps,
+    gaps: butterpollo_media_policy::arrival_gaps::ArrivalGaps,
 }
 /// The last session a microphone packet matched, tried before the full lookup.
 struct Cached {
@@ -540,7 +538,7 @@ fn render(
     playout: &Mutex<Playout>,
     stop: &AtomicBool,
     opened: &AtomicBool,
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
 ) -> Result<()> {
     let _com = ComGuard::new()?;
     let _priority = Priority::input();
@@ -647,7 +645,11 @@ fn warning_due(warned: &mut Option<Instant>, now: Instant) -> bool {
     due
 }
 /// The level thread: `GainCap` until the render thread stops.
-fn keep_gain(warnings: &butterpollo_core::session::Warnings, stop: &AtomicBool, done: &AtomicBool) {
+fn keep_gain(
+    warnings: &butterpollo_session::session::Warnings,
+    stop: &AtomicBool,
+    done: &AtomicBool,
+) {
     let _com = match ComGuard::new() {
         Ok(com) => com,
         Err(error) => return gain_failed(&error, warnings, stop),
@@ -669,7 +671,7 @@ struct GainCap {
     next: Option<Instant>,
 }
 impl GainCap {
-    fn open(warnings: &butterpollo_core::session::Warnings, stop: &AtomicBool) -> Self {
+    fn open(warnings: &butterpollo_session::session::Warnings, stop: &AtomicBool) -> Self {
         let gain = audio_route::SteamMicrophoneGain::open()
             .inspect_err(|error| gain_failed(error, warnings, stop))
             .ok();
@@ -686,7 +688,7 @@ impl GainCap {
     fn check(
         &mut self,
         now: Instant,
-        warnings: &butterpollo_core::session::Warnings,
+        warnings: &butterpollo_session::session::Warnings,
         stop: &AtomicBool,
     ) {
         if self.gain.is_none() || !self.due(now) {
@@ -710,7 +712,7 @@ impl GainCap {
 }
 fn gain_failed(
     error: &anyhow::Error,
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
     stop: &AtomicBool,
 ) {
     tracing::warn!(error = %format!("{error:#}"), "Steam Streaming Microphone recording level could not be checked; the microphone may sound distorted");

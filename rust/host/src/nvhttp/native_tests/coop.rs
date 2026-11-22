@@ -2,7 +2,8 @@
 //! entries through the router, with the fake Nucleus Co-op PC.
 use super::*;
 use crate::nucleus::{Admission, Game, fake};
-use butterpollo_core::{native_api::coop::Coop, state::App};
+use butterpollo_session::state::App;
+use rubylight_native_api::coop::Coop;
 
 async fn join(s: &Setup, connection: &Connection, body: &str) -> Reply {
     send(
@@ -61,7 +62,7 @@ fn device(f: &Fixture, uuid: &str) -> Connection {
 }
 
 /// Device `index` launches the co-op entry: it starts the session or joins it.
-fn launch(s: &Setup, index: usize, launch: &str) -> butterpollo_core::session::Seat {
+fn launch(s: &Setup, index: usize, launch: &str) -> butterpollo_session::session::Seat {
     let apps = s.host().apps.read().unwrap().clone();
     let coop = s.host().nucleus.entries(&apps, "").remove(0);
     let client = s.host().paired.read().unwrap().clients[index].clone();
@@ -136,7 +137,7 @@ async fn capabilities_list_coop_while_nucleus_can_run_and_show_join_co_op() {
     allow_coop_join(&s, 0);
     assert!(read(&s).await);
     // A watching device that never set it may not join.
-    let watching = Setup::with(butterpollo_core::state::LATER_DEVICE_PERMISSION);
+    let watching = Setup::with(butterpollo_session::state::LATER_DEVICE_PERMISSION);
     with_nucleus(&watching);
     assert!(!read(&watching).await);
 }
@@ -198,10 +199,7 @@ async fn coop_lists_the_games_and_the_sessions_as_the_device_sees_them() {
     let session = &listed.sessions[0];
     assert_eq!(session.id, seat.session);
     assert_eq!((session.app_id, session.title.as_str()), (id, "Portal 2"));
-    assert_eq!(
-        session.phase,
-        butterpollo_core::native_api::coop::Phase::Starting
-    );
+    assert_eq!(session.phase, rubylight_native_api::coop::Phase::Starting);
     assert_eq!(session.players.len(), 2);
     // Who plays is named only to a device that may join.
     assert_eq!(session.players[0].name, None);
@@ -230,11 +228,11 @@ async fn coop_lists_the_games_and_the_sessions_as_the_device_sees_them() {
     let ended = coop(&s.get("/coop").await);
     assert_eq!(
         ended.sessions[0].phase,
-        butterpollo_core::native_api::coop::Phase::Ended
+        rubylight_native_api::coop::Phase::Ended
     );
     assert_eq!(
         ended.sessions[0].end.as_ref().unwrap().reason,
-        butterpollo_core::native_api::coop::EndReason::Ended
+        rubylight_native_api::coop::EndReason::Ended
     );
     assert!(!ended.sessions[0].joinable);
 }

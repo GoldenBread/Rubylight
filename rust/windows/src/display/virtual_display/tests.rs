@@ -894,7 +894,7 @@ fn native_virtual_display_recovery_restores_the_requested_mode_and_mode_list() -
                 &display.name,
                 2560,
                 1440,
-                butterpollo_core::framegen::Rate(60_000),
+                butterpollo_media_policy::framegen::Rate(60_000),
             )?;
             // A healthy heartbeat must allow a game's own mode change.
             display.last_feed = Instant::now() - Duration::from_secs(2);
@@ -968,15 +968,15 @@ fn a_vrr_display_requests_1000_hz_in_the_drivers_millihertz_field() {
     }
     // Windows takes the mode as a reduced rational.
     assert_eq!(
-        butterpollo_core::framegen::Rate(1_000_000).rational(),
+        butterpollo_media_policy::framegen::Rate(1_000_000).rational(),
         (1000, 1)
     );
     assert_eq!(
-        butterpollo_core::framegen::Rate(116_000).rational(),
+        butterpollo_media_policy::framegen::Rate(116_000).rational(),
         (116, 1)
     );
     assert_eq!(
-        butterpollo_core::framegen::Rate(59_940).rational(),
+        butterpollo_media_policy::framegen::Rate(59_940).rational(),
         (2997, 50)
     );
 }
@@ -985,7 +985,7 @@ fn a_selected_gpu_renders_the_virtual_display_and_automatic_leaves_it_to_windows
     // Issue #28: the integrated GPU rendered the virtual display while
     // the selected discrete Radeon was asked to duplicate it.
     assert_eq!(VirtualOptions::default().render_adapter, None);
-    use butterpollo_core::config::Config;
+    use butterpollo_config::config::Config;
     assert_eq!(configured_render_adapter(&Config::default()), None);
     // A GPU that is gone leaves the choice to Windows, never another GPU.
     let missing = Config::parse("adapter_name = No Such GPU\n").unwrap();

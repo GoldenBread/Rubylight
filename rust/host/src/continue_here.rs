@@ -19,12 +19,12 @@
 //! more, and close-on-disconnect waits for [`Back`] before it counts that device as gone.
 use crate::session_control::locked;
 use crate::state::{Host, Shared};
-use butterpollo_core::{
+use butterpollo_session::{
     native::{Holder, SessionSnapshot},
-    native_api::session::{MovedTo, State},
     session_state::Refusal,
     state::Client,
 };
+use rubylight_native_api::session::{MovedTo, State};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Mutex,
@@ -281,7 +281,7 @@ impl Host {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clients
             .iter()
-            .find(|client| client.uuid == butterpollo_core::state::device_uuid(uuid))
+            .find(|client| client.uuid == butterpollo_session::state::device_uuid(uuid))
             .map(|client| client.name.clone())
     }
     /// Where `device`'s stream went, for its own `/session`. Nothing else asks once the game has

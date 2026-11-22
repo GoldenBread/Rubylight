@@ -1,6 +1,6 @@
 use super::handle;
 use crate::state::test_support::Fixture;
-use butterpollo_core::power_action::SleepStates;
+use butterpollo_session::power_action::SleepStates;
 use serde_json::json;
 use std::time::Duration;
 
@@ -34,11 +34,11 @@ fn turning_a_device_off_gives_up_its_radeon_settings_but_removing_a_permission_d
 
 #[test]
 fn forgetting_a_kept_resolution_forgets_the_second_screens_too() {
-    use butterpollo_core::state::{REMEMBERED_RESOLUTION, screen_setting};
+    use butterpollo_session::state::{REMEMBERED_RESOLUTION, screen_setting};
     let f = Fixture::new();
     let client = f.client(PERM);
     let second = screen_setting(
-        &butterpollo_core::state::second_screen_uuid(&client.uuid),
+        &butterpollo_session::state::second_screen_uuid(&client.uuid),
         REMEMBERED_RESOLUTION,
     );
     {
@@ -63,7 +63,7 @@ fn turning_off_or_unpairing_a_device_gives_up_its_second_screens_radeon_settings
     for data in [json!({"enabled": false}), json!(null)] {
         let f = Fixture::new();
         let client = f.client(PERM);
-        let second = butterpollo_core::state::second_screen_uuid(&client.uuid);
+        let second = butterpollo_session::state::second_screen_uuid(&client.uuid);
         f.host.radeon.note_written(&second, &[]);
         let path = if data.is_null() {
             "/api/clients/unpair"
@@ -79,7 +79,7 @@ fn turning_off_or_unpairing_a_device_gives_up_its_second_screens_radeon_settings
 
 #[test]
 fn turning_off_disconnecting_or_unpairing_a_device_ends_its_second_screen_too() {
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     for (path, data) in [
         ("/api/clients/update", json!({"enabled": false})),
         ("/api/clients/update", json!({"perm": 0})),
@@ -119,22 +119,22 @@ fn a_name_from_before_direction_characters_were_refused_can_stay_but_not_arrive(
             &json!({"uuid": client.uuid, "name": name, "perm": perm}),
         )
     };
-    update(old, butterpollo_core::state::LATER_DEVICE_PERMISSION).unwrap();
+    update(old, butterpollo_session::state::LATER_DEVICE_PERMISSION).unwrap();
     let state = f.host.paired.read().unwrap();
     assert_eq!(
         state.clients[0].perm,
-        butterpollo_core::state::LATER_DEVICE_PERMISSION
+        butterpollo_session::state::LATER_DEVICE_PERMISSION
     );
     assert_eq!(state.clients[0].name, old);
     drop(state);
     assert!(
         update(
             "TV\u{202e}2",
-            butterpollo_core::state::LATER_DEVICE_PERMISSION
+            butterpollo_session::state::LATER_DEVICE_PERMISSION
         )
         .is_err()
     );
-    update("TV", butterpollo_core::state::LATER_DEVICE_PERMISSION).unwrap();
+    update("TV", butterpollo_session::state::LATER_DEVICE_PERMISSION).unwrap();
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn join_co_op_is_granted_only_as_a_boolean() {
             .cloned()
     };
     // Never set: the device launches apps, so it may join.
-    assert_ne!(PERM & butterpollo_core::state::LAUNCH_APPS, 0);
+    assert_ne!(PERM & butterpollo_session::state::LAUNCH_APPS, 0);
     assert!(allowed());
     let error = update(json!("yes")).unwrap_err();
     assert_eq!(error.to_string(), "coop_join must be true, false or null");
@@ -461,7 +461,7 @@ fn the_device_list_names_the_client_and_warns_only_about_listed_builds() {
     assert_eq!(listed()["clients"][0]["client_agent"], "Nightjar/3.2.0");
     // The shipped list names no build, so nothing is flagged.
     assert_eq!(listed()["clients"][0]["client_warning"], json!(null));
-    let list = [butterpollo_core::client_warnings::BrokenClient {
+    let list = [butterpollo_session::client_warnings::BrokenClient {
         product: "Nightjar",
         from: (3, 2, 0),
         fixed: (3, 2, 1),
@@ -551,7 +551,7 @@ fn the_pairing_qr_code_holds_a_one_time_pin_and_the_host_certificate() {
     };
     for code in codes {
         let uri = code["uri"].as_str().unwrap();
-        let parsed = butterpollo_core::pairing_uri::PairingUri::parse(uri).unwrap();
+        let parsed = rubylight_protocol::pairing_uri::PairingUri::parse(uri).unwrap();
         assert_eq!(parsed.host, code["address"].as_str().unwrap());
         assert_eq!(parsed.port, f.host.config.read().unwrap().port().unwrap());
         assert_eq!((&parsed.otp, &parsed.passphrase), (&pin, &passphrase));
@@ -604,7 +604,7 @@ fn a_second_tab_shows_the_live_qr_code_until_its_last_minute() {
     // Another tab, with 61 s left: the same code and its time left. The
     // latest access choice applies to it.
     f.host.otp.lock().unwrap().qr.as_mut().unwrap().created -= Duration::from_secs(119);
-    let play = Some(butterpollo_core::state::PLAY_DEVICE_PERMISSION);
+    let play = Some(butterpollo_session::state::PLAY_DEVICE_PERMISSION);
     let again = super::pairing_qr(&f.host, "", play, addresses.clone()).unwrap();
     assert_eq!(again["codes"][0]["uri"], first["codes"][0]["uri"]);
     assert_eq!(again["expires_in_seconds"], 61);
@@ -649,7 +649,7 @@ fn the_typed_one_time_pin_leaves_the_qr_code_alone() {
     assert_eq!(typed.passphrase, "typed phrase");
     assert_eq!(
         typed.permission,
-        Some(butterpollo_core::state::PLAY_DEVICE_PERMISSION)
+        Some(butterpollo_session::state::PLAY_DEVICE_PERMISSION)
     );
     assert_eq!(otp.qr.as_ref().unwrap().passphrase, passphrase);
     drop(otp);
@@ -699,7 +699,7 @@ fn the_console_pin_carries_the_chosen_access_to_moonlight_requests_only() {
         (
             "1234".to_owned(),
             "moonlight".to_owned(),
-            Some(butterpollo_core::state::PLAY_DEVICE_PERMISSION),
+            Some(butterpollo_session::state::PLAY_DEVICE_PERMISSION),
             None
         )
     );

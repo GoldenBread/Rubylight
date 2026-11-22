@@ -37,7 +37,8 @@ use axum::{
     routing::get,
 };
 use base64::Engine;
-use butterpollo_core::{auth, crypto, state, state::Credentials};
+use butterpollo_crypto::{auth, crypto};
+use butterpollo_session::{state, state::Credentials};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -346,7 +347,7 @@ pub fn router_with(h: Shared, console: crate::webrtc::server::Console) -> Router
         .route(
             "/api/backup/inspect",
             axum::routing::post(api).layer(axum::extract::DefaultBodyLimit::max(
-                butterpollo_core::settings_backup::MAX_ARCHIVE as usize,
+                butterpollo_session::settings_backup::MAX_ARCHIVE as usize,
             )),
         )
         .route(
@@ -410,7 +411,7 @@ fn origin_allowed(h: &Shared, headers: &HeaderMap, origin: &str) -> bool {
         .unwrap()
         .get("csrf_allowed_origins", "[]")
         .to_owned();
-    butterpollo_core::config::Config::parse(&format!("csrf_allowed_origins = {configured}\n"))
+    butterpollo_config::config::Config::parse(&format!("csrf_allowed_origins = {configured}\n"))
         .map(|c| c.list("csrf_allowed_origins"))
         .unwrap_or_default()
         .iter()
@@ -496,7 +497,7 @@ async fn webrtc_signal(
     };
     let device = match h.webrtc.console_device(&h, &username) {
         Ok(device) => device,
-        Err(butterpollo_core::webrtc::protocol::ErrorCode::ClientDisabled) => {
+        Err(butterpollo_session::webrtc::protocol::ErrorCode::ClientDisabled) => {
             return error(
                 StatusCode::LOCKED,
                 "this console's device is disabled on the Devices page",
@@ -1605,7 +1606,7 @@ mod tests {
     #[test]
     fn closing_the_game_from_the_console_waits_for_a_launch_in_progress() {
         let f = crate::state::test_support::Fixture::new();
-        let app = butterpollo_core::state::App::desktop();
+        let app = butterpollo_session::state::App::desktop();
         *f.host.current_app.lock().unwrap() =
             Some(crate::process::RunningApp::with_environment(&app, Default::default()).unwrap());
         let launching = f.host.launch_transition.lock().unwrap();

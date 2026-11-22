@@ -1,0 +1,495 @@
+//! Cryptographic primitives the Moonlight protocol needs: hashing, the
+//! pairing PIN key, AES-ECB/GCM/CBC, the host's RSA identity and X.509
+//! certificate helpers.
+use aes::{
+    Aes128,
+    cipher::{Block, BlockDecrypt, BlockEncrypt, KeyInit},
+};
+use anyhow::{Context, Result, bail};
+use rand::{RngCore, rngs::OsRng};
+use rsa::{
+    RsaPrivateKey, RsaPublicKey,
+    pkcs1::DecodeRsaPrivateKey,
+    pkcs1v15::{Signature, SigningKey, VerifyingKey},
+    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey},
+    signature::{RandomizedSigner, SignatureEncoding, Verifier},
+};
+use sha2::{Digest, Sha256};
+use std::path::Path;
+
+pub use rubylight_wire::crypto::{
+    GcmKey, cbc_open, cbc_seal, cbc_seal_into, equal, gcm_open, gcm_seal, gcm_seal_in_place,
+};
+
+pub fn random<const N: usize>() -> [u8; N] {
+    let mut b = [0; N];
+    OsRng.fill_bytes(&mut b);
+    b
+}
+pub fn hash(b: &[u8]) -> [u8; 32] {
+    Sha256::digest(b).into()
+}
+/// Sunshine's util::hex(array) serializes the digest in reverse byte order.
+pub fn legacy_hash(input: &[u8]) -> String {
+    let mut digest = hash(input);
+    digest.reverse();
+    hex::encode_upper(digest)
+}
+/// Accept previous C++ state and credentials written by early Rust candidates.
+pub fn matches_hash(input: &[u8], stored: &str) -> bool {
+    let mut digest = hash(input);
+    let forward = hex::encode(digest);
+    digest.reverse();
+    let legacy = hex::encode(digest);
+    let stored = stored.to_ascii_lowercase();
+    equal(stored.as_bytes(), forward.as_bytes()) | equal(stored.as_bytes(), legacy.as_bytes())
+}
+pub fn pin_key(salt: &[u8; 16], pin: &str) -> [u8; 16] {
+    let mut b = salt.to_vec();
+    b.extend_from_slice(pin.as_bytes());
+    hash(&b)[..16].try_into().unwrap()
+}
+pub fn ecb(key: &[u8; 16], data: &[u8], encrypt: bool) -> Result<Vec<u8>> {
+    if data.is_empty() || !data.len().is_multiple_of(16) {
+        bail!("AES-ECB data is not block aligned");
+    }
+    let c = Aes128::new_from_slice(key).unwrap();
+    let mut b = data.to_vec();
+    for chunk in b.as_chunks_mut::<16>().0 {
+        let block = Block::<Aes128>::from_mut_slice(chunk);
+        if encrypt {
+            c.encrypt_block(block)
+        } else {
+            c.decrypt_block(block)
+        }
+    }
+    Ok(b)
+}
+pub fn ecb_block(key: &[u8; 16], input: [u8; 16]) -> [u8; 16] {
+    let c = Aes128::new_from_slice(key).unwrap();
+    let mut block = Block::<Aes128>::from(input);
+    c.encrypt_block(&mut block);
+    block.into()
+}
+pub fn gcm_seal_aad(key: &[u8; 16], nonce: &[u8; 12], aad: &[u8], bytes: &mut [u8]) -> [u8; 16] {
+    let key = ring::aead::LessSafeKey::new(
+        ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, key).unwrap(),
+    );
+    key.seal_in_place_separate_tag(
+        ring::aead::Nonce::assume_unique_for_key(*nonce),
+        ring::aead::Aad::from(aad),
+        bytes,
+    )
+    .expect("16-byte roaming payloads are within AES-GCM limits")
+    .as_ref()
+    .try_into()
+    .unwrap()
+}
+pub fn gcm_open_aad(
+    key: &[u8; 16],
+    nonce: &[u8; 12],
+    aad: &[u8],
+    tag: &[u8; 16],
+    bytes: &mut [u8],
+) -> bool {
+    let key = ring::aead::LessSafeKey::new(
+        ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, key).unwrap(),
+    );
+    key.open_in_place_separate_tag(
+        ring::aead::Nonce::assume_unique_for_key(*nonce),
+        ring::aead::Aad::from(aad),
+        ring::aead::Tag::from(*tag),
+        bytes,
+        0..,
+    )
+    .is_ok()
+}
+/// Video packets share a key but always have independent 96-bit nonces.
+pub struct PacketSealer(ring::aead::LessSafeKey);
+impl PacketSealer {
+    #[inline]
+    pub fn new(key: &[u8; 16]) -> Self {
+        Self(ring::aead::LessSafeKey::new(
+            ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, key).unwrap(),
+        ))
+    }
+    #[inline]
+    pub fn seal(&self, nonce: &[u8; 12], bytes: &mut [u8]) -> Result<[u8; 16]> {
+        self.0
+            .seal_in_place_separate_tag(
+                ring::aead::Nonce::assume_unique_for_key(*nonce),
+                ring::aead::Aad::empty(),
+                bytes,
+            )
+            .map(|tag| tag.as_ref().try_into().unwrap())
+            .map_err(|_| anyhow::anyhow!("AES-GCM encryption failed"))
+    }
+}
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let parent = path.parent().context("identity path has no parent")?;
+    std::fs::create_dir_all(parent)?;
+    let name = path
+        .file_name()
+        .context("identity path has no file name")?
+        .to_string_lossy();
+    let tmp = parent.join(format!(".{name}.{}.tmp", hex::encode(random::<8>())));
+    let result = (|| -> Result<()> {
+        let mut f = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+            const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+            unsafe extern "system" {
+                fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+            }
+            let wide = |p: &Path| -> Result<Vec<u16>> {
+                let mut v: Vec<u16> = p.as_os_str().encode_wide().collect();
+                if v.contains(&0) {
+                    bail!("file path contains a NUL");
+                }
+                v.push(0);
+                Ok(v)
+            };
+            let src = wide(&tmp)?;
+            let dst = wide(path)?;
+            // SAFETY: both paths are NUL-terminated UTF-16 buffers that outlive the call.
+            if unsafe {
+                MoveFileExW(
+                    src.as_ptr(),
+                    dst.as_ptr(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::rename(&tmp, path)?;
+            std::fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+#[derive(Clone)]
+pub struct Identity {
+    pub certificate: String,
+    pub private_pem: String,
+    pub der: Vec<u8>,
+    pub signature: Vec<u8>,
+    private: RsaPrivateKey,
+}
+impl Identity {
+    pub fn load(cert: &Path, key: &Path) -> Result<Self> {
+        if let Some(id) = Self::read(cert, key)? {
+            return Ok(id);
+        }
+        let id = Self::generate()?;
+        atomic_write(key, id.private_pem.as_bytes())?;
+        atomic_write(cert, id.certificate.as_bytes())?;
+        Ok(id)
+    }
+    /// The identity in `cert` and `key`; None when neither exists yet.
+    pub fn read(cert: &Path, key: &Path) -> Result<Option<Self>> {
+        match (std::fs::read_to_string(cert), std::fs::read_to_string(key)) {
+            (Ok(c), Ok(k)) => Self::from_pem(c, k).map(Some),
+            (Err(c), Err(k))
+                if c.kind() == std::io::ErrorKind::NotFound
+                    && k.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Ok(None)
+            }
+            _ => bail!(
+                "certificate and key must both exist and be readable; refusing to replace identity"
+            ),
+        }
+    }
+    pub fn generate() -> Result<Self> {
+        let private = RsaPrivateKey::new(&mut OsRng, 2048)?;
+        let private_pem = private
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)?
+            .to_string();
+        let pair = rcgen::KeyPair::from_pem(&private_pem)?;
+        let mut params =
+            rcgen::CertificateParams::new(vec!["Sunshine".to_owned(), "localhost".to_owned()])?;
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "Sunshine");
+        let cert = params.self_signed(&pair)?;
+        Self::from_pem(cert.pem(), private_pem)
+    }
+    pub fn from_pem(certificate: String, private_pem: String) -> Result<Self> {
+        let private = RsaPrivateKey::from_pkcs8_pem(&private_pem)
+            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&private_pem))?;
+        let der = certificate_der(&certificate)?;
+        let (_, cert) = x509_parser::parse_x509_certificate(&der)
+            .map_err(|_| anyhow::anyhow!("invalid certificate"))?;
+        let signature = cert.signature_value.data.to_vec();
+        let public = public_key(&certificate)?;
+        if public != RsaPublicKey::from(&private) {
+            bail!("certificate does not match private key");
+        }
+        Ok(Self {
+            certificate,
+            private_pem,
+            der,
+            signature,
+            private,
+        })
+    }
+    pub fn sign(&self, b: &[u8]) -> Vec<u8> {
+        SigningKey::<Sha256>::new(self.private.clone())
+            .sign_with_rng(&mut OsRng, b)
+            .to_vec()
+    }
+}
+/// The name of the root that issues the console's certificate; setup trusts
+/// it on install and removes every root by this name on uninstall.
+pub const CONSOLE_ROOT_NAME: &str = "Rubylight local console";
+/// The console's own TLS certificate. The pairing identity is self-signed,
+/// so browsers warned on https://localhost; this one comes from a root made
+/// for it alone, which setup adds to Windows' trusted roots. The root may
+/// name only localhost and loopback addresses, and its private key is
+/// dropped once it signed the console's certificate, so trusting it cannot
+/// vouch for any other site.
+pub struct ConsoleCertificate {
+    /// The console's certificate followed by the root's.
+    pub chain_pem: String,
+    pub key_pem: String,
+    pub root_pem: String,
+}
+impl ConsoleCertificate {
+    /// The certificate kept in `directory`, made there on first use.
+    pub fn load(directory: &Path) -> Result<Self> {
+        let [chain, key, root] =
+            ["console.pem", "console.key", "console-root.pem"].map(|name| directory.join(name));
+        if let (Ok(chain_pem), Ok(key_pem), Ok(root_pem)) = (
+            std::fs::read_to_string(&chain),
+            std::fs::read_to_string(&key),
+            std::fs::read_to_string(&root),
+        ) && Self::root_is_own(&root_pem)
+        {
+            return Ok(Self {
+                chain_pem,
+                key_pem,
+                root_pem,
+            });
+        }
+        // Setup trusts the new root after every start of a new host, replacing
+        // the old one by its name.
+        let made = Self::generate()?;
+        std::fs::create_dir_all(directory)?;
+        atomic_write(&key, made.key_pem.as_bytes())?;
+        atomic_write(&root, made.root_pem.as_bytes())?;
+        atomic_write(&chain, made.chain_pem.as_bytes())?;
+        Ok(made)
+    }
+    /// Whether the root's name is this host's alone. Earlier hosts named
+    /// every root just [`CONSOLE_ROOT_NAME`]; Firefox, which also
+    /// reads Windows' trusted roots, then took another host's trusted root as
+    /// the issuer and refused the page with SEC_ERROR_UNKNOWN, a failure
+    /// without a way past it.
+    fn root_is_own(root_pem: &str) -> bool {
+        let Ok(der) = certificate_der(root_pem) else {
+            return false;
+        };
+        x509_parser::parse_x509_certificate(&der)
+            .is_ok_and(|(_, root)| root.subject().iter_organizational_unit().next().is_some())
+    }
+    pub fn generate() -> Result<Self> {
+        use rcgen::{
+            BasicConstraints, CertificateParams, CidrSubnet, DnType, ExtendedKeyUsagePurpose,
+            GeneralSubtree, IsCa, Issuer, KeyPair, KeyUsagePurpose, NameConstraints,
+        };
+        let now = time::OffsetDateTime::now_utc();
+        let validity = |params: &mut CertificateParams| {
+            params.not_before = now - time::Duration::days(1);
+            params.not_after = now + time::Duration::days(20 * 365);
+        };
+        let mut root = CertificateParams::default();
+        root.distinguished_name
+            .push(DnType::CommonName, CONSOLE_ROOT_NAME);
+        // Browsers find an issuer by its name: a root named like every other
+        // host's would be confused with theirs (see `root_is_own`).
+        root.distinguished_name
+            .push(DnType::OrganizationalUnitName, hex::encode(random::<8>()));
+        root.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+        root.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let mut loopback_v6 = [0; 16];
+        loopback_v6[15] = 1;
+        root.name_constraints = Some(NameConstraints {
+            permitted_subtrees: vec![
+                GeneralSubtree::DnsName("localhost".into()),
+                GeneralSubtree::IpAddress(CidrSubnet::V4([127, 0, 0, 0], [255, 0, 0, 0])),
+                GeneralSubtree::IpAddress(CidrSubnet::V6(loopback_v6, [0xff; 16])),
+            ],
+            excluded_subtrees: vec![],
+        });
+        validity(&mut root);
+        let root_key = KeyPair::generate()?;
+        let root_pem = root.self_signed(&root_key)?.pem();
+        let issuer = Issuer::new(root, root_key);
+
+        let mut console =
+            CertificateParams::new(vec!["localhost".into(), "127.0.0.1".into(), "::1".into()])?;
+        console
+            .distinguished_name
+            .push(DnType::CommonName, "localhost");
+        console.is_ca = IsCa::ExplicitNoCa;
+        console.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        console.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        console.use_authority_key_identifier_extension = true;
+        validity(&mut console);
+        let key = KeyPair::generate()?;
+        let certificate = console.signed_by(&key, &issuer)?.pem();
+        Ok(Self {
+            chain_pem: format!("{certificate}{root_pem}"),
+            key_pem: key.serialize_pem(),
+            root_pem,
+        })
+    }
+}
+pub fn certificate_der(pem_text: &str) -> Result<Vec<u8>> {
+    let b = pem::parse(pem_text)?;
+    if b.tag() != "CERTIFICATE" {
+        bail!("expected certificate PEM");
+    }
+    Ok(b.into_contents())
+}
+/// The SubjectPublicKeyInfo of a DER certificate of any X.509 version.
+/// Moonlight for webOS (moonlight-tv) makes a v2 certificate, which webpki,
+/// and so rustls's own signature checks, refuse.
+pub fn subject_public_key_info(der: &[u8]) -> Result<&[u8]> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der)
+        .map_err(|_| anyhow::anyhow!("invalid X.509 certificate"))?;
+    Ok(cert.tbs_certificate.subject_pki.raw)
+}
+pub fn public_key(pem_text: &str) -> Result<RsaPublicKey> {
+    let der = certificate_der(pem_text)?;
+    let (_, cert) = x509_parser::parse_x509_certificate(&der)
+        .map_err(|_| anyhow::anyhow!("invalid X.509 certificate"))?;
+    RsaPublicKey::from_public_key_der(cert.tbs_certificate.subject_pki.raw)
+        .context("pairing certificate must contain an RSA key")
+}
+pub fn certificate_signature(pem_text: &str) -> Result<Vec<u8>> {
+    let der = certificate_der(pem_text)?;
+    let (_, c) = x509_parser::parse_x509_certificate(&der)
+        .map_err(|_| anyhow::anyhow!("invalid X.509 certificate"))?;
+    Ok(c.signature_value.data.to_vec())
+}
+pub fn verify(pem_text: &str, data: &[u8], signature: &[u8]) -> Result<bool> {
+    Ok(VerifyingKey::<Sha256>::new(public_key(pem_text)?)
+        .verify(data, &Signature::try_from(signature)?)
+        .is_ok())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn packet_sealer_matches_rustcrypto_for_video_payloads() {
+        let key = std::array::from_fn(|i| (i * 17) as u8);
+        let sealer = PacketSealer::new(&key);
+        for length in [0, 1, 15, 16, 17, 272, 1408, 1416] {
+            let plain: Vec<u8> = (0..length).map(|i| (i * 29) as u8).collect();
+            for counter in [0u64, 1, u32::MAX as u64, u64::MAX - 1] {
+                let mut nonce = [0; 12];
+                nonce[..8].copy_from_slice(&counter.to_le_bytes());
+                nonce[11] = b'V';
+                let (expected_tag, expected) = gcm_seal(&key, &nonce, &plain).unwrap();
+                let mut encrypted = plain.clone();
+                let tag = sealer.seal(&nonce, &mut encrypted).unwrap();
+                assert_eq!(tag, expected_tag);
+                assert_eq!(encrypted, expected);
+                assert_eq!(gcm_open(&key, &nonce, &tag, &encrypted).unwrap(), plain);
+            }
+        }
+    }
+    #[test]
+    fn moonlight_tv_v2_certificate_has_a_readable_key() {
+        // Made by moonlight-tv's mkcert.c (mbedtls) as X.509 v2.
+        let pem = include_str!("../testdata/moonlight-tv-client.pem");
+        let der = certificate_der(pem).unwrap();
+        let spki = subject_public_key_info(&der).unwrap();
+        assert!(RsaPublicKey::from_public_key_der(spki).is_ok());
+    }
+    #[test]
+    fn the_console_certificate_names_only_loopback_and_is_kept() {
+        let directory = tempfile::tempdir().unwrap();
+        let made = ConsoleCertificate::load(directory.path()).unwrap();
+        let kept = ConsoleCertificate::load(directory.path()).unwrap();
+        assert_eq!(made.chain_pem, kept.chain_pem);
+        assert_eq!(made.key_pem, kept.key_pem);
+        assert!(made.chain_pem.ends_with(&made.root_pem));
+
+        let root_der = certificate_der(&made.root_pem).unwrap();
+        let (_, root) = x509_parser::parse_x509_certificate(&root_der).unwrap();
+        assert!(root.is_ca());
+        let constraints = root.name_constraints().unwrap().unwrap().value;
+        assert_eq!(constraints.permitted_subtrees.as_ref().unwrap().len(), 3);
+
+        let console_der = certificate_der(&made.chain_pem).unwrap();
+        let (_, console) = x509_parser::parse_x509_certificate(&console_der).unwrap();
+        assert!(!console.is_ca());
+        assert_eq!(console.issuer(), root.subject());
+        let names = console.subject_alternative_name().unwrap().unwrap();
+        assert_eq!(names.value.general_names.len(), 3);
+    }
+    #[test]
+    fn every_console_root_has_its_own_name_and_a_shared_one_is_replaced() {
+        let subject = |pem: &str| {
+            let der = certificate_der(pem).unwrap();
+            let (_, cert) = x509_parser::parse_x509_certificate(&der).unwrap();
+            cert.subject().to_string()
+        };
+        let [one, two] = [(); 2].map(|_| ConsoleCertificate::generate().unwrap());
+        // Firefox refused a chain whose root had the same name as another
+        // host's root that Windows trusts (SEC_ERROR_UNKNOWN).
+        assert_ne!(subject(&one.root_pem), subject(&two.root_pem));
+        assert!(subject(&one.root_pem).contains(CONSOLE_ROOT_NAME));
+        let leaf_issuer = {
+            let der = certificate_der(&one.chain_pem).unwrap();
+            let (_, cert) = x509_parser::parse_x509_certificate(&der).unwrap();
+            cert.issuer().to_string()
+        };
+        assert_eq!(leaf_issuer, subject(&one.root_pem));
+
+        // A certificate kept from an earlier host, its root named only
+        // CONSOLE_ROOT_NAME, is made anew.
+        let directory = tempfile::tempdir().unwrap();
+        let mut shared = rcgen::CertificateParams::default();
+        shared
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, CONSOLE_ROOT_NAME);
+        shared.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
+        let shared = shared
+            .self_signed(&rcgen::KeyPair::generate().unwrap())
+            .unwrap()
+            .pem();
+        for (name, text) in [
+            ("console.pem", format!("{}{shared}", one.chain_pem)),
+            ("console.key", one.key_pem.clone()),
+            ("console-root.pem", shared.clone()),
+        ] {
+            std::fs::write(directory.path().join(name), text).unwrap();
+        }
+        let made = ConsoleCertificate::load(directory.path()).unwrap();
+        assert_ne!(made.root_pem, shared);
+        assert_ne!(subject(&made.root_pem), format!("CN={CONSOLE_ROOT_NAME}"));
+        let kept = ConsoleCertificate::load(directory.path()).unwrap();
+        assert_eq!(made.chain_pem, kept.chain_pem);
+        assert_eq!(made.root_pem, kept.root_pem);
+    }
+}

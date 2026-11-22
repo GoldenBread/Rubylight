@@ -1,6 +1,6 @@
 use super::{fake::*, *};
 use crate::state::test_support::Fixture;
-use butterpollo_core::{
+use butterpollo_session::{
     session::Role,
     wake::{AdapterFix, idle::ES_SYSTEM_REQUIRED},
 };

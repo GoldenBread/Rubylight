@@ -7,14 +7,14 @@ use super::super::{
 };
 use super::*;
 use crate::multiclient::{Gate, Join};
-use butterpollo_core::invite_uri::InviteUri;
-use butterpollo_core::{
-    crypto,
+use butterpollo_crypto::crypto;
+use butterpollo_session::{
     invites::{MARKER, invited_guest},
     multiclient::{Permission, Refusal},
-    native_api::guests::{GuestInvites, InviteCreated},
     state::{ALL_INPUT, LAUNCH_APPS, LIST_APPS, PAIRING_APPROVE_KEY, VIEW_STREAMS},
 };
+use rubylight_native_api::guests::{GuestInvites, InviteCreated};
+use rubylight_protocol::invite_uri::InviteUri;
 use std::time::{Duration, Instant};
 
 /// The link's PIN and secret, as Nightjar derives them.
@@ -297,7 +297,7 @@ async fn an_invited_device_gets_its_internet_details_until_its_time_ends_and_the
     }
     crate::invites::sweep(&f.host);
     assert!(paired(&f, "Friend").is_none());
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert!(saved.clients.iter().all(|c| c.name != "Friend"));
 }
 

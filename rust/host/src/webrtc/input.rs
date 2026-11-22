@@ -31,8 +31,8 @@ use crate::{
     },
 };
 use anyhow::{Context, Result};
-use butterpollo_core::{
-    input::{Input, required_permission},
+use butterpollo_input_policy::input::{Input, required_permission};
+use butterpollo_session::{
     session::EVENT_PERIOD,
     webrtc::{
         gamepad::{self, Action, Control, GamepadMessage, Gamepads, MAX_GAMEPADS, Outcome},
@@ -636,7 +636,7 @@ impl Drop for NativeSink {
 struct CoopSink {
     h: Shared,
     player: crate::nucleus::Player,
-    warnings: Arc<butterpollo_core::session::Warnings>,
+    warnings: Arc<butterpollo_session::session::Warnings>,
 }
 
 impl CoopSink {
@@ -949,7 +949,7 @@ impl Core {
     fn input(&mut self, text: &str, now: Instant) {
         self.summary.input_messages += 1;
         self.received = Some(now);
-        match butterpollo_core::webrtc::input::parse(text) {
+        match butterpollo_session::webrtc::input::parse(text) {
             Ok(message) => {
                 let events = self.channel.translate(message);
                 self.dispatch(events, now);
@@ -968,7 +968,8 @@ impl Core {
         }
         if self.denied & permission == 0 {
             self.denied |= permission;
-            let (code, message) = butterpollo_core::input::denied_warning(event, &client.name);
+            let (code, message) =
+                butterpollo_input_policy::input::denied_warning(event, &client.name);
             self.session.launch.warnings.set(&code, message);
         }
         false
@@ -1317,7 +1318,7 @@ impl Core {
             return;
         }
         let mask = guest.permission.input_mask();
-        let events = match butterpollo_core::webrtc::input::parse(text) {
+        let events = match butterpollo_session::webrtc::input::parse(text) {
             Ok(message) => guest.channel.translate(message),
             Err(error) => return self.invalid("input", &error),
         };

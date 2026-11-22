@@ -5,7 +5,7 @@
 //! displays of one device: two devices' streams are laid out as always, and physical displays
 //! are never moved from memory.
 use anyhow::Result;
-use butterpollo_core::topology::{Node, Position};
+use butterpollo_media_policy::topology::{Node, Position};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -206,7 +206,7 @@ fn write(path: &Path, saved: &[Saved]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::topology::{Kind, Mode};
+    use butterpollo_media_policy::topology::{Kind, Mode};
     fn node(id: &str, x: i32, y: i32, primary: bool) -> Node {
         Node {
             id: id.into(),

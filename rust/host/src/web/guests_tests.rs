@@ -5,7 +5,8 @@ use super::*;
 use crate::state::test_support::Fixture;
 use crate::webrtc::server::tests::Ws;
 use axum::body::{Body, to_bytes};
-use butterpollo_core::webrtc::guests::Permission;
+use butterpollo_session::config_ext::ConfigExt;
+use butterpollo_session::webrtc::guests::Permission;
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     server::conn::auto::Builder,
@@ -337,7 +338,7 @@ async fn the_panel_makes_and_revokes_links_and_says_what_it_refuses() {
         json!("203.0.113.9:47991"),
         json!("[2001:db8::1]:47991"),
     ];
-    for n in 0..butterpollo_core::webrtc::guests::MAX_INVITES {
+    for n in 0..butterpollo_session::webrtc::guests::MAX_INVITES {
         let made = invite(
             &f,
             &cookie,
@@ -989,7 +990,7 @@ fn a_pairing_notice_shows_the_address_apart_from_a_name_that_could_hide_or_fake_
     );
     // 128 math bold letters are 256 UTF-16 units, more than Windows keeps of a notice's text.
     let long: String = std::iter::repeat_n('\u{1d400}', 128).collect();
-    butterpollo_core::pairing::validate_device_name(&long).unwrap();
+    butterpollo_crypto::pairing::validate_device_name(&long).unwrap();
     let (title, text) = crate::state::pairing_notice(&long, lan);
     assert_eq!(title, "Pairing request from 192.168.4.20");
     assert!(text.encode_utf16().count() < 256, "{text}");
@@ -1084,7 +1085,7 @@ async fn play_socket(address: SocketAddr, extra: &str) -> (Ws, String) {
 }
 
 fn proof(secret: &str, nonce: &str) -> String {
-    butterpollo_core::webrtc::auth::proof_hex(secret, nonce).unwrap()
+    butterpollo_session::webrtc::auth::proof_hex(secret, nonce).unwrap()
 }
 
 #[tokio::test]

@@ -169,7 +169,7 @@ pub fn run() -> Result<()> {
             .with_ansi(false)
             .with_max_level(tracing::Level::WARN)
             .init();
-        return butterpollo_core::migration::import(source, args.config_dir.as_ref().unwrap());
+        return butterpollo_session::migration::import(source, args.config_dir.as_ref().unwrap());
     }
     if let Some(pipe) = &args.rtss_worker {
         return butterpollo_windows::rtss::worker(pipe, args.rtss_parent.unwrap());
@@ -240,16 +240,17 @@ pub fn run() -> Result<()> {
         let directory = match args.config_dir.clone() {
             Some(directory) => directory,
             None => {
-                let installed = butterpollo_core::paths::installed_profile();
+                let installed = butterpollo_session::paths::installed_profile();
                 if installed.join("sunshine.conf").is_file() {
                     installed
                 } else {
-                    butterpollo_core::paths::portable_profile()?
+                    butterpollo_session::paths::portable_profile()?
                 }
             }
         };
         let h = state::Host::load(directory, assets, args.port)?;
-        let credentials = butterpollo_core::state::Credentials::new(creds[0].clone(), &creds[1])?;
+        let credentials =
+            butterpollo_session::state::Credentials::new(creds[0].clone(), &creds[1])?;
         // As with a password change in the console, signed-in browsers sign
         // in again.
         h.save_web_sessions(&Default::default())?;
@@ -295,7 +296,7 @@ fn smoke(args: &Args) -> Result<()> {
     };
     let mut output = serde_json::json!({"capture":args.capture,"width":image.width,"height":image.height,"bytes":image.bytes.len()});
     if let Some(name) = &args.encoder_smoke {
-        let cfg = butterpollo_core::rtsp::Negotiated {
+        let cfg = butterpollo_media_policy::rtsp::Negotiated {
             width: if args.codec == "h264" { 128 } else { 256 },
             height: if args.codec == "h264" { 128 } else { 256 },
             hdr: args.hdr,

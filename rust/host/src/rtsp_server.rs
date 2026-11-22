@@ -1,9 +1,7 @@
 use crate::state::{Launch, Shared};
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
-    crypto,
-    rtsp::{self, Negotiated},
-};
+use butterpollo_crypto::crypto;
+use butterpollo_media_policy::rtsp::{self, Negotiated};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -256,14 +254,14 @@ async fn connection(
                     if flags & 0x40000000 != 0
                         && (backend == "nvenc"
                             || (backend == "amf"
-                                && butterpollo_core::encoder_policy::amf_offers_invalidation(
+                                && butterpollo_media_policy::encoder_policy::amf_offers_invalidation(
                                     &config,
                                 )))
                     {
                         body.extend_from_slice(b"a=x-nv-video[0].refPicInvalidation:1\r\n");
                     }
                     if let Some(custom) = launch.options.get("surroundParams")
-                        && butterpollo_core::audio::OpusLayout::valid_custom(custom)
+                        && butterpollo_media_policy::audio::OpusLayout::valid_custom(custom)
                     {
                         let at = body
                             .windows(9)
@@ -275,7 +273,7 @@ async fn connection(
                     if config.packed_444() {
                         let modes = h.packed_modes.load(std::sync::atomic::Ordering::Acquire);
                         if modes != 0 {
-                            use butterpollo_core::packed444;
+                            use rubylight_protocol::packed444;
                             body.extend_from_slice(
                                 format!(
                                     "a={}:{}\r\na={}:{}\r\na={}:{}\r\n",
@@ -296,7 +294,7 @@ async fn connection(
                             .as_bytes(),
                     );
                     if mic {
-                        body.extend_from_slice(butterpollo_core::mic::sdp(ports.mic).as_bytes());
+                        body.extend_from_slice(butterpollo_session::mic::sdp(ports.mic).as_bytes());
                     }
                     headers.push(("Content-Type", "application/sdp".into()));
                 }
@@ -350,17 +348,17 @@ async fn connection(
                     let required_encryption = encryption_mode == 2;
                     // The FEC and audio share of the client's bitrate is expected;
                     // only a host cap is worth a warning.
-                    let uncapped = butterpollo_core::stream_policy::uncapped_bitrate_kbps(
+                    let uncapped = butterpollo_media_policy::stream_policy::uncapped_bitrate_kbps(
                         &negotiated,
                         launch.requested_rate,
                         &config,
                     );
-                    butterpollo_core::stream_policy::apply(
+                    butterpollo_media_policy::stream_policy::apply(
                         &mut negotiated,
                         launch.requested_rate,
                         &config,
                     );
-                    butterpollo_core::stream_policy::report_bitrate(
+                    butterpollo_media_policy::stream_policy::report_bitrate(
                         &launch.warnings,
                         uncapped,
                         negotiated.bitrate_kbps,
@@ -369,11 +367,11 @@ async fn connection(
                             config.integer("max_bitrate", 0)
                         ),
                     );
-                    butterpollo_core::stream_policy::report_packet_size(&launch.warnings, &config);
+                    butterpollo_media_policy::stream_policy::report_packet_size(&launch.warnings, &config);
                     // A ten-bit format with `hdrMode=0` is ten-bit SDR, packed 4:4:4
                     // included: its encoder codes SDR ten-bit either way and its
                     // startup probe asks for `sdr_10bit`.
-                    if butterpollo_core::stream_policy::infer_sdr_10bit(
+                    if butterpollo_media_policy::stream_policy::infer_sdr_10bit(
                         &mut negotiated,
                         launch.ten_bit_sdr_requested(),
                     ) {
@@ -385,13 +383,13 @@ async fn connection(
                         );
                     }
                     if negotiated.chroma_packing == 0 {
-                        butterpollo_core::stream_policy::apply_color(&mut negotiated, &config);
+                        butterpollo_media_policy::stream_policy::apply_color(&mut negotiated, &config);
                     }
-                    butterpollo_core::stream_policy::packed_drops_dolby_vision(
+                    butterpollo_media_policy::stream_policy::packed_drops_dolby_vision(
                         &mut negotiated,
                         &launch.warnings,
                     );
-                    butterpollo_core::stream_policy::packed_drops_hlg(
+                    butterpollo_media_policy::stream_policy::packed_drops_hlg(
                         &mut negotiated,
                         &launch.warnings,
                     );
@@ -401,7 +399,7 @@ async fn connection(
                             config.packed_444(),
                             "experimental packed 4:4:4 is disabled on the host"
                         );
-                        let mode = butterpollo_core::packed444::mode_bit(
+                        let mode = rubylight_protocol::packed444::mode_bit(
                             negotiated.codec,
                             negotiated.ten_bit(),
                         );
@@ -434,7 +432,7 @@ async fn connection(
                     }
                     negotiated.mic = mics.lock().unwrap().contains(&launch.id);
                     if negotiated.mic
-                        && negotiated.encryption & butterpollo_core::mic::ENCRYPTION == 0
+                        && negotiated.encryption & butterpollo_session::mic::ENCRYPTION == 0
                     {
                         // As in Apollo: a microphone is never taken in the clear.
                         negotiated.mic = false;
@@ -489,7 +487,7 @@ async fn connection(
                         reason = "Requested codec is unavailable";
                         // The RTSP reason line is fixed text: put the cause in
                         // the log and in the launch warning the console shows.
-                        let detail = butterpollo_core::codec_support::refusal_for(
+                        let detail = butterpollo_media_policy::codec_support::refusal_for(
                             &h.codec_missing.lock().unwrap(),
                             negotiated.codec,
                             negotiated.ten_bit(),
@@ -624,7 +622,7 @@ fn ffmpeg_directory(h: &Shared) -> Result<std::path::PathBuf> {
     crate::stream::audio_encoder::ffmpeg_directory()
 }
 /// Whether the host takes client microphones on this stream.
-fn takes_mic(config: &butterpollo_core::config::Config, media: &crate::stream::Media) -> bool {
+fn takes_mic(config: &butterpollo_config::config::Config, media: &crate::stream::Media) -> bool {
     config.boolean("stream_mic", true) && media.mic.is_some()
 }
 /// Why a stream that must be encrypted was refused, as the device shows it: the words of the
@@ -641,7 +639,7 @@ fn encryption_refusal(peer: SocketAddr) -> String {
 }
 /// Show why a launch was refused for its codec, or drop that refusal once a
 /// later attempt on the same launch asks for something the host has.
-fn note_codec_refusal(warnings: &butterpollo_core::session::Warnings, refusal: Option<String>) {
+fn note_codec_refusal(warnings: &butterpollo_session::session::Warnings, refusal: Option<String>) {
     match refusal {
         Some(detail) => warnings.set("codec_unavailable", detail),
         None => warnings.clear("codec_unavailable"),
@@ -652,20 +650,20 @@ fn note_codec_refusal(warnings: &butterpollo_core::session::Warnings, refusal: O
 /// link-rate adaptation stops at, so the two agree, and a client asking exactly the floor is not
 /// below it just because the picture gives up a few Mbps to sound and control.
 pub(crate) fn note_pyrowave_minimum(
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
     stream: &Negotiated,
 ) {
     if stream.codec != 3 {
         warnings.clear("pyrowave_minimum");
         return;
     }
-    let floor = butterpollo_core::link_rate::pyrowave_floor_kbps(stream);
+    let floor = butterpollo_media_policy::link_rate::pyrowave_floor_kbps(stream);
     let bitrate = stream.bitrate_kbps;
     if bitrate >= floor {
         warnings.clear("pyrowave_minimum");
         return;
     }
-    let minimum = butterpollo_core::pyrowave::minimum_kbps(
+    let minimum = butterpollo_media_policy::pyrowave::minimum_kbps(
         stream.width,
         stream.height,
         stream.fps.saturating_mul(1000),
@@ -690,7 +688,7 @@ pub(crate) fn note_pyrowave_minimum(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::session::Warnings;
+    use butterpollo_session::session::Warnings;
 
     #[test]
     fn a_codec_refusal_clears_when_a_retry_asks_for_an_available_codec() {

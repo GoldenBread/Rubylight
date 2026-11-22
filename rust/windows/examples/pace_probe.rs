@@ -5,7 +5,7 @@
 //! process to HIGH priority class, as a streaming host does.
 //!
 //! cargo run -p butterpollo-windows --example pace_probe --release -- --load --high
-use butterpollo_core::network_pacing::{Pacer, overhead, pyrowave_batch_limit};
+use butterpollo_media_policy::network_pacing::{Pacer, overhead, pyrowave_batch_limit};
 use butterpollo_windows::timing::Timer;
 use std::time::{Duration, Instant};
 use windows::Win32::{

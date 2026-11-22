@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::audio_dsp::{Inactive, Key};
+use butterpollo_media_policy::audio_dsp::{Inactive, Key};
 
 const OFF: Settings = Settings {
     night_mode: false,
@@ -92,7 +92,7 @@ fn the_session_choice_picks_the_capture_channels_per_client_and_setting() {
     ] {
         let mut launch = f.launch(
             client_entry.clone(),
-            butterpollo_core::session::Role::Stream,
+            butterpollo_session::session::Role::Stream,
         );
         if let Some(value) = option {
             launch
@@ -101,7 +101,7 @@ fn the_session_choice_picks_the_capture_channels_per_client_and_setting() {
         }
         let s = crate::state::Session::new(
             launch,
-            butterpollo_core::rtsp::Negotiated {
+            butterpollo_media_policy::rtsp::Negotiated {
                 audio_channels: client,
                 ..Default::default()
             },
@@ -124,13 +124,16 @@ fn the_session_choice_picks_the_capture_channels_per_client_and_setting() {
 #[test]
 fn active_surround_is_logged_and_the_opus_layout_stays_stereo() {
     let f = crate::state::test_support::Fixture::new();
-    let mut launch = f.launch(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    let mut launch = f.launch(
+        f.client(u32::MAX),
+        butterpollo_session::session::Role::Stream,
+    );
     launch
         .options
         .insert(Key::HeadphoneSurround.parameter().into(), "on".into());
     let s = crate::state::Session::new(
         launch,
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             audio_channels: 2,
             ..Default::default()
         },
@@ -183,14 +186,14 @@ fn a_live_choice_carries_to_the_clients_next_session_of_the_app() {
     let config = Config::parse("").unwrap();
     let memory = Memory::default();
     let warnings = Warnings::default();
-    let session = |client: butterpollo_core::state::Client, app: Option<u32>| {
-        let mut launch = f.launch(client, butterpollo_core::session::Role::Stream);
+    let session = |client: butterpollo_session::state::Client, app: Option<u32>| {
+        let mut launch = f.launch(client, butterpollo_session::session::Role::Stream);
         if let Some(app) = app {
             launch.app_id = app;
         }
         crate::state::Session::new(
             launch,
-            butterpollo_core::rtsp::Negotiated {
+            butterpollo_media_policy::rtsp::Negotiated {
                 audio_channels: 2,
                 ..Default::default()
             },

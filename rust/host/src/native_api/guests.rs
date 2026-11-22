@@ -12,16 +12,16 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
 };
-use butterpollo_core::{
+use butterpollo_session::{
     multiclient::{MAX_LIFETIME, MIN_LIFETIME, Permission},
-    native_api::{
-        error::ErrorCode,
-        guests::{
-            GuestApprove, GuestId, GuestInvites, GuestKeyboardMouse, GuestPermission, InviteCreate,
-            InviteCreated, InviteRevoke, JoinRequest, SessionGuest, SessionGuests,
-        },
-    },
     state::{Client, device_uuid},
+};
+use rubylight_native_api::{
+    error::ErrorCode,
+    guests::{
+        GuestApprove, GuestId, GuestInvites, GuestKeyboardMouse, GuestPermission, InviteCreate,
+        InviteCreated, InviteRevoke, JoinRequest, SessionGuest, SessionGuests,
+    },
 };
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -131,7 +131,7 @@ pub async fn approve(
     let (client, body): (_, GuestApprove) = manager(&h, &c, request).await?;
     let permission = match &body.permission {
         Some(text) => permission(text)?,
-        None => butterpollo_core::multiclient::default_permission(&h.config_snapshot()),
+        None => butterpollo_session::multiclient::default_permission(&h.config_snapshot()),
     };
     let lifetime = match body.seconds {
         Some(seconds) => {

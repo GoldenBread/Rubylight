@@ -3,9 +3,8 @@ mod common;
 
 use anyhow::Result;
 use butterpollo::stream::reconnect_harness::{Harness, until};
-use butterpollo_core::{
+use butterpollo_session::{
     native::{FILE_DOWNLOAD, FILE_UPLOAD},
-    native_api::feature,
     power_action::SleepStates,
 };
 use common::{LOADED, device, paired, stream};
@@ -13,6 +12,7 @@ use nightjar_core::http::{
     Availability, EntryKind, Feature, FileError, FolderAccess, HostClient, PowerError, Reason,
     Refusal, TransferCancel, transfers::Problem,
 };
+use rubylight_native_api::feature;
 use std::{
     path::PathBuf,
     sync::{
@@ -422,7 +422,7 @@ async fn nightjar_browses_and_moves_files_through_shared_folders() -> Result<()>
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_copies_images_both_ways_while_it_streams() -> Result<()> {
     use butterpollo::nvhttp::clipboard;
-    use butterpollo_core::clipboard_image::{Image, decode_png, encode_png};
+    use butterpollo_session::clipboard_image::{Image, decode_png, encode_png};
     use nightjar_core::http::ImageClipboardError;
     let _turn = clipboard::TURN.lock().await;
     *clipboard::PNG.lock().unwrap() = None;
@@ -497,7 +497,7 @@ impl butterpollo::power_action::Backend for Suspends {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn power_off(&self, action: butterpollo_core::power_action::Action) -> Result<()> {
+    fn power_off(&self, action: butterpollo_session::power_action::Action) -> Result<()> {
         panic!("an interop test reached the {}", action.name())
     }
 }

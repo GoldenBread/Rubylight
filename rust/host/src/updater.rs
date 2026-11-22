@@ -2,7 +2,7 @@
 //! Installation is limited to the installed service and serialized with launches.
 use crate::state::Shared;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::version::newer;
+use butterpollo_session::version::newer;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -143,7 +143,7 @@ pub fn install_supported(h: &Shared) -> bool {
 }
 
 fn supported(h: &Shared) -> bool {
-    let profile = butterpollo_core::paths::installed_profile();
+    let profile = butterpollo_session::paths::installed_profile();
     butterpollo_windows::process::is_system()
         && std::fs::canonicalize(&h.directory)
             .ok()
@@ -155,12 +155,13 @@ pub fn status(h: &Shared) -> Value {
     let mut state = h.updates.lock().unwrap().clone();
     state["install_supported"] = json!(supported(h));
     state["updates"] = json!(match h.config.read().unwrap().updates() {
-        butterpollo_core::config::UpdatesMode::Off => "off",
-        butterpollo_core::config::UpdatesMode::TellMe => "tell_me",
-        butterpollo_core::config::UpdatesMode::Install => "install",
+        butterpollo_config::config::UpdatesMode::Off => "off",
+        butterpollo_config::config::UpdatesMode::TellMe => "tell_me",
+        butterpollo_config::config::UpdatesMode::Install => "install",
     });
-    state["auto_update"] =
-        json!(h.config.read().unwrap().updates() == butterpollo_core::config::UpdatesMode::Install);
+    state["auto_update"] = json!(
+        h.config.read().unwrap().updates() == butterpollo_config::config::UpdatesMode::Install
+    );
     // 0 when automatic checks are off.
     state["update_check_interval"] = json!(h.config.read().unwrap().update_check_interval());
     // "HH:MM" when the check runs once a day at that time; null when the
@@ -183,7 +184,7 @@ pub fn status(h: &Shared) -> Value {
     // A device's Install now held back by another device's stream.
     state["waiting_for"] = json!(held_for_others(h).map(|busy| busy.message()));
     state["last_install"] =
-        butterpollo_core::state::load_json(&h.directory.join("update-result.json"), json!(null))
+        butterpollo_session::state::load_json(&h.directory.join("update-result.json"), json!(null))
             .unwrap_or(Value::Null);
     state
 }
@@ -276,7 +277,7 @@ pub fn remember_check(h: &Shared) {
         next["root"] = json!({});
     }
     next["root"][LAST_CHECK] = json!(checked_at);
-    match butterpollo_core::state::write_json(&h.aliases_path, &next) {
+    match butterpollo_session::state::write_json(&h.aliases_path, &next) {
         Ok(()) => *aliases = next,
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "the release check time could not be saved");
@@ -313,7 +314,7 @@ fn remember(h: &Shared, key: &str, version: Option<&str>) {
             }
         }
     }
-    match butterpollo_core::state::write_json(&h.aliases_path, &next) {
+    match butterpollo_session::state::write_json(&h.aliases_path, &next) {
         Ok(()) => *aliases = next,
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "the automatic update attempt could not be saved");
@@ -337,7 +338,7 @@ fn report_failed_install(h: &Shared, error: Option<String>) {
     let reason = match error {
         Some(error) => Some(error),
         None => {
-            let record = butterpollo_core::state::load_json(
+            let record = butterpollo_session::state::load_json(
                 &h.directory.join("update-result.json"),
                 Value::Null,
             )
@@ -383,7 +384,7 @@ fn withdraw_installed_warning(h: &Shared) {
         return;
     };
     let record =
-        butterpollo_core::state::load_json(&h.directory.join("update-result.json"), Value::Null)
+        butterpollo_session::state::load_json(&h.directory.join("update-result.json"), Value::Null)
             .unwrap_or(Value::Null);
     let installed = record["phase"] == "installed"
         && record["version"]
@@ -552,7 +553,7 @@ fn install_now_again(state: &mut Value, by: Option<&str>) -> bool {
 /// What a device's Install now waits for: another device that streams or
 /// starts a stream, whose stream it never ends. `None` for the console's
 /// Install now and for an update that waits for an idle host anyway.
-pub fn held_for_others(h: &Shared) -> Option<butterpollo_core::power_action::Busy> {
+pub fn held_for_others(h: &Shared) -> Option<butterpollo_session::power_action::Busy> {
     let state = h.updates.lock().unwrap();
     if state["now"] != true
         || !matches!(
@@ -624,7 +625,7 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
         return;
     }
     let config = h.config.read().unwrap();
-    let auto_enabled = config.updates() == butterpollo_core::config::UpdatesMode::Install
+    let auto_enabled = config.updates() == butterpollo_config::config::UpdatesMode::Install
         && config.update_check_interval() > 0;
     let prereleases = config.boolean("notify_pre_releases", false);
     drop(config);
@@ -776,7 +777,7 @@ fn poll_with(h: &Shared, hashed: Option<Hashed>, hash: &dyn Fn(&std::path::Path)
                 .to_path_buf();
             // A persistent attempt record also prevents automatic retry loops.
             check_recovery(&h.directory)?;
-            butterpollo_core::state::write_json(
+            butterpollo_session::state::write_json(
                 &h.directory.join("update-result.json"),
                 &json!({"version":candidate.version,"phase":"installing","started_at":now()}),
             )?;
@@ -828,7 +829,7 @@ fn setup_failure(
     exit: std::io::Result<std::process::ExitStatus>,
 ) -> anyhow::Error {
     let record =
-        butterpollo_core::state::load_json(&profile.join("update-result.json"), Value::Null)
+        butterpollo_session::state::load_json(&profile.join("update-result.json"), Value::Null)
             .unwrap_or(Value::Null);
     if record["phase"] == "failed"
         && let Some(error) = record["error"].as_str()
@@ -1088,7 +1089,7 @@ fn tidy_downloads(h: &Shared) {
 
 fn check_recovery(profile: &std::path::Path) -> Result<Value> {
     let record =
-        butterpollo_core::state::load_json(&profile.join("update-result.json"), Value::Null)
+        butterpollo_session::state::load_json(&profile.join("update-result.json"), Value::Null)
             .context("The last update's record is unreadable. Run the Rubylight installer to repair this installation")?;
     if record["phase"] == "recovery_failed"
         || (record["phase"] == "installing" && record["backup"].is_string())

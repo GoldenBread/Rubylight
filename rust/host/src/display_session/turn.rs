@@ -29,12 +29,12 @@ pub(super) fn plan_physical_turn(
         after: resolution,
     };
     let option = config.dd_rotation_option();
-    if option == butterpollo_core::config::DisplayAdjust::Disabled {
+    if option == butterpollo_config::config::DisplayAdjust::Disabled {
         return Ok(unturned);
     }
     let (current, desktop) =
         read().context("the display's rotation could not be read for dd_rotation_option")?;
-    let Some(degrees) = butterpollo_core::display_policy::physical_rotation(
+    let Some(degrees) = butterpollo_media_policy::display_policy::physical_rotation(
         option,
         config.dd_manual_rotation(),
         current,
@@ -43,8 +43,8 @@ pub(super) fn plan_physical_turn(
     ) else {
         return Ok(unturned);
     };
-    let before =
-        resolution.map(|size| butterpollo_core::display_policy::mode_before_turn(size, desktop));
+    let before = resolution
+        .map(|size| butterpollo_media_policy::display_policy::mode_before_turn(size, desktop));
     // A quarter turn swaps the desktop's width and height.
     let quarter = (degrees + 360 - current) % 180 == 90;
     Ok(PhysicalTurn {
@@ -129,14 +129,18 @@ pub(super) fn follow_turn(
     to: (u32, u32),
     mut read: impl FnMut() -> Result<(u16, (u32, u32))>,
 ) -> Result<Option<(u32, u32)>> {
-    use butterpollo_core::config::DisplayAdjust;
+    use butterpollo_config::config::DisplayAdjust;
     match follow {
         Follow::Virtual => {
             let size = lease.virtual_size().context(
                 "the virtual display is shared or not at the stream's size, so it keeps its shape",
             )?;
-            let shaped =
-                butterpollo_core::display_policy::virtual_shape(DisplayAdjust::Auto, 0, size, to);
+            let shaped = butterpollo_media_policy::display_policy::virtual_shape(
+                DisplayAdjust::Auto,
+                0,
+                size,
+                to,
+            );
             if shaped == size {
                 return Ok(None);
             }
@@ -146,7 +150,7 @@ pub(super) fn follow_turn(
         Follow::Physical => {
             let (current, desktop) =
                 read().context("the display's rotation could not be read to follow the stream")?;
-            let Some(degrees) = butterpollo_core::display_policy::physical_rotation(
+            let Some(degrees) = butterpollo_media_policy::display_policy::physical_rotation(
                 DisplayAdjust::Auto,
                 0,
                 current,

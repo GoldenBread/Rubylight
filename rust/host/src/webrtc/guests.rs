@@ -23,12 +23,10 @@ use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     response::Response,
 };
-use butterpollo_core::{
-    audio::OpusLayout,
-    webrtc::{
-        guests::{Invite, InviteError, Invites, Lookups, Permission, guest_name},
-        protocol::{ControlMessage, classify_control},
-    },
+use butterpollo_media_policy::audio::OpusLayout;
+use butterpollo_session::webrtc::{
+    guests::{Invite, InviteError, Invites, Lookups, Permission, guest_name},
+    protocol::{ControlMessage, classify_control},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;

@@ -1,7 +1,7 @@
 use super::*;
 use crate::state::{PendingPin, test_support::Fixture};
 use axum::body::{Body, to_bytes};
-use butterpollo_core::{session::Role, state::Credentials};
+use butterpollo_session::{session::Role, state::Credentials};
 use tower::ServiceExt;
 
 pub(super) async fn request(f: &Fixture, method: &str, path: &str, data: Value) -> Response {
@@ -198,7 +198,7 @@ async fn device_updates_persist_permissions_overrides_and_revoke_only_that_devic
         assert!(mine.stopping());
         assert!(!theirs.stopping());
     }
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert!(!saved.clients[0].enabled);
     assert_eq!(saved.clients[0].perm, 1 << 25);
     assert_eq!(saved.clients[0].cert, client.cert);
@@ -252,7 +252,7 @@ async fn host_control_is_granted_only_as_a_boolean_and_revoking_keeps_the_stream
     .await;
     assert_eq!(granted["disconnected"], false);
     assert!(f.host.paired.read().unwrap().clients[0].allows_host_control());
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert!(saved.clients[0].allows_host_control());
     let listed = value(
         request(&f, "GET", "/api/clients/list", json!({})).await,
@@ -322,7 +322,7 @@ async fn sleep_is_granted_only_as_a_boolean() {
         )
     };
     value(update(json!(true)).await, StatusCode::OK).await;
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert!(saved.clients[0].allows_sleep());
     let listed = value(
         request(&f, "GET", "/api/clients/list", json!({})).await,
@@ -332,7 +332,7 @@ async fn sleep_is_granted_only_as_a_boolean() {
     assert_eq!(listed["clients"][0]["allow_sleep"], true);
     value(update(json!(null)).await, StatusCode::OK).await;
     assert!(!f.host.paired.read().unwrap().clients[0].allows_sleep());
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert!(!saved.clients[0].extra.contains_key("allow_sleep"));
 }
 
@@ -431,10 +431,10 @@ async fn usb_and_folder_grants_are_saved_only_in_their_shape() {
         StatusCode::OK,
     )
     .await;
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     let device = &saved.clients[0];
     assert!(device.allows_usb() && device.has_folders());
-    use butterpollo_core::native_api::folders::FolderAccess;
+    use rubylight_native_api::folders::FolderAccess;
     assert_eq!(
         (
             device.folder_access("games"),
@@ -447,7 +447,7 @@ async fn usb_and_folder_grants_are_saved_only_in_their_shape() {
         StatusCode::OK,
     )
     .await;
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert!(!saved.clients[0].extra.contains_key("allow_usb"));
     assert!(!saved.clients[0].extra.contains_key("shared_folders"));
 }
@@ -485,7 +485,7 @@ async fn host_control_cannot_be_granted_without_the_update_route() {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert!(!f.host.paired.read().unwrap().clients[0].allows_host_control());
     }
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert!(!saved.clients[0].extra.contains_key("host_control"));
 }
 
@@ -620,7 +620,7 @@ async fn network_history_is_visible_and_only_authenticated_reset_clears_it() {
     )
     .await;
     assert!(f.host.keyframe_loss_routes().is_empty());
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert_eq!(saved.document["root"]["keyframe_loss_routes"], json!([]));
     assert!(!session.stopping());
 }
@@ -901,7 +901,7 @@ async fn library_discovery_and_import_require_authentication_and_validate_identi
     assert_ne!(state("gog"), Some(json!("disabled")));
     // Turned off in the settings: the next scan skips the launcher.
     *f.host.config.write().unwrap() =
-        butterpollo_core::config::Config::parse("library_epic_enabled = false").unwrap();
+        butterpollo_config::config::Config::parse("library_epic_enabled = false").unwrap();
     let discovery = value(
         request(&f, "GET", "/api/library/discovery", Value::Null).await,
         StatusCode::OK,
@@ -980,7 +980,7 @@ async fn the_library_steam_switch_and_the_steam_library_setting_agree() {
 
 #[tokio::test]
 async fn the_session_history_route_lists_ended_streams_newest_first_and_requires_signing_in() {
-    use butterpollo_core::session_history::{
+    use butterpollo_session::session_history::{
         MAX_AGE_MS, MAX_BYTES, MAX_ENTRIES, REASON_ENDED, REASON_FAILED,
     };
     let f = Fixture::new();
@@ -1039,7 +1039,7 @@ async fn the_session_history_route_lists_ended_streams_newest_first_and_requires
 
 #[tokio::test]
 async fn the_console_lists_forwarded_usb_devices_and_detaches_them() {
-    use butterpollo_core::usb_forward::{UsbMessage, UsbReason, UsbState};
+    use rubylight_protocol::usb::{UsbMessage, UsbReason, UsbState};
     let f = Fixture::new();
     f.host.usb.set_vhci(crate::usb_forward::tests::installed());
     let client = crate::usb_forward::tests::client(true);

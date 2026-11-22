@@ -2,7 +2,7 @@
 //! importance map goes on the input surface as the codec's ROI map, and the
 //! startup probe proves from block QP feedback that the driver honours it.
 use super::*;
-use butterpollo_core::encoder_focus::{self, Reason, Stats, Support};
+use butterpollo_media_policy::encoder_focus::{self, Reason, Stats, Support};
 use std::collections::VecDeque;
 
 /// The probe map must move the unimportant half at least this many QP above

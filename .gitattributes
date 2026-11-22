@@ -9,9 +9,9 @@ rust/release/fixtures/timing/** text eol=lf
 # Unified patches use a single space to mark blank context lines.
 rust/compatibility/**/*.patch whitespace=-blank-at-eol
 
-rust/core/src/library/fixtures/*.db binary
+rust/core/session/src/library/fixtures/*.db binary
 # The HRIR data is checked by its SHA-256.
-rust/core/src/audio_dsp/*.bin binary
+rust/core/media-policy/src/audio_dsp/*.bin binary
 
 # Nightjar's desktop string tables hold one entry per line between `TABLE: &[` and
 # `];`: two branches that append entries both keep theirs (union). An entry both

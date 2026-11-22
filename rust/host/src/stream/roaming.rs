@@ -1,8 +1,8 @@
-//! Client roaming on the control port (`butterpollo_core::roaming`). A client whose
+//! Client roaming on the control port (`butterpollo_session::roaming`). A client whose
 //! address changed keeps its ENet peer: once it proved the new address, the control
 //! socket maps datagrams between it and the address ENet knows the peer by, and drops
 //! those from the address it left.
-use butterpollo_core::roaming::{
+use butterpollo_session::roaming::{
     Action, DATAGRAM_BYTES, Refusal, RoamTable, SeqMemory, is_roaming,
 };
 use butterpollo_windows::net::ReplySocket;
@@ -295,7 +295,7 @@ pub(super) fn canonical(address: SocketAddr) -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::roaming::{Datagram, Header, Payload, RoamKeys, open, seal};
+    use butterpollo_session::roaming::{Datagram, Header, Payload, RoamKeys, open, seal};
 
     const RIKEY: [u8; 16] = [7; 16];
     const CHALLENGE: u64 = 0x1234;

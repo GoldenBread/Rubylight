@@ -1,7 +1,7 @@
 use super::super::parity_tests::{request, value};
 use crate::state::test_support::Fixture;
 use axum::http::StatusCode;
-use butterpollo_core::config::Config;
+use butterpollo_config::config::Config;
 use serde_json::{Value, json};
 
 async fn post(f: &Fixture, path: &str, data: Value) -> (StatusCode, Value) {
@@ -18,9 +18,9 @@ async fn list(f: &Fixture) -> Value {
     .await
 }
 
-fn stored(f: &Fixture) -> Vec<butterpollo_core::webhook::Webhook> {
+fn stored(f: &Fixture) -> Vec<butterpollo_session::webhook::Webhook> {
     let saved = Config::load(&f.host.config_path).unwrap();
-    butterpollo_core::webhook::parse_webhooks(saved.get("webhooks", "[]")).unwrap()
+    butterpollo_session::webhook::parse_webhooks(saved.get("webhooks", "[]")).unwrap()
 }
 
 #[tokio::test]
@@ -38,7 +38,10 @@ async fn a_hook_is_added_edited_and_deleted_and_its_secret_shown_once() {
     assert_eq!(secret.len(), 64);
     assert!(secret.chars().all(|c| c.is_ascii_hexdigit()));
     assert_eq!(stored(&f)[0].secret, secret);
-    assert_eq!(f.host.config.read().unwrap().webhooks()[0].secret, secret);
+    assert_eq!(
+        butterpollo_session::webhook::from_config(&f.host.config.read().unwrap())[0].secret,
+        secret
+    );
 
     let listed = list(&f).await;
     assert_eq!(
@@ -267,7 +270,7 @@ async fn send_test_reaches_the_receiver_and_shows_as_the_last_status() {
     assert_eq!(answer["result"]["event"], "webhook.test");
     let request = received.recv().await.unwrap();
     assert_eq!(request.headers["x-rubylight-event"], "webhook.test");
-    let signature = butterpollo_core::webhook::sign(secret, &request.body);
+    let signature = butterpollo_session::webhook::sign(secret, &request.body);
     assert_eq!(
         request.headers["x-rubylight-signature"],
         format!("sha256={signature}")

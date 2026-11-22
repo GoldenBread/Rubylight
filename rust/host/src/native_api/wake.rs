@@ -4,7 +4,7 @@
 use super::{Failure, Reply, caller, json, require};
 use crate::{state::Shared, tls::Connection};
 use axum::{Extension, extract::State, http::StatusCode};
-use butterpollo_core::native::{LAUNCH, LIST, VIEW};
+use butterpollo_session::native::{LAUNCH, LIST, VIEW};
 
 pub async fn read(State(h): State<Shared>, Extension(c): Extension<Connection>) -> Reply {
     let client = caller(&h, &c)?;

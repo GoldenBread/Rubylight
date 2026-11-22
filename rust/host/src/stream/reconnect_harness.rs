@@ -2,11 +2,9 @@
 use super::Media;
 use crate::state::{Launch, Session, Shared};
 use anyhow::Result;
-use butterpollo_core::{
-    config::Ports,
-    crypto::{self, Identity},
-    state::{App, Client as PairedClient},
-};
+use butterpollo_config::config::Ports;
+use butterpollo_crypto::crypto::{self, Identity};
+use butterpollo_session::state::{App, Client as PairedClient};
 use std::{
     net::{SocketAddr, UdpSocket},
     path::PathBuf,

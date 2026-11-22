@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::session::Role;
+use butterpollo_session::session::Role;
 use std::time::Instant;
 
 /// #59: a keyframe's line says whether AMF re-encoded it, the cap the host
@@ -9,7 +9,7 @@ fn recovery_keyframes_count_the_ones_past_fec() {
     let fixture = crate::state::test_support::Fixture::new();
     let session = Session::new(
         fixture.launch(fixture.client(0), Role::Stream),
-        butterpollo_core::rtsp::Negotiated::default(),
+        butterpollo_media_policy::rtsp::Negotiated::default(),
     );
     let config = Config::default();
     let frame = |idr: bool, fec_limited: bool| RecoveryFrame {
@@ -58,7 +58,7 @@ fn a_mapped_ipv4_client_has_the_ipv4_wire_budget() {
     let route = Link::default();
     let session = Session::new(
         fixture.launch(fixture.client(0), Role::Stream),
-        butterpollo_core::rtsp::Negotiated::default(),
+        butterpollo_media_policy::rtsp::Negotiated::default(),
     );
     session
         .bitrate
@@ -129,7 +129,7 @@ fn a_clients_link_hint_caps_the_startup_pace_for_conventional_codecs() {
     ] {
         let session = Session::new(
             fixture.launch(fixture.client(0), Role::Stream),
-            butterpollo_core::rtsp::Negotiated {
+            butterpollo_media_policy::rtsp::Negotiated {
                 pyrowave_client_link_mbps: hint,
                 ..Default::default()
             },
@@ -162,7 +162,7 @@ fn a_clients_link_hint_caps_the_startup_pace_for_conventional_codecs() {
 fn link_stream(fixture: &crate::state::test_support::Fixture) -> std::sync::Arc<Session> {
     let session = Session::new(
         fixture.launch(fixture.client(0), Role::Stream),
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             pyrowave_client_link_mbps: 2500,
             ..Default::default()
         },
@@ -229,7 +229,7 @@ fn a_client_link_hint_below_the_bitrate_floors_the_pace_at_one_point_one_times_i
     };
     let session = Session::new(
         fixture.launch(fixture.client(0), Role::Stream),
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             pyrowave_client_link_mbps: 100,
             ..Default::default()
         },
@@ -268,7 +268,7 @@ fn wireless_hint_stream(
 ) -> (std::sync::Arc<Session>, Config, bool) {
     let session = Session::new(
         fixture.launch(fixture.client(0), Role::Stream),
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             codec,
             client_wireless,
             ..Default::default()
@@ -376,7 +376,7 @@ fn the_wireless_hint_sets_the_route_pace_only_when_no_controller_owns_the_stream
     let known = fixture.launch(fixture.client(0), Role::Stream);
     let known = Session::new(
         known,
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             codec: 1,
             client_wireless: true,
             pyrowave_client_link_mbps: 1000,
@@ -437,7 +437,7 @@ fn the_first_picture_and_live_loss_use_the_same_pace_as_sending() {
         1,
         true,
         Instant::now()
-            - butterpollo_core::keyframe_loss::STARTUP_WINDOW
+            - butterpollo_media_policy::keyframe_loss::STARTUP_WINDOW
             - Duration::from_millis(50),
     );
     session.request_recovery_keyframe();

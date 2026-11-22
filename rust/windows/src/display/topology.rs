@@ -174,7 +174,7 @@ fn monitor_id(path: &str) -> String {
     if let Some((_, id)) = ids.get(path) {
         return id.clone();
     }
-    let id = butterpollo_core::display_policy::legacy_device_id(
+    let id = butterpollo_media_policy::display_policy::legacy_device_id(
         path,
         monitor_instance(path).ok().as_deref(),
         &monitor_edid(path),
@@ -566,15 +566,15 @@ impl Topology {
         super::end_trace::committed("clone groups, Windows' modes", false);
         Ok(())
     }
-    pub fn nodes(&self) -> Result<Vec<butterpollo_core::topology::Node>> {
+    pub fn nodes(&self) -> Result<Vec<butterpollo_media_policy::topology::Node>> {
         self.nodes_of(self.monitors())
     }
     /// [`Self::nodes`] for monitors already listed, which cost a DXGI enumeration.
     pub(super) fn nodes_of(
         &self,
         monitors: Vec<Monitor>,
-    ) -> Result<Vec<butterpollo_core::topology::Node>> {
-        use butterpollo_core::topology::{Kind, Mode, Node, Position};
+    ) -> Result<Vec<butterpollo_media_policy::topology::Node>> {
+        use butterpollo_media_policy::topology::{Kind, Mode, Node, Position};
         let listed = monitors.clone();
         monitors
             .into_iter()
@@ -605,7 +605,10 @@ impl Topology {
     }
     pub fn set_positions(
         &mut self,
-        positions: &std::collections::BTreeMap<String, butterpollo_core::topology::Position>,
+        positions: &std::collections::BTreeMap<
+            String,
+            butterpollo_media_policy::topology::Position,
+        >,
     ) -> Result<()> {
         let monitors = self.monitors();
         let mut moved = false;
@@ -733,7 +736,7 @@ impl Topology {
             ))
         }
     }
-    pub fn refresh(&self, id: &str) -> Result<butterpollo_core::framegen::Rate> {
+    pub fn refresh(&self, id: &str) -> Result<butterpollo_media_policy::framegen::Rate> {
         self.refresh_in(&self.monitors(), id)
     }
     /// [`Self::refresh`] among monitors already listed, which cost a DXGI enumeration.
@@ -741,7 +744,7 @@ impl Topology {
         &self,
         monitors: &[Monitor],
         id: &str,
-    ) -> Result<butterpollo_core::framegen::Rate> {
+    ) -> Result<butterpollo_media_policy::framegen::Rate> {
         let monitor = monitors
             .iter()
             .find(|m| m.device_id == id)
@@ -757,7 +760,7 @@ impl Topology {
         if rate.Denominator == 0 {
             bail!("display refresh has no denominator");
         }
-        Ok(butterpollo_core::framegen::Rate(u32::try_from(
+        Ok(butterpollo_media_policy::framegen::Rate(u32::try_from(
             (u64::from(rate.Numerator) * 1000 + u64::from(rate.Denominator) / 2)
                 / u64::from(rate.Denominator),
         )?))
@@ -766,7 +769,7 @@ impl Topology {
         name: &str,
         width: u32,
         height: u32,
-        rate: butterpollo_core::framegen::Rate,
+        rate: butterpollo_media_policy::framegen::Rate,
     ) -> Result<()> {
         if width == 0 || height == 0 || rate.0 == 0 {
             bail!("invalid display mode");
@@ -1270,7 +1273,7 @@ pub fn edid_refresh(hint: &str, targets: &[u32]) -> Result<serde_json::Value> {
             }
         }
     }
-    let info = butterpollo_core::edid::Refresh::parse(&bytes);
+    let info = butterpollo_media_policy::edid::Refresh::parse(&bytes);
     let mut response = serde_json::to_value(&info)?;
     response["status"] = true.into();
     response["device_id"] = monitor.device_id.clone().into();

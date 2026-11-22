@@ -243,7 +243,7 @@ fn gpu_downscale_coverage_matches_independent_reference() -> Result<()> {
             (95, 51, 32, 24), // Fractional bars cross an edge pixel's footprint.
             (95, 49, 32, 16), // Subpixel aspect mismatch fills both target axes.
         ] {
-            let config = butterpollo_core::rtsp::Negotiated {
+            let config = butterpollo_media_policy::rtsp::Negotiated {
                 width,
                 height,
                 codec: 1,
@@ -335,7 +335,7 @@ fn gpu_downscale_timing() -> Result<()> {
             (1280, 720),
             (480, 270),
         ] {
-            let config = butterpollo_core::rtsp::Negotiated {
+            let config = butterpollo_media_policy::rtsp::Negotiated {
                 width,
                 height,
                 codec: 1,

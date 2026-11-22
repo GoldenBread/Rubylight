@@ -27,16 +27,16 @@ use crate::{
     stream::Media,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use butterpollo_core::{
+use butterpollo_media_policy::{
     audio::OpusLayout,
     performance::{Claims, Timing},
     rtsp::{Negotiated, webrtc_audio_kbps},
-    webrtc::{
-        capabilities::{Codec, HostCapabilities, StreamSettings},
-        protocol::{
-            AudioSettings, ControlMessage, ErrorCode, HostSessionState, ServerMessage,
-            SessionState, VideoSettings, classify_control,
-        },
+};
+use butterpollo_session::webrtc::{
+    capabilities::{Codec, HostCapabilities, StreamSettings},
+    protocol::{
+        AudioSettings, ControlMessage, ErrorCode, HostSessionState, ServerMessage, SessionState,
+        VideoSettings, classify_control,
     },
 };
 use butterpollo_windows::encoder::{Encoded, Unit};
@@ -449,7 +449,7 @@ struct Live {
 
 /// A checked request.
 struct Checked {
-    client: butterpollo_core::state::Client,
+    client: butterpollo_session::state::Client,
     settings: StreamSettings,
     app_id: u32,
 }
@@ -697,7 +697,7 @@ impl Actor {
         // only in the protocol's table. AV1 and HDR are refused when it is not, never streamed
         // as something else.
         let unsupported = |message: &str| error(kind, ErrorCode::UnsupportedSettings, message);
-        let codec = butterpollo_core::codec_support::Codec {
+        let codec = butterpollo_media_policy::codec_support::Codec {
             id: match settings.codec {
                 Codec::H264 => 0,
                 Codec::Hevc => 1,
@@ -707,7 +707,7 @@ impl Actor {
             yuv444: false,
         };
         if codecs & codec.bit() == 0 {
-            let detail = butterpollo_core::codec_support::refusal_for(
+            let detail = butterpollo_media_policy::codec_support::refusal_for(
                 &self.h.codec_missing.lock().unwrap(),
                 codec.id,
                 settings.hdr,
@@ -1249,7 +1249,7 @@ fn start_live(
         settings.width,
         settings.height,
         settings.fps,
-        settings.codec,
+        settings.codec.into(),
         settings.hdr,
         settings.bitrate_kbps,
         settings.audio_channels as u8,
@@ -1312,7 +1312,7 @@ impl Prepared {
 mod tests {
     use super::*;
     use crate::state::test_support::Fixture;
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
 
     #[test]
     fn the_audio_layout_is_the_answered_one_at_the_bitrate_the_video_budget_paid_for() {

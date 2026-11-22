@@ -107,7 +107,7 @@ pub fn apply<D: Drs>(drs: &mut D, latency_over_power: bool) -> Result<Change> {
 /// Runs at startup, before this process opens a device on the NVIDIA GPU,
 /// since the driver reads a process's profile when it first loads there. A
 /// PC without an NVIDIA driver is skipped; a failure is logged as a warning.
-pub fn apply_configured(config: &butterpollo_core::config::Config) {
+pub fn apply_configured(config: &butterpollo_config::config::Config) {
     let wanted = config.boolean("nvenc_latency_over_power", true);
     let mut api = match NvApi::open() {
         Ok(Some(api)) => api,

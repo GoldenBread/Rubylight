@@ -1,12 +1,10 @@
 //! `GET /audio` and `POST /audio/settings` (`docs/native-api.md`, "Audio processing") through
 //! the router.
 use super::*;
-use butterpollo_core::{
-    audio_dsp::Settings,
-    native_api::{
-        audio::{Audio, HEADPHONE_SURROUND, NIGHT_MODE},
-        radeon::{ControlState, Value},
-    },
+use butterpollo_media_policy::audio_dsp::Settings;
+use rubylight_native_api::{
+    audio::{Audio, HEADPHONE_SURROUND, NIGHT_MODE},
+    radeon::{ControlState, Value},
 };
 
 async fn write(s: &Setup, connection: &Connection, body: &str) -> Reply {

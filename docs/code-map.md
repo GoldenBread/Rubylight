@@ -11,7 +11,7 @@ The paths and names on this page are checked: `python tools/code_map.py check` f
 | Question | Command |
 | --- | --- |
 | What is in this folder? | `python tools/code_map.py index rust/host/src/stream` prints lines, tests and the header sentence of each file; `--dirs` sums folders |
-| What else changes when this file changes? | `python tools/code_map.py with rust/core/src/config.rs` |
+| What else changes when this file changes? | `python tools/code_map.py with rust/core/config/src/config.rs` |
 | Where have bugs been found? | `python tools/code_map.py hot rust/windows` lists fix commits per file |
 | Which checks cover my change? | `tools\dev.ps1 check -DryRun` |
 
@@ -25,29 +25,29 @@ Each Rust module opens with a `//!` header saying what it owns. The index is bui
 | `rubylight-wire` | `client/protocol/wire/` | Shared `std` wire codecs, packet crypto, RTSP framing, and input decoding for Rubylight and Nightjar. |
 | `rubylight-native-api` | `client/protocol/native-api/` | The [native API](native-api.md)'s wire types, versioned on their own. |
 | `rubylight-traverse` | `client/protocol/traverse/` | Internet play shared with Nightjar: reaching a paired host from outside its network without forwarded ports (DHT records, STUN, PCP and NAT-PMP, hole punching, the tunnel). The host uses it from `rust/host/src/internet_play.rs`. |
-| `butterpollo-core` | `rust/core/` | Protocol, state and policy without a Windows call. Decisions are plain functions over plain values, tested on any OS. |
+| `butterpollo-{crypto, config, media-policy, input-policy, session}` | `rust/core/` | Protocol, state and policy without a Windows call: crypto/pairing (`crypto/`), host configuration (`config/`), media/encoder/network/RTSP policy (`media-policy/`), input/couch-menu policy (`input-policy/`), and state/session/launchers (`session/`). Decisions are plain functions over plain values, tested on any OS. |
 | `butterpollo-windows` | `rust/windows/` | Everything that calls Windows, a GPU or a driver. |
 | `butterpollo` | `rust/host/` | Servers, sessions and threads: it asks core what to do and windows to do it. [The interop tests](../tests/interop/tests/stream_control.rs) live in `tests/interop/` (`rubylight-interop`) and enable `test-harness` as a dev-dependency. |
 | console | `rust/web/` | The Svelte console, built with Vite and served by the host from files. |
 | service, setup, drivers | `rust/service/`, `rust/setup/`, `rust/drivers/` | The Windows service and the display and virtual gamepad drivers are workspaces of their own. |
 | NVIDIA NGX adapter | `rust/truehdr-runtime/` | An MSVC DLL between NVIDIA's NGX and the host, shipped in the NVIDIA component's archive (`build.ps1 -Nvidia`); outside the workspace. |
 
-A behaviour usually has three homes. `rust/core/src/encoder_policy.rs` decides, `rust/windows/src/amf.rs` applies it and `rust/host/src/stream.rs` calls both; displays (`display_policy.rs`, `display.rs`, `display_session.rs`) and input (`input_policy.rs`, `input.rs`, `stream/control.rs`) follow the same split. Put the decision in core, where its test needs no hardware.
+A behaviour usually has three homes. `rust/core/media-policy/src/encoder_policy.rs` decides, `rust/windows/src/amf.rs` applies it and `rust/host/src/stream.rs` calls both; displays (`display_policy.rs`, `display.rs`, `display_session.rs`) and input (`input_policy.rs`, `input.rs`, `stream/control.rs`) follow the same split. Put the decision in core, where its test needs no hardware.
 
 ## A stream, hop by hop
 
 | Step | Where |
 | --- | --- |
 | Launch or resume | [`launch`, `resume`, `start`, `launch_back_half`](../rust/host/src/nvhttp/launch.rs), whose steps are in [`launch_steps.rs`](../rust/host/src/nvhttp/launch_steps.rs); the settings in force for this app and device come from `rust/host/src/stream/config.rs` |
-| RTSP | `rust/host/src/rtsp_server.rs` negotiates and calls [`Media`](../rust/host/src/stream.rs)'s `start`; the extension lines it offers are [`describe_lines`](../rust/core/src/extensions.rs) |
+| RTSP | `rust/host/src/rtsp_server.rs` negotiates and calls [`Media`](../rust/host/src/stream.rs)'s `start`; the extension lines it offers are [`describe_lines`](../rust/core/media-policy/src/extensions.rs) |
 | Session thread | [`spawn_session`](../rust/host/src/stream/video.rs), then [`start_media`, `spawn_audio`](../rust/host/src/stream/video/setup.rs), the loop [`run`](../rust/host/src/stream/video/run.rs) and `rust/host/src/stream/video/teardown.rs` |
 | Capture | The capture thread in `rust/host/src/stream.rs` publishes the newest frame through `rust/host/src/stream/capture.rs`; backends and fallback are [`Capture`, `open_stream_capture`](../rust/windows/src/capture.rs) |
 | Convert | `rust/windows/src/compute.rs` (D3D12 compute), `rust/windows/src/gpu_color.rs` (D3D11), both from `rust/windows/src/shaders/color.hlsl` |
-| Encode | [`configure_encoder`](../rust/host/src/stream.rs) builds an [`Encoder`](../rust/windows/src/encoder.rs), an enum over AMF, NVENC and PyroWave; which one is [`backend`](../rust/core/src/encoder_policy.rs) |
-| Packetize, send | [`spawn`, `submit`](../rust/host/src/video_send.rs), `rust/host/src/pyrowave_send.rs` for PyroWave, `rust/host/src/stream/slices.rs` for the inline path; formats in `rust/core/src/packet.rs` |
+| Encode | [`configure_encoder`](../rust/host/src/stream.rs) builds an [`Encoder`](../rust/windows/src/encoder.rs), an enum over AMF, NVENC and PyroWave; which one is [`backend`](../rust/core/media-policy/src/encoder_policy.rs) |
+| Packetize, send | [`spawn`, `submit`](../rust/host/src/video_send.rs), `rust/host/src/pyrowave_send.rs` for PyroWave, `rust/host/src/stream/slices.rs` for the inline path; formats in `rust/core/media-policy/src/packet.rs` |
 | Control, input | `rust/host/src/stream/control.rs` runs ENet and dispatches each message by its id; injection is `rust/windows/src/input.rs` |
 | Audio | `rust/host/src/stream/audio.rs`, `audio_encoder.rs` and `audio_sink.rs` beside it; capture is `rust/windows/src/audio.rs` |
-| End | [`session_begin`, `session_teardown`](../rust/host/src/session_control.rs) are the two points every start and end pass; states are [`Machine`](../rust/core/src/session_state.rs); [`stop_streams`](../rust/host/src/nvhttp/quit.rs) ends from HTTP |
+| End | [`session_begin`, `session_teardown`](../rust/host/src/session_control.rs) are the two points every start and end pass; states are [`Machine`](../rust/core/session/src/session_state.rs); [`stop_streams`](../rust/host/src/nvhttp/quit.rs) ends from HTTP |
 
 Threads carry these names in a debugger and in `rust/host/src/stall_watch.rs` lines: `session`, `control`, `capture`, `gpu-recovery`, `video-packetize`, `video-send`, `pyrowave-packetize`, `pyrowave-send`, `audio`, `audio route`, `server commands`, `gamepads`, `session-journal`.
 
@@ -55,27 +55,27 @@ Deadlines, by name: [`ENCODER_RECOVERY`](../rust/host/src/stream/video.rs), [`RE
 
 ## Where to start
 
-| Area | Decides: `rust/core/src/` | Does: `rust/windows/src/` | Wires: `rust/host/src/` |
+| Area | Decides: `rust/core/` | Does: `rust/windows/src/` | Wires: `rust/host/src/` |
 | --- | --- | --- | --- |
-| Encoder | `encoder_policy.rs`, `encoder_gpu.rs`, `encoder_backlog.rs`, `nvenc.rs`, `codec_support.rs`, `amf_vpe.rs`, `image_quality.rs` | `encoder.rs`, `amf.rs`, `amf/` (the AMF video converter in `amf/vpe.rs`), `nvenc.rs`, `nvenc/`, `pyrowave.rs` | `stream.rs`, `stream/video/run.rs` |
-| Capture | `capture_policy.rs`, `app_window.rs` (one app's window) | `capture.rs`, `capture/` (`capture/amd_direct.rs`, `capture/app_window.rs`) | `stream/capture.rs`, `stream/app_window.rs` |
-| Colour, HDR | `hdr.rs`, `hdr_dynamic.rs`, `dovi.rs` | `compute.rs`, `gpu_color.rs`, `gpu_color/`, `color.rs`, `compute_hdr_stats.rs` | `stream.rs` |
-| NVIDIA RTX HDR, RTX Video | `nvidia_enhance.rs` | `nvidia_enhance.rs`, `rtx_video.rs`, `rtx_profiles.rs`, `truehdr.rs`, `shaders/rtx_video.hlsl` | `nvidia_enhance.rs` |
-| NVIDIA component (download, checks, install) | `nvidia_component.rs` | `nvidia_enhance.rs` (loads the adapter) | `nvidia_component.rs`, `web/nvidia_component.rs` |
-| Displays | `display_policy.rs`, `display_caps.rs`, `edid.rs`, `topology.rs` | `display.rs`, `display/`, `display_arrangement.rs`, `display_recovery.rs` | `display_session.rs`, `remote_display.rs` |
-| Pacing, bitrate, loss | `stream_policy.rs`, `network_pacing.rs`, `adaptive_bitrate.rs`, `adaptive_fec.rs`, `link_rate.rs`, `ltr.rs`, `congestion.rs` | `timing.rs`, `limiter.rs` | `video_send.rs`, `video_send/`, `stream/qos.rs` |
-| Input, controllers | `input.rs`, `input_policy.rs`, `steam_pad.rs`, `dualsense.rs`, `switch2.rs`, `virtual_hid.rs` (virtual mouse and touchpad), `usbip.rs`, `dsu.rs` | `input.rs`, `input/` (`input/virtual_hid.rs`, `input/gamepad_backend.rs`, `input/switch2_pad.rs`), `local_input.rs` | `stream/control.rs`, `controller_sessions.rs`, `dsu.rs` |
-| Audio, microphone | `audio.rs`, `audio_dsp/`, `audio_passthrough.rs`, `mic.rs` | `audio.rs`, `audio_app_route.rs`, `mic.rs` | `stream/audio.rs`, `stream/audio_sink.rs`, `mic.rs` |
-| Sessions, pairing | `session.rs`, `session/`, `session_state.rs`, `session_history.rs` (the ended streams the console lists), `pairing.rs`, `auth.rs`, `crypto.rs`, `state.rs`, `multiclient.rs` (guests), `auto_lock.rs` | | `nvhttp.rs`, `nvhttp/`, `rtsp_server.rs`, `session_control.rs`, `session_history.rs`, `state.rs`, `multiclient.rs`, `web/session_guests.rs`, `native_api/guests.rs`, `auto_lock.rs` |
-| Settings | `config.rs`, `config/`, `device_overrides.rs`, `stream_preset.rs`, `settings_backup.rs` | | `web/config.rs`, `console/settings.rs`, `stream/config.rs`, `settings_backup.rs`, `web/backup.rs` |
-| Library, launch | `library.rs`, `steam.rs`, `playnite.rs`, `catalog.rs`, `menu_commands.rs`, `connection_commands.rs`, `steamgriddb.rs` (SteamGridDB covers) | `process.rs`, `process/`, `launcher.rs`, `steam.rs` | `process.rs`, `library.rs`, `launcher_watch.rs`, `steamgriddb.rs` |
-| Co-op, background | `nucleus.rs`, `nucleus/`, `background.rs` | `nucleus.rs`, `nucleus/` | `nucleus.rs`, `stream/instance_audio.rs`, `stream/background.rs` |
-| Client extensions | `extensions.rs`, `native.rs`, `native/`, `roaming.rs` | `clipboard.rs`, `files.rs`, `shared_folder.rs` | `extensions.rs`, `native_api.rs`, `native_api/`, `stream/roaming.rs`, `usb_forward.rs` |
+| Encoder | `media-policy/src/encoder_policy.rs`, `media-policy/src/encoder_gpu.rs`, `media-policy/src/encoder_backlog.rs`, `media-policy/src/nvenc.rs`, `media-policy/src/codec_support.rs`, `media-policy/src/amf_vpe.rs`, `media-policy/src/image_quality.rs` | `encoder.rs`, `amf.rs`, `amf/` (the AMF video converter in `amf/vpe.rs`), `nvenc.rs`, `nvenc/`, `pyrowave.rs` | `stream.rs`, `stream/video/run.rs` |
+| Capture | `media-policy/src/capture_policy.rs`, `media-policy/src/app_window.rs` (one app's window) | `capture.rs`, `capture/` (`capture/amd_direct.rs`, `capture/app_window.rs`) | `stream/capture.rs`, `stream/app_window.rs` |
+| Colour, HDR | `media-policy/src/hdr.rs`, `media-policy/src/hdr_dynamic.rs`, `media-policy/src/dovi.rs` | `compute.rs`, `gpu_color.rs`, `gpu_color/`, `color.rs`, `compute_hdr_stats.rs` | `stream.rs` |
+| NVIDIA RTX HDR, RTX Video | `media-policy/src/nvidia_enhance.rs` | `nvidia_enhance.rs`, `rtx_video.rs`, `rtx_profiles.rs`, `truehdr.rs`, `shaders/rtx_video.hlsl` | `nvidia_enhance.rs` |
+| NVIDIA component (download, checks, install) | `media-policy/src/nvidia_component.rs` | `nvidia_enhance.rs` (loads the adapter) | `nvidia_component.rs`, `web/nvidia_component.rs` |
+| Displays | `media-policy/src/display_policy.rs`, `media-policy/src/display_caps.rs`, `media-policy/src/edid.rs`, `media-policy/src/topology.rs` | `display.rs`, `display/`, `display_arrangement.rs`, `display_recovery.rs` | `display_session.rs`, `remote_display.rs` |
+| Pacing, bitrate, loss | `media-policy/src/stream_policy.rs`, `media-policy/src/network_pacing.rs`, `media-policy/src/adaptive_bitrate.rs`, `media-policy/src/adaptive_fec.rs`, `media-policy/src/link_rate.rs`, `media-policy/src/ltr.rs`, `media-policy/src/congestion.rs` | `timing.rs`, `limiter.rs` | `video_send.rs`, `video_send/`, `stream/qos.rs` |
+| Input, controllers | `input-policy/src/input.rs`, `input-policy/src/input_policy.rs`, `input-policy/src/steam_pad.rs`, `input-policy/src/dualsense.rs`, `input-policy/src/switch2.rs`, `input-policy/src/virtual_hid.rs` (virtual mouse and touchpad), `input-policy/src/usbip.rs`, `input-policy/src/dsu.rs` | `input.rs`, `input/` (`input/virtual_hid.rs`, `input/gamepad_backend.rs`, `input/switch2_pad.rs`), `local_input.rs` | `stream/control.rs`, `controller_sessions.rs`, `dsu.rs` |
+| Audio, microphone | `media-policy/src/audio.rs`, `media-policy/src/audio_dsp/`, `media-policy/src/audio_passthrough.rs`, `session/src/mic.rs` | `audio.rs`, `audio_app_route.rs`, `mic.rs` | `stream/audio.rs`, `stream/audio_sink.rs`, `mic.rs` |
+| Sessions, pairing | `session/src/session.rs`, `session/src/session/`, `session/src/session_state.rs`, `session/src/session_history.rs` (the ended streams the console lists), `crypto/src/pairing.rs`, `crypto/src/auth.rs`, `crypto/src/crypto.rs`, `session/src/state.rs`, `session/src/multiclient.rs` (guests), `session/src/auto_lock.rs` | | `nvhttp.rs`, `nvhttp/`, `rtsp_server.rs`, `session_control.rs`, `session_history.rs`, `state.rs`, `multiclient.rs`, `web/session_guests.rs`, `native_api/guests.rs`, `auto_lock.rs` |
+| Settings | `config/src/config.rs`, `config/src/config/`, `session/src/device_overrides.rs`, `media-policy/src/stream_preset.rs`, `session/src/settings_backup.rs` | | `web/config.rs`, `console/settings.rs`, `stream/config.rs`, `settings_backup.rs`, `web/backup.rs` |
+| Library, launch | `session/src/library.rs`, `session/src/steam.rs`, `session/src/playnite.rs`, `session/src/catalog.rs`, `input-policy/src/menu_commands.rs`, `session/src/connection_commands.rs`, `session/src/steamgriddb.rs` (SteamGridDB covers) | `process.rs`, `process/`, `launcher.rs`, `steam.rs` | `process.rs`, `library.rs`, `launcher_watch.rs`, `steamgriddb.rs` |
+| Co-op, background | `session/src/nucleus.rs`, `session/src/nucleus/`, `session/src/background.rs` | `nucleus.rs`, `nucleus/` | `nucleus.rs`, `stream/instance_audio.rs`, `stream/background.rs` |
+| Client extensions | `media-policy/src/extensions.rs`, `session/src/native.rs`, `session/src/native/`, `session/src/roaming.rs` | `clipboard.rs`, `files.rs`, `shared_folder.rs` | `extensions.rs`, `native_api.rs`, `native_api/`, `stream/roaming.rs`, `usb_forward.rs` |
 | Internet play | (`rubylight-traverse`) | | `internet_play.rs`, `network/portmap.rs` |
-| Invites to play over the internet | `invites.rs` (links, invited devices) | | `invites.rs`, `nvhttp/pairing.rs`, `multiclient.rs`, `internet_play.rs`, `native_api/guests.rs`, `web/session_guests.rs` |
-| Console, API | `auth.rs`, `log_analysis.rs` | | `web.rs`, `web/`, `console/`, `web_sessions.rs`, `webhooks.rs` |
-| Browser play | `webrtc/` | | `webrtc/` |
-| Update, service | `update_files.rs`, `update_recovery.rs` | `service.rs` | `updater.rs`, `updater/`, `maintenance.rs`, `service_tasks.rs` |
+| Invites to play over the internet | `session/src/invites.rs` (links, invited devices) | | `invites.rs`, `nvhttp/pairing.rs`, `multiclient.rs`, `internet_play.rs`, `native_api/guests.rs`, `web/session_guests.rs` |
+| Console, API | `crypto/src/auth.rs`, `session/src/log_analysis.rs` | | `web.rs`, `web/`, `console/`, `web_sessions.rs`, `webhooks.rs` |
+| Browser play | `session/src/webrtc/` | | `webrtc/` |
+| Update, service | `src/update_files.rs`, `src/update_recovery.rs` | `service.rs` | `updater.rs`, `updater/`, `maintenance.rs`, `service_tasks.rs` |
 
 Outside the three crates: the installer in `rust/setup/src/`, the service in `rust/service/src/`, the display and virtual gamepad drivers and their protocols in `rust/drivers/`, capture and encoder probes in `rust/windows/examples/` (run with `cargo run -p butterpollo-windows --example <name>`; several change real settings and say so in their header).
 
@@ -85,10 +85,10 @@ Each list names every home of one kind of change. `python tools/code_map.py with
 
 ### A host setting
 
-1. An accessor on [`Config`](../rust/core/src/config.rs) with the default; parsers such as [`parse_boolean`, `parse_integer`](../rust/core/src/config/values.rs) report a bad value. Tests go in `rust/core/src/config/tests.rs`.
-2. A setting of a 3.0 extension is also a row of [`SETTINGS_30`](../rust/core/src/config/settings30.rs), and a test there compares the rows with `rust/web/src/lib/schema/extensions.ts`.
-3. A renamed or removed key: [`RENAMED_KEYS`, `REMOVED_KEYS`](../rust/core/src/config/retired.rs). Settings are renamed or retired, not dropped silently.
-4. A per-app or per-device setting: [`override_allowed`](../rust/core/src/config/overrides.rs). The order is app and device, app, device, host ([`for_device`](../rust/core/src/device_overrides.rs)); a value set in the configuration beats a preset (`rust/core/src/stream_preset.rs`).
+1. An accessor on [`Config`](../rust/core/config/src/config.rs) with the default; parsers such as [`parse_boolean`, `parse_integer`](../rust/core/config/src/config/values.rs) report a bad value. Tests go in `rust/core/config/src/config/tests.rs`.
+2. A setting of a 3.0 extension is also a row of [`SETTINGS_30`](../rust/core/config/src/config/settings30.rs), and a test there compares the rows with `rust/web/src/lib/schema/extensions.ts`.
+3. A renamed or removed key: [`RENAMED_KEYS`, `REMOVED_KEYS`](../rust/core/config/src/config/retired.rs). Settings are renamed or retired, not dropped silently.
+4. A per-app or per-device setting: [`override_allowed`](../rust/core/config/src/config/overrides.rs). The order is app and device, app, device, host ([`for_device`](../rust/core/session/src/device_overrides.rs)); a value set in the configuration beats a preset (`rust/core/media-policy/src/stream_preset.rs`).
 5. The console: an entry with label, description, default and control in its category file under `rust/web/src/lib/schema/`. The schema is written by hand and its defaults must equal the accessor's. Its tier (everyday, always on, a launcher option) is a key in a list in `rust/web/src/lib/schema/tiers.ts` (an everyday setting, shown in its topic tab, needs none, and may not depend on one that is not everyday); a group most people leave alone folds through `FOLDED_GROUPS` in `main.ts`; `rust/web/SettingsSchema.test.mjs`, `SettingsHome.test.mjs` and `SettingsTiers.test.mjs` hold the rules.
 6. The console without scripts: a row in `rust/host/src/console/settings.rs`, with its label and description in every file of `rust/assets/locale/`.
 7. `docs/configuration.md`: the topic section and the key table. No test checks this one.
@@ -101,19 +101,19 @@ Saving goes through [`save_setting`](../rust/host/src/web/config.rs), which vali
 ### A control message
 
 1. Reserve the id in [`ids.rs`](../client/protocol/core/src/ids.rs) and give the message a module in `client/protocol/core/src/`, as `clipboard_sync.rs` has.
-2. Offer it: a field of [`Offered`](../rust/core/src/extensions.rs) with its serverinfo field and DESCRIBE line, set per stream in [`stream_offered`](../rust/host/src/extensions.rs). A client that asks for nothing new must see nothing new (`rust/host/src/stream/reconnect_tests/extension_tests.rs`).
+2. Offer it: a field of [`Offered`](../rust/core/media-policy/src/extensions.rs) with its serverinfo field and DESCRIBE line, set per stream in [`stream_offered`](../rust/host/src/extensions.rs). A client that asks for nothing new must see nothing new (`rust/host/src/stream/reconnect_tests/extension_tests.rs`).
 3. Dispatch it in `rust/host/src/stream/control.rs`; give it a worker beside that file when it keeps state, as `rust/host/src/stream/clipboard_sync.rs` does.
 4. Nightjar in the same change: `client/protocol/client/src/control/` (`messages.rs`, `events.rs`, `session.rs`), then Android and desktop ([Nightjar's map](../client/docs/code-map.md#a-control-message)).
 5. `docs/control-messages.md`, and the tests `client/protocol/client/tests/control_messages_contract.rs` and a file under `rust/host/src/stream/reconnect_tests/`.
 
 ### A capability a client can see
 
-The host says what it offers in three places: serverinfo fields ([`serverinfo_fields`](../rust/core/src/extensions.rs)), DESCRIBE lines and the native API's capabilities (`client/protocol/native-api/src/capabilities.rs`). Nightjar reads them into [`Feature`, `HostCapabilities`](../client/protocol/client/src/http/capabilities.rs) and gates on that, never on a host's name. `client/protocol/client/tests/capabilities_contract.rs` checks the reading against recorded serverinfo replies.
+The host says what it offers in three places: serverinfo fields ([`serverinfo_fields`](../rust/core/media-policy/src/extensions.rs)), DESCRIBE lines and the native API's capabilities (`client/protocol/native-api/src/capabilities.rs`). Nightjar reads them into [`Feature`, `HostCapabilities`](../client/protocol/client/src/http/capabilities.rs) and gates on that, never on a host's name. `client/protocol/client/tests/capabilities_contract.rs` checks the reading against recorded serverinfo replies.
 
 ### A native API endpoint
 
 1. Types in `client/protocol/native-api/src/`. Within v1, changes only add: a response may gain fields, a request refuses unknown ones.
-2. The route in [`router`](../rust/host/src/native_api.rs), the handler in `rust/host/src/native_api/`, what it reads from host state in `rust/core/src/native/`. The caller is the paired device of the TLS certificate; its permissions are read on every request.
+2. The route in [`router`](../rust/host/src/native_api.rs), the handler in `rust/host/src/native_api/`, what it reads from host state in `rust/core/session/src/native/`. The caller is the paired device of the TLS certificate; its permissions are read on every request.
 3. Tests in `rust/host/src/nvhttp/native_tests/`; the contract in `docs/native-api.md`.
 4. Nightjar: `client/protocol/client/src/http/native.rs`, then both apps.
 
@@ -128,11 +128,11 @@ The host says what it offers in three places: serverinfo fields ([`serverinfo_fi
 
 | Change | Test |
 | --- | --- |
-| A decision in core | The module's own tests: `cargo test -p butterpollo-core --locked <module>`. No GPU, any OS. |
+| A decision in core | The module's own tests: `cargo test -p butterpollo-<crate> --locked <module>` (`crypto`, `config`, `media-policy`, `input-policy`, `session`). No GPU, any OS. |
 | Launch, resume, reconnect, control messages, roaming, session end | `rust/host/src/stream/reconnect_tests.rs` and the files under `rust/host/src/stream/reconnect_tests/`: the real HTTP, RTSP, ENet and session workers on loopback with a fake capture, encoder and input. Start here for a session bug: it needs no GPU, driver or service. |
 | Anything Nightjar and the host must agree on | `tests/interop/` (`cargo test -p rubylight-interop --locked`) runs Nightjar's engine against this host in one process. |
 | Moonlight HTTP replies | `rust/host/src/nvhttp/parity_tests.rs`, `rust/host/src/nvhttp/native_tests/` |
-| Bytes from the network | The property tests in `rust/core/src/fuzz.rs` and `client/protocol/core/src/fuzz.rs`: no input panics, and what decodes encodes back. `PROPTEST_CASES` raises the count. |
+| Bytes from the network | The property tests in `rust/core/session/src/fuzz.rs` and `client/protocol/core/src/fuzz.rs`: no input panics, and what decodes encodes back. `PROPTEST_CASES` raises the count. |
 | Capture, conversion, encoders, displays, input devices | Tests marked `#[ignore]` in `rust/windows/src/`, each with the reason it needs hardware; the [developer guide](../rust/README.md#running-the-native-checks) has the command. They read `BUTTERPOLLO_TEST_*` variables for decoders and report files. |
 | Console | `node --test "*.test.mjs"` in `rust/web/` renders components on the server through `rust/web/test-server.mjs`, without a browser. The `*.browser.cjs` files need Playwright. |
 | A packaged host | `rust/tests/interop.py`, `rust/tests/web_api.py` and their neighbours start an isolated host; `rust/release/e2e.py` streams one end to end. Exit code 3 is an AMD encoder hang: stop, do not retry. |
@@ -144,12 +144,12 @@ The host says what it offers in three places: serverinfo fields ([`serverinfo_fi
 
 | Evidence | Where |
 | --- | --- |
-| Host log | `logs\butterpollo.log` in the profile, 32 MiB a file with four older ones kept (`rust/core/src/logfile.rs`). `RUST_LOG` overrides the saved level (`rust/host/src/logging.rs`). |
-| Known failures in words | [`RULES`](../rust/core/src/log_analysis.rs) maps warnings and errors to the explanations the console shows. Read it to learn what a log line means; add a rule when a new failure has a known cause. |
+| Host log | `logs\butterpollo.log` in the profile, 32 MiB a file with four older ones kept (`rust/core/session/src/logfile.rs`). `RUST_LOG` overrides the saved level (`rust/host/src/logging.rs`). |
+| Known failures in words | [`RULES`](../rust/core/session/src/log_analysis.rs) maps warnings and errors to the explanations the console shows. Read it to learn what a log line means; add a rule when a new failure has a known cause. |
 | A stalled stream thread | `rust/host/src/stall_watch.rs` logs where it is. |
 | Console warnings | `rust/host/src/host_warnings.rs`, kept in `host-warnings.json` until dismissed |
 | Per-frame timings | `BUTTERPOLLO_TIMING_RECORD` writes the [timing record](timing-record.md); `rust/release/timing_report.py` turns host and receiver records into a stage table. |
-| Which stage lost the stream's time | The console's **Stream details & performance**, the end-of-stream `stream stutter report` line, and `rust/core/src/stutter_report.rs` over the stage samples `rust/core/src/performance.rs` keeps. |
+| Which stage lost the stream's time | The console's **Stream details & performance**, the end-of-stream `stream stutter report` line, and `rust/core/media-policy/src/stutter_report.rs` over the stage samples `rust/core/media-policy/src/performance.rs` keeps. |
 | A stream run | `rust/release/e2e.py` leaves `result.json`, `frames.csv` and the host's record in the run's folder. |
 | Faults on purpose | `rust/host/src/soak_fault.rs` (debug hosts only) and the send switches `BUTTERPOLLO_TEST_SEND_LOSS`, `BUTTERPOLLO_TEST_SEND_JITTER` and `BUTTERPOLLO_TEST_SEND_OUTAGE` |
 

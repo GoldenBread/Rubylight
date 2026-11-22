@@ -21,7 +21,7 @@ fn a_shrunken_route_mtu_only_warns_when_a_jumbo_packet_does_not_fit() {
     // Only this session's warning list changes; a stock packet size fits.
     let f = crate::state::test_support::Fixture::new();
     let client = f.client(u32::MAX);
-    let s = f.session(client, butterpollo_core::session::Role::Stream);
+    let s = f.session(client, butterpollo_session::session::Role::Stream);
     check_route_mtu(&s, 8192, Some(1280));
     let warnings = s.launch.warnings.snapshot();
     assert_eq!(warnings.len(), 1);
@@ -407,7 +407,7 @@ fn capacity_wait_wakes_after_the_sender_releases_a_frame() {
 
 #[test]
 fn recovery_progress_opens_one_slot_without_changing_order_or_skipping_a_frame() {
-    use butterpollo_core::encoder_backlog::{Backpressure, backpressure};
+    use butterpollo_media_policy::encoder_backlog::{Backpressure, backpressure};
     let (sender, frames, release) = blocked_sender();
     sender
         .submit(
@@ -911,7 +911,10 @@ fn wait_prepared(sender: &Sender) -> std::sync::MutexGuard<'_, State> {
 fn moonlight_timing_stops_at_packetization_before_a_blocked_sender() {
     for key in [None, Some([23; 16])] {
         let fixture = crate::state::test_support::Fixture::new();
-        let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+        let session = fixture.session(
+            fixture.client(0),
+            butterpollo_session::session::Role::Stream,
+        );
         let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
         let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
         receiver.set_read_timeout(Some(WAIT)).unwrap();
@@ -983,7 +986,7 @@ fn moonlight_timing_stops_at_packetization_before_a_blocked_sender() {
         let len = receiver.recv(&mut packet).unwrap();
         let packet = match key {
             None => packet[..len].to_vec(),
-            Some(key) => butterpollo_core::crypto::gcm_open(
+            Some(key) => butterpollo_crypto::crypto::gcm_open(
                 &key,
                 &packet[..12],
                 &packet[16..32],
@@ -1013,7 +1016,10 @@ fn moonlight_timing_stops_at_packetization_before_a_blocked_sender() {
 #[test]
 fn keyframe_skips_raw_and_prepared_waiters_without_spending_wire_numbers_twice() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = Sender::packetizer(
         session,
         Instant::now(),
@@ -1086,7 +1092,10 @@ fn keyframe_skips_raw_and_prepared_waiters_without_spending_wire_numbers_twice()
 #[test]
 fn stopping_wakes_a_packetizer_blocked_on_the_prepared_slot() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender =
         Sender::packetizer(session, Instant::now(), handoff(packetizer(None)), false).unwrap();
     sender
@@ -1118,7 +1127,10 @@ fn stopping_wakes_a_packetizer_blocked_on_the_prepared_slot() {
 fn a_sender_taking_over_mid_stream_continues_the_inline_numbering() {
     for key in [None, Some([17; 16])] {
         let fixture = crate::state::test_support::Fixture::new();
-        let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+        let session = fixture.session(
+            fixture.client(0),
+            butterpollo_session::session::Role::Stream,
+        );
         let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
         let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
         receiver.set_read_timeout(Some(WAIT)).unwrap();
@@ -1152,7 +1164,7 @@ fn a_sender_taking_over_mid_stream_continues_the_inline_numbering() {
             None => packet[..size].to_vec(),
             Some(key) => {
                 assert_eq!(u64::from_le_bytes(packet[..8].try_into().unwrap()), 9000);
-                butterpollo_core::crypto::gcm_open(
+                butterpollo_crypto::crypto::gcm_open(
                     &key,
                     &packet[..12],
                     &packet[16..32],
@@ -1170,7 +1182,10 @@ fn a_sender_taking_over_mid_stream_continues_the_inline_numbering() {
 #[test]
 fn the_sender_thread_accepts_client_reports_for_adaptive_fec() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     session.configure_fec(true, 20);
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -1204,7 +1219,10 @@ fn the_sender_thread_accepts_client_reports_for_adaptive_fec() {
 #[test]
 fn the_sender_thread_records_where_a_new_pictures_time_went() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
     // The media clock started 500 ms ago.
@@ -1223,10 +1241,10 @@ fn the_sender_thread_records_where_a_new_pictures_time_went() {
     )
     .unwrap();
     // The host-side record is on.
-    let (sink, rows) = butterpollo_core::timing_record::channel(8);
+    let (sink, rows) = butterpollo_media_policy::timing_record::channel(8);
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     // A client that asked for host timing reports (0x5536).
-    let asked = butterpollo_core::host_timing::HostTimingRequest { enabled: true }.encode();
+    let asked = butterpollo_media_policy::host_timing::HostTimingRequest { enabled: true }.encode();
     assert_eq!(session.host_timings.on_request(&asked), Some(true));
     // A picture presented 6 ms ago, held 1 ms, claimed 3 ms ago and encoded
     // in 2 ms, beside a static repeat that has no present.
@@ -1265,7 +1283,7 @@ fn the_sender_thread_records_where_a_new_pictures_time_went() {
     );
     // Encoding ran from the submission to the output reaching the sender.
     assert!(ms("encode") >= 2.);
-    let parts: f64 = butterpollo_core::performance::STAGES
+    let parts: f64 = butterpollo_media_policy::performance::STAGES
         .iter()
         .map(|stage| ms(stage))
         .sum();
@@ -1279,12 +1297,13 @@ fn the_sender_thread_records_where_a_new_pictures_time_went() {
     // The client that asked hears the whole span for the new picture alone,
     // numbered as its packets are, with the same stages.
     let report = session.host_timings.take_report().unwrap();
-    let records = butterpollo_core::host_timing::HostTiming::decode_report(&report).unwrap();
+    let records =
+        butterpollo_media_policy::host_timing::HostTiming::decode_report(&report).unwrap();
     assert_eq!(records.len(), 1);
     let record = records[0];
     // The extension holds the present on the media clock and the split stages, and the
     // record's row has the stamp points themselves.
-    let (_, extra) = butterpollo_core::host_timing::HostTiming::decode_report_with(&report)
+    let (_, extra) = butterpollo_media_policy::host_timing::HostTiming::decode_report_with(&report)
         .unwrap()
         .remove(0);
     let extra = extra.unwrap();
@@ -1514,7 +1533,10 @@ fn only_a_streamed_frames_first_unit_takes_the_pictures_claim() {
 #[test]
 fn the_packetizer_thread_sends_each_block_of_a_streamed_frame_as_one_part() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = streaming_sender(session, 2, 2);
     submit_units(&sender, vec![slice(0, 20, 1)]);
     // Block 0 is ready before the frame's last unit exists.
@@ -1556,7 +1578,10 @@ fn the_packetizer_thread_sends_each_block_of_a_streamed_frame_as_one_part() {
 #[test]
 fn streamed_frames_follow_the_block_count_of_a_rebuilt_encoder() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     // Handed off at 1440p, whole frames; a switch to 4K brings slices.
     let sender = streaming_sender(session.clone(), 0, 2);
     sender.follow_slice_blocks(2);
@@ -1583,7 +1608,10 @@ fn streamed_frames_follow_the_block_count_of_a_rebuilt_encoder() {
 #[test]
 fn a_prepared_part_of_a_streamed_frame_survives_a_keyframe_request() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = streaming_sender(session, 2, 2);
     submit_units(&sender, vec![slice(0, 20, 1)]);
     drop(wait_prepared(&sender));
@@ -1595,7 +1623,10 @@ fn a_prepared_part_of_a_streamed_frame_survives_a_keyframe_request() {
 #[test]
 fn a_frame_that_begins_over_an_open_streamed_frame_takes_its_number_after_it() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = streaming_sender(session, 2, 2);
     // One shard: nothing can leave before the last unit.
     submit_units(&sender, vec![slice(0, 1, 1)]);
@@ -1618,7 +1649,10 @@ fn a_frame_that_begins_over_an_open_streamed_frame_takes_its_number_after_it() {
 #[test]
 fn a_streamed_frame_the_plan_cannot_hold_is_dropped_and_turns_delivery_off() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = streaming_sender(session.clone(), 2, 2);
     // A frame that grows past what the encoder reported it could return.
     let mut first = slice(0, 2, 1);
@@ -1684,7 +1718,10 @@ fn streamed_payload(packets: &[Vec<u8>]) -> (Vec<u8>, usize) {
 #[test]
 fn a_streamed_frame_goes_out_in_order_and_is_timed_once() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
     receiver
@@ -1704,7 +1741,7 @@ fn a_streamed_frame_goes_out_in_order_and_is_timed_once() {
         handoff,
     )
     .unwrap();
-    let (sink, rows) = butterpollo_core::timing_record::channel(8);
+    let (sink, rows) = butterpollo_media_policy::timing_record::channel(8);
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     let mut claims = Claims::default();
     let key = now - Duration::from_millis(6);
@@ -1810,7 +1847,10 @@ fn a_streamed_frame_goes_out_in_order_and_is_timed_once() {
 #[test]
 fn a_frame_cut_off_after_its_first_block_leaves_no_stats_or_timing_behind() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
     // Block 0 comes from the packetizer thread: on a busy PC after 500 ms.
@@ -1828,7 +1868,7 @@ fn a_frame_cut_off_after_its_first_block_leaves_no_stats_or_timing_behind() {
         handoff,
     )
     .unwrap();
-    let (sink, rows) = butterpollo_core::timing_record::channel(8);
+    let (sink, rows) = butterpollo_media_policy::timing_record::channel(8);
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     let mut claims = Claims::default();
     for ms in [8, 4] {
@@ -1872,7 +1912,10 @@ fn a_frame_cut_off_after_its_first_block_leaves_no_stats_or_timing_behind() {
 #[test]
 fn a_streamed_frame_lost_in_its_first_block_stops_and_is_not_stamped() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     session.link_sent.set_live(true);
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -1884,7 +1927,7 @@ fn a_streamed_frame_lost_in_its_first_block_stops_and_is_not_stamped() {
     handoff.slice_blocks = 2;
     handoff.slices = 2;
     let mut sender = Sender::packetizer(session.clone(), now, handoff, false).unwrap();
-    let (sink, rows) = butterpollo_core::timing_record::channel(8);
+    let (sink, rows) = butterpollo_media_policy::timing_record::channel(8);
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     let key = now - Duration::from_millis(4);
     let mut claims = Claims::default();
@@ -1918,7 +1961,7 @@ fn a_streamed_frame_lost_in_its_first_block_stops_and_is_not_stamped() {
             now,
             Instant::now(),
             Default::default(),
-            butterpollo_core::stream_policy::SendDrop::parse("100:5"),
+            butterpollo_media_policy::stream_policy::SendDrop::parse("100:5"),
             None,
             Default::default(),
         );
@@ -1953,7 +1996,7 @@ fn a_streamed_frame_lost_in_its_first_block_stops_and_is_not_stamped() {
 
 #[test]
 fn only_what_reached_the_socket_is_counted_for_the_link_rate_controller() {
-    use butterpollo_core::network_pacing::overhead;
+    use butterpollo_media_policy::network_pacing::overhead;
     // Ten offered, three refused: seven datagrams and the bytes the socket took.
     assert_eq!(
         reached_socket(10, 3, 7000, false),
@@ -1971,7 +2014,7 @@ fn only_what_reached_the_socket_is_counted_for_the_link_rate_controller() {
 /// on, and the frames reach the client in order only once the stall is over.
 #[test]
 fn frames_during_a_test_stall_count_as_sent_and_go_out_in_order_after_it() {
-    use butterpollo_core::stream_policy::SendJitter;
+    use butterpollo_media_policy::stream_policy::SendJitter;
     let ms = Duration::from_millis;
     // A seed whose first stall starts after the sender does and leaves ample
     // time to hand it three frames, even on a busy PC; `until` is the first
@@ -1989,7 +2032,10 @@ fn frames_during_a_test_stall_count_as_sent_and_go_out_in_order_after_it() {
         })
         .unwrap();
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
     let start = Instant::now();
@@ -2068,7 +2114,10 @@ fn frames_during_a_test_stall_count_as_sent_and_go_out_in_order_after_it() {
 #[test]
 fn an_open_streamed_frame_counts_toward_the_claim_backlog_only() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = streaming_sender(session, 2, 2);
     submit_units(&sender, vec![slice(0, 20, 1)]);
     take_prepared(&sender);
@@ -2142,7 +2191,10 @@ fn keyframe(shards: usize) -> Encoded {
 #[test]
 fn an_idle_sender_gets_a_whole_frame_block_by_block() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = early_sender(session);
     submit_units(&sender, vec![keyframe(600)]);
     let first = take_prepared(&sender);
@@ -2165,7 +2217,7 @@ fn an_idle_sender_gets_a_whole_frame_block_by_block() {
     let packets: usize = layout.iter().map(|(data, parity)| data + parity).sum();
     assert_eq!(
         first.frame_wire_bytes,
-        Some(packets * (1040 + butterpollo_core::network_pacing::overhead(false)))
+        Some(packets * (1040 + butterpollo_media_policy::network_pacing::overhead(false)))
     );
     assert_eq!(first.blocks[0][0].len(), 1040);
     // The paced sender sends block 0 while the packetizer hands over block 1
@@ -2208,7 +2260,10 @@ fn an_idle_sender_gets_a_whole_frame_block_by_block() {
 #[test]
 fn a_whole_frame_sent_block_by_block_arrives_whole_and_is_timed_once() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
     receiver.set_read_timeout(Some(WAIT)).unwrap();
     // Slow enough that the receive buffer never overflows.
@@ -2225,7 +2280,7 @@ fn a_whole_frame_sent_block_by_block_arrives_whole_and_is_timed_once() {
         handoff(packetizer(None)),
     )
     .unwrap();
-    let (sink, rows) = butterpollo_core::timing_record::channel(8);
+    let (sink, rows) = butterpollo_media_policy::timing_record::channel(8);
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     let now = Instant::now();
     let mut claims = Claims::default();
@@ -2279,7 +2334,10 @@ fn a_whole_frame_sent_block_by_block_arrives_whole_and_is_timed_once() {
 #[test]
 fn a_keyframe_sent_block_by_block_opens_admission_at_its_lead_across_parts() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = early_sender(session);
     let lead = Some(Duration::from_millis(4));
     sender.claim_backlog(lead).unwrap();
@@ -2320,7 +2378,10 @@ fn a_keyframe_sent_block_by_block_opens_admission_at_its_lead_across_parts() {
 #[test]
 fn recovery_progress_stays_quiet_until_the_lead_is_crossed() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = early_sender(session);
     let ms = |ms| Some(Duration::from_millis(ms));
     sender.claim_backlog(ms(4)).unwrap();
@@ -2356,7 +2417,10 @@ fn the_recovery_estimate_counts_a_whole_frame_from_its_first_part() {
 #[test]
 fn a_whole_frame_given_up_part_way_queues_no_more_blocks() {
     let fixture = crate::state::test_support::Fixture::new();
-    let session = fixture.session(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let session = fixture.session(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let sender = early_sender(session);
     let slot = &sender.slot;
     let picture = keyframe(600);
@@ -2364,7 +2428,7 @@ fn a_whole_frame_given_up_part_way_queues_no_more_blocks() {
     let mut layout = wire.block_layout(picture.bytes.len());
     assert!(layout.len() >= 3);
     layout[1].1 += 1;
-    let plan = butterpollo_core::packet::ConventionalPlan {
+    let plan = butterpollo_media_policy::packet::ConventionalPlan {
         layout: layout.clone(),
         percentage: wire.conventional_plan(picture.bytes.len()).percentage,
     };
@@ -2456,7 +2520,10 @@ fn empty_state() -> State {
 
 /// Takes a block from the pool and fills it as the packetizer does. A take the
 /// pool cannot serve is a miss: the block is empty and allocates its shards.
-fn build_block(state: &mut State, misses: &mut usize) -> butterpollo_core::packet::PacketBlock {
+fn build_block(
+    state: &mut State,
+    misses: &mut usize,
+) -> butterpollo_media_policy::packet::PacketBlock {
     const SHARDS: usize = 8;
     const SHARD_BYTES: usize = 1_400;
     let mut block = state.take_block();

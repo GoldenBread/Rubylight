@@ -1,8 +1,8 @@
 //! Keep each rate-control limit tied to the bitrate at which its last write
 //! succeeded. A target-rate update can succeed while an individual limit fails.
 use anyhow::{Context, Result};
-use butterpollo_core::encoder_policy::Property;
-use butterpollo_core::session::Warnings;
+use butterpollo_media_policy::encoder_policy::Property;
+use butterpollo_session::session::Warnings;
 
 pub(super) fn frame_cap_name(codec: u8) -> &'static str {
     match codec {
@@ -153,7 +153,7 @@ pub(super) fn hold_to_ranges(
     ceiling: Option<i64>,
     maximum: impl Fn(&str) -> Option<i64>,
 ) -> Vec<(String, i64, i64)> {
-    use butterpollo_core::encoder_policy::Value;
+    use butterpollo_media_policy::encoder_policy::Value;
     let mut held = Vec::new();
     for property in properties {
         let limit = if property.name.ends_with("PeakBitrate") {
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn each_keyframe_cap_relax_step_reaches_the_driver() {
-        use butterpollo_core::encoder_policy::KeyframeCapScale;
+        use butterpollo_media_policy::encoder_policy::KeyframeCapScale;
         let warnings = Warnings::default();
         let mut cap = FrameCap::new(true);
         let mut writes = Vec::new();

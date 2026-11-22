@@ -4,10 +4,10 @@ use crate::{
     native_api::pairing,
     nvhttp::parity_tests::{device_request, finish_pairing, one_time_pin},
 };
-use butterpollo_core::{
-    native_api::{capabilities::Capabilities, pairing::PairingRequests},
-    state::{FIRST_DEVICE_PERMISSION, LATER_DEVICE_PERMISSION, PLAY_DEVICE_PERMISSION},
+use butterpollo_session::state::{
+    FIRST_DEVICE_PERMISSION, LATER_DEVICE_PERMISSION, PLAY_DEVICE_PERMISSION,
 };
+use rubylight_native_api::{capabilities::Capabilities, pairing::PairingRequests};
 use std::time::{Duration, Instant};
 
 const PEER: &str = "127.0.0.1";
@@ -846,7 +846,7 @@ async fn the_first_device_may_approve_and_the_second_may_not() {
     assert!(!second.extra.contains_key("pairing_approve"));
     assert!(!second.may_approve_pairing());
     // What pairing gave, and nothing more, is still there after a restart.
-    let reloaded = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let reloaded = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert!(reloaded.clients[0].allows_pairing_approve());
     assert!(!reloaded.clients[1].may_approve_pairing());
 }

@@ -292,14 +292,14 @@ fn a_host_that_cannot_find_its_executable_fails_loudly() {
 
 #[test]
 fn a_microphone_only_session_plays_its_microphone() {
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
     let mut launch = f.launch(f.client(u32::MAX), Role::InputOnly);
     launch
         .options
-        .insert(butterpollo_core::mic::ONLY_OPTION.into(), "1".into());
+        .insert(butterpollo_session::mic::ONLY_OPTION.into(), "1".into());
     assert!(launch.mic_only());
-    let negotiated = butterpollo_core::rtsp::Negotiated {
+    let negotiated = butterpollo_media_policy::rtsp::Negotiated {
         mic: true,
         ..Default::default()
     };
@@ -335,9 +335,9 @@ fn a_microphone_only_session_plays_its_microphone() {
 
 #[test]
 fn a_second_microphone_is_refused_and_told_while_one_plays() {
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
-    let negotiated = butterpollo_core::rtsp::Negotiated {
+    let negotiated = butterpollo_media_policy::rtsp::Negotiated {
         mic: true,
         ..Default::default()
     };
@@ -393,9 +393,9 @@ fn a_second_microphone_is_refused_and_told_while_one_plays() {
 
 #[test]
 fn a_packet_of_a_second_session_resolves_while_the_cache_holds_the_first() {
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
-    let negotiated = butterpollo_core::rtsp::Negotiated {
+    let negotiated = butterpollo_media_policy::rtsp::Negotiated {
         mic: true,
         ..Default::default()
     };
@@ -446,9 +446,9 @@ fn a_packet_of_a_second_session_resolves_while_the_cache_holds_the_first() {
 
 #[test]
 fn an_ended_session_is_not_used_from_the_cache() {
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
-    let negotiated = butterpollo_core::rtsp::Negotiated {
+    let negotiated = butterpollo_media_policy::rtsp::Negotiated {
         mic: true,
         ..Default::default()
     };

@@ -16,7 +16,8 @@ fn main() -> anyhow::Result<()> {
         return result;
     }
     use anyhow::{Context, ensure};
-    use butterpollo_core::{config::Config, rtsp::Negotiated};
+    use butterpollo_config::config::Config;
+    use butterpollo_media_policy::rtsp::Negotiated;
     use butterpollo_windows::{
         amf,
         capture::{Capture, ComGuard, Pixel, enable_dpi_awareness},

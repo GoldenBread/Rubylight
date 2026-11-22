@@ -1,10 +1,10 @@
 //! A launcher showing a prompt instead of the game (plan item B5). While a launched app's game
 //! has not shown up, the visible windows are read every couple of seconds; a Steam, Epic, EA or
-//! Ubisoft window that wants an update or a sign in (`butterpollo_core::launcher_prompt`) is put
+//! Ubisoft window that wants an update or a sign in (`butterpollo_session::launcher_prompt`) is put
 //! in the owner's session as `launcher`, and goes when the window does or the game appears.
 //! Reading only: the host never clicks or types into a launcher.
 use crate::state::Shared;
-use butterpollo_core::launcher_prompt::{Window, launcher_of};
+use butterpollo_session::launcher_prompt::{Window, launcher_of};
 use std::{
     collections::HashMap,
     time::{Duration, SystemTime},

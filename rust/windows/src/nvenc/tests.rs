@@ -1049,7 +1049,7 @@ fn an_api_fallback_says_which_features_the_older_api_loses() {
         hdr: true,
         ..Default::default()
     };
-    let tuning = Tuning::new(&butterpollo_core::config::Config::default(), &hdr).unwrap();
+    let tuning = Tuning::new(&butterpollo_config::config::Config::default(), &hdr).unwrap();
     let warning = api_fallback_warning(
         &["13.0: NV_ENC_ERR_UNSUPPORTED_PARAM".into()],
         ApiVersion(12, 2),
@@ -1126,13 +1126,13 @@ fn failed_bitrate_reconfigure_keeps_the_config_and_a_rise_needs_no_keyframe() ->
     encoder.bitrate(2_500_000)?;
     assert_eq!(
         encoder.stream.bitrate_kbps,
-        butterpollo_core::rtsp::MAX_BITRATE_KBPS
+        butterpollo_media_policy::rtsp::MAX_BITRATE_KBPS
     );
     assert_eq!(encoder.config.rcParams.averageBitRate, 2_000_000_000);
     // The cap is applied before the stored rate is compared: a request above
     // the ceiling at the stream's current rate changes nothing.
     state(|d| d.reconfigured = None);
-    encoder.bitrate(butterpollo_core::rtsp::MAX_BITRATE_KBPS + 500_000)?;
+    encoder.bitrate(butterpollo_media_policy::rtsp::MAX_BITRATE_KBPS + 500_000)?;
     assert!(state(|d| d.reconfigured.is_none()));
     drop(encoder);
     assert_clean();
@@ -1140,7 +1140,7 @@ fn failed_bitrate_reconfigure_keeps_the_config_and_a_rise_needs_no_keyframe() ->
 }
 #[test]
 fn hdr_metadata_uses_each_codecs_units_and_bounds_av1_chromaticities() {
-    let source = butterpollo_core::hdr::Metadata {
+    let source = butterpollo_media_policy::hdr::Metadata {
         minimum: 20,
         max_cll: 900,
         max_fall: 400,
@@ -1173,7 +1173,7 @@ fn hdr_metadata_uses_each_codecs_units_and_bounds_av1_chromaticities() {
         }
     );
     av1.update(
-        butterpollo_core::hdr::Metadata {
+        butterpollo_media_policy::hdr::Metadata {
             primaries: [[u16::MAX; 2]; 3],
             white: [0, 50000],
             maximum_nits: u16::MAX,
@@ -1216,7 +1216,7 @@ fn hdr_output_flags_and_submissions_respect_codec_api_and_sdr() -> Result<()> {
                         }
                     };
                     assert_eq!((mastering, light), (u32::from(enabled), u32::from(enabled)));
-                    encoder.set_hdr_metadata(butterpollo_core::hdr::Metadata {
+                    encoder.set_hdr_metadata(butterpollo_media_policy::hdr::Metadata {
                         maximum_nits: 1400,
                         max_cll: 1300,
                         max_fall: 800,
@@ -1255,15 +1255,15 @@ fn hdr_metadata_is_snapshotted_until_the_gpu_submission_completes() -> Result<()
             },
             ApiVersion(13, 0),
         )?;
-        let first = butterpollo_core::hdr::Metadata {
+        let first = butterpollo_media_policy::hdr::Metadata {
             max_cll: 550,
             max_fall: 300,
-            ..butterpollo_core::hdr::Metadata::display(600., 0.002, 300.)
+            ..butterpollo_media_policy::hdr::Metadata::display(600., 0.002, 300.)
         };
-        let second = butterpollo_core::hdr::Metadata {
+        let second = butterpollo_media_policy::hdr::Metadata {
             max_cll: 1300,
             max_fall: 800,
-            ..butterpollo_core::hdr::Metadata::display(1400., 0.001, 800.)
+            ..butterpollo_media_policy::hdr::Metadata::display(1400., 0.001, 800.)
         };
         let slot = input(&mut encoder, 17)?;
         encoder.set_hdr_metadata(first);
@@ -1288,14 +1288,14 @@ fn hdr_metadata_is_snapshotted_until_the_gpu_submission_completes() -> Result<()
         // submission must not produce another keyframe.
         encoder.set_hdr_metadata(second);
         encoder.set_hdr_metadata(first);
-        encoder.set_hdr_metadata(butterpollo_core::hdr::Metadata {
+        encoder.set_hdr_metadata(butterpollo_media_policy::hdr::Metadata {
             full_frame_nits: 900,
             ..second
         });
         encoder.submit(slot, None, false, Instant::now())?;
         assert!(!encoder.poll()?[0].idr);
         // Light-level-only updates also need a keyframe.
-        encoder.set_hdr_metadata(butterpollo_core::hdr::Metadata {
+        encoder.set_hdr_metadata(butterpollo_media_policy::hdr::Metadata {
             max_fall: 700,
             ..second
         });
@@ -1325,7 +1325,7 @@ fn hdr_keyframe_retries_failed_submissions_and_consumes_simultaneous_requests() 
         encoder.submit(slot, None, true, Instant::now())?;
         assert!(encoder.poll()?[0].idr);
         let submitted = encoder.submitted_metadata;
-        encoder.set_hdr_metadata(butterpollo_core::hdr::Metadata {
+        encoder.set_hdr_metadata(butterpollo_media_policy::hdr::Metadata {
             maximum_nits: 1400,
             max_cll: 1300,
             max_fall: 800,
@@ -1364,7 +1364,7 @@ fn hdr_keyframe_retries_failed_submissions_and_consumes_simultaneous_requests() 
 
 fn check_decoded_hdr_metadata(
     frame: &serde_json::Value,
-    expected: butterpollo_core::hdr::Metadata,
+    expected: butterpollo_media_policy::hdr::Metadata,
     codec: u8,
 ) -> Result<()> {
     let side_data = frame["side_data_list"]
@@ -1420,7 +1420,7 @@ fn check_decoded_hdr_metadata(
 
 #[test]
 fn decoded_hdr_check_rejects_wrong_av1_units_and_missing_light_metadata() -> Result<()> {
-    let expected = butterpollo_core::hdr::Metadata {
+    let expected = butterpollo_media_policy::hdr::Metadata {
         minimum: 20,
         max_cll: 900,
         max_fall: 400,
@@ -1496,13 +1496,13 @@ fn native_nvenc_loss_recovery_and_444_hdr_decode() -> Result<()> {
         };
         let mut encoder = Encoder::new_device_options(&config, gpu.clone(), &Config::default())?;
         let metadata_embedded = hdr && encoder.session.api >= ApiVersion(13, 0);
-        let first_metadata = butterpollo_core::hdr::Metadata {
+        let first_metadata = butterpollo_media_policy::hdr::Metadata {
             minimum: 20,
             max_cll: 900,
             max_fall: 400,
             ..Default::default()
         };
-        let second_metadata = butterpollo_core::hdr::Metadata {
+        let second_metadata = butterpollo_media_policy::hdr::Metadata {
             maximum_nits: 1400,
             minimum: 10,
             max_cll: 1300,
@@ -2599,7 +2599,9 @@ fn a_game_holding_the_gpu_is_left_to_the_sessions_stall_policy() -> Result<()> {
     // The session recreates a silent encoder after 250 ms, doubling up to
     // 2 s. NVENC's own deadline at 100 ms came first: game loading on an
     // RTX 5070 recreated the encoder twice in 12 s.
-    assert!(COMPLETION_TIMEOUT > butterpollo_core::stream_policy::encoder_stall_limit(u32::MAX));
+    assert!(
+        COMPLETION_TIMEOUT > butterpollo_media_policy::stream_policy::encoder_stall_limit(u32::MAX)
+    );
     reset();
     let mut encoder = d3d12_session(&Negotiated::default(), ApiVersion(13, 0), "")?;
     let slot = d3d12_input(&mut encoder, 17)?;
@@ -3006,7 +3008,7 @@ fn block_statistics_are_read_for_measured_frames_from_api_12_1() -> Result<()> {
     encoder.submit(slot, None, true, Instant::now())?;
     encoder.poll()?;
     assert!(encoder.qp_grids.is_empty(), "only measured frames are read");
-    let (columns, rows) = butterpollo_core::nvenc::delta_grid(0, 1920, 1080);
+    let (columns, rows) = butterpollo_media_policy::nvenc::delta_grid(0, 1920, 1080);
     let blocks = (columns * rows) as usize;
     let map = (0..blocks)
         .map(|index| if index % 2 == 0 { -3 } else { 3 })

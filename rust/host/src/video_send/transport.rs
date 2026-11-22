@@ -1,6 +1,6 @@
 //! Socket pacing consumes packets whose Moonlight timing was already written.
 use super::{link_watch::LinkWatch, *};
-use butterpollo_core::{
+use butterpollo_media_policy::{
     network_pacing,
     performance::Timing,
     stream_policy::{
@@ -568,7 +568,7 @@ impl Transport<'_> {
             self.send_loss.delivered(frame.idr);
         }
         if refused {
-            s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+            s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_session::session::EVENT_PERIOD);
         }
         super::report_oversized(s, &self.batch, oversized);
         s.stats.latency_us.store(frame.latency, Ordering::Relaxed);

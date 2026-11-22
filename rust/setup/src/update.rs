@@ -470,7 +470,7 @@ fn recover_or_supersede(result: &Path) -> Result<()> {
 /// With update.lock held: if the last update still says "installing" after
 /// its backup was made, its setup never finished, so the files the backup
 /// holds are put back. The service does the same when it starts
-/// (butterpollo_core::update_recovery); keep the two in step.
+/// (butterpollo_session::update_recovery); keep the two in step.
 fn recover_locked(result: &Path) -> Result<()> {
     let bytes = match std::fs::read(result) {
         Ok(bytes) => bytes,

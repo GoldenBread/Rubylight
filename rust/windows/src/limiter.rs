@@ -1,11 +1,9 @@
 //! Stream-owned limiter transactions. Durable originals precede every mutation.
 use crate::rtss;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
-    config::Config,
-    framegen::{Policy, Provider, Rate},
-    state::write_json,
-};
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::framegen::{Policy, Provider, Rate};
+use butterpollo_session::state::write_json;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 use std::{
@@ -533,7 +531,7 @@ fn apply_cap(
         .map_err(|_| anyhow::anyhow!("RTSS did not confirm the requested rational frame limit"))
 }
 /// The stream's display refreshes at `display` now: take a virtual display's automatic cap
-/// off while that is too slow for it ([`butterpollo_core::framegen::cap_suits_display`]),
+/// off while that is too slow for it ([`butterpollo_media_policy::framegen::cap_suits_display`]),
 /// and put it back when the display is fast again. A cap the user asked for, a second
 /// stream's and a host without RTSS are left alone. Called from the stream's loop with each
 /// timing window, so it never waits: the change is made on a thread of its own.
@@ -609,7 +607,7 @@ fn wanted_change(state: &State, display: Rate) -> Option<bool> {
     {
         return None;
     }
-    let stand_down = !butterpollo_core::framegen::cap_suits_display(follow.rate, display);
+    let stand_down = !butterpollo_media_policy::framegen::cap_suits_display(follow.rate, display);
     (stand_down != follow.standing_down).then_some(stand_down)
 }
 /// Take the followed cap off or put it back, in place: the journal keeps what RTSS held

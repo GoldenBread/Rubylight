@@ -1,0 +1,29 @@
+[package]
+name = "butterpollo-media-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+butterpollo-config = { path = "../config" }
+butterpollo-crypto = { path = "../crypto" }
+hex = "0.4"
+rubylight-protocol = { path = "../../../client/protocol/core" }
+rubylight-wire = { path = "../../../client/protocol/wire" }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = { version = "0.10", features = ["oid"] }
+tracing.workspace = true
+uuid = { version = "1.18", features = ["v4", "v5", "serde"] }
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+tempfile = "3.23"
+
+[features]
+test-internals = []
+
+[lints]
+workspace = true

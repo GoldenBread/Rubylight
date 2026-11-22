@@ -130,7 +130,7 @@ mod benchmark {
             // Build the pointer view outside timing; the production matrix
             // constructor/encode/release sequence stays inside the reference.
             let mut cpp_pointers: Vec<_> = cpp.iter_mut().map(|s| s.as_mut_ptr()).collect();
-            butterpollo_core::packet::cauchy_encode(&mut rust, data, parity)?;
+            butterpollo_media_policy::packet::cauchy_encode(&mut rust, data, parity)?;
             reference.encode(&mut cpp_pointers, data, parity, bytes)?;
             if rust != cpp {
                 bail!("Rust/C++ parity mismatch for {data}+{parity}/{bytes}");
@@ -141,7 +141,7 @@ mod benchmark {
                 let rust_run = |shards: &mut Vec<Vec<u8>>| {
                     measure(
                         || {
-                            butterpollo_core::packet::cauchy_encode(
+                            butterpollo_media_policy::packet::cauchy_encode(
                                 black_box(shards),
                                 data,
                                 parity,

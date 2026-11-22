@@ -1,7 +1,7 @@
 //! Frame Warp on this host (docs/frame-warp.md). The video thread runs the GPU passes over
 //! each new capture after its frame went to the encoder and hands their readbacks to a
 //! worker, which measures and fits them off the frame path and outside the host's lock
-//! ([`butterpollo_core::session::FrameWarpState`]). What a game taught the host is kept for
+//! ([`butterpollo_session::session::FrameWarpState`]). What a game taught the host is kept for
 //! its next session in `frame_warp.json`. Nothing runs until a client asks.
 
 use std::collections::BTreeMap;
@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use butterpollo_core::frame_warp::{Mask, Measurer, Model, Prior, Thumbnail};
+use butterpollo_media_policy::frame_warp::{Mask, Measurer, Model, Prior, Thumbnail};
 use butterpollo_windows::capture::GpuImage;
 use butterpollo_windows::compute::frame_warp::{FrameWarpGpu, Hud, Pass, hud_grid};
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,8 @@ impl VideoFrameWarp {
         if self.picture != Some((picture, capture)) {
             self.picture = Some((picture, capture));
             // A capture of another shape is letterboxed into the stream, as the converter does.
-            let (x, y, w, h) = butterpollo_core::display_policy::letterbox(capture, picture);
+            let (x, y, w, h) =
+                butterpollo_media_policy::display_policy::letterbox(capture, picture);
             s.frame_warp.set_picture(
                 (edge(picture.0), edge(picture.1)),
                 (edge(x), edge(y), edge(w), edge(h)),
@@ -380,7 +381,7 @@ impl Store {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
         remembered.remember(key, prior, now);
-        if let Err(error) = butterpollo_core::state::write_json(&self.path, &remembered) {
+        if let Err(error) = butterpollo_session::state::write_json(&self.path, &remembered) {
             tracing::warn!(
                 path = %self.path.display(),
                 error = %format!("{error:#}"),

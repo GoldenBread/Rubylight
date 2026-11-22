@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::hdr_dynamic::{FrameStats, frame_units, insert_offset};
+use butterpollo_media_policy::hdr_dynamic::{FrameStats, frame_units, insert_offset};
 
 fn nal(kind: u8, body: &[u8]) -> Vec<u8> {
     let mut unit = vec![0, 0, 0, 1, kind << 1, 0x01];
@@ -31,9 +31,9 @@ fn readout(conversion: u64, low: usize, high: usize) -> HdrStatsReadout {
 
 #[test]
 fn only_hdr_hevc_and_av1_with_the_setting_on_get_dynamic_metadata() {
-    let on = butterpollo_core::config::Config::default();
-    let off = butterpollo_core::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
-    let config = |codec, hdr| butterpollo_core::rtsp::Negotiated {
+    let on = butterpollo_config::config::Config::default();
+    let off = butterpollo_config::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
+    let config = |codec, hdr| butterpollo_media_policy::rtsp::Negotiated {
         codec,
         hdr,
         ..Default::default()
@@ -54,16 +54,16 @@ fn only_hdr_hevc_and_av1_with_the_setting_on_get_dynamic_metadata() {
 #[test]
 fn ten_bit_sdr_never_gets_dynamic_metadata() {
     // Hardware lane 4a: a 10-bit SDR launch streamed as HDR switched HDR10+ on.
-    let on = butterpollo_core::config::Config::default();
+    let on = butterpollo_config::config::Config::default();
     for codec in [1, 2] {
         // RTSP reads dynamicRangeMode=1 as HDR; hdrMode=0 at launch makes it SDR.
-        let mut stream = butterpollo_core::rtsp::Negotiated {
+        let mut stream = butterpollo_media_policy::rtsp::Negotiated {
             codec,
             hdr: true,
             ..Default::default()
         };
         assert!(wanted(&stream, &on).is_some(), "an HDR launch keeps it");
-        assert!(butterpollo_core::stream_policy::infer_sdr_10bit(
+        assert!(butterpollo_media_policy::stream_policy::infer_sdr_10bit(
             &mut stream,
             true
         ));
@@ -79,7 +79,7 @@ fn frames_before_the_first_sample_carry_the_static_stand_in() {
     let mut dynamic = Dynamic::new(Codec::Hevc);
     let frame = keyframe();
     let at = insert_offset(Codec::Hevc, &frame).unwrap();
-    let with = |metadata: &butterpollo_core::hdr::Metadata| {
+    let with = |metadata: &butterpollo_media_policy::hdr::Metadata| {
         let units = frame_units(Codec::Hevc, &FrameStats::from_static(metadata)).unwrap();
         (
             [&frame[..at], &units, &frame[at..]].concat(),
@@ -91,7 +91,7 @@ fn frames_before_the_first_sample_carry_the_static_stand_in() {
     assert_eq!(dynamic.first_unit(frame.clone()), expected);
     assert_eq!(dynamic.cap(Some(5000)), Some(5000 + added));
     // The stream's static metadata rebuilds it.
-    let mut metadata = butterpollo_core::hdr::Metadata::display(600., 0.01, 300.);
+    let mut metadata = butterpollo_media_policy::hdr::Metadata::display(600., 0.01, 300.);
     metadata.max_cll = 450;
     dynamic.set_metadata(metadata);
     // Nothing finished yet: still the stand-in.
@@ -329,13 +329,13 @@ fn packed_444_streams_ask_with_their_own_config_not_the_coded_one() {
     // amf.rs codes a packed stream as SDR; `wanted` gets the stream's
     // config, so an HDR packed stream reaches `start` and says why it
     // carries no dynamic metadata.
-    let mut config = butterpollo_core::rtsp::Negotiated {
+    let mut config = butterpollo_media_policy::rtsp::Negotiated {
         codec: 1,
         hdr: true,
         chroma_packing: 1,
         ..Default::default()
     };
-    let on = butterpollo_core::config::Config::default();
+    let on = butterpollo_config::config::Config::default();
     assert_eq!(wanted(&config, &on), Some(Wanted::t35(Codec::Hevc)));
     config.hdr = false;
     assert_eq!(wanted(&config, &on), None);
@@ -361,9 +361,9 @@ fn ending_rpu(bytes: &[u8]) -> &[u8] {
 
 #[test]
 fn dolby_vision_is_wanted_for_hevc_streams_that_picked_it() {
-    let on = butterpollo_core::config::Config::default();
-    let off = butterpollo_core::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
-    let config = |codec, hdr_format| butterpollo_core::rtsp::Negotiated {
+    let on = butterpollo_config::config::Config::default();
+    let off = butterpollo_config::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
+    let config = |codec, hdr_format| butterpollo_media_policy::rtsp::Negotiated {
         codec,
         hdr: true,
         hdr_format,
@@ -496,9 +496,9 @@ fn an_av1_dolby_vision_frame_without_hdr10_plus_or_a_place_says_so() {
 
 #[test]
 fn hlg_streams_want_hdr_vivid_on_hevc_and_dolby_vision_8_4() {
-    let on = butterpollo_core::config::Config::default();
-    let off = butterpollo_core::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
-    let config = |codec, hdr_format| butterpollo_core::rtsp::Negotiated {
+    let on = butterpollo_config::config::Config::default();
+    let off = butterpollo_config::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
+    let config = |codec, hdr_format| butterpollo_media_policy::rtsp::Negotiated {
         codec,
         hdr: true,
         hdr_format,
@@ -559,7 +559,7 @@ fn a_dolby_vision_8_4_frame_carries_hdr_vivid_for_hlg_and_an_8_4_rpu() {
 #[test]
 fn every_dolby_vision_frame_ends_with_an_rpu_counted_in_its_cap() {
     let mut dynamic = Dynamic::with(dolby_vision(false), false);
-    let mut metadata = butterpollo_core::hdr::Metadata::display(1000., 0.005, 400.);
+    let mut metadata = butterpollo_media_policy::hdr::Metadata::display(1000., 0.005, 400.);
     metadata.max_fall = 150;
     dynamic.set_metadata(metadata);
     dynamic.set_target(600);
@@ -857,8 +857,8 @@ fn slice_output_carries_dynamic_metadata_on_each_frames_first_unit() {
 
 #[test]
 fn without_dynamic_metadata_every_output_byte_is_amfs() {
-    let off = butterpollo_core::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
-    let config = butterpollo_core::rtsp::Negotiated {
+    let off = butterpollo_config::config::Config::parse("hdr_dynamic_metadata = false\n").unwrap();
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         codec: 1,
         hdr: true,
         ..Default::default()

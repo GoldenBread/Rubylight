@@ -12,16 +12,12 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
 };
-use butterpollo_core::{
-    audio_dsp::{self, Settings},
-    native_api::{
-        audio::AudioWrite,
-        error::ErrorCode,
-        radeon::{Change, Value},
-    },
-    session::Role,
-    session_state::Refusal,
-    state::Client,
+use butterpollo_media_policy::audio_dsp::{self, Settings};
+use butterpollo_session::{audio_dsp_api, session::Role, session_state::Refusal, state::Client};
+use rubylight_native_api::{
+    audio::AudioWrite,
+    error::ErrorCode,
+    radeon::{Change, Value},
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -31,9 +27,9 @@ pub async fn read(State(h): State<Shared>, Extension(c): Extension<Connection>) 
     require_view_or_launch(&client)?;
     tokio::task::spawn_blocking(move || {
         let audio = match own_stream(&h, &client) {
-            Some(s) => audio_dsp::state(Some(&s.audio), base(&h, &s)?),
+            Some(s) => audio_dsp_api::state(Some(&s.audio), base(&h, &s)?),
             // Another device's stream is no more writable for this one than none at all.
-            None => audio_dsp::state(None, Settings::default()),
+            None => audio_dsp_api::state(None, Settings::default()),
         };
         Ok(json(StatusCode::OK, &audio))
     })
@@ -103,7 +99,7 @@ fn write_settings(h: &Shared, connection: &Connection, body: &[u8]) -> Reply {
     // change, as the read says.
     let s = own_stream(h, &client).ok_or(Refusal::NoSession)?;
     let base = base(h, &s)?;
-    let audio = audio_dsp::apply(&s.audio, base, &write).map_err(|error| {
+    let audio = audio_dsp_api::apply(&s.audio, base, &write).map_err(|error| {
         let failure = Failure::new(error.code, error.message);
         match error.setting {
             Some(id) => failure.for_setting(&id),

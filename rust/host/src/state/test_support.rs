@@ -1,6 +1,7 @@
 use super::*;
 use crate::tls::Connection;
-use butterpollo_core::{rtsp::Negotiated, session::Role, state::Client};
+use butterpollo_media_policy::rtsp::Negotiated;
+use butterpollo_session::{session::Role, state::Client};
 use std::sync::{OnceLock, atomic::Ordering};
 
 pub(crate) struct Fixture {

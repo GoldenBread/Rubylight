@@ -1,6 +1,6 @@
 //! `POST /session/continue-here` and what the session says around it.
 use super::*;
-use butterpollo_core::session::{Seat, Transport};
+use butterpollo_session::session::{Seat, Transport};
 
 /// Another paired device, by name.
 fn device(s: &Setup, uuid: &str, name: &str, perm: u32) -> (Client, Connection) {
@@ -57,7 +57,7 @@ async fn the_stream_moves_and_the_game_and_its_display_stay() {
     assert_eq!(playing.device, s.client.name);
     assert_eq!(
         before.owner,
-        butterpollo_core::native_api::session::Owner::OtherDevice
+        rubylight_native_api::session::Owner::OtherDevice
     );
 
     let reply = press(&s, &tv_connection).await.session();
@@ -96,10 +96,7 @@ async fn the_stream_moves_and_the_game_and_its_display_stay() {
     assert!(s.game_running());
     assert!(!s.host().claim_live());
     let streaming = session_of(&s, &tv_connection).await;
-    assert_eq!(
-        streaming.owner,
-        butterpollo_core::native_api::session::Owner::You
-    );
+    assert_eq!(streaming.owner, rubylight_native_api::session::Owner::You);
     assert!(streaming.playing_on.is_none());
     assert_eq!(s.state(), SessionState::Streaming);
     drop(tv_stream);
@@ -423,12 +420,10 @@ async fn a_press_whose_own_launch_would_be_refused_changes_nothing() {
     let s = Setup::new();
     let phone = s.streaming();
     let (_, tv_connection) = device(&s, "tv", "TV", ALL);
-    s.host()
-        .config
-        .write()
-        .unwrap()
-        .values
-        .insert(butterpollo_core::background::SETTING.into(), "true".into());
+    s.host().config.write().unwrap().values.insert(
+        butterpollo_session::background::SETTING.into(),
+        "true".into(),
+    );
     press(&s, &tv_connection)
         .await
         .assert_error(409, "host_in_use");
@@ -706,10 +701,7 @@ async fn after_a_failed_press_the_session_reads_as_the_first_devices_own_again()
         "the prompt offers to resume on exactly this"
     );
     assert!(back.playing_on.is_none());
-    assert_eq!(
-        back.owner,
-        butterpollo_core::native_api::session::Owner::You
-    );
+    assert_eq!(back.owner, rubylight_native_api::session::Owner::You);
 
     // A device without a kept display has no session between streams, and the game is still its.
     let s = Setup::new();
@@ -750,7 +742,7 @@ async fn a_note_that_runs_out_or_a_game_that_ended_does_not_read_as_coming_back(
     assert!(read.moved_to.is_none() && !read.owns_game);
     assert_eq!(
         read.owner,
-        butterpollo_core::native_api::session::Owner::OtherDevice
+        rubylight_native_api::session::Owner::OtherDevice
     );
 
     // The game ended after the press failed.

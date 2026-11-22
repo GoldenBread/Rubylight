@@ -24,10 +24,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use butterpollo_core::{
-    config::Config,
-    crypto,
-    pairing::Pairing,
+use butterpollo_config::config::Config;
+use butterpollo_crypto::{crypto, pairing::Pairing};
+use butterpollo_session::{
     remote::{self, Control},
     session::{Role, Transport},
     state::{App, Client, device_uuid},
@@ -110,8 +109,8 @@ pub(crate) fn wait_for_teardown(
         std::thread::sleep(Duration::from_millis(10));
     }
 }
-fn remote_owner(h: &Shared, client: &str) -> butterpollo_core::remote::Owner {
-    use butterpollo_core::remote::Owner;
+fn remote_owner(h: &Shared, client: &str) -> butterpollo_session::remote::Owner {
+    use butterpollo_session::remote::Owner;
     if h.monitors.lock().unwrap().contains_key(client) {
         return Owner::Monitor;
     }
@@ -142,7 +141,7 @@ fn remote_owner(h: &Shared, client: &str) -> butterpollo_core::remote::Owner {
         Owner::None
     }
 }
-fn remote_game(h: &Shared) -> Option<butterpollo_core::remote::Game> {
+fn remote_game(h: &Shared) -> Option<butterpollo_session::remote::Game> {
     let (id, name, owner, generation) = h.current_app.lock().unwrap().as_ref().map(|app| {
         (
             app.id,
@@ -161,8 +160,8 @@ fn remote_game(h: &Shared) -> Option<butterpollo_core::remote::Game> {
         .and_then(serde_json::Value::as_str)
         .unwrap_or("")
         .to_owned();
-    Some(butterpollo_core::remote::Game {
-        app: butterpollo_core::remote::Entry {
+    Some(butterpollo_session::remote::Game {
+        app: butterpollo_session::remote::Entry {
             id,
             title: name,
             uuid,
@@ -251,10 +250,10 @@ async fn mark_second_screen(mut request: axum::extract::Request) -> axum::extrac
 /// Ends every session of a paired device, its second screen's too: an unpaired or turned off
 /// device keeps neither streaming.
 pub(crate) fn end_device(h: &Shared, device: &str) {
-    let device = butterpollo_core::state::device_uuid(device);
+    let device = butterpollo_session::state::device_uuid(device);
     for uuid in [
         device.to_owned(),
-        butterpollo_core::state::second_screen_uuid(device),
+        butterpollo_session::state::second_screen_uuid(device),
     ] {
         let canceled = h.sessions.lock().unwrap().request_stop(Some(&uuid));
         drop(canceled);
@@ -264,10 +263,10 @@ pub(crate) fn end_device(h: &Shared, device: &str) {
 /// Releases what an unpaired or turned off device held, Radeon settings and game files, for
 /// both of its screens: each screen's stream claims them under its own identity.
 pub(crate) fn release_device(h: &Shared, device: &str) {
-    let device = butterpollo_core::state::device_uuid(device);
+    let device = butterpollo_session::state::device_uuid(device);
     for uuid in [
         device.to_owned(),
-        butterpollo_core::state::second_screen_uuid(device),
+        butterpollo_session::state::second_screen_uuid(device),
     ] {
         h.radeon.release_device(&uuid);
         h.game_files.release_device(&h.directory, &uuid);
@@ -313,7 +312,7 @@ pub fn router(h: Shared, https: bool) -> Router {
             .route(crate::internet_play::ROUTE, get(internet_play))
             .route("/pyrowave-bandwidth-probe", get(pyrowave_bandwidth))
             .route(
-                butterpollo_core::bandwidth_probe::ROUTE,
+                butterpollo_media_policy::bandwidth_probe::ROUTE,
                 get(bandwidth_probe),
             )
             .route("/pyrowave-udp-probe", get(pyrowave_udp_probe))
@@ -452,7 +451,7 @@ async fn appasset(
         .and_then(|id| id.parse::<u32>().ok())
         .and_then(|id| {
             let id = remote_game(&h)
-                .filter(|game| id == butterpollo_core::remote::running_game_id(game.app.id))
+                .filter(|game| id == butterpollo_session::remote::running_game_id(game.app.id))
                 .map_or(id, |game| game.app.id);
             h.apps
                 .read()
@@ -465,23 +464,23 @@ async fn appasset(
     let control_art = args
         .get("appid")
         .and_then(|id| id.parse().ok())
-        .and_then(|id| butterpollo_core::remote::identify(id, ""))
+        .and_then(|id| butterpollo_session::remote::identify(id, ""))
         .and_then(|control| match control {
-            butterpollo_core::remote::Control::Resume => Some("resume.png"),
-            butterpollo_core::remote::Control::DisconnectMonitor => {
+            butterpollo_session::remote::Control::Resume => Some("resume.png"),
+            butterpollo_session::remote::Control::DisconnectMonitor => {
                 Some("disconnect-remote-monitor.png")
             }
-            butterpollo_core::remote::Control::DisconnectInput => {
+            butterpollo_session::remote::Control::DisconnectInput => {
                 Some("disconnect-remote-input.png")
             }
-            butterpollo_core::remote::Control::Terminate => Some("terminate.png"),
-            butterpollo_core::remote::Control::Monitor => Some("remote-monitor.png"),
-            butterpollo_core::remote::Control::Input => Some("remote-input.png"),
+            butterpollo_session::remote::Control::Terminate => Some("terminate.png"),
+            butterpollo_session::remote::Control::Monitor => Some("remote-monitor.png"),
+            butterpollo_session::remote::Control::Input => Some("remote-input.png"),
             _ => None,
         });
     let path = control_art
         .map(|name| assets.join("remote-session").join(name))
-        .or_else(|| app.map(|a| butterpollo_core::catalog::artwork(&a, assets)))
+        .or_else(|| app.map(|a| butterpollo_session::catalog::artwork(&a, assets)))
         .unwrap_or_else(|| assets.join("box.png"));
     if !tokio::fs::metadata(&path)
         .await
@@ -522,13 +521,15 @@ async fn bitrate(
     else {
         return failed(400, "Missing or invalid bitrate parameter");
     };
-    let applied =
-        butterpollo_core::stream_policy::runtime_bitrate_kbps(&h.config.read().unwrap(), requested);
+    let applied = butterpollo_media_policy::stream_policy::runtime_bitrate_kbps(
+        &h.config.read().unwrap(),
+        requested,
+    );
     let sessions = h.sessions.lock().unwrap();
     let mut count = 0;
     for s in sessions.active.values() {
         if s.launch.client.uuid == client.uuid {
-            butterpollo_core::stream_policy::report_bitrate(
+            butterpollo_media_policy::stream_policy::report_bitrate(
                 &s.launch.warnings,
                 requested,
                 applied,
@@ -543,8 +544,9 @@ async fn bitrate(
             stream.bitrate_kbps = applied;
             stream.configured_bitrate_kbps = 0;
             crate::rtsp_server::note_pyrowave_minimum(&s.launch.warnings, &stream);
-            let minimum = butterpollo_core::link_rate::pyrowave_floor_kbps(&stream);
-            let recommended = butterpollo_core::link_rate::pyrowave_recommended_kbps(&stream);
+            let minimum = butterpollo_media_policy::link_rate::pyrowave_floor_kbps(&stream);
+            let recommended =
+                butterpollo_media_policy::link_rate::pyrowave_recommended_kbps(&stream);
             if s.config.codec == 3 && applied >= minimum && applied < recommended {
                 tracing::warn!(
                     bitrate_kbps = applied,

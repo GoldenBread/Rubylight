@@ -1,8 +1,10 @@
 //! Encoder focus on the compute converter: the still-age detector and the ROI
-//! map against `butterpollo_core::encoder_focus`, which A2's encoder reads.
+//! map against `butterpollo_media_policy::encoder_focus`, which A2's encoder reads.
 use super::*;
 use crate::capture::{ComGuard, Device, GpuImage, Image, Pixel};
-use butterpollo_core::encoder_focus::{Levels, Mode, age_grid, centre_weight, ctb_age, importance};
+use butterpollo_media_policy::encoder_focus::{
+    Levels, Mode, age_grid, centre_weight, ctb_age, importance,
+};
 
 struct Rig {
     _com: ComGuard,
@@ -20,7 +22,7 @@ impl Rig {
         let hdr = image.pixel == Pixel::RgbaF16;
         let mut converter = Converter::new(compute.clone(), image.width, image.height, hdr)?;
         converter.values = crate::gpu_color::constants(
-            &butterpollo_core::rtsp::Negotiated {
+            &butterpollo_media_policy::rtsp::Negotiated {
                 width: image.width,
                 height: image.height,
                 codec: 1,

@@ -8,7 +8,7 @@ use super::modes::{
 use super::rubylight_vdd::{self, Control};
 use super::topology::{Route, activate_target, is_rubylight_monitor, is_virtual_monitor};
 use super::*;
-use butterpollo_core::virtual_output::{DisplayProvider, Mode};
+use butterpollo_media_policy::virtual_output::{DisplayProvider, Mode};
 use driver::apply_render_adapter;
 #[cfg(test)]
 use driver::problem_text;
@@ -89,7 +89,7 @@ impl VirtualDisplay {
             bail!("virtual display mode is outside the driver limits");
         }
         let driver = Control::open_recovering()?;
-        let id = butterpollo_core::display_policy::virtual_display_id(stable_id);
+        let id = butterpollo_media_policy::display_policy::virtual_display_id(stable_id);
         apply_render_adapter(&driver, &options);
         // A previous host's display can survive a session handover until its
         // removal completes or its heartbeat expires. Keep the same identity.
@@ -362,7 +362,7 @@ impl VirtualDisplay {
             &self.name,
             width,
             height,
-            butterpollo_core::framegen::Rate(rate),
+            butterpollo_media_policy::framegen::Rate(rate),
         );
         let actual = current_timing(&self.name);
         let requested = format_timing(self.mode);
@@ -400,7 +400,7 @@ impl VirtualDisplay {
                         &self.name,
                         width,
                         height,
-                        butterpollo_core::framegen::Rate(fallback),
+                        butterpollo_media_policy::framegen::Rate(fallback),
                     );
                     let now = current_timing(&self.name).ok();
                     size_applied = now.is_some_and(|(w, h, _)| (w, h) == (width, height));

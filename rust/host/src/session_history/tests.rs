@@ -1,6 +1,6 @@
 use super::*;
 use crate::state::test_support::Fixture;
-use butterpollo_core::native_api::session::SessionApp;
+use rubylight_native_api::session::SessionApp;
 use std::sync::atomic::Ordering;
 
 #[test]

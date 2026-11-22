@@ -48,9 +48,9 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str) -> anyhow::Result<Val
             json!({
                 "status": true,
                 "sessions": h.session_history.entries(),
-                "limit": butterpollo_core::session_history::MAX_ENTRIES,
-                "days": butterpollo_core::session_history::MAX_AGE_MS / 86_400_000,
-                "bytes": butterpollo_core::session_history::MAX_BYTES,
+                "limit": butterpollo_session::session_history::MAX_ENTRIES,
+                "days": butterpollo_session::session_history::MAX_AGE_MS / 86_400_000,
+                "bytes": butterpollo_session::session_history::MAX_BYTES,
             })
         }
         ("GET", "/api/session/status") => {
@@ -89,7 +89,7 @@ mod tests {
             );
         }
         let client = f.client(0x071f1f00);
-        let _stream = f.session(client, butterpollo_core::session::Role::Stream);
+        let _stream = f.session(client, butterpollo_session::session::Role::Stream);
         let error = console(
             &f.host,
             "POST",

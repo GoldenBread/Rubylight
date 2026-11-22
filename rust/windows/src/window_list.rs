@@ -1,5 +1,5 @@
 //! The visible top-level windows with a title and the process each belongs to, for the host to
-//! tell a launcher showing a prompt from a game (`butterpollo_core::launcher_prompt`). Read-only:
+//! tell a launcher showing a prompt from a game (`butterpollo_session::launcher_prompt`). Read-only:
 //! it never sends a message, a click or a key to any of them.
 
 use windows::Win32::{

@@ -1,7 +1,7 @@
 //! Dynamic HDR metadata in AMF's output: HDR10+ and HDR Vivid
-//! (`butterpollo_core::hdr_dynamic`; HDR Vivid alone on HLG streams) before
+//! (`butterpollo_media_policy::hdr_dynamic`; HDR Vivid alone on HLG streams) before
 //! each frame's first slice, and a Dolby Vision profile 8.1 or 8.4 RPU
-//! (`butterpollo_core::dovi`) after its last; on AV1, a profile 10.1 RPU
+//! (`butterpollo_media_policy::dovi`) after its last; on AV1, a profile 10.1 RPU
 //! metadata OBU goes before the frame too, after the HDR10+ one. The
 //! conversion's statistics pass (`compute_hdr_stats.rs` behind the compute
 //! conversion, `gpu_color/hdr_stats.rs` behind the D3D11 one) measures each
@@ -12,9 +12,9 @@
 //! static HDR10 levels.
 use crate::compute::HdrStatsReadout;
 use crate::encoder::Unit;
-use butterpollo_core::dovi;
-use butterpollo_core::hdr_dynamic::{self, Codec, Writer};
-use butterpollo_core::session::Warnings;
+use butterpollo_media_policy::dovi;
+use butterpollo_media_policy::hdr_dynamic::{self, Codec, Writer};
+use butterpollo_session::session::Warnings;
 use std::time::{Duration, Instant};
 
 /// What an HDR stream's frames carry beside the picture.
@@ -66,8 +66,8 @@ impl Wanted {
 /// picked 10.1. `None` leaves every output byte as AMF wrote it. Ten-bit SDR
 /// never gets any, even if a path marked it SDR without clearing `hdr`.
 pub(crate) fn wanted(
-    config: &butterpollo_core::rtsp::Negotiated,
-    options: &butterpollo_core::config::Config,
+    config: &butterpollo_media_policy::rtsp::Negotiated,
+    options: &butterpollo_config::config::Config,
 ) -> Option<Wanted> {
     if !config.hdr || config.sdr_10bit {
         return None;
@@ -408,7 +408,7 @@ impl Dynamic {
     }
     /// The stream's static HDR10 metadata, which frames before the first
     /// sample carry as a stand-in, and which every RPU carries.
-    pub(crate) fn set_metadata(&mut self, metadata: butterpollo_core::hdr::Metadata) {
+    pub(crate) fn set_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
         self.writer.set_metadata(&metadata);
         if let Some(rpus) = self.dovi.as_mut() {
             rpus.set_metadata(metadata);

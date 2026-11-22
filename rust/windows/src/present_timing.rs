@@ -1,7 +1,7 @@
 //! Owned DXGI ETW tracking. Failure keeps the original WGC composition time.
 
 use crate::capture::qpc_frequency;
-use butterpollo_core::present_timing::Refiner;
+use butterpollo_media_policy::present_timing::Refiner;
 use std::{
     collections::VecDeque,
     sync::{
@@ -284,7 +284,7 @@ impl Tracker {
     }
 }
 fn hex_nonce() -> u64 {
-    u64::from_le_bytes(butterpollo_core::crypto::random::<8>())
+    u64::from_le_bytes(butterpollo_crypto::crypto::random::<8>())
 }
 unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
     // SAFETY: ETW passes either null or a record that is valid for the whole callback.

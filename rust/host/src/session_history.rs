@@ -1,5 +1,5 @@
 //! The ended stream sessions the console lists, saved in the host's data directory
-//! (`session-history.json`, the rules and caps are `butterpollo_core::session_history`).
+//! (`session-history.json`, the rules and caps are `butterpollo_session::session_history`).
 //!
 //! A stream's entry is written once, when its thread tears down or its start fails, and
 //! its frame rate is sampled every second meanwhile (`Host::session_tick`). A journal
@@ -8,14 +8,14 @@
 //! the store, so a slow disk or a virus scanner never delays a stream's teardown; the
 //! console only reads.
 use crate::state::{Host, Session};
-use butterpollo_core::{
+use butterpollo_media_policy::timing_record::codec_name;
+use butterpollo_session::{
     log_analysis,
-    native_api::session::State,
     session::{Role, Transport},
     session_history::{self as history, Caps, Entry, Store},
     session_state::Journal,
-    timing_record::codec_name,
 };
+use rubylight_native_api::session::State;
 use std::{
     collections::{BTreeMap, VecDeque},
     path::{Path, PathBuf},
@@ -235,7 +235,7 @@ fn save(store: &Mutex<Store>, path: &Path, messages: &Receiver<Message>) {
 
 /// Saves `store`; false when the file could not be written.
 fn save_now(path: &Path, store: &Store) -> bool {
-    match butterpollo_core::state::write_json(path, store) {
+    match butterpollo_session::state::write_json(path, store) {
         Ok(()) => true,
         Err(error) => {
             tracing::warn!(
@@ -283,7 +283,7 @@ impl Host {
         let owner = journal
             .owner
             .as_deref()
-            .map(butterpollo_core::state::device_uuid);
+            .map(butterpollo_session::state::device_uuid);
         let device_name = {
             let paired = self.paired.read().unwrap_or_else(PoisonError::into_inner);
             paired

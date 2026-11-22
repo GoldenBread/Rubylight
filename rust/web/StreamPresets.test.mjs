@@ -13,7 +13,7 @@ const presets = await server.ssrLoadModule('/src/lib/stream-presets.ts');
 const { computeChanges, currentValues, describeDefault, differsFromDefault, isSet, normalise, toText } =
   await server.ssrLoadModule('/src/components/settings/values.ts');
 const settings = new Map(schema.settings.map((setting) => [setting.key, setting]));
-const table = JSON.parse(readFileSync(new URL('../core/src/stream_presets.json', import.meta.url), 'utf8'));
+const table = JSON.parse(readFileSync(new URL('../core/media-policy/src/stream_presets.json', import.meta.url), 'utf8'));
 const explicit = new Set(presets.covered);
 
 /** The settings as Settings.svelte shows them under the preset the stored and edited values name. */

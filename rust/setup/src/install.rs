@@ -1364,7 +1364,7 @@ fn secure_profile_with(
     reset.and(credentials).and(backups)
 }
 /// The name of the root the host makes for the console's certificate
-/// (`butterpollo_core::crypto::CONSOLE_ROOT_NAME`). certutil's `-delstore`
+/// (`butterpollo_crypto::crypto::CONSOLE_ROOT_NAME`). certutil's `-delstore`
 /// by this name also removes the roots whose name adds a host's own unit.
 const CONSOLE_ROOT_NAME: &str = "Rubylight local console";
 /// Browsers open the console without a warning once its root is trusted
@@ -1402,7 +1402,7 @@ pub(crate) fn untrust_console() {
     );
 }
 /// The host's folder of users' own Nucleus copies
-/// (`butterpollo_core::nucleus::install::user_root`).
+/// (`butterpollo_session::nucleus::install::user_root`).
 fn nucleus_user_root(root: &Path) -> PathBuf {
     root.join("nucleus-user")
 }

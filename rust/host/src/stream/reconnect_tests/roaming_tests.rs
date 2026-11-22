@@ -1,7 +1,9 @@
 //! Client roaming through the real control socket, ENet and media workers: a fake client
 //! proves a new address on 127.0.0.2 with the roaming exchange and moves its stream there.
 use super::*;
-use butterpollo_core::roaming::{Datagram, Header, Payload, RoamKeys, SDP_ATTRIBUTE, open, seal};
+use butterpollo_session::roaming::{
+    Datagram, Header, Payload, RoamKeys, SDP_ATTRIBUTE, open, seal,
+};
 
 /// The address the client moves to.
 const MOVED: [u8; 4] = [127, 0, 0, 2];

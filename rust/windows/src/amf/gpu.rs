@@ -78,7 +78,7 @@ impl Ownership {
         Box::new(Self {
             observer: AMFSurfaceObserver { pVtbl: &OBSERVER },
             textures: Mutex::new(Vec::with_capacity(
-                butterpollo_core::encoder_backlog::AMF_SURFACE_LIMIT + 1,
+                butterpollo_media_policy::encoder_backlog::AMF_SURFACE_LIMIT + 1,
             )),
             released: Condvar::new(),
         })
@@ -123,7 +123,7 @@ pub(crate) struct Converter {
 impl Converter {
     pub fn new(
         gpu: &Device,
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         source: (u32, u32, Pixel),
     ) -> Result<Self> {
         Ok(Self {

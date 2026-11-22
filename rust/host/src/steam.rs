@@ -3,7 +3,7 @@
 //! every 30 seconds while `steam_auto_sync` is on.
 use crate::state::Shared;
 use anyhow::{Result, bail};
-use butterpollo_core::{
+use butterpollo_session::{
     state::App,
     steam::{self, Game, Settings},
 };
@@ -155,7 +155,7 @@ fn cover(h: &Shared, game: &Game) -> Option<PathBuf> {
     }
     match butterpollo_windows::image::to_png(&source, &png) {
         Ok(_) => {
-            let _ = butterpollo_core::state::atomic_write(&meta, stamp.as_bytes());
+            let _ = butterpollo_session::state::atomic_write(&meta, stamp.as_bytes());
             Some(png)
         }
         Err(error) => {
@@ -244,7 +244,7 @@ fn store_portrait(folder: &Path, appid: u32, local: Option<&Path>) -> Option<Pat
     });
     let result = bytes.and_then(|bytes| {
         std::fs::create_dir_all(folder)?;
-        butterpollo_core::state::atomic_write(&file, &bytes)?;
+        butterpollo_session::state::atomic_write(&file, &bytes)?;
         if !valid(&file) {
             let _ = std::fs::remove_file(&file);
             bail!("Steam artwork is smaller than 600x900");
@@ -592,7 +592,7 @@ pub fn launch(h: &Shared, appid: u32) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::state::test_support::Fixture;
-    use butterpollo_core::config::Config;
+    use butterpollo_config::config::Config;
 
     /// A 600x900 portrait in the profile, so a sync needs no store download.
     fn portrait(f: &Fixture) -> PathBuf {
@@ -668,7 +668,7 @@ mod tests {
         let first = sync_catalog(&f.host, &settings, &games).unwrap();
         assert!(first.changed);
         assert_eq!((first.games, first.importable), (1, 1));
-        let saved = butterpollo_core::state::load_json(&f.host.apps_path, json!({})).unwrap();
+        let saved = butterpollo_session::state::load_json(&f.host.apps_path, json!({})).unwrap();
         assert_eq!(saved["apps"].as_array().unwrap().len(), original + 1);
         let app = saved["apps"]
             .as_array()
@@ -684,7 +684,7 @@ mod tests {
         );
         assert!(!sync_catalog(&f.host, &settings, &games).unwrap().changed);
         assert_eq!(
-            butterpollo_core::state::load_json(&f.host.apps_path, json!({})).unwrap(),
+            butterpollo_session::state::load_json(&f.host.apps_path, json!({})).unwrap(),
             saved
         );
         settings.exclusions.push(("570".into(), String::new()));
@@ -694,7 +694,7 @@ mod tests {
 
     #[test]
     fn a_deleted_steam_game_stays_out_of_the_sync_until_add_games_brings_it_back() {
-        use butterpollo_core::library::{self, Launch, Selection, Source};
+        use butterpollo_session::library::{self, Launch, Selection, Source};
         let f = Fixture::new();
         let games = [Game {
             appid: 570,

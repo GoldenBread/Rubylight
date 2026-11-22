@@ -201,8 +201,8 @@ fn cleanup_retries_a_refused_final_mouse_release_once() {
 #[test]
 fn key_remapping_uses_the_destination_extension_and_legacy_vk_width() {
     let config =
-        butterpollo_core::config::Config::parse("keybindings=[13,65,66,163,67,4660]\n").unwrap();
-    let policy = butterpollo_core::input_policy::Policy::resolve(&config).unwrap();
+        butterpollo_config::config::Config::parse("keybindings=[13,65,66,163,67,4660]\n").unwrap();
+    let policy = butterpollo_input_policy::input_policy::Policy::resolve(&config).unwrap();
     assert_eq!(
         mapped_keyboard_identity(&policy, 0x0d, MODIFIER_EXTENDED),
         0x41

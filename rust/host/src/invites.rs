@@ -1,19 +1,19 @@
 //! Invites to play over the internet (docs/multiclient.md, "Invite a friend over the internet"):
 //! the owner makes a link, a friend's Nightjar opens it, reaches this PC through the internet play
 //! rendezvous keyed by the link, pairs with the PIN the link carries and joins the game being
-//! played when the player lets it in. The state is `butterpollo_core::invites`; this module makes
+//! played when the player lets it in. The state is `butterpollo_session::invites`; this module makes
 //! the links, spends them at the end of a pairing, removes invited devices when their time ends,
 //! and tells the rendezvous which invites and invited devices to look for, even while
 //! "Play over the internet" itself is off.
 use crate::state::Shared;
 use anyhow::{Context, Result};
-use butterpollo_core::invite_uri::{InvitePorts, InviteUri};
-use butterpollo_core::{
+use butterpollo_session::{
     invites::{
         self as policy, CreateError, DEFAULT_LIFETIME, InvitedGuest, Invites, MARKER, Permission,
     },
     state::Client,
 };
+use rubylight_protocol::invite_uri::{InvitePorts, InviteUri};
 use serde_json::{Value, json};
 use std::{
     sync::{Mutex, MutexGuard, PoisonError},
@@ -134,7 +134,7 @@ pub(crate) fn create(
         return Err(CreateFailure::PairingOff);
     }
     let wanted =
-        permission.unwrap_or_else(|| butterpollo_core::multiclient::default_permission(&config));
+        permission.unwrap_or_else(|| butterpollo_session::multiclient::default_permission(&config));
     let permission = match creator {
         None => wanted,
         Some(client) if client.may_approve_pairing() => {
@@ -153,7 +153,7 @@ pub(crate) fn create(
                 rubylight_traverse::invite::pairing_pin(&secret),
                 permission,
                 lifetime,
-                creator.map(|c| butterpollo_core::state::device_uuid(&c.uuid).to_owned()),
+                creator.map(|c| butterpollo_session::state::device_uuid(&c.uuid).to_owned()),
                 now,
             )
             .map_err(CreateFailure::Policy)?;
@@ -287,7 +287,7 @@ pub(crate) fn matching(h: &Shared, auth: &str, salt: &str) -> Option<(u32, Strin
 /// invite in between.
 pub(crate) fn entitle(
     h: &Shared,
-    state: &butterpollo_core::state::PairedState,
+    state: &butterpollo_session::state::PairedState,
     id: u32,
 ) -> Result<(u32, InvitedGuest)> {
     let now = unix_now();

@@ -1,9 +1,9 @@
 //! Locks Windows when the last device leaves (`lock_on_last_disconnect`, off by
-//! default; `butterpollo_core::auto_lock`). The lock runs as the signed-in user
+//! default; `butterpollo_session::auto_lock`). The lock runs as the signed-in user
 //! in their session, the same way PC commands run, because a SYSTEM service
 //! cannot lock another session's desktop.
 use crate::state::{Host, Shared};
-use butterpollo_core::auto_lock::{AutoLock, KEY};
+use butterpollo_session::auto_lock::{AutoLock, KEY};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -101,7 +101,7 @@ mod tests {
         let f = Fixture::new();
         assert!(!devices_connected(&f.host));
         let client = f.client(u32::MAX);
-        let _session = f.session(client, butterpollo_core::session::Role::Stream);
+        let _session = f.session(client, butterpollo_session::session::Role::Stream);
         assert!(devices_connected(&f.host));
         f.host.sessions.lock().unwrap().active.clear();
         assert!(!devices_connected(&f.host));

@@ -2,11 +2,12 @@
 //! lets it in, changes what it may do and kicks it (`crate::multiclient`).
 use super::*;
 use crate::multiclient::{Gate, Join};
-use butterpollo_core::{
-    input::Input,
+use butterpollo_input_policy::input::Input;
+use butterpollo_session::{
+    config_ext::ConfigExt,
     multiclient::{KICKED, LAUNCH_OPTION, Permission, REVOKED, Refusal},
-    native_api::guests::SessionGuests,
 };
+use rubylight_native_api::guests::SessionGuests;
 use std::time::{Duration, Instant};
 
 /// Another paired device, by name.
@@ -217,7 +218,7 @@ async fn allow_lets_in_at_once_and_guest_input_follows_the_permission() {
     assert_eq!(permission, Permission::Controller);
     let stream = guest_stream(&s, phone, id);
     let guests = &s.host().device_guests;
-    let pad = butterpollo_core::input::required_permission(&Input::Controller {
+    let pad = butterpollo_input_policy::input::required_permission(&Input::Controller {
         id: 0,
         active: 1,
         buttons: 0,
@@ -225,7 +226,8 @@ async fn allow_lets_in_at_once_and_guest_input_follows_the_permission() {
         right_trigger: 0,
         sticks: [0; 4],
     });
-    let mouse = butterpollo_core::input::required_permission(&Input::Relative { x: 1, y: 1 });
+    let mouse =
+        butterpollo_input_policy::input::required_permission(&Input::Relative { x: 1, y: 1 });
     assert!(guests.admits(&stream, pad));
     assert!(!guests.admits(&stream, mouse));
     assert!(!guests.full_access(&stream));
@@ -253,7 +255,7 @@ async fn allow_lets_in_at_once_and_guest_input_follows_the_permission() {
     drop(
         pool.acquire(
             &stream.launch,
-            &butterpollo_core::config::Config::default(),
+            &butterpollo_config::config::Config::default(),
             false,
         )
         .unwrap(),

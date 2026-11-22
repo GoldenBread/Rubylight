@@ -15,9 +15,13 @@ def checks(*paths):
 
 class Plan(unittest.TestCase):
     def test_core_change_checks_its_dependants(self):
-        planned, _ = checks('rust/core/src/lib.rs')
+        planned, _ = checks('rust/core/config/src/lib.rs')
         crates = set(planned['host'].items)
-        self.assertTrue({'butterpollo-core', 'butterpollo-windows', 'butterpollo'} <= crates, crates)
+        self.assertTrue({
+            'butterpollo-config', 'butterpollo-media-policy', 'butterpollo-input-policy',
+            'butterpollo-session', 'butterpollo-windows', 'butterpollo',
+        } <= crates, crates)
+        self.assertNotIn('butterpollo-crypto', crates)
         self.assertNotIn('butterpollo-vulkan-layer', crates)
         self.assertNotIn('client-protocol', planned)
 
@@ -33,7 +37,7 @@ class Plan(unittest.TestCase):
     def test_nested_member_maps_to_itself(self):
         planned, _ = checks('client/protocol/native-api/src/lib.rs')
         self.assertIn('rubylight-native-api', planned['client-protocol'].items)
-        self.assertIn('butterpollo-core', planned['host'].items)
+        self.assertIn('butterpollo-session', planned['host'].items)
 
     def test_workspace_files_check_every_host_crate(self):
         for path in ('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml'):
@@ -44,7 +48,9 @@ class Plan(unittest.TestCase):
 
     def test_protocol_crate_checks_client_and_host(self):
         planned, _ = checks('client/protocol/core/src/lib.rs')
-        self.assertIn('butterpollo-core', planned['host'].items)
+        self.assertTrue({
+            'butterpollo-media-policy', 'butterpollo-input-policy', 'butterpollo-session',
+        } <= set(planned['host'].items), planned['host'].items)
         client = set(planned['client-protocol'].items)
         self.assertTrue({'rubylight-protocol', 'nightjar-core', 'nightjar-desktop'} <= client, client)
         self.assertIn('rubylight-interop', planned['host'].items)
@@ -134,7 +140,7 @@ class Plan(unittest.TestCase):
         # It compiles core's update recovery itself.
         planned, _ = checks('rust/core/src/update_recovery.rs')
         self.assertIn('service', planned)
-        self.assertIn('butterpollo-core', planned['host'].items)
+        self.assertIn('butterpollo-session', planned['host'].items)
 
     def test_generated_docs_are_checked_when_their_sources_change(self):
         planned, _ = checks('client/app/src/main/res/xml/preferences.xml')
@@ -159,8 +165,8 @@ class WarmTargets(unittest.TestCase):
         self.target = pathlib.Path(temp.name, 'slot')
         self.dirs = []
         for profile in ('debug/.fingerprint', 'service/debug/.fingerprint'):
-            for name in ('butterpollo-core-0123456789abcdef', 'rubylight-protocol-fedcba9876543210',
-                         'tokio-00112233445566aa', 'butterpollo-core-extra'):
+            for name in ('butterpollo-session-0123456789abcdef', 'rubylight-protocol-fedcba9876543210',
+                         'tokio-00112233445566aa', 'butterpollo-session-extra'):
                 path = self.target / profile / name
                 path.mkdir(parents=True)
                 self.dirs.append(path)
@@ -170,31 +176,35 @@ class WarmTargets(unittest.TestCase):
 
     def test_the_repository_packages_are_found(self):
         names = dev.local_packages(ROOT)
-        self.assertTrue({'butterpollo-core', 'butterpollo', 'rubylight-protocol', 'butterpollo-service'} <= names, names)
+        self.assertTrue({
+            'butterpollo-crypto', 'butterpollo-config', 'butterpollo-media-policy',
+            'butterpollo-input-policy', 'butterpollo-session', 'butterpollo',
+            'rubylight-protocol', 'butterpollo-service',
+        } <= names, names)
 
     def test_another_checkouts_build_loses_only_this_repositorys_fingerprints(self):
         (self.target / dev.STAMP).write_text(r'C:\src\other-checkout')
         removed = dev.claim_target(self.target, ROOT)
         self.assertEqual(removed, 4)
-        self.assertEqual(self.left(), ['debug/.fingerprint/butterpollo-core-extra', 'debug/.fingerprint/tokio-00112233445566aa',
-                                       'service/debug/.fingerprint/butterpollo-core-extra',
+        self.assertEqual(self.left(), ['debug/.fingerprint/butterpollo-session-extra', 'debug/.fingerprint/tokio-00112233445566aa',
+                                       'service/debug/.fingerprint/butterpollo-session-extra',
                                        'service/debug/.fingerprint/tokio-00112233445566aa'])
         self.assertTrue(dev.same_path((self.target / dev.STAMP).read_text(), ROOT))
 
     def test_cargo_1_100_build_folders_are_reset_too(self):
         # Cargo 1.100 keeps <profile>/build/<name>/<16 hex>/{fingerprint,out} and no .fingerprint.
         target = self.target.parent / 'new-layout'
-        mine = [target / 'debug/build/butterpollo-core/0123456789abcdef/fingerprint',
+        mine = [target / 'debug/build/butterpollo-session/0123456789abcdef/fingerprint',
                 target / 'service/debug/build/rubylight-protocol/fedcba9876543210/out']
-        kept = [target / 'debug/build/tokio/00112233445566aa/out', target / 'debug/build/butterpollo-core/notahash',
-                target / 'debug/build/butterpollo-core-0123456789abcdef']
+        kept = [target / 'debug/build/tokio/00112233445566aa/out', target / 'debug/build/butterpollo-session/notahash',
+                target / 'debug/build/butterpollo-session-0123456789abcdef']
         for path in mine + kept:
             path.mkdir(parents=True)
         (target / dev.STAMP).write_text(r'C:\src\other-checkout')
         self.assertEqual(dev.claim_target(target, ROOT), 2)
         self.assertEqual([p.exists() for p in mine + kept], [False, False, True, True, True])
         unknown = self.target.parent / 'unknown'
-        (unknown / 'debug/build/butterpollo-core/0123456789abcdef').mkdir(parents=True)
+        (unknown / 'debug/build/butterpollo-session/0123456789abcdef').mkdir(parents=True)
         self.assertEqual(dev.claim_target(unknown, ROOT), 1)
 
     def test_its_own_last_build_is_kept(self):
@@ -666,7 +676,7 @@ class Execution(unittest.TestCase):
 
     def test_fast_mode_plan_and_env_gating(self):
         planned, _ = dev.plan([
-            'rust/core/src/lib.rs',
+            'rust/core/session/src/lib.rs',
             'rust/web/src/App.svelte',
             'client/app/src/main/java/com/limelight/AppView.java',
             'rust/release/e2e_result.py',

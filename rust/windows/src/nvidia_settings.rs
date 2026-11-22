@@ -373,7 +373,7 @@ fn nvidia_gpus() -> Result<Vec<GpuInfo>, BackendError> {
     let driver = Global::open().ok().and_then(|mut global| global.driver());
     Ok(gpus
         .into_iter()
-        .filter(|gpu| butterpollo_core::encoder_gpu::is_nvidia(gpu.vendor))
+        .filter(|gpu| butterpollo_media_policy::encoder_gpu::is_nvidia(gpu.vendor))
         .enumerate()
         .map(|(index, gpu)| GpuInfo {
             id: index as i32,

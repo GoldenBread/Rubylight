@@ -6,7 +6,7 @@
 //! while the encoder still produces the rest.
 use super::*;
 use crate::stream::slices;
-use butterpollo_core::packet::StreamedFrame;
+use butterpollo_media_policy::packet::StreamedFrame;
 use butterpollo_windows::encoder::Unit;
 
 /// The first unit of a frame, which a streamed frame is built from.
@@ -94,7 +94,7 @@ impl Streams {
             s.launch.warnings.event(
                 "network_frame",
                 "A streamed video frame lost its last slice; requesting a recovery frame.",
-                butterpollo_core::session::EVENT_PERIOD,
+                butterpollo_session::session::EVENT_PERIOD,
             );
             s.request_host_keyframe();
         }
@@ -133,7 +133,7 @@ impl Streams {
                     format!(
                         "Encoded video frame dropped ({error:#}); requesting a recovery frame."
                     ),
-                    butterpollo_core::session::EVENT_PERIOD,
+                    butterpollo_session::session::EVENT_PERIOD,
                 );
                 s.request_host_keyframe();
                 packetizer.skip_frame();
@@ -226,7 +226,7 @@ impl Streams {
                 if let Some(overflow) = slices::count_overflow(&s.stats, &error) {
                     slices::report_overflow(s, wire_frame, overflow);
                 } else {
-                    s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_core::session::EVENT_PERIOD);
+                    s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_session::session::EVENT_PERIOD);
                 }
                 s.request_host_keyframe();
             }
@@ -243,7 +243,7 @@ impl Streams {
                 && fec_reported.is_none_or(|at| at.elapsed() >= Duration::from_secs(1))
             {
                 *fec_reported = Some(Instant::now());
-                s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_core::session::EVENT_PERIOD);
+                s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_session::session::EVENT_PERIOD);
             }
         }
         self.spare = open.frame.into_buffer();

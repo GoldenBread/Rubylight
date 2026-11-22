@@ -7,7 +7,7 @@ fn completed_planar_slots_retain_resources_until_their_views_are_replaced() -> R
     let _com = crate::capture::ComGuard::new()?;
     let gpu = Device::new("")?;
     let compute = Compute::for_device(&gpu.device)?;
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 64,
         height: 64,
         codec: 3,
@@ -134,7 +134,7 @@ fn timed_out_converter_retains_capture_until_its_queue_really_finishes() -> Resu
     )?;
     let capture = Arc::downgrade(&image.texture);
     converter.values = crate::gpu_color::constants(
-        &butterpollo_core::rtsp::Negotiated {
+        &butterpollo_media_policy::rtsp::Negotiated {
             width: 4,
             height: 4,
             ..Default::default()
@@ -360,7 +360,7 @@ fn unsupported_amf_state_is_rejected_before_recording_conversion() -> Result<()>
     let source = compute.open(&image.texture)?;
     let mut converter = Converter::new(compute.clone(), 4, 4, false)?;
     converter.values = crate::gpu_color::constants(
-        &butterpollo_core::rtsp::Negotiated {
+        &butterpollo_media_policy::rtsp::Negotiated {
             width: 4,
             height: 4,
             ..Default::default()
@@ -514,7 +514,7 @@ fn retired_queue_rejects_conversion_upload_and_capture_before_mutating_resources
     let mut returns = Returns::new(compute.clone(), &gpu)?;
     let mut converter = Converter::new(compute.clone(), 4, 4, false)?;
     converter.values = crate::gpu_color::constants(
-        &butterpollo_core::rtsp::Negotiated {
+        &butterpollo_media_policy::rtsp::Negotiated {
             width: 4,
             height: 4,
             ..Default::default()
@@ -710,7 +710,7 @@ fn capture_ownership_ends_at_conversion_and_handoff_forgets_its_textures() -> Re
     image.ready = Some(handoff.copy(&image.texture, &source.texture, None)?);
     let mut converter = Converter::new(compute.clone(), 4, 4, false)?;
     converter.values = crate::gpu_color::constants(
-        &butterpollo_core::rtsp::Negotiated {
+        &butterpollo_media_policy::rtsp::Negotiated {
             width: 4,
             height: 4,
             ..Default::default()

@@ -17,7 +17,7 @@
 //! natively and downscaled to 1920x1080 and 1280x720; scRGB as PQ and HLG.
 use super::*;
 use crate::capture::{ComGuard, Device, GpuImage, Image, Pixel};
-use butterpollo_core::{
+use butterpollo_media_policy::{
     amf_vpe::{Transfer, vui},
     image_quality as q,
     rtsp::Negotiated,
@@ -130,7 +130,7 @@ fn amf_numbers_match_the_vendored_headers() {
     for (index, (ours, header)) in pairs.into_iter().enumerate() {
         assert_eq!(ours, header, "pair {index}");
     }
-    use butterpollo_core::amf_vpe::Format;
+    use butterpollo_media_policy::amf_vpe::Format;
     assert_eq!(
         Format::Nv12.amf(),
         AMF_SURFACE_FORMAT_AMF_SURFACE_NV12 as i64
@@ -424,7 +424,7 @@ fn negotiated(transfer: Transfer, width: u32, height: u32) -> Negotiated {
     }
 }
 fn spec(config: &Negotiated, pixel: Pixel) -> q::Spec {
-    let stream = butterpollo_core::amf_vpe::Stream::of(config);
+    let stream = butterpollo_media_policy::amf_vpe::Stream::of(config);
     q::Spec {
         width: config.width as usize,
         height: config.height as usize,

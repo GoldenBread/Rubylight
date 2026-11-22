@@ -1,6 +1,7 @@
 use super::*;
 use crate::state::test_support::Fixture;
-use butterpollo_core::webrtc::auth::proof_hex;
+use butterpollo_session::config_ext::ConfigExt;
+use butterpollo_session::webrtc::auth::proof_hex;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -760,17 +761,17 @@ async fn the_first_device_of_either_kind_gets_everything_and_a_later_tv_view_onl
     };
     assert_eq!(
         perm(&first),
-        butterpollo_core::state::FIRST_DEVICE_PERMISSION
+        butterpollo_session::state::FIRST_DEVICE_PERMISSION
     );
     assert_eq!(
         perm(&second),
-        butterpollo_core::state::LATER_DEVICE_PERMISSION
+        butterpollo_session::state::LATER_DEVICE_PERMISSION
     );
     // Behind a GameStream phone, a TV is a later device too.
     let phone = Server::start();
     phone
         .f
-        .client(butterpollo_core::state::FIRST_DEVICE_PERMISSION);
+        .client(butterpollo_session::state::FIRST_DEVICE_PERMISSION);
     let (tv, secret) = phone.pair("TV").await;
     assert_eq!(
         phone
@@ -782,7 +783,7 @@ async fn the_first_device_of_either_kind_gets_everything_and_a_later_tv_view_onl
             .webrtc_client(&tv)
             .unwrap()
             .perm,
-        butterpollo_core::state::LATER_DEVICE_PERMISSION
+        butterpollo_session::state::LATER_DEVICE_PERMISSION
     );
     // Viewing the library is part of view-only.
     let mut ws = sign_in(&phone, &tv, &secret).await;
@@ -903,7 +904,7 @@ fn only_the_local_network_may_connect() {
 /// A test host can stream rates that are not offered by default; nothing else changes them.
 #[test]
 fn the_frame_rate_setting_replaces_the_offer_for_every_mode() {
-    let mut config = butterpollo_core::config::Config::default();
+    let mut config = butterpollo_config::config::Config::default();
     assert_eq!(frame_rate_offer(&config), FrameRateOffer::default());
     let saved = serde_json::json!({"webrtc_frame_rates": "30, 60,120,x"});
     config.update(saved.as_object().unwrap()).unwrap();

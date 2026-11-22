@@ -1,6 +1,6 @@
 //! `GET /coop` and `POST /coop/join`: the games this host offers for Nucleus
 //! Co-op and the co-op sessions a device can join (the wire types are
-//! `butterpollo_core::native_api::coop`). Both answer 503 while this host
+//! `rubylight_native_api::coop`). Both answer 503 while this host
 //! cannot run Nucleus Co-op sessions, when `coop` is not a feature.
 use super::{Failure, Reply, caller, json, permission_required, read_body, require};
 use crate::{nucleus::JoinError, state::Shared, tls::Connection};
@@ -9,12 +9,12 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
 };
-use butterpollo_core::{
+use butterpollo_session::{
     native::{LAUNCH, LIST},
-    native_api::{coop as wire, error::ErrorCode},
     nucleus::coop::{End, Kind, Phase, Refused},
     state::Client,
 };
+use rubylight_native_api::{coop as wire, error::ErrorCode};
 use std::sync::PoisonError;
 
 fn unavailable(h: &Shared) -> Result<(), Failure> {

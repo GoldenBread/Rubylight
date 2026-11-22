@@ -17,10 +17,10 @@ impl Drop for Fixture {
         let _ = std::fs::remove_dir_all(&self.directory);
     }
 }
-fn launch(role: butterpollo_core::session::Role) -> crate::state::Launch {
+fn launch(role: butterpollo_session::session::Role) -> crate::state::Launch {
     crate::state::Launch {
         id: "fixture".into(),
-        client: butterpollo_core::state::Client {
+        client: butterpollo_session::state::Client {
             name: "fixture".into(),
             cert: String::new(),
             uuid: "fixture".into(),
@@ -57,7 +57,8 @@ fn launch(role: butterpollo_core::session::Role) -> crate::state::Launch {
 }
 #[test]
 fn connections_reset_the_idle_wait_including_during_downloads() {
-    use butterpollo_core::{rtsp::Negotiated, session::Role};
+    use butterpollo_media_policy::rtsp::Negotiated;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
     let h = &f.host;
     for role in [Role::Stream, Role::RemoteMonitor, Role::InputOnly] {
@@ -90,7 +91,7 @@ fn a_devices_install_now_waits_for_another_devices_stream_but_not_its_own() {
     h.sessions
         .lock()
         .unwrap()
-        .queue(launch(butterpollo_core::session::Role::Stream))
+        .queue(launch(butterpollo_session::session::Role::Stream))
         .unwrap();
     for phase in ["waiting", "ready"] {
         *h.updates.lock().unwrap() =
@@ -141,7 +142,7 @@ fn install_now_does_not_wait_for_an_idle_host() {
     h.sessions
         .lock()
         .unwrap()
-        .queue(launch(butterpollo_core::session::Role::Stream))
+        .queue(launch(butterpollo_session::session::Role::Stream))
         .unwrap();
     *h.updates.lock().unwrap() = json!({"phase":"ready","idle_since":0,"now":true});
     poll(h);
@@ -208,7 +209,7 @@ fn the_installer_is_hashed_with_no_lock_held_and_checked_again_after() {
         h.sessions
             .lock()
             .unwrap()
-            .queue(launch(butterpollo_core::session::Role::Stream))
+            .queue(launch(butterpollo_session::session::Role::Stream))
             .unwrap();
         Ok((1, "00".into()))
     });
@@ -391,7 +392,7 @@ fn a_stream_defers_the_check() {
     h.sessions
         .lock()
         .unwrap()
-        .queue(launch(butterpollo_core::session::Role::Stream))
+        .queue(launch(butterpollo_session::session::Role::Stream))
         .unwrap();
     assert!(!check_due(h));
     // Due but held back: the console says so.
@@ -406,7 +407,7 @@ fn a_lingering_game_or_monitor_does_not_defer_the_check() {
     // cannot be built without a display driver.)
     *h.current_app.lock().unwrap() = Some(
         crate::process::RunningApp::with_environment(
-            &butterpollo_core::state::App::desktop(),
+            &butterpollo_session::state::App::desktop(),
             Default::default(),
         )
         .unwrap(),
@@ -478,7 +479,7 @@ fn a_time_of_day_decides_the_check_in_place_of_the_interval() {
     h.sessions
         .lock()
         .unwrap()
-        .queue(launch(butterpollo_core::session::Role::Stream))
+        .queue(launch(butterpollo_session::session::Role::Stream))
         .unwrap();
     assert!(!check_due(h));
     assert_eq!(status(h)["deferred"], true);
@@ -495,7 +496,7 @@ fn the_daily_check_counts_the_last_check_before_a_restart() {
     // A check two hours ago succeeded; then the host restarts.
     h.updates.lock().unwrap()["checked_at"] = json!(t - 2 * 3600);
     remember_check(h);
-    let saved = butterpollo_core::state::load_json(&h.aliases_path, json!(null)).unwrap();
+    let saved = butterpollo_session::state::load_json(&h.aliases_path, json!(null)).unwrap();
     assert_eq!(saved["root"][LAST_CHECK], t - 2 * 3600);
     let again =
         crate::state::Host::load(f.directory.clone(), f.directory.join("assets"), None).unwrap();
@@ -576,15 +577,15 @@ fn an_unresolved_rollback_cannot_be_overwritten_by_another_update() -> Result<()
     for phase in ["installing", "recovery_failed"] {
         let record = json!({"version":"2.0.0-rc.22","phase":phase,
             "backup":f.directory.join("updates/transaction-1-2/previous")});
-        butterpollo_core::state::write_json(&path, &record)?;
+        butterpollo_session::state::write_json(&path, &record)?;
         assert!(check_recovery(&f.directory).is_err());
         assert_eq!(
-            butterpollo_core::state::load_json(&path, Value::Null)?,
+            butterpollo_session::state::load_json(&path, Value::Null)?,
             record
         );
     }
     for phase in ["installed", "rolled_back", "failed", "superseded"] {
-        butterpollo_core::state::write_json(&path, &json!({"phase":phase}))?;
+        butterpollo_session::state::write_json(&path, &json!({"phase":phase}))?;
         assert!(check_recovery(&f.directory).is_ok());
     }
     std::fs::write(&path, b"{")?;
@@ -596,7 +597,7 @@ fn an_unresolved_rollback_cannot_be_overwritten_by_another_update() -> Result<()
 fn the_failed_update_warning_goes_once_that_release_is_installed() -> Result<()> {
     let f = Fixture::new();
     let path = f.directory.join("update-result.json");
-    let shown = |warnings: &butterpollo_core::session::Warnings| {
+    let shown = |warnings: &butterpollo_session::session::Warnings| {
         warnings
             .snapshot()
             .into_iter()
@@ -604,23 +605,23 @@ fn the_failed_update_warning_goes_once_that_release_is_installed() -> Result<()>
     };
     // A release newer than this host failed: the warning stays, also across a restart.
     raise_failed_install(&f.host, "v999.0.0", "boom");
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &path,
         &json!({"version":"999.0.0","phase":"rolled_back","error":"boom"}),
     )?;
     withdraw_installed_warning(&f.host);
     assert!(shown(&f.host.warnings));
-    let restarted = butterpollo_core::session::Warnings::default();
+    let restarted = butterpollo_session::session::Warnings::default();
     crate::host_warnings::restore(&f.directory, &restarted);
     assert!(shown(&restarted));
     // Installed from Updates afterwards: gone now and at the next start.
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &path,
         &json!({"version":"999.0.0","phase":"installed","error":null}),
     )?;
     withdraw_installed_warning(&f.host);
     assert!(!shown(&f.host.warnings));
-    let restarted = butterpollo_core::session::Warnings::default();
+    let restarted = butterpollo_session::session::Warnings::default();
     crate::host_warnings::restore(&f.directory, &restarted);
     assert!(!shown(&restarted));
     assert!(f.host.aliases.lock().unwrap()["root"][FAILED_VERSION].is_null());
@@ -646,7 +647,7 @@ fn a_failed_automatic_install_warns_once_also_after_setup_restarted_the_host() -
             .collect::<Vec<_>>()
     };
     // No automatic install was started: a failed record is the console's to show.
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &path,
         &json!({"version":"9.9.9","phase":"failed","error":"boom"}),
     )?;
@@ -654,14 +655,14 @@ fn a_failed_automatic_install_warns_once_also_after_setup_restarted_the_host() -
     assert!(shown().is_empty());
     remember_attempt(&f.host, Some("v9.9.9"));
     // What this host writes before it starts setup: setup still runs.
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &path,
         &json!({"version":"v9.9.9","phase":"installing","started_at":1}),
     )?;
     report_failed_install(&f.host, None);
     assert!(shown().is_empty());
     // Setup rolled back and started this host again, which reads the outcome.
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &path,
         &json!({"version":"9.9.9","phase":"rolled_back",
             "error":"Update failed; the previous version was restored. The service did not start."}),
@@ -680,7 +681,7 @@ fn a_failed_automatic_install_warns_once_also_after_setup_restarted_the_host() -
     assert!(shown().is_empty());
     // An install that succeeded is forgotten quietly.
     remember_attempt(&f.host, Some("v9.9.10"));
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &path,
         &json!({"version":"9.9.10","phase":"installed","error":null}),
     )?;
@@ -696,7 +697,7 @@ fn a_setup_that_stops_early_reports_its_recorded_reason() -> Result<()> {
     let path = f.directory.join("update-result.json");
     let exited = || Ok(std::process::ExitStatus::from_raw(1));
     // What this host writes before it starts setup.
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &path,
         &json!({"version":"v2.2.22","phase":"installing","started_at":1}),
     )?;
@@ -706,7 +707,7 @@ fn a_setup_that_stops_early_reports_its_recorded_reason() -> Result<()> {
         "Installer exited before replacing this host (exit code 1). See the setup log."
     );
     let reason = "Rubylight cannot be updated in D:\\Games\\Rubylight: D:\\Games must be owned by Administrators, SYSTEM or TrustedInstaller.";
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &path,
         &json!({"version":"2.2.22","phase":"failed","error":reason}),
     )?;
@@ -720,7 +721,7 @@ async fn busy_host_defers_download_before_contacting_the_network() {
         .sessions
         .lock()
         .unwrap()
-        .queue(launch(butterpollo_core::session::Role::Stream))
+        .queue(launch(butterpollo_session::session::Role::Stream))
         .unwrap();
     let candidate = installer(&release()).unwrap();
     let error = transfer(&f.host, "test", &candidate, &f.directory.join("setup.exe"))
@@ -967,7 +968,7 @@ fn the_installer_is_downloaded_into_the_installation_folder() -> Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let directory = prepare_download(&install, &id)?;
     assert_eq!(directory, staging.join(format!("download-{id}")));
-    assert!(!directory.starts_with(butterpollo_core::paths::installed_profile()));
+    assert!(!directory.starts_with(butterpollo_session::paths::installed_profile()));
     assert_eq!(std::fs::read_dir(&directory)?.count(), 0);
     assert!(!earlier.exists());
     assert_eq!(std::fs::read(backup.join("butterpollo.exe"))?, b"previous");

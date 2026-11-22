@@ -40,7 +40,7 @@ pub struct Loopback {
     /// Keeps an endpoint capture delivering through silence; None for game-only capture.
     _keepalive: Option<KeepAlive>,
     /// Every packet `GetBuffer` returned since `drain_trace`, when `audio_cadence_trace` is on.
-    trace: Option<Vec<butterpollo_core::audio_cadence::Captured>>,
+    trace: Option<Vec<butterpollo_media_policy::audio_cadence::Captured>>,
 }
 /// A started render stream of silence on the captured endpoint. Loopback capture delivers
 /// nothing while no stream renders to its endpoint, so when the sound stopped the host went
@@ -109,10 +109,13 @@ impl Loopback {
             } else {
                 0
             };
-            let matrix =
-                butterpollo_core::audio::mix_matrix(f.nChannels as usize, mask, output_channels);
+            let matrix = butterpollo_media_policy::audio::mix_matrix(
+                f.nChannels as usize,
+                mask,
+                output_channels,
+            );
             let resampler =
-                butterpollo_core::audio::Resampler::new(f.nSamplesPerSec, output_channels);
+                butterpollo_media_policy::audio::Resampler::new(f.nSamplesPerSec, output_channels);
             // Event mode wakes the sender the moment audio is captured, as the
             // C++ host does; a 1 ms poll cost 0.6 ms on average. Where Windows
             // refuses it for loopback, a fresh client polls as before.
@@ -199,7 +202,7 @@ impl Loopback {
                     bits: f.wBitsPerSample,
                     float,
                     resampler,
-                    identity: butterpollo_core::audio::mix_is_identity(&matrix),
+                    identity: butterpollo_media_policy::audio::mix_is_identity(&matrix),
                     matrix,
                     input: vec![0.; f.nChannels as usize],
                     output: vec![0.; output_channels],
@@ -217,7 +220,7 @@ impl Loopback {
             })
         }
     }
-    pub fn process_identity(&self) -> Option<butterpollo_core::audio_scope::Identity> {
+    pub fn process_identity(&self) -> Option<butterpollo_session::audio_scope::Identity> {
         self.process.as_ref().map(|p| p.identity)
     }
     /// Captures the verified game process and its children, across playback
@@ -270,8 +273,9 @@ impl Loopback {
                     std::time::Duration::from_secs_f64(f64::from(n) / 48_000.)
                 });
             let capture = client.GetService()?;
-            let matrix = butterpollo_core::audio::mix_matrix(2, 3, output_channels)?;
-            let resampler = butterpollo_core::audio::Resampler::new(48_000, output_channels)?;
+            let matrix = butterpollo_media_policy::audio::mix_matrix(2, 3, output_channels)?;
+            let resampler =
+                butterpollo_media_policy::audio::Resampler::new(48_000, output_channels)?;
             client.Start()?;
             Ok(Self {
                 client,
@@ -282,7 +286,7 @@ impl Loopback {
                     bits: 32,
                     float: true,
                     resampler,
-                    identity: butterpollo_core::audio::mix_is_identity(&matrix),
+                    identity: butterpollo_media_policy::audio::mix_is_identity(&matrix),
                     matrix,
                     input: vec![0.; 2],
                     output: vec![0.; output_channels],
@@ -356,7 +360,7 @@ impl Loopback {
     }
     /// Moves the packets traced since the last call into `into`; nothing without
     /// `audio_cadence_trace`.
-    pub fn drain_trace(&mut self, into: &mut butterpollo_core::audio_cadence::Trace) {
+    pub fn drain_trace(&mut self, into: &mut butterpollo_media_policy::audio_cadence::Trace) {
         for entry in self.trace.iter_mut().flat_map(|trace| trace.drain(..)) {
             into.capture(entry);
         }
@@ -393,7 +397,7 @@ impl Loopback {
                     Some(&mut qpc),
                 )?;
                 if let Some(trace) = &mut self.trace {
-                    trace.push(butterpollo_core::audio_cadence::Captured {
+                    trace.push(butterpollo_media_policy::audio_cadence::Captured {
                         read_ms: crate::timing::qpc_ms(),
                         // GetBuffer reports QPC in 100 ns units.
                         device_qpc_ms: qpc as f64 / 10_000.,
@@ -426,7 +430,7 @@ struct CaptureSamples {
     channels: usize,
     bits: u16,
     float: bool,
-    resampler: butterpollo_core::audio::Resampler,
+    resampler: butterpollo_media_policy::audio::Resampler,
     matrix: Vec<Vec<f32>>,
     /// Whether the matrix only copies each channel to its own output, decided
     /// once here rather than per sample: such a capture queues its converted
@@ -548,18 +552,18 @@ impl Opus {
     pub fn new(directory: &Path, channels: usize, quality: bool) -> Result<Self> {
         Self::new_layout(
             directory,
-            &butterpollo_core::audio::OpusLayout::select(channels, quality, None)?,
+            &butterpollo_media_policy::audio::OpusLayout::select(channels, quality, None)?,
         )
     }
     pub fn new_layout(
         directory: &Path,
-        layout: &butterpollo_core::audio::OpusLayout,
+        layout: &butterpollo_media_policy::audio::OpusLayout,
     ) -> Result<Self> {
         Self::new_layout_duration(directory, layout, 5)
     }
     pub fn new_layout_duration(
         directory: &Path,
-        layout: &butterpollo_core::audio::OpusLayout,
+        layout: &butterpollo_media_policy::audio::OpusLayout,
         packet_ms: u8,
     ) -> Result<Self> {
         if !matches!(packet_ms, 5 | 10 | 20) {

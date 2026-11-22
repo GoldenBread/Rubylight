@@ -1,5 +1,5 @@
 //! HDR dynamic metadata statistics on the compute queue
-//! (`butterpollo_core::hdr_dynamic`): once an HDR frame went to the encoder,
+//! (`butterpollo_media_policy::hdr_dynamic`): once an HDR frame went to the encoder,
 //! [`Converter::submit_hdr_stats`] runs a list of its own that reads the same
 //! source through the slot's views and constants, histograms PQ(maxRGB) on a
 //! grid of at most 240x135 samples and copies it into the slot's readback
@@ -11,7 +11,7 @@
 //! hdr_luminance_analysis_cs.hlsl (AlkaidLab/foundation-sunshine, commit
 //! 880f1ef). Copyright (c) Foundation Sunshine authors, GPL-3.0.
 use super::*;
-use butterpollo_core::hdr_dynamic::FrameStats;
+use butterpollo_media_policy::hdr_dynamic::FrameStats;
 
 /// Equal PQ bins over 0..=1, as [`FrameStats::from_histogram`] takes them.
 pub const HDR_STATS_BINS: usize = 1024;

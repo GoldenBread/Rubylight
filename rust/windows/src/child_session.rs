@@ -1,6 +1,6 @@
 //! Windows side of what is left of the removed background child session:
 //! the registry, child-session switch and Windows Firewall behind the seams
-//! of [`butterpollo_core::child_session`], so restore puts back what setup
+//! of [`butterpollo_session::child_session`], so restore puts back what setup
 //! changed; the lock restore takes across processes ([`lock`]); the
 //! profiles the password the removed feature saved can be in, and its
 //! deletion.
@@ -17,7 +17,7 @@ use crate::{
     wmi::Wmi,
 };
 use anyhow::{Context, Result, bail};
-use butterpollo_core::child_session::{Hive, Registry, SystemSettings};
+use butterpollo_session::child_session::{Hive, Registry, SystemSettings};
 use std::{
     ffi::OsString,
     io::{self, Write},
@@ -597,7 +597,7 @@ impl NativeSettings {
 
 #[cfg(test)]
 mod tests {
-    use butterpollo_core::child_session::{
+    use butterpollo_session::child_session::{
         Hive, REMOTE_DESKTOP_RULES, Registry, SystemSettings, TERMINAL_SERVER,
     };
 

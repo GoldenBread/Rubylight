@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::topology::{Kind, Mode, Position};
+use butterpollo_media_policy::topology::{Kind, Mode, Position};
 fn node(id: &str, active: bool, primary: bool) -> Node {
     Node {
         id: id.into(),
@@ -41,7 +41,7 @@ fn a_display_the_layout_switched_off_is_still_watched_after_another_display_left
     assert_eq!(desired.len(), 3);
     // Windows switches it on when the other virtual display is removed.
     assert_eq!(
-        butterpollo_core::display_policy::switched_back_on(
+        butterpollo_media_policy::display_policy::switched_back_on(
             &before,
             &desired,
             &["physical".to_owned(), "b".to_owned()],
@@ -1549,7 +1549,7 @@ fn a_first_exclusive_layout_knows_the_monitor_windows_already_switched_off() {
     assert!(!monitor.active && !monitor.primary);
     // So its coming back is seen, and it is no arrival to leave on.
     assert_eq!(
-        butterpollo_core::display_policy::switched_back_on(
+        butterpollo_media_policy::display_policy::switched_back_on(
             &before,
             &desired,
             &["monitor".to_owned(), "a".to_owned()],

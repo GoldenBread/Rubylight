@@ -212,7 +212,7 @@ fn a_sliced_packed_frame_counts_once() {
             fps: 120,
             bitrate_kbps: 48_588,
             codec: 1,
-            chroma_packing: butterpollo_core::packed444::VERSION,
+            chroma_packing: rubylight_protocol::packed444::VERSION,
             ..Default::default()
         };
         assert_eq!(mode.coded_size(), coded, "{width}x{height}");
@@ -220,8 +220,10 @@ fn a_sliced_packed_frame_counts_once() {
         let mut coded_mode = mode.clone();
         (coded_mode.width, coded_mode.height) = coded;
         coded_mode.chroma_packing = 0;
-        let blocks =
-            butterpollo_core::encoder_policy::slice_delivery(&Config::default(), &coded_mode);
+        let blocks = butterpollo_media_policy::encoder_policy::slice_delivery(
+            &Config::default(),
+            &coded_mode,
+        );
         assert_eq!(blocks, if sliced { 4 } else { 0 }, "{width}x{height}");
         let units: Vec<Unit> = if sliced {
             (0..u32::from(blocks) - 1)
@@ -250,7 +252,7 @@ fn packed_probe_accepts_1080p_at_60_and_120_fps() {
                 bitrate_kbps: 20_000,
                 codec,
                 sdr_10bit,
-                chroma_packing: butterpollo_core::packed444::VERSION,
+                chroma_packing: rubylight_protocol::packed444::VERSION,
                 ..Default::default()
             };
             let reply = probe(
@@ -263,7 +265,7 @@ fn packed_probe_accepts_1080p_at_60_and_120_fps() {
                 },
                 &mut Vec::new(),
             );
-            let expected = u32::from(butterpollo_core::packed444::mode_bit(codec, sdr_10bit));
+            let expected = u32::from(rubylight_protocol::packed444::mode_bit(codec, sdr_10bit));
             match reply {
                 Ok(Reply::Done { flags, .. }) => assert_eq!(flags, expected),
                 Ok(Reply::Error { message }) => {
@@ -287,7 +289,7 @@ fn packed_probe_accepts_sliced_hevc_at_2560x1600() {
             bitrate_kbps: 40_000,
             codec: 1,
             sdr_10bit,
-            chroma_packing: butterpollo_core::packed444::VERSION,
+            chroma_packing: rubylight_protocol::packed444::VERSION,
             ..Default::default()
         };
         let reply = probe(
@@ -303,7 +305,7 @@ fn packed_probe_accepts_sliced_hevc_at_2560x1600() {
         match reply {
             Ok(Reply::Done { flags, .. }) => assert_eq!(
                 flags,
-                u32::from(butterpollo_core::packed444::mode_bit(1, sdr_10bit))
+                u32::from(rubylight_protocol::packed444::mode_bit(1, sdr_10bit))
             ),
             Ok(Reply::Error { message }) => panic!("10-bit {sdr_10bit}: {message}"),
             Err(error) => panic!("10-bit {sdr_10bit}: {error:#}"),
@@ -324,7 +326,7 @@ fn packed_probe_holds_a_bitrate_above_the_driver_ceiling() {
             bitrate_kbps: 1_500_000,
             codec,
             sdr_10bit: true,
-            chroma_packing: butterpollo_core::packed444::VERSION,
+            chroma_packing: rubylight_protocol::packed444::VERSION,
             ..Default::default()
         };
         let reply = probe(
@@ -337,7 +339,7 @@ fn packed_probe_holds_a_bitrate_above_the_driver_ceiling() {
             },
             &mut Vec::new(),
         );
-        let expected = u32::from(butterpollo_core::packed444::mode_bit(codec, true));
+        let expected = u32::from(rubylight_protocol::packed444::mode_bit(codec, true));
         match reply {
             Ok(Reply::Done { flags, .. }) => assert_eq!(flags, expected, "codec {codec}"),
             Ok(Reply::Error { message }) => panic!("codec {codec}: {message}"),

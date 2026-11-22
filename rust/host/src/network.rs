@@ -1,7 +1,7 @@
 use crate::state::Shared;
 use anyhow::Result;
 use axum::http::{HeaderMap, Uri, header, uri::Authority};
-use butterpollo_core::config::{Config, Ports};
+use butterpollo_config::config::{Config, Ports};
 use igd_next::{
     PortMappingProtocol as Protocol,
     aio::{Gateway, Provider},
@@ -373,7 +373,7 @@ pub fn bind_address(config: &Config, override_address: Option<IpAddr>) -> Result
     match config.get("address_family", "ipv4") {
         "both" => Ok(IpAddr::from([0u16; 8])),
         other => {
-            butterpollo_core::config::fallback("address_family", other, "ipv4");
+            butterpollo_config::config::fallback("address_family", other, "ipv4");
             Ok(IpAddr::from([0, 0, 0, 0]))
         }
     }
@@ -712,7 +712,7 @@ impl LeaseRecord {
     fn load(directory: &Path) -> Self {
         let path = directory.join(GUEST_LEASES);
         let mut leases: Vec<GuestLease> =
-            butterpollo_core::state::load_json(&path, serde_json::Value::Array(Vec::new()))
+            butterpollo_session::state::load_json(&path, serde_json::Value::Array(Vec::new()))
                 .and_then(|value| {
                     serde_json::from_value::<Vec<GuestLease>>(value).map_err(anyhow::Error::from)
                 })
@@ -784,7 +784,7 @@ impl LeaseRecord {
                 _ => Ok(()),
             }
         } else {
-            butterpollo_core::state::write_json(&self.path, &leases)
+            butterpollo_session::state::write_json(&self.path, &leases)
         };
         match result {
             Ok(()) => self.leases = leases,

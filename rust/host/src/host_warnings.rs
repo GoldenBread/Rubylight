@@ -3,7 +3,7 @@
 //! are saved, so a host restarted before anyone opened the console still shows
 //! them; a dismissed warning stays hidden until its text changes.
 use anyhow::{Context, Result};
-use butterpollo_core::session::{Warning, Warnings};
+use butterpollo_session::session::{Warning, Warnings};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
@@ -63,7 +63,7 @@ pub fn notice(directory: &Path, warnings: &Warnings, code: &str, message: &str) 
     let saved = load(directory).and_then(|mut saved| {
         saved.notices.insert(code.into(), message.into());
         saved.dismissed.remove(code);
-        butterpollo_core::state::write_json(&directory.join(FILE), &saved)
+        butterpollo_session::state::write_json(&directory.join(FILE), &saved)
     });
     if let Err(error) = saved {
         tracing::warn!(code, error = %format!("{error:#}"), "the host warning could not be saved; it shows until the host stops");
@@ -94,7 +94,7 @@ pub fn dismiss(directory: &Path, warnings: &Warnings, code: &str) -> Result<()> 
     } else {
         saved.dismissed.insert(current.code, current.message);
     }
-    butterpollo_core::state::write_json(&directory.join(FILE), &saved)
+    butterpollo_session::state::write_json(&directory.join(FILE), &saved)
 }
 
 /// Takes back the notice `code` once what it reported is over: it is cleared, and neither
@@ -107,7 +107,7 @@ pub fn withdraw(directory: &Path, warnings: &Warnings, code: &str) {
         if !notice && saved.dismissed.remove(code).is_none() {
             return Ok(());
         }
-        butterpollo_core::state::write_json(&directory.join(FILE), &saved)
+        butterpollo_session::state::write_json(&directory.join(FILE), &saved)
     });
     if let Err(error) = saved {
         tracing::warn!(code, error = %format!("{error:#}"), "the host warning could not be taken back; it may show again at the next start");

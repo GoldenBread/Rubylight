@@ -340,7 +340,7 @@ fn remote_desktop_that_stays_on_is_reported_loudly() {
 }
 #[test]
 fn the_uninstaller_switches_remote_desktop_where_the_host_does() {
-    use butterpollo_core::child_session as host;
+    use butterpollo_session::child_session as host;
     assert_eq!(TERMINAL_SERVER, host::TERMINAL_SERVER);
     assert_eq!(TERMINAL_SERVICES_POLICY, host::TERMINAL_SERVICES_POLICY);
     // Read-only on this PC: the value is a DWORD or absent, and a missing one reads as None.
@@ -484,28 +484,28 @@ fn a_removal_whose_restore_failed_has_its_own_exit_code() {
 fn child_session_restore_uses_the_hosts_record_and_flag() {
     assert_eq!(
         CHILD_SESSION_SETUP_FILE,
-        butterpollo_core::child_session::SETUP_FILE
+        butterpollo_session::child_session::SETUP_FILE
     );
     assert_eq!(
         CHILD_SESSION_SETUP_FOLDER,
-        butterpollo_core::child_session::SETUP_FOLDER
+        butterpollo_session::child_session::SETUP_FOLDER
     );
     // Beside the installed profile: the PC's record is the host's.
     assert_eq!(
         child_session_record(&profile()),
-        butterpollo_core::child_session::setup_record()
+        butterpollo_session::child_session::setup_record()
     );
     assert_eq!(
         CHILD_SESSION_RESTORE_FLAG,
-        butterpollo_core::child_session::RESTORE_FLAG
+        butterpollo_session::child_session::RESTORE_FLAG
     );
     assert_eq!(
         CHILD_SESSION_BLOCK_RULE,
-        butterpollo_core::child_session::BLOCK_RULE
+        butterpollo_session::child_session::BLOCK_RULE
     );
     assert_eq!(
         CHILD_SESSION_RESTORE_PARTLY_EXIT,
-        butterpollo_core::child_session::RESTORE_PARTLY_EXIT
+        butterpollo_session::child_session::RESTORE_PARTLY_EXIT
     );
 }
 fn package(root: &Path) {

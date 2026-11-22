@@ -1,6 +1,6 @@
 use super::*;
 use crate::state::test_support::Fixture;
-use butterpollo_core::session::Role;
+use butterpollo_session::session::Role;
 use serde_json::json;
 
 use super::test_support::receiver;

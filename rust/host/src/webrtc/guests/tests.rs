@@ -1,6 +1,6 @@
 use super::*;
 use crate::webrtc::sdp::testing::spec;
-use butterpollo_core::webrtc::guests::MIN_LIFETIME;
+use butterpollo_session::webrtc::guests::MIN_LIFETIME;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 fn owner() -> Owner {

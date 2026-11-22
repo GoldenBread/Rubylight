@@ -520,7 +520,7 @@ fn pointer_section() {
 }
 
 fn vhf_section(loads: &[String]) {
-    use butterpollo_core::input::Input;
+    use butterpollo_input_policy::input::Input;
     println!("== VHF virtual gamepad (neutral pad, removed at the end) ==");
     let worker = {
         let loads = loads.to_vec();
@@ -528,7 +528,7 @@ fn vhf_section(loads: &[String]) {
             let _p = Priority::new();
             let t = Instant::now();
             let opened = butterpollo_windows::input::Gamepads::open(
-                butterpollo_core::input_policy::VHF_AUTO,
+                butterpollo_input_policy::input_policy::VHF_AUTO,
             );
             println!(
                 "Gamepads::open (SetupDi + CreateFile + version ioctl): {:.1} us -> {}",
@@ -605,7 +605,7 @@ fn vhf_section(loads: &[String]) {
 /// refresh and feedback poll. Reports how long the mouse move waited from the
 /// start of its pass. A neutral pad is plugged and removed at the end.
 fn pad_contention_section(loads: &[String], profile: &'static str) {
-    use butterpollo_core::input::Input;
+    use butterpollo_input_policy::input::Input;
     println!(
         "== {profile}: mouse move behind a controller state (Injector, neutral pad, zero moves) =="
     );
@@ -683,7 +683,7 @@ fn injector_section() {
         .ok()
         .and_then(|d| d.first().map(|d| d.display_name.clone()))
         .unwrap_or_default();
-    let config = butterpollo_core::config::Config::default();
+    let config = butterpollo_config::config::Config::default();
     for (label, output) in [
         ("existing display", first.as_str()),
         ("missing display", r"\\.\DISPLAY99"),
@@ -738,7 +738,7 @@ fn injector_section() {
 /// Each event applied on its own (one SendInput call each, the control loop
 /// before October 7) against the whole pass at once (apply_all).
 fn batch_section() {
-    use butterpollo_core::input::Input;
+    use butterpollo_input_policy::input::Input;
     println!("== events applied in one pass (zero mouse moves) ==");
     std::thread::spawn(|| {
         let _p = Priority::input();
@@ -797,7 +797,7 @@ fn crypto_section() {
             } else {
                 iv[0] = seq as u8;
             }
-            let (tag, ct) = butterpollo_core::crypto::gcm_seal(&key, &iv, &plain).unwrap();
+            let (tag, ct) = butterpollo_crypto::crypto::gcm_seal(&key, &iv, &plain).unwrap();
             let mut p = 1u16.to_le_bytes().to_vec();
             p.extend_from_slice(&((4 + 16 + ct.len()) as u16).to_le_bytes());
             p.extend_from_slice(&seq.to_le_bytes());
@@ -805,8 +805,8 @@ fn crypto_section() {
             p.extend_from_slice(&ct);
             let t = Instant::now();
             let (_, kind, payload) =
-                butterpollo_core::packet::decrypt_control(&key, &p, v2).unwrap();
-            let event = butterpollo_core::input::decode(&payload).unwrap();
+                butterpollo_media_policy::packet::decrypt_control(&key, &p, v2).unwrap();
+            let event = butterpollo_input_policy::input::decode(&payload).unwrap();
             std::hint::black_box((kind, event));
             v.push(t.elapsed().as_secs_f64() * 1e6);
         }

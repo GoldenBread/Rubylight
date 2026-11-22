@@ -1,10 +1,10 @@
 //! The OS side of streaming the launched app's window
-//! (`butterpollo_core::app_window`): the top-level windows to pick it from,
+//! (`butterpollo_media_policy::app_window`): the top-level windows to pick it from,
 //! the capture target that names it, the rectangle absolute input maps onto,
 //! and the window's client area inside a Windows Graphics Capture frame.
 use super::window::{self, WindowTarget};
 use anyhow::Result;
-use butterpollo_core::app_window::Candidate;
+use butterpollo_media_policy::app_window::Candidate;
 use windows::Win32::{
     Foundation::{HWND, LPARAM, POINT, RECT},
     Graphics::{

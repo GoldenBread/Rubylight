@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         let signal = StopSignal::new(Some(&source))?;
         let mut result =
             json!({"pid":std::process::id(),"session":session_id()?,"shutdown_requested":false});
-        butterpollo_core::state::write_json(&child_report, &result)?;
+        butterpollo_session::state::write_json(&child_report, &result)?;
         let deadline = Instant::now() + Duration::from_secs(10);
         while !signal.requested() {
             if Instant::now() >= deadline {
@@ -39,7 +39,7 @@ fn main() -> Result<()> {
             std::thread::sleep(Duration::from_millis(1));
         }
         result["shutdown_requested"] = json!(true);
-        butterpollo_core::state::write_json(&child_report, &result)?;
+        butterpollo_session::state::write_json(&child_report, &result)?;
         return Ok(());
     }
     let target_session = argument(&args, "--system-session")
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
         bail!("child entered the wrong Windows session");
     }
     let report_value = json!({"status":"pass","parent_session":session_id()?,"child_session":result["session"],"shutdown_ms":elapsed.as_secs_f64()*1000.,"graceful":true});
-    butterpollo_core::state::write_json(&report, &report_value)?;
+    butterpollo_session::state::write_json(&report, &report_value)?;
     println!("{report_value}");
     Ok(())
 }

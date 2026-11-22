@@ -6,10 +6,10 @@
 //! builds saved and the child host's profile ([`retire_at_startup`]); the
 //! console's Restore again does the same ([`restore_again`]), and so does
 //! `--child-session-restore`, which the uninstaller runs. The rules are
-//! `butterpollo_core::child_session`, ported from Annex (MIT).
+//! `butterpollo_session::child_session`, ported from Annex (MIT).
 use crate::state::Shared;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::child_session::{self as logic, SetupState, SystemSettings, Unrecorded};
+use butterpollo_session::child_session::{self as logic, SetupState, SystemSettings, Unrecorded};
 use butterpollo_windows::child_session as native;
 use serde_json::{Value, json};
 use std::{
@@ -493,7 +493,7 @@ fn delete_saved_passwords(pc: &dyn Leftovers) -> Vec<String> {
 /// `<config_dir>\child-session\`, with a copy of the console's sign-in:
 /// deleted, and logged, but only when its `sunshine.conf` says it is that
 /// host's (`child_session_host = true`). Read as text: the setting is no
-/// longer one, so [`butterpollo_core::config::Config`] drops it. Ok(false)
+/// longer one, so [`butterpollo_config::config::Config`] drops it. Ok(false)
 /// when there is none.
 fn remove_child_profile(config_dir: &Path) -> Result<bool, String> {
     let profile = config_dir.join(CHILD_PROFILE);

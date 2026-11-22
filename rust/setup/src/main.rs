@@ -14,10 +14,10 @@
 
 mod detect;
 #[allow(dead_code)]
-#[path = "../../core/src/encoder_gpu.rs"]
+#[path = "../../core/media-policy/src/encoder_gpu.rs"]
 mod encoder_gpu;
 mod gpu;
-#[path = "../../core/src/host_service.rs"]
+#[path = "../../core/session/src/host_service.rs"]
 mod host_service;
 mod install;
 mod libvirtualdisplay;
@@ -37,7 +37,7 @@ mod update;
 #[path = "../../core/src/update_files.rs"]
 mod update_files;
 mod usbip;
-#[path = "../../core/src/version.rs"]
+#[path = "../../core/session/src/version.rs"]
 mod version;
 mod wake;
 #[allow(dead_code)]

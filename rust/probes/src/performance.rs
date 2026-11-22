@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
         return result;
     }
     use anyhow::{Context, bail};
-    use butterpollo_core::rtsp::Negotiated;
+    use butterpollo_media_policy::rtsp::Negotiated;
     use butterpollo_windows::{
         capture::{Capture, ComGuard, Priority},
         encoder::Encoder,
@@ -83,9 +83,9 @@ Repeat-frame throughput excludes capture, network, decoding and display latency.
     }
     let option =
         |key: &str, default: &str| fields.get(key).cloned().unwrap_or_else(|| default.into());
-    butterpollo_core::encoder_policy::probe_option(&option("--encoder", "auto"))?;
+    butterpollo_media_policy::encoder_policy::probe_option(&option("--encoder", "auto"))?;
     let number = |key: &str, default: &str| option(key, default).parse::<u32>();
-    let rate = butterpollo_core::framegen::Rate::parse(&option("--fps", "120"))?;
+    let rate = butterpollo_media_policy::framegen::Rate::parse(&option("--fps", "120"))?;
     let config = Negotiated {
         width: number("--width", "1920")?,
         height: number("--height", "1080")?,
@@ -125,7 +125,7 @@ Repeat-frame throughput excludes capture, network, decoding and display latency.
     let _com = ComGuard::new()?;
     let _priority = Priority::new();
     let tuning = if let Some(path) = fields.get("--config") {
-        butterpollo_core::config::Config::load(std::path::Path::new(path))?
+        butterpollo_config::config::Config::load(std::path::Path::new(path))?
     } else {
         Default::default()
     };

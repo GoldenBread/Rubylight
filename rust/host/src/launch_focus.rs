@@ -94,7 +94,7 @@ fn game_windows(pids: &BTreeSet<u32>) -> (Vec<(u32, bool)>, Option<u32>) {
 fn is_store_client(pid: u32) -> bool {
     butterpollo_windows::process::image_path(pid).is_some_and(|path| {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(&path);
-        store_client(name) || butterpollo_core::launcher_prompt::launcher_of(name).is_some()
+        store_client(name) || butterpollo_session::launcher_prompt::launcher_of(name).is_some()
     })
 }
 
@@ -103,7 +103,7 @@ mod tests {
     use super::*;
     use crate::process::RunningApp;
     use crate::state::test_support::Fixture;
-    use butterpollo_core::state::App;
+    use butterpollo_session::state::App;
     use std::collections::BTreeMap;
 
     fn launching_steam_app() -> RunningApp {

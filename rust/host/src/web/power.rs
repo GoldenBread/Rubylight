@@ -84,7 +84,7 @@ async fn fix(h: &Shared, data: &Value) -> Response {
     };
     // `GET /api/power` lists the adapters' changes; Fast Startup is its own
     // choice, `fast_startup_off`.
-    let adapters = butterpollo_core::wake::FixPlan {
+    let adapters = butterpollo_session::wake::FixPlan {
         fast_startup_off: false,
         ..plan.clone()
     }

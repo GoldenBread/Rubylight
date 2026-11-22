@@ -339,7 +339,7 @@ test('the encoders offered are Automatic, AMD AMF, NVIDIA NVENC and PyroWave', (
 test('the NVENC group holds exactly the settings the NVENC encoder reads, with its defaults', async () => {
   const { readFile } = await import('node:fs/promises');
   // The encoder's settings, the GPU priority it runs at and the driver's power profile.
-  const source = (await Promise.all(['../core/src/nvenc.rs', '../windows/src/gpu_priority.rs', '../windows/src/nvidia_profile.rs']
+  const source = (await Promise.all(['../core/media-policy/src/nvenc.rs', '../windows/src/gpu_priority.rs', '../windows/src/nvidia_profile.rs']
     .map(path => readFile(new URL(path, import.meta.url), 'utf8')))).join('\n');
   const read = [...new Set([...source.matchAll(/"(nvenc_[a-z0-9_]+)"/g)].map(match => match[1]))].sort();
   const shown = [...settings.values()].filter(setting => setting.key.startsWith('nvenc_'));
@@ -1049,7 +1049,7 @@ test('RTX HDR and RTX Video settings show only where the host offers them, with 
 async function hostSources() {
   const { readdir, readFile } = await import('node:fs/promises');
   const sources = new Map();
-  for (const crate of ['core', 'host', 'windows', 'setup', 'service']) {
+  for (const crate of ['core/crypto', 'core/config', 'core/media-policy', 'core/input-policy', 'core/session', 'host', 'windows', 'setup', 'service']) {
     const root = new URL(`../${crate}/src/`, import.meta.url);
     for (const name of await readdir(root, { recursive: true })) {
       const path = name.replaceAll('\\', '/');
@@ -1063,7 +1063,7 @@ async function hostSources() {
 
 test('the host reads every switch and number with the default the console shows', async () => {
   // Checks of a value the file is known to hold, where the default never applies.
-  const present = new Set(['core/src/config.rs port 0', 'core/src/config.rs hardware_metrics_interval 0', 'host/src/library.rs steam_enabled false']);
+  const present = new Set(['core/config/src/config.rs port 0', 'core/config/src/config.rs hardware_metrics_interval 0', 'host/src/library.rs steam_enabled false']);
   const wrong = [];
   let reads = 0;
   for (const [path, source] of await hostSources()) {

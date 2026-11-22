@@ -20,12 +20,12 @@
 //!
 //! Restores run on a thread of their own: they take seconds, and `sync` runs under the session
 //! lock.
-use butterpollo_core::native_api::radeon::{ControlState, Gpu};
 use butterpollo_windows::radeon::{
     BackendError, Change, Driver, Entry, ErrorKind, RestoreReport, Setting, WriteError,
     control::RestoreResult,
     worker::{RestoreTicket, Worker},
 };
+use rubylight_native_api::radeon::{ControlState, Gpu};
 use std::{
     collections::{BTreeMap, BTreeSet},
     ops::Deref,

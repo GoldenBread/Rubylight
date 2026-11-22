@@ -1,0 +1,578 @@
+//! Native API v1 projections: the host's state turned into the types of
+//! [`rubylight_native_api`].
+//!
+//! Pure functions over plain inputs, so the rules are tested here and the
+//! host's handlers only gather the facts. See `docs/native-api.md`.
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde_json::Value;
+
+use crate::library::Source;
+use crate::remote;
+use crate::state::{App, Client};
+use rubylight_native_api::error::ErrorCode;
+use rubylight_native_api::library::{Artwork, Game, Library, Store};
+use rubylight_native_api::session::{
+    Action, ActionId, LauncherNotice, MovedTo, Owner, PlayingOn, RadeonProfile, Session,
+    SessionApp, State,
+};
+
+/// List apps, the same bits as `authenticated()` checks in `nvhttp.rs`.
+pub const LIST: u32 = 1 << 24;
+pub const VIEW: u32 = 1 << 25;
+pub const LAUNCH: u32 = 1 << 26;
+/// Upload files and Download files, Apollo's bits; the host's File transfer
+/// setting must be on too.
+pub const FILE_UPLOAD: u32 = 1 << 18;
+pub const FILE_DOWNLOAD: u32 = 1 << 19;
+
+/// The most collections `/library` names for one game, and the most bytes of one's name.
+pub const MAX_COLLECTIONS_PER_GAME: usize = 20;
+pub const MAX_COLLECTION_NAME_BYTES: usize = 100;
+/// The most bytes all of a scan's names may take in `/library`'s JSON, where a control character
+/// takes six: the whole answer has to stay under what a client reads of it (4 MiB).
+pub const MAX_COLLECTIONS_JSON_BYTES: usize = 1024 * 1024;
+
+/// What a name takes in JSON, quotes and comma included.
+fn json_bytes(name: &str) -> usize {
+    serde_json::to_string(name).map_or(name.len() * 6, |text| text.len()) + 1
+}
+
+/// The games the host's last launcher scan found installed, by `game_id`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Scan {
+    installed: BTreeSet<String>,
+    /// Source keys the scan did not read (turned off): their games' state is unknown.
+    skipped: BTreeSet<String>,
+    /// The game folders the scan read, when it read any: a game folder outside them
+    /// (a folder since removed or left out) has an unknown state.
+    folders: Option<crate::library::Settings>,
+    /// When the stores say each game was last played, in seconds since the epoch, `0` for
+    /// never: by `game_id` (`steam:570`) and by Playnite game ([`playnite_key`]).
+    played: BTreeMap<String, u64>,
+    /// How long the stores say each game was played, in minutes, keyed like `played`.
+    playtime: BTreeMap<String, u64>,
+    /// The collections and categories each game is in, keyed like `played`.
+    collections: BTreeMap<String, BTreeSet<String>>,
+    /// How many collection names [`Self::collecting`] left out or shortened.
+    collections_cut: usize,
+    /// What the names in `collections` take in JSON, against [`MAX_COLLECTIONS_JSON_BYTES`].
+    collections_bytes: usize,
+}
+impl Scan {
+    pub fn new(game_ids: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            installed: game_ids.into_iter().collect(),
+            skipped: BTreeSet::new(),
+            folders: None,
+            played: BTreeMap::new(),
+            playtime: BTreeMap::new(),
+            collections: BTreeMap::new(),
+            collections_cut: 0,
+            collections_bytes: 0,
+        }
+    }
+    /// The collections these games are in, by `game_id` or [`playnite_key`], up to
+    /// [`MAX_COLLECTIONS_PER_GAME`] a game, [`MAX_COLLECTION_NAME_BYTES`] a name and
+    /// [`MAX_COLLECTIONS_JSON_BYTES`] in all.
+    pub fn collecting(mut self, games: impl IntoIterator<Item = (String, Vec<String>)>) -> Self {
+        for (key, names) in games {
+            let collected = self.collections.entry(key).or_default();
+            for mut name in names {
+                if name.len() > MAX_COLLECTION_NAME_BYTES {
+                    let end = (0..=MAX_COLLECTION_NAME_BYTES)
+                        .rev()
+                        .find(|at| name.is_char_boundary(*at))
+                        .unwrap_or(0);
+                    name.truncate(end);
+                    self.collections_cut += 1;
+                }
+                if collected.contains(&name) {
+                    continue;
+                }
+                let bytes = json_bytes(&name);
+                if collected.len() < MAX_COLLECTIONS_PER_GAME
+                    && self.collections_bytes + bytes <= MAX_COLLECTIONS_JSON_BYTES
+                {
+                    self.collections_bytes += bytes;
+                    collected.insert(name);
+                } else {
+                    self.collections_cut += 1;
+                }
+            }
+        }
+        self
+    }
+    /// How many collection names were left out or shortened, for one log line: the scan's own, and
+    /// those a game's store and Playnite names go over [`MAX_COLLECTIONS_PER_GAME`] by together.
+    pub fn collections_cut(&self, apps: &[App]) -> usize {
+        self.collections_cut
+            + apps
+                .iter()
+                .map(|app| {
+                    self.all_collections(app)
+                        .len()
+                        .saturating_sub(MAX_COLLECTIONS_PER_GAME)
+                })
+                .sum::<usize>()
+    }
+    /// The collections the app's game is in, its store's and its Playnite game's together, by name.
+    pub fn collections(&self, app: &App) -> Vec<String> {
+        // A game's store and Playnite names are each within the limit, together maybe not.
+        self.all_collections(app)
+            .into_iter()
+            .take(MAX_COLLECTIONS_PER_GAME)
+            .cloned()
+            .collect()
+    }
+    fn all_collections(&self, app: &App) -> BTreeSet<&String> {
+        let store = store_of(app).map(|(_, game_id)| game_id);
+        let playnite = app
+            .extra
+            .get("playnite-id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(playnite_key);
+        [store, playnite]
+            .iter()
+            .flatten()
+            .filter_map(|key| self.collections.get(key))
+            .flatten()
+            .collect()
+    }
+    /// When the stores say these games were last played (`0` for never), by `game_id` or
+    /// [`playnite_key`]. A key seen twice keeps the later time.
+    pub fn playing(mut self, played: impl IntoIterator<Item = (String, u64)>) -> Self {
+        keep_max(&mut self.played, played);
+        self
+    }
+    /// How long the stores say these games were played, in minutes (`0` for never), by
+    /// `game_id` or [`playnite_key`]. A key seen twice keeps the longer time.
+    pub fn played_for(mut self, minutes: impl IntoIterator<Item = (String, u64)>) -> Self {
+        keep_max(&mut self.playtime, minutes);
+        self
+    }
+    /// When the app's game was last played (`0` for never), the later of its store's and its
+    /// Playnite game's; `None` when no store says.
+    pub fn last_played(&self, app: &App) -> Option<u64> {
+        app_max(&self.played, app)
+    }
+    /// How long the app's game was played, in minutes (`0` for never), the longer of its
+    /// store's and its Playnite game's, since Playnite imports the stores' times rather than
+    /// adding to them; `None` when no store says.
+    pub fn playtime_minutes(&self, app: &App) -> Option<u64> {
+        app_max(&self.playtime, app)
+    }
+    /// The scan did not read these sources, so it says nothing about their games.
+    pub fn skipping(mut self, sources: impl IntoIterator<Item = Source>) -> Self {
+        self.skipped
+            .extend(sources.into_iter().map(|source| source.key().to_owned()));
+        self
+    }
+    /// The scan read the game folders of these settings and no others.
+    pub fn reading(mut self, settings: crate::library::Settings) -> Self {
+        self.folders = Some(settings);
+        self
+    }
+    /// Whether the game is installed, `None` when the scan did not read its source
+    /// or, for a game folder, the folder.
+    pub fn installed(&self, game_id: &str) -> Option<bool> {
+        let (source, id) = game_id.split_once(':').unwrap_or((game_id, ""));
+        let unread = self.skipped.contains(source)
+            || (source == Source::Local.key()
+                && self
+                    .folders
+                    .as_ref()
+                    .is_some_and(|settings| !settings.reads_local(id)));
+        (!unread).then(|| self.contains(game_id))
+    }
+    pub fn from_games(games: &[crate::library::Game]) -> Self {
+        Self::new(
+            games
+                .iter()
+                .map(|game| format!("{}:{}", game.source.key(), game.id)),
+        )
+    }
+    pub fn contains(&self, game_id: &str) -> bool {
+        self.installed.contains(game_id)
+    }
+    /// Also installed: games the launcher scan leaves out, such as Steam tools.
+    pub fn adding(mut self, game_ids: impl IntoIterator<Item = String>) -> Self {
+        self.installed.extend(game_ids);
+        self
+    }
+}
+
+/// Adds the values to `map`, keeping the larger one for a key seen twice.
+fn keep_max(map: &mut BTreeMap<String, u64>, values: impl IntoIterator<Item = (String, u64)>) {
+    for (key, value) in values {
+        let kept = map.entry(key).or_insert(value);
+        *kept = (*kept).max(value);
+    }
+}
+/// The larger of the values `map` holds for the app's store game and its Playnite game,
+/// `None` when it holds neither.
+fn app_max(map: &BTreeMap<String, u64>, app: &App) -> Option<u64> {
+    let store = store_of(app).and_then(|(_, game_id)| map.get(&game_id).copied());
+    let playnite = app
+        .extra
+        .get("playnite-id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .and_then(|id| map.get(&playnite_key(id)).copied());
+    store.max(playnite)
+}
+
+/// The key [`Scan::playing`] and [`Scan::played_for`] take a Playnite game's times by.
+pub fn playnite_key(id: &str) -> String {
+    format!("playnite:{}", id.to_ascii_lowercase())
+}
+
+/// The read-time app field the console shows as "Not installed". Never stored.
+pub const NOT_INSTALLED: &str = "not-installed";
+/// Whether the app's launcher game is installed: `None` for an app without a launcher
+/// id, or one whose source or folder the scan did not read.
+pub fn installed(app: &App, scan: &Scan) -> Option<bool> {
+    store_of(app).and_then(|(_, game_id)| scan.installed(&game_id))
+}
+
+/// The store an app belongs to and its `<source>:<id>` key, from
+/// `launcher-source` and `launcher-id`, or `steam-id` for Steam apps.
+fn store_of(app: &App) -> Option<(Store, String)> {
+    fn text<'a>(app: &'a App, key: &str) -> Option<&'a str> {
+        app.extra
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+    }
+    if let (Some(source), Some(id)) = (text(app, "launcher-source"), text(app, "launcher-id")) {
+        let name = Source::ALL
+            .into_iter()
+            .find(|candidate| candidate.key() == source)
+            .map_or_else(|| source.to_owned(), |known| known.name().to_owned());
+        return Some((
+            Store {
+                source: source.into(),
+                id: id.into(),
+                name,
+            },
+            format!("{source}:{id}"),
+        ));
+    }
+    let mut keys = serde_json::Map::new();
+    for key in ["steam-id", "uuid"] {
+        if let Some(value) = app.extra.get(key) {
+            keys.insert(key.into(), value.clone());
+        }
+    }
+    let id = crate::steam::app_id_of(&Value::Object(keys))?.to_string();
+    Some((
+        Store {
+            source: Source::Steam.key().into(),
+            name: Source::Steam.name().into(),
+            id: id.clone(),
+        },
+        format!("steam:{id}"),
+    ))
+}
+
+/// The app's `uuid` from `apps.json`. An app without one gets a v5 UUID of its
+/// name, which is stable until the app is renamed.
+pub fn install_id(app: &App) -> String {
+    match app.extra.get("uuid").and_then(Value::as_str) {
+        Some(uuid) if !uuid.trim().is_empty() => uuid.into(),
+        _ => uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_URL,
+            format!("rubylight:app:{}", app.name).as_bytes(),
+        )
+        .to_string(),
+    }
+}
+
+fn hash(bytes: &[u8]) -> String {
+    format!("{:08x}", crc32fast::hash(bytes))
+}
+
+/// [`library_with`] with the app's `image-path` as the cover fingerprint (no
+/// cover without one).
+pub fn library(apps: &[App], scan: Option<&Scan>, current: Option<u32>) -> Library {
+    library_with(apps, scan, current, |app| {
+        app.extra
+            .get("image-path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// The host's configured apps in console order, without the synthetic Remote
+/// session tiles. `scan` is the cached launcher scan (`None` before the first
+/// one), `current` the id of the host's current game. `cover` returns what
+/// identifies the cover image file, such as its path, size and mtime: the
+/// artwork `version` changes when it does. `None` is an app without a cover of
+/// its own (the host would send its placeholder): `cover` is left out, so
+/// clients show the title instead.
+pub fn library_with(
+    apps: &[App],
+    scan: Option<&Scan>,
+    current: Option<u32>,
+    cover: impl Fn(&App) -> Option<String>,
+) -> Library {
+    let mut games = Vec::with_capacity(apps.len());
+    let mut played = Vec::with_capacity(apps.len());
+    for app in apps {
+        let install_id = install_id(app);
+        let id = app.id();
+        if remote::identify(id, &install_id).is_some() {
+            continue;
+        }
+        let (store, game_id) = match store_of(app) {
+            Some((store, game_id)) => (Some(store), Some(game_id)),
+            None => (None, None),
+        };
+        let installed = match (&game_id, scan) {
+            (Some(game_id), Some(scan)) => scan.installed(game_id),
+            _ => None,
+        };
+        games.push(Game {
+            install_id,
+            app_id: id,
+            title: app.name.clone(),
+            game_id,
+            store,
+            installed,
+            running: false,
+            artwork: match cover(app) {
+                Some(file) => Artwork {
+                    cover: Some(format!("/appasset?appid={id}&AssetType=2&AssetIdx=0")),
+                    version: hash(file.as_bytes()),
+                },
+                None => Artwork {
+                    cover: None,
+                    version: String::new(),
+                },
+            },
+            last_played: None,
+            playtime_minutes: None,
+            collections: scan.map(|scan| scan.collections(app)).unwrap_or_default(),
+        });
+        played.push(scan.map_or((None, None), |scan| {
+            (scan.last_played(app), scan.playtime_minutes(app))
+        }));
+    }
+    // The revision leaves `running`, `last_played` and `playtime_minutes` out, so
+    // starting or playing a game doesn't make every client refetch the covers.
+    let revision = hash(&serde_json::to_vec(&games).unwrap_or_default());
+    for (game, (last_played, playtime_minutes)) in games.iter_mut().zip(played) {
+        game.running = current == Some(game.app_id);
+        game.last_played = last_played;
+        game.playtime_minutes = playtime_minutes;
+    }
+    Library { revision, games }
+}
+
+/// What the host's session state machine reports right now
+/// ([`crate::session_state::Machine::snapshot`]). `session_view` turns it into
+/// the wire type for one caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionSnapshot {
+    pub revision: u64,
+    pub state: State,
+    /// There is a running game, whoever owns it. After End session it is true
+    /// while the state is `idle`.
+    pub game_running: bool,
+    /// The uuid of the device that owns the session. Always set unless the
+    /// state is `idle`.
+    pub owner: Option<String>,
+    pub app: Option<SessionApp>,
+    pub since_unix_ms: Option<u64>,
+    pub suspended_until_unix_ms: Option<u64>,
+    /// A launcher shows a prompt in place of the game. The host adds it; the machine does not
+    /// know it.
+    pub launcher: Option<LauncherNotice>,
+    /// The Radeon profile of the running app, as applied. The host adds it too.
+    pub radeon_profile: Option<RadeonProfile>,
+    /// The device playing the game, the one another device can continue from. The host adds it.
+    pub holder: Option<Holder>,
+}
+/// The device playing the running game on a plain stream, or suspended from one. Nucleus Co-op
+/// and background streams never count.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Holder {
+    pub uuid: String,
+    pub device: String,
+}
+impl Default for SessionSnapshot {
+    fn default() -> Self {
+        Self {
+            revision: 0,
+            state: State::Idle,
+            game_running: false,
+            owner: None,
+            app: None,
+            since_unix_ms: None,
+            suspended_until_unix_ms: None,
+            launcher: None,
+            radeon_profile: None,
+            holder: None,
+        }
+    }
+}
+
+/// Whether the administrator granted this device Host control. The rule
+/// lives in [`Client::allows_host_control`].
+pub fn host_control(client: &Client) -> bool {
+    client.allows_host_control()
+}
+
+/// The session as `caller` may see it, with the actions it may run.
+/// Where the caller's stream went. The device's name needs List or View, as `playing_on` does;
+/// without them the caller still learns that it moved, so it stops recovering, with no name.
+pub fn moved_view(moved: Option<MovedTo>, caller: &Client) -> Option<MovedTo> {
+    moved.map(|moved| {
+        if caller.allows(LIST) || caller.allows(VIEW) {
+            moved
+        } else {
+            MovedTo {
+                device: String::new(),
+                ..moved
+            }
+        }
+    })
+}
+pub fn session_view(snapshot: &SessionSnapshot, caller: &Client) -> Session {
+    let state = snapshot.state;
+    let idle = state == State::Idle;
+    // The host always names the owner of a session that isn't idle. Without
+    // one, every caller would read as another device.
+    debug_assert!(
+        idle || snapshot.owner.is_some(),
+        "a {state:?} session needs an owner"
+    );
+    let owns = !idle && snapshot.owner.as_deref() == Some(caller.uuid.as_str());
+    let owner = if idle {
+        Owner::None
+    } else if owns {
+        Owner::You
+    } else {
+        Owner::OtherDevice
+    };
+    let can_see = caller.allows(VIEW) || caller.allows(LAUNCH);
+    let details = owns && can_see;
+    let host_control = host_control(caller);
+    let reason = |id: ActionId| -> Option<ErrorCode> {
+        // Another device's session is refused whatever the permissions.
+        if !idle && !owns {
+            return Some(ErrorCode::NotSessionOwner);
+        }
+        match id {
+            ActionId::Resume => {
+                if !caller.allows(VIEW) {
+                    return Some(ErrorCode::PermissionRequired);
+                }
+                match state {
+                    // While streaming too: `/resume` supersedes the same
+                    // device's stream, which is how it reconnects after a
+                    // crash.
+                    State::Suspended | State::Streaming => None,
+                    State::Idle => Some(ErrorCode::NoSession),
+                    State::Preparing | State::Launching | State::Stopping => {
+                        Some(ErrorCode::SessionBusy)
+                    }
+                    State::Unknown => Some(ErrorCode::Internal),
+                }
+            }
+            ActionId::Disconnect => {
+                if !can_see {
+                    return Some(ErrorCode::PermissionRequired);
+                }
+                match state {
+                    State::Streaming => None,
+                    State::Idle => Some(ErrorCode::NoSession),
+                    _ => Some(ErrorCode::NotStreaming),
+                }
+            }
+            ActionId::End => {
+                if !caller.allows(LAUNCH) {
+                    return Some(ErrorCode::PermissionRequired);
+                }
+                match state {
+                    State::Idle => Some(ErrorCode::NoSession),
+                    // The launch holds `launch_transition` for minutes.
+                    State::Preparing | State::Launching => Some(ErrorCode::SessionBusy),
+                    // Stopping: repeating End is safe.
+                    _ => None,
+                }
+            }
+            ActionId::CloseGame => {
+                if !caller.allows(LAUNCH) {
+                    return Some(ErrorCode::PermissionRequired);
+                }
+                if !host_control {
+                    return Some(ErrorCode::HostControlRequired);
+                }
+                match state {
+                    State::Preparing | State::Launching => Some(ErrorCode::SessionBusy),
+                    // With no session, it closes a game End session left
+                    // behind.
+                    State::Idle if !snapshot.game_running => Some(ErrorCode::NoSession),
+                    _ => None,
+                }
+            }
+            ActionId::Unknown => Some(ErrorCode::Internal),
+        }
+    };
+    let actions = [
+        ActionId::Resume,
+        ActionId::Disconnect,
+        ActionId::End,
+        ActionId::CloseGame,
+    ]
+    .into_iter()
+    .map(|id| {
+        let reason = reason(id);
+        Action {
+            id,
+            allowed: reason.is_none(),
+            reason,
+        }
+    })
+    .collect();
+    Session {
+        revision: snapshot.revision,
+        state,
+        owner,
+        app: snapshot.app.clone().filter(|_| details),
+        game_running: snapshot.game_running,
+        since_unix_ms: snapshot.since_unix_ms.filter(|_| details),
+        suspended_until_unix_ms: snapshot
+            .suspended_until_unix_ms
+            .filter(|_| details && state == State::Suspended),
+        // What the host noticed about the owner's own game is the owner's to see.
+        launcher: snapshot.launcher.clone().filter(|_| details),
+        radeon_profile: snapshot.radeon_profile.clone().filter(|_| details),
+        // The host's microphone receiver knows this, not the snapshot; it sets it.
+        microphone_busy: false,
+        playing_on: snapshot
+            .holder
+            .as_ref()
+            // A device's own second screen is the device, not another one.
+            .filter(|holder| {
+                crate::state::device_uuid(&holder.uuid) != crate::state::device_uuid(&caller.uuid)
+            })
+            .filter(|_| caller.allows(LIST) || caller.allows(VIEW))
+            .zip(snapshot.app.clone())
+            .map(|(holder, app)| PlayingOn {
+                device: holder.device.clone(),
+                app,
+            }),
+        // The host's record of moved streams knows this, not the snapshot; it sets it.
+        moved_to: None,
+        owns_game: false,
+        press_failed: false,
+        actions,
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -8,7 +8,7 @@ use std::{
 };
 use windows::Win32::{Foundation::FILETIME, System::Threading::GetSystemTimes};
 
-pub use butterpollo_core::config::HARDWARE_METRICS as METRICS;
+pub use butterpollo_config::config::HARDWARE_METRICS as METRICS;
 
 /// A driver DLL from System32 only, so no DLL earlier in the search order
 /// stands in for it.

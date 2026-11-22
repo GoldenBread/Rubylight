@@ -1,6 +1,6 @@
 //! Where Steam is installed on this PC.
 
-use butterpollo_core::nucleus::generic;
+use butterpollo_session::nucleus::generic;
 use std::path::{Path, PathBuf};
 use windows::{
     Win32::System::Registry::{

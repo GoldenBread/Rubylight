@@ -18,16 +18,16 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
 };
-use butterpollo_core::{
-    native_api::{
-        error::ErrorCode,
-        pairing::{PairingApprove, PairingApproved, PairingDeny, PairingRequest, PairingRequests},
-    },
+use butterpollo_session::{
     nucleus::coop,
     state::{
         Client, LATER_DEVICE_PERMISSION, LAUNCH_APPS, PAIRING_APPROVE_KEY, PLAY_DEVICE_PERMISSION,
         PairedState,
     },
+};
+use rubylight_native_api::{
+    error::ErrorCode,
+    pairing::{PairingApprove, PairingApproved, PairingDeny, PairingRequest, PairingRequests},
 };
 use serde_json::Value;
 use std::{
@@ -211,7 +211,9 @@ pub(crate) fn capped(
     let approver = state
         .clients
         .iter()
-        .find(|c| c.uuid == butterpollo_core::state::device_uuid(uuid) && c.may_approve_pairing())
+        .find(|c| {
+            c.uuid == butterpollo_session::state::device_uuid(uuid) && c.may_approve_pairing()
+        })
         .ok_or(ApproverRevoked {
             missing: "Approve new devices",
         })?;

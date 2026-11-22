@@ -1,10 +1,10 @@
 //! The writer of the opt-in host-side timing record (`BUTTERPOLLO_TIMING_RECORD=<dir>`). Rows
-//! and the file text come from `butterpollo_core::timing_record`; this is the file IO on a
+//! and the file text come from `butterpollo_media_policy::timing_record`; this is the file IO on a
 //! thread of its own, so the send path only does a non-blocking queue push. Unset, no thread
 //! and no file exist.
 use crate::state::Session;
 use anyhow::{Context, Result};
-use butterpollo_core::timing_record::{self as record, Meta, Row, Sink};
+use butterpollo_media_policy::timing_record::{self as record, Meta, Row, Sink};
 use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -127,7 +127,7 @@ fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::performance::Stamps;
+    use butterpollo_media_policy::performance::Stamps;
     use std::{
         sync::{Mutex, mpsc},
         time::Instant,
@@ -301,7 +301,10 @@ mod tests {
     #[test]
     fn a_stream_that_ends_early_still_gets_its_footer() {
         let fixture = crate::state::test_support::Fixture::new();
-        let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+        let launch = fixture.launch(
+            fixture.client(0),
+            butterpollo_session::session::Role::Stream,
+        );
         let session = Session::new(launch, Default::default());
         let dir = std::env::temp_dir().join(format!("timing-record-{}", uuid::Uuid::new_v4()));
         // What stream setup does, then an exit on the way to the normal teardown.

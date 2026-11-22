@@ -12,17 +12,17 @@
 //! `butterpollo_windows::nucleus`; the tests use the fakes in `fake`.
 use crate::state::{Host, Launch, Shared};
 use anyhow::{Context, Result};
-use butterpollo_core::config::Config;
-use butterpollo_core::input::Input;
-use butterpollo_core::input_policy::Policy;
-use butterpollo_core::nucleus::coop::{self, Admit, End, Kind, Phase, Refused};
-use butterpollo_core::nucleus::elevation::{self, Account, Need, Run, Script};
-use butterpollo_core::nucleus::generic::{self, Setup};
-use butterpollo_core::nucleus::handler::{self, Catalog, Handler, Match, Missing};
-use butterpollo_core::nucleus::install::{Problem, Unusable};
-use butterpollo_core::nucleus::mode;
-use butterpollo_core::session::{Seat, Warnings};
-use butterpollo_core::state::{App, Client};
+use butterpollo_config::config::Config;
+use butterpollo_input_policy::input::Input;
+use butterpollo_input_policy::input_policy::Policy;
+use butterpollo_session::nucleus::coop::{self, Admit, End, Kind, Phase, Refused};
+use butterpollo_session::nucleus::elevation::{self, Account, Need, Run, Script};
+use butterpollo_session::nucleus::generic::{self, Setup};
+use butterpollo_session::nucleus::handler::{self, Catalog, Handler, Match, Missing};
+use butterpollo_session::nucleus::install::{Problem, Unusable};
+use butterpollo_session::nucleus::mode;
+use butterpollo_session::session::{Seat, Warnings};
+use butterpollo_session::state::{App, Client};
 use butterpollo_windows::input::PadReport;
 use butterpollo_windows::nucleus::pads::{self, Dropped};
 use butterpollo_windows::nucleus::session::{Opened, Running, Start};
@@ -111,7 +111,7 @@ pub trait Pc: Send + Sync {
     fn unavailable(&self) -> Option<String>;
     /// The Nucleus folder once it is there; `configured` is `nucleus_path`,
     /// the folder the user chose, whose refusal is an
-    /// [`install::Unusable`](butterpollo_core::nucleus::install::Unusable).
+    /// [`install::Unusable`](butterpollo_session::nucleus::install::Unusable).
     fn installed(&self, configured: &str) -> Result<Option<PathBuf>>;
     /// Why [`Self::installed`] runs the copy an earlier Rubylight installed
     /// rather than the folder `configured` names (it holds another release),
@@ -269,7 +269,7 @@ impl Install {
 pub fn not_set_up() -> String {
     format!(
         "Nucleus Co-op is not set up: download Nucleus Co-op {} and choose its folder on a game's Play together panel in the Rubylight console",
-        butterpollo_core::nucleus::install::VERSION
+        butterpollo_session::nucleus::install::VERSION
     )
 }
 

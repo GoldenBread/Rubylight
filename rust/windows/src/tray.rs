@@ -1,6 +1,6 @@
 //! Native notification-area UI, owned by its Windows message thread.
 use anyhow::{Context, Result, bail};
-use butterpollo_core::tray::{Icon, NoticeAction, Notices, Post, QueuedNotice};
+use butterpollo_session::tray::{Icon, NoticeAction, Notices, Post, QueuedNotice};
 use std::{
     mem::size_of,
     path::PathBuf,
@@ -291,7 +291,7 @@ unsafe fn badged(base: HICON, state: Icon) -> Option<HICON> {
             );
             ReleaseDC(None, screen);
             if lines != height
-                || !butterpollo_core::tray::badge(
+                || !butterpollo_session::tray::badge(
                     &mut pixels,
                     width as usize,
                     height as usize,
@@ -676,7 +676,7 @@ pub fn notices_due() -> Option<Instant> {
 pub fn try_notify(title: &str, text: &str) -> Result<()> {
     post_notice(&notice(title, text, None))
 }
-fn launch_error_notice(app: &str, code: u32) -> butterpollo_core::tray::Notice {
+fn launch_error_notice(app: &str, code: u32) -> butterpollo_session::tray::Notice {
     (
         "Launch Error",
         format!(

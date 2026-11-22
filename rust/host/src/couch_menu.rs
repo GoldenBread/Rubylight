@@ -15,20 +15,21 @@ use crate::{
     native_api::{self, Failure},
     state::{Session, Shared},
 };
-use butterpollo_core::{
-    config::Config,
-    couch_menu::{
-        self as menu, Action, Filter, Frame, Layout, Menu, Nav, Snapshot, Strings,
-        chord::OpenWith,
-        model::{Availability, Setting, Target},
-    },
+use butterpollo_config::config::Config;
+use butterpollo_input_policy::{
+    couch_menu::{self as menu, Filter, Frame, Layout, Nav, chord::OpenWith},
     input::Input,
-    native_api::error::ErrorCode,
+};
+use butterpollo_session::{
+    couch_menu_model::{
+        self, Action, Availability, Menu, Setting, Snapshot, Strings, Target, render,
+    },
     session::Role,
     session_state::Refusal,
     state::Client,
 };
 use butterpollo_windows::{input::Injector, overlay::Overlay};
+use rubylight_native_api::error::ErrorCode;
 use std::{
     collections::HashMap,
     sync::{
@@ -270,7 +271,7 @@ fn spawn(h: &Shared, s: &Arc<Session>) -> Option<Worker> {
 fn strings(locale: &str, registry: &[&dyn items::Item]) -> Result<Strings, String> {
     let strings = Strings::from_lookup(|path| i18n::catalogue(locale, path))?;
     for item in registry {
-        let path = menu::model::items::label_path(item.key());
+        let path = couch_menu_model::items::label_path(item.key());
         let label = i18n::catalogue(locale, &path)
             .ok_or_else(|| format!("couch menu: string {path} is missing"))?;
         if let Some(c) = menu::font::uncovered(&label) {
@@ -390,7 +391,7 @@ impl Page {
         }
     }
     fn draw(&self, menu: &Menu, shared: &menu::Shared, shown: &mut Option<Frame>) {
-        let frame = menu::render(menu, &self.snap, &self.layout);
+        let frame = render(menu, &self.snap, &self.layout);
         if shown.as_ref() != Some(&frame) && shared.publish(frame.clone()) {
             *shown = Some(frame);
         }
@@ -407,7 +408,7 @@ fn client(h: &Shared, s: &Session) -> Result<Client, Failure> {
         .iter()
         .find(|client| {
             client.enabled
-                && client.uuid == butterpollo_core::state::device_uuid(&s.launch.client.uuid)
+                && client.uuid == butterpollo_session::state::device_uuid(&s.launch.client.uuid)
         })
         .cloned()
         .map(|client| {
@@ -492,7 +493,7 @@ fn snapshot(h: &Shared, s: &Session, registry: &[&dyn items::Item], locale: &str
     let device = client(h, s).ok();
     let host_control = device
         .as_ref()
-        .is_some_and(butterpollo_core::native::host_control);
+        .is_some_and(butterpollo_session::native::host_control);
     // The same list, in the same order, the device's own stream menu shows.
     let commands = if device.as_ref().is_some_and(|client| client.allows(1 << 20)) {
         let config = h.config.read().unwrap().clone();
@@ -506,7 +507,7 @@ fn snapshot(h: &Shared, s: &Session, registry: &[&dyn items::Item], locale: &str
             let availability = item.available(h, s);
             (availability != Availability::Hidden).then(|| Setting {
                 id: item.key().to_owned(),
-                label: i18n::catalogue(locale, &menu::model::items::label_path(item.key()))
+                label: i18n::catalogue(locale, &couch_menu_model::items::label_path(item.key()))
                     .unwrap_or_else(|| item.key().to_owned()),
                 control: item.value(h, s),
                 availability,

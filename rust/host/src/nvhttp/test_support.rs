@@ -18,7 +18,7 @@ pub fn ensure_streaming_session() -> Result<()> {
 /// test put an image there, each holding [`TURN`] while it does.
 pub mod clipboard {
     use anyhow::Result;
-    use butterpollo_core::clipboard_image::{self, ImageError};
+    use butterpollo_session::clipboard_image::{self, ImageError};
     use std::sync::Mutex;
     pub static PNG: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     /// One test at a time on the clipboard.

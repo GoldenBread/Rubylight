@@ -199,7 +199,7 @@ impl Encoder {
     /// before Init, by their exact AMF names, for probes. A refusal is an error.
     pub(super) fn apply_probe_properties(
         &mut self,
-        options: &butterpollo_core::config::Config,
+        options: &butterpollo_config::config::Config,
     ) -> Result<()> {
         let Some(list) = options.values.get("probe_amf_properties") else {
             return Ok(());
@@ -222,9 +222,9 @@ impl Encoder {
     /// another.
     pub(super) fn apply(
         &mut self,
-        property: &butterpollo_core::encoder_policy::Property,
+        property: &butterpollo_media_policy::encoder_policy::Property,
     ) -> Result<()> {
-        use butterpollo_core::encoder_policy::Value;
+        use butterpollo_media_policy::encoder_policy::Value;
         let value = match property.value {
             Value::Integer(n) => int(n),
             Value::Boolean(on) => gpu::boolean(on),
@@ -276,8 +276,9 @@ impl Encoder {
     /// rate control and pre-analysis have set the driver's defaults. The
     /// value after Init is in the settings line; even that does not prove a
     /// frame is split, which the driver decides.
-    pub(super) fn request_split_frame(&mut self, options: &butterpollo_core::config::Config) {
-        let Some((cap, name)) = butterpollo_core::encoder_policy::amf_multi_instance(self.codec)
+    pub(super) fn request_split_frame(&mut self, options: &butterpollo_config::config::Config) {
+        let Some((cap, name)) =
+            butterpollo_media_policy::encoder_policy::amf_multi_instance(self.codec)
         else {
             return;
         };
@@ -285,7 +286,7 @@ impl Encoder {
         let driver = self.read(name).map(|value| value != 0);
         let setting = options.get("amd_split_frame", "auto");
         if instances <= 1
-            && butterpollo_core::encoder_policy::tristate(options, "amd_split_frame", None)
+            && butterpollo_media_policy::encoder_policy::tristate(options, "amd_split_frame", None)
                 == Some(true)
         {
             tracing::warn!(
@@ -293,7 +294,7 @@ impl Encoder {
                 "AMF split-frame encoding was requested but multiple encode instances are unavailable. Encoding remains on one engine; select Automatic or check the AMD GPU and driver capabilities"
             );
         }
-        match butterpollo_core::encoder_policy::amf_split_frame(
+        match butterpollo_media_policy::encoder_policy::amf_split_frame(
             options, self.codec, instances, driver,
         ) {
             None => tracing::info!(
@@ -308,7 +309,7 @@ impl Encoder {
                     instances,
                     driver_value = ?driver,
                     requested = property.value
-                        == butterpollo_core::encoder_policy::Value::Boolean(true),
+                        == butterpollo_media_policy::encoder_policy::Value::Boolean(true),
                     "AMF split-frame encoding requested"
                 ),
                 Err(error) => tracing::warn!(
@@ -477,7 +478,7 @@ impl Encoder {
     /// what it wanted decides what it says.
     pub(super) fn enable_dynamic(
         &mut self,
-        options: &butterpollo_core::config::Config,
+        options: &butterpollo_config::config::Config,
     ) -> Option<Box<dynamic::Dynamic>> {
         let wanted = dynamic::wanted(&self.config, options)?;
         let packed = self.config.chroma_packing != 0;
@@ -495,7 +496,7 @@ impl Encoder {
         )
     }
     /// The receiver's display peak
-    /// (`butterpollo_core::display_caps::HdrSource::target_nits`). HDR10+
+    /// (`butterpollo_media_policy::display_caps::HdrSource::target_nits`). HDR10+
     /// profile A names no target display, so it does not change the units.
     pub fn set_hdr_target(&mut self, nits: u16) {
         if let Some(dynamic) = self.dynamic.as_deref_mut() {
@@ -507,7 +508,7 @@ impl Encoder {
     /// control channel's copy otherwise get no mastering metadata at all.
     /// Dynamic metadata takes its first frames' stand-in from it, and Dolby
     /// Vision RPUs carry it from the next frame on.
-    pub fn set_hdr_metadata(&mut self, metadata: butterpollo_core::hdr::Metadata) {
+    pub fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
         if let Some(dynamic) = self.dynamic.as_deref_mut() {
             dynamic.set_metadata(metadata);
         }
@@ -696,12 +697,12 @@ impl Encoder {
         })();
         match result {
             Ok(count) => {
-                self.references = butterpollo_core::ltr::References::new(
+                self.references = butterpollo_media_policy::ltr::References::new(
                     count,
-                    butterpollo_core::ltr::Counter::for_codec(self.codec),
+                    butterpollo_media_policy::ltr::Counter::for_codec(self.codec),
                 );
                 self.repair_headers =
-                    butterpollo_core::bitstream::RepairHeaders::for_codec(self.codec);
+                    butterpollo_media_policy::bitstream::RepairHeaders::for_codec(self.codec);
                 tracing::info!(count, "AMF long-term reference recovery enabled");
             }
             Err(error) => {

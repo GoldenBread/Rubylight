@@ -188,6 +188,10 @@ def plan(paths, root=ROOT, fast=False):
             hit = True
             if d.startswith('rust/core') or d.startswith('rust/host'):
                 interop_hit = True
+        if path in ('rust/core/src/update_recovery.rs', 'rust/core/src/update_files.rs', 'rust/core/src/state/file.rs') and 'rust/core/session' in host:
+            host_dirs.add('rust/core/session')
+            interop_hit = True
+            hit = True
         d = owner(path, set(client))
         if d or under(path, CLIENT_WIDE):
             if d:

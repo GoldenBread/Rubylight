@@ -22,7 +22,7 @@ mod roaming;
 pub(crate) mod slices;
 mod video;
 use audio_sink::{AudioPace, AudioSink, GameStreamAudio, WebRtcAudio};
-use butterpollo_core::audio_passthrough::Codec;
+use butterpollo_media_policy::audio_passthrough::Codec;
 #[cfg(test)]
 use config::{apply_overrides, sets_peak};
 pub(crate) use config::{
@@ -54,16 +54,18 @@ pub mod reconnect_harness;
 #[cfg(test)]
 pub(crate) mod reconnect_tests;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
-    config::Config,
-    controller_audio, crypto,
-    encoder_backlog::{self, Backpressure},
-    haptics,
+use butterpollo_config::config::Config;
+use butterpollo_crypto::crypto;
+use butterpollo_input_policy::{
+    controller_audio, haptics,
     input::{self, required_permission},
-    packet::{AudioPacketizer, VideoPacketizer},
-    session::Role,
     text_input::Watch as TextWatch,
 };
+use butterpollo_media_policy::{
+    encoder_backlog::{self, Backpressure},
+    packet::{AudioPacketizer, VideoPacketizer},
+};
+use butterpollo_session::session::Role;
 use butterpollo_windows::device_loss::DeviceLost;
 /// A WebRTC HDR stream carries the display's HDR or nothing: SDR content labelled HDR, or HDR
 /// tone-mapped to SDR, is not what the client asked for, so the session ends with an error.
@@ -76,7 +78,7 @@ pub(crate) fn require_hdr_source(
     display_in_hdr: impl FnOnce() -> Option<bool>,
     running: bool,
 ) -> Result<()> {
-    if s.launch.transport != butterpollo_core::session::Transport::WebRtc || !s.config.hdr {
+    if s.launch.transport != butterpollo_session::session::Transport::WebRtc || !s.config.hdr {
         return Ok(());
     }
     match display_in_hdr() {
@@ -100,13 +102,13 @@ pub(crate) fn require_hdr_source(
 /// because capture shows the display stayed in SDR (`Some(false)`) with an SDR
 /// surface and RTX HDR is not generating HDR from it.
 pub(crate) fn should_fallback_hdr_to_sdr(
-    transport: butterpollo_core::session::Transport,
+    transport: butterpollo_session::session::Transport,
     stream_hdr: bool,
     source_is_bgra8: bool,
     display_in_hdr: Option<bool>,
     rtx_hdr_active: bool,
 ) -> bool {
-    transport != butterpollo_core::session::Transport::WebRtc
+    transport != butterpollo_session::session::Transport::WebRtc
         && stream_hdr
         && source_is_bgra8
         && display_in_hdr == Some(false)
@@ -289,7 +291,7 @@ use std::{
 
 type Latest = capture::Latest<GpuImage>;
 struct Source {
-    warnings: Arc<butterpollo_core::session::Warnings>,
+    warnings: Arc<butterpollo_session::session::Warnings>,
     latest: Arc<Latest>,
     /// The capture backend that opened, after every reopen: `auto` is planned
     /// as WGC, so the plan cannot say whether frames come from WGC or the
@@ -471,7 +473,7 @@ pub struct Media {
     shutdown_done: AtomicBool,
     /// Roaming seqs of the launches, kept across control worker restarts so no launch key
     /// repeats a nonce.
-    roam_seqs: butterpollo_core::roaming::SeqMemory,
+    roam_seqs: butterpollo_session::roaming::SeqMemory,
 }
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct CaptureKey {
@@ -507,7 +509,7 @@ impl CaptureKey {
         Self {
             kind: kind.into(),
             output: output.into(),
-            automatic: butterpollo_core::capture_policy::automatic_capture(
+            automatic: butterpollo_media_policy::capture_policy::automatic_capture(
                 config.get("capture", ""),
             ),
             hdr,
@@ -529,7 +531,7 @@ impl CaptureKey {
             wgc_helper_scheduling: !matches!(kind, "ddx" | "dxgi")
                 && config.boolean("wgc_helper_streaming_scope", false),
             idd_fence_ring: config.idd_push_fence_ring(),
-            background: butterpollo_core::background::enabled(config),
+            background: butterpollo_session::background::enabled(config),
             constant_rate,
         }
     }
@@ -559,10 +561,10 @@ fn configure_video_fec(s: &Session, c: &Config) -> Result<()> {
         requested_fec.clamp(0, 100) as usize
     };
     // A client's `rlFecPercentage` was checked at /launch.
-    let choice = butterpollo_core::extensions::fec_choice(&s.launch.options)?;
-    let maximum = butterpollo_core::config::FEC_MAX_PERCENTAGE;
+    let choice = butterpollo_media_policy::extensions::fec_choice(&s.launch.options)?;
+    let maximum = butterpollo_config::config::FEC_MAX_PERCENTAGE;
     let start = s.configure_fec_choice(choice, false, fec_ceiling, maximum);
-    if choice != butterpollo_core::extensions::FecChoice::Host {
+    if choice != butterpollo_media_policy::extensions::FecChoice::Host {
         tracing::info!(
             client = %s.launch.client.name,
             choice = %choice.as_param(),
@@ -583,7 +585,11 @@ pub(crate) fn congestion_mode(c: &Config) -> (bool, bool) {
 }
 /// Congestion control for a stream whose mode or path changed; call after
 /// `rebuild_link_rate`.
-fn rebuild_congestion(s: &Session, stream: &butterpollo_core::rtsp::Negotiated, c: &Config) {
+fn rebuild_congestion(
+    s: &Session,
+    stream: &butterpollo_media_policy::rtsp::Negotiated,
+    c: &Config,
+) {
     let (enabled, shadow) = congestion_mode(c);
     s.rebuild_congestion(stream, enabled, max_bitrate_kbps(s, c), shadow);
 }
@@ -755,7 +761,7 @@ impl Media {
         &self,
         hdr: bool,
         config: &Config,
-        rate: butterpollo_core::framegen::Rate,
+        rate: butterpollo_media_policy::framegen::Rate,
         phase: &str,
         prepared: Arc<crate::display_session::Ready>,
     ) -> Result<Arc<Source>> {
@@ -767,7 +773,7 @@ impl Media {
         // The user's Capture method, not the resolved backend: an explicit method is
         // never moved to another backend (`capture_policy::automatic_capture`).
         let automatic =
-            butterpollo_core::capture_policy::automatic_capture(config.get("capture", ""));
+            butterpollo_media_policy::capture_policy::automatic_capture(config.get("capture", ""));
         let capture_config = capture_config(config);
         let key = CaptureKey::new(&kind, &output, hdr, &capture_config, phase, constant_rate);
         let mut captures = self.captures.lock().unwrap();
@@ -781,7 +787,7 @@ impl Media {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let worker = latest.clone();
-        let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+        let warnings = Arc::new(butterpollo_session::session::Warnings::default());
         let capture_warnings = warnings.clone();
         let grid = Arc::new(Mutex::new(butterpollo_windows::capture::ClaimGrid {
             anchor: Instant::now(),
@@ -868,7 +874,7 @@ impl Media {
                             // A UAC prompt or the lock screen switches the input
                             // desktop; duplication must be made on that desktop.
                             butterpollo_windows::input::follow_input_desktop();
-                            let background = butterpollo_core::background::enabled(&capture_config);
+                            let background = butterpollo_session::background::enabled(&capture_config);
                             let on = reopen_on(butterpollo_windows::capture::display_present(&next.0), background, &mut missing_since, Instant::now());
                             let opened = match on {
                                 ReopenOn::Wait => {
@@ -952,7 +958,7 @@ impl Media {
                     // composed for it. `origin` names the content of a fresh
                     // picture so its repeats reuse the converted picture.
                     let mut constant = constant_rate
-                        .then(butterpollo_core::capture_policy::ConstantRate::default);
+                        .then(butterpollo_media_policy::capture_policy::ConstantRate::default);
                     let mut origin = 0u64;
                     while !worker_stop.load(Ordering::Acquire) {
                         if Instant::now() >= check_target {
@@ -1053,7 +1059,7 @@ impl Media {
                                     && !duplication_tried
                                     && capture.backend() == "wgc"
                                     && display
-                                    && idle >= butterpollo_core::capture_policy::FULLSCREEN_STALL
+                                    && idle >= butterpollo_media_policy::capture_policy::FULLSCREEN_STALL
                                     && fullscreen_probe_due(now, &mut stall_check)
                                     && butterpollo_windows::foreground::exclusive_fullscreen()
                                 {
@@ -1061,7 +1067,7 @@ impl Media {
                                     // changed its mode after the capture opened (issue #123)
                                     // would not match the rectangle the capture opened on.
                                     let in_front = butterpollo_windows::foreground::in_front(&target.0);
-                                    if butterpollo_core::capture_policy::duplication_for_fullscreen(
+                                    if butterpollo_media_policy::capture_policy::duplication_for_fullscreen(
                                         automatic,
                                         capture.backend(),
                                         display,
@@ -1104,7 +1110,7 @@ impl Media {
                                     let now = Instant::now();
                                     if matches!(
                                         rate.decide(now, period, false),
-                                        Some(butterpollo_core::capture_policy::Publish::Repeat)
+                                        Some(butterpollo_media_policy::capture_policy::Publish::Repeat)
                                     ) {
                                         match worker.current()? {
                                             Some(picture) => {
@@ -1233,7 +1239,10 @@ impl Media {
             let reason = format!("the stream could not start: {e:#}");
             h.sessions.lock().unwrap().fail_start(&s, reason);
             h.record_failure(&s);
-            h.record_session(&s, butterpollo_core::session_history::REASON_START_FAILED);
+            h.record_session(
+                &s,
+                butterpollo_session::session_history::REASON_START_FAILED,
+            );
             tracing::error!(error=%e,"could not start session worker");
             h.session_webhook("session.ended", &s);
         }
@@ -1248,7 +1257,7 @@ impl Media {
         let latest = latest.insert(self.capture(
             s.config.hdr,
             c,
-            butterpollo_core::framegen::Rate(s.config.fps_millihz()),
+            butterpollo_media_policy::framegen::Rate(s.config.fps_millihz()),
             &s.launch.id,
             prepared.clone(),
         )?);
@@ -1260,8 +1269,8 @@ impl Media {
     fn set_display_hdr_metadata(
         &self,
         s: &Session,
-        display: butterpollo_core::hdr::Metadata,
-    ) -> butterpollo_core::hdr::Metadata {
+        display: butterpollo_media_policy::hdr::Metadata,
+    ) -> butterpollo_media_policy::hdr::Metadata {
         let hdr = s.hdr_active();
         let previous = s.hdr_metadata.read().unwrap().map(|m| m.wire(hdr));
         let metadata = s.set_display_hdr_metadata(display);
@@ -1276,7 +1285,7 @@ impl Media {
     fn fallback_hdr_if_sdr(
         &self,
         s: &Session,
-        stream: &mut butterpollo_core::rtsp::Negotiated,
+        stream: &mut butterpollo_media_policy::rtsp::Negotiated,
         image: &GpuImage,
         rtx_hdr_active: bool,
     ) -> bool {
@@ -1290,7 +1299,7 @@ impl Media {
         ) {
             return false;
         }
-        butterpollo_core::stream_policy::stream_sdr_10bit(stream);
+        butterpollo_media_policy::stream_policy::stream_sdr_10bit(stream);
         if s.disable_hdr() {
             let _ = self.control_wake.send(&[1]);
         }
@@ -1340,8 +1349,8 @@ impl Media {
         }
         // The same floor link-rate adaptation stops at, measured on the project's test scenes.
         // Whole frames per second, as the client's minimum is, so 59.94 compares as 60.
-        let minimum = butterpollo_core::link_rate::pyrowave_floor_kbps(&stream);
-        let recommended = butterpollo_core::link_rate::pyrowave_recommended_kbps(&stream);
+        let minimum = butterpollo_media_policy::link_rate::pyrowave_floor_kbps(&stream);
+        let recommended = butterpollo_media_policy::link_rate::pyrowave_recommended_kbps(&stream);
         let bitrate = s.bitrate.load(Ordering::Relaxed);
         if stream.codec == 3 && bitrate < minimum {
             tracing::warn!(

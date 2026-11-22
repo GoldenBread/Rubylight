@@ -193,7 +193,7 @@ fn send(pads: &mut Gamepads, touchpad: u8, event: u8, pointer: u32, x: f32, y: f
     packet[16..20].copy_from_slice(&x.to_le_bytes());
     packet[20..24].copy_from_slice(&y.to_le_bytes());
     packet[24..28].copy_from_slice(&1f32.to_le_bytes());
-    pads.apply(&butterpollo_core::input::decode(&packet)?)
+    pads.apply(&butterpollo_input_policy::input::decode(&packet)?)
 }
 
 #[test]

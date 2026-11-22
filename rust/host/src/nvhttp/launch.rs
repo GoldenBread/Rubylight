@@ -176,7 +176,7 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
         if let Some(id) = guest
             && !h.device_guests.guest_live(&h, id)
         {
-            return Err(LaunchFailure(403, butterpollo_core::multiclient::REVOKED).into());
+            return Err(LaunchFailure(403, butterpollo_session::multiclient::REVOKED).into());
         }
         let key: [u8; 16] = hex::decode(args.get("rikey").context("missing stream key")?)?
             .try_into()
@@ -198,17 +198,17 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
             build_launch_session(&connection, &args, client, app_id, role, key, key_id);
         if let Some(id) = guest {
             launch.options.insert(
-                butterpollo_core::multiclient::LAUNCH_OPTION.into(),
+                butterpollo_session::multiclient::LAUNCH_OPTION.into(),
                 id.to_string(),
             );
         }
         // A refused `rlFecPercentage` fails the launch rather than streaming
         // with protection the client did not ask for.
-        butterpollo_core::extensions::fec_choice(&launch.options)?;
+        butterpollo_media_policy::extensions::fec_choice(&launch.options)?;
         // So does a refused `rlRateChange`, rather than a stream without 0x553C.
-        butterpollo_core::rate_change::launch_choice(&launch.options)?;
+        butterpollo_media_policy::rate_change::launch_choice(&launch.options)?;
         // And a display scale Windows does not offer (`rlDisplayScale`).
-        butterpollo_core::display_policy::client_display_scale(&launch.options)?;
+        butterpollo_media_policy::display_policy::client_display_scale(&launch.options)?;
         // A co-op launch is no background stream; a background stream runs
         // in a Nucleus Co-op session of its own ([`launch_back_half`]).
         launch.background = Some(coop.is_none() && validate_background_launch(&h, &launch)?);
@@ -253,7 +253,7 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
             h.device_guests.unplug_guest_pad(&h, id);
             h.controller_sessions
                 .unplug(&crate::controller_sessions::key(&launch));
-            return Err(LaunchFailure(403, butterpollo_core::multiclient::REVOKED).into());
+            return Err(LaunchFailure(403, butterpollo_session::multiclient::REVOKED).into());
         }
         let host = match connection.local.ip() {
             std::net::IpAddr::V4(ip) => ip.to_string(),
@@ -305,9 +305,9 @@ fn launch_back_half(
     // The app as this device streams it: the device's block in its `device-overrides` on top,
     // for its Radeon profile and its managed game files.
     let app = app.map(|app| {
-        butterpollo_core::device_overrides::for_device(
+        butterpollo_session::device_overrides::for_device(
             &app,
-            butterpollo_core::state::device_uuid(&launch.client.uuid),
+            butterpollo_session::state::device_uuid(&launch.client.uuid),
         )
     });
     let role = launch.role;
@@ -673,7 +673,7 @@ pub(crate) fn launch_webrtc(
         Some(LaunchFailure(404, _)) => WebRtcLaunchError::InvalidApplication,
         Some(LaunchFailure(409, message)) => WebRtcLaunchError::SessionActive((*message).into()),
         Some(LaunchFailure(503, message))
-            if *message != butterpollo_core::encoder_gpu::NO_ENCODER_LAUNCH =>
+            if *message != butterpollo_media_policy::encoder_gpu::NO_ENCODER_LAUNCH =>
         {
             WebRtcLaunchError::HostBusy
         }
@@ -692,10 +692,13 @@ pub(crate) fn launch_webrtc(
 fn no_encoder(h: &Shared, uuid: &str) -> anyhow::Error {
     let refused = anyhow::Error::new(LaunchFailure(
         503,
-        butterpollo_core::encoder_gpu::NO_ENCODER_LAUNCH,
+        butterpollo_media_policy::encoder_gpu::NO_ENCODER_LAUNCH,
     ));
     let Some(cause) = h.encoder_probe_error.lock().unwrap().clone() else {
-        h.record_launch_failure(uuid, butterpollo_core::encoder_gpu::NO_ENCODER_LAUNCH);
+        h.record_launch_failure(
+            uuid,
+            butterpollo_media_policy::encoder_gpu::NO_ENCODER_LAUNCH,
+        );
         return refused;
     };
     let cause = format!("The encoder check failed: {cause}");

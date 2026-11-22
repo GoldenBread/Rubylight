@@ -37,7 +37,7 @@ pub use handoff::*;
 
 /// Whether captures and the AMF and NVENC encoders use the compute queue
 /// (`gpu_compute_conversion`, on unless turned off).
-pub fn enabled(config: &butterpollo_core::config::Config) -> bool {
+pub fn enabled(config: &butterpollo_config::config::Config) -> bool {
     config.boolean("gpu_compute_conversion", true)
 }
 /// Whether the compute queue can open `texture` (an NT-handle shared one).
@@ -1654,8 +1654,8 @@ impl Drop for Converter {
 /// What the focus passes use for the next conversions.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FocusSettings {
-    pub mode: butterpollo_core::encoder_focus::Mode,
-    pub levels: butterpollo_core::encoder_focus::Levels,
+    pub mode: butterpollo_media_policy::encoder_focus::Mode,
+    pub levels: butterpollo_media_policy::encoder_focus::Levels,
     /// The cursor in target pixels, while it is in the picture.
     pub cursor: Option<(i32, i32)>,
 }
@@ -1765,7 +1765,7 @@ impl Focus {
         let levels = settings.levels;
         let cursor = settings
             .cursor
-            .map(butterpollo_core::encoder_focus::clamp_cursor);
+            .map(butterpollo_media_policy::encoder_focus::clamp_cursor);
         let (x, y) = cursor.unwrap_or_default();
         [
             settings.mode.shader(),
@@ -1898,7 +1898,7 @@ impl Converter {
             return Ok(());
         }
         self.compute.ensure_active()?;
-        let age_grid = butterpollo_core::encoder_focus::age_grid(self.width, self.height);
+        let age_grid = butterpollo_media_policy::encoder_focus::age_grid(self.width, self.height);
         let grid = (self.width.div_ceil(block), self.height.div_ceil(block));
         let device = &self.compute.device;
         let root = root_signature_with(device, 0, 2, &focus_parameters())?;

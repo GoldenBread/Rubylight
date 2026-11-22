@@ -25,7 +25,7 @@ fn running_app(f: &crate::state::test_support::Fixture, owner: &str) {
 #[test]
 fn a_launch_that_replaces_the_game_logs_the_stop_and_who_launched() {
     use crate::state::test_support::Fixture;
-    use butterpollo_core::{remote::Owner, session::Role};
+    use butterpollo_session::{remote::Owner, session::Role};
     let f = Fixture::new();
     running_app(&f, "owner");
     let mut launch = f.launch(f.client(u32::MAX), Role::Stream);
@@ -59,7 +59,7 @@ fn a_launch_that_replaces_the_game_logs_the_stop_and_who_launched() {
 #[test]
 fn a_client_that_sends_the_confirmation_replaces_only_on_that_request() {
     use crate::state::test_support::Fixture;
-    use butterpollo_core::{remote::Owner, session::Role};
+    use butterpollo_session::{remote::Owner, session::Role};
     let f = Fixture::new();
     running_app(&f, "owner");
     let mut launch = f.launch(f.client(u32::MAX), Role::Stream);
@@ -76,7 +76,7 @@ fn a_client_that_sends_the_confirmation_replaces_only_on_that_request() {
     let asking = || {
         f.host.confirmations.lock().unwrap().active(
             &launch.client.uuid,
-            butterpollo_core::remote::Confirmation::Replace,
+            butterpollo_session::remote::Confirmation::Replace,
             &generation,
         )
     };
@@ -99,7 +99,7 @@ fn a_client_that_sends_the_confirmation_replaces_only_on_that_request() {
 #[test]
 fn a_confirmation_closes_only_the_game_its_prompt_named() {
     use crate::state::test_support::Fixture;
-    use butterpollo_core::{remote::Owner, session::Role};
+    use butterpollo_session::{remote::Owner, session::Role};
     let f = Fixture::new();
     running_app(&f, "owner");
     let mut launch = f.launch(f.client(u32::MAX), Role::Stream);
@@ -132,7 +132,7 @@ fn a_confirmation_closes_only_the_game_its_prompt_named() {
 fn stopping_streams_does_not_wait_for_remote_sessions_it_leaves_running() {
     use super::{Duration, Instant, StopStreams, stop_streams};
     use crate::state::test_support::Fixture;
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
     let client = f.client(u32::MAX);
     let monitor = f.session(client.clone(), Role::RemoteMonitor);
@@ -148,7 +148,7 @@ fn stopping_streams_does_not_wait_for_remote_sessions_it_leaves_running() {
 fn stopping_streams_ends_a_stream_and_waits_for_it_to_leave() {
     use super::{Duration, StopStreams, stop_streams};
     use crate::state::test_support::Fixture;
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
     let stream = f.session(f.client(u32::MAX), Role::Stream);
     let host = f.host.clone();
@@ -171,7 +171,7 @@ fn stopping_streams_ends_a_stream_and_waits_for_it_to_leave() {
 fn only_the_games_owner_may_terminate_it_while_remote_sessions_are_active() {
     use super::{StopStreams, stop_streams, terminate_refused};
     use crate::state::test_support::Fixture;
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
     // No game, nothing to refuse.
     assert!(!terminate_refused(&f.host, "other"));
@@ -214,7 +214,7 @@ fn a_failed_app_lookup_keeps_its_own_status_and_only_an_unknown_app_is_a_404() {
 fn a_launch_stops_the_watch_before_it_looks_at_a_display() {
     use crate::display_session::tests::WAKE_WATCH_HOLDS;
     use crate::state::test_support::Fixture;
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
     let f = Fixture::new();
     let launch = f.launch(f.client(u32::MAX), Role::Stream);
     let args = super::Args::from([("mode".to_owned(), "not a mode".to_owned())]);

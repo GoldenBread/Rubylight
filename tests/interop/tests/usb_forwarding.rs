@@ -6,7 +6,6 @@ use butterpollo::{
     stream::reconnect_harness::{Harness, until},
     usb_forward::test_support::FakeVhci,
 };
-use butterpollo_core::usbip_wire::{self as wire, Base, Header};
 use common::{LOADED, Recorder, device, stream};
 use nightjar_core::{
     control::{ClientMessage, ControlEvent, SendError, ptype},
@@ -17,6 +16,7 @@ use nightjar_core::{
         fake::{self, FakeDevice},
     },
 };
+use rubylight_protocol::usbip::{self as wire, Base, Header};
 use std::{
     io::{Read, Write},
     net::TcpStream,

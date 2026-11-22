@@ -84,9 +84,9 @@ fn apps_list_marks_only_known_uninstalled_launcher_games_and_never_stores_it() {
     }
     crate::library::seed(
         &f.host,
-        butterpollo_core::native::Scan::new(["steam:570".into()])
+        butterpollo_session::native::Scan::new(["steam:570".into()])
             .adding(["steam:1007".into()])
-            .skipping([butterpollo_core::library::Source::Epic]),
+            .skipping([butterpollo_session::library::Source::Epic]),
     );
     let list = handle(&f.host, "GET", "/api/apps", &json!({})).unwrap();
     let flagged: Vec<&str> = list["apps"]
@@ -126,7 +126,7 @@ fn apps_list_says_when_the_stores_last_played_a_game_and_never_stores_it() {
     }
     crate::library::seed(
         &f.host,
-        butterpollo_core::native::Scan::new(["steam:570".into(), "steam:440".into()]).playing([
+        butterpollo_session::native::Scan::new(["steam:570".into(), "steam:440".into()]).playing([
             ("steam:570".to_owned(), 1_700_000_000),
             ("steam:440".to_owned(), 0),
         ]),
@@ -321,7 +321,7 @@ fn stored(f: &Fixture, uuid: &str) -> Option<serde_json::Value> {
 
 #[test]
 fn a_synced_app_saved_in_the_console_becomes_the_users_and_survives_uninstall() {
-    use butterpollo_core::steam;
+    use butterpollo_session::steam;
     let f = Fixture::new();
     let uuid = steam::canonical_uuid(620);
     crate::steam::update_apps(&f.host, |apps| {
@@ -345,7 +345,7 @@ fn a_synced_app_saved_in_the_console_becomes_the_users_and_survives_uninstall() 
     assert_eq!(app.get("synced-by"), None);
     // Uninstalled, with a sync that removes missing games: it stays as saved.
     let settings = steam::Settings::from_config(
-        &butterpollo_core::config::Config::parse(
+        &butterpollo_config::config::Config::parse(
             "steam_sync_all_installed=true\nsteam_autosync_remove_uninstalled=true",
         )
         .unwrap(),
@@ -480,7 +480,7 @@ fn a_busy_or_failed_neural_rendering_removal_keeps_its_app_and_touches_nothing_e
         handle(&f.host, "POST", "/api/apps", &app).unwrap();
     }
     let removals = Cell::new(0);
-    let count = |_: &crate::neural::Removing, _: &butterpollo_core::state::App| {
+    let count = |_: &crate::neural::Removing, _: &butterpollo_session::state::App| {
         removals.set(removals.get() + 1);
         Ok(())
     };
@@ -552,7 +552,10 @@ async fn a_delete_while_a_stream_runs_keeps_an_app_with_neural_rendering() {
         true
     })
     .unwrap();
-    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    f.session(
+        f.client(u32::MAX),
+        butterpollo_session::session::Role::Stream,
+    );
     for (method, path, data) in [
         ("POST", "/api/apps/delete", json!({"uuids": ["game"]})),
         ("DELETE", "/api/apps/game", serde_json::Value::Null),

@@ -69,7 +69,7 @@ pub(super) async fn do_pair(
             .get("devicename")
             .cloned()
             .unwrap_or("Moonlight Client".into());
-        butterpollo_core::pairing::validate_device_name(&name)?;
+        butterpollo_crypto::pairing::validate_device_name(&name)?;
         // Another device's request still waiting for its PIN, or in the
         // seconds of its handshake, is not replaced: the PIN typed for it
         // would reach this device instead.
@@ -357,11 +357,11 @@ pub(super) async fn do_pair(
 }
 
 /// The end of a pairing that answered an invite: the invite is spent, and the device is paired as
-/// an invited guest (`butterpollo_core::invites`), never with a first device's rights. A device
+/// an invited guest (`butterpollo_session::invites`), never with a first device's rights. A device
 /// already paired on its own keeps its rights.
 fn finish_invite(
     h: &Shared,
-    p: &butterpollo_core::pairing::Pairing,
+    p: &butterpollo_crypto::pairing::Pairing,
     peer: std::net::IpAddr,
 ) -> Result<Vec<(String, String)>> {
     let invite = p.invite.context("not an invite's pairing")?;
@@ -374,7 +374,10 @@ fn finish_invite(
     let (perm, guest) = crate::invites::entitle(h, &state, invite)?;
     let before = state.clone();
     let mut extra = std::collections::BTreeMap::new();
-    extra.insert(butterpollo_core::invites::MARKER.to_owned(), guest.marker());
+    extra.insert(
+        butterpollo_session::invites::MARKER.to_owned(),
+        guest.marker(),
+    );
     state
         .add(
             &h.paired_path,
@@ -439,7 +442,7 @@ pub(super) async fn unpair(
         return xml(200, &[("unpaired", "0".into())], None);
     };
     // From either of its screens, the device goes, with both screens' streams.
-    let device = butterpollo_core::state::device_uuid(&client.uuid);
+    let device = butterpollo_session::state::device_uuid(&client.uuid);
     let removed = h.unpair_with_network_history(Some(device));
     if let Err(e) = removed {
         return xml(500, &[("unpaired", "0".into())], Some(e.to_string()));

@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::wake::AdapterFix;
+use butterpollo_session::wake::AdapterFix;
 
 const GUID: &str = "{875511C7-0EF5-45F7-876C-3BE50726AC42}";
 const PNP: &str = r"PCI\VEN_10EC&DEV_8125\01";

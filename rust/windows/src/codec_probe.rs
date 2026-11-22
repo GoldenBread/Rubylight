@@ -9,7 +9,8 @@ use crate::{
     process::{Process, Target},
 };
 use anyhow::{Result, bail, ensure};
-use butterpollo_core::{config::Config, rtsp::Negotiated};
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::rtsp::Negotiated;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -168,10 +169,10 @@ pub fn pyrowave(config: &Config, stop: &dyn Fn() -> bool) -> Result<u32> {
 pub fn packed(config: &Config, stream: &Negotiated, stop: &dyn Fn() -> bool) -> Result<()> {
     stream.validate()?;
     ensure!(
-        butterpollo_core::packed444::supported(stream.chroma_packing),
+        rubylight_protocol::packed444::supported(stream.chroma_packing),
         "invalid packed probe request"
     );
-    let flag = u32::from(butterpollo_core::packed444::mode_bit(
+    let flag = u32::from(rubylight_protocol::packed444::mode_bit(
         stream.codec,
         stream.ten_bit(),
     ));
@@ -248,7 +249,7 @@ fn run(config: &Config, packed: Option<&Negotiated>, stop: &dyn Fn() -> bool) ->
     match reply {
         Reply::Done { flags, errors } => {
             let allowed = if packed.is_some() {
-                u32::from(butterpollo_core::packed444::ALL_MODES)
+                u32::from(rubylight_protocol::packed444::ALL_MODES)
             } else {
                 FLAGS
             };
@@ -312,7 +313,7 @@ fn probe(request: &Request, open: &mut Vec<Encoder>) -> Result<Reply> {
     if let Some(mode) = &request.packed {
         mode.validate()?;
         ensure!(
-            butterpollo_core::packed444::supported(mode.chroma_packing),
+            rubylight_protocol::packed444::supported(mode.chroma_packing),
             "invalid packed probe request"
         );
         gpu.values.extend(request.encoder_options.clone());
@@ -323,7 +324,7 @@ fn probe(request: &Request, open: &mut Vec<Encoder>) -> Result<Reply> {
         };
         packed_sequence(&mut encoder, PACKED_FRAME_WAIT)?;
         return Ok(Reply::Done {
-            flags: u32::from(butterpollo_core::packed444::mode_bit(
+            flags: u32::from(rubylight_protocol::packed444::mode_bit(
                 mode.codec,
                 mode.ten_bit(),
             )),
@@ -411,7 +412,7 @@ impl Sequence for Probe<'_> {
 /// slices failed packed HEVC above 2560x1208 with "failed to return frame 2"
 /// (issue #76).
 ///
-/// [`AUTO_SLICE_PIXELS`]: butterpollo_core::encoder_policy::AUTO_SLICE_PIXELS
+/// [`AUTO_SLICE_PIXELS`]: butterpollo_media_policy::encoder_policy::AUTO_SLICE_PIXELS
 fn frames(units: impl Iterator<Item = crate::encoder::Unit>) -> usize {
     units
         .filter(|unit| !matches!(unit, crate::encoder::Unit::Slice { .. }))

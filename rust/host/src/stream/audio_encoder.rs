@@ -3,7 +3,7 @@
 
 use super::audio_sink::AudioSink;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
+use butterpollo_media_policy::{
     audio_passthrough::{self, Codec},
     rtsp::Negotiated,
 };
@@ -107,7 +107,7 @@ pub(crate) fn dolby_codecs_probed(directory: &Path, channels: u8) -> Option<u8> 
 
 /// The AC3 and E-AC3 bits that fit `channels` and `opens`, or `None` when `opens` doesn't know.
 fn dolby_bits(channels: u8, mut opens: impl FnMut(Codec) -> Option<bool>) -> Option<u8> {
-    use butterpollo_core::audio_ext::{CODEC_AC3, CODEC_EAC3, channels_fit};
+    use rubylight_protocol::audio_ext::{CODEC_AC3, CODEC_EAC3, channels_fit};
     let mut bits = 0;
     for (bit, codec) in [(CODEC_AC3, Codec::Ac3), (CODEC_EAC3, Codec::Eac3)] {
         if channels_fit(bit, channels) && opens(codec)? {
@@ -179,7 +179,7 @@ pub(super) enum AudioEncoder {
     Pcm,
     Dolby {
         encoder: Ac3Encoder,
-        /// The next frame's [`butterpollo_core::audio_ext::ChunkHeader`] index.
+        /// The next frame's [`rubylight_protocol::audio_ext::ChunkHeader`] index.
         frame: u16,
     },
 }

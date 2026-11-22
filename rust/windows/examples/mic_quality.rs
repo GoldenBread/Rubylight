@@ -15,7 +15,7 @@
 //! usage: mic_quality IN.f32 OUT.f32
 #![allow(clippy::undocumented_unsafe_blocks)]
 use anyhow::{Context, Result, bail};
-use butterpollo_core::mic::Playout;
+use butterpollo_session::mic::Playout;
 use butterpollo_windows::{
     audio::OpusDecoder,
     audio_route,

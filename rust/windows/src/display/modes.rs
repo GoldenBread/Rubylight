@@ -292,7 +292,7 @@ pub(super) fn supported_modes(output: &str) -> Vec<(u32, u32, u32)> {
 pub fn highest_refresh(
     output: &str,
     resolution: Option<(u32, u32)>,
-) -> Result<butterpollo_core::framegen::Rate> {
+) -> Result<butterpollo_media_policy::framegen::Rate> {
     let monitors = monitors()?;
     let monitor = monitors
         .iter()
@@ -336,7 +336,9 @@ pub fn highest_refresh(
     if best == 0 {
         bail!("selected display has no mode for {width}x{height}");
     }
-    Ok(butterpollo_core::framegen::Rate(best.saturating_mul(1000)))
+    Ok(butterpollo_media_policy::framegen::Rate(
+        best.saturating_mul(1000),
+    ))
 }
 
 #[cfg(test)]

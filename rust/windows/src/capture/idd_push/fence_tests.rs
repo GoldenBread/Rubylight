@@ -302,7 +302,7 @@ fn pyrowave_encoding_returns_keyed_capture_slots() -> Result<()> {
         &pixels(layout.width, layout.height, Pixel::Bgra8, 80),
     )?;
     let mut consumer = Consumer::new(1, layout.slot_count);
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: layout.width,
         height: layout.height,
         fps: 144,
@@ -310,7 +310,7 @@ fn pyrowave_encoding_returns_keyed_capture_slots() -> Result<()> {
         bitrate_kbps: 100_000,
         ..Default::default()
     };
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     let mut encoder = crate::pyrowave::Encoder::new_device_reported(
         &config,
         gpu.clone(),

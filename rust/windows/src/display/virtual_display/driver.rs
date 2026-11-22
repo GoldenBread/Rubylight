@@ -4,7 +4,7 @@
 use super::*;
 
 /// The Windows build number from the registry, or None when it cannot be read
-/// (callers then treat the build as capable; see `butterpollo_core::os_gate`).
+/// (callers then treat the build as capable; see `butterpollo_session::os_gate`).
 pub fn windows_build() -> Option<u32> {
     static BUILD: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
     *BUILD
@@ -32,7 +32,7 @@ pub fn windows_build() -> Option<u32> {
 /// physical display, as Vibepollo does on Windows 10, because the driver
 /// cannot bind. The first call logs why, once.
 pub fn virtual_display_os() -> bool {
-    use butterpollo_core::os_gate::{Feature, missing, virtual_display};
+    use butterpollo_session::os_gate::{Feature, missing, virtual_display};
     static LOGGED: std::sync::Once = std::sync::Once::new();
     let build = windows_build();
     if let Some(reason) = missing(build, Feature::VirtualDisplay) {
@@ -133,7 +133,7 @@ pub struct RenderAdapter {
 /// on a PC with an AMD and a non-AMD GPU, where it is the AMD GPU: the stream
 /// encodes only there, and the probe already counts on it.
 pub fn configured_render_adapter(
-    config: &butterpollo_core::config::Config,
+    config: &butterpollo_config::config::Config,
 ) -> Option<RenderAdapter> {
     let (name, pnp_id) = crate::capture::stream_adapter(
         None,

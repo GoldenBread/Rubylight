@@ -16,7 +16,7 @@ use axum::{
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
-use butterpollo_core::webrtc::guests::{InviteError, Permission};
+use butterpollo_session::webrtc::guests::{InviteError, Permission};
 use serde_json::{Value, json};
 use std::time::Duration;
 

@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::{packet::VideoPacketizer, rtsp::Negotiated};
+use butterpollo_media_policy::{packet::VideoPacketizer, rtsp::Negotiated};
 use std::time::Duration;
 
 #[test]

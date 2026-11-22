@@ -3,7 +3,7 @@
 //! folder is opened without impersonation.
 use super::*;
 use axum::response::Response;
-use butterpollo_core::native_api::{
+use rubylight_native_api::{
     feature,
     files::{FileList, Uploaded},
 };
@@ -456,7 +456,7 @@ async fn a_download_is_paced_while_a_stream_runs_or_starts() {
     let bytes = files.put("game.sav", PACED);
     files.s.f.session(
         files.s.client.clone(),
-        butterpollo_core::session::Role::Stream,
+        butterpollo_session::session::Role::Stream,
     );
     let started = std::time::Instant::now();
     assert_eq!(
@@ -471,7 +471,7 @@ async fn a_download_is_paced_while_a_stream_runs_or_starts() {
     let bytes = files.put("game.sav", PACED);
     let launch = files.s.f.launch(
         files.s.client.clone(),
-        butterpollo_core::session::Role::Stream,
+        butterpollo_session::session::Role::Stream,
     );
     files
         .s
@@ -495,7 +495,7 @@ async fn an_upload_is_paced_while_a_stream_runs() {
     files.set("file_transfer_stream_mbps", "8");
     files.s.f.session(
         files.s.client.clone(),
-        butterpollo_core::session::Role::Stream,
+        butterpollo_session::session::Role::Stream,
     );
     let started = std::time::Instant::now();
     let reply = files.upload("paced.bin", vec![1; PACED]).await;

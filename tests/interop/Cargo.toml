@@ -10,7 +10,10 @@ publish = false
 [dev-dependencies]
 anyhow.workspace = true
 butterpollo = { path = "../../rust/host", features = ["test-harness"] }
-butterpollo-core = { path = "../../rust/core" }
+butterpollo-crypto = { path = "../../rust/core/crypto" }
+butterpollo-input-policy = { path = "../../rust/core/input-policy" }
+butterpollo-media-policy = { path = "../../rust/core/media-policy" }
+butterpollo-session = { path = "../../rust/core/session" }
 butterpollo-windows = { path = "../../rust/windows", features = ["test-folder", "test-route"] }
 nightjar-core = { path = "../../client/protocol/client" }
 rubylight-native-api = { path = "../../client/protocol/native-api" }

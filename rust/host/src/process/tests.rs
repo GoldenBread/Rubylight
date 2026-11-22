@@ -3,7 +3,7 @@ use super::*;
 /// audio routed too, and nothing older that only shares a pid.
 #[test]
 fn a_games_processes_are_the_game_and_its_children() {
-    let process = |pid, parent, started| butterpollo_core::steam::Process {
+    let process = |pid, parent, started| butterpollo_session::steam::Process {
         pid,
         parent,
         started,
@@ -58,7 +58,7 @@ fn a_playnite_games_processes_are_recorded_for_its_settings_files() {
         crate::game_settings::launching(&f.host, &app, &args, &environment).unwrap();
     assert!(running.settings_swap.is_some());
     running.playnite = Some(crate::playnite::Launch::with_game_processes(vec![
-        butterpollo_core::game_settings::Watched {
+        butterpollo_session::game_settings::Watched {
             pid: 7171,
             started: 9,
             program: folder.join("Game.exe").to_string_lossy().into_owned(),
@@ -76,7 +76,7 @@ fn a_playnite_games_processes_are_recorded_for_its_settings_files() {
 }
 #[test]
 fn an_apps_exit_timeout_overrides_the_hosts_and_the_hosts_overrides_ten_seconds() {
-    use butterpollo_core::config::Config;
+    use butterpollo_config::config::Config;
     let app = |extra: serde_json::Value| -> App {
         let mut value = serde_json::json!({"name": "Game"});
         value
@@ -198,7 +198,7 @@ fn a_missing_executable_fails_instead_of_detaching_a_desktop_stream() {
 #[test]
 fn a_slow_steam_launch_keeps_its_process_tracker() {
     let mut app = RunningApp::with_environment(&App::desktop(), BTreeMap::new()).unwrap();
-    app.steam = Some(butterpollo_core::steam::Tracker::new(
+    app.steam = Some(butterpollo_session::steam::Tracker::new(
         &[],
         "C:\\not-a-game",
         Duration::ZERO,
@@ -321,7 +321,7 @@ fn the_launcher_watch_skips_launcher_apps_and_ends_with_its_limit() {
     assert_eq!(running.launch_progress(), None);
     running.launcher_only = false;
     running.started = std::time::Instant::now()
-        - butterpollo_core::launcher_prompt::WATCH_LIMIT
+        - butterpollo_session::launcher_prompt::WATCH_LIMIT
         - Duration::from_secs(1);
     assert_eq!(
         running.launch_progress(),
@@ -341,7 +341,7 @@ fn existing_environment_syntax_is_case_insensitive_and_checked() {
 }
 #[test]
 fn a_program_the_desktop_started_is_the_users_not_the_apps() {
-    use butterpollo_core::steam::Process;
+    use butterpollo_session::steam::Process;
     let process = |pid, parent, started, name: &str| Process {
         pid,
         parent,
@@ -364,7 +364,7 @@ fn a_program_the_desktop_started_is_the_users_not_the_apps() {
 }
 #[test]
 fn a_store_started_game_is_found_by_a_check_handed_out_one_at_a_time() {
-    use butterpollo_core::steam::Process;
+    use butterpollo_session::steam::Process;
     let mut app = RunningApp::with_environment(&App::desktop(), BTreeMap::new()).unwrap();
     app.launches = true;
     let launched = app.launched_at;
@@ -434,7 +434,8 @@ fn a_display_leaving_brings_back_only_a_game_with_processes_to_name() {
     let mut game = std::mem::ManuallyDrop::new(
         RunningApp::with_environment(&App::desktop(), BTreeMap::new()).unwrap(),
     );
-    let mut tracker = butterpollo_core::steam::Tracker::new(&[], "C:\\not-a-game", Duration::ZERO);
+    let mut tracker =
+        butterpollo_session::steam::Tracker::new(&[], "C:\\not-a-game", Duration::ZERO);
     tracker.tracked.insert(me, started);
     game.steam = Some(tracker);
     assert!(!game.is_desktop());
@@ -448,7 +449,7 @@ fn a_display_leaving_brings_back_only_a_game_with_processes_to_name() {
 fn launching_app() -> RunningApp {
     let mut app = RunningApp::with_environment(&App::desktop(), BTreeMap::new()).unwrap();
     app.mark_launching();
-    app.steam = Some(butterpollo_core::steam::Tracker::new(
+    app.steam = Some(butterpollo_session::steam::Tracker::new(
         &[],
         "C:\\not-a-game",
         Duration::ZERO,
@@ -635,7 +636,7 @@ fn a_background_game_or_a_program_the_desktop_started_is_never_brought_back() {
     assert!(!launcher.bring_back_open(now));
     let mut late = launching_app();
     late.started = std::time::Instant::now()
-        - butterpollo_core::launcher_prompt::WATCH_LIMIT
+        - butterpollo_session::launcher_prompt::WATCH_LIMIT
         - Duration::from_secs(1);
     assert!(!late.bring_back_open(now));
     assert_eq!(
@@ -647,7 +648,7 @@ fn a_background_game_or_a_program_the_desktop_started_is_never_brought_back() {
     assert!(!desktop.bring_back_open(now));
     assert!(desktop.focus_windows().unwrap().is_empty());
     // A program explorer.exe started is the user's, even when a tracker followed it.
-    let process = |pid, parent, started, name: &str| butterpollo_core::steam::Process {
+    let process = |pid, parent, started, name: &str| butterpollo_session::steam::Process {
         pid,
         parent,
         started,
@@ -690,7 +691,7 @@ fn a_foreground_check_for_a_replaced_app_is_not_applied_to_its_successor() {
     let verdict = check.run_with(
         |_| created,
         || {
-            Ok(vec![butterpollo_core::steam::Process {
+            Ok(vec![butterpollo_session::steam::Process {
                 pid: 30,
                 parent: 40,
                 started: created,
@@ -708,7 +709,7 @@ fn a_foreground_check_for_a_replaced_app_is_not_applied_to_its_successor() {
 }
 #[test]
 fn a_foreground_check_records_nothing_for_a_program_gone_or_replaced_under_its_id() {
-    use butterpollo_core::steam::Process;
+    use butterpollo_session::steam::Process;
     let mut app = RunningApp::with_environment(&App::desktop(), BTreeMap::new()).unwrap();
     app.launches = true;
     let created = app.launched_at + 5;

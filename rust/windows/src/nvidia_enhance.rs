@@ -3,11 +3,11 @@
 //! of what the GPU and driver offer. The adapter is never beside the host: it
 //! is loaded by full path from the component's folder, which the host names
 //! with [`set_component`], after every file there was checked
-//! ([`butterpollo_core::nvidia_component::verify`]).
+//! ([`butterpollo_media_policy::nvidia_component::verify`]).
 use crate::process::Hold;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::nvidia_component::{self, ABI, ADAPTER};
-use butterpollo_core::nvidia_enhance::{RTX_HDR, RTX_VIDEO, ngx_adapter};
+use butterpollo_media_policy::nvidia_component::{self, ABI, ADAPTER};
+use butterpollo_media_policy::nvidia_enhance::{RTX_HDR, RTX_VIDEO, ngx_adapter};
 use std::{
     ffi::c_void,
     os::windows::ffi::OsStrExt,

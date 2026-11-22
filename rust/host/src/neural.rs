@@ -6,8 +6,8 @@
 //! (GPL-3.0) loads in place of the game's own. Rubylight never hosts,
 //! bundles, mirrors or modifies its files: when the user turns the switch
 //! on, this PC downloads the release Rubylight pins
-//! ([`butterpollo_core::neural::PINNED`]): its full package and add-on,
-//! straight from that GitHub release ([`butterpollo_core::neural::asset`]
+//! ([`butterpollo_session::neural::PINNED`]): its full package and add-on,
+//! straight from that GitHub release ([`butterpollo_session::neural::asset`]
 //! says which), checks them against the pin, GitHub's digests and the
 //! release's SHA256SUMS.txt, keeps them in a cache and copies the files
 //! unmodified into the game's folder ([`folder`]). A launch checks them and
@@ -22,7 +22,7 @@ mod tests;
 
 use crate::state::Shared;
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use butterpollo_core::{
+use butterpollo_session::{
     neural::{self, Download, Gpu, Placed, Release},
     state::App,
 };
@@ -931,7 +931,7 @@ fn update_settings(h: &Shared, change: impl FnOnce(&mut Value) -> Result<()>) ->
         .unwrap_or_else(PoisonError::into_inner);
     let mut value = read_settings(h)?;
     change(&mut value)?;
-    butterpollo_core::state::write_json(&h.directory.join(SETTINGS_FILE), &value)
+    butterpollo_session::state::write_json(&h.directory.join(SETTINGS_FILE), &value)
 }
 /// Whether the user accepted the notice that comes before the first download.
 pub fn accepted(h: &Shared) -> bool {
@@ -968,8 +968,8 @@ fn legacy_cache_root(h: &Shared) -> PathBuf {
 /// host, the profile otherwise. Setup locks it down for the installed host,
 /// so it is where [`trusted_root`]'s check of who may change folders ends.
 fn data_root(h: &Shared) -> PathBuf {
-    if h.directory == butterpollo_core::paths::installed_profile() {
-        butterpollo_core::paths::data_root()
+    if h.directory == butterpollo_session::paths::installed_profile() {
+        butterpollo_session::paths::data_root()
     } else {
         h.directory.clone()
     }
@@ -1385,7 +1385,7 @@ fn extract(archives: &[PathBuf], root: &Path, release: &Release) -> Result<(Path
             .collect(),
         files,
     };
-    butterpollo_core::state::write_json(&staging.join(PACKAGE), &package)?;
+    butterpollo_session::state::write_json(&staging.join(PACKAGE), &package)?;
     let folder = root.join(&release.tag);
     // The same release there before (damaged, or changed on GitHub) goes
     // aside whole, never half deleted under an install about to copy it;
@@ -1494,11 +1494,11 @@ fn install(app: &App) -> Option<PathBuf> {
 /// game's folder moved elsewhere and linked back into Steam's library is a
 /// plain folder where the link leads.
 ///
-/// [`steam::valve_anti_cheat`]: butterpollo_core::steam::valve_anti_cheat
+/// [`steam::valve_anti_cheat`]: butterpollo_session::steam::valve_anti_cheat
 fn steam_refusal(app: &App, paths: &[PathBuf], roots: &[PathBuf]) -> Option<String> {
     let appid = serde_json::to_value(app)
         .ok()
-        .and_then(|app| butterpollo_core::steam::game_of(&app));
+        .and_then(|app| butterpollo_session::steam::game_of(&app));
     // A Steam game's link is asked once: its flag names no file.
     let paths = if appid.is_some() {
         &paths[..paths.len().min(1)]
@@ -1506,7 +1506,7 @@ fn steam_refusal(app: &App, paths: &[PathBuf], roots: &[PathBuf]) -> Option<Stri
         paths
     };
     paths.iter().find_map(|exe| {
-        match butterpollo_core::steam::valve_anti_cheat(appid, exe, "", roots) {
+        match butterpollo_session::steam::valve_anti_cheat(appid, exe, "", roots) {
             Ok(false) => None,
             Ok(true) => Some(format!(
                 "Steam lists Valve Anti-Cheat for the game, and {}",

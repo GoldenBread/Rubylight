@@ -4,7 +4,7 @@
 //! window, for as long as the stream runs.
 use crate::state::{Session, Shared};
 use anyhow::Result;
-use butterpollo_core::background::Rect;
+use butterpollo_session::background::Rect;
 use std::{
     sync::{
         Arc,

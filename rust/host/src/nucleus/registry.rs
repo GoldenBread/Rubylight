@@ -577,7 +577,7 @@ impl Registry {
         if request
             .client
             .uuid
-            .ends_with(butterpollo_core::state::SECOND_SCREEN_SUFFIX)
+            .ends_with(butterpollo_session::state::SECOND_SCREEN_SUFFIX)
         {
             return Err(Refusal::busy(format!(
                 "{} plays on this device's first screen: a second screen takes no Nucleus Co-op seat",
@@ -1117,7 +1117,7 @@ mod tests {
             "name": "Device A",
             "cert": "",
             "uuid": "A",
-            "perm": butterpollo_core::state::PLAY_DEVICE_PERMISSION,
+            "perm": butterpollo_session::state::PLAY_DEVICE_PERMISSION,
         }))
         .unwrap();
         let seat = registry

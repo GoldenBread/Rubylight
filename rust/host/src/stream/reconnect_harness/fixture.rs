@@ -10,12 +10,9 @@ use super::super::{
 use super::WAIT;
 use crate::state::{Launch, Session, Shared};
 use anyhow::{Context, Result};
-use butterpollo_core::state::App;
-use butterpollo_core::{
-    audio::OpusLayout,
-    packet::VideoPacketizer,
-    session::{Preparation, Role},
-};
+use butterpollo_media_policy::{audio::OpusLayout, packet::VideoPacketizer};
+use butterpollo_session::session::{Preparation, Role};
+use butterpollo_session::state::App;
 use rusty_enet::{Host, PeerID};
 use std::{
     collections::HashMap,
@@ -45,7 +42,7 @@ pub struct Fixture {
     pub input_releases: AtomicUsize,
     /// What the control worker did with the clients' text input requests (0x553B), in place
     /// of starting the desktop's focus watcher.
-    pub text_watches: Mutex<Vec<butterpollo_core::text_input::Watch>>,
+    pub text_watches: Mutex<Vec<butterpollo_input_policy::text_input::Watch>>,
     pub video_after_input_release: AtomicUsize,
     /// The stream's encoder fails for good, as one that keeps failing past its recovery.
     pub fail_encoder: AtomicBool,
@@ -120,7 +117,7 @@ impl Drop for Audio {
         }
     }
 }
-impl butterpollo_core::session::AudioPreparation<butterpollo_windows::audio_route::Route>
+impl butterpollo_session::session::AudioPreparation<butterpollo_windows::audio_route::Route>
     for Audio
 {
     fn route(&self) -> Arc<butterpollo_windows::audio_route::Route> {
@@ -315,7 +312,7 @@ impl Fixture {
                 .context("the WebRTC link is missing")?,
         );
         *s.encoder.write().unwrap() = "reconnect fixture".into();
-        let mut claims = butterpollo_core::performance::Claims::default();
+        let mut claims = butterpollo_media_policy::performance::Claims::default();
         let codec = s.config.codec;
         let mut first = true;
         let mut position = 0u64;
@@ -363,7 +360,7 @@ impl Fixture {
         result
     }
     pub(crate) fn stream(&self, media: &Media, h: &Shared, s: &Session) -> Result<()> {
-        if s.launch.transport == butterpollo_core::session::Transport::WebRtc {
+        if s.launch.transport == butterpollo_session::session::Transport::WebRtc {
             return self.stream_webrtc(h, s);
         }
         let _audio = s.launch.audio_preparation.lock().unwrap().take();
@@ -382,7 +379,7 @@ impl Fixture {
         configure_video_fec(s, &effective_config(h, &s.launch)?)?;
         // As the encoder does once it has the display's metadata: the control
         // worker then sends the HDR mode message (0x010e).
-        s.set_display_hdr_metadata(butterpollo_core::hdr::Metadata::default());
+        s.set_display_hdr_metadata(butterpollo_media_policy::hdr::Metadata::default());
         // The video clock starts with the stream, as in the video worker: clock sync
         // probes are answered from here on.
         *s.media_epoch.write().unwrap() = Some(Instant::now());
@@ -396,7 +393,7 @@ impl Fixture {
             }
             if self.fail_encoder.load(Ordering::Acquire) {
                 return Err(anyhow::anyhow!("AMF error AMF_FAIL (1)").context(
-                    butterpollo_core::session::EncoderFailure("the encoder kept failing"),
+                    butterpollo_session::session::EncoderFailure("the encoder kept failing"),
                 ));
             }
             let peer = media.peers.lock().unwrap().get(&s.launch.id, false);

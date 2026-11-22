@@ -1,12 +1,12 @@
-//! The device's keyboard layout on the control loop (`butterpollo_core::keyboard_layout`,
+//! The device's keyboard layout on the control loop (`butterpollo_input_policy::keyboard_layout`,
 //! 0x553E): reports and saves of `keyboard_layout` pick the layout here, off the input
 //! path, and the injector takes the read layout between passes. Each layout id is read at
 //! most once a peer, however often a device reports it.
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use butterpollo_core::config::{Config, KeyboardLayoutSetting};
-use butterpollo_core::session::Warnings;
+use butterpollo_config::config::{Config, KeyboardLayoutSetting};
+use butterpollo_session::session::Warnings;
 use butterpollo_windows::keylayout::{Layout, Layouts};
 
 /// The session warning code while the layout keys should follow cannot be read.
@@ -106,7 +106,7 @@ impl PeerLayout {
         let Some(setting) = self.setting else {
             return;
         };
-        let klid = butterpollo_core::keyboard_layout::effective(setting, self.reported);
+        let klid = butterpollo_input_policy::keyboard_layout::effective(setting, self.reported);
         if self.klid == Some(klid) {
             return;
         }

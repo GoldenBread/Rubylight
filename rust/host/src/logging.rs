@@ -10,7 +10,9 @@ static FILTER: OnceLock<reload::Handle<EnvFilter, Registry>> = OnceLock::new();
 /// libraries do not flood a debug log.
 fn directives(level: &str) -> &str {
     match level {
-        "debug" => "info,butterpollo=debug,butterpollo_core=debug,butterpollo_windows=debug",
+        "debug" => {
+            "info,butterpollo=debug,butterpollo_crypto=debug,butterpollo_config=debug,butterpollo_media_policy=debug,butterpollo_input_policy=debug,butterpollo_session=debug,butterpollo_windows=debug"
+        }
         level => level,
     }
 }

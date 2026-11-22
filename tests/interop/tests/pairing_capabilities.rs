@@ -3,7 +3,7 @@ mod common;
 
 use anyhow::Result;
 use butterpollo::stream::reconnect_harness::{HOST_VERSION, Harness};
-use butterpollo_core::power_action::SleepStates;
+use butterpollo_session::power_action::SleepStates;
 use common::{LOADED, device};
 use nightjar_core::http::{
     Availability, ClientIdentity, Family, Feature, HostClient, PairResult, Reason, ServerInfo,
@@ -28,7 +28,7 @@ impl butterpollo::power_action::Backend for Suspends {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn power_off(&self, action: butterpollo_core::power_action::Action) -> Result<()> {
+    fn power_off(&self, action: butterpollo_session::power_action::Action) -> Result<()> {
         panic!("an interop test reached the {}", action.name())
     }
 }
@@ -114,7 +114,7 @@ async fn nightjar_pairs_with_the_pin_entered_on_the_host() -> Result<()> {
 /// trusts the host, a used link pairs no one, and the pairing raises `pairing.paired`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_pairs_from_the_qr_link_and_checks_the_host_certificate() -> Result<()> {
-    use butterpollo_core::pairing_uri::PairingUri;
+    use rubylight_protocol::pairing_uri::PairingUri;
     let h = Harness::new(10_000, 1).await?;
     let (url, mut received) = butterpollo::webhooks::test_support::receiver(vec![200]).await;
     {
@@ -422,10 +422,10 @@ fn expected(feature: Feature) -> Availability {
 async fn nightjar_knows_every_capability_the_host_advertises() -> Result<()> {
     let h = Harness::new(10_000, 1).await?;
     // Seed an AMD GPU so GPU-less CI runners exercise host neural frame generation advertisement.
-    *h.h.neural.adapters.lock().unwrap() = Some(vec![butterpollo_core::neural::Adapter {
+    *h.h.neural.adapters.lock().unwrap() = Some(vec![butterpollo_session::neural::Adapter {
         name: "AMD Radeon 780M Graphics".into(),
         luid: 1,
-        vendor: butterpollo_core::neural::AMD,
+        vendor: butterpollo_session::neural::AMD,
         device: 0x1900,
     }]);
     let suspends = Arc::new(Suspends::default());

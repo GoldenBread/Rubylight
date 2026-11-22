@@ -17,16 +17,16 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use butterpollo_core::{
+use butterpollo_session::{
     file_transfer::Pacer,
     native::{FILE_DOWNLOAD, FILE_UPLOAD},
-    native_api::{
-        error::ErrorCode,
-        files::{FileEntry, FileList, Uploaded},
-    },
     state::Client,
 };
 use butterpollo_windows::user_folder::{PartFile, UserFolder, UserFolderError};
+use rubylight_native_api::{
+    error::ErrorCode,
+    files::{FileEntry, FileList, Uploaded},
+};
 use std::{
     collections::HashMap,
     fs::File,
@@ -568,7 +568,7 @@ pub(super) async fn content(
 ) -> Reply {
     let client = allowed(&h, &c, FILE_DOWNLOAD, "Download files")?;
     let name = name_of(request.uri().query())?;
-    let slot = begin_download(&h, butterpollo_core::state::device_uuid(&client.uuid))?;
+    let slot = begin_download(&h, butterpollo_session::state::device_uuid(&client.uuid))?;
     let dir = transfer_dir(&h);
     let opened = tokio::task::spawn_blocking(move || open_folder(dir.as_deref())?.open_file(&name))
         .await
@@ -847,13 +847,13 @@ async fn receive(
 ) -> Reply {
     let client = allowed(h, c, FILE_UPLOAD, "Upload files")?;
     let name = name_of(query)?;
-    butterpollo_core::file_transfer::check_name(&name)
+    butterpollo_session::file_transfer::check_name(&name)
         .map_err(|error| failure("check the name", error.into()))?;
     let dir = transfer_dir(h);
     let recheck = Recheck::new(h, c, FILE_UPLOAD, "Upload files");
     let uploaded = accept(
         h,
-        butterpollo_core::state::device_uuid(&client.uuid),
+        butterpollo_session::state::device_uuid(&client.uuid),
         headers,
         body,
         recheck,
@@ -1148,7 +1148,7 @@ mod tests {
         set(h, "file_transfer_stream_mbps", "1");
         let pace = |bytes| h.file_transfers.pace(h, bytes);
         assert!(pace(PACE_BURST * 4).is_zero(), "no stream: unpaced");
-        f.session(f.client(0), butterpollo_core::session::Role::Stream);
+        f.session(f.client(0), butterpollo_session::session::Role::Stream);
         look_again(h);
         // Two transfers, one budget: the second waits for what the first took.
         let first = pace(PACE_BURST);
@@ -1161,7 +1161,7 @@ mod tests {
     fn a_new_stream_rate_applies_to_the_transfers_running() {
         let f = crate::state::test_support::Fixture::new();
         let h = &f.host;
-        f.session(f.client(0), butterpollo_core::session::Role::Stream);
+        f.session(f.client(0), butterpollo_session::session::Role::Stream);
         let rate = || h.file_transfers.pacing.lock().unwrap().pacer.rate();
         h.file_transfers.pace(h, 1);
         assert_eq!(rate(), Some(50 * 125_000), "the default 50 Mbit/s");

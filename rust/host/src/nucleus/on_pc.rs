@@ -9,17 +9,17 @@ impl Pc for OnPc {
         if !butterpollo_windows::process::is_system() {
             return Some("Nucleus Co-op sessions need the host to run as the Rubylight Windows service, which starts Nucleus Co-op as the signed-in user".into());
         }
-        butterpollo_core::os_gate::missing(
+        butterpollo_session::os_gate::missing(
             butterpollo_windows::display::windows_build(),
-            butterpollo_core::os_gate::Feature::WgcWindow,
+            butterpollo_session::os_gate::Feature::WgcWindow,
         )
     }
     fn installed(&self, configured: &str) -> Result<Option<PathBuf>> {
-        install::installed(&butterpollo_core::paths::data_root(), configured)
+        install::installed(&butterpollo_session::paths::data_root(), configured)
     }
     fn instead(&self, configured: &str) -> Option<(Unusable, String)> {
         // Kept from `installed`'s check moments before.
-        let found = install::found(&butterpollo_core::paths::data_root(), configured).ok()??;
+        let found = install::found(&butterpollo_session::paths::data_root(), configured).ok()??;
         let notice = found.notice()?;
         Some((found.instead?, notice))
     }
@@ -45,10 +45,10 @@ impl Pc for OnPc {
         if !starts_exe(app)
             && let Some(appid) = serde_json::to_value(app)
                 .ok()
-                .and_then(|app| butterpollo_core::steam::game_of(&app))
+                .and_then(|app| butterpollo_session::steam::game_of(&app))
         {
             let roots = butterpollo_windows::steam::roots();
-            let launch = butterpollo_core::steam::game_executable(appid, &roots)
+            let launch = butterpollo_session::steam::game_executable(appid, &roots)
                 .map_err(Refusal::not_found)?;
             return Ok(Setup {
                 anti_cheat: launch.vac.then_some("Valve Anti-Cheat"),
@@ -73,7 +73,7 @@ impl Pc for OnPc {
             return Err(Refusal::not_found(not_on_this_pc(exe)));
         }
         // An .exe in a Steam library is its Steam app's, as a link would be.
-        let steam = butterpollo_core::steam::library_app(
+        let steam = butterpollo_session::steam::library_app(
             Path::new(exe),
             &arguments(app),
             &butterpollo_windows::steam::roots(),
@@ -125,7 +125,12 @@ impl Pc for OnPc {
     fn user_copy(&self, folder: &Path) -> Result<PathBuf> {
         let user = user_copy::user()?;
         let sid = user_copy::sid(&user)?;
-        user_copy::ensure(&butterpollo_core::paths::data_root(), folder, &sid, &user)
+        user_copy::ensure(
+            &butterpollo_session::paths::data_root(),
+            folder,
+            &sid,
+            &user,
+        )
     }
     fn write_own(&self, folder: &Path, copy: Option<&Path>, setup: &Setup) -> Result<Handler> {
         if let Some(pid) = self.running()? {

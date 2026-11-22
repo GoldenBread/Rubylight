@@ -97,7 +97,7 @@ fn joined_game(display: Option<&str>) -> Option<JoinedGame<'_>> {
 fn a_devices_second_screen_never_joins_the_game_it_resumes() {
     // Dual screen mode on the AYN Thor: the second screen resumed the game and was put on
     // the first screen's display, a mirror of it.
-    let second = butterpollo_core::state::second_screen_uuid("b");
+    let second = butterpollo_session::state::second_screen_uuid("b");
     let ask = JoinAsk {
         client: &second,
         identity: &second,
@@ -141,7 +141,7 @@ fn a_second_screen_on_physical_displays_shows_another_monitor() {
         None
     );
     assert!(is_second_screen(
-        &butterpollo_core::state::second_screen_uuid("b")
+        &butterpollo_session::state::second_screen_uuid("b")
     ));
     assert!(!is_second_screen("b"));
 }
@@ -548,7 +548,7 @@ fn a_joined_stream_at_another_rate_keeps_its_place_and_leaves_the_display() {
 
 #[test]
 fn a_display_that_left_lays_out_again_with_what_the_watch_keeps_on() {
-    use butterpollo_core::display_policy::{LayoutAction, LayoutWatch};
+    use butterpollo_media_policy::display_policy::{LayoutAction, LayoutWatch};
     let start = std::time::Instant::now();
     let mut watch = LayoutWatch::default();
     // A display that keeps coming back is left on, without a reapply of its own.
@@ -617,7 +617,7 @@ fn a_display_that_left_lays_out_again_with_what_the_watch_keeps_on() {
 }
 #[test]
 fn a_resume_after_a_display_left_repairs_before_it_records_the_layout() {
-    use butterpollo_core::display_policy::LayoutWatch;
+    use butterpollo_media_policy::display_policy::LayoutWatch;
     let warnings = Arc::new(Warnings::default());
     let report = ModeReport::new(warnings.clone(), (None, None, None), 60_000);
     let chosen = |unsettled| {
@@ -872,7 +872,7 @@ fn a_client_scale_too_large_for_the_resolution_is_lowered_with_a_warning() {
 
 #[test]
 fn a_physical_display_takes_only_the_devices_own_scale() {
-    let client = |overrides: serde_json::Value| -> butterpollo_core::state::Client {
+    let client = |overrides: serde_json::Value| -> butterpollo_session::state::Client {
         serde_json::from_value(serde_json::json!({
             "name": "phone", "cert": "", "uuid": "u", "config_overrides": overrides,
         }))
@@ -1764,7 +1764,7 @@ fn a_retained_display_stops_enforcing_layout_after_the_last_preparation_drops() 
     let display = first.display.clone();
     let mut changed = Config::parse("virtual_display_layout=extended").unwrap();
     let mut client = fixture.client(u32::MAX);
-    let mut app: butterpollo_core::state::App =
+    let mut app: butterpollo_session::state::App =
         serde_json::from_value(serde_json::json!({"name":"Game"})).unwrap();
     assert!(display.serves(
         None,
@@ -1912,12 +1912,12 @@ fn native_paused_game_leaves_a_disabled_display_off_until_resume() -> Result<()>
 
 #[test]
 fn explicit_virtual_layouts_take_precedence_over_the_legacy_primary_flag() {
-    use butterpollo_core::display_policy::Arrangement;
+    use butterpollo_media_policy::display_policy::Arrangement;
     let config = Config::default();
-    let mut client: butterpollo_core::state::Client =
+    let mut client: butterpollo_session::state::Client =
         serde_json::from_value(serde_json::json!({"name":"Device","uuid":"device","cert":""}))
             .unwrap();
-    let mut app: butterpollo_core::state::App =
+    let mut app: butterpollo_session::state::App =
         serde_json::from_value(serde_json::json!({"name":"Game","virtual-display-primary":true}))
             .unwrap();
     assert_eq!(
@@ -1983,7 +1983,7 @@ fn explicit_virtual_layouts_take_precedence_over_the_legacy_primary_flag() {
 /// layout settings afterwards.
 fn stream_then_disconnect(
     fixture: &crate::state::test_support::Fixture,
-    client: &butterpollo_core::state::Client,
+    client: &butterpollo_session::state::Client,
     planned: &str,
     owner: bool,
     ended: Vec<(String, bool)>,
@@ -2027,7 +2027,7 @@ fn a_browser_on_this_pc_teaches_its_device_no_layout() {
         let config = Config::parse(config).unwrap();
         *fixture.host.config.write().unwrap() = config.clone();
         let mut launch = fixture.launch(client.clone(), Role::Stream);
-        launch.transport = butterpollo_core::session::Transport::WebRtc;
+        launch.transport = butterpollo_session::session::Transport::WebRtc;
         if this_pc {
             launch.options.insert(BROWSER_ON_THIS_PC.into(), "1".into());
         }
@@ -2216,7 +2216,7 @@ fn a_layout_saved_before_the_user_marker_existed_stays_learnable() {
 fn a_learned_device_layout_yields_when_the_host_layout_changes() {
     // Issue #40: "exclusive" was learned over the host's "extended"; switching
     // the host to "extended_primary" must take effect.
-    let mut client: butterpollo_core::state::Client =
+    let mut client: butterpollo_session::state::Client =
         serde_json::from_value(serde_json::json!({"name":"Device","uuid":"device","cert":""}))
             .unwrap();
     client
@@ -2295,11 +2295,11 @@ fn a_legacy_extended_layout_yields_when_the_host_asks_for_the_primary() {
 #[test]
 fn an_app_that_asks_for_the_primary_gets_it_while_a_legacy_layout_stays() {
     let exclusive = Config::parse("virtual_display_layout=exclusive").unwrap();
-    let primary: butterpollo_core::state::App = serde_json::from_value(
+    let primary: butterpollo_session::state::App = serde_json::from_value(
         serde_json::json!({"name":"Game","virtual-display-layout":"extended_primary"}),
     )
     .unwrap();
-    let plain: butterpollo_core::state::App =
+    let plain: butterpollo_session::state::App =
         serde_json::from_value(serde_json::json!({"name":"Desktop"})).unwrap();
     // Only an app asks for the primary: the device keeps its layout, learned over the host's,
     // so that app gets the main screen while the host and the other apps keep "extended".
@@ -2376,8 +2376,8 @@ fn the_legacy_host_layout_reads_the_host_setting_or_the_default() {
     );
 }
 
-fn legacy_extended() -> butterpollo_core::state::Client {
-    let mut client: butterpollo_core::state::Client =
+fn legacy_extended() -> butterpollo_session::state::Client {
+    let mut client: butterpollo_session::state::Client =
         serde_json::from_value(serde_json::json!({"name":"Device","uuid":"device","cert":""}))
             .unwrap();
     client
@@ -2422,7 +2422,7 @@ fn a_retained_display_matches_only_the_exact_mode_it_was_made_for() {
 }
 #[test]
 fn only_a_stream_takes_the_clients_display_choice() {
-    use butterpollo_core::display_policy::Arrangement;
+    use butterpollo_media_policy::display_policy::Arrangement;
     let f = crate::state::test_support::Fixture::new();
     let client = f.client(u32::MAX);
     let launch = |role: Role, value: Option<&str>| {
@@ -2455,7 +2455,7 @@ fn only_a_stream_takes_the_clients_display_choice() {
 }
 #[test]
 fn legacy_virtual_display_zero_leaves_the_host_settings_in_control() {
-    use butterpollo_core::display_policy::Arrangement;
+    use butterpollo_media_policy::display_policy::Arrangement;
     let f = crate::state::test_support::Fixture::new();
     let client = f.client(u32::MAX);
     let mut launch = f.launch(client, Role::Stream);
@@ -2491,7 +2491,7 @@ fn legacy_virtual_display_zero_leaves_the_host_settings_in_control() {
 #[test]
 fn virtual_display_mode_keeps_device_app_host_precedence_and_legacy_global_inheritance() {
     let config = Config::parse("virtual_display_mode=shared").unwrap();
-    let mut client: butterpollo_core::state::Client =
+    let mut client: butterpollo_session::state::Client =
         serde_json::from_value(serde_json::json!({"name":"Device","uuid":"device","cert":""}))
             .unwrap();
     let app = serde_json::from_value(
@@ -2540,7 +2540,7 @@ fn background_display_ignores_shared_and_app_identity_overrides() {
         "uniqueid".into(),
         "00000000-0000-0000-0000-000000000001".into(),
     );
-    let app: butterpollo_core::state::App = serde_json::from_value(serde_json::json!({
+    let app: butterpollo_session::state::App = serde_json::from_value(serde_json::json!({
         "name":"Game", "uuid":"app-display", "use-app-identity":true,
         "virtual-display-mode":"shared", "virtual-display-layout":"exclusive"
     }))
@@ -2549,7 +2549,7 @@ fn background_display_ignores_shared_and_app_identity_overrides() {
         virtual_display_identity(&config, &launch, Some(&app)),
         "app-display"
     );
-    butterpollo_core::background::apply(&mut config);
+    butterpollo_session::background::apply(&mut config);
     for mode in ["shared", "disabled", "per_client"] {
         launch
             .client
@@ -2570,7 +2570,7 @@ fn background_display_ignores_shared_and_app_identity_overrides() {
                 Some(&app),
                 Some(HostDisplay::Physical)
             ),
-            butterpollo_core::background::LAYOUT
+            butterpollo_session::background::LAYOUT
         );
     }
 }
@@ -2861,7 +2861,7 @@ fn a_primary_windows_keeps_taking_back_stays_on_the_card() {
 }
 #[test]
 fn only_a_primary_the_layout_makes_for_this_stream_is_watched() {
-    use butterpollo_core::display_policy::Arrangement;
+    use butterpollo_media_policy::display_policy::Arrangement;
     let applies = |planned: Arrangement, lease_primary, active, secure| {
         Prepared::primary_watch_applies(planned, lease_primary, active, secure, true)
     };
@@ -2891,7 +2891,7 @@ fn only_a_primary_the_layout_makes_for_this_stream_is_watched() {
 }
 #[test]
 fn a_primary_move_without_a_windows_change_is_left_alone() {
-    use butterpollo_core::display_policy::{
+    use butterpollo_media_policy::display_policy::{
         LayoutWatch, PrimaryAction, PrimaryChange, PrimaryWatch,
     };
     let start = std::time::Instant::now();
@@ -2913,7 +2913,7 @@ fn a_primary_move_without_a_windows_change_is_left_alone() {
 }
 #[test]
 fn a_user_pick_before_a_later_windows_change_is_not_undone() {
-    use butterpollo_core::display_policy::PrimaryChange;
+    use butterpollo_media_policy::display_policy::PrimaryChange;
     let arms = |last_shown: Option<bool>, change: Option<PrimaryChange>| {
         Prepared::primary_change_arms(last_shown, change)
     };
@@ -2947,7 +2947,7 @@ fn the_start_layout_warning_goes_once_the_primary_is_restored() {
 
 #[test]
 fn a_change_that_arrives_while_paused_arms_at_the_resume() {
-    use butterpollo_core::display_policy::PrimaryChange;
+    use butterpollo_media_policy::display_policy::PrimaryChange;
     let resumed = |paused, change| Prepared::resumed_primary_change(paused, change);
     // A display changed while the stream had nobody to show a restore to: the resume arms
     // the watch with it, at the resume time.

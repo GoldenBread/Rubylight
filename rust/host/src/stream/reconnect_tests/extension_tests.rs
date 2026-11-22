@@ -6,7 +6,7 @@ use super::*;
 /// The video packet size the host offers for `launch`'s path; loopback carries
 /// the largest this version defines.
 fn max_packet(launch: &Launch) -> u16 {
-    butterpollo_core::video_packet::for_mtu(
+    rubylight_protocol::video_packet::for_mtu(
         butterpollo_windows::net::routed_mtu(std::net::SocketAddr::new(launch.peer, 0))
             .unwrap_or(1500),
     )
@@ -57,7 +57,7 @@ async fn describe_for_a_default_config_is_byte_identical() -> Result<()> {
     // The default host's 3.0 control messages (FEC report, text input, pipeline rates,
     // keyboard layout and Frame Warp) are a second line, which stock clients ignore.
     assert_eq!(body.matches("a=x-rl-control:").count(), 2, "{body}");
-    assert!(body.contains(butterpollo_core::rtsp::CONTROL_MESSAGES));
+    assert!(body.contains(butterpollo_media_policy::rtsp::CONTROL_MESSAGES));
     let (session, client) = h.play(&launch).await?;
     h.end(&session, client).await?;
     h.finish().await
@@ -104,7 +104,7 @@ async fn frame_warp_is_listed_only_while_its_setting_is_on() -> Result<()> {
 async fn describe_with_packed_444_and_the_microphone_is_byte_identical() -> Result<()> {
     let h = Harness::configured(10_000, 1, "experimental_packed_444=true\n").await?;
     h.h.packed_modes.store(
-        butterpollo_core::packed444::ALL_MODES,
+        rubylight_protocol::packed444::ALL_MODES,
         std::sync::atomic::Ordering::Release,
     );
     let launch = h.launch(0, false).await?;
@@ -156,7 +156,7 @@ async fn describe_with_packed_444_and_the_microphone_is_byte_identical() -> Resu
 async fn describe_offers_packed_444_saved_while_the_host_runs() -> Result<()> {
     fn probe(
         _: &Config,
-        _: &butterpollo_core::rtsp::Negotiated,
+        _: &butterpollo_media_policy::rtsp::Negotiated,
         _: &dyn Fn() -> bool,
     ) -> Result<()> {
         Ok(())
@@ -179,7 +179,7 @@ async fn describe_offers_packed_444_saved_while_the_host_runs() -> Result<()> {
         .insert("packed_444".into(), "true".into());
     h.h.packed_settings_saved_with(&before, probe);
     until("the saved packed modes are probed", WAIT, || {
-        h.h.packed_modes.load(Ordering::Acquire) == butterpollo_core::packed444::ALL_MODES
+        h.h.packed_modes.load(Ordering::Acquire) == rubylight_protocol::packed444::ALL_MODES
     })
     .await;
     let launch = h.launch(0, false).await?;
@@ -314,7 +314,7 @@ async fn a_default_host_streams_the_7_1_4_a_client_asks_for() -> Result<()> {
         )
         .await?;
     assert_eq!(session.config.audio_channels, 12);
-    let layout = butterpollo_core::audio::OpusLayout::select(12, false, None)?;
+    let layout = butterpollo_media_policy::audio::OpusLayout::select(12, false, None)?;
     assert_eq!((layout.streams, layout.coupled), (8, 4));
     h.end(&session, client).await?;
     h.finish().await

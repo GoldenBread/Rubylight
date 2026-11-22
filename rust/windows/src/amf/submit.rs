@@ -128,7 +128,7 @@ impl Encoder {
         &mut self,
         surface: *mut AMFSurface,
         idr: bool,
-    ) -> Result<(butterpollo_core::ltr::Plan, bool)> {
+    ) -> Result<(butterpollo_media_policy::ltr::Plan, bool)> {
         let (plan, idr, ltr_rejected) =
             self.prepare_surface_at(surface, self.index as u64 + 1, idr)?;
         if ltr_rejected {
@@ -146,7 +146,7 @@ impl Encoder {
         surface: *mut AMFSurface,
         frame: u64,
         mut idr: bool,
-    ) -> Result<(butterpollo_core::ltr::Plan, bool, bool)> {
+    ) -> Result<(butterpollo_media_policy::ltr::Plan, bool, bool)> {
         let mut plan = self.references.plan(frame, idr);
         let [_, _, mark, reference] = self.ltr_properties();
         let apply = |name: &'static str, value: AMFVariantStruct| -> Result<()> {
@@ -174,7 +174,7 @@ impl Encoder {
         if let Err(error) = ltr {
             tracing::warn!(%error,"AMF LTR surface rejected; requesting a larger IDR recovery frame. Disable amd_ltr_frames if this repeats");
             idr = true;
-            plan = butterpollo_core::ltr::References::disabled_keyframe_plan();
+            plan = butterpollo_media_policy::ltr::References::disabled_keyframe_plan();
         }
         if idr {
             apply(
@@ -220,7 +220,7 @@ impl Encoder {
     pub fn set_frame_cap(&mut self, bytes: u64, floor: u64) -> Option<u64> {
         let target = bytes;
         self.frame_cap_target = frame_cap_target(self.frame_cap.automatic(), target);
-        let bytes = butterpollo_core::encoder_policy::keyframe_cap_bytes(
+        let bytes = butterpollo_media_policy::encoder_policy::keyframe_cap_bytes(
             self.frame_cap.automatic(),
             self.slice_blocks,
             &self.keyframe_cap,

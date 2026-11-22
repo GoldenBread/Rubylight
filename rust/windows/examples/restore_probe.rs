@@ -38,8 +38,9 @@ fn main() -> anyhow::Result<()> {
             let Some(m) = monitors()?.into_iter().find(|m| m.device_id == n.device_id) else {
                 continue;
             };
-            let rate =
-                butterpollo_core::framegen::Rate((n.mode.refresh_hz * 1000.0).round() as u32);
+            let rate = butterpollo_media_policy::framegen::Rate(
+                (n.mode.refresh_hz * 1000.0).round() as u32,
+            );
             let result =
                 Topology::set_mode_rate(&m.display_name, n.mode.width, n.mode.height, rate);
             rates(&format!(
@@ -78,7 +79,7 @@ fn main() -> anyhow::Result<()> {
     }
     // --set <display> <width> <height> <millihertz>
     if let Some(i) = args.iter().position(|a| a == "--set") {
-        let rate = butterpollo_core::framegen::Rate(args[i + 4].parse()?);
+        let rate = butterpollo_media_policy::framegen::Rate(args[i + 4].parse()?);
         Topology::set_mode_rate(
             &args[i + 1],
             args[i + 2].parse()?,

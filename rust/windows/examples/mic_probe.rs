@@ -9,7 +9,7 @@
 //! Needs libopus-0.dll next to the probe or in BUTTERPOLLO_TEST_OPUS_ROOT.
 #![allow(clippy::undocumented_unsafe_blocks)]
 use anyhow::{Context, Result, bail};
-use butterpollo_core::mic::{self, Arrival, Playout, Sequencer};
+use butterpollo_session::mic::{self, Arrival, Playout, Sequencer};
 use butterpollo_windows::{
     audio::OpusDecoder,
     audio_route,
@@ -224,7 +224,7 @@ fn main() -> Result<()> {
     };
     let mut id = find()?;
     if id.is_none() && install {
-        let config = butterpollo_core::config::Config::default();
+        let config = butterpollo_config::config::Config::default();
         if let Some(saved) = audio_route::install_steam_microphone(&config)? {
             for _ in 0..40 {
                 std::thread::sleep(Duration::from_millis(250));

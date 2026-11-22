@@ -5,10 +5,13 @@ use std::net::UdpSocket;
 #[test]
 fn stopping_interrupts_a_paced_wait_without_sending_another_packet() -> Result<()> {
     let fixture = crate::state::test_support::Fixture::new();
-    let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let launch = fixture.launch(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let session = Session::new(
         launch,
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             codec: 3,
             bitrate_kbps: 80_000,
             ..Default::default()
@@ -71,18 +74,21 @@ fn stopping_interrupts_a_paced_wait_without_sending_another_packet() -> Result<(
 #[test]
 fn a_pyrowave_picture_yields_host_timing_stages_and_a_record_row() {
     let fixture = crate::state::test_support::Fixture::new();
-    let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let launch = fixture.launch(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let session = Session::new(
         launch,
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             codec: 3,
             bitrate_kbps: 80_000,
             ..Default::default()
         },
     );
-    let asked = butterpollo_core::host_timing::HostTimingRequest { enabled: true }.encode();
+    let asked = butterpollo_media_policy::host_timing::HostTimingRequest { enabled: true }.encode();
     assert_eq!(session.host_timings.on_request(&asked), Some(true));
-    let (sink, rows) = butterpollo_core::timing_record::channel(8);
+    let (sink, rows) = butterpollo_media_policy::timing_record::channel(8);
     *session.timing_record.write().unwrap() = Some(Arc::new(sink));
     let client = UdpSocket::bind("127.0.0.1:0").unwrap();
     let socket = Arc::new(ReplySocket::bind("127.0.0.1:0").unwrap());
@@ -137,7 +143,8 @@ fn a_pyrowave_picture_yields_host_timing_stages_and_a_record_row() {
         thread::sleep(Duration::from_millis(10));
     }
     let report = report.expect("no 0x5536 record for the PyroWave picture");
-    let records = butterpollo_core::host_timing::HostTiming::decode_report_with(&report).unwrap();
+    let records =
+        butterpollo_media_policy::host_timing::HostTiming::decode_report_with(&report).unwrap();
     assert_eq!(records.len(), 1);
     let (record, extra) = records[0];
     assert_eq!(record.frame, 1);
@@ -174,10 +181,13 @@ fn a_pyrowave_picture_yields_host_timing_stages_and_a_record_row() {
 #[test]
 fn a_sent_pyrowave_picture_is_recorded_for_the_link_rate_controller() {
     let fixture = crate::state::test_support::Fixture::new();
-    let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let launch = fixture.launch(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let session = Session::new(
         launch,
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             codec: 3,
             bitrate_kbps: 80_000,
             ..Default::default()
@@ -238,7 +248,7 @@ fn a_sent_pyrowave_picture_is_recorded_for_the_link_rate_controller() {
     assert_eq!(u64::from(recorded_packets), packets);
     assert_eq!(
         u64::from(wire_bytes),
-        payload + packets * butterpollo_core::network_pacing::overhead(false) as u64,
+        payload + packets * butterpollo_media_policy::network_pacing::overhead(false) as u64,
         "the payload sent and each datagram's IP and Ethernet framing"
     );
 }
@@ -248,10 +258,13 @@ fn prepared_intra_frames_freeze_timing_and_keep_only_the_newest_waiter() {
     let wait = Duration::from_secs(4);
     for encrypted in [false, true] {
         let fixture = crate::state::test_support::Fixture::new();
-        let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+        let launch = fixture.launch(
+            fixture.client(0),
+            butterpollo_session::session::Role::Stream,
+        );
         let session = Session::new(
             launch,
-            butterpollo_core::rtsp::Negotiated {
+            butterpollo_media_policy::rtsp::Negotiated {
                 encryption: if encrypted { 3 } else { 1 },
                 bitrate_kbps: 80_000,
                 configured_bitrate_kbps: 100_000,
@@ -319,7 +332,7 @@ fn prepared_intra_frames_freeze_timing_and_keep_only_the_newest_waiter() {
         assert_eq!(latency, 12_000);
         assert_eq!(kbps, 50_000);
         let plaintext = if encrypted {
-            butterpollo_core::crypto::gcm_open(
+            butterpollo_crypto::crypto::gcm_open(
                 &session.launch.key,
                 &packet[..12],
                 &packet[16..32],
@@ -374,10 +387,13 @@ fn prepared_intra_frames_freeze_timing_and_keep_only_the_newest_waiter() {
 fn an_idle_sender_gets_each_block_as_it_is_built() {
     for early in [true, false] {
         let fixture = crate::state::test_support::Fixture::new();
-        let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+        let launch = fixture.launch(
+            fixture.client(0),
+            butterpollo_session::session::Role::Stream,
+        );
         let session = Session::new(
             launch,
-            butterpollo_core::rtsp::Negotiated {
+            butterpollo_media_policy::rtsp::Negotiated {
                 bitrate_kbps: 80_000,
                 ..Default::default()
             },
@@ -474,7 +490,10 @@ fn an_idle_sender_gets_each_block_as_it_is_built() {
 fn a_failed_block_abandons_a_frame_handed_over_block_by_block() {
     for taken in [false, true] {
         let fixture = crate::state::test_support::Fixture::new();
-        let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+        let launch = fixture.launch(
+            fixture.client(0),
+            butterpollo_session::session::Role::Stream,
+        );
         let session = Session::new(launch, Default::default());
         let sender = Sender::packetizer(
             session,
@@ -552,7 +571,10 @@ fn a_failed_block_abandons_a_frame_handed_over_block_by_block() {
 fn a_stalled_frame_returns_its_blocks_and_leaves_the_sender_idle() {
     for building in [false, true] {
         let fixture = crate::state::test_support::Fixture::new();
-        let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+        let launch = fixture.launch(
+            fixture.client(0),
+            butterpollo_session::session::Role::Stream,
+        );
         let session = Session::new(launch, Default::default());
         let sender = Sender::packetizer(
             session,
@@ -609,10 +631,13 @@ fn a_stalled_frame_returns_its_blocks_and_leaves_the_sender_idle() {
 #[test]
 fn a_streamed_frame_goes_out_whole() {
     let fixture = crate::state::test_support::Fixture::new();
-    let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
+    let launch = fixture.launch(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
     let session = Session::new(
         launch,
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             codec: 3,
             bitrate_kbps: 80_000,
             ..Default::default()
@@ -798,7 +823,7 @@ fn frame_drop_warnings_report_the_first_failure_and_count_repeats() {
 /// An encrypted 1080p60 frame filling the encoder's 400 Mbps budget, as
 /// the sender's blocks, and the rate the sender paces it at.
 fn budget_sized_1080p_frame() -> (Vec<Vec<Vec<u8>>>, u64, Duration) {
-    use butterpollo_core::pyrowave;
+    use butterpollo_media_policy::pyrowave;
     let (packet_size, kbps, fps_millihz) = (1360, 400_000, 60_000);
     let period = Duration::from_secs_f64(1000. / f64::from(fps_millihz));
     let budget = pyrowave::budget(kbps, period, packet_size, true, 20);
@@ -841,8 +866,13 @@ fn budget_sized_1080p_frame() -> (Vec<Vec<Vec<u8>>>, u64, Duration) {
     let (packets, _, blocks) = packetizer.pyrowave_blocks(&framed, 0, 0, fec).unwrap();
     let blocks = blocks.collect::<Result<Vec<_>>>().unwrap();
     let demand = demand_bps(packets, packet_size, true, false, fps_millihz);
-    let bps =
-        butterpollo_core::network_pacing::pyrowave_rate_bps(0, kbps, 0, demand, Default::default());
+    let bps = butterpollo_media_policy::network_pacing::pyrowave_rate_bps(
+        0,
+        kbps,
+        0,
+        demand,
+        Default::default(),
+    );
     (blocks, bps, period)
 }
 
@@ -853,7 +883,7 @@ fn paced_budget_sized_1080p_frame_leaves_within_85_percent_of_the_period() {
     // takes about 0.2 ms and the precise timer wakes up to 0.1 ms late.
     let (send, wake) = (Duration::from_micros(250), Duration::from_micros(100));
     let start = Instant::now();
-    let mut pacer = butterpollo_core::network_pacing::Pacer::new(start);
+    let mut pacer = butterpollo_media_policy::network_pacing::Pacer::new(start);
     let mut now = start;
     let mut batches = 0;
     for block in &blocks {
@@ -903,7 +933,7 @@ fn pyrowave_loopback_sends_a_budget_sized_1080p_frame_within_85_percent_of_the_p
     butterpollo_windows::net::configure_udp(&socket)?;
     let timer = Timer::new()?;
     let mut batch = Batch::default();
-    let mut pacer = butterpollo_core::network_pacing::Pacer::new(Instant::now());
+    let mut pacer = butterpollo_media_policy::network_pacing::Pacer::new(Instant::now());
     let mut spans = Vec::new();
     for _ in 0..180 {
         let begin = Instant::now();

@@ -2,7 +2,7 @@
 //! not cover them): `GET /power-actions/v1` hands an opted-in paired client
 //! a 30 s token while the host is idle, `POST /power-actions/v1/sleep`
 //! spends it. HTTPS only. The decisions live in
-//! `butterpollo_core::power_action`; this module holds the lifecycle gate
+//! `butterpollo_session::power_action`; this module holds the lifecycle gate
 //! (`launch_transition`) from the idle check through the suspend, so a
 //! racing launch waits, and suspends only once the 202 left the host: the
 //! answer closes its connection, and hyper wrote and flushed it.
@@ -18,7 +18,7 @@ use axum::{
     http::{HeaderMap, Method, Uri, header},
     response::{IntoResponse, Response},
 };
-use butterpollo_core::power_action::{
+use butterpollo_session::power_action::{
     self, Action, Authority, Busy, Request, SleepStates, Tokens, Unconfirmed,
 };
 use std::{
@@ -234,9 +234,9 @@ pub(crate) fn busy_beside_gate(h: &Shared) -> Option<Busy> {
 }
 /// The devices that stream or start a stream, but `except` (with both its screens).
 pub(crate) fn streaming(h: &Shared, except: Option<&str>) -> Option<Busy> {
-    use butterpollo_core::state::device_uuid;
+    use butterpollo_session::state::device_uuid;
     let sessions = h.sessions.lock().unwrap();
-    let names = |clients: Vec<&butterpollo_core::state::Client>| {
+    let names = |clients: Vec<&butterpollo_session::state::Client>| {
         let mut names: Vec<String> = clients
             .into_iter()
             .filter(|c| except.is_none_or(|except| device_uuid(except) != device_uuid(&c.uuid)))

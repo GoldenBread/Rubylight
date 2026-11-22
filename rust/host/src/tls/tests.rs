@@ -91,12 +91,12 @@ pub(crate) fn client(
 #[tokio::test]
 async fn moonlight_tv_v2_certificate_completes_the_handshake() {
     // Made by moonlight-tv's libgamestream mkcert.c (mbedtls): X.509 v2.
-    let certificate = butterpollo_core::crypto::certificate_der(include_str!(
-        "../../../core/testdata/moonlight-tv-client.pem"
+    let certificate = butterpollo_crypto::crypto::certificate_der(include_str!(
+        "../../../core/crypto/testdata/moonlight-tv-client.pem"
     ))
     .unwrap();
-    let key = include_str!("../../../core/testdata/moonlight-tv-client.key");
-    let identity = butterpollo_core::crypto::Identity::generate().unwrap();
+    let key = include_str!("../../../core/crypto/testdata/moonlight-tv-client.key");
+    let identity = butterpollo_crypto::crypto::Identity::generate().unwrap();
     let acceptor = acceptor(&identity, true).unwrap();
     for version in [&rustls::version::TLS12, &rustls::version::TLS13] {
         assert!(accepts(&acceptor, version, &certificate, key).await);
@@ -108,7 +108,7 @@ async fn moonlight_tv_v2_certificate_completes_the_handshake() {
 /// every loopback name it is opened by.
 #[tokio::test]
 async fn a_client_trusting_the_console_root_accepts_the_console() -> Result<()> {
-    let console = butterpollo_core::crypto::ConsoleCertificate::generate()?;
+    let console = butterpollo_crypto::crypto::ConsoleCertificate::generate()?;
     let acceptor = console_acceptor(&console)?;
     let mut roots = rustls::RootCertStore::empty();
     for root in rustls_pemfile::certs(&mut console.root_pem.as_bytes()) {

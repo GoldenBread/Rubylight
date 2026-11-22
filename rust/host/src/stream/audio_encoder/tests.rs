@@ -1,9 +1,9 @@
 use super::{AudioEncoder, AudioSink, check};
 use anyhow::Result;
-use butterpollo_core::audio_ext::{
+use butterpollo_media_policy::audio_passthrough::{Codec, pcm_s16le};
+use rubylight_protocol::audio_ext::{
     CHUNK_PAYLOAD_BYTES, CODEC_AC3, CODEC_EAC3, CODEC_OPUS, CODEC_PCM, ChunkHeader,
 };
-use butterpollo_core::audio_passthrough::{Codec, pcm_s16le};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 

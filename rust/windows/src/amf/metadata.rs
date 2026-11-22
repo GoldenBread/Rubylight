@@ -14,7 +14,7 @@ pub(super) struct EncodedMetadata {
 }
 
 impl EncodedMetadata {
-    pub(super) fn new(codec: u8, metadata: butterpollo_core::hdr::Metadata) -> Self {
+    pub(super) fn new(codec: u8, metadata: butterpollo_media_policy::hdr::Metadata) -> Self {
         // HEVC takes 1/50000 chromaticity and 1/10000 nit luminance. AMF
         // copies AV1 values into the OBU unscaled: 0.16 chromaticity, 24.8
         // maximum luminance, and 18.14 minimum luminance.

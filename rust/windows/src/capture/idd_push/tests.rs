@@ -211,7 +211,7 @@ fn fence_rings_require_the_request_capability_and_in_place_compute() {
 fn the_fence_ring_is_the_default_and_an_explicit_false_selects_the_keyed_ring() {
     let caps = CAP_FENCE_RING | CAP_SCOPED_CLEAR;
     let configured = |text: &str| {
-        let config = butterpollo_core::config::Config::parse(text).unwrap();
+        let config = butterpollo_config::config::Config::parse(text).unwrap();
         choose_ring(caps, config.idd_push_fence_ring(), false, true)
     };
     let fence = RingChoice {

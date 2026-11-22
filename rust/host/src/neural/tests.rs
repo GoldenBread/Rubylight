@@ -1,6 +1,6 @@
 use super::folder::{Package, Request, Response, Writer, handle};
 use super::*;
-use butterpollo_core::neural::{LEGACY_MANIFEST, MANIFEST, Manifest, Mode};
+use butterpollo_session::neural::{LEGACY_MANIFEST, MANIFEST, Manifest, Mode};
 use std::{io::Write as _, sync::Arc};
 
 /// A folder of its own under the temp folder, deleted when dropped.
@@ -353,7 +353,7 @@ fn a_name_taken_by_the_game_is_never_overwritten() {
     let cache = release(temp.path(), "Alpha0.3.5.8", b"OptiScaler proxy");
     let exe = game(temp.path());
     let folder = exe.parent().unwrap().to_path_buf();
-    for name in butterpollo_core::neural::PROXIES {
+    for name in butterpollo_session::neural::PROXIES {
         std::fs::write(folder.join(name), format!("game's {name}")).unwrap();
     }
     let Response::Refused { reason } = install(Some(&exe), None, &cache) else {
@@ -367,7 +367,7 @@ fn a_name_taken_by_the_game_is_never_overwritten() {
         panic!()
     };
     assert!(reason.contains("OptiScaler"), "{reason}");
-    for name in butterpollo_core::neural::PROXIES
+    for name in butterpollo_session::neural::PROXIES
         .iter()
         .filter(|n| **n != "version.dll")
     {
@@ -1374,7 +1374,7 @@ fn program_files_folders_are_left_to_system() {
 #[test]
 #[ignore = "reads this PC's installed host"]
 fn the_installed_hosts_data_folder_holds_a_system_cache() {
-    let data = butterpollo_core::paths::data_root();
+    let data = butterpollo_session::paths::data_root();
     assert!(data.is_dir(), "{} is not installed", data.display());
     super::trusted_root(&data, &data, true).unwrap();
 }
@@ -2159,7 +2159,10 @@ fn a_delete_while_a_stream_runs_leaves_the_folder_untouched() {
     assert!(matches!(placed, Response::Placed { .. }), "{placed:?}");
     let with_mod = snapshot(folder);
     let app: App = serde_json::from_value(switched_on("Game", "game", &exe)).unwrap();
-    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    f.session(
+        f.client(u32::MAX),
+        butterpollo_session::session::Role::Stream,
+    );
     let error = format!("{:#}", reserve(h, &app).err().unwrap());
     assert!(
         error.contains("remove it when no stream is running"),
@@ -2486,7 +2489,7 @@ fn the_gpu_check_is_asked_again_once_the_streaming_gpu_is_set_otherwise() {
     .into_iter()
     .enumerate()
     {
-        *h.config.write().unwrap() = butterpollo_core::config::Config::parse(config).unwrap();
+        *h.config.write().unwrap() = butterpollo_config::config::Config::parse(config).unwrap();
         let name = format!("AMD Radeon PRO W7900 {n}");
         answer(&name);
         assert_eq!(gpu_of(h), Ok(name.clone()), "{config}");
@@ -3016,7 +3019,10 @@ async fn a_download_goes_list_checksums_archives_cache() {
     std::fs::remove_dir_all(cache_root(h)).unwrap();
 
     // A stream starts while the switch's own download runs: it stops.
-    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    f.session(
+        f.client(u32::MAX),
+        butterpollo_session::session::Role::Stream,
+    );
     let error = fetch(h, &|_, _| {}).await.unwrap_err();
     assert!(error.is::<StreamStarted>(), "{error:#}");
     assert!(cached(&cache_root(h)).is_none());
@@ -3095,7 +3101,10 @@ async fn a_download_waits_for_no_stream_and_its_failure_names_no_files() {
         true
     })
     .unwrap();
-    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    f.session(
+        f.client(u32::MAX),
+        butterpollo_session::session::Role::Stream,
+    );
     assert!(matches!(enable(h, "game", None), Err(Refusal::Streaming)));
     assert!(!h.neural.lock().jobs.contains_key("game"));
     // A release downloaded already changes nothing: its copy into the
@@ -4816,7 +4825,10 @@ fn a_stream_holds_the_game_check_at_its_last_answer() {
     checked_game(&f, temp.path());
     assert_eq!(status(h, "without")["game"]["why"], "no_frame_generation");
     assert_eq!(game_checks(h), 1);
-    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+    f.session(
+        f.client(u32::MAX),
+        butterpollo_session::session::Role::Stream,
+    );
     expire(h, "without");
     let shown = status(h, "without");
     assert_eq!(shown["game"]["why"], "no_frame_generation", "{shown}");

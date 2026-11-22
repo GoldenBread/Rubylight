@@ -1,14 +1,15 @@
-//! Rubylight native API v1 interop between `butterpollo_core::native` and `nightjar_core::http::HostClient`.
+//! Rubylight native API v1 interop between `butterpollo_session::native` and `nightjar_core::http::HostClient`.
 mod common;
 
-use butterpollo_core::native::{self, SessionSnapshot};
-use butterpollo_core::state::{App, Client};
-use butterpollo_core::{crypto, native_api as host_api};
+use butterpollo_crypto::crypto;
+use butterpollo_session::native::{self, SessionSnapshot};
+use butterpollo_session::state::{App, Client};
 use common::{client_identity, host_identity};
 use nightjar_core::http::HostClient;
 use nightjar_core::http::native_api::library::Library;
 use nightjar_core::http::native_api::radeon::SettingsWrite;
 use nightjar_core::http::native_api::session::{ActionId, Owner, State};
+use rubylight_native_api as host_api;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use serde_json::{Value, json};

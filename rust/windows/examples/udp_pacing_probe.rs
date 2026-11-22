@@ -10,7 +10,7 @@ fn main() {
 #[cfg(windows)]
 fn main() -> anyhow::Result<()> {
     use anyhow::Context;
-    use butterpollo_core::{
+    use butterpollo_media_policy::{
         adaptive_pacing::{AdaptivePacing, Traffic},
         network_pacing::Pacer,
     };
@@ -68,7 +68,7 @@ fn main() -> anyhow::Result<()> {
     let mut initial_bps = None;
     let mut final_bps = bps;
     let ceiling = if is_automatic {
-        butterpollo_core::network_pacing::rate_bps(0, 40_000, 0, false, 55_000_000).min(bps)
+        butterpollo_media_policy::network_pacing::rate_bps(0, 40_000, 0, false, 55_000_000).min(bps)
     } else {
         bps
     };
@@ -149,7 +149,7 @@ fn main() -> anyhow::Result<()> {
             let budget = if mode == "legacy" {
                 (rate / 4000).clamp(1400, 64 * 1024) as usize
             } else {
-                butterpollo_core::network_pacing::batch_payload_limit(
+                butterpollo_media_policy::network_pacing::batch_payload_limit(
                     rate,
                     1400,
                     peer.is_ipv6(),

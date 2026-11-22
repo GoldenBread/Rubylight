@@ -13,7 +13,7 @@
 //! delete elsewhere. Only the user's helper follows the game's folder
 //! itself when it is a link, as a game moved and linked back leaves it
 //! ([`followed`]); a SYSTEM host follows none.
-use butterpollo_core::neural::{
+use butterpollo_session::neural::{
     self, LEGACY_MANIFEST, MANIFEST, Manifest, Mode, Now, Occupant, PLACED_BY, Placed, SETTINGS,
 };
 use serde::{Deserialize, Serialize};

@@ -6,7 +6,7 @@
 //! the host never does it in its own process: `butterpollo.exe
 //! --neural-probe` calls [`gpus`] and exits.
 use anyhow::{Context, Result, bail};
-use butterpollo_core::neural::Gpu;
+use butterpollo_session::neural::Gpu;
 use std::ffi::{CStr, c_int, c_void};
 
 /// The runtime the driver installs in System32; older drivers had version 6.

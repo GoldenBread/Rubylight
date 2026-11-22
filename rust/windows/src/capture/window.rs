@@ -140,8 +140,8 @@ pub(super) fn refuse_backend(kind: &str) -> Result<()> {
 /// Refuses a Windows build without window capture. Its floor is above WGC's,
 /// whose own text would suggest Desktop Duplication.
 pub(super) fn require_capture(build: Option<u32>) -> Result<()> {
-    use butterpollo_core::os_gate::{Feature, missing};
-    const { assert!(butterpollo_core::os_gate::WGC_WINDOW >= butterpollo_core::os_gate::WGC) };
+    use butterpollo_session::os_gate::{Feature, missing};
+    const { assert!(butterpollo_session::os_gate::WGC_WINDOW >= butterpollo_session::os_gate::WGC) };
     match missing(build, Feature::WgcWindow) {
         Some(reason) => bail!("{reason}"),
         None => Ok(()),

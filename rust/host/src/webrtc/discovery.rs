@@ -7,7 +7,7 @@ use crate::{
     state::Shared,
 };
 use anyhow::{Context, Result};
-use butterpollo_core::webrtc::protocol::{ServerMessage, is_discovery_request};
+use butterpollo_session::webrtc::protocol::{ServerMessage, is_discovery_request};
 use socket2::{Domain, Socket, Type};
 use std::{
     collections::HashMap,

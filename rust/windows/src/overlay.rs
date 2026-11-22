@@ -4,7 +4,7 @@
 //! colours read from the panel image instead of the capture; closed, the
 //! conversions record exactly what they did before.
 use anyhow::{Result, ensure};
-use butterpollo_core::couch_menu::{Frame, layout::ALIGN};
+use butterpollo_input_policy::couch_menu::{Frame, layout::ALIGN};
 use std::sync::Arc;
 
 /// One published panel.

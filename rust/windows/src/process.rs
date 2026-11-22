@@ -1,7 +1,7 @@
 //! User-session process creation with ownership of the complete Windows job.
 
 use anyhow::{Context, Result, bail};
-use butterpollo_core::nucleus::elevation::Account;
+use butterpollo_session::nucleus::elevation::Account;
 use std::{
     collections::BTreeMap,
     ffi::OsString,
@@ -360,7 +360,7 @@ fn own_linked_account(user: &str, linked: &str) -> Result<()> {
     anyhow::ensure!(
         user == linked,
         "Starting it elevated needs administrator rights, and {}",
-        butterpollo_core::nucleus::elevation::PROTECTED
+        butterpollo_session::nucleus::elevation::PROTECTED
     );
     Ok(())
 }
@@ -544,11 +544,11 @@ pub struct Process {
 /// process object alive prevents PID reuse between verification and activation.
 #[derive(Clone)]
 pub struct AudioProcess {
-    pub identity: butterpollo_core::audio_scope::Identity,
+    pub identity: butterpollo_session::audio_scope::Identity,
     handle: std::sync::Arc<OwnedHandle>,
 }
 impl AudioProcess {
-    pub fn open(identity: butterpollo_core::audio_scope::Identity) -> Result<Self> {
+    pub fn open(identity: butterpollo_session::audio_scope::Identity) -> Result<Self> {
         // SAFETY: a newly opened query/synchronize-only handle is owned once;
         // the out-pointers are live FILETIMEs and no process is modified.
         unsafe {
@@ -1595,7 +1595,7 @@ pub fn usage(pid: u32) -> Option<Usage> {
 }
 /// Every running process with its parent, creation time and program name. The creation time is 0
 /// for a process this one may not open.
-pub fn processes() -> Result<Vec<butterpollo_core::steam::Process>> {
+pub fn processes() -> Result<Vec<butterpollo_session::steam::Process>> {
     static LISTING: std::sync::LazyLock<std::sync::Mutex<listing::Listing>> =
         std::sync::LazyLock::new(Default::default);
     static SNAPSHOT: std::sync::Once = std::sync::Once::new();
@@ -1617,7 +1617,7 @@ pub fn processes() -> Result<Vec<butterpollo_core::steam::Process>> {
 }
 /// [`processes`] from a Toolhelp snapshot, opening every process for its creation time: the way
 /// that works where the kernel's list cannot be read.
-fn snapshot_processes() -> Result<Vec<butterpollo_core::steam::Process>> {
+fn snapshot_processes() -> Result<Vec<butterpollo_session::steam::Process>> {
     use windows::Win32::System::Diagnostics::ToolHelp::*;
     let mut list = vec![];
     // SAFETY: `entry` has dwSize set to its size and the owned snapshot handle stays open for the
@@ -1636,7 +1636,7 @@ fn snapshot_processes() -> Result<Vec<butterpollo_core::steam::Process>> {
                 .position(|c| *c == 0)
                 .unwrap_or(entry.szExeFile.len());
             if entry.th32ProcessID != 0 {
-                list.push(butterpollo_core::steam::Process {
+                list.push(butterpollo_session::steam::Process {
                     pid: entry.th32ProcessID,
                     parent: entry.th32ParentProcessID,
                     started: creation_time(entry.th32ProcessID),

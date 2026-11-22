@@ -2,9 +2,11 @@
 //! resolve the requested mode against what the session and the startup check
 //! allow, and hand the encoder new settings only when they change.
 
-use butterpollo_core::config::Config;
-use butterpollo_core::encoder_focus::{self, Context, FocusState, Levels, Requested, Resolved};
-use butterpollo_core::session::Warnings;
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::encoder_focus::{
+    self, Context, FocusState, Levels, Requested, Resolved,
+};
+use butterpollo_session::session::Warnings;
 use butterpollo_windows::compute::FocusSettings;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};

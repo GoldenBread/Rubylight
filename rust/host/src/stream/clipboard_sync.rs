@@ -1,4 +1,4 @@
-//! Clipboard sync (0x5508), Moonlight V+'s message (`butterpollo_core::clipboard_sync`, after
+//! Clipboard sync (0x5508), Moonlight V+'s message (`rubylight_protocol::clipboard_sync`, after
 //! https://github.com/qiin2333/moonlight-vplus, GPL-3.0): what the device copies goes on this
 //! PC's clipboard, and what is copied here goes to the device, text and PNG images of up to
 //! one control message each.
@@ -17,11 +17,11 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use butterpollo_core::clipboard_image::ImageError;
-use butterpollo_core::clipboard_sync::{Frame, KIND_PNG, KIND_REF, KIND_TEXT, MAX_PAYLOAD_BYTES};
-use butterpollo_core::config::Config;
-use butterpollo_core::session::Warnings;
-use butterpollo_core::state::Client;
+use butterpollo_config::config::Config;
+use butterpollo_session::clipboard_image::ImageError;
+use butterpollo_session::session::Warnings;
+use butterpollo_session::state::Client;
+use rubylight_protocol::clipboard_sync::{Frame, KIND_PNG, KIND_REF, KIND_TEXT, MAX_PAYLOAD_BYTES};
 
 use crate::state::Session;
 
@@ -59,7 +59,7 @@ impl Allowed {
 /// What `client` may do on a stream with the effective `config`.
 pub(crate) fn allowed(config: &Config, client: &Client) -> Allowed {
     if client.perm & VIEW == 0
-        || butterpollo_core::background::enabled(config)
+        || butterpollo_session::background::enabled(config)
         || crate::nucleus::player(config)
     {
         return Allowed::default();

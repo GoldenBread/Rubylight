@@ -1,5 +1,5 @@
 //! HDR dynamic metadata statistics behind the D3D11 conversion
-//! (`butterpollo_core::hdr_dynamic`): the compute conversion's pass
+//! (`butterpollo_media_policy::hdr_dynamic`): the compute conversion's pass
 //! (`compute_hdr_stats.rs`), the same shaders on the graphics context. A
 //! conversion leaves its source and constants with [`HdrStats::queue`]; once
 //! the frame went to the encoder, [`HdrStats::submit`] histograms PQ(maxRGB)

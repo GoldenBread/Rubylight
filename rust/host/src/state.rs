@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
-use butterpollo_core::{
-    config::Config,
-    crypto::Identity,
-    pairing::Pairings,
+use butterpollo_config::config::Config;
+use butterpollo_crypto::{crypto::Identity, pairing::Pairings};
+use butterpollo_session::{
     session::Warnings,
     state::{App, Credentials, PairedState, ProfileFiles},
 };
@@ -27,15 +26,15 @@ fn file_stamp(path: &std::path::Path) -> Option<FileStamp> {
 pub(crate) mod loss_memory;
 #[cfg(test)]
 pub(crate) mod test_support;
-pub type Launch = butterpollo_core::session::Launch<
+pub type Launch = butterpollo_session::session::Launch<
     crate::display_session::StreamPreparation,
     butterpollo_windows::audio_route::Route,
 >;
-pub type Session = butterpollo_core::session::Session<
+pub type Session = butterpollo_session::session::Session<
     crate::display_session::StreamPreparation,
     butterpollo_windows::audio_route::Route,
 >;
-pub type Sessions = butterpollo_core::session::Sessions<
+pub type Sessions = butterpollo_session::session::Sessions<
     crate::display_session::StreamPreparation,
     butterpollo_windows::audio_route::Route,
 >;
@@ -115,7 +114,7 @@ pub struct OneTimePin {
     pub device_name: String,
     pub created: Instant,
     pub misses: OtpMisses,
-    /// The access the owner chose ([`butterpollo_core::state::pairing_access`]).
+    /// The access the owner chose ([`butterpollo_session::state::pairing_access`]).
     pub permission: Option<u32>,
 }
 /// Wrong one-time PIN answers by device address. Pairing needs no client
@@ -189,12 +188,12 @@ impl OneTimePins {
                 continue;
             }
             tried = true;
-            let expected = butterpollo_core::crypto::hash(
+            let expected = butterpollo_crypto::crypto::hash(
                 format!("{}{salt}{}", otp.pin, otp.passphrase).as_bytes(),
             );
             if auth
                 .as_deref()
-                .is_some_and(|auth| butterpollo_core::crypto::equal(&expected, auth))
+                .is_some_and(|auth| butterpollo_crypto::crypto::equal(&expected, auth))
             {
                 return Ok(slot.take());
             }
@@ -267,7 +266,7 @@ pub fn pairing_from_internet(address: std::net::IpAddr) -> bool {
     crate::network::reach(address) == crate::network::Reach::Wan
 }
 fn notice_name(name: &str) -> String {
-    let name = butterpollo_core::pairing::without_direction_controls(name);
+    let name = butterpollo_crypto::pairing::without_direction_controls(name);
     let mut shown: String = name.chars().take(NOTICE_NAME_CHARS).collect();
     if shown.len() < name.len() {
         shown.push('…');
@@ -330,12 +329,12 @@ pub struct Host {
     pub port_override: Option<u16>,
     pub identity: Identity,
     /// The web console's TLS certificate, separate from the pairing identity.
-    pub console: butterpollo_core::crypto::ConsoleCertificate,
+    pub console: butterpollo_crypto::crypto::ConsoleCertificate,
     pub paired: RwLock<PairedState>,
     /// Serializes route-memory writes with resets; epochs fence old sessions.
     keyframe_loss_epochs: Mutex<HashMap<String, u64>>,
     /// Each client's last live audio choice per app, for its next session.
-    pub audio_memory: butterpollo_core::audio_dsp::Memory,
+    pub audio_memory: butterpollo_media_policy::audio_dsp::Memory,
     pub credentials: RwLock<Option<Credentials>>,
     /// The credentials file as the sign-in was last read or written.
     credentials_stamp: Mutex<Option<FileStamp>>,
@@ -377,7 +376,7 @@ pub struct Host {
     pub encoder_mb_rates: [std::sync::atomic::AtomicU64; 3],
     pub packed_modes: std::sync::atomic::AtomicU8,
     /// The NVIDIA image enhancements the GPU and driver reported with the
-    /// NVIDIA component (`butterpollo_core::nvidia_enhance` bits); 0 without
+    /// NVIDIA component (`butterpollo_media_policy::nvidia_enhance` bits); 0 without
     /// it and on other GPUs.
     pub nvidia_enhancements: std::sync::atomic::AtomicU8,
     /// Why the startup check found an enhancement unavailable, per
@@ -401,8 +400,8 @@ pub struct Host {
     /// a save, and PyroWave probed again.
     optional_probe: Mutex<()>,
     /// The encoder focus check per codec and bit depth, indexed by
-    /// [`butterpollo_core::encoder_focus::support_index`].
-    focus_support: Mutex<[butterpollo_core::encoder_focus::Support; 5]>,
+    /// [`butterpollo_media_policy::encoder_focus::support_index`].
+    focus_support: Mutex<[butterpollo_media_policy::encoder_focus::Support; 5]>,
     pub probing_codecs: std::sync::atomic::AtomicBool,
     codec_probe_requested: std::sync::atomic::AtomicBool,
     /// True once the startup probe has published its standard codecs, or
@@ -426,7 +425,7 @@ pub struct Host {
     /// Sleep PC tokens and the suspend backend.
     pub power: crate::power_action::PowerActions,
     /// Each paired client's `GET /bandwidth-probe` cooldown and budget.
-    pub bandwidth_probes: Mutex<butterpollo_core::bandwidth_probe::Limiter>,
+    pub bandwidth_probes: Mutex<butterpollo_media_policy::bandwidth_probe::Limiter>,
     /// File transfer uploads and downloads, all paced together.
     pub file_transfers: crate::native_api::files::Transfers,
     /// The USB devices clients forward to this host.
@@ -435,7 +434,7 @@ pub struct Host {
     pub session: Mutex<crate::session_control::Control>,
     /// Ended streams for the console's Sessions page, saved in the profile directory.
     pub session_history: crate::session_history::History,
-    pub confirmations: Mutex<butterpollo_core::remote::Confirmations>,
+    pub confirmations: Mutex<butterpollo_session::remote::Confirmations>,
     pub app_audio: Mutex<Option<Arc<butterpollo_windows::audio_route::Route>>>,
     /// Each client's game display, kept between its streams while the app runs.
     pub app_display: Mutex<BTreeMap<String, RetainedDisplay>>,
@@ -454,7 +453,7 @@ pub struct Host {
     /// The encoder family the capability probe selected for H.264.
     pub probed_encoder: Mutex<&'static str>,
     /// Why each codec the last probe pass did not advertise is missing.
-    pub codec_missing: Mutex<Vec<butterpollo_core::codec_support::Unavailable>>,
+    pub codec_missing: Mutex<Vec<butterpollo_media_policy::codec_support::Unavailable>>,
     /// Which session changed Radeon settings, and when they go back.
     pub radeon: crate::radeon_session::Radeon,
     /// Which session changed keys in games' settings files, and when they go back.
@@ -618,7 +617,7 @@ impl Host {
             uuid.to_owned(),
             LastFailure {
                 since: Instant::now(),
-                reason: Some(butterpollo_core::session::failure_text(reason)),
+                reason: Some(butterpollo_session::session::failure_text(reason)),
             },
         );
     }
@@ -846,11 +845,11 @@ impl Host {
         if let Err(message) = restored {
             crate::host_warnings::notice(&directory, &warnings, "settings_restore", &message);
         }
-        if let Some(warning) = butterpollo_core::config::retired_warning(&retired) {
+        if let Some(warning) = butterpollo_config::config::retired_warning(&retired) {
             // Written back, so the file no longer has them; the notice is saved
             // until the console dismisses it. A file that cannot be written
             // keeps the old values and warns again on the next start.
-            if let Err(error) = butterpollo_core::state::atomic_write(
+            if let Err(error) = butterpollo_session::state::atomic_write(
                 &config_path,
                 Config::load(&config_path)?.text().as_bytes(),
             ) {
@@ -873,7 +872,7 @@ impl Host {
             certificate,
             key,
         } = ProfileFiles::new(&config, &directory);
-        let mut aliases = butterpollo_core::state::load_json(&aliases_path, json!({"root":{}}))?;
+        let mut aliases = butterpollo_session::state::load_json(&aliases_path, json!({"root":{}}))?;
         let mut paired = PairedState::load(&paired_path)?;
         // Vibepollo keeps the shared virtual display's GUID in
         // vibeshine_state.json; reuse it so Windows keeps that display's
@@ -894,7 +893,7 @@ impl Host {
         if upgraded.as_bool() != Some(true) {
             let mut stored = Config::load(&config_path)?;
             if stored.upgrade_ltr_default(false) {
-                butterpollo_core::state::atomic_write(&config_path, stored.text().as_bytes())?;
+                butterpollo_session::state::atomic_write(&config_path, stored.text().as_bytes())?;
                 config.upgrade_ltr_default(false);
                 tracing::info!(
                     "amd_ltr_frames = 0, the default before 2.0.0, was removed from sunshine.conf: AV1 now recovers lost frames without a keyframe. Set it to 0 again to turn that off"
@@ -928,7 +927,7 @@ impl Host {
         paired.save(&paired_path)?;
         let identity = Identity::load(&certificate, &key)?;
         let console =
-            butterpollo_core::crypto::ConsoleCertificate::load(&directory.join("credentials"))?;
+            butterpollo_crypto::crypto::ConsoleCertificate::load(&directory.join("credentials"))?;
         let credentials = Credentials::load(&credentials_path)?;
         let credentials_stamp = file_stamp(&credentials_path);
         let app_document = load_library(
@@ -942,17 +941,17 @@ impl Host {
         )?;
         let mut app_document = app_document;
         if normalize_library(&mut app_document) {
-            butterpollo_core::state::write_json(&apps_path, &app_document)?;
+            butterpollo_session::state::write_json(&apps_path, &app_document)?;
         }
         let apps_stamp = file_stamp(&apps_path);
         let mut apps: Vec<App> =
             serde_json::from_value(app_document.get("apps").cloned().unwrap_or(json!([])))?;
-        butterpollo_core::catalog::assign(
+        butterpollo_session::catalog::assign(
             &mut apps,
             &mut aliases,
             assets.parent().unwrap_or(&assets),
         )?;
-        butterpollo_core::state::write_json(&aliases_path, &aliases)?;
+        butterpollo_session::state::write_json(&aliases_path, &aliases)?;
         let web_sessions = web_sessions::load(
             &aliases,
             credentials
@@ -1022,7 +1021,7 @@ impl Host {
             packed_reprobing: std::sync::atomic::AtomicBool::new(false),
             optional_probe: Mutex::new(()),
             focus_support: Mutex::new(std::array::from_fn(|_| {
-                butterpollo_core::encoder_focus::Support::NotProbed
+                butterpollo_media_policy::encoder_focus::Support::NotProbed
             })),
             probing_codecs: std::sync::atomic::AtomicBool::new(true),
             codec_probe_requested: std::sync::atomic::AtomicBool::new(false),
@@ -1068,7 +1067,7 @@ impl Host {
     /// Write the app library and remember the file as written, so [`Host::reload_apps`] does
     /// not read the host's own save back. Call it with [`Host::apps`] write-locked.
     pub fn save_apps(&self, document: &Value) -> Result<()> {
-        butterpollo_core::state::write_json(&self.apps_path, document)?;
+        butterpollo_session::state::write_json(&self.apps_path, document)?;
         *self.apps_stamp.lock().unwrap() = file_stamp(&self.apps_path);
         Ok(())
     }
@@ -1092,7 +1091,7 @@ impl Host {
         drop(stamp);
         let loaded = (|| -> Result<(Value, Vec<App>)> {
             let bytes = std::fs::read(&self.apps_path)?;
-            let json = butterpollo_core::state::json_bytes(&bytes)
+            let json = butterpollo_session::state::json_bytes(&bytes)
                 .context("the file is empty or not text")?;
             let mut document: Value = serde_json::from_slice(json)?;
             if normalize_library(&mut document) {
@@ -1121,12 +1120,12 @@ impl Host {
     pub fn assign_apps(&self, apps: &mut [App]) -> Result<()> {
         let mut aliases = self.aliases.lock().unwrap();
         let mut next = aliases.clone();
-        butterpollo_core::catalog::assign(
+        butterpollo_session::catalog::assign(
             apps,
             &mut next,
             self.assets.parent().unwrap_or(&self.assets),
         )?;
-        butterpollo_core::state::write_json(&self.aliases_path, &next)?;
+        butterpollo_session::state::write_json(&self.aliases_path, &next)?;
         *aliases = next;
         Ok(())
     }
@@ -1244,9 +1243,9 @@ impl Host {
         &self,
         codec: u8,
         ten_bit: bool,
-    ) -> butterpollo_core::encoder_focus::Support {
-        butterpollo_core::encoder_focus::support_index(codec, ten_bit).map_or(
-            butterpollo_core::encoder_focus::Support::NotProbed,
+    ) -> butterpollo_media_policy::encoder_focus::Support {
+        butterpollo_media_policy::encoder_focus::support_index(codec, ten_bit).map_or(
+            butterpollo_media_policy::encoder_focus::Support::NotProbed,
             |index| self.focus_support.lock().unwrap()[index].clone(),
         )
     }
@@ -1305,21 +1304,21 @@ impl Host {
         };
         let mut flags = 0u32;
         let mut outcomes: Vec<(
-            butterpollo_core::codec_support::Codec,
-            butterpollo_core::codec_support::Outcome,
+            butterpollo_media_policy::codec_support::Codec,
+            butterpollo_media_policy::codec_support::Outcome,
         )> = Vec::new();
         // The GPU the first encoder opened on, which wording a missing codec
         // must name: the probe may encode on a card other than the biggest.
         let mut adapter = String::new();
-        let mut focus: [butterpollo_core::encoder_focus::Support; 5] =
-            std::array::from_fn(|_| butterpollo_core::encoder_focus::Support::NotProbed);
+        let mut focus: [butterpollo_media_policy::encoder_focus::Support; 5] =
+            std::array::from_fn(|_| butterpollo_media_policy::encoder_focus::Support::NotProbed);
         // Bits follow moonlight-common-c's SCM_* values. Native 4:4:4 is
         // probed after the 4:2:0 modes, as Sunshine's encoder check does
         // (`src/video.cpp`), and only where its 4:2:0 mode works: a real
         // session opens in 4:4:4 and must return a frame, so NVENC's
         // NV_ENC_CAPS_SUPPORT_YUV444_ENCODE on this GPU decides, never its
         // name. AMF encodes 4:2:0 only and is not opened for it.
-        use butterpollo_core::codec_support::{Codec, Outcome};
+        use butterpollo_media_policy::codec_support::{Codec, Outcome};
         for probed in Codec::ALL.into_iter().chain(Codec::NATIVE_444) {
             let (codec, hdr, bit) = (probed.id, probed.hdr, probed.bit());
             let mode = config.integer(if codec == 1 { "hevc_mode" } else { "av1_mode" }, 0);
@@ -1333,8 +1332,8 @@ impl Host {
                     continue;
                 }
                 let refusal = match *self.probed_encoder.lock().unwrap() {
-                    "nvenc" => butterpollo_core::nvenc::sdk_444_refusal(codec),
-                    _ => Some(butterpollo_core::codec_support::AMF_NATIVE_444),
+                    "nvenc" => butterpollo_media_policy::nvenc::sdk_444_refusal(codec),
+                    _ => Some(butterpollo_media_policy::codec_support::AMF_NATIVE_444),
                 };
                 if let Some(reason) = refusal {
                     outcomes.push((probed, Outcome::Failed(reason.into())));
@@ -1347,7 +1346,7 @@ impl Host {
             if busy() {
                 return Ok(None);
             }
-            let negotiated = butterpollo_core::rtsp::Negotiated {
+            let negotiated = butterpollo_media_policy::rtsp::Negotiated {
                 width: 640,
                 height: 480,
                 fps: 30,
@@ -1372,14 +1371,15 @@ impl Host {
                     if !hdr && !probed.yuv444 {
                         self.record_throughput(codec, &encoder);
                     }
-                    let mut outcome = butterpollo_core::codec_support::Outcome::Failed(
+                    let mut outcome = butterpollo_media_policy::codec_support::Outcome::Failed(
                         "the encoder produced no packets".into(),
                     );
                     for frame in 0..8 {
                         match encoder.encode(&image, frame == 0, negotiated.bitrate_kbps) {
                             Ok(packets) if !packets.is_empty() => {
                                 flags |= bit;
-                                outcome = butterpollo_core::codec_support::Outcome::Available;
+                                outcome =
+                                    butterpollo_media_policy::codec_support::Outcome::Available;
                                 self.codecs
                                     .store(flags | pyrowave, std::sync::atomic::Ordering::Release);
                                 if encoder.supports_invalidation() {
@@ -1390,7 +1390,7 @@ impl Host {
                             Err(error) => {
                                 first_error.get_or_insert_with(|| format!("{error:#}"));
                                 tracing::debug!(%error, codec, hdr, "encoder capability probe failed");
-                                outcome = butterpollo_core::codec_support::Outcome::Failed(
+                                outcome = butterpollo_media_policy::codec_support::Outcome::Failed(
                                     format!("{error:#}"),
                                 );
                                 break;
@@ -1399,11 +1399,11 @@ impl Host {
                         }
                     }
                     // The focus check is a 4:2:0 verdict per codec and depth.
-                    if outcome == butterpollo_core::codec_support::Outcome::Available
+                    if outcome == butterpollo_media_policy::codec_support::Outcome::Available
                         && !probed.yuv444
                         && !busy()
                         && let Some(index) =
-                            butterpollo_core::encoder_focus::support_index(codec, hdr)
+                            butterpollo_media_policy::encoder_focus::support_index(codec, hdr)
                     {
                         focus[index] = focus_verdict(encoder.probe_focus());
                     }
@@ -1414,7 +1414,9 @@ impl Host {
                     tracing::debug!(%error, codec, hdr, "encoder capability initialization failed");
                     outcomes.push((
                         probed,
-                        butterpollo_core::codec_support::Outcome::Failed(format!("{error:#}")),
+                        butterpollo_media_policy::codec_support::Outcome::Failed(format!(
+                            "{error:#}"
+                        )),
                     ));
                 }
             }
@@ -1465,7 +1467,7 @@ impl Host {
     ) {
         use std::sync::atomic::Ordering;
         let _probe = self.optional_probe.lock().unwrap();
-        let all = butterpollo_core::packed444::ALL_MODES;
+        let all = rubylight_protocol::packed444::ALL_MODES;
         let live = || packed_modes_allowed(&self.config.read().unwrap());
         match probe_packed_modes(config, flags, all, busy, &live, probe) {
             Some((found, waiting)) => {
@@ -1515,12 +1517,12 @@ impl Host {
         &self,
         adapter: &str,
         outcomes: &[(
-            butterpollo_core::codec_support::Codec,
-            butterpollo_core::codec_support::Outcome,
+            butterpollo_media_policy::codec_support::Codec,
+            butterpollo_media_policy::codec_support::Outcome,
         )],
         any_codec: bool,
     ) {
-        let missing = butterpollo_core::codec_support::explain_all(adapter, outcomes);
+        let missing = butterpollo_media_policy::codec_support::explain_all(adapter, outcomes);
         for m in &missing {
             // A setting is the user's choice, not a fault, and most GPUs
             // encode 4:2:0 only.
@@ -1530,7 +1532,7 @@ impl Host {
                 tracing::warn!(adapter, codec = m.codec.label(), reason = %m.reason, "codec not advertised");
             }
         }
-        match butterpollo_core::codec_support::warning(&missing).filter(|_| any_codec) {
+        match butterpollo_media_policy::codec_support::warning(&missing).filter(|_| any_codec) {
             Some(message) => self.warnings.set("codec_support", message),
             None => self.warnings.clear("codec_support"),
         }
@@ -1646,7 +1648,7 @@ impl Host {
         use std::sync::atomic::Ordering;
         let new = modes & !self.packed_codec_missing.fetch_or(modes, Ordering::AcqRel);
         for (codec, ten_bit) in PACKED_MODES {
-            let bit = butterpollo_core::packed444::mode_bit(codec, ten_bit);
+            let bit = rubylight_protocol::packed444::mode_bit(codec, ten_bit);
             if new & bit != 0 {
                 let codec = if codec == 1 { "HEVC" } else { "AV1" };
                 tracing::warn!(
@@ -1816,12 +1818,13 @@ impl Host {
     }
     pub fn save_credentials(&self, credentials: &Credentials) -> Result<()> {
         let mut paired = self.paired.write().unwrap();
-        let mut document = butterpollo_core::state::load_json(&self.credentials_path, json!({}))?;
+        let mut document =
+            butterpollo_session::state::load_json(&self.credentials_path, json!({}))?;
         let values = serde_json::to_value(credentials)?;
         for (key, value) in values.as_object().unwrap() {
             document[key] = value.clone();
         }
-        butterpollo_core::state::write_json(&self.credentials_path, &document)?;
+        butterpollo_session::state::write_json(&self.credentials_path, &document)?;
         if self.credentials_path == self.paired_path {
             paired.document = document;
         }
@@ -1897,7 +1900,7 @@ impl Host {
                 .map(|(key, s)| web_sessions::record(key, s))
                 .collect(),
         );
-        butterpollo_core::state::write_json(&self.aliases_path, &document)?;
+        butterpollo_session::state::write_json(&self.aliases_path, &document)?;
         *aliases = document;
         Ok(())
     }
@@ -1912,7 +1915,7 @@ impl Host {
         }
         document["root"]["session_tokens"] = json!([]);
         document["root"]["api_tokens"] = json!([]);
-        butterpollo_core::state::write_json(&self.aliases_path, &document)?;
+        butterpollo_session::state::write_json(&self.aliases_path, &document)?;
         *aliases = document;
         Ok(())
     }
@@ -1930,9 +1933,9 @@ impl Host {
             .unwrap()
             .integer("session_token_ttl_seconds", 7200)
             .clamp(60, 604800) as u64;
-        let access = hex::encode(butterpollo_core::crypto::random::<32>());
-        let refresh = hex::encode(butterpollo_core::crypto::random::<32>());
-        let csrf = hex::encode(butterpollo_core::crypto::random::<32>());
+        let access = hex::encode(butterpollo_crypto::crypto::random::<32>());
+        let refresh = hex::encode(butterpollo_crypto::crypto::random::<32>());
+        let csrf = hex::encode(butterpollo_crypto::crypto::random::<32>());
         let wall = web_sessions::now();
         let refresh_deadline = previous
             .as_ref()
@@ -1955,7 +1958,7 @@ impl Host {
             .unwrap_or_default();
         extra.insert(
             "rotation_id".into(),
-            hex::encode(butterpollo_core::crypto::random::<12>()).into(),
+            hex::encode(butterpollo_crypto::crypto::random::<12>()).into(),
         );
         let mut sessions = self.web_sessions.lock().unwrap();
         let live = previous.as_ref().map(|previous| {
@@ -1971,7 +1974,7 @@ impl Host {
         let sign_in = live
             .flatten()
             .and_then(|s| s.extra.get(web_sessions::SIGN_IN_ID).cloned())
-            .unwrap_or_else(|| hex::encode(butterpollo_core::crypto::random::<16>()).into());
+            .unwrap_or_else(|| hex::encode(butterpollo_crypto::crypto::random::<16>()).into());
         extra.insert(web_sessions::SIGN_IN_ID.into(), sign_in);
         let mut next = sessions.clone();
         next.retain(|_, s| s.refresh_expires > Instant::now());
@@ -2013,18 +2016,18 @@ impl Host {
 /// The focus check's verdict. Its error marks only this codec unsupported:
 /// the codec itself passed and stays offered.
 fn focus_verdict(
-    probe: Result<butterpollo_core::encoder_focus::Support>,
-) -> butterpollo_core::encoder_focus::Support {
+    probe: Result<butterpollo_media_policy::encoder_focus::Support>,
+) -> butterpollo_media_policy::encoder_focus::Support {
     probe.unwrap_or_else(
-        |error| butterpollo_core::encoder_focus::Support::Unsupported {
-            reason: butterpollo_core::encoder_focus::Reason::CodecUnsupported,
+        |error| butterpollo_media_policy::encoder_focus::Support::Unsupported {
+            reason: butterpollo_media_policy::encoder_focus::Reason::CodecUnsupported,
             message: format!("the focus check failed: {error:#}"),
         },
     )
 }
 /// `h264=verified(+10.0) hevc=... av1_10=not_probed`.
-fn focus_summary(support: &[butterpollo_core::encoder_focus::Support; 5]) -> String {
-    butterpollo_core::encoder_focus::SUPPORT_NAMES
+fn focus_summary(support: &[butterpollo_media_policy::encoder_focus::Support; 5]) -> String {
+    butterpollo_media_policy::encoder_focus::SUPPORT_NAMES
         .iter()
         .zip(support)
         .map(|(name, support)| format!("{name}={}", support.summary()))
@@ -2097,7 +2100,7 @@ pub(crate) type PyroWaveProbe = fn(&Config, &dyn Fn() -> bool) -> Result<u32>;
 /// Checks one packed 4:4:4 mode on the encoder: `codec_probe::packed`, or a
 /// fake in tests. The closure says a stream wants the encoder.
 pub(crate) type PackedProbe =
-    fn(&Config, &butterpollo_core::rtsp::Negotiated, &dyn Fn() -> bool) -> Result<()>;
+    fn(&Config, &butterpollo_media_policy::rtsp::Negotiated, &dyn Fn() -> bool) -> Result<()>;
 const PACKED_MODES: [(u8, bool); 4] = [(1, false), (1, true), (2, false), (2, true)];
 /// The packed 4:4:4 modes the settings let clients be offered: none while
 /// full chroma is off, and none for a codec or 10-bit mode turned off.
@@ -2112,7 +2115,7 @@ fn packed_modes_allowed(config: &Config) -> u8 {
             !(mode == 1 || (ten_bit && mode == 2))
         })
         .fold(0, |modes, (codec, ten_bit)| {
-            modes | butterpollo_core::packed444::mode_bit(codec, ten_bit)
+            modes | rubylight_protocol::packed444::mode_bit(codec, ten_bit)
         })
 }
 /// `packed_modes_allowed`, less the modes of a codec the startup probe did
@@ -2124,7 +2127,7 @@ fn packed_modes_offerable(config: &Config, codecs: u32) -> u8 {
         .into_iter()
         .filter(|&(codec, _)| codecs & if codec == 1 { 0x100 } else { 0x10000 } != 0)
         .fold(0, |modes, (codec, ten_bit)| {
-            modes | butterpollo_core::packed444::mode_bit(codec, ten_bit)
+            modes | rubylight_protocol::packed444::mode_bit(codec, ten_bit)
         })
         & packed_modes_allowed(config)
 }
@@ -2146,21 +2149,21 @@ fn probe_packed_modes(
     let mut packed_modes = 0;
     let mut waiting = 0;
     for (codec, ten_bit) in PACKED_MODES {
-        let bit = butterpollo_core::packed444::mode_bit(codec, ten_bit);
+        let bit = rubylight_protocol::packed444::mode_bit(codec, ten_bit);
         if allowed & bit == 0 || live() & bit == 0 {
             continue;
         }
         if busy() {
             return None;
         }
-        let negotiated = butterpollo_core::rtsp::Negotiated {
+        let negotiated = butterpollo_media_policy::rtsp::Negotiated {
             width: 640,
             height: 480,
             fps: 30,
             bitrate_kbps: 2000,
             codec,
             sdr_10bit: ten_bit,
-            chroma_packing: butterpollo_core::packed444::VERSION,
+            chroma_packing: rubylight_protocol::packed444::VERSION,
             ..Default::default()
         };
         let probing = std::time::Instant::now();
@@ -2205,7 +2208,7 @@ fn packed_mode_names(modes: u8) -> String {
     ]
     .into_iter()
     .filter(|&(codec, ten_bit, _)| {
-        modes & butterpollo_core::packed444::mode_bit(codec, ten_bit) != 0
+        modes & rubylight_protocol::packed444::mode_bit(codec, ten_bit) != 0
     })
     .map(|(_, _, name)| name)
     .collect();
@@ -2231,7 +2234,7 @@ fn normalize_library(document: &mut Value) -> bool {
             }
             // A ViGEmBus controller type, say, becomes its VHF pad, and a
             // setting saved under an earlier name takes its current one.
-            assigned |= butterpollo_core::config::migrate_app(app);
+            assigned |= butterpollo_config::config::migrate_app(app);
         }
     }
     assigned
@@ -2245,7 +2248,7 @@ fn load_library(path: &std::path::Path, default: Value) -> Result<Value> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(default),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let Some(json) = butterpollo_core::state::json_bytes(&bytes) else {
+    let Some(json) = butterpollo_session::state::json_bytes(&bytes) else {
         return Ok(default);
     };
     let parsed = serde_json::from_slice::<Value>(json)
@@ -2260,7 +2263,7 @@ fn load_library(path: &std::path::Path, default: Value) -> Result<Value> {
             let mut kept = path.as_os_str().to_owned();
             kept.push(".invalid");
             let kept = PathBuf::from(kept);
-            butterpollo_core::state::atomic_write(&kept, &bytes)?;
+            butterpollo_session::state::atomic_write(&kept, &bytes)?;
             tracing::error!(
                 error = %format!("{error:#}"),
                 file = %path.display(),

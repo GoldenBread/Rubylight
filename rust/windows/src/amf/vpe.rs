@@ -2,7 +2,7 @@
 //! captured texture goes to AMF as it is, the driver converts and scales it
 //! (on the Video Processing Engine where the GPU has one, or on compute), and
 //! the converter's NV12 or P010 surface goes to the encoder without a copy or
-//! a CPU wait. `butterpollo_core::amf_vpe` decides what it may convert; every
+//! a CPU wait. `butterpollo_media_policy::amf_vpe` decides what it may convert; every
 //! other frame keeps the shader conversion (`gpu_color`).
 //!
 //! Ported from Foundation Sunshine's `amd_vpe` (src/amf/amf_vpe_d3d11.cpp,
@@ -13,7 +13,7 @@
 use super::{check, gpu, int, timed};
 use crate::{amf_abi::*, capture::GpuImage, text::static_wide};
 use anyhow::{Context, Result, bail};
-use butterpollo_core::amf_vpe::{self as plan, Frame, Input, Output, Refusal, Source};
+use butterpollo_media_policy::amf_vpe::{self as plan, Frame, Input, Output, Refusal, Source};
 use std::{
     ptr,
     sync::Arc,
@@ -38,7 +38,7 @@ pub(crate) struct Converted {
 pub(crate) struct Vpe {
     component: *mut AMFComponent,
     context: *mut AMFContext,
-    config: butterpollo_core::rtsp::Negotiated,
+    config: butterpollo_media_policy::rtsp::Negotiated,
     output: Output,
     /// The input the converter was initialized for.
     input: Option<(Input, u32, u32)>,
@@ -144,7 +144,7 @@ impl Vpe {
     pub(crate) unsafe fn new(
         factory: *mut AMFFactory,
         context: *mut AMFContext,
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
     ) -> Result<Self> {
         let output = plan::stream_plan(&plan::Stream::of(config))
             .map_err(|refusal| anyhow::anyhow!("{}", refusal.code()))?;
@@ -497,8 +497,8 @@ impl Drop for Vpe {
 /// Whether an AMF stream converts with AMF's video converter: the setting is
 /// on and the stream's layout is one it can write.
 pub(crate) fn wanted_for(
-    options: &butterpollo_core::config::Config,
-    config: &butterpollo_core::rtsp::Negotiated,
+    options: &butterpollo_config::config::Config,
+    config: &butterpollo_media_policy::rtsp::Negotiated,
 ) -> Result<bool, Refusal> {
     if !plan::wanted(options) {
         return Ok(false);

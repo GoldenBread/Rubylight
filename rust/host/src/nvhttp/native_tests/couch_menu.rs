@@ -1,7 +1,7 @@
 //! `POST /session/couch-menu` (`docs/couch-menu-design.md` section 7.1)
 //! through the router.
 use super::*;
-use butterpollo_core::couch_menu::Shared as Menu;
+use butterpollo_input_policy::couch_menu::Shared as Menu;
 
 async fn couch_menu(s: &Setup, connection: &Connection, body: &str) -> Reply {
     send(

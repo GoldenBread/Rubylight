@@ -3,12 +3,14 @@
 //! Both reach the client in the native API's session (`launcher`, `radeon_profile`), for the
 //! owner only. A change of either moves the session's revision, so a client that polls on the
 //! revision sees it.
-use butterpollo_core::{
+use butterpollo_media_policy::radeon_profile::Item;
+use butterpollo_session::{
     launcher_prompt::{Watch, Window},
     native::SessionSnapshot,
-    native_api::session::State,
-    native_api::session::{LauncherNotice, ProfileState, RadeonProfile},
-    radeon_profile::Item,
+};
+use rubylight_native_api::{
+    session::State,
+    session::{LauncherNotice, ProfileState, RadeonProfile},
 };
 use std::{
     collections::BTreeSet,
@@ -195,7 +197,7 @@ impl SessionNotes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::native_api::session::LauncherKind;
+    use rubylight_native_api::session::LauncherKind;
 
     fn snapshot(owner: &str, state: State) -> SessionSnapshot {
         SessionSnapshot {

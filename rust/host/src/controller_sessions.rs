@@ -1,12 +1,12 @@
 //! Retain controller identities across a client's transports. No input crosses client identities.
 use crate::state::{Launch, Shared};
 use anyhow::{Result, bail};
-use butterpollo_core::{
-    config::Config,
+use butterpollo_config::config::Config;
+use butterpollo_input_policy::{
     input::Input,
     input_policy::{Policy, gamepad_profile},
-    session::Warning,
 };
+use butterpollo_session::session::Warning;
 use butterpollo_windows::input::GamepadThread;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -269,7 +269,7 @@ pub fn prepare(h: &Shared, launch: &Launch, value: &str) -> Result<()> {
     if events.iter().any(|e| {
         !launch
             .client
-            .allows(butterpollo_core::input::required_permission(e))
+            .allows(butterpollo_input_policy::input::required_permission(e))
     }) {
         bail!("controller permission is required");
     }
@@ -318,7 +318,7 @@ fn not_ready(warnings: &[Warning]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
 
     #[test]
     fn another_clients_parked_controllers_are_released_when_a_client_connects() {
@@ -361,7 +361,7 @@ mod tests {
     /// not handed to a launch with the other answer.
     #[test]
     fn controllers_know_whether_the_launch_starts_through_steam() {
-        use butterpollo_core::{session::Seat, state::App, steam};
+        use butterpollo_session::{session::Seat, state::App, steam};
         let f = crate::state::test_support::Fixture::new();
         let game = steam::Game {
             appid: 570,
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn a_launch_without_controllers_names_the_missing_driver_instead_of_a_reconnect() {
-        use butterpollo_core::session::{EVENT_PERIOD, Warnings};
+        use butterpollo_session::session::{EVENT_PERIOD, Warnings};
         let warnings = Warnings::default();
         assert_eq!(
             not_ready(&warnings.snapshot()),

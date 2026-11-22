@@ -12,7 +12,7 @@ use std::{
 };
 
 fn log_encoder_gpu_check() {
-    use butterpollo_core::encoder_gpu::{Refusal, Runtimes, check};
+    use butterpollo_media_policy::encoder_gpu::{Refusal, Runtimes, check};
     let adapters = butterpollo_windows::capture::gpus()
         .map(|gpus| butterpollo_windows::capture::gpu_adapters(&gpus))
         .unwrap_or_default();
@@ -27,10 +27,10 @@ fn log_encoder_gpu_check() {
 }
 
 #[derive(Clone)]
-struct SharedLogFile(std::sync::Arc<std::sync::Mutex<butterpollo_core::logfile::RotatingFile>>);
+struct SharedLogFile(std::sync::Arc<std::sync::Mutex<butterpollo_session::logfile::RotatingFile>>);
 
 impl SharedLogFile {
-    fn new(file: butterpollo_core::logfile::RotatingFile) -> Self {
+    fn new(file: butterpollo_session::logfile::RotatingFile) -> Self {
         Self(std::sync::Arc::new(std::sync::Mutex::new(file)))
     }
 }
@@ -153,7 +153,7 @@ pub(crate) async fn run(args: crate::cli::Args, assets: PathBuf) -> Result<()> {
         butterpollo_windows::process::StopSignal::new(args.service_stop_source.as_deref())?;
     let directory = match &args.config_dir {
         Some(directory) => directory.clone(),
-        None => butterpollo_core::paths::portable_profile()?,
+        None => butterpollo_session::paths::portable_profile()?,
     };
     let h = state::Host::load(directory, assets, args.port)?;
     // Crash reporting must not keep the host from starting, e.g. when the
@@ -167,7 +167,9 @@ pub(crate) async fn run(args: crate::cli::Args, assets: PathBuf) -> Result<()> {
         .path("log_path", &h.directory, "logs/butterpollo.log");
     let open = |path: &std::path::Path| -> Result<_> {
         std::fs::create_dir_all(path.parent().context("log directory missing")?)?;
-        Ok(butterpollo_core::logfile::RotatingFile::open_default(path)?)
+        Ok(butterpollo_session::logfile::RotatingFile::open_default(
+            path,
+        )?)
     };
     // A log_path that cannot be used (a folder, a missing drive) falls back to
     // the default file instead of keeping the host, and its console, down.
@@ -326,7 +328,7 @@ async fn run_logged(
     );
     // The service's keys and backups: SYSTEM and Administrators only, also after a
     // profile was copied in or restored from a backup.
-    for folder in ["credentials", butterpollo_core::settings_backup::BACKUPS] {
+    for folder in ["credentials", butterpollo_session::settings_backup::BACKUPS] {
         let path = h.directory.join(folder);
         if butterpollo_windows::process::is_system()
             && path.is_dir()
@@ -718,7 +720,7 @@ mod shutdown_tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("butterpollo.log");
-        let file = butterpollo_core::logfile::RotatingFile::open_default(&path).unwrap();
+        let file = butterpollo_session::logfile::RotatingFile::open_default(&path).unwrap();
         let shared = SharedLogFile::new(file);
         let stamp = utc_timestamp(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1));
         assert_eq!(stamp, "1970-01-01T00:00:01.000000Z");

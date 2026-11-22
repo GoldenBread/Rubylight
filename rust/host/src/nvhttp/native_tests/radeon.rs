@@ -2,17 +2,15 @@
 //! here touches the real GPU: the worker is the real one, the backend under it is `Fake`.
 use super::*;
 use crate::radeon_session::WorkerRef;
-use butterpollo_core::{
-    config::Config,
-    native_api::radeon::{
-        self as api, ControlState, Kind as ApiKind, Restore as ApiRestore, Value as Api,
-    },
-};
+use butterpollo_config::config::Config;
 use butterpollo_windows::radeon::{
     BackendError, Entry, GpuInfo, Journal, RadeonBackend,
     control::JOURNAL_FILE,
     model::{ChoiceOption, Kind, Range, Setting as Driven, State, Value as Raw, Writable},
     worker::{Phase, Timing, Worker},
+};
+use rubylight_native_api::radeon::{
+    self as api, ControlState, Kind as ApiKind, Restore as ApiRestore, Value as Api,
 };
 use serde_json::json;
 use std::{
@@ -1424,18 +1422,18 @@ async fn a_new_write_clears_only_the_failures_of_the_settings_it_changes() {
 // A game's Radeon profile (plan item B5): applied at launch through the journaled path, shown to
 // the owner in the session, and restored with the session.
 
-use butterpollo_core::native_api::session::{ProfileState, RadeonProfile};
+use rubylight_native_api::session::{ProfileState, RadeonProfile};
 
 impl Rig {
     /// The first app carries `extra` (a Radeon profile) from now on.
-    fn app_with(&self, extra: serde_json::Value) -> butterpollo_core::state::App {
+    fn app_with(&self, extra: serde_json::Value) -> butterpollo_session::state::App {
         let mut apps = self.host().apps.write().unwrap();
         for (key, value) in extra.as_object().unwrap() {
             apps[0].extra.insert(key.clone(), value.clone());
         }
         apps[0].clone()
     }
-    fn launched(&self, app: &butterpollo_core::state::App, fps: Option<u32>) {
+    fn launched(&self, app: &butterpollo_session::state::App, fps: Option<u32>) {
         crate::radeon_profile::launched(self.host(), &self.client.uuid, Some(app), fps);
     }
     /// The profile status once it left Applying.
@@ -1456,7 +1454,7 @@ impl Rig {
         }
     }
     /// A launch of `app` from `device` (not necessarily the test's own).
-    fn launched_by(&self, device: &str, app: &butterpollo_core::state::App, fps: Option<u32>) {
+    fn launched_by(&self, device: &str, app: &butterpollo_session::state::App, fps: Option<u32>) {
         crate::radeon_profile::launched(self.host(), device, Some(app), fps);
     }
     /// The game that runs now belongs to `owner`.
@@ -1705,14 +1703,14 @@ async fn another_device_sees_no_profile() {
     assert!(snapshot.radeon_profile.is_some());
     let mut other = rig.client.clone();
     other.uuid = "someone-else".into();
-    let seen = butterpollo_core::native::session_view(&snapshot, &other);
+    let seen = butterpollo_session::native::session_view(&snapshot, &other);
     assert!(seen.radeon_profile.is_none());
 }
 
 // Review fixes: who is released before a profile is written, what a profile's restore touches,
 // and how a profile ends with the session.
 
-fn custom_pacing(rig: &Rig, value: i64) -> butterpollo_core::state::App {
+fn custom_pacing(rig: &Rig, value: i64) -> butterpollo_session::state::App {
     rig.app_with(json!({
         "radeon-profile": "custom",
         "radeon-settings": {"pacing.limit": value}

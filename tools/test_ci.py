@@ -9,7 +9,7 @@ import ci  # noqa: E402
 
 class Filters(unittest.TestCase):
     def test_glob_syntax_matches_githubs(self):
-        self.assertTrue(ci.glob_regex('rust/**').match('rust/core/src/lib.rs'))
+        self.assertTrue(ci.glob_regex('rust/**').match('rust/core/session/src/lib.rs'))
         self.assertTrue(ci.glob_regex('Cargo.*').match('Cargo.lock'))
         self.assertFalse(ci.glob_regex('Cargo.*').match('rust/Cargo.lock'))
         self.assertTrue(ci.glob_regex('!rust/**/*.md'.lstrip('!')).match('rust/core/README.md'))
@@ -23,11 +23,11 @@ class Filters(unittest.TestCase):
             self.assertTrue(ci.branch_matches(branches, 'wip/x'), key)
             self.assertFalse(ci.branch_matches(branches, 'RamazanKara/nj-redesign'), key)
         self.assertEqual(ci.expected('wip/x', ['docs/building.md', 'rust/RELEASE_NOTES.md', 'client/docs/settings.md']), [])
-        self.assertEqual(ci.expected('wip/x', ['rust/core/src/lib.rs']), ['host', 'tools'])
+        self.assertEqual(ci.expected('wip/x', ['rust/core/session/src/lib.rs']), ['host', 'tools'])
         self.assertEqual(ci.expected('wip/x', ['client/protocol/core/src/lib.rs']), ['host', 'android', 'macos', 'tools'])
         self.assertEqual(ci.expected('wip/x', ['client/app/src/main/java/A.java']), ['android', 'tools'])
         self.assertEqual(ci.expected('wip/x', ['tools/dev.py']), ['tools'])
-        self.assertEqual(ci.expected('feature/x', ['rust/core/src/lib.rs']), [])
+        self.assertEqual(ci.expected('feature/x', ['rust/core/session/src/lib.rs']), [])
 
     def test_main_keeps_its_triggers(self):
         # The lane adds wip/**; main, tags and the path filters stay as they were.
@@ -56,7 +56,7 @@ class Watch(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(ci, 'gh', side_effect=gh), mock.patch.object(ci, 'remote_head', return_value='abc'), \
                 mock.patch.object(ci, 'branch_files', getattr(ci.branch_files, 'return_value', None) and ci.branch_files
-                                  or mock.Mock(return_value=['rust/core/src/lib.rs'])), \
+                                  or mock.Mock(return_value=['rust/core/session/src/lib.rs'])), \
                 mock.patch.object(ci.time, 'sleep'), contextlib.redirect_stdout(out):
             code = ci.main(['wip/x', '--poll', '0', *(['--settle', '0'] if '--settle' not in argv else []), *argv])
         return code, out.getvalue(), calls
@@ -91,7 +91,7 @@ class Watch(unittest.TestCase):
         self.assertNotIn('failure', out)
 
     def test_an_expected_workflow_that_did_not_run_is_no_pass(self):
-        with mock.patch.object(ci, 'branch_files', return_value=['rust/core/src/lib.rs', 'tools/dev.py']):
+        with mock.patch.object(ci, 'branch_files', return_value=['rust/core/session/src/lib.rs', 'tools/dev.py']):
             code, out, _ = self.main([self.runs(('Developer workflow checks', 'completed', 'success', 'push'))])
         self.assertEqual(code, 2, out)
         self.assertIn('Not started: Rubylight Windows', out)

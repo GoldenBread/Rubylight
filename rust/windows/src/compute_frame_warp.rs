@@ -10,7 +10,7 @@
 use super::*;
 use crate::capture::{GpuImage, Pixel};
 
-/// The largest thumbnail: `butterpollo_core::frame_warp::THUMBNAIL_WIDTH`
+/// The largest thumbnail: `butterpollo_media_policy::frame_warp::THUMBNAIL_WIDTH`
 /// by the tallest `thumbnail_height`.
 pub const THUMBNAIL_EDGE: u32 = 256;
 const THUMBNAIL_BYTES: u64 = THUMBNAIL_EDGE as u64 * THUMBNAIL_EDGE as u64;

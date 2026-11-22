@@ -2,9 +2,9 @@
 //! workers. Only native preparation/input and capture/encoder output are fake.
 //! No service, driver, environment switch or production port is used.
 use super::*;
-use butterpollo_core::session::Transport;
-use butterpollo_core::{
-    config::Ports,
+use butterpollo_config::config::Ports;
+use butterpollo_session::session::Transport;
+use butterpollo_session::{
     mic,
     state::{App, Client as PairedClient},
 };
@@ -95,7 +95,7 @@ async fn a_session_change_during_launch_or_resume_releases_unaccepted_preparatio
             // directory; no app window, input or user process is involved.
             h.h.apps.write().unwrap()[0]
                 .prep
-                .push(butterpollo_core::state::PrepCommand {
+                .push(butterpollo_session::state::PrepCommand {
                     r#do: format!("echo prepared>\"{}\"", undo_marker.display()),
                     undo: format!("echo undone>>\"{}\"", undo_marker.display()),
                     // CI administrators may have no linked non-elevated
@@ -491,7 +491,7 @@ async fn network_drop_40s_times_out_then_resumes() -> Result<()> {
 /// second, newest first, and hears the return to the requested rate.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn link_notices_reach_only_a_client_that_asks() -> Result<()> {
-    use butterpollo_core::link_notice::{
+    use butterpollo_media_policy::link_notice::{
         LINK_NOTICE_MESSAGE_TYPE, LinkNotice, LinkNoticeRequest, LinkReason, LinkState,
     };
     let limited = |current_kbps| LinkNotice {
@@ -562,9 +562,9 @@ async fn link_notices_reach_only_a_client_that_asks() -> Result<()> {
 
 /// The text field a focus watcher would see.
 fn text_field(
-    input_type: butterpollo_core::text_input::InputType,
-) -> butterpollo_core::text_input::Focused {
-    use butterpollo_core::text_input::{Field, Focused, Surrounding};
+    input_type: butterpollo_input_policy::text_input::InputType,
+) -> butterpollo_input_policy::text_input::Focused {
+    use butterpollo_input_policy::text_input::{Field, Focused, Surrounding};
     Focused {
         field: Field {
             input_type,
@@ -582,14 +582,15 @@ fn text_field(
 }
 
 /// The text input notices (0x553B) `client` heard.
-fn text_notices(client: &Client) -> Vec<butterpollo_core::text_input::TextInputNotice> {
+fn text_notices(client: &Client) -> Vec<butterpollo_input_policy::text_input::TextInputNotice> {
     client
         .text_notices
         .lock()
         .unwrap()
         .iter()
         .map(|(_, payload)| {
-            butterpollo_core::text_input::TextInputNotice::decode(payload).expect("a valid notice")
+            butterpollo_input_policy::text_input::TextInputNotice::decode(payload)
+                .expect("a valid notice")
         })
         .collect()
 }
@@ -599,7 +600,7 @@ fn text_notices(client: &Client) -> Vec<butterpollo_core::text_input::TextInputN
 /// it stops asking. Over plain control the text around the cursor stays on the host.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn text_input_notices_reach_only_a_client_that_asks() -> Result<()> {
-    use butterpollo_core::text_input::{
+    use butterpollo_input_policy::text_input::{
         InputType, NoticeKind, TEXT_INPUT_MESSAGE_TYPE, TextInputRequest, Watch,
     };
     let h = Harness::configured(10_000, 1, "text_input_surrounding_text = enabled\n").await?;
@@ -673,7 +674,7 @@ async fn text_input_notices_reach_only_a_client_that_asks() -> Result<()> {
 /// around the cursor; never for a password field.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn text_input_sends_surrounding_text_only_over_encrypted_control() -> Result<()> {
-    use butterpollo_core::text_input::{
+    use butterpollo_input_policy::text_input::{
         InputType, TEXT_INPUT_MESSAGE_TYPE, TextInputRequest, Watch,
     };
     let h = Harness::configured(10_000, 1, "text_input_surrounding_text = enabled\n").await?;
@@ -689,7 +690,7 @@ async fn text_input_sends_surrounding_text_only_over_encrypted_control() -> Resu
         .outbox
         .lock()
         .unwrap()
-        .push(butterpollo_core::packet::encrypted_control(
+        .push(butterpollo_media_policy::packet::encrypted_control(
             &launch.key,
             1,
             TEXT_INPUT_MESSAGE_TYPE,
@@ -734,11 +735,11 @@ async fn text_input_sends_surrounding_text_only_over_encrypted_control() -> Resu
 /// starts no watcher and hears nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn text_input_needs_the_keyboard_permission_and_the_setting() -> Result<()> {
-    use butterpollo_core::text_input::{
+    use butterpollo_input_policy::text_input::{
         InputType, TEXT_INPUT_MESSAGE_TYPE, TextInputRequest, Watch,
     };
     for (config, perm) in [
-        ("", !butterpollo_core::input::KEYBOARD_PERMISSION),
+        ("", !butterpollo_input_policy::input::KEYBOARD_PERMISSION),
         ("keyboard_follows_focus = disabled\n", u32::MAX),
     ] {
         let h = Harness::configured(10_000, 1, config).await?;
@@ -776,7 +777,7 @@ async fn text_input_needs_the_keyboard_permission_and_the_setting() -> Result<()
 /// leaves the layout to the device; with `keyboard_layout = us` it is not taken.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keyboard_layout_reports_keep_the_newest() -> Result<()> {
-    use butterpollo_core::keyboard_layout::{
+    use butterpollo_input_policy::keyboard_layout::{
         KEYBOARD_LAYOUT_MESSAGE_TYPE, KeyboardLayout, LayoutSource,
     };
     let report = |klid: u32, tag: &str| KeyboardLayout {
@@ -814,12 +815,13 @@ async fn keyboard_layout_reports_keep_the_newest() -> Result<()> {
 /// A device without the keyboard permission does not pick the layout keys go with.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keyboard_layout_reports_need_the_keyboard_permission() -> Result<()> {
-    use butterpollo_core::keyboard_layout::{
+    use butterpollo_input_policy::keyboard_layout::{
         KEYBOARD_LAYOUT_MESSAGE_TYPE, KeyboardLayout, LayoutSource,
     };
-    use butterpollo_core::text_input::{TEXT_INPUT_MESSAGE_TYPE, TextInputRequest};
+    use butterpollo_input_policy::text_input::{TEXT_INPUT_MESSAGE_TYPE, TextInputRequest};
     let h = Harness::new(10_000, 1).await?;
-    h.h.paired.write().unwrap().clients[0].perm = !butterpollo_core::input::KEYBOARD_PERMISSION;
+    h.h.paired.write().unwrap().clients[0].perm =
+        !butterpollo_input_policy::input::KEYBOARD_PERMISSION;
     let launch = h.launch(0, false).await?;
     let (session, client) = h.play(&launch).await?;
     let german = KeyboardLayout {
@@ -850,7 +852,7 @@ async fn keyboard_layout_reports_need_the_keyboard_permission() -> Result<()> {
 /// in the outage run out (client/protocol/vendor/rusty_enet).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reliable_messages_sent_in_an_outage_arrive_when_it_ends() -> Result<()> {
-    use butterpollo_core::link_notice::{
+    use butterpollo_media_policy::link_notice::{
         LINK_NOTICE_MESSAGE_TYPE, LinkNotice, LinkNoticeRequest, LinkReason, LinkState,
     };
     let limited = |current_kbps| LinkNotice {
@@ -942,7 +944,7 @@ async fn background_launches_run_in_nucleus_and_only_their_owner_returns() -> Re
     let listed = h.h.nucleus.sessions();
     assert_eq!(
         listed[0].session.kind,
-        butterpollo_core::nucleus::coop::Kind::Background
+        butterpollo_session::nucleus::coop::Kind::Background
     );
     assert_eq!(
         (listed[0].session.slots.len(), listed[0].app_id),
@@ -956,7 +958,7 @@ async fn background_launches_run_in_nucleus_and_only_their_owner_returns() -> Re
     );
     let config = crate::stream::effective_config(&h.h, &launch)?;
     assert!(crate::nucleus::player(&config));
-    assert!(!butterpollo_core::background::enabled(&config));
+    assert!(!butterpollo_session::background::enabled(&config));
     let refused = launch_app(&h, 1, portal).await?;
     assert!(refused.contains("status_code=\"409\""), "{refused}");
     assert!(
@@ -1049,7 +1051,7 @@ async fn a_new_background_stream_releases_parked_controllers_first() -> Result<(
     let (h, _pc, _) = coop_harness().await?;
     let portal = h.h.apps.read().unwrap().last().unwrap().id();
     let none = BTreeSet::new();
-    let config = butterpollo_core::config::Config::default();
+    let config = butterpollo_config::config::Config::default();
     let pool = &h.h.controller_sessions;
     // Client 1 streams the desktop; its controllers wait for its first
     // input.
@@ -1123,7 +1125,7 @@ async fn a_new_co_op_session_releases_parked_controllers_first() -> Result<()> {
     let gap = parked_launch(&h, 0, "gap");
     drop(h.h.controller_sessions.acquire(
         &gap,
-        &butterpollo_core::config::Config::default(),
+        &butterpollo_config::config::Config::default(),
         false,
     )?);
     assert!(h.h.controller_sessions.parked(&none));
@@ -1166,7 +1168,7 @@ async fn a_quit_after_the_stream_ended_ends_the_background_stream() -> Result<()
         h.h.nucleus.leave(seat, &launch.id);
         seat
     };
-    let ended = |seat: butterpollo_core::session::Seat| {
+    let ended = |seat: butterpollo_session::session::Seat| {
         h.h.nucleus
             .sessions()
             .iter()
@@ -1727,7 +1729,7 @@ async fn a_paired_client_runs_the_pyrowave_udp_probe_with_a_handshake() -> Resul
     assert!(body.contains("status_code=\"200\""), "{body}");
     assert_eq!(
         field("expected"),
-        butterpollo_core::pyrowave_probe::expected(20_000, 1024)
+        butterpollo_media_policy::pyrowave_probe::expected(20_000, 1024)
     );
     // A busy machine (a CI runner) can fall behind the schedule and stop at
     // the overload limit (2128 of 4317 on a windows-2022 runner); what the
@@ -1743,7 +1745,7 @@ async fn a_paired_client_runs_the_pyrowave_udp_probe_with_a_handshake() -> Resul
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_session_state_follows_a_launch_a_resume_and_the_end_of_a_stream() -> Result<()> {
-    use butterpollo_core::native_api::session::State;
+    use rubylight_native_api::session::State;
     let h = Harness::new(10_000, 1).await?;
     let journal = h.directory.join(crate::session_control::JOURNAL);
     // A game runs from before and nobody streams.
@@ -1794,7 +1796,7 @@ async fn the_session_state_follows_a_launch_a_resume_and_the_end_of_a_stream() -
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancel_while_a_launch_waits_for_its_client_ends_the_session() -> Result<()> {
-    use butterpollo_core::native_api::session::State;
+    use rubylight_native_api::session::State;
     let h = Harness::new(10_000, 1).await?;
     let journal = h.directory.join(crate::session_control::JOURNAL);
     // The copy holds the launch's resources: keep only the id.
@@ -2195,11 +2197,11 @@ async fn co_op_launches_share_one_session_beside_the_running_app() -> Result<()>
     let session = a.nucleus.unwrap().session;
     assert_eq!(
         a.nucleus,
-        Some(butterpollo_core::session::Seat { session, slot: 0 })
+        Some(butterpollo_session::session::Seat { session, slot: 0 })
     );
     assert_eq!(
         b.nucleus,
-        Some(butterpollo_core::session::Seat { session, slot: 1 })
+        Some(butterpollo_session::session::Seat { session, slot: 1 })
     );
     assert_eq!((a.app_id, b.app_id), (id, id));
     assert_eq!(a.background, Some(false));
@@ -2290,7 +2292,7 @@ async fn a_co_op_launch_that_fails_later_gives_its_slot_back() -> Result<()> {
     let launch = pending_of(&h, 0).unwrap();
     assert_eq!(
         launch.nucleus,
-        Some(butterpollo_core::session::Seat {
+        Some(butterpollo_session::session::Seat {
             session: listed[0].session.id,
             slot: 0
         })
@@ -2347,11 +2349,11 @@ async fn webrtc_co_op_launches_take_seats_and_answer_refusals() -> Result<()> {
     };
     assert_eq!(
         launch.transport,
-        butterpollo_core::session::Transport::WebRtc
+        butterpollo_session::session::Transport::WebRtc
     );
     assert_eq!(
         launch.nucleus,
-        Some(butterpollo_core::session::Seat {
+        Some(butterpollo_session::session::Seat {
             session: seat.session,
             slot: 1
         })
@@ -2487,14 +2489,14 @@ async fn co_op_streams_drive_their_slots_and_end_with_the_session() -> Result<()
         [
             (
                 0,
-                butterpollo_core::input::Input::Controller {
+                butterpollo_input_policy::input::Input::Controller {
                     buttons: 0x1000,
                     ..
                 }
             ),
             (
                 1,
-                butterpollo_core::input::Input::Controller {
+                butterpollo_input_policy::input::Input::Controller {
                     buttons: 0x2000,
                     ..
                 }
@@ -2519,7 +2521,7 @@ async fn co_op_streams_drive_their_slots_and_end_with_the_session() -> Result<()
         .session
         .lock()
         .unwrap()
-        .end(butterpollo_core::nucleus::coop::End::Crashed(
+        .end(butterpollo_session::nucleus::coop::End::Crashed(
             "portal2.exe exited".into(),
         ));
     until("both streams ended", WAIT, || {
@@ -2552,7 +2554,7 @@ async fn co_op_streams_drive_their_slots_and_end_with_the_session() -> Result<()
 /// quietly with the reason, never as a failure, and stop Nucleus Co-op.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn co_op_streams_close_quietly_when_the_session_is_ended_or_empty() -> Result<()> {
-    use butterpollo_core::nucleus::coop::End;
+    use butterpollo_session::nucleus::coop::End;
     let (h, pc, id) = coop_harness().await?;
     let closed_with = |s: &Session, text: &str| {
         let ended = s
@@ -2608,7 +2610,7 @@ async fn an_expired_co_op_launch_gives_its_slot_back() -> Result<()> {
     let expired = {
         let mut sessions = h.h.sessions.lock().unwrap();
         let long_ago = Instant::now()
-            .checked_sub(butterpollo_core::session::LAUNCH_WAIT + Duration::from_secs(1))
+            .checked_sub(butterpollo_session::session::LAUNCH_WAIT + Duration::from_secs(1))
             .unwrap();
         for launch in sessions.pending.values_mut() {
             launch.created = long_ago;
@@ -2732,7 +2734,7 @@ async fn a_join_never_ends_the_owners_webrtc_stream_and_runs_beside_its_moonligh
 
     // The same join as stock Moonlight makes it: a `/launch` of the Running Game tile.
     let game = h.h.current_app.lock().unwrap().as_ref().unwrap().id;
-    let tile = butterpollo_core::remote::running_game_id(game).to_string();
+    let tile = butterpollo_session::remote::running_game_id(game).to_string();
     let refused = h
         .launch_response_with(1, false, None, &[("appid", &tile)])
         .await?;
@@ -2775,7 +2777,7 @@ async fn a_join_never_ends_the_owners_webrtc_stream_and_runs_beside_its_moonligh
     drop(queued);
     background.transport = Transport::WebRtc;
     background.background = Some(true);
-    background.nucleus = Some(butterpollo_core::session::Seat {
+    background.nucleus = Some(butterpollo_session::session::Seat {
         session: 1,
         slot: 0,
     });

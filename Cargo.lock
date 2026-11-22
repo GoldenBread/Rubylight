@@ -389,7 +389,11 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
- "butterpollo-core",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
  "butterpollo-windows",
  "clap",
  "embed-resource",
@@ -405,6 +409,8 @@ dependencies = [
  "qrcodegen",
  "rand 0.8.8",
  "reqwest",
+ "rubylight-native-api",
+ "rubylight-protocol",
  "rubylight-traverse",
  "rustls",
  "rustls-pemfile",
@@ -434,40 +440,70 @@ dependencies = [
 ]
 
 [[package]]
-name = "butterpollo-core"
+name = "butterpollo-config"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "butterpollo-crypto"
 version = "6.3.1"
 dependencies = [
  "aes",
- "aes-gcm",
  "anyhow",
- "cbc",
- "crc32fast",
  "hex",
  "pem 3.0.6",
- "png",
- "proptest",
- "prost",
- "quick-xml",
  "rand 0.8.8",
  "rcgen",
  "regex",
  "ring",
  "rsa",
- "rubylight-native-api",
+ "rubylight-wire",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "time",
+ "x509-parser",
+ "zeroize",
+]
+
+[[package]]
+name = "butterpollo-input-policy"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "butterpollo-config",
+ "crc32fast",
+ "hex",
+ "rubylight-protocol",
+ "rubylight-wire",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "butterpollo-media-policy"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "hex",
+ "proptest",
  "rubylight-protocol",
  "rubylight-wire",
  "serde",
  "serde_json",
  "sha2",
- "subtle",
  "tempfile",
- "time",
  "tracing",
- "tracing-subscriber",
  "uuid",
- "x509-parser",
- "zeroize",
- "zip",
 ]
 
 [[package]]
@@ -475,7 +511,9 @@ name = "butterpollo-probes"
 version = "6.3.1"
 dependencies = [
  "anyhow",
- "butterpollo-core",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-media-policy",
  "butterpollo-windows",
  "embed-resource",
  "hex",
@@ -484,11 +522,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "butterpollo-session"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "crc32fast",
+ "hex",
+ "png",
+ "proptest",
+ "prost",
+ "quick-xml",
+ "rand 0.8.8",
+ "regex",
+ "ring",
+ "rubylight-native-api",
+ "rubylight-protocol",
+ "rubylight-wire",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "zip",
+]
+
+[[package]]
 name = "butterpollo-setup"
 version = "6.3.1"
 dependencies = [
  "anyhow",
- "butterpollo-core",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-session",
  "embed-resource",
  "serde",
  "serde_json",
@@ -512,11 +583,16 @@ version = "6.3.1"
 dependencies = [
  "anyhow",
  "bindgen",
- "butterpollo-core",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
  "embed-resource",
  "half",
  "libloading",
  "rayon",
+ "rubylight-protocol",
  "rubylight-vdisplay-proto",
  "rubylight-vgamepad-proto",
  "serde",
@@ -2684,7 +2760,10 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "butterpollo",
- "butterpollo-core",
+ "butterpollo-crypto",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
  "butterpollo-windows",
  "nightjar-core",
  "rubylight-native-api",

@@ -23,7 +23,7 @@
 //! no one streams and no other XInput pad is connected. Its reports are read
 //! by polling every 100 us, so latencies leave out the control loop's wake.
 use anyhow::{Context, Result, ensure};
-use butterpollo_core::input::Input;
+use butterpollo_input_policy::input::Input;
 use butterpollo_windows::{
     capture::Priority,
     input::{Injector, PadReport},
@@ -213,7 +213,7 @@ fn plug(pad: &str, args: &[String], xinput: &XInput) -> Result<(Injector, u32)> 
         "an XInput pad is already connected; refusing to write vibration"
     );
     let switch = |flag: &str| args.iter().any(|a| a == flag);
-    let config = butterpollo_core::config::Config::parse(&format!(
+    let config = butterpollo_config::config::Config::parse(&format!(
         "gamepad_feedback_fast_poll = {}\ngamepad_driver_host_priority = {}\n",
         switch("--fast-poll"),
         switch("--driver-host-priority")
@@ -355,7 +355,7 @@ fn state_hid_section(profile: &str, args: &[String], loads: &[String]) -> Result
     println!("== {profile}: controller state to the DualSense's HID input report, 500 Hz ==");
     idle_host()?;
     let switch = |flag: &str| args.iter().any(|a| a == flag);
-    let config = butterpollo_core::config::Config::parse(&format!(
+    let config = butterpollo_config::config::Config::parse(&format!(
         "gamepad_driver_host_priority = {}\n",
         switch("--driver-host-priority")
     ))?;
@@ -713,7 +713,7 @@ fn dualsense_section() -> Result<()> {
     println!("== VHF DualSense: lightbar and trigger report, then rumble-only, in one poll ==");
     idle_host()?;
     let before = hid_paths()?;
-    let config = butterpollo_core::config::Config::default();
+    let config = butterpollo_config::config::Config::default();
     let mut injector = Injector::new_options("", "vhf_ds5", &config)?;
     injector.apply(&controller(0))?;
     let hid = new_hid(&before, 0x054c, 0x0ce6)?;
@@ -969,7 +969,7 @@ fn release_section() -> Result<()> {
         let _ = GetCursorPos(&mut cursor);
     }
     for delay in [0, 10] {
-        let config = butterpollo_core::config::Config::parse(&format!(
+        let config = butterpollo_config::config::Config::parse(&format!(
             "absolute_left_release_delay = {delay}\n"
         ))?;
         let mut injector = Injector::new_options(&window.name, "vhf", &config)?;

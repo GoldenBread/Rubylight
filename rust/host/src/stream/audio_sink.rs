@@ -6,7 +6,7 @@ use super::qos::Tagged;
 use crate::state::Session;
 use crate::webrtc::media::{AudioPacket, AudioSender, Submit};
 use anyhow::Result;
-use butterpollo_core::{audio::HostLoss, packet::AudioPacketizer};
+use butterpollo_media_policy::{audio::HostLoss, packet::AudioPacketizer};
 use butterpollo_windows::{audio::Loopback, net::ReplySocket};
 use std::{
     net::SocketAddr,
@@ -71,7 +71,7 @@ impl PingWait {
         &mut self,
         ready: bool,
         timed_out: impl FnOnce() -> bool,
-        warnings: &butterpollo_core::session::Warnings,
+        warnings: &butterpollo_session::session::Warnings,
     ) {
         if ready {
             if std::mem::take(&mut self.missing) {

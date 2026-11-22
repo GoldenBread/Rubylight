@@ -1,6 +1,6 @@
 //! Settings backup and restore from the console's Troubleshoot page and the
 //! tray (docs/configuration.md, "Settings backup and restore"; the archive
-//! and its checks are `butterpollo_core::settings_backup`).
+//! and its checks are `butterpollo_session::settings_backup`).
 //!
 //! A restore runs in three steps: `inspect` checks an uploaded archive, keeps
 //! it as `backups/pending-<id>.zip` and answers what it changes; `restore`
@@ -9,7 +9,7 @@
 //! it before anything is loaded (`Host::load`).
 use crate::state::Shared;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::settings_backup as core;
+use butterpollo_session::settings_backup as core;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -24,7 +24,7 @@ fn now_unix() -> u64 {
 }
 
 fn fresh_secret() -> String {
-    hex::encode(butterpollo_core::crypto::random::<32>())
+    hex::encode(butterpollo_crypto::crypto::random::<32>())
 }
 
 /// Applies a staged restore at start; the message for the console when one
@@ -132,10 +132,10 @@ pub fn inspect(directory: &Path, bytes: &[u8]) -> Result<Value> {
     }
     let archive = core::read(std::io::Cursor::new(bytes))?;
     let summary = core::summarize(&archive, directory);
-    let token = hex::encode(butterpollo_core::crypto::random::<16>());
+    let token = hex::encode(butterpollo_crypto::crypto::random::<16>());
     let folder = ensure_backups_dir(directory)?;
     let path = folder.join(format!("{PENDING_PREFIX}{token}.zip"));
-    butterpollo_core::state::atomic_write(&path, bytes)?;
+    butterpollo_session::state::atomic_write(&path, bytes)?;
     remove_pending(directory, Some(&path));
     Ok(json!({"status": true, "token": token, "summary": summary}))
 }
@@ -153,7 +153,7 @@ pub fn restore(h: &Shared, token: &str) -> Result<Value> {
         .context("the uploaded backup can no longer be read")?;
     let folder = ensure_backups_dir(directory)?;
     let before = folder.join(format!("before-restore-{}.zip", now_unix()));
-    butterpollo_core::state::atomic_write(&before, &export(directory, true)?)
+    butterpollo_session::state::atomic_write(&before, &export(directory, true)?)
         .context("the current settings could not be saved first, so nothing was restored")?;
     prune_before_restore(directory);
     std::fs::rename(&path, folder.join(core::STAGED)).context("the backup could not be staged")?;
@@ -208,7 +208,7 @@ pub fn export_from_tray(h: &Shared) -> Result<PathBuf> {
         .join(file_name(false));
     let bytes = export(&h.directory, false)?;
     butterpollo_windows::user_folder::as_user(|| {
-        butterpollo_core::state::atomic_write(&path, &bytes)
+        butterpollo_session::state::atomic_write(&path, &bytes)
     })
     .map_err(anyhow::Error::from)??;
     Ok(path)

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::webrtc::input::Recorder;
-use butterpollo_core::input::Input;
+use butterpollo_input_policy::input::Input;
 
 const PAD: u32 = 1 << 8;
 const MOUSE: u32 = 1 << 11;

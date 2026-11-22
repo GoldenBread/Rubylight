@@ -5,7 +5,7 @@
 /// of a block past recovery reported lost, once each.
 #[test]
 fn host_dolby_packets_come_out_of_nightjar_as_whole_frames() {
-    use butterpollo_core::{audio_passthrough::chunks, packet::AudioPacketizer};
+    use butterpollo_media_policy::{audio_passthrough::chunks, packet::AudioPacketizer};
     use nightjar_core::audio::{AudioConfig, AudioOutput, AudioReceiver};
     // 640 kbit/s AC3 5.1 frames, 2560 bytes and three chunks each.
     let frames: Vec<Vec<u8>> = (0..40u8)

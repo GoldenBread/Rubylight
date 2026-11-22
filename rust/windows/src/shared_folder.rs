@@ -2,7 +2,7 @@
 //! written as the signed-in user, like the file transfer folder
 //! ([`crate::user_folder`]), and never left. The root is resolved once when
 //! the folder opens. A device's path is a list of names
-//! (`butterpollo_core::file_transfer::folder_path`) opened below it, and what
+//! (`butterpollo_session::file_transfer::folder_path`) opened below it, and what
 //! Windows opened must be exactly that path below that root: a symbolic link,
 //! junction or mount point on the way resolves elsewhere, and an 8.3 short
 //! name to its long name, so both are refused. Links are never listed.
@@ -13,7 +13,7 @@ use crate::user_folder::{
     Impersonation, PartFile, UserFolder, UserFolderError, final_path, plain, reopen_for_data,
     same_name, user_token,
 };
-use butterpollo_core::file_transfer;
+use butterpollo_session::file_transfer;
 use std::{
     fs::{self, File, Metadata, OpenOptions},
     io,

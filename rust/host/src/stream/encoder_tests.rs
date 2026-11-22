@@ -83,7 +83,7 @@ impl Stream {
         std::fs::create_dir(&directory)?;
         let launch = Launch {
             id: "stall".into(),
-            client: butterpollo_core::state::Client {
+            client: butterpollo_session::state::Client {
                 name: "fixture".into(),
                 cert: String::new(),
                 uuid: "client".into(),
@@ -124,7 +124,10 @@ impl Stream {
             },
             directory,
             encoder: Some(MockEncoder::default()),
-            session: Session::new(launch, butterpollo_core::rtsp::Negotiated::default()),
+            session: Session::new(
+                launch,
+                butterpollo_media_policy::rtsp::Negotiated::default(),
+            ),
             packetizer: VideoPacketizer {
                 sequence: 0,
                 iv_counter: 0,
@@ -206,7 +209,7 @@ fn device_removal_releases_capture_and_encoder_then_resumes_with_a_keyframe() ->
     let now = Instant::now();
     stream.step(now)?;
     let latest = Arc::new(capture::Latest::<u8>::new());
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     *stream.session.capture_warnings.write().unwrap() = warnings.clone();
     let consumer = latest.subscribe(Arc::downgrade(&stream.session))?;
     latest.publish_captured(Arc::new(1), now)?;
@@ -273,7 +276,7 @@ fn persistent_removal_ends_clients_even_when_the_gpu_worker_does_not_return() ->
     }
     assert!(request.exists());
     let latest = Arc::new(capture::Latest::<u8>::new());
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     let _consumer = latest.subscribe(Arc::downgrade(&stream.session))?;
     let other = Stream::new()?;
     let _other_consumer = latest.subscribe(Arc::downgrade(&other.session))?;
@@ -535,7 +538,7 @@ fn output_ready_after_a_late_wake_does_not_restart_a_healthy_encoder() -> Result
             queued: [frame(false)].into(),
             ..Default::default()
         });
-        let warnings = butterpollo_core::session::Warnings::default();
+        let warnings = butterpollo_session::session::Warnings::default();
         // Cover both the first stall threshold and an existing recovery's
         // terminal budget: ready output proves progress in either case.
         let delayed = if failing.is_some() {
@@ -567,7 +570,7 @@ fn a_failed_poll_at_the_stall_deadline_schedules_one_recreation() -> Result<()> 
         poll_failure: true,
         ..Default::default()
     });
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let now = start + Duration::from_millis(250);
     assert!(
         recovery

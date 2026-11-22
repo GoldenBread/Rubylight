@@ -1,0 +1,21 @@
+[package]
+name = "butterpollo-input-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+butterpollo-config = { path = "../config" }
+crc32fast = "1.5"
+rubylight-protocol = { path = "../../../client/protocol/core" }
+rubylight-wire = { path = "../../../client/protocol/wire" }
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+hex = "0.4"
+
+[lints]
+workspace = true

@@ -24,16 +24,13 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use butterpollo_core::{
-    config::SharedFolderConfig,
-    file_transfer,
-    native_api::{
-        error::ErrorCode,
-        folders::{EntryKind, FolderAccess, FolderEntries, FolderEntry, FolderList, SharedFolder},
-    },
-    state::Client,
-};
+use butterpollo_config::config::SharedFolderConfig;
+use butterpollo_session::{file_transfer, state::Client};
 use butterpollo_windows::{shared_folder::SharedFolder as Root, user_folder::UserFolderError};
+use rubylight_native_api::{
+    error::ErrorCode,
+    folders::{EntryKind, FolderAccess, FolderEntries, FolderEntry, FolderList, SharedFolder},
+};
 use std::{io, sync::PoisonError};
 
 /// The folders the host shares; none is `folders_disabled`.
@@ -270,7 +267,7 @@ pub(super) async fn content(
 ) -> Reply {
     let (client, folder) = granted(&h, &c, &id_of(id)?, false)?;
     let names = names_of(request.uri().query())?;
-    let slot = files::begin_download(&h, butterpollo_core::state::device_uuid(&client.uuid))?;
+    let slot = files::begin_download(&h, butterpollo_session::state::device_uuid(&client.uuid))?;
     let (file, length) = in_folder("open the file", &folder, move |root| {
         root.open_file(&refs(&names))
     })
@@ -335,7 +332,7 @@ async fn receive(
     let target = folder.clone();
     let uploaded = files::accept(
         h,
-        butterpollo_core::state::device_uuid(&client.uuid),
+        butterpollo_session::state::device_uuid(&client.uuid),
         headers,
         body,
         recheck,

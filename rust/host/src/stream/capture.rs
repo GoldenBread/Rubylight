@@ -43,7 +43,7 @@ struct State<T> {
     image: Option<Arc<T>>,
     error: Option<String>,
     captured: Option<Instant>,
-    cadence: butterpollo_core::capture_policy::Freshness,
+    cadence: butterpollo_media_policy::capture_policy::Freshness,
     generation: u64,
     trace: PublicationTrace<T>,
     recovery: super::device_recovery::DeviceRecovery,
@@ -79,7 +79,7 @@ impl Consumer {
     }
     pub(super) fn wake_on_recovery<P, A>(
         self: &Arc<Self>,
-        session: &butterpollo_core::session::Session<P, A>,
+        session: &butterpollo_session::session::Session<P, A>,
     ) {
         let wake = Arc::downgrade(self);
         let menu = wake.clone();
@@ -216,7 +216,7 @@ impl<T> Latest<T> {
     pub(super) fn device_lost(
         self: &Arc<Self>,
         loss: DeviceLost,
-        warnings: &Arc<butterpollo_core::session::Warnings>,
+        warnings: &Arc<butterpollo_session::session::Warnings>,
         now: Instant,
     ) -> Result<()>
     where
@@ -265,7 +265,7 @@ impl<T> Latest<T> {
         state.check()?;
         Ok(std::mem::take(&mut state.recovery.restart))
     }
-    pub(super) fn device_recovered(&self, warnings: &butterpollo_core::session::Warnings) {
+    pub(super) fn device_recovered(&self, warnings: &butterpollo_session::session::Warnings) {
         if !self.recovering.load(Ordering::Acquire) {
             return;
         }
@@ -276,7 +276,7 @@ impl<T> Latest<T> {
         {
             self.recovering.store(false, Ordering::Release);
             warnings.clear("gpu_recovery");
-            warnings.event("gpu_reset", "The graphics device was reset; capture and encoding have resumed with a keyframe. Check the graphics driver if this repeats.", butterpollo_core::session::EVENT_PERIOD);
+            warnings.event("gpu_reset", "The graphics device was reset; capture and encoding have resumed with a keyframe. Check the graphics driver if this repeats.", butterpollo_session::session::EVENT_PERIOD);
             tracing::info!("GPU recovery completed; encoded output resumed");
         }
     }

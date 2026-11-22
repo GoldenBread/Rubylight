@@ -203,7 +203,7 @@ fn headless_hardware_device_encodes_without_a_display_output() -> Result<()> {
         pixel: Pixel::Bgra8,
     };
     for codec in 0..=2 {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: image.width,
             height: image.height,
             fps: 30,
@@ -468,9 +468,9 @@ fn newest_frame_selection_closes_the_replacement_when_superseded_close_fails() {
 
 #[test]
 fn wgc_startup_failure_uses_the_same_fallback_as_recovery() {
-    let policy = butterpollo_core::framegen::Policy::resolve(
+    let policy = butterpollo_media_policy::framegen::Policy::resolve(
         &Default::default(),
-        butterpollo_core::framegen::Rate(60000),
+        butterpollo_media_policy::framegen::Rate(60000),
         false,
         "none",
         false,
@@ -478,7 +478,7 @@ fn wgc_startup_failure_uses_the_same_fallback_as_recovery() {
     )
     .unwrap();
     let mut attempted = Vec::new();
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let capture = open_stream_capture(&policy.capture, &warnings, |kind| {
         attempted.push(kind.to_owned());
         match kind {
@@ -608,7 +608,7 @@ fn desktop_duplication_moves_to_the_amd_gpu_that_renders_the_display() {
     // picture; when that GPU is AMD it now captures and encodes there and
     // says so.
     let amd_renders = || gpu_renders_the_display("AMD Radeon(TM) 680M", 0x1002, "NVIDIA RTX 3050");
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let capture = open_stream_capture("wgc", &warnings, |kind| match kind {
         "wgc" => bail!("The parameter is incorrect. (0x80070057)"),
         _ => duplication_device(
@@ -632,7 +632,7 @@ fn desktop_duplication_moves_to_the_amd_gpu_that_renders_the_display() {
     assert!(snapshot.iter().any(|w| w.code == "capture_backend"));
 
     // On the display's own GPU nothing is reopened or reported.
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let device = duplication_device(
         "device on AMD Radeon(TM) 680M",
         |_| None,
@@ -661,7 +661,7 @@ fn desktop_duplication_moves_to_the_amd_gpu_that_renders_the_display() {
 fn desktop_duplication_on_a_display_driven_by_another_vendor_suggests_wgc() {
     // The monitor sits on the Intel iGPU and AMD is selected: moving there
     // would encode on Intel, which 3.0 refuses, so it fails with WGC advice.
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let error = duplication_device::<&str>(
         "device on AMD Radeon R7 M370",
         |_| {
@@ -1313,7 +1313,7 @@ impl Drop for TestWindow {
 }
 
 fn open_error(name: &str, kind: &str) -> String {
-    let warnings = std::sync::Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = std::sync::Arc::new(butterpollo_session::session::Warnings::default());
     let error =
         Capture::open_for_stream_reported(name, kind, false, &Default::default(), warnings.clone())
             .err()

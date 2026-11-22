@@ -6,7 +6,9 @@ use butterpollo::{
     state::{Launch, Session},
     stream::reconnect_harness::{Harness, until},
 };
-use butterpollo_core::{crypto, extensions::FecChoice, state::Client as PairedClient};
+use butterpollo_crypto::crypto;
+use butterpollo_media_policy::extensions::FecChoice;
+use butterpollo_session::state::Client as PairedClient;
 use nightjar_core::{
     control::ControlEvent,
     http::{ClientIdentity, HostClient, LaunchRequest},

@@ -6,11 +6,11 @@ use super::*;
 /// the launch asked for.
 pub(crate) fn audio_layout(
     s: &Session,
-    negotiated: Option<&butterpollo_core::audio::OpusLayout>,
-) -> Result<butterpollo_core::audio::OpusLayout> {
+    negotiated: Option<&butterpollo_media_policy::audio::OpusLayout>,
+) -> Result<butterpollo_media_policy::audio::OpusLayout> {
     match negotiated {
         Some(layout) => Ok(layout.clone()),
-        None => butterpollo_core::audio::OpusLayout::select(
+        None => butterpollo_media_policy::audio::OpusLayout::select(
             s.config.audio_channels as usize,
             s.config.audio_quality,
             s.launch.options.get("surroundParams").map(String::as_str),
@@ -22,8 +22,8 @@ pub(crate) fn audio_layout(
 pub(crate) fn open_audio_encoder(
     directory: &std::path::Path,
     s: &Session,
-    negotiated: Option<&butterpollo_core::audio::OpusLayout>,
-) -> Result<(Opus, butterpollo_core::audio::OpusLayout)> {
+    negotiated: Option<&butterpollo_media_policy::audio::OpusLayout>,
+) -> Result<(Opus, butterpollo_media_policy::audio::OpusLayout)> {
     let layout = audio_layout(s, negotiated)?;
     let opus = Opus::new_layout_duration(directory, &layout, s.config.audio_packet_ms)?;
     Ok((opus, layout))
@@ -34,7 +34,7 @@ type Route = butterpollo_windows::audio_route::Route;
 /// The `audio_cadence_trace` ring, written to `logs\audio-cadence-<unix seconds>.csv` when the
 /// audio thread ends, however it ends.
 struct CadenceDump {
-    trace: butterpollo_core::audio_cadence::Trace,
+    trace: butterpollo_media_policy::audio_cadence::Trace,
     directory: std::path::PathBuf,
 }
 
@@ -70,7 +70,7 @@ impl Drop for CadenceDump {
 fn route_upkeep(
     route: &Route,
     config: &Config,
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
     previous: &str,
 ) -> String {
     match route.maintain_default() {
@@ -103,7 +103,7 @@ impl RouteUpkeep {
     fn start(
         route: Arc<Route>,
         config: Config,
-        warnings: Arc<butterpollo_core::session::Warnings>,
+        warnings: Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
         let sink = Arc::new(Mutex::new(route_upkeep(
             &route,
@@ -163,7 +163,7 @@ impl Media {
     ) -> Result<thread::JoinHandle<()>> {
         // The video worker takes the media link later, so the audio thread gets its own handle on
         // the audio side now. A WebRTC session whose answer left no layout cannot stream sound.
-        let webrtc = if s.launch.transport == butterpollo_core::session::Transport::WebRtc {
+        let webrtc = if s.launch.transport == butterpollo_session::session::Transport::WebRtc {
             Some(
                 h.webrtc_links
                     .audio_sender(&s.launch.id)
@@ -225,7 +225,7 @@ impl Media {
         // Hidden: when each captured packet arrived and each went out, for support.
         let trace = config.boolean("audio_cadence_trace", false);
         let mut cadence = trace.then(|| CadenceDump {
-            trace: butterpollo_core::audio_cadence::Trace::new(),
+            trace: butterpollo_media_policy::audio_cadence::Trace::new(),
             directory: h.directory.clone(),
         });
         let mut sink = String::new();
@@ -279,7 +279,7 @@ impl Media {
         let client_channels = usize::from(s.config.audio_channels);
         let start = Instant::now();
         let interval = Duration::from_millis(u64::from(packet_ms));
-        let mut loss = butterpollo_core::audio::HostLoss::default();
+        let mut loss = butterpollo_media_policy::audio::HostLoss::default();
         // Packet deadlines, silence for a quiet endpoint, and where each packet sits in the
         // stream in 48 kHz samples; the WebRTC RTP clock follows that, not wall time.
         let mut pace = AudioPace::new(Instant::now(), interval, frames);
@@ -372,7 +372,7 @@ impl Media {
                     };
                     if selected != sink {
                         if !sink.is_empty() {
-                            s.launch.warnings.event("audio_device_changed", "Audio capture device changed because the Windows default playback device changed. WASAPI is reopening and sound may briefly pause; select a fixed capture sink if the change was unintended.", butterpollo_core::session::EVENT_PERIOD);
+                            s.launch.warnings.event("audio_device_changed", "Audio capture device changed because the Windows default playback device changed. WASAPI is reopening and sound may briefly pause; select a fixed capture sink if the change was unintended.", butterpollo_session::session::EVENT_PERIOD);
                         }
                         if let Some(mut old) = capture.take() {
                             let waited = old.since_drained();
@@ -472,10 +472,12 @@ impl Media {
                         loss.unsent();
                     }
                     if let Some(cadence) = &mut cadence {
-                        cadence.trace.send(butterpollo_core::audio_cadence::Sent {
-                            send_ms: butterpollo_windows::timing::qpc_ms(),
-                            position: at,
-                        });
+                        cadence
+                            .trace
+                            .send(butterpollo_media_policy::audio_cadence::Sent {
+                                send_ms: butterpollo_windows::timing::qpc_ms(),
+                                position: at,
+                            });
                     }
                     // Haptics from game audio analyse a copy of what went out,
                     // on the control thread; one atomic load while unused.

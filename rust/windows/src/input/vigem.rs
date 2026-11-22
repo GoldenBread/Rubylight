@@ -10,7 +10,7 @@
 //! devices, which tools that look for USB controllers see and a VHF pad they
 //! may not. ViGEmBus is retired upstream and separately installed.
 use anyhow::{Context, Result, bail};
-use butterpollo_core::input_policy::VIGEM_DS4;
+use butterpollo_input_policy::input_policy::VIGEM_DS4;
 use std::{
     collections::BTreeMap,
     mem::size_of,

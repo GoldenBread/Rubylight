@@ -1,4 +1,4 @@
-//! Sends the events of the `webhooks` setting ([`butterpollo_core::webhook`]).
+//! Sends the events of the `webhooks` setting ([`butterpollo_session::webhook`]).
 //!
 //! Nothing here runs on a stream's path: an event is serialized once and put
 //! on its hook's bounded queue with `try_send`, so a full queue drops the
@@ -13,7 +13,7 @@
 //! A failure is logged with the hook's origin only, since a URL's path or
 //! query may hold a token, and the secret is never logged.
 use crate::state::Host;
-use butterpollo_core::webhook::{self, Delivery, DeliveryHost, Webhook};
+use butterpollo_session::webhook::{self, Delivery, DeliveryHost, Webhook};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -541,13 +541,13 @@ impl Host {
             "device": device(&launch.client.uuid, &launch.client.name),
             "app_id": launch.app_id,
             "role": match launch.role {
-                butterpollo_core::session::Role::Stream => "stream",
-                butterpollo_core::session::Role::RemoteMonitor => "remote_monitor",
-                butterpollo_core::session::Role::InputOnly => "input_only",
+                butterpollo_session::session::Role::Stream => "stream",
+                butterpollo_session::session::Role::RemoteMonitor => "remote_monitor",
+                butterpollo_session::session::Role::InputOnly => "input_only",
             },
             "transport": match launch.transport {
-                butterpollo_core::session::Transport::GameStream => "moonlight",
-                butterpollo_core::session::Transport::WebRtc => "webrtc",
+                butterpollo_session::session::Transport::GameStream => "moonlight",
+                butterpollo_session::session::Transport::WebRtc => "webrtc",
             },
         });
         if event == "session.ended" {
@@ -567,7 +567,7 @@ impl Host {
             .unwrap()
             .clients
             .iter()
-            .find(|c| c.uuid == butterpollo_core::state::device_uuid(uuid))
+            .find(|c| c.uuid == butterpollo_session::state::device_uuid(uuid))
             .map(|c| c.name.clone())
             .unwrap_or_default();
         device(uuid, &name)
@@ -582,7 +582,10 @@ impl Host {
             if config.get("webhooks", "[]").trim() == "[]" {
                 return;
             }
-            (config.webhooks(), crate::network::host_name(&config))
+            (
+                webhook::from_config(&config),
+                crate::network::host_name(&config),
+            )
         };
         if hooks.is_empty() {
             return;

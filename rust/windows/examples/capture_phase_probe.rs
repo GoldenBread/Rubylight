@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod probe {
     use anyhow::{Context, Result, bail, ensure};
-    use butterpollo_core::config::Config;
+    use butterpollo_config::config::Config;
     use butterpollo_windows::{
         capture::{Capture, ComGuard, Display, GpuImage, Priority, displays, enable_dpi_awareness},
         timing::{StreamingScope, Timer},

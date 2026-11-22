@@ -8,8 +8,8 @@
 //! `multiopus` in a remote offer, and the client answers `multiopus` with the layout it decodes.
 //! See `docs/webrtc-design.md` ("Library").
 use anyhow::{Context, Result, anyhow, bail};
-use butterpollo_core::audio::OpusLayout;
-use butterpollo_core::webrtc::capabilities::{av1_level, h264_level, hevc_level};
+use butterpollo_media_policy::audio::OpusLayout;
+use butterpollo_session::webrtc::capabilities::{av1_level, h264_level, hevc_level};
 use str0m::change::{SdpAnswer, SdpPendingOffer};
 use str0m::channel::{ChannelConfig, ChannelId, Reliability};
 use str0m::format::{Codec, FormatParams};

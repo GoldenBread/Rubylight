@@ -37,7 +37,7 @@ fn gpu_conversion_timing() -> Result<()> {
     };
     let mut reports = vec![];
     for (width, height) in [(1968, 2184), (3840, 2160)] {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width,
             height,
             codec: 1,
@@ -388,7 +388,7 @@ fn compute_conversion_matches_the_graphics_converter() -> Result<()> {
                 let mut image = base.clone();
                 image.cursor = cursor.cloned();
                 let image = &image;
-                let config = butterpollo_core::rtsp::Negotiated {
+                let config = butterpollo_media_policy::rtsp::Negotiated {
                     width,
                     height,
                     codec: 1,
@@ -551,7 +551,7 @@ fn gpu_420_single_pass_matches_pixel_passes() -> Result<()> {
                 for cursor in [None, Some(&pointer), Some(&clipped), Some(&color)] {
                     let mut image = source.clone();
                     image.cursor = cursor.cloned();
-                    let config = butterpollo_core::rtsp::Negotiated {
+                    let config = butterpollo_media_policy::rtsp::Negotiated {
                         width,
                         height,
                         codec: 1,
@@ -639,7 +639,7 @@ fn gpu_420_single_pass_timing() -> Result<()> {
     let mut reports = Vec::new();
     for (width, height) in [(1920, 1080), (2560, 1440), (3840, 2160)] {
         for hdr in [false, true] {
-            let config = butterpollo_core::rtsp::Negotiated {
+            let config = butterpollo_media_policy::rtsp::Negotiated {
                 width,
                 height,
                 codec: 1,
@@ -726,7 +726,7 @@ fn gpu_420_video_plane_uavs_are_disjoint() -> Result<()> {
             .SetMultithreadProtected(true);
         let messages: ID3D11InfoQueue = gpu.device.cast()?;
         for hdr in [false, true] {
-            let config = butterpollo_core::rtsp::Negotiated {
+            let config = butterpollo_media_policy::rtsp::Negotiated {
                 width: 64,
                 height: 64,
                 codec: 1,
@@ -917,7 +917,7 @@ fn compute_planes_match_the_pyrowave_graphics_planes() -> Result<()> {
                 for cursor in [None, Some(&pointer)] {
                     let mut image = base.clone();
                     image.cursor = cursor.cloned();
-                    let config = butterpollo_core::rtsp::Negotiated {
+                    let config = butterpollo_media_policy::rtsp::Negotiated {
                         width,
                         height,
                         codec: 3,
@@ -1073,7 +1073,7 @@ fn gpu_desktop_pointer_matches_cpu_composition_for_sdr_and_hdr() -> Result<()> {
         image.cursor = Some(pointer.clone());
         pointer.blend(&mut source);
         let cpu_composited = GpuImage::upload(&gpu, &source)?;
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 64,
             height: 64,
             codec: 1,
@@ -1129,7 +1129,7 @@ fn gpu_sdr_ten_bit_respects_client_matrix_and_full_range() -> Result<()> {
         (4, [387, 371, 769]),
         (5, [378, 351, 805]),
     ] {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 64,
             height: 64,
             codec: 1,
@@ -1185,7 +1185,7 @@ fn the_red_reference_matches_the_published_csc_tables() {
 }
 #[test]
 fn native_444_targets_follow_sunshines_nvenc_input_formats() {
-    let mut config = butterpollo_core::rtsp::Negotiated {
+    let mut config = butterpollo_media_policy::rtsp::Negotiated {
         width: 64,
         height: 64,
         codec: 1,
@@ -1261,7 +1261,7 @@ fn gpu_native_444_eight_bit_writes_full_resolution_ayuv_codes() -> Result<()> {
     };
     let uploaded = GpuImage::upload(&gpu, &image)?;
     for csc_mode in 0..4u8 {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 64,
             height: 64,
             codec: 1,
@@ -1301,7 +1301,7 @@ fn gpu_native_444_ten_bit_stacks_y_u_and_v_planes() -> Result<()> {
     };
     let uploaded = GpuImage::upload(&gpu, &image)?;
     for csc_mode in 0..4u8 {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 64,
             height: 64,
             codec: 1,
@@ -1348,7 +1348,7 @@ fn hdr_full_and_limited_range_match_absolute_pq_on_both_gpu_paths() -> Result<()
     let image = make_image(&[[0.; 3], [1.; 3], [12.5; 3], [125.; 3]], 64, 64);
     let source = GpuImage::upload_settled(&gpu, &image)?;
     for full in [false, true] {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: image.width,
             height: image.height,
             codec: 2,
@@ -1399,7 +1399,7 @@ fn hdr_full_and_limited_range_match_absolute_pq_on_both_gpu_paths() -> Result<()
 fn hlg_streams_and_dolby_vision_8_4_tell_the_shader_hlg() {
     // cbuffer Config: hdr=5. rubylight_protocol::hdr: PQ 1, HLG 2, DV_81 4, DV_84 8.
     let hdr = |hdr, hdr_format| {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 64,
             height: 64,
             codec: 1,
@@ -1458,7 +1458,7 @@ fn gpu_hlg_matches_the_cpu_reference_in_every_converter() -> Result<()> {
         [12.5, 0., 0.],
     ];
     let image = make_image(&colours, 64, 64);
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: image.width,
         height: image.height,
         codec: 1,
@@ -1533,7 +1533,7 @@ fn pyrowave_planes_hlg_matches_the_cpu_reference() -> Result<()> {
     let fence: ID3D12Fence = unsafe { compute.device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? };
     let width = image.width as usize;
     for (value, yuv444) in [(1, false), (2, true)] {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: image.width,
             height: image.height,
             codec: 3,
@@ -1625,7 +1625,7 @@ fn gpu_hdr_preserves_absolute_luminance_gamut_and_linear_resize() -> Result<()> 
         64,
         64,
     );
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: image.width,
         height: image.height,
         codec: 1,
@@ -1682,7 +1682,7 @@ fn gpu_hdr_preserves_absolute_luminance_gamut_and_linear_resize() -> Result<()> 
     let sdr = GpuImage::upload(&gpu, &sdr)?;
     let mut sdr_convert = Converter::new(
         &gpu,
-        &butterpollo_core::rtsp::Negotiated {
+        &butterpollo_media_policy::rtsp::Negotiated {
             width: 64,
             height: 64,
             hdr: true,
@@ -1701,7 +1701,7 @@ fn gpu_hdr_preserves_absolute_luminance_gamut_and_linear_resize() -> Result<()> 
         assert!(output[32 * 64 + 32].abs_diff((64. + 876. * pq).round() as u16) <= 2);
     }
     let resized = make_image(&[[0.; 3], [25.; 3], [0.; 3], [25.; 3]], 1, 4);
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 2,
         height: 2,
         codec: 1,
@@ -1726,7 +1726,7 @@ fn gpu_hdr_preserves_absolute_luminance_gamut_and_linear_resize() -> Result<()> 
     let wide = make_image(&[[125.; 3]], 8, 2);
     let mut convert = Converter::new(
         &gpu,
-        &butterpollo_core::rtsp::Negotiated {
+        &butterpollo_media_policy::rtsp::Negotiated {
             width: 4,
             height: 4,
             codec: 1,
@@ -1753,7 +1753,7 @@ fn converters_take_their_contexts_lock_once_and_hold_it_per_conversion() -> Resu
     let _com = ComGuard::new()?;
     let gpu = Device::new("")?;
     let context = gpu.context.cast::<IUnknown>()?;
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 64,
         height: 64,
         codec: 1,
@@ -1781,7 +1781,7 @@ fn gpu_pool_does_not_overwrite_frames_held_by_the_codec() -> Result<()> {
     let gpu = Device::new("")?;
     let black = make_image(&[[0.; 3]], 64, 64);
     let white = make_image(&[[125.; 3]], 64, 64);
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 64,
         height: 64,
         codec: 1,
@@ -1831,7 +1831,7 @@ fn every_d3d11_uav_fits_feature_level_11_0() {
 
 #[test]
 fn sdr_white_scale_constants_follow_windows_nits() {
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 1920,
         height: 1080,
         codec: 1,

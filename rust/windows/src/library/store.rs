@@ -5,7 +5,7 @@
 //! menu does. Scanning installs, signs in and starts nothing.
 use super::{add, bytes, files};
 use anyhow::{Context, Result};
-use butterpollo_core::library::{self, Game, StorePackage};
+use butterpollo_session::library::{self, Game, StorePackage};
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
@@ -209,7 +209,7 @@ mod tests {
         std::fs::create_dir_all(&game).unwrap();
         std::fs::write(
             game.join(CONFIG),
-            include_str!("../../../core/src/library/fixtures/microsoft_game.config"),
+            include_str!("../../../core/session/src/library/fixtures/microsoft_game.config"),
         )
         .unwrap();
         std::fs::write(
@@ -258,7 +258,7 @@ mod tests {
         let lone = tempfile::tempdir().unwrap();
         std::fs::write(
             lone.path().join(CONFIG),
-            include_str!("../../../core/src/library/fixtures/microsoft_game.config"),
+            include_str!("../../../core/session/src/library/fixtures/microsoft_game.config"),
         )
         .unwrap();
         assert!(game_in(&installed(lone.path())).is_err());

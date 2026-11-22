@@ -2,14 +2,14 @@
 //! pairing requests waiting in the console, and the credentials check.
 //!
 //! A paired device is an ordinary `Client` with an empty certificate and
-//! `extra.webrtc` (see `butterpollo_core::state::Client::webrtc`). The
+//! `extra.webrtc` (see `butterpollo_session::state::Client::webrtc`). The
 //! console's Devices page approves a request through `/api/pin`: the request
 //! sits in `Host::pins` under its unguessable request ID with an empty
 //! certificate, which no GameStream pairing has, and `/api/pin` hands the
 //! entered PIN to the connection that is waiting for it.
 
 use crate::state::Host;
-use butterpollo_core::{
+use butterpollo_session::{
     state::Client,
     webrtc::{
         auth::{
@@ -133,7 +133,7 @@ impl Registry {
     }
 
     /// The `webrtc` object of `/api/config`.
-    pub fn status_json(&self, config: &butterpollo_core::config::Config) -> Value {
+    pub fn status_json(&self, config: &butterpollo_config::config::Config) -> Value {
         let status = self.status();
         json!({
             "enabled": status.enabled,
@@ -304,7 +304,7 @@ impl Registry {
         }
         let credentials = Credentials::generate(&mut OsRng);
         let name = format!("Console ({username})");
-        let name = match butterpollo_core::pairing::validate_device_name(&name) {
+        let name = match butterpollo_crypto::pairing::validate_device_name(&name) {
             Ok(()) => name,
             Err(_) => "Console".to_owned(),
         };
@@ -446,7 +446,7 @@ impl Registry {
         })?;
         // A device approved from another one: `add_webrtc` gives it the default,
         // which that device must still hold.
-        let default = butterpollo_core::state::LATER_DEVICE_PERMISSION;
+        let default = butterpollo_session::state::LATER_DEVICE_PERMISSION;
         let capped = crate::native_api::pairing::capped(
             &h.paired.read().unwrap(),
             approver,

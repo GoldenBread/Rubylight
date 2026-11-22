@@ -3,10 +3,10 @@
 //! titled "Rubylight" that starts the session's players.
 use super::layers::{LOCK_WAIT, Lock};
 use anyhow::{Context, Result, bail, ensure};
-use butterpollo_core::nucleus::generic::{self, Inject, Setup};
-use butterpollo_core::nucleus::handler::{self, Catalog, Handler};
-use butterpollo_core::nucleus::profile::{self, Player};
-use butterpollo_core::nucleus::window::Rect;
+use butterpollo_session::nucleus::generic::{self, Inject, Setup};
+use butterpollo_session::nucleus::handler::{self, Catalog, Handler};
+use butterpollo_session::nucleus::profile::{self, Player};
+use butterpollo_session::nucleus::window::Rect;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -750,7 +750,7 @@ fn session_settings(path: &Path) -> Result<(Vec<u8>, profile::Settings)> {
             file = %path.display(),
             keys = settings.added.join(", "),
             "Nucleus Co-op: Settings.ini completed from Nucleus Co-op {}'s defaults",
-            butterpollo_core::nucleus::install::VERSION
+            butterpollo_session::nucleus::install::VERSION
         );
     }
     Ok((text, settings))

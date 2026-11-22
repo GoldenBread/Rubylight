@@ -6,7 +6,7 @@ use super::*;
 /// (`AMF_COLOR_TRANSFER_CHARACTERISTIC_*`, the H.273 codes): ARIB STD-B67
 /// (18) for HLG and Dolby Vision 8.4, SMPTE ST 2084 (16) for other HDR, and
 /// each SDR matrix's own curve.
-pub(super) fn transfer_characteristic(config: &butterpollo_core::rtsp::Negotiated) -> i64 {
+pub(super) fn transfer_characteristic(config: &butterpollo_media_policy::rtsp::Negotiated) -> i64 {
     if config.hlg() {
         18
     } else if config.hdr {
@@ -75,16 +75,23 @@ impl OutputRange {
     }
 }
 impl Encoder {
-    pub fn new(config: &butterpollo_core::rtsp::Negotiated, display: &str) -> Result<Self> {
+    pub fn new(config: &butterpollo_media_policy::rtsp::Negotiated, display: &str) -> Result<Self> {
         Self::new_device(config, Device::new(display)?)
     }
-    pub fn new_device(config: &butterpollo_core::rtsp::Negotiated, device: Device) -> Result<Self> {
-        Self::new_device_options(config, device, &butterpollo_core::config::Config::default())
+    pub fn new_device(
+        config: &butterpollo_media_policy::rtsp::Negotiated,
+        device: Device,
+    ) -> Result<Self> {
+        Self::new_device_options(
+            config,
+            device,
+            &butterpollo_config::config::Config::default(),
+        )
     }
     pub fn new_device_options(
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         device: Device,
-        options: &butterpollo_core::config::Config,
+        options: &butterpollo_config::config::Config,
     ) -> Result<Self> {
         Self::new_device_alignment_options(
             config,
@@ -94,9 +101,9 @@ impl Encoder {
         )
     }
     pub(super) fn new_device_alignment_options(
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         device: Device,
-        options: &butterpollo_core::config::Config,
+        options: &butterpollo_config::config::Config,
         av1_alignment: i64,
     ) -> Result<Self> {
         Self::create(config, device, options, av1_alignment, None)
@@ -105,9 +112,9 @@ impl Encoder {
     /// converted on that D3D12 compute queue and AMF encodes from D3D12, so
     /// neither waits behind a game's work on the graphics engine.
     pub fn new_gpu(
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         device: Device,
-        options: &butterpollo_core::config::Config,
+        options: &butterpollo_config::config::Config,
         compute: Option<std::sync::Arc<crate::compute::Compute>>,
     ) -> Result<Self> {
         Self::create(
@@ -119,9 +126,9 @@ impl Encoder {
         )
     }
     fn create(
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         device: Device,
-        options: &butterpollo_core::config::Config,
+        options: &butterpollo_config::config::Config,
         av1_alignment: i64,
         compute: Option<std::sync::Arc<crate::compute::Compute>>,
     ) -> Result<Self> {
@@ -144,18 +151,19 @@ impl Encoder {
     }
 
     fn create_attempt(
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         device: Device,
-        options: &butterpollo_core::config::Config,
+        options: &butterpollo_config::config::Config,
         av1_alignment: i64,
         compute: Option<std::sync::Arc<crate::compute::Compute>>,
         allow_hevc_intra_refresh: bool,
     ) -> Result<Self> {
         let mut effective_config = config.clone();
         effective_config.intra_refresh =
-            butterpollo_core::encoder_policy::amf_intra_refresh(config)
+            butterpollo_media_policy::encoder_policy::amf_intra_refresh(config)
                 || intra_refresh::av1_forced(config);
-        let slice_blocks = butterpollo_core::encoder_policy::slice_delivery(options, config);
+        let slice_blocks =
+            butterpollo_media_policy::encoder_policy::slice_delivery(options, config);
         if slice_blocks > 0 && effective_config.intra_refresh {
             effective_config.intra_refresh = false;
             tracing::warn!(
@@ -218,9 +226,9 @@ impl Encoder {
             coded_config.chroma_packing = 0;
         }
         let config = &coded_config;
-        let limits = butterpollo_core::encoder_policy::amf_rate_control(options, config)?;
+        let limits = butterpollo_media_policy::encoder_policy::amf_rate_control(options, config)?;
         let automatic_frame_cap =
-            butterpollo_core::encoder_policy::amf_frame_cap_automatic(options);
+            butterpollo_media_policy::encoder_policy::amf_frame_cap_automatic(options);
         let scale_frame_cap = !automatic_frame_cap
             && limits
                 .iter()
@@ -254,10 +262,10 @@ impl Encoder {
                     .filter(|query| query(&mut runtime) == AMF_RESULT_AMF_OK)
                     .map(|_| runtime);
                 let described = queried
-                    .map(butterpollo_core::codec_support::amf_version_text)
+                    .map(butterpollo_media_policy::codec_support::amf_version_text)
                     .unwrap_or_else(|| "unknown".into());
-                let header = butterpollo_core::codec_support::amf_version_text(version);
-                match butterpollo_core::codec_support::amf_retry_version(version, queried) {
+                let header = butterpollo_media_policy::codec_support::amf_version_text(version);
+                match butterpollo_media_policy::codec_support::amf_retry_version(version, queried) {
                     Some(older) => {
                         // Every encoder open takes this path on such a driver;
                         // say it once.
@@ -381,7 +389,9 @@ impl Encoder {
                 last_accepted: None,
                 input_full: 0,
                 unit_log: None,
-                slice_blocks: butterpollo_core::encoder_policy::slice_delivery(options, config),
+                slice_blocks: butterpollo_media_policy::encoder_policy::slice_delivery(
+                    options, config,
+                ),
                 slices_joined: false,
                 units: Default::default(),
                 unit_held: false,
@@ -393,7 +403,7 @@ impl Encoder {
             // Before any property: AMF refuses an oversize FrameSize with a bare
             // AMF_OUT_OF_RANGE, which would read as a driver problem.
             e.validate_size()?;
-            let mut properties = butterpollo_core::encoder_policy::amf(options, config)?;
+            let mut properties = butterpollo_media_policy::encoder_policy::amf(options, config)?;
             properties.extend(intra_refresh::av1_forced_properties(config));
             for property in properties {
                 if let Err(error) = e.apply(&property) {
@@ -456,11 +466,11 @@ impl Encoder {
                     "{message}"
                 );
                 e.warnings.set("encoder_bitrate_ceiling", message);
-                let held = butterpollo_core::rtsp::Negotiated {
+                let held = butterpollo_media_policy::rtsp::Negotiated {
                     bitrate_kbps: bitrate,
                     ..config.clone()
                 };
-                butterpollo_core::encoder_policy::amf_rate_control(options, &held)?
+                butterpollo_media_policy::encoder_policy::amf_rate_control(options, &held)?
             } else {
                 limits
             };
@@ -563,8 +573,9 @@ impl Encoder {
                 e.property_raw(name, gpu::boolean(full))
             });
             let requested_ltr =
-                butterpollo_core::encoder_policy::amf_ltr_requested(options, config);
-            let ltr_count = butterpollo_core::encoder_policy::amf_ltr_frames(options, config);
+                butterpollo_media_policy::encoder_policy::amf_ltr_requested(options, config);
+            let ltr_count =
+                butterpollo_media_policy::encoder_policy::amf_ltr_frames(options, config);
             if ltr_count < requested_ltr {
                 tracing::info!(
                     requested_ltr,
@@ -578,7 +589,7 @@ impl Encoder {
             e.request_split_frame(options);
             e.apply_probe_properties(options)?;
             let hevc_request = if allow_hevc_intra_refresh {
-                butterpollo_core::encoder_policy::amf_hevc_intra_refresh(config)
+                butterpollo_media_policy::encoder_policy::amf_hevc_intra_refresh(config)
             } else {
                 None
             };
@@ -653,7 +664,7 @@ impl Encoder {
             e.dynamic = e.enable_dynamic(options);
             // AMF's video converter shares the encoder's D3D11 context;
             // `Encoder::new_gpu` leaves the compute queue out for it.
-            if d3d12_free && butterpollo_core::amf_vpe::wanted(options) {
+            if d3d12_free && butterpollo_media_policy::amf_vpe::wanted(options) {
                 match vpe::Vpe::new(factory, context, &e.config) {
                     Ok(converter) => {
                         tracing::info!(

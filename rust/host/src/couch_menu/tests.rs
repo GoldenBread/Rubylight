@@ -1,7 +1,7 @@
 use super::*;
 use crate::state::test_support::Fixture;
-use butterpollo_core::couch_menu::chord;
-use butterpollo_core::native::{LAUNCH, VIEW};
+use butterpollo_input_policy::couch_menu::chord;
+use butterpollo_session::native::{LAUNCH, VIEW};
 
 #[test]
 fn couch_menu_refuses_input_only_readback_and_tiny_streams() {
@@ -211,8 +211,8 @@ fn couch_menu_panel_for_another_mode_waits_instead_of_closing() {
 fn couch_menu_strings_are_complete_in_english_and_german() {
     for locale in ["en", "de-DE", "fr"] {
         strings(locale, items::ITEMS).unwrap();
-        for key in menu::model::items::ALL {
-            let path = menu::model::items::label_path(key);
+        for key in butterpollo_session::couch_menu_model::items::ALL {
+            let path = butterpollo_session::couch_menu_model::items::label_path(key);
             let label = i18n::catalogue(locale, &path).unwrap();
             assert_eq!(menu::font::uncovered(&label), None, "{path}");
         }
@@ -230,7 +230,7 @@ fn a_second_screens_menu_disconnects_its_own_stream_not_the_first_screens() {
     assert_eq!(client(&f.host, &first).unwrap().uuid, device.uuid);
     assert_eq!(
         client(&f.host, &second).unwrap().uuid,
-        butterpollo_core::state::second_screen_uuid(&device.uuid)
+        butterpollo_session::state::second_screen_uuid(&device.uuid)
     );
     act(&f.host, &second, &Action::Disconnect).unwrap();
     assert!(second.stopping());

@@ -3,11 +3,11 @@
 //! AV1 never refreshes (`encoder_policy::amf_intra_refresh`); only the native
 //! measurement asks AMF for it.
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
+use butterpollo_media_policy::{
     encoder_policy::{AmfHevcIntraRefresh, Property},
     rtsp::Negotiated,
-    session::Warnings,
 };
+use butterpollo_session::session::Warnings;
 
 pub(super) const GOP: &str = "HevcGOPSize";
 pub(super) const CTBS: &str = "HevcIntraRefreshCTBsNumberPerSlot";
@@ -54,7 +54,7 @@ pub(super) fn av1_forced_properties(stream: &Negotiated) -> Vec<Property> {
             .into_iter()
             .map(|(name, value)| Property {
                 name: name.into(),
-                value: butterpollo_core::encoder_policy::Value::Integer(value),
+                value: butterpollo_media_policy::encoder_policy::Value::Integer(value),
                 required: true,
             })
             .collect();
@@ -236,7 +236,7 @@ mod tests {
             forced,
             AV1_REFRESH.map(|(name, value)| (
                 name.to_string(),
-                butterpollo_core::encoder_policy::Value::Integer(value),
+                butterpollo_media_policy::encoder_policy::Value::Integer(value),
                 true
             ))
         );

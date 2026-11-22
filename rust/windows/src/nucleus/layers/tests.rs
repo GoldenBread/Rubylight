@@ -436,7 +436,7 @@ fn leaving_a_nucleus_puts_back_what_its_sessions_left_or_says_why_not() {
     };
     let favourites = || {
         let text = std::fs::read(&settings).unwrap();
-        butterpollo_core::nucleus::profile::ini_value(&text, "Dev", "ShowFavoriteOnly").unwrap()
+        butterpollo_session::nucleus::profile::ini_value(&text, "Dev", "ShowFavoriteOnly").unwrap()
     };
     // A session runs from it: nothing is put back under it.
     let mut forced = crate::nucleus::files::write_settings(folder.path()).unwrap();

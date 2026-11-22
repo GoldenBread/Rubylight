@@ -21,7 +21,7 @@ pub struct Filter {
 }
 impl Filter {
     /// NGX's contrast, saturation, middle gray and peak
-    /// (`butterpollo_core::nvidia_enhance::rtx_parameters`).
+    /// (`butterpollo_media_policy::nvidia_enhance::rtx_parameters`).
     pub fn set_parameters(&mut self, parameters: [u32; 4]) {
         self.parameters = parameters;
     }

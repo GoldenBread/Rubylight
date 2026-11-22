@@ -3,7 +3,8 @@ use crate::{
     display_session::tests::retained_display,
     state::{Session, test_support::Fixture},
 };
-use butterpollo_core::{config::Config, state::Client};
+use butterpollo_config::config::Config;
+use butterpollo_session::state::Client;
 use std::{sync::Arc, time::Instant};
 
 /// A host with one paired device, which owns whatever the test starts.
@@ -657,7 +658,7 @@ fn shutdown_releases_the_audio_route_before_the_games_undo_commands() {
     let host = setup.host();
     let mut app = setup.game();
     app.cmd.clear();
-    app.prep = vec![butterpollo_core::state::PrepCommand {
+    app.prep = vec![butterpollo_session::state::PrepCommand {
         r#do: String::new(),
         undo: "ping -n 3 127.0.0.1 >nul".into(),
         elevated: false,
@@ -871,7 +872,8 @@ fn cleanup_repeats_safely_in_every_order() {
 
 #[test]
 fn the_actions_the_view_allows_are_the_actions_the_host_accepts() {
-    use butterpollo_core::{native::session_view, native_api::session::ActionId};
+    use butterpollo_session::native::session_view;
+    use rubylight_native_api::session::ActionId;
     for scenario in ["idle", "game", "streaming", "suspended"] {
         for action in [
             ActionId::Resume,

@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 #[cfg(test)]
 mod parity_tests;
-use butterpollo_core::connection_commands::ConnectionCommand as ClientCommand;
-use butterpollo_core::state::{App, PrepCommand};
+use butterpollo_session::connection_commands::ConnectionCommand as ClientCommand;
+use butterpollo_session::state::{App, PrepCommand};
 use butterpollo_windows::process::{CommandCancellation, Process};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -15,7 +15,7 @@ use std::{
 /// cap shrinks only the coded picture, so `SUNSHINE_CLIENT_WIDTH/HEIGHT` keep
 /// reporting the requested size, as they always did.
 fn client_stream_environment(
-    stream: &butterpollo_core::rtsp::Negotiated,
+    stream: &butterpollo_media_policy::rtsp::Negotiated,
     fps: String,
 ) -> BTreeMap<String, String> {
     let (width, height) = stream.display_size();
@@ -34,7 +34,7 @@ pub struct ClientCommands {
 }
 impl ClientCommands {
     pub fn start(h: &crate::state::Shared, s: &crate::state::Session) -> Result<Self> {
-        if s.launch.role == butterpollo_core::session::Role::InputOnly
+        if s.launch.role == butterpollo_session::session::Role::InputOnly
             || !s.launch.client.allows_commands()
             || h.current_app
                 .lock()
@@ -69,7 +69,7 @@ impl ClientCommands {
         };
         environment.insert(
             "SUNSHINE_CLIENT_NAME".into(),
-            butterpollo_core::pairing::command_device_name(&s.launch.client.name),
+            butterpollo_crypto::pairing::command_device_name(&s.launch.client.name),
         );
         environment.insert("SUNSHINE_CLIENT_UUID".into(), s.launch.client.uuid.clone());
         let fps = if h
@@ -80,7 +80,7 @@ impl ClientCommands {
         {
             s.config.fps.to_string()
         } else {
-            butterpollo_core::framegen::Rate(s.config.fps_millihz()).to_string()
+            butterpollo_media_policy::framegen::Rate(s.config.fps_millihz()).to_string()
         };
         environment.extend(client_stream_environment(&s.config, fps));
         for (key, value) in environment.clone() {
@@ -109,7 +109,7 @@ impl ClientCommands {
         environment: BTreeMap<String, String>,
     ) -> Result<Self> {
         let parse = |key: &str| -> Result<Vec<ClientCommand>> {
-            butterpollo_core::connection_commands::parse(extra.get(key), key)
+            butterpollo_session::connection_commands::parse(extra.get(key), key)
                 .map_err(anyhow::Error::msg)
         };
         // Validate both lists before any command is started.
@@ -191,15 +191,15 @@ impl MenuRun {
 /// rest of its reply agree.
 pub fn pc_command_names(
     h: &crate::state::Shared,
-    config: &butterpollo_core::config::Config,
+    config: &butterpollo_config::config::Config,
 ) -> Vec<String> {
-    let global = butterpollo_core::menu_commands::global(config.get("server_cmd", "[]"));
+    let global = butterpollo_input_policy::menu_commands::global(config.get("server_cmd", "[]"));
     let app = h.current_app.lock().unwrap();
     // The same rule as running one (`pc_command`): a list of commands that do nothing is none.
     let Some((own, exclude)) = device_menu(app.as_ref()) else {
         return Vec::new();
     };
-    butterpollo_core::menu_commands::listed(&global, own, exclude)
+    butterpollo_input_policy::menu_commands::listed(&global, own, exclude)
         .into_iter()
         .map(|(_, command)| command.name.clone())
         .collect()
@@ -210,7 +210,10 @@ pub fn pc_command_names(
 /// run. Without an app, the host-wide ones.
 fn device_menu(
     app: Option<&RunningApp>,
-) -> Option<(&[butterpollo_core::menu_commands::MenuCommand], bool)> {
+) -> Option<(
+    &[butterpollo_input_policy::menu_commands::MenuCommand],
+    bool,
+)> {
     match app {
         Some(app) if !app.allow_client_commands => None,
         Some(app) => Some((&app.menu_commands[..], app.exclude_global_menu)),
@@ -224,7 +227,7 @@ fn device_menu(
 /// another command (the list changed since the device read it). The caller
 /// checks the device's permission.
 pub fn pc_command(h: &crate::state::Shared, index: usize, expect: Option<&str>) -> Option<MenuRun> {
-    use butterpollo_core::menu_commands::{self, Source};
+    use butterpollo_input_policy::menu_commands::{self, Source};
     let global = menu_commands::global(h.config.read().unwrap().get("server_cmd", "[]"));
     let mut app = h.current_app.lock().unwrap();
     let source = {
@@ -270,10 +273,10 @@ pub struct RunningApp {
     pub allow_client_commands: bool,
     /// The app's own stream-menu commands (`menu-cmd`), listed after the host-wide
     /// `server_cmd` ones, and whether the app hides those (`exclude-global-menu-cmd`).
-    pub menu_commands: Vec<butterpollo_core::menu_commands::MenuCommand>,
+    pub menu_commands: Vec<butterpollo_input_policy::menu_commands::MenuCommand>,
     pub exclude_global_menu: bool,
     /// The app's menu commands that ran, undone when the app stops.
-    menu_undo: butterpollo_core::menu_commands::UndoLog,
+    menu_undo: butterpollo_input_policy::menu_commands::UndoLog,
     terminate_on_pause: bool,
     connected: bool,
     state_events: Option<StateCommands>,
@@ -293,7 +296,7 @@ pub struct RunningApp {
     pub deferred: Option<(App, HashMap<String, String>)>,
     deferred_check: std::time::Instant,
     /// A game Steam starts, followed through its install folder.
-    steam: Option<butterpollo_core::steam::Tracker>,
+    steam: Option<butterpollo_session::steam::Tracker>,
     steam_check: std::time::Instant,
     /// A game Playnite starts.
     playnite: Option<crate::playnite::Launch>,
@@ -342,7 +345,7 @@ fn inferred_working_dir(command: &str) -> String {
 /// The processes of this host's user session, among which a running app's
 /// game processes are found. Listing them takes milliseconds: list them
 /// before locking `current_app`, which console and launch requests wait on.
-pub fn session_processes() -> Result<Vec<butterpollo_core::steam::Process>> {
+pub fn session_processes() -> Result<Vec<butterpollo_session::steam::Process>> {
     let session = butterpollo_windows::process::current_session()?;
     let mut processes = butterpollo_windows::process::processes()?;
     // A launcher may report the same executable in several signed-in
@@ -380,9 +383,9 @@ impl RunningApp {
     /// `current_app`.
     pub fn audio_root(
         &self,
-        processes: &[butterpollo_core::steam::Process],
-    ) -> Result<butterpollo_core::audio_scope::Identity> {
-        butterpollo_core::audio_scope::root(&self.owned_processes(processes)?, processes)
+        processes: &[butterpollo_session::steam::Process],
+    ) -> Result<butterpollo_session::audio_scope::Identity> {
+        butterpollo_session::audio_scope::root(&self.owned_processes(processes)?, processes)
     }
     /// The verified game processes and every process they started, whose
     /// devices game-only audio sets. None for an app without one (Desktop, a
@@ -398,7 +401,7 @@ impl RunningApp {
     /// identified as for game-only audio.
     pub fn window_processes(&self) -> Result<std::collections::BTreeSet<u32>> {
         let (owned, processes) = self.game_processes()?;
-        Ok(butterpollo_core::background::window_owners(
+        Ok(butterpollo_session::background::window_owners(
             &owned, &processes,
         ))
     }
@@ -461,14 +464,14 @@ impl RunningApp {
     /// process list.
     fn game_processes(
         &self,
-    ) -> Result<(BTreeMap<u32, u64>, Vec<butterpollo_core::steam::Process>)> {
+    ) -> Result<(BTreeMap<u32, u64>, Vec<butterpollo_session::steam::Process>)> {
         let processes = session_processes()?;
         Ok((self.owned_processes(&processes)?, processes))
     }
     /// The verified game processes (pid → creation time) among `processes`.
     fn owned_processes(
         &self,
-        processes: &[butterpollo_core::steam::Process],
+        processes: &[butterpollo_session::steam::Process],
     ) -> Result<BTreeMap<u32, u64>> {
         let owned = if let Some(tracker) = &self.steam {
             tracker.tracked.clone()
@@ -531,12 +534,12 @@ impl RunningApp {
             allow_client_commands: app_bool(app, "allow-client-commands", true),
             menu_commands: app
                 .extra
-                .get(butterpollo_core::menu_commands::APP_KEY)
-                .map(|list| butterpollo_core::menu_commands::entries(list, true))
+                .get(butterpollo_input_policy::menu_commands::APP_KEY)
+                .map(|list| butterpollo_input_policy::menu_commands::entries(list, true))
                 .unwrap_or_default(),
             exclude_global_menu: app_bool(
                 app,
-                butterpollo_core::menu_commands::EXCLUDE_GLOBAL_KEY,
+                butterpollo_input_policy::menu_commands::EXCLUDE_GLOBAL_KEY,
                 false,
             ),
             menu_undo: Default::default(),
@@ -563,7 +566,7 @@ impl RunningApp {
             game_seen: false,
             launcher_only: only_opens_launchers(app),
             focus: None,
-            exit_timeout: exit_timeout(app, &butterpollo_core::config::Config::default()),
+            exit_timeout: exit_timeout(app, &butterpollo_config::config::Config::default()),
             settings_swap: None,
             settings_watch: std::time::Instant::now(),
             processes_stopped: None,
@@ -666,7 +669,7 @@ impl RunningApp {
                     == Some(app.cmd.as_str())
             })
             .map(|action| {
-                serde_json::from_value::<butterpollo_core::library::Launch>(action.clone())
+                serde_json::from_value::<butterpollo_session::library::Launch>(action.clone())
             })
             .transpose()?;
         // Launchers start games outside this app's job. Track only new game
@@ -686,7 +689,7 @@ impl RunningApp {
         {
             match butterpollo_windows::process::processes() {
                 Ok(before) => {
-                    running.steam = Some(butterpollo_core::steam::Tracker::new(
+                    running.steam = Some(butterpollo_session::steam::Tracker::new(
                         &before,
                         folder,
                         Duration::from_secs(15),
@@ -785,13 +788,13 @@ impl RunningApp {
         pids.remove(&std::process::id());
         // By id and creation time: a shared helper or the same game started later at the desk
         // is a process of its own, and never holds the files.
-        let mut processes: Vec<butterpollo_core::game_settings::Watched> = pids
+        let mut processes: Vec<butterpollo_session::game_settings::Watched> = pids
             .into_iter()
             .filter_map(|pid| {
                 let program = butterpollo_windows::process::image_path(pid)?;
                 let started = butterpollo_windows::process::creation_time(pid);
                 (started != 0 && watches_program(&program)).then_some(
-                    butterpollo_core::game_settings::Watched {
+                    butterpollo_session::game_settings::Watched {
                         pid,
                         started,
                         program,
@@ -943,7 +946,7 @@ impl RunningApp {
     }
     /// The processes in `processes` whose program path the Steam game's
     /// tracker has not read yet, for [`ProcessScan::paths`].
-    pub fn unlooked(&self, processes: &[butterpollo_core::steam::Process]) -> Vec<u32> {
+    pub fn unlooked(&self, processes: &[butterpollo_session::steam::Process]) -> Vec<u32> {
         self.steam
             .as_ref()
             .map_or_else(Vec::new, |tracker| tracker.unchecked(processes))
@@ -963,7 +966,7 @@ impl RunningApp {
             return Ok(launch.finished());
         }
         if let Some(tracker) = &mut self.steam {
-            use butterpollo_core::steam::Tracked;
+            use butterpollo_session::steam::Tracked;
             let Some(scan) = scan.filter(|_| self.steam_check.elapsed() >= Duration::from_secs(1))
             else {
                 return Ok(false);
@@ -1038,7 +1041,7 @@ impl RunningApp {
                     .is_some_and(|ids| ids.contains(&pid))
             })
         };
-        let is_launcher = butterpollo_core::launcher_prompt::launcher_of(program).is_some();
+        let is_launcher = butterpollo_session::launcher_prompt::launcher_of(program).is_some();
         if !self.game_seen && !is_launcher && owns(self) {
             self.game_seen = true;
         }
@@ -1100,7 +1103,7 @@ impl RunningApp {
         let age = self.started.elapsed();
         if !self.launches
             || self.launcher_only
-            || age > butterpollo_core::launcher_prompt::WATCH_LIMIT
+            || age > butterpollo_session::launcher_prompt::WATCH_LIMIT
         {
             return None;
         }
@@ -1115,7 +1118,7 @@ impl RunningApp {
     /// Whether bringing a launched game's window back may still happen at `now`
     /// (issue #131): worth a look at the PC's process list and the desktop. Before
     /// the game's window is seen that lasts as long as a launcher prompt is
-    /// watched for ([`butterpollo_core::launcher_prompt::WATCH_LIMIT`]); after, a
+    /// watched for ([`butterpollo_session::launcher_prompt::WATCH_LIMIT`]); after, a
     /// minute from its first sight. Playnite already manages its own launch focus.
     pub fn bring_back_open(&self, now: Instant) -> bool {
         if self.background || !self.launches || self.playnite.is_some() || !self.has_game_process()
@@ -1196,7 +1199,7 @@ impl RunningApp {
     /// A Steam game looked for in `install_dir`, with its first look due.
     #[cfg(test)]
     pub fn track_steam(&mut self, install_dir: &str) {
-        self.steam = Some(butterpollo_core::steam::Tracker::new(
+        self.steam = Some(butterpollo_session::steam::Tracker::new(
             &[],
             install_dir,
             Duration::ZERO,
@@ -1259,7 +1262,7 @@ fn exit_action(
 /// of the ones it has not looked at ([`RunningApp::unlooked`]), all read
 /// without `current_app` held.
 pub struct ProcessScan {
-    pub processes: Vec<butterpollo_core::steam::Process>,
+    pub processes: Vec<butterpollo_session::steam::Process>,
     pub paths: HashMap<u32, Option<String>>,
 }
 /// Whether a fullscreen program another program started is the app's game,
@@ -1294,7 +1297,7 @@ impl ForegroundCheck {
     fn run_with(
         &self,
         creation_time: impl FnOnce(u32) -> u64,
-        processes: impl FnOnce() -> Result<Vec<butterpollo_core::steam::Process>>,
+        processes: impl FnOnce() -> Result<Vec<butterpollo_session::steam::Process>>,
     ) -> ForegroundVerdict {
         let created = creation_time(self.pid);
         if created == 0 {
@@ -1398,7 +1401,7 @@ impl FocusSnapshot {
     }
     pub(crate) fn candidates_in(
         &self,
-        processes: &[butterpollo_core::steam::Process],
+        processes: &[butterpollo_session::steam::Process],
     ) -> BTreeSet<u32> {
         let owned = if let Some(tracked) = &self.steam_tracked {
             tracked.clone()
@@ -1419,9 +1422,9 @@ impl FocusSnapshot {
 /// (`FocusSnapshot::candidate_pids`).
 fn focus_candidates(
     owned: &BTreeMap<u32, u64>,
-    processes: &[butterpollo_core::steam::Process],
+    processes: &[butterpollo_session::steam::Process],
 ) -> BTreeSet<u32> {
-    butterpollo_core::background::window_owners(owned, processes)
+    butterpollo_session::background::window_owners(owned, processes)
         .into_iter()
         .filter(|pid| {
             !started_from_desktop(*pid, processes)
@@ -1443,13 +1446,13 @@ fn focus_candidates(
 /// each started, once each.
 fn game_trees(
     owned: &BTreeMap<u32, u64>,
-    processes: &[butterpollo_core::steam::Process],
+    processes: &[butterpollo_session::steam::Process],
 ) -> Vec<u32> {
     let mut pids: Vec<u32> = owned
         .iter()
         .flat_map(|(&pid, &started)| {
-            butterpollo_core::audio_scope::tree(
-                butterpollo_core::audio_scope::Identity { pid, started },
+            butterpollo_session::audio_scope::tree(
+                butterpollo_session::audio_scope::Identity { pid, started },
                 processes,
             )
         })
@@ -1460,7 +1463,7 @@ fn game_trees(
     pids
 }
 
-fn started_from_desktop(pid: u32, processes: &[butterpollo_core::steam::Process]) -> bool {
+fn started_from_desktop(pid: u32, processes: &[butterpollo_session::steam::Process]) -> bool {
     let Some(child) = processes.iter().find(|p| p.pid == pid) else {
         return false;
     };
@@ -1486,7 +1489,7 @@ fn only_opens_launchers(app: &App) -> bool {
     !commands.is_empty()
         && commands
             .iter()
-            .all(|command| butterpollo_core::launcher_prompt::opens_launcher_itself(command))
+            .all(|command| butterpollo_session::launcher_prompt::opens_launcher_itself(command))
 }
 /// Whether `app` starts its game where the host may not see it (detached commands, a
 /// launcher only), so its swapped settings files cannot wait for the game to close.
@@ -1519,7 +1522,7 @@ fn watches_program(program: &str) -> bool {
     let name = program.rsplit(['\\', '/']).next().unwrap_or(program);
     !store_client(name)
         && !SHELLS.iter().any(|shell| name.eq_ignore_ascii_case(shell))
-        && butterpollo_core::launcher_prompt::launcher_of(program).is_none()
+        && butterpollo_session::launcher_prompt::launcher_of(program).is_none()
 }
 fn foreign_game(program: &str, created: u64, launched_at: u64) -> bool {
     let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
@@ -1549,7 +1552,7 @@ pub(crate) fn store_client(name: &str) -> bool {
 }
 /// How long `app` gets to close before it is ended: its own `exit-timeout`, else the host's
 /// `exit_timeout` (issue #71), else 10 s; at most 300 s.
-pub fn exit_timeout(app: &App, config: &butterpollo_core::config::Config) -> Duration {
+pub fn exit_timeout(app: &App, config: &butterpollo_config::config::Config) -> Duration {
     let seconds = app
         .extra
         .get("exit-timeout")
@@ -1633,7 +1636,7 @@ fn runs_commands(h: &crate::state::Shared, app: &App) -> bool {
             && h.config.read().unwrap().get("global_prep_cmd", "[]").trim() != "[]")
 }
 /// The launch argument the host sets for a background stream's app; see
-/// [`butterpollo_core::background`].
+/// [`butterpollo_session::background`].
 pub const BACKGROUND_ARG: &str = "rubylightBackgroundStream";
 /// A failed preparation command as the device shows it: the app, which command (counted
 /// across the global ones and the app's own, in the order they run), what went wrong and
@@ -1724,7 +1727,7 @@ fn launch_with_environment(
             for (arg, name) in [("clientUuid", "UUID"), ("clientName", "NAME")] {
                 if let Some(value) = args.get(arg) {
                     let value = if arg == "clientName" {
-                        butterpollo_core::pairing::command_device_name(value)
+                        butterpollo_crypto::pairing::command_device_name(value)
                     } else {
                         value.clone()
                     };
@@ -1762,7 +1765,7 @@ fn launch_with_environment(
     }
     drop(document);
     if background {
-        for (key, value) in butterpollo_core::background::ENVIRONMENT {
+        for (key, value) in butterpollo_session::background::ENVIRONMENT {
             environment.insert(key.into(), value.into());
         }
     }
@@ -1784,7 +1787,7 @@ fn launch_with_environment(
         .map_or("1920x1080x60", String::as_str)
         .split('x')
         .collect();
-    let (render_width, render_height) = butterpollo_core::display_policy::render_dimensions(
+    let (render_width, render_height) = butterpollo_media_policy::display_policy::render_dimensions(
         mode.first()
             .and_then(|value| value.parse().ok())
             .unwrap_or(1920),
@@ -1839,9 +1842,9 @@ fn launch_with_environment(
     }
     if let Some(rate) = mode.get(2) {
         let rate = if rate.contains('.') {
-            butterpollo_core::framegen::Rate::parse(rate)?
+            butterpollo_media_policy::framegen::Rate::parse(rate)?
         } else {
-            butterpollo_core::framegen::Rate::from_client(rate.parse()?)
+            butterpollo_media_policy::framegen::Rate::from_client(rate.parse()?)
         };
         environment.insert(
             "SUNSHINE_CLIENT_FPS".into(),
@@ -1866,7 +1869,7 @@ fn launch_with_environment(
         };
         if let Some(name) = name {
             let value = if key == "clientName" {
-                butterpollo_core::pairing::command_device_name(value)
+                butterpollo_crypto::pairing::command_device_name(value)
             } else {
                 value.clone()
             };
@@ -1953,7 +1956,7 @@ fn launch_with_environment(
             .get(2)
             .and_then(|rate| rate.parse::<f64>().ok())
             .map_or(60., |rate| if rate >= 1000. { rate / 1000. } else { rate });
-        butterpollo_core::lossless::options(&serde_json::to_value(&app)?, &config, fps)
+        butterpollo_media_policy::lossless::options(&serde_json::to_value(&app)?, &config, fps)
     };
     // Lossless Scaling looks for the game among the processes that start
     // after this.

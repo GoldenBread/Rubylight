@@ -1,9 +1,9 @@
 //! Logs where a stream thread is when it stops making progress
-//! (`butterpollo_core::stall_watch`), with how long a trivial query on the
+//! (`butterpollo_media_policy::stall_watch`), with how long a trivial query on the
 //! stream's GPU has been outstanding. A stalled GPU holds both; a thread stuck
 //! on the host's own work (a lock, a fence, the network) only the thread.
 //! Observation only: nothing in the stream changes.
-use butterpollo_core::stall_watch::{Event, Watch};
+use butterpollo_media_policy::stall_watch::{Event, Watch};
 use std::{
     sync::{
         Arc, Condvar, Mutex, OnceLock, Weak,

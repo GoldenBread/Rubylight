@@ -220,7 +220,7 @@ fn h264_fmtp_is_packetization_mode_one_with_asymmetric_levels() {
 
 #[test]
 fn h264_level_comes_from_the_mode_and_rate() {
-    use butterpollo_core::webrtc::capabilities::{FRAME_RATES, MODES};
+    use butterpollo_session::webrtc::capabilities::{FRAME_RATES, MODES};
     // (width, height, fps, profile-level-id) at each mode's default bitrate; the profile bytes
     // never change. 1080p60 is 4.2, 1080p120 5.1 and 1440p90 and 120 are 5.2 (table A-1).
     let expected = [

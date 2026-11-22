@@ -233,7 +233,7 @@ mod look {
     }
 
     /// The curve the host fits, from the protocol crate through butterpollo-core.
-    pub use butterpollo_core::frame_warp::stick_curve;
+    pub use butterpollo_media_policy::frame_warp::stick_curve;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct MouseMove {

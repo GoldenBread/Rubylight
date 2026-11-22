@@ -53,7 +53,7 @@ fn description(hdr: bool, peak: f32) -> Description {
         } else {
             DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709
         },
-        metadata: butterpollo_core::hdr::Metadata::display(peak, 0.001, 400.),
+        metadata: butterpollo_media_policy::hdr::Metadata::display(peak, 0.001, 400.),
     }
 }
 

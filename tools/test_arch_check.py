@@ -455,7 +455,7 @@ class CliAndDevIntegrationTests(unittest.TestCase):
 
     def test_dev_plan_runs_arch_check_in_full_and_fast_modes_and_extracts_cpp_digits(self):
         for fast in (False, True):
-            planned, _ = dev.plan(['rust/core/src/lib.rs'], ROOT, fast=fast)
+            planned, _ = dev.plan(['rust/core/session/src/lib.rs'], ROOT, fast=fast)
             by_name = {c.name: c for c in planned}
             self.assertIn('arch-check', by_name)
             self.assertEqual(by_name['arch-check'].skip, '')

@@ -34,7 +34,7 @@ pub(super) struct Captured<'a> {
 pub(super) struct Started {
     pub(super) present_stamper: Option<butterpollo_windows::present_timing::Stamper>,
     pub(super) start: Instant,
-    pub(super) claims: std::cell::RefCell<butterpollo_core::performance::Claims>,
+    pub(super) claims: std::cell::RefCell<butterpollo_media_policy::performance::Claims>,
     pub(super) next_wire_frame: std::cell::Cell<u64>,
     pub(super) packetizer: VideoPacketizer,
     pub(super) automatic_pacing: bool,
@@ -49,7 +49,7 @@ impl SessionThread<'_> {
     pub(super) fn record_last_seen(&self) {
         let SessionThread { h, s, .. } = *self;
         let paired_h = h.clone();
-        let client_uuid = butterpollo_core::state::device_uuid(&s.launch.client.uuid).to_owned();
+        let client_uuid = butterpollo_session::state::device_uuid(&s.launch.client.uuid).to_owned();
         let last_seen = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -201,7 +201,7 @@ impl SessionThread<'_> {
         prepared: &Arc<crate::display_session::Ready>,
     ) -> Option<app_window::AppWindow> {
         let SessionThread { h, s, .. } = *self;
-        let settings = butterpollo_core::app_window::settings(c)?;
+        let settings = butterpollo_media_policy::app_window::settings(c)?;
         if s.launch.role != Role::Stream || s.launch.nucleus.is_some() {
             return None;
         }
@@ -269,7 +269,7 @@ impl SessionThread<'_> {
         let mut effective = s.effective_config();
         let rtx_hdr_active = crate::nvidia_enhance::generated_peak(&c, effective.hdr, first.pixel)
             .is_some()
-            && butterpollo_core::encoder_gpu::is_nvidia(first.gpu.vendor);
+            && butterpollo_media_policy::encoder_gpu::is_nvidia(first.gpu.vendor);
         if m.fallback_hdr_if_sdr(&s, &mut effective, &first, rtx_hdr_active) {
             prepared.note_hdr_fallback();
         }
@@ -279,7 +279,7 @@ impl SessionThread<'_> {
         drop(first);
         let focus = crate::stream_focus::Focus::start(
             &c,
-            butterpollo_core::encoder_focus::Context {
+            butterpollo_media_policy::encoder_focus::Context {
                 codec: s.config.codec,
                 ten_bit: s.config.ten_bit(),
                 pyrowave: s.config.codec == 3,
@@ -314,7 +314,7 @@ impl SessionThread<'_> {
         configure_video_fec(&s, &c)?;
         let max_kbps = max_bitrate_kbps(&s, &c);
         s.configure_link_rate(c.link_rate_adaptation(), max_kbps);
-        let ceiling = butterpollo_core::stream_policy::explain_bitrate(&s.config, &c, max_kbps);
+        let ceiling = butterpollo_media_policy::stream_policy::explain_bitrate(&s.config, &c, max_kbps);
         tracing::info!(
             configured_bitrate_kbps = s.config.configured_bitrate_kbps,
             encoder_kbps = ceiling.encoder_kbps,
@@ -358,7 +358,7 @@ impl SessionThread<'_> {
         // UDP probe, which refuses fragmentation on its own socket.
         let next_wire_frame = std::cell::Cell::new(u64::from(packetizer.frame));
         // New pictures claimed and not yet sent, for the stage timings.
-        let claims = std::cell::RefCell::new(butterpollo_core::performance::Claims::default());
+        let claims = std::cell::RefCell::new(butterpollo_media_policy::performance::Claims::default());
         let start = Instant::now();
         let start_qpc_ms = butterpollo_windows::timing::qpc_ms();
         *s.media_epoch.write().unwrap() = Some(start);
@@ -370,14 +370,14 @@ impl SessionThread<'_> {
         *s.timing_record.write().unwrap() = crate::timing_record::attach(
             crate::timing_record::directory().as_deref(),
             &s.launch.id,
-            butterpollo_core::timing_record::Meta {
-                codec: butterpollo_core::timing_record::codec_name(s.config.codec),
+            butterpollo_media_policy::timing_record::Meta {
+                codec: butterpollo_media_policy::timing_record::codec_name(s.config.codec),
                 capture: prepared.capture().to_string(),
-                present_source: butterpollo_core::timing_record::present_source(tracks_presents),
+                present_source: butterpollo_media_policy::timing_record::present_source(tracks_presents),
                 media_epoch_qpc_ms: start_qpc_ms,
             },
         );
-        workers.webrtc_sender = if s.launch.transport == butterpollo_core::session::Transport::WebRtc {
+        workers.webrtc_sender = if s.launch.transport == butterpollo_session::session::Transport::WebRtc {
             Some(crate::webrtc::session::Sender::new(h.webrtc_links.take(&s.launch.id).context("the WebRTC media link is missing for this session")?))
         } else { None };
         workers.pyrowave_sender = if s.config.codec == 3 { Some(crate::pyrowave_send::Sender::new(m.video.clone(),s.clone(),c.clone(),h.clone(),start,present_stamper.take())?) } else { None };

@@ -155,7 +155,7 @@ impl Session {
             if runtime < MINIMUM_VERSION {
                 bail!(
                     "AMD Direct Capture needs AMF 1.4.30 or newer; the driver has {}. Update the Radeon driver",
-                    butterpollo_core::codec_support::amf_version_text(runtime)
+                    butterpollo_media_policy::codec_support::amf_version_text(runtime)
                 );
             }
             let init: libloading::Symbol<
@@ -234,7 +234,7 @@ impl Session {
             tracing::info!(
                 display = %session.gpu.display.friendly_name,
                 output = session.gpu.display.output_index,
-                runtime = butterpollo_core::codec_support::amf_version_text(runtime),
+                runtime = butterpollo_media_policy::codec_support::amf_version_text(runtime),
                 fps,
                 "AMD Direct Capture started (waits for each present)"
             );
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn the_minimum_runtime_is_amf_1_4_30() {
         assert_eq!(
-            butterpollo_core::codec_support::amf_version_text(MINIMUM_VERSION),
+            butterpollo_media_policy::codec_support::amf_version_text(MINIMUM_VERSION),
             "1.4.30.0"
         );
         assert!(header_version() > MINIMUM_VERSION);

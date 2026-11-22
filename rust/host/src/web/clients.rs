@@ -1,7 +1,7 @@
 //! Paired-client management and pairing API handlers.
 
 use crate::state::Shared;
-use butterpollo_core::native_api::folders::FolderAccess;
+use rubylight_native_api::folders::FolderAccess;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -18,7 +18,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 .values()
                 .filter(|s| !s.stopping())
                 // A device streaming only its second screen is connected too.
-                .map(|s| butterpollo_core::state::device_uuid(&s.launch.client.uuid).to_owned())
+                .map(|s| butterpollo_session::state::device_uuid(&s.launch.client.uuid).to_owned())
                 .collect::<std::collections::HashSet<_>>();
             let agents = h.client_agents.lock().unwrap().clone();
             let clients: Vec<_> = h
@@ -43,7 +43,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                     let agent = agents.get(&c.uuid).map(String::as_str);
                     v["client_agent"] = json!(agent);
                     v["client_warning"] =
-                        client_warning(butterpollo_core::client_warnings::BROKEN_CLIENTS, agent);
+                        client_warning(butterpollo_session::client_warnings::BROKEN_CLIENTS, agent);
                     v
                 })
                 .collect();
@@ -97,7 +97,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             // change.
             for key in [
                 "host_control",
-                butterpollo_core::state::PAIRING_APPROVE_KEY,
+                butterpollo_session::state::PAIRING_APPROVE_KEY,
                 "allow_sleep",
                 "allow_restart_shutdown",
                 "allow_usb",
@@ -115,12 +115,12 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             }
             // Connect and disconnect commands the host could not read would be
             // skipped at every stream: refuse them here instead.
-            butterpollo_core::connection_commands::check_update(data)
+            butterpollo_session::connection_commands::check_update(data)
                 .map_err(anyhow::Error::msg)?;
             // A preset the host does not know is refused here, as it is for the
             // host's own setting, before anything is saved.
             if let Some(overrides) = data.get("config_overrides") {
-                butterpollo_core::stream_preset::check_overrides(overrides)?;
+                butterpollo_media_policy::stream_preset::check_overrides(overrides)?;
             }
             let previous_perm = c.perm;
             let previous_usb = c.allows_usb();
@@ -131,7 +131,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 // The editor sends the name back with any change: a device paired
                 // before a character was refused can still have its access changed.
                 if n != c.name {
-                    butterpollo_core::pairing::validate_device_name(n)?;
+                    butterpollo_crypto::pairing::validate_device_name(n)?;
                 }
                 c.name = n.into();
             }
@@ -163,10 +163,10 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                     if v.is_null() {
                         c.extra.remove(k);
                         // Forgetting what the device kept forgets its second screen's too.
-                        if butterpollo_core::state::PER_SCREEN_SETTINGS.contains(&k.as_str()) {
+                        if butterpollo_session::state::PER_SCREEN_SETTINGS.contains(&k.as_str()) {
                             c.extra.remove(&format!(
                                 "{k}{}",
-                                butterpollo_core::state::SECOND_SCREEN_SUFFIX
+                                butterpollo_session::state::SECOND_SCREEN_SUFFIX
                             ));
                         }
                     } else {
@@ -244,13 +244,13 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
         }
         ("POST", "/api/otp") => {
             if !text("deviceName").is_empty() {
-                butterpollo_core::pairing::validate_device_name(text("deviceName"))?;
+                butterpollo_crypto::pairing::validate_device_name(text("deviceName"))?;
             }
             let passphrase = text("passphrase");
             if passphrase.chars().count() < 4 {
                 anyhow::bail!("passphrase must have at least four characters");
             }
-            let permission = butterpollo_core::state::pairing_access(text("access"))?;
+            let permission = butterpollo_session::state::pairing_access(text("access"))?;
             let pin = typed_one_time_pin(h, passphrase, text("deviceName"), permission);
             let config = h.config.read().unwrap().clone();
             json!({
@@ -263,7 +263,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
         }
         ("POST", "/api/pin") => {
             if !text("name").is_empty() {
-                butterpollo_core::pairing::validate_device_name(text("name"))?;
+                butterpollo_crypto::pairing::validate_device_name(text("name"))?;
             }
             let pin = text("pin");
             if pin.len() != 4 || !pin.bytes().all(|c| c.is_ascii_digit()) {
@@ -281,7 +281,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("no pending pairing request"))?
             };
-            let permission = butterpollo_core::state::pairing_access(text("access"))?;
+            let permission = butterpollo_session::state::pairing_access(text("access"))?;
             // A WebRTC device keeps its own default.
             if permission.is_some() && pins.get(&key).is_some_and(|p| p.certificate.is_empty()) {
                 anyhow::bail!("access applies only to Moonlight pairing requests");
@@ -302,7 +302,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
         ("POST", "/api/pairing/qr") => pairing_qr(
             h,
             text("address"),
-            butterpollo_core::state::pairing_access(text("access"))?,
+            butterpollo_session::state::pairing_access(text("access"))?,
             butterpollo_windows::net::lan_addresses()?,
         )?,
         _ => return Err(anyhow::anyhow!("unknown API endpoint")),
@@ -346,7 +346,7 @@ fn typed_one_time_pin(
 const QR_REUSE_LEFT: Duration = Duration::from_secs(60);
 
 /// A pairing QR code per LAN address (`rubylight://pair?...`, see
-/// `butterpollo_core::pairing_uri`), all for one one-time PIN with a
+/// `rubylight_protocol::pairing_uri`), all for one one-time PIN with a
 /// passphrase the host picks: the live one while it has [`QR_REUSE_LEFT`],
 /// else a new one. `permission` is the access the device gets, also for a
 /// code shown again. Refused while `qr_pairing` is off; `address` puts that
@@ -379,7 +379,7 @@ pub fn pairing_qr(
             qr.created.elapsed() + QR_REUSE_LEFT <= crate::state::ONE_TIME_PIN_LIFETIME
         });
         if !reuse {
-            let passphrase = hex::encode(butterpollo_core::crypto::random::<8>());
+            let passphrase = hex::encode(butterpollo_crypto::crypto::random::<8>());
             otp.qr = Some(new_one_time_pin(&passphrase, "", permission));
         }
         let qr = otp.qr.as_mut().unwrap();
@@ -387,7 +387,7 @@ pub fn pairing_qr(
         let left = crate::state::ONE_TIME_PIN_LIFETIME.saturating_sub(qr.created.elapsed());
         (qr.pin.clone(), qr.passphrase.clone(), left)
     };
-    let mut invitation = butterpollo_core::pairing_uri::PairingUri {
+    let mut invitation = rubylight_protocol::pairing_uri::PairingUri {
         host: String::new(),
         port: config.port()?,
         otp: pin,
@@ -431,7 +431,7 @@ pub(super) fn qr_svg(text: &str) -> anyhow::Result<String> {
 }
 
 /// The folders this device holds a grant for, as `Client::folder_access` reads them.
-fn folder_grants(c: &butterpollo_core::state::Client) -> Vec<(String, FolderAccess)> {
+fn folder_grants(c: &butterpollo_session::state::Client) -> Vec<(String, FolderAccess)> {
     c.extra
         .get("shared_folders")
         .and_then(Value::as_object)
@@ -447,7 +447,7 @@ fn check_folder_grants(grants: &Value) -> anyhow::Result<()> {
     let valid = grants.is_null()
         || grants.as_object().is_some_and(|grants| {
             grants.iter().all(|(id, access)| {
-                butterpollo_core::config::valid_folder_id(id)
+                butterpollo_config::config::valid_folder_id(id)
                     && matches!(access.as_str(), Some("read" | "write"))
             })
         });
@@ -459,11 +459,11 @@ fn check_folder_grants(grants: &Value) -> anyhow::Result<()> {
 
 /// The console's warning for a client build on `list`; it never refuses one.
 fn client_warning(
-    list: &[butterpollo_core::client_warnings::BrokenClient],
+    list: &[butterpollo_session::client_warnings::BrokenClient],
     agent: Option<&str>,
 ) -> Value {
     agent
-        .and_then(|agent| butterpollo_core::client_warnings::warning_in(list, agent))
+        .and_then(|agent| butterpollo_session::client_warnings::warning_in(list, agent))
         .map_or(
             Value::Null,
             |broken| json!({"problem": broken.problem, "link": broken.link}),

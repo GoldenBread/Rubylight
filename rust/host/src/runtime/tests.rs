@@ -145,7 +145,7 @@ async fn a_launch_a_wake_and_a_tray_action_wake_the_idle_loop() {
 
 fn steam_app() -> crate::process::RunningApp {
     let mut app = crate::process::RunningApp::with_environment(
-        &butterpollo_core::state::App::desktop(),
+        &butterpollo_session::state::App::desktop(),
         Default::default(),
     )
     .unwrap();
@@ -168,7 +168,7 @@ fn a_steam_games_process_scan_leaves_the_running_app_to_the_stream() {
                 "the process scan held the running app"
             );
             scanned = true;
-            Ok(vec![butterpollo_core::steam::Process {
+            Ok(vec![butterpollo_session::steam::Process {
                 pid: 4242,
                 parent: 1,
                 started: 10,

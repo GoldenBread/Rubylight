@@ -235,7 +235,7 @@ fn installed_records_keep_unicode_paths_and_local_artwork() {
     std::fs::create_dir(&folder).unwrap();
     std::fs::write(folder.join("cover.png"), b"local artwork").unwrap();
     let mut record: serde_json::Value = serde_json::from_slice(include_bytes!(
-        "../../../core/src/library/fixtures/epic.item"
+        "../../../core/session/src/library/fixtures/epic.item"
     ))
     .unwrap();
     record["InstallLocation"] = serde_json::json!(folder);

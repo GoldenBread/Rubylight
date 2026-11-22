@@ -225,7 +225,7 @@ impl Drop for Watch {
 pub fn prepare(
     h: &Shared,
     launch: &Launch,
-    stream: &butterpollo_core::rtsp::Negotiated,
+    stream: &butterpollo_media_policy::rtsp::Negotiated,
     config: &Config,
     wait: Duration,
 ) -> Result<crate::display_session::StreamPreparation> {
@@ -297,7 +297,7 @@ pub const PLAYER: &str = "nucleus_player";
 /// no window into focus and leaves the clipboard alone ([`player`]).
 pub fn isolate(config: &mut Config) {
     config.values.insert(PLAYER.into(), "true".into());
-    for (key, value) in butterpollo_core::background::FORCED {
+    for (key, value) in butterpollo_session::background::FORCED {
         config.values.insert(key.into(), value.into());
     }
 }
@@ -382,7 +382,7 @@ mod tests {
             "name": "Device A",
             "cert": "",
             "uuid": "A",
-            "perm": butterpollo_core::state::PLAY_DEVICE_PERMISSION,
+            "perm": butterpollo_session::state::PLAY_DEVICE_PERMISSION,
         }))
         .unwrap();
         let seat = registry

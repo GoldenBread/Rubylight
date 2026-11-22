@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::Engine;
-use butterpollo_core::{state, state::App};
+use butterpollo_session::{state, state::App};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
@@ -32,21 +32,22 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             // the current one, as the library has it once loaded.
             let mut settings: serde_json::Map<String, Value> =
                 std::mem::take(&mut app.extra).into_iter().collect();
-            butterpollo_core::config::migrate_app(&mut settings);
+            butterpollo_config::config::migrate_app(&mut settings);
             app.extra = settings.into_iter().collect();
             if let Some(overrides) = app.extra.get("config-overrides") {
-                butterpollo_core::stream_preset::check_overrides(overrides)?;
+                butterpollo_media_policy::stream_preset::check_overrides(overrides)?;
             }
             // A Radeon profile the host cannot read is an error here, not a game that starts
             // without it.
-            butterpollo_core::radeon_profile::check(&app.extra)?;
-            butterpollo_core::menu_commands::check_app(
-                app.extra.get(butterpollo_core::menu_commands::APP_KEY),
+            butterpollo_media_policy::radeon_profile::check(&app.extra)?;
+            butterpollo_input_policy::menu_commands::check_app(
+                app.extra
+                    .get(butterpollo_input_policy::menu_commands::APP_KEY),
             )
             .map_err(anyhow::Error::msg)?;
-            butterpollo_core::device_overrides::check(&app.extra)?;
+            butterpollo_session::device_overrides::check(&app.extra)?;
             crate::game_files::check(&app)?;
-            butterpollo_core::game_settings::paths(&app.extra)?;
+            butterpollo_session::game_settings::paths(&app.extra)?;
             if !app.extra.contains_key("uuid") {
                 app.extra
                     .insert("uuid".into(), json!(uuid::Uuid::new_v4().to_string()));
@@ -60,16 +61,20 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             );
             // Only a sync stamps an app. A synced app saved here becomes the user's, so no sync
             // renames or removes it again.
-            app.extra.remove(butterpollo_core::library::SYNCED_BY);
-            app.extra.remove(butterpollo_core::native::NOT_INSTALLED);
+            app.extra.remove(butterpollo_session::library::SYNCED_BY);
+            app.extra.remove(butterpollo_session::native::NOT_INSTALLED);
             app.extra.remove(LAST_PLAYED);
             if let Some(sync) = next
                 .iter()
                 .find(|a| a.extra.get("uuid") == Some(&uuid))
-                .and_then(|a| a.extra.get(butterpollo_core::library::SYNCED_BY)?.as_str())
+                .and_then(|a| {
+                    a.extra
+                        .get(butterpollo_session::library::SYNCED_BY)?
+                        .as_str()
+                })
             {
                 let mut value = serde_json::to_value(&app)?;
-                butterpollo_core::library::hand_over(&mut value, sync);
+                butterpollo_session::library::hand_over(&mut value, sync);
                 app = serde_json::from_value(value)?;
             }
             if let Some(i) = next.iter().position(|a| a.extra.get("uuid") == Some(&uuid)) {
@@ -109,7 +114,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 .as_array()
                 .ok_or_else(|| anyhow::anyhow!("order must be an array"))?;
             let mut apps = h.apps.write().unwrap();
-            let next = butterpollo_core::catalog::reorder(&apps, order);
+            let next = butterpollo_session::catalog::reorder(&apps, order);
             let mut document = h.app_document.read().unwrap().clone();
             document["apps"] = serde_json::to_value(&next)?;
             h.save_apps(&document)?;
@@ -125,7 +130,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 .sessions
                 .lock()
                 .unwrap()
-                .stop_role(butterpollo_core::session::Role::Stream, None);
+                .stop_role(butterpollo_session::session::Role::Stream, None);
             drop(canceled);
             h.stop_app(crate::state::AppStop::WebUi);
             json!({"status":true})
@@ -386,16 +391,16 @@ pub(super) async fn browse(uri: &axum::http::Uri) -> Response {
         url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
             .into_owned()
             .collect();
-    let filter = butterpollo_core::browse::Filter::parse(query.get("type").map(String::as_str));
+    let filter = butterpollo_session::browse::Filter::parse(query.get("type").map(String::as_str));
     let requested = query.get("path").cloned().unwrap_or_default();
     // Listing a folder waits on the disk, or on the network for a share.
     let result = tokio::task::spawn_blocking(move || {
-        if butterpollo_core::browse::root(&requested) {
-            Ok(butterpollo_core::browse::drives(
+        if butterpollo_session::browse::root(&requested) {
+            Ok(butterpollo_session::browse::drives(
                 &butterpollo_windows::files::drives(),
             ))
         } else {
-            butterpollo_core::browse::listing(std::path::Path::new(&requested), filter)
+            butterpollo_session::browse::listing(std::path::Path::new(&requested), filter)
         }
     })
     .await;
@@ -474,7 +479,7 @@ pub(super) async fn icon(h: &Shared, id: &str, headers: &HeaderMap) -> Response 
         .unwrap()
         .iter()
         .find(|a| a.extra.get("uuid").and_then(Value::as_str) == Some(id))
-        .and_then(butterpollo_core::catalog::icon);
+        .and_then(butterpollo_session::catalog::icon);
     if let Some(icon) = icon
         && let Some(response) = image(&icon, u64::MAX, headers).await
     {
@@ -490,7 +495,7 @@ pub(super) async fn purge_autosync(h: &Shared) -> Response {
     let purged = tokio::task::spawn_blocking(move || {
         let mut removed = 0;
         crate::steam::update_apps(&h, |apps| {
-            removed = butterpollo_core::playnite::purge(apps);
+            removed = butterpollo_session::playnite::purge(apps);
             removed > 0
         })
         .map(|_| removed)
@@ -519,7 +524,7 @@ pub(super) async fn cover(h: &Shared, path: &str, headers: &HeaderMap) -> Respon
     let Some(app) = app else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let path = butterpollo_core::catalog::artwork(&app, h.assets.parent().unwrap_or(&h.assets));
+    let path = butterpollo_session::catalog::artwork(&app, h.assets.parent().unwrap_or(&h.assets));
     match image(&path, 16 * 1024 * 1024, headers).await {
         Some(response) => response,
         None => StatusCode::NOT_FOUND.into_response(),
@@ -643,7 +648,7 @@ pub(super) async fn library(h: &Shared, method: &Method, action: &str, data: &Va
         }
         ("POST", "sync") => tokio::task::spawn_blocking(move || crate::library::sync(&h)).await,
         ("POST", "import") => {
-            let selected: Vec<butterpollo_core::library::Selection> =
+            let selected: Vec<butterpollo_session::library::Selection> =
                 match serde_json::from_value(data["games"].clone()) {
                     Ok(selected) => selected,
                     Err(_) => {
@@ -702,10 +707,10 @@ fn apps_with_install_state(h: &Shared) -> anyhow::Result<Value> {
         let mut value = serde_json::to_value(app)?;
         if scan
             .as_ref()
-            .and_then(|scan| butterpollo_core::native::installed(app, scan))
+            .and_then(|scan| butterpollo_session::native::installed(app, scan))
             == Some(false)
         {
-            value[butterpollo_core::native::NOT_INSTALLED] = json!(true);
+            value[butterpollo_session::native::NOT_INSTALLED] = json!(true);
         }
         // `0` is the stores' never played.
         if let Some(at) = scan

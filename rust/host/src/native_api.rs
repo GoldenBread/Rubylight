@@ -1,7 +1,7 @@
 //! The native API v1 (plan item A3): capabilities, library and session state
 //! and actions, served on the streaming HTTPS port. The contract is
-//! `docs/native-api.md`; the wire types live in `butterpollo_core::native_api`
-//! and the projections in `butterpollo_core::native`.
+//! `docs/native-api.md`; the wire types live in `rubylight_native_api`
+//! and the projections in `butterpollo_session::native`.
 //!
 //! Every request identifies its caller from the TLS certificate and reads the
 //! device's permissions and Host control flag from `h.paired` then, never from
@@ -27,16 +27,16 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get, post, put},
 };
-use butterpollo_core::{
+use butterpollo_session::{
     native::{self, FILE_DOWNLOAD, FILE_UPLOAD, LAUNCH, LIST, VIEW},
-    native_api::{
-        self,
-        capabilities::{Capabilities, HostInfo, Permissions},
-        error::{ApiError, ErrorBody, ErrorCode},
-        feature,
-    },
     session_state::Refusal,
     state::{App, Client},
+};
+use rubylight_native_api as native_api;
+use rubylight_native_api::{
+    capabilities::{Capabilities, HostInfo, Permissions},
+    error::{ApiError, ErrorBody, ErrorCode},
+    feature,
 };
 use serde::Serialize;
 use std::{path::Path, sync::PoisonError, time::UNIX_EPOCH};
@@ -412,8 +412,8 @@ async fn capabilities(State(h): State<Shared>, Extension(c): Extension<Connectio
             crate::network::host_name(&config),
             crate::extensions::native_features(&h, &config),
             config.boolean("enable_pairing", true),
-            butterpollo_core::multiclient::JoinPolicy::from_config(&config)
-                != butterpollo_core::multiclient::JoinPolicy::Off,
+            butterpollo_session::multiclient::JoinPolicy::from_config(&config)
+                != butterpollo_session::multiclient::JoinPolicy::Off,
         )
     };
     let coop = h.nucleus.unavailable().is_none();
@@ -555,7 +555,7 @@ fn library_of(h: &Shared) -> native_api::library::Library {
 /// `None` when the app has none of its own and `/appasset` would send the
 /// placeholder.
 fn cover_fingerprint(app: &App, assets: &Path) -> Option<String> {
-    let path = butterpollo_core::catalog::artwork(app, assets);
+    let path = butterpollo_session::catalog::artwork(app, assets);
     if path == assets.join("box.png") {
         return None;
     }
@@ -695,7 +695,7 @@ pub(crate) fn session_action(h: &Shared, client: &Client, action: Action) -> Res
         // The session the host follows is its first screen's: a second screen's Disconnect or
         // End ends its own stream, End its kept display too.
         Err(Refusal::NotOwner)
-            if device.ends_with(butterpollo_core::state::SECOND_SCREEN_SUFFIX)
+            if device.ends_with(butterpollo_session::state::SECOND_SCREEN_SUFFIX)
                 && !matches!(action, Action::CloseGame) =>
         {
             end_second_screen(h, device, matches!(action, Action::End));

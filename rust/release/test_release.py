@@ -676,7 +676,7 @@ class Signing(unittest.TestCase):
         package = (ROOT / 'rust/release/package.ps1').read_text(encoding='utf-8')
         self.assertNotIn('nvidia', package.lower())
         # The archive holds NVIDIA's files exactly as the host pins them.
-        self.assertIn("rust\\core\\src\\nvidia_component.rs", component)
+        self.assertIn("rust\\core\\media-policy\\src\\nvidia_component.rs", component)
         self.assertIn('is not the file nvidia_component.rs pins', component)
 
     def test_the_release_never_waits_on_the_nvidia_component(self):
@@ -844,7 +844,7 @@ class Signing(unittest.TestCase):
         # A side-by-side installation's service is not ApolloService, which may
         # be another host's there. The scripts read setup's record, whose
         # names live in one place; the service itself names nobody.
-        names = (ROOT / 'rust/core/src/host_service.rs').read_text(encoding='utf-8')
+        names = (ROOT / 'rust/core/session/src/host_service.rs').read_text(encoding='utf-8')
         self.assertIn(r'KEY: &str = "SOFTWARE\\Rubylight"', names)
         self.assertIn('VALUE: &str = "ServiceName"', names)
         self.assertIn('DEFAULT: &str = "ApolloService"', names)
@@ -1285,7 +1285,7 @@ NS = '{http://signpath.io/artifact-configuration/v1}'
 class PortedCredits(unittest.TestCase):
     """Code ported from Foundation Sunshine is credited by file in NOTICE, which AGENTS.md points to."""
 
-    PORTED = ['rust/core/src/hdr_dynamic.rs', 'rust/windows/src/shaders/color.hlsl',
+    PORTED = ['rust/core/media-policy/src/hdr_dynamic.rs', 'rust/windows/src/shaders/color.hlsl',
               'rust/windows/src/compute_hdr_stats.rs']
 
     def test_notice_names_every_ported_hdr_file(self):

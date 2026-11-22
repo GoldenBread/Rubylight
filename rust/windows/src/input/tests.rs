@@ -134,7 +134,8 @@ fn click(button: u8, down: bool) -> Event {
 }
 #[test]
 fn a_trackpad_touch_profile_sends_touches_as_mouse_input() {
-    use butterpollo_core::{config::TouchMode, touch_profile::Settings};
+    use butterpollo_config::config::TouchMode;
+    use butterpollo_input_policy::touch_profile::Settings;
     let touch = |event, x| Event::Touch {
         event,
         id: 4,
@@ -979,7 +980,7 @@ fn the_cursor_maps_onto_the_stream_bars_included() {
     // The display letterboxed into a 4:3 stream: its 16:9 picture in
     // 1600x1200 sits at (0, 150).
     let stream = (1600, 1200);
-    let picture = butterpollo_core::display_policy::picture((1920, 1080), stream).unwrap();
+    let picture = butterpollo_media_policy::display_policy::picture((1920, 1080), stream).unwrap();
     assert_eq!(picture, (0, 150, 1600, 900));
     assert_eq!(
         at(2560, 0, Some((stream, picture))),
@@ -992,7 +993,7 @@ fn the_cursor_maps_onto_the_stream_bars_included() {
     // The stream point maps back onto the same display point, as absolute
     // input does.
     let (x, y) = at(2560 + 480, 270, Some((stream, picture))).unwrap();
-    let back = butterpollo_core::display_policy::stream_to_picture(
+    let back = butterpollo_media_policy::display_policy::stream_to_picture(
         (f64::from(x), f64::from(y)),
         stream,
         picture,
@@ -1058,11 +1059,11 @@ fn a_turned_portrait_display_maps_the_stream_upright() {
     // A portrait phone's 1080x2400 stream holds the 9:16 desktop with bars
     // above and below, and a point maps there and back.
     let stream = (1080, 2400);
-    let picture = butterpollo_core::display_policy::picture((1440, 2560), stream).unwrap();
+    let picture = butterpollo_media_policy::display_policy::picture((1440, 2560), stream).unwrap();
     assert_eq!(picture, (0, 240, 1080, 1920));
     assert_eq!(at(-1440, 0, Some((stream, picture))), Some((0., 0.1)));
     let (x, y) = at(-1440 + 360, 1920, Some((stream, picture))).unwrap();
-    let back = butterpollo_core::display_policy::stream_to_picture(
+    let back = butterpollo_media_policy::display_policy::stream_to_picture(
         (f64::from(x), f64::from(y)),
         stream,
         picture,

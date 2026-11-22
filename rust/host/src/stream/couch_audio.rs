@@ -2,11 +2,11 @@
 //! the channels a stream captures, and the processing of each packet between `collect` and Opus.
 
 use anyhow::Result;
-use butterpollo_core::{
-    audio_dsp::{self, Chain, Conditions, Controls, Live, Memory, Report, Settings},
-    config::Config,
-    session::Warnings,
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::audio_dsp::{
+    self, Chain, Conditions, Controls, Live, Memory, Report, Settings,
 };
+use butterpollo_session::session::Warnings;
 
 use crate::state::Session;
 

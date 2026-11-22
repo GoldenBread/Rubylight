@@ -1,6 +1,6 @@
 use super::*;
 use crate::input::{Event, gamepads::Gamepads};
-use butterpollo_core::input_policy::VIGEM_X360;
+use butterpollo_input_policy::input_policy::VIGEM_X360;
 use std::time::{Duration, Instant};
 
 #[test]
@@ -504,7 +504,7 @@ fn hid_io(
 #[ignore = "plugs one DS4 on the installed ViGEmBus; needs an idle host"]
 fn a_chosen_vigem_ds4_is_a_usb_ds4_with_touch_motion_and_lightbar() -> Result<()> {
     use crate::input::native_touch_tests::{hid_paths, wait_removed};
-    use butterpollo_core::input_policy::VIGEM_DS4;
+    use butterpollo_input_policy::input_policy::VIGEM_DS4;
     let before = hid_paths()?;
     let mut pads = Gamepads::open(VIGEM_DS4)?;
     // A PlayStation client with motion and a touchpad.

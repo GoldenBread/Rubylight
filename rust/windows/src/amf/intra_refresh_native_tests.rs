@@ -48,7 +48,7 @@ fn native_amf_recycled_surface_barriers_are_valid() -> Result<()> {
     let mut reports = Vec::new();
     for (hdr, codec) in [(false, 1), (true, 1), (false, 2), (true, 2)] {
         let mut picture = picture(&device, hdr, 0)?;
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 3840,
             height: 2160,
             fps: 120,
@@ -296,7 +296,7 @@ fn native_hevc_intra_refresh_decodes_across_gops_and_forced_recovery() -> Result
     let mut reports = Vec::new();
     for hdr in [false, true] {
         let name = if hdr { "hdr" } else { "sdr" };
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 3840,
             height: 2160,
             fps: 120,
@@ -363,7 +363,9 @@ fn native_hevc_intra_refresh_decodes_across_gops_and_forced_recovery() -> Result
             serde_json::to_vec_pretty(&properties)?,
         )?;
         if hdr {
-            encoder.set_hdr_metadata(butterpollo_core::hdr::Metadata::display(1000., 0.005, 400.));
+            encoder.set_hdr_metadata(butterpollo_media_policy::hdr::Metadata::display(
+                1000., 0.005, 400.,
+            ));
         }
         let full_path = report.with_extension(format!("{name}.hevc"));
         let tail_path = report.with_extension(format!("{name}.recovery.hevc"));
@@ -421,7 +423,7 @@ fn native_hevc_intra_refresh_decodes_across_gops_and_forced_recovery() -> Result
         drop(full);
         drop(tail);
         drop(encoder);
-        let packetizer = butterpollo_core::packet::VideoPacketizer {
+        let packetizer = butterpollo_media_policy::packet::VideoPacketizer {
             sequence: 0,
             iv_counter: 0,
             frame: 1,
@@ -660,7 +662,7 @@ fn native_av1_intra_refresh_recovery_after_a_lost_frame() -> Result<()> {
         ("ltr", false, "invalidation"),
         ("keyframe", false, "keyframe"),
     ] {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: WIDTH as u32,
             height: HEIGHT as u32,
             fps: 120,

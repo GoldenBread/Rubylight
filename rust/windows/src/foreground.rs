@@ -2,7 +2,7 @@
 //! overlays, and the foreground window's process.
 
 use crate::capture::Display;
-use butterpollo_core::capture_policy::InFront;
+use butterpollo_media_policy::capture_policy::InFront;
 use std::sync::{Arc, Mutex, mpsc};
 use windows::{
     Win32::{Foundation::*, Graphics::Dwm::*, System::Threading::*, UI::WindowsAndMessaging::*},
@@ -177,7 +177,7 @@ fn fullscreen(rect: RECT, capture: [i32; 4], framed: bool) -> bool {
 }
 
 /// What sits in front of `display` (the primary for an empty name) right now, for
-/// `butterpollo_core::capture_policy::duplication_for_fullscreen`: the foreground
+/// `butterpollo_media_policy::capture_policy::duplication_for_fullscreen`: the foreground
 /// window's coverage of the display, with Windows' own shell and desktop windows and
 /// this process's own windows kept apart, since they cover it without being an app that
 /// can present past the compositor. Read-only: no window is touched, activated or

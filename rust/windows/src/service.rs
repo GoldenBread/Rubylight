@@ -8,11 +8,11 @@ use anyhow::Result;
 
 /// The service's name in a normal installation, as in
 /// rust/service/src/supervisor.rs.
-pub const NAME: &str = butterpollo_core::host_service::DEFAULT;
+pub const NAME: &str = butterpollo_session::host_service::DEFAULT;
 /// The service this PC's Rubylight runs as, which setup recorded; a lost record
 /// does not hand the launcher the other host's service.
 pub fn name() -> &'static str {
-    use butterpollo_core::host_service;
+    use butterpollo_session::host_service;
     use windows::Win32::System::Registry::HKEY_LOCAL_MACHINE;
     host_service::service_named(
         crate::steam::registry_string(HKEY_LOCAL_MACHINE, host_service::KEY, host_service::VALUE)
@@ -45,7 +45,7 @@ pub const SESSION_ENDED_EXIT_CODE: u32 = windows::Win32::Foundation::DBG_TERMINA
 /// Whether nothing failed; each failure is logged.
 pub fn restore_nucleus_layers(config: &std::path::Path) -> bool {
     // The host's settings file, for nucleus_path.
-    let configured = match butterpollo_core::config::Config::load(&config.join("sunshine.conf")) {
+    let configured = match butterpollo_config::config::Config::load(&config.join("sunshine.conf")) {
         Ok(config) => config
             .nucleus_path()
             .map(|path| path.to_string_lossy().into_owned())
@@ -59,7 +59,7 @@ pub fn restore_nucleus_layers(config: &std::path::Path) -> bool {
     // still runs from it: a user is never left with changed settings.
     let mut restored = true;
     for folder in
-        crate::nucleus::install::left_in(&butterpollo_core::paths::data_root(), &configured)
+        crate::nucleus::install::left_in(&butterpollo_session::paths::data_root(), &configured)
     {
         let folder = match folder {
             Ok(folder) => folder,
@@ -168,7 +168,7 @@ mod tests {
     }
     #[test]
     fn nucleus_settings_are_put_back_only_with_neither_nucleus_nor_a_session() {
-        use butterpollo_core::nucleus::profile::Forced;
+        use butterpollo_session::nucleus::profile::Forced;
         let nucleus = tempfile::tempdir().unwrap();
         let folder = nucleus.path();
         let settings = folder.join("Settings.ini");

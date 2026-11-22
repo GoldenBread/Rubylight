@@ -32,7 +32,7 @@ fn bind_identity(expected: &str, identity: Identity, attached: bool) -> Result<I
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Description {
     pub color_space: DXGI_COLOR_SPACE_TYPE,
-    pub metadata: butterpollo_core::hdr::Metadata,
+    pub metadata: butterpollo_media_policy::hdr::Metadata,
 }
 
 /// Whether an output's colour space is the HDR10 signal the HDR encode path carries.
@@ -82,7 +82,7 @@ struct Cache<S: Source> {
     output: Option<S::Output>,
     next_check: Instant,
     snapshot: std::result::Result<Option<Description>, String>,
-    metadata: butterpollo_core::hdr::Metadata,
+    metadata: butterpollo_media_policy::hdr::Metadata,
     /// The refresh rate in Hz at the last check, 0 when unknown.
     refresh: u32,
     /// Windows "SDR content brightness" in nits at the last check.
@@ -155,7 +155,7 @@ impl<S: Source> Cache<S> {
     }
 
     #[cfg(test)]
-    fn metadata(&mut self, now: Instant) -> butterpollo_core::hdr::Metadata {
+    fn metadata(&mut self, now: Instant) -> butterpollo_media_policy::hdr::Metadata {
         let _ = self.poll(now);
         self.metadata
     }
@@ -223,7 +223,7 @@ impl Source for Dxgi {
                 .ok()
                 .map(|desc| Description {
                     color_space: desc.ColorSpace,
-                    metadata: butterpollo_core::hdr::Metadata::display(
+                    metadata: butterpollo_media_policy::hdr::Metadata::display(
                         desc.MaxLuminance,
                         desc.MinLuminance,
                         desc.MaxFullFrameLuminance,
@@ -267,7 +267,7 @@ pub(crate) fn current_refresh_hz(name: &str) -> u32 {
 /// metadata, refresh rate in Hz (0 when unknown), and SDR white level in nits.
 pub(super) type Snapshot = (
     std::result::Result<Option<Description>, String>,
-    butterpollo_core::hdr::Metadata,
+    butterpollo_media_policy::hdr::Metadata,
     u32,
     f32,
 );

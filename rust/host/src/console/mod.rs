@@ -13,7 +13,7 @@ use axum::{
     http::{HeaderMap, Method, StatusCode, Uri, header},
     response::{Html, IntoResponse, Response},
 };
-use butterpollo_core::crypto;
+use butterpollo_crypto::crypto;
 use serde_json::Value;
 use std::{collections::BTreeMap, time::Instant};
 pub(crate) type Fields = BTreeMap<String, String>;

@@ -1,5 +1,7 @@
 //! On-demand, bounded route diagnosis. Never starts or configures a VPN.
-use butterpollo_core::network_path::{MAX_STATUS_BYTES, NetworkPath, from_tailscale_status};
+use butterpollo_media_policy::network_path::{
+    MAX_STATUS_BYTES, NetworkPath, from_tailscale_status,
+};
 use std::{
     net::IpAddr,
     process::Stdio,

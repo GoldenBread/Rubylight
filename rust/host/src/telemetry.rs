@@ -1,6 +1,6 @@
 use crate::state::{Host, Shared};
 use axum::http::StatusCode;
-use butterpollo_core::session::Role;
+use butterpollo_session::session::Role;
 use butterpollo_windows::telemetry::Collector;
 use serde_json::{Value, json};
 use std::{

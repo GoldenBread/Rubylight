@@ -9,8 +9,8 @@ fn main() {
 #[cfg(windows)]
 fn main() -> anyhow::Result<()> {
     use anyhow::{Context, bail};
-    use butterpollo_core::encoder_focus::{Levels, Mode, Requested};
-    use butterpollo_core::rtsp::Negotiated;
+    use butterpollo_media_policy::encoder_focus::{Levels, Mode, Requested};
+    use butterpollo_media_policy::rtsp::Negotiated;
     use butterpollo_windows::{
         capture::{ComGuard, Device, GpuImage, Image, Pixel, Priority},
         encoder::Encoder,
@@ -84,7 +84,7 @@ fn main() -> anyhow::Result<()> {
     }
     let out = option("--out").context("--out is required")?;
     let tuning = match option("--config") {
-        Some(path) => butterpollo_core::config::Config::load(std::path::Path::new(&path))?,
+        Some(path) => butterpollo_config::config::Config::load(std::path::Path::new(&path))?,
         None => Default::default(),
     };
     // The stream's keys in --config, as focus_ab.py writes them; --focus wins.
@@ -160,7 +160,7 @@ fn main() -> anyhow::Result<()> {
     if config.hdr {
         // As a stream does before its first frame: the display's values,
         // with optional content light levels (--max-cll N --max-fall N).
-        let mut metadata = butterpollo_core::hdr::Metadata::display(1000., 0.005, 400.);
+        let mut metadata = butterpollo_media_policy::hdr::Metadata::display(1000., 0.005, 400.);
         metadata.max_cll = number("--max-cll", 0)? as u16;
         metadata.max_fall = number("--max-fall", 0)? as u16;
         encoder.set_hdr_metadata(metadata);

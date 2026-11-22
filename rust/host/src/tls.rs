@@ -40,7 +40,7 @@ pub struct Connection {
     pub certificate: Option<Vec<u8>>,
     pub tls: bool,
     /// The request comes from the device's second screen (`rlSecondScreen=1` in its query):
-    /// its client is [`butterpollo_core::state::Client::second_screen`]. Set per request by
+    /// its client is [`butterpollo_session::state::Client::second_screen`]. Set per request by
     /// `nvhttp::router`, never by a connection.
     pub second_screen: bool,
 }
@@ -165,7 +165,7 @@ struct ClientProof {
 fn client_key<'a>(
     certificate: &'a CertificateDer<'_>,
 ) -> Result<SubjectPublicKeyInfoDer<'a>, Error> {
-    butterpollo_core::crypto::subject_public_key_info(certificate)
+    butterpollo_crypto::crypto::subject_public_key_info(certificate)
         .map(SubjectPublicKeyInfoDer::from)
         .map_err(|_| CertificateError::BadEncoding.into())
 }
@@ -233,7 +233,7 @@ impl ClientCertVerifier for ClientProof {
     }
 }
 pub fn acceptor(
-    identity: &butterpollo_core::crypto::Identity,
+    identity: &butterpollo_crypto::crypto::Identity,
     client_auth: bool,
 ) -> Result<TlsAcceptor> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -253,7 +253,7 @@ pub fn acceptor(
 /// The console's listener presents its own certificate, which browsers trust
 /// once setup has trusted its root, instead of the self-signed pairing one.
 pub fn console_acceptor(
-    console: &butterpollo_core::crypto::ConsoleCertificate,
+    console: &butterpollo_crypto::crypto::ConsoleCertificate,
 ) -> Result<TlsAcceptor> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let chain = rustls_pemfile::certs(&mut console.chain_pem.as_bytes())

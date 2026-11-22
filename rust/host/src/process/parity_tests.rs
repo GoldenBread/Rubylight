@@ -539,7 +539,7 @@ impl Drop for Helper {
 fn a_program_a_preparation_command_left_running_is_never_taken_for_the_game() {
     // The helper is a fullscreen window on the stream's display, created after the launch
     // began but before the app's own command: it is not a game another program started.
-    use butterpollo_core::steam::Process;
+    use butterpollo_session::steam::Process;
     let elevated = butterpollo_windows::process::user_environment().is_err();
     let f = Fixture::new();
     let pid = f.host.directory.join("helper.pid");
@@ -770,7 +770,7 @@ fn stopping_an_app_undoes_its_menu_commands_once_last_run_first() {
 fn connection_commands_report_the_display_size_not_the_capped_picture() {
     // A 4K request under a 1440p host cap: the device's display runs at 3840x2160
     // while the encoder codes 2560x1440.
-    let mut stream = butterpollo_core::rtsp::Negotiated {
+    let mut stream = butterpollo_media_policy::rtsp::Negotiated {
         width: 2560,
         height: 1440,
         hdr: true,

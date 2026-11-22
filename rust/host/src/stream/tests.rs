@@ -5,7 +5,7 @@ fn webrtc_sessions_are_not_ended_for_lacking_an_enet_control_peer() {
     let moonlight = f.session(client.clone(), Role::Stream);
     assert!(super::expects_enet_control(&moonlight));
     let mut launch = f.launch(client, Role::Stream);
-    launch.transport = butterpollo_core::session::Transport::WebRtc;
+    launch.transport = butterpollo_session::session::Transport::WebRtc;
     let webrtc = Session::new(launch, Default::default());
     assert!(!super::expects_enet_control(&webrtc));
 }
@@ -15,7 +15,7 @@ fn the_control_watchdog_ends_a_moonlight_session_without_a_peer_but_not_a_webrtc
     let client = f.client(u32::MAX);
     let moonlight = f.session(client.clone(), Role::Stream);
     let mut launch = f.launch(client, Role::Stream);
-    launch.transport = butterpollo_core::session::Transport::WebRtc;
+    launch.transport = butterpollo_session::session::Transport::WebRtc;
     let webrtc = Session::new(launch, Default::default());
     assert_ne!(moonlight.launch.id, webrtc.launch.id);
     let timeout = Duration::from_millis(20);
@@ -54,7 +54,7 @@ fn webrtc_launches_take_whole_frames_whatever_the_host_asks_for() {
     let mut launch = f.launch(client, Role::Stream);
     let moonlight = effective_config(&f.host, &launch).unwrap();
     assert_eq!(moonlight.get("video_slice_delivery", ""), "on");
-    launch.transport = butterpollo_core::session::Transport::WebRtc;
+    launch.transport = butterpollo_session::session::Transport::WebRtc;
     let webrtc = effective_config(&f.host, &launch).unwrap();
     assert_eq!(webrtc.get("video_slice_delivery", ""), "off");
 }
@@ -62,7 +62,7 @@ fn webrtc_launches_take_whole_frames_whatever_the_host_asks_for() {
 // client's budget, and the host's other devices keep theirs.
 #[test]
 fn a_devices_long_term_references_reach_its_stream_and_no_other_device() {
-    use butterpollo_core::encoder_policy::{amf_ltr_frames, amf_offers_invalidation};
+    use butterpollo_media_policy::encoder_policy::{amf_ltr_frames, amf_offers_invalidation};
     let f = crate::state::test_support::Fixture::new();
     let others = f.client(u32::MAX);
     let mut cube = others.clone();
@@ -70,7 +70,7 @@ fn a_devices_long_term_references_reach_its_stream_and_no_other_device() {
         "config_overrides".into(),
         serde_json::json!({"amd_ltr_frames": 0}),
     );
-    let hevc = butterpollo_core::rtsp::Negotiated {
+    let hevc = butterpollo_media_policy::rtsp::Negotiated {
         codec: 1,
         references: 0,
         ..Default::default()
@@ -97,11 +97,15 @@ fn overrides_saved_for_rtx_hdr_are_chosen_and_the_peak_renamed() {
     assert_eq!(config.integer("hdr_peak_brightness", 0), 1200);
     assert_eq!(config.get("encoder", ""), "amf");
     // RTX HDR reads them as the device's or app's choice.
-    assert!(butterpollo_core::nvidia_enhance::rtx_hdr_enabled(&config));
+    assert!(butterpollo_media_policy::nvidia_enhance::rtx_hdr_enabled(
+        &config
+    ));
     assert_eq!(config.integer("rtx_hdr_contrast", 0), 14);
     let cleared = serde_json::json!({"rtx_hdr": null});
     super::apply_overrides(&mut config, cleared.as_object().unwrap()).unwrap();
-    assert!(!butterpollo_core::nvidia_enhance::rtx_hdr_enabled(&config));
+    assert!(!butterpollo_media_policy::nvidia_enhance::rtx_hdr_enabled(
+        &config
+    ));
     assert!(!super::sets_peak(
         serde_json::json!({"hdr_peak_brightness": ""})
             .as_object()
@@ -110,7 +114,7 @@ fn overrides_saved_for_rtx_hdr_are_chosen_and_the_peak_renamed() {
 }
 #[test]
 fn waveform_haptics_require_negotiation_and_encrypted_multichannel_control() {
-    let mut config = butterpollo_core::rtsp::Negotiated::from_sdp(
+    let mut config = butterpollo_media_policy::rtsp::Negotiated::from_sdp(
         b"a=x-ml-general.featureFlags:7\na=x-ss-general.encryptionEnabled:1\n",
     )
     .unwrap();
@@ -433,7 +437,7 @@ fn the_stream_thread_skips_its_game_look_while_another_thread_holds_the_app() {
     let f = Fixture::new();
     *f.host.current_app.lock().unwrap() = Some(
         crate::process::RunningApp::with_environment(
-            &butterpollo_core::state::App::desktop(),
+            &butterpollo_session::state::App::desktop(),
             Default::default(),
         )
         .unwrap(),
@@ -463,7 +467,7 @@ fn a_program_another_program_started_is_checked_off_the_stream_thread() {
     use crate::state::test_support::Fixture;
     let f = Fixture::new();
     let mut app = crate::process::RunningApp::with_environment(
-        &butterpollo_core::state::App::desktop(),
+        &butterpollo_session::state::App::desktop(),
         Default::default(),
     )
     .unwrap();
@@ -599,17 +603,20 @@ fn an_apps_window_frame_choice_reaches_the_stream() {
         .insert("capture-window-frame".into(), json!("client"));
     let config = effective_config(&f.host, &launch).unwrap();
     assert_eq!(
-        config.get(butterpollo_core::app_window::FRAME, ""),
+        config.get(butterpollo_media_policy::app_window::FRAME, ""),
         "client"
     );
     // A co-op player's stream is its window already and has no window settings.
     let mut coop = f.launch(f.client(u32::MAX), Role::Stream);
-    coop.nucleus = Some(butterpollo_core::session::Seat {
+    coop.nucleus = Some(butterpollo_session::session::Seat {
         session: 1,
         slot: 0,
     });
     let config = effective_config(&f.host, &coop).unwrap();
-    assert_eq!(config.get(butterpollo_core::app_window::FRAME, ""), "");
+    assert_eq!(
+        config.get(butterpollo_media_policy::app_window::FRAME, ""),
+        ""
+    );
 }
 /// Every capture method that captures whole displays, AMD Direct Capture among them, gives way
 /// to WGC for a stream of the app's window, with a warning, instead of failing to open.
@@ -699,7 +706,7 @@ fn a_devices_controller_type_wins_over_the_hosts_and_an_apps_over_the_devices() 
     switch
         .extra
         .insert("config_overrides".into(), json!({"gamepad": "vhf_switch"}));
-    let gamepad = |client: &butterpollo_core::state::Client| {
+    let gamepad = |client: &butterpollo_session::state::Client| {
         effective_config(&f.host, &f.launch(client.clone(), Role::Stream))
             .unwrap()
             .get("gamepad", "")
@@ -719,7 +726,7 @@ fn stream_presets_fill_the_host_and_a_device_or_app_can_pick_its_own() {
     let f = Fixture::new();
     let set = |text: &str| *f.host.config.write().unwrap() = Config::parse(text).unwrap();
     let client = f.client(u32::MAX);
-    let effective = |client: &butterpollo_core::state::Client| {
+    let effective = |client: &butterpollo_session::state::Client| {
         effective_config(&f.host, &f.launch(client.clone(), Role::Stream)).unwrap()
     };
     // No preset is Balanced: nothing is added.
@@ -825,9 +832,9 @@ fn stream_presets_fill_the_host_and_a_device_or_app_can_pick_its_own() {
 #[test]
 fn a_browser_on_this_pc_keeps_the_monitors_it_shows_the_stream_on() {
     use crate::display_session::{BROWSER_ON_THIS_PC, launch_display_layout};
-    use butterpollo_core::session::Transport;
+    use butterpollo_session::session::Transport;
     let f = crate::state::test_support::Fixture::new();
-    let config = butterpollo_core::config::Config::default();
+    let config = butterpollo_config::config::Config::default();
     let client = f.client(u32::MAX);
     let mut launch = f.launch(client.clone(), Role::Stream);
     // The default for everyone else: the stream takes over the displays.
@@ -847,7 +854,7 @@ fn a_browser_on_this_pc_keeps_the_monitors_it_shows_the_stream_on() {
     );
     // A layout that leaves the monitors on is the user's and stays.
     let extended =
-        butterpollo_core::config::Config::parse("virtual_display_layout=extended\n").unwrap();
+        butterpollo_config::config::Config::parse("virtual_display_layout=extended\n").unwrap();
     assert_eq!(
         launch_display_layout(&extended, &launch, None, None),
         "extended"
@@ -865,14 +872,14 @@ fn a_browser_on_this_pc_keeps_its_monitors_however_the_setting_is_spelled() {
     use crate::display_session::{
         BROWSER_ON_THIS_PC, browser_keeps_monitors, launch_display_layout,
     };
-    use butterpollo_core::session::Transport;
+    use butterpollo_session::session::Transport;
     let f = crate::state::test_support::Fixture::new();
     let mut launch = f.launch(f.client(u32::MAX), Role::Stream);
     launch.transport = Transport::WebRtc;
     launch.options.insert(BROWSER_ON_THIS_PC.into(), "1".into());
     let layout = |launch: &Launch, value: &str| {
         let config =
-            butterpollo_core::config::Config::parse(&format!("virtual_display_layout={value}\n"))
+            butterpollo_config::config::Config::parse(&format!("virtual_display_layout={value}\n"))
                 .unwrap();
         launch_display_layout(&config, launch, None, None).to_owned()
     };
@@ -937,7 +944,7 @@ fn a_background_stream_keeps_keyboard_and_mouse_off_whatever_overrides_say() {
         json!({"keyboard":true,"mouse":true,"audio_capture_mode":"system"}),
     );
     let plain = effective_config(&f.host, &f.launch(client.clone(), Role::Stream)).unwrap();
-    assert!(!butterpollo_core::background::enabled(&plain));
+    assert!(!butterpollo_session::background::enabled(&plain));
     assert!(plain.boolean("keyboard", false));
     // From the app.
     f.host.apps.write().unwrap()[0]
@@ -945,7 +952,7 @@ fn a_background_stream_keeps_keyboard_and_mouse_off_whatever_overrides_say() {
         .insert("background-stream".into(), json!(true));
     let launch = f.launch(client.clone(), Role::Stream);
     let app = effective_config(&f.host, &launch).unwrap();
-    assert!(butterpollo_core::background::enabled(&app));
+    assert!(butterpollo_session::background::enabled(&app));
     assert!(!app.boolean("keyboard", true));
     assert!(!app.boolean("mouse", true));
     assert_eq!(app.get("audio_capture_mode", ""), "game");
@@ -954,9 +961,11 @@ fn a_background_stream_keeps_keyboard_and_mouse_off_whatever_overrides_say() {
             &app,
             &launch.client,
             None,
-            Some(butterpollo_core::display_policy::HostDisplay::Virtual(
-                butterpollo_core::display_policy::Arrangement::Exclusive
-            )),
+            Some(
+                butterpollo_media_policy::display_policy::HostDisplay::Virtual(
+                    butterpollo_media_policy::display_policy::Arrangement::Exclusive
+                )
+            ),
         ),
         "extended_isolated"
     );
@@ -966,9 +975,9 @@ fn a_background_stream_keeps_keyboard_and_mouse_off_whatever_overrides_say() {
         .remove("background-stream");
     client.extra.insert("background_stream".into(), json!(true));
     let device = effective_config(&f.host, &f.launch(client.clone(), Role::Stream)).unwrap();
-    assert!(butterpollo_core::background::enabled(&device));
+    assert!(butterpollo_session::background::enabled(&device));
     let input = effective_config(&f.host, &f.launch(client, Role::InputOnly)).unwrap();
-    assert!(!butterpollo_core::background::enabled(&input));
+    assert!(!butterpollo_session::background::enabled(&input));
     // A saved effective-config key must enforce the same isolation.
     f.host
         .config
@@ -993,7 +1002,7 @@ fn a_launch_keeps_its_background_mode_when_settings_change() {
             serde_json::json!({"keyboard":true, "mouse":true, "audio_capture_mode":audio}),
         );
         let config = effective_config(&f.host, &launch.clone()).unwrap();
-        assert!(butterpollo_core::background::enabled(&config));
+        assert!(butterpollo_session::background::enabled(&config));
         assert!(!config.boolean("keyboard", true));
         assert!(!config.boolean("mouse", true));
         assert_eq!(config.get("audio_capture_mode", ""), "game");
@@ -1003,7 +1012,7 @@ fn a_launch_keeps_its_background_mode_when_settings_change() {
         .extra
         .insert("background-stream".into(), true.into());
     let config = effective_config(&f.host, &launch).unwrap();
-    assert!(!butterpollo_core::background::enabled(&config));
+    assert!(!butterpollo_session::background::enabled(&config));
     assert!(config.boolean("keyboard", false));
     assert!(config.boolean("mouse", false));
 }
@@ -1239,7 +1248,7 @@ fn background_capture_never_recovers_onto_the_primary_display() {
 
     let plain = Config::default();
     let mut background = plain.clone();
-    butterpollo_core::background::apply(&mut background);
+    butterpollo_session::background::apply(&mut background);
     for capture in ["auto", "wgc", "ddx"] {
         assert_ne!(
             CaptureKey::new(capture, "display", false, &plain, "", false),
@@ -1365,7 +1374,8 @@ fn rumble_reaches_a_single_channel_moonlight_peer() {
             data[..4].copy_from_slice(&strengths);
             let (kind, payload) = feedback_packets(2, 4, &data).remove(0);
             let message =
-                butterpollo_core::packet::encrypted_control(&key, 7, kind, &payload, v2).unwrap();
+                butterpollo_media_policy::packet::encrypted_control(&key, 7, kind, &payload, v2)
+                    .unwrap();
             host.socket_mut().hold();
             host.peer_mut(PeerID(0))
                 .send(
@@ -1395,7 +1405,8 @@ fn rumble_reaches_a_single_channel_moonlight_peer() {
                 iv[10..].copy_from_slice(b"HC");
             }
             let plain =
-                butterpollo_core::crypto::gcm_open(&key, &iv, &bytes[8..24], &bytes[24..]).unwrap();
+                butterpollo_crypto::crypto::gcm_open(&key, &iv, &bytes[8..24], &bytes[24..])
+                    .unwrap();
             // Moonlight's decrypted V2 header, marker, controller ID,
             // then the low- and high-frequency strengths, all LE.
             assert_eq!(
@@ -1565,7 +1576,7 @@ fn a_roaming_flood_does_not_hold_the_control_receive() {
     socket.roaming.set_enabled(true);
     let host = socket.socket.local_addr().unwrap();
     let client = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut magic = [0u8; butterpollo_core::roaming::DATAGRAM_BYTES];
+    let mut magic = [0u8; butterpollo_session::roaming::DATAGRAM_BYTES];
     magic[..4].copy_from_slice(&[0x0F, 0xFE, 0x52, 0x4D]);
     for _ in 0..SWALLOWED_PER_RECEIVE + 10 {
         client.send_to(&magic, host).unwrap();
@@ -2059,7 +2070,7 @@ fn an_hdr_request_alone_in_overrides_folds_over_the_layers_below() {
 
 #[test]
 fn gamestream_hdr_falls_back_to_sdr_only_when_display_and_source_stay_sdr() {
-    use butterpollo_core::session::Transport;
+    use butterpollo_session::session::Transport;
     assert!(super::should_fallback_hdr_to_sdr(
         Transport::GameStream,
         true,
@@ -2104,7 +2115,7 @@ fn gamestream_hdr_falls_back_to_sdr_only_when_display_and_source_stay_sdr() {
 #[test]
 fn disabling_hdr_updates_effective_config_info_and_hdr_control_payload() {
     let f = crate::state::test_support::Fixture::new();
-    let mut negotiated = butterpollo_core::rtsp::Negotiated {
+    let mut negotiated = butterpollo_media_policy::rtsp::Negotiated {
         codec: 2,
         hdr: true,
         hdr_format: 1,
@@ -2116,7 +2127,8 @@ fn disabling_hdr_updates_effective_config_info_and_hdr_control_payload() {
 
     assert!(session.hdr_active());
     assert_eq!(session.info()["hdr"], true);
-    let initial_meta = session.set_display_hdr_metadata(butterpollo_core::hdr::Metadata::default());
+    let initial_meta =
+        session.set_display_hdr_metadata(butterpollo_media_policy::hdr::Metadata::default());
     assert_eq!(initial_meta.wire(session.hdr_active())[0], 1);
     let revision_before = session
         .hdr_revision

@@ -4,12 +4,12 @@ fn microphone_journal_keeps_playback_restoration_out_of_recording_roles() -> Res
     let _active = ACTIVE.lock().unwrap();
     let directory = tempfile::tempdir()?;
     assert!(!microphone_owns_recording(directory.path()));
-    let journal = butterpollo_core::audio_defaults::MicrophoneDefaults::new(
+    let journal = butterpollo_media_policy::audio_defaults::MicrophoneDefaults::new(
         std::array::from_fn(|_| Some("physical-mic".into())),
         "steam-mic".into(),
         None,
     );
-    butterpollo_core::state::write_json(&microphone_path(directory.path()), &Some(&journal))?;
+    butterpollo_session::state::write_json(&microphone_path(directory.path()), &Some(&journal))?;
     assert!(microphone_owns_recording(directory.path()));
     assert_eq!(
         microphone_pending(directory.path())?.unwrap().before,

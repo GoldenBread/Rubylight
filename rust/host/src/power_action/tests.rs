@@ -4,7 +4,7 @@ use axum::{
     body::to_bytes,
     http::{Request as HttpRequest, StatusCode},
 };
-use butterpollo_core::{session::Role, state::Client};
+use butterpollo_session::{session::Role, state::Client};
 use std::sync::{Weak, atomic::AtomicUsize, atomic::Ordering};
 use tower::ServiceExt;
 

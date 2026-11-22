@@ -208,7 +208,7 @@ fn a_steam_game_is_looked_up_by_its_app_id_first_and_by_name_when_that_has_none(
     add(
         &f,
         json!({"name": "Hollow Knight", "uuid": "by-name", "cmd": "steam://rungameid/1",
-               "image-path": butterpollo_core::steam::FALLBACK_IMAGE}),
+               "image-path": butterpollo_session::steam::FALLBACK_IMAGE}),
     );
     let fake = steamgriddb(false);
     watch_with(&f.host, &fake);
@@ -312,14 +312,14 @@ fn a_cover_the_user_cleared_is_not_put_back_and_a_launchers_replaces_ours() {
         "image-path": ours, sgdb::COVER_FIELD: ours}),
     ];
     let mut game =
-        butterpollo_core::library::ubisoft("13504", Path::new("F:/Games/Mirage"), "Mirage")
+        butterpollo_session::library::ubisoft("13504", Path::new("F:/Games/Mirage"), "Mirage")
             .unwrap();
     game.cover = Some(PathBuf::from("C:/profile/covers/launcher_ubi.png"));
-    let change = butterpollo_core::library::reconcile(
+    let change = butterpollo_session::library::reconcile(
         &mut apps,
         &[game],
-        &butterpollo_core::library::Settings::default(),
-        &butterpollo_core::library::Source::ALL,
+        &butterpollo_session::library::Settings::default(),
+        &butterpollo_session::library::Source::ALL,
         &[],
     );
     assert_eq!(change.covered, 1);
@@ -590,10 +590,11 @@ fn the_key_goes_only_to_the_api_and_never_into_the_log() {
 fn typed_key(f: &Fixture, key: &str) {
     let mut config = f.host.config.write().unwrap();
     config.values.insert(sgdb::KEY_SETTING.into(), key.into());
-    butterpollo_core::state::atomic_write(&f.host.config_path, config.text().as_bytes()).unwrap();
+    butterpollo_session::state::atomic_write(&f.host.config_path, config.text().as_bytes())
+        .unwrap();
 }
 fn in_conf(f: &Fixture) -> bool {
-    butterpollo_core::config::Config::load(&f.host.config_path)
+    butterpollo_config::config::Config::load(&f.host.config_path)
         .unwrap()
         .values
         .contains_key(sgdb::KEY_SETTING)

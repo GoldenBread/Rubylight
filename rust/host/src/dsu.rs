@@ -1,7 +1,7 @@
 //! The DSU (cemuhook) motion server (`enable_dsu_server`, off by default):
 //! emulators on the PC read each streamed controller's gyroscope,
 //! accelerometer, buttons and touch from UDP `dsu_server_port` (26760). The
-//! packets and the client registrations are `butterpollo_core::dsu`'s; the
+//! packets and the client registrations are `butterpollo_input_policy::dsu`'s; the
 //! setting names and port are Foundation Sunshine's
 //! (AlkaidLab/foundation-sunshine, GPL-3.0). Unlike its server this one
 //! listens only on `127.0.0.1` unless `dsu_server_lan` asks for an emulator
@@ -11,11 +11,11 @@
 //! sent from it, and with the setting off [`observe`] returns at once. The
 //! client registrations have a lock of their own, so a flood of spoofed
 //! requests cannot stall the input path.
-use butterpollo_core::{
+use butterpollo_input_policy::{
     dsu::{self, Clients, Request, SLOTS, Slots},
     input::Input,
-    session::Warnings,
 };
+use butterpollo_session::session::Warnings;
 use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};

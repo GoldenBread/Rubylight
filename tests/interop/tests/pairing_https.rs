@@ -1,7 +1,7 @@
 //! Pairing and HTTPS interop between Nightjar's HostClient and butterpollo-core's pairing state machine.
 mod common;
 
-use butterpollo_core::{crypto, pairing::Pairing};
+use butterpollo_crypto::{crypto, pairing::Pairing};
 use common::{client_identity, host_identity};
 use nightjar_core::http::{
     AppControl, ClientIdentity, Error as HttpError, HostClient, InfoPath, LaunchRequest, PairResult,

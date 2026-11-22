@@ -43,18 +43,18 @@ https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz.
 Foundation Sunshine
 
 The AMD encoder's opt-in treatment of the low-latency mode, the input queue size
-and the AV1 encoding latency mode (rust/core/src/encoder_policy.rs), and the
+and the AV1 encoding latency mode (rust/core/media-policy/src/encoder_policy.rs), and the
 reasoning behind it, are derived from Foundation Sunshine: AlkaidLab/foundation-sunshine
 commit 3340d28 ("feat(amf): align AMD aggressive defaults with FFmpeg amfenc",
 AlkaidLab/foundation-sunshine#666) by qiin2333. The statistical video FEC driven by the
-client's loss reports (rust/core/src/statistical_fec.rs) is ported from its
+client's loss reports (rust/core/media-policy/src/statistical_fec.rs) is ported from its
 src/streaming/fec.cpp and docs/dynamic-fec.zh-CN.md, and the split of the video budget
-between encoder and FEC (Session::encoder_bitrate in rust/core/src/session.rs) follows
+between encoder and FEC (Session::encoder_bitrate in rust/core/session/src/session.rs) follows
 its src/video.cpp, both at commit 880f1ef. Both projects are licensed under GPLv3.
 
 The HDR10+ (SMPTE ST 2094-40) and HDR Vivid (CUVA 005.1) metadata writers, their
 statistics and scene-cut thresholds, and the HEVC SEI and AV1 metadata OBU splice
-(rust/core/src/hdr_dynamic.rs) are ported in part from Foundation Sunshine commit
+(rust/core/media-policy/src/hdr_dynamic.rs) are ported in part from Foundation Sunshine commit
 880f1ef: video_hdr_metadata.h, video_hdr_metadata.cpp and video_hdr_bitstream.cpp.
 The GPU luminance statistics those writers take, the hdr_stats_cs compute shader
 (rust/windows/src/shaders/color.hlsl) and its dispatch and readback
@@ -66,20 +66,20 @@ and LinearToHLG in that commit's src_assets/windows/assets/shaders/directx/inclu
 The NVIDIA encoder's frame budget guard and its per-preset encode-time calibration
 (src/nvenc/frame_budget.cpp), its VBR rate control and bounds, the fixed split-encode
 strip counts and the slice-mode rule that keeps split encoding available, the codec
-check and spatial AQ by default (rust/core/src/nvenc.rs, rust/windows/src/nvenc.rs)
+check and spatial AQ by default (rust/core/media-policy/src/nvenc.rs, rust/windows/src/nvenc.rs)
 follow Foundation Sunshine's src/nvenc/. Its native YUV 4:4:4 path for NVENC (commit
 79423092eda6ccd011e58d04236c8f16e02765c5, src/nvenc/common_impl/ and the
 convert_yuv444_* shaders) was compared with LizardByte Sunshine's, where that path
 originates and from which Rubylight's is ported (see LizardByte Sunshine below).
 Per-app stream-menu commands (the app key menu-cmd with name, cmd and elevated,
-rust/core/src/menu_commands.rs) follow Foundation Sunshine's menu commands
+rust/core/input-policy/src/menu_commands.rs) follow Foundation Sunshine's menu commands
 (src/process.cpp, src/nvhttp/apps.cpp); the undo is Rubylight's.
 Settings backup and restore from the console and the tray
-(rust/core/src/settings_backup.rs, rust/host/src/settings_backup.rs) follow
+(rust/core/session/src/settings_backup.rs, rust/host/src/settings_backup.rs) follow
 Foundation Sunshine v2025.1011.143611's tray export, import and restore (pull
 request 248); the archive format and its checks are Rubylight's.
 
-The AMF video converter option (amd_vpe: rust/core/src/amf_vpe.rs,
+The AMF video converter option (amd_vpe: rust/core/media-policy/src/amf_vpe.rs,
 rust/windows/src/amf/vpe.rs) and its scene-linear HLG prepass (hlg_scene_cs in
 rust/windows/src/shaders/color.hlsl, rust/windows/src/gpu_color/hlg_scene.rs) are
 ported from Foundation Sunshine's amd_vpe (src/amf/amf_vpe_d3d11.cpp and
@@ -90,7 +90,7 @@ its src/platform/windows/display_amd.cpp and the AFMF capture fixes in commits
 duplicated output.
 
 The virtual mouse with its choice of Automatic, Virtual mouse and Injection
-(mouse_mode, rust/core/src/input_policy.rs; rust/core/src/virtual_hid.rs and
+(mouse_mode, rust/core/input-policy/src/input_policy.rs; rust/core/input-policy/src/virtual_hid.rs and
 rust/windows/src/input/virtual_hid.rs) follows Foundation Sunshine's virtual mouse,
 which is a driver of its own; Rubylight's is a USB device on its USB/IP server. The
 touchpad input packets 0x55000009 and 0x5500000A and their feature flags
@@ -98,10 +98,10 @@ touchpad input packets 0x55000009 and 0x5500000A and their feature flags
 
 The per-application design of the NVIDIA image enhancements, the single pre-encode
 slot that RTX HDR takes first, and the HDR proxy through which RTX Video enhancement
-treats an HDR picture (rust/core/src/nvidia_enhance.rs, rust/host/src/nvidia_enhance.rs,
+treats an HDR picture (rust/core/media-policy/src/nvidia_enhance.rs, rust/host/src/nvidia_enhance.rs,
 rust/windows/src/rtx_video.rs and rust/windows/src/shaders/rtx_video.hlsl) follow
 Foundation Sunshine's src/platform/windows/image_enhancement/, including
-dlss_nr/hdr_filter.cpp. The NVIDIA component's design (rust/core/src/nvidia_component.rs,
+dlss_nr/hdr_filter.cpp. The NVIDIA component's design (rust/core/media-policy/src/nvidia_component.rs,
 rust/host/src/nvidia_component.rs and rust/windows/src/nvidia_enhance.rs: NVIDIA's files
 trusted by digests in the host and kept apart from the adapter's build, fixed file roles
 in a fixed folder, a check before each load, installed only at the user's request)
@@ -114,7 +114,7 @@ Copyright (c) Foundation Sunshine authors, GPL-3.0.
 mac-precision-touchpad
 
 The virtual precision touchpad's report layout and the certification blob Windows
-asks precision touchpads for (rust/core/src/virtual_hid.rs) follow imbushuo's
+asks precision touchpads for (rust/core/input-policy/src/virtual_hid.rs) follow imbushuo's
 mac-precision-touchpad, AmtPtpDeviceSpiKm/Hid.h
 (https://github.com/imbushuo/mac-precision-touchpad). Copyright 2018 Bingxing Wang,
 MIT License; full text in third-party/licenses/mac-precision-touchpad-LICENSE.txt.
@@ -126,16 +126,16 @@ The NVIDIA encoder's native YUV 4:4:4 path is ported from LizardByte Sunshine
 ec2676b60bb8220a1807fc761bc2157e5e6dba63: the input formats, 8-bit AYUV written
 through an R8G8B8A8_UINT view and 10-bit as three R16_UINT planes stacked in one
 texture and copied through CUDA (src/nvenc/nvenc_utils.cpp, nvenc_d3d11_native.cpp,
-nvenc_d3d11_on_cuda.cpp, src/platform/windows/display_vram.cpp; rust/core/src/nvenc.rs,
+nvenc_d3d11_on_cuda.cpp, src/platform/windows/display_vram.cpp; rust/core/media-policy/src/nvenc.rs,
 rust/windows/src/gpu_color.rs), the conversion shaders' output layout
 (src_assets/windows/assets/shaders/directx/include/convert_yuv444_ps_base.hlsl and
 convert_yuv444_planar_vs.hlsl; yuv444_* in rust/windows/src/shaders/color.hlsl), and
 the YUV 4:4:4 capability check (validate_encoder_capabilities in src/nvenc/nvenc_base.cpp;
 rust/windows/src/nvenc.rs). The dscp_tagging switch, on by default, that turns off the
-DSCP marks on video and audio (rust/core/src/stream_policy.rs) follows LizardByte
+DSCP marks on video and audio (rust/core/media-policy/src/stream_policy.rs) follows LizardByte
 Sunshine pull request 6067. Copyright (c) LizardByte and the Sunshine contributors, GPL-3.0.
 
-The Dolby Vision profile 8.1 RPU writer (rust/core/src/dovi.rs) follows the syntax,
+The Dolby Vision profile 8.1 RPU writer (rust/core/media-policy/src/dovi.rs) follows the syntax,
 default values and L1 limits of the dolby_vision crate 3.4.0 of dovi_tool
 (https://github.com/quietvoid/dovi_tool, tag libdovi-3.4.0), Copyright (c) 2026
 quietvoid, MIT. The MIT terms are included in rust/THIRD_PARTY.md.
@@ -143,7 +143,7 @@ quietvoid, MIT. The MIT terms are included in rust/THIRD_PARTY.md.
 Annex
 
 Restoring the Windows settings that the removed background child-session
-feature changed (rust/core/src/child_session.rs, rust/windows/src/child_session.rs,
+feature changed (rust/core/session/src/child_session.rs, rust/windows/src/child_session.rs,
 rust/host/src/child_session.rs) is ported from Annex
 (https://github.com/mattxslv/annex), Copyright (c) 2026 mattxslv, MIT licensed,
 with ocr1n's launcher rework (mattxslv/annex#2). The MIT license text is in
@@ -151,7 +151,7 @@ third-party/licenses/annex-LICENSE.txt.
 
 Nucleus Co-op
 
-Background streaming and co-op (rust/core/src/nucleus/, rust/windows/src/nucleus/)
+Background streaming and co-op (rust/core/session/src/nucleus/, rust/windows/src/nucleus/)
 launch games through Nucleus Co-op (https://github.com/SplitScreen-Me/splitscreenme-nucleus)
 by SplitScreen.Me, GPL-3.0 licensed, which includes ProtoInput by Ilyaki, MIT
 licensed. Rubylight neither bundles nor downloads them: the user downloads
@@ -161,7 +161,7 @@ handler hub and are the user's own content.
 
 ANR frame generation (Neural Rendering)
 
-The per-app frame generation switch (rust/core/src/neural.rs, rust/host/src/neural.rs)
+The per-app frame generation switch (rust/core/session/src/neural.rs, rust/host/src/neural.rs)
 installs ANR frame generation by apex-compute (https://github.com/apex-compute/ANR),
 release FG-V.B16, into a game's folder. Its authors publish no license for it.
 Rubylight does not host, bundle, mirror or modify any of its files: at the user's
@@ -182,7 +182,7 @@ only removes AMDNR from the games it put it in, by the manifest it wrote then.
 
 InputPlumber and SDL
 
-The virtual Steam Deck controller (rust/core/src/steam_deck.rs) uses the Steam Deck's
+The virtual Steam Deck controller (rust/core/input-policy/src/steam_deck.rs) uses the Steam Deck's
 HID report descriptors and the feature-report replies Steam expects as captured by
 InputPlumber (https://github.com/ShadowBlip/InputPlumber, GPLv3), and the input
 report layout and button bits from SDL's SDL_hidapi_steamdeck.c and
@@ -190,7 +190,7 @@ controller_structs.h (https://github.com/libsdl-org/SDL, zlib license).
 
 VIIPER, Solstice and SDL (Switch 2 Pro Controller)
 
-The virtual Switch 2 Pro Controller (rust/core/src/switch2.rs) follows libVIIPER's
+The virtual Switch 2 Pro Controller (rust/core/input-policy/src/switch2.rs) follows libVIIPER's
 device/ns2pro by Alia5 (https://github.com/Alia5/VIIPER, GPL-3.0, commit 20aa112) for
 its USB descriptors, input reports and bulk command replies, Solstice by Luiz Filipe
 Bandeira and contributors (https://github.com/eqnx-emu/Solstice, GPL-3.0) for its
@@ -201,7 +201,7 @@ rumble and motion timestamps.
 
 DS4Windows and Foundation Sunshine (DSU motion server)
 
-The DSU (cemuhook) motion server (rust/core/src/dsu.rs, rust/host/src/dsu.rs) follows
+The DSU (cemuhook) motion server (rust/core/input-policy/src/dsu.rs, rust/host/src/dsu.rs) follows
 the protocol of DS4Windows' UdpServer.cs (https://github.com/schmaldeo/DS4Windows,
 GPL-3.0, Jays2Kings, Ryochan7, schmaldeo and contributors). Its settings
 (enable_dsu_server, dsu_server_port) and default port 26760 are Foundation Sunshine's
@@ -285,14 +285,14 @@ Its rumble stop on an unflagged zero-motor output report follows Vibepollo commi
 7a5bb9cabc02b8baf177ad135489b35a8da1ce7e (Nonary/vibeshine, GPL-3.0), ported on
 2026-11-09.
 Composite descriptors use HIDMaestro's MIT profile, Copyright 2026 HIDMaestro
-Contributors. Original notices remain in rust/core/src/dualsense/descriptors.rs;
+Contributors. Original notices remain in rust/core/input-policy/src/dualsense/descriptors.rs;
 the complete MIT terms are also included in rust/THIRD_PARTY.md.
 
 Steam Controller (2026)
 
 The virtual Steam Controller is jlobue10's profile in libvirtualgamepad v0.1.0-beta.10
 (https://github.com/Nonary/libvirtualgamepad, MIT), which Rubylight ships as signed in
-Vibepollo 2.0.6. How the host maps a client onto it (rust/core/src/steam_pad.rs and the
+Vibepollo 2.0.6. How the host maps a client onto it (rust/core/input-policy/src/steam_pad.rs and the
 Steam Controller paths in rust/windows/src/input/gamepads.rs: the explicit-click flag,
 split trackpads, haptic and settings forwarding, firmware attributes) follows
 Nonary/Vibepollo 2.0.6's docs/steam_controller.md (GPL-3.0). The wire format is the one
@@ -366,7 +366,7 @@ Spleen font
 The couch menu embeds bitmaps converted from Spleen 2.2.0 (8x16 and 16x32) by
 Frederic Cambus, Copyright (c) 2018-2026 Frederic Cambus. BSD 2-Clause; the full
 notice, source URL and SHA-256 are in
-rust/core/src/couch_menu/font/LICENSE-spleen.txt.
+rust/core/input-policy/src/couch_menu/font/LICENSE-spleen.txt.
 https://github.com/fcambus/spleen
 
 SADIE II HRTF data
@@ -380,7 +380,7 @@ Database", Applied Sciences 8(11):2029, 2018. Changes made by Rubylight: nine ho
 directions selected, diffuse-field equalized, converted to minimum phase with their
 measured arrival times, left and right symmetrized, common onset trimmed and truncated
 to 256 taps (rust/tools/hrir/generate.py). The license text is in rust/THIRD_PARTY.md
-and rust/core/src/audio_dsp/LICENSE-SADIE-II.txt.
+and rust/core/media-policy/src/audio_dsp/LICENSE-SADIE-II.txt.
 
 Moonlight V+
 

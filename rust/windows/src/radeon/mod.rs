@@ -38,7 +38,7 @@ impl Driver {
     /// The stream's GPU decides. Unknown (no display, several GPUs and none chosen), a Radeon
     /// present keeps the Radeon panel, else an NVIDIA GPU gets the NVIDIA one.
     pub fn for_stream(stream: Option<u32>, vendors: &[u32]) -> Self {
-        use butterpollo_core::encoder_gpu::{is_amd, is_nvidia};
+        use butterpollo_media_policy::encoder_gpu::{is_amd, is_nvidia};
         match stream {
             Some(vendor) if is_nvidia(vendor) => Self::Nvidia,
             Some(vendor) if is_amd(vendor) => Self::Radeon,

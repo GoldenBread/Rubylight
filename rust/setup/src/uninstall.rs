@@ -57,20 +57,20 @@ pub fn install_location() -> Option<PathBuf> {
         })
 }
 /// The record child-session setup leaves
-/// (`butterpollo_core::child_session::SETUP_FILE`), in its folder beside the
+/// (`butterpollo_session::child_session::SETUP_FILE`), in its folder beside the
 /// profile (`SETUP_FOLDER`). One of that name in the profile, which its user
 /// can write, is never read.
 const CHILD_SESSION_SETUP_FILE: &str = "child_session_setup.json";
 const CHILD_SESSION_SETUP_FOLDER: &str = "windows-settings";
 /// The host's flag that puts back what that setup changed
-/// (`butterpollo_core::child_session::RESTORE_FLAG`).
+/// (`butterpollo_session::child_session::RESTORE_FLAG`).
 const CHILD_SESSION_RESTORE_FLAG: &str = "--child-session-restore";
 /// Its exit code when the restore failed after putting Remote Desktop back
 /// as it was before setup: RDP is the user's own again and stays as it is
-/// (`butterpollo_core::child_session::RESTORE_PARTLY_EXIT`).
+/// (`butterpollo_session::child_session::RESTORE_PARTLY_EXIT`).
 const CHILD_SESSION_RESTORE_PARTLY_EXIT: i32 = 4;
 /// The PC's child-session setup record
-/// (`butterpollo_core::child_session::setup_record`), beside `profile`.
+/// (`butterpollo_session::child_session::setup_record`), beside `profile`.
 fn child_session_record(profile: &Path) -> PathBuf {
     profile
         .parent()
@@ -378,7 +378,7 @@ fn restore_child_session_with(
     ))
 }
 /// The block rule child-session setup adds, as `"<name> (TCP)"` and
-/// `"<name> (UDP)"` (`butterpollo_core::child_session::BLOCK_RULE`).
+/// `"<name> (UDP)"` (`butterpollo_session::child_session::BLOCK_RULE`).
 const CHILD_SESSION_BLOCK_RULE: &str = "Rubylight child session: RDP only on this PC";
 /// Without a record, as the host's `enforce_unrecorded`: Remote Desktop on
 /// while setup's block rule is still there (`block_rule`) was turned on by a
@@ -418,7 +418,7 @@ fn child_session_block_rule_present() -> Result<bool> {
 
 /// Where the removed child-session feature saved the account's Windows
 /// password, encrypted with DPAPI, under each `AppData\Local`, and the file a
-/// save cut short left (`butterpollo_core::child_session::PASSWORD_FOLDER`
+/// save cut short left (`butterpollo_session::child_session::PASSWORD_FOLDER`
 /// and `PASSWORD_FILES`).
 const CHILD_SESSION_PASSWORD_FOLDER: &str = "Rubylight";
 const CHILD_SESSION_PASSWORD_FILES: [&str; 2] =
@@ -606,7 +606,7 @@ fn wipe_file(path: &Path) -> std::io::Result<bool> {
 }
 
 /// Where Remote Desktop is switched (`fDenyTSConnections`), and the group
-/// policy that wins over it (`butterpollo_core::child_session`'s
+/// policy that wins over it (`butterpollo_session::child_session`'s
 /// `TERMINAL_SERVER` and `TERMINAL_SERVICES_POLICY`).
 const TERMINAL_SERVER: &str = r"SYSTEM\CurrentControlSet\Control\Terminal Server";
 const TERMINAL_SERVICES_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services";
@@ -632,7 +632,7 @@ impl MachineRegistry for NativeRegistry {
 }
 /// Turn Remote Desktop off (`fDenyTSConnections = 1`), read it back, and
 /// check that no group policy keeps it on, as the host does
-/// (`butterpollo_core::child_session::turn_rdp_off`). What was done, for
+/// (`butterpollo_session::child_session::turn_rdp_off`). What was done, for
 /// the note.
 fn turn_rdp_off(registry: &mut dyn MachineRegistry) -> String {
     let off = registry

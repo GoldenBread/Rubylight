@@ -1,4 +1,4 @@
-//! The NVIDIA component on this PC ([`butterpollo_core::nvidia_component`]):
+//! The NVIDIA component on this PC ([`butterpollo_media_policy::nvidia_component`]):
 //! the console's download, the check of every file, the install into a folder
 //! only administrators may change, the removal, and the start-up check.
 //!
@@ -19,7 +19,9 @@
 
 use crate::state::Shared;
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use butterpollo_core::nvidia_component::{self as pins, ADAPTER, NGX_DATA, Pinned, RECORD, Record};
+use butterpollo_media_policy::nvidia_component::{
+    self as pins, ADAPTER, NGX_DATA, Pinned, RECORD, Record,
+};
 use butterpollo_windows::nvidia_enhance::{self as loader, Component};
 use butterpollo_windows::process::Hold;
 use serde_json::{Value, json};
@@ -63,7 +65,11 @@ impl NvidiaComponent {
 
 /// The component's folder on this PC.
 pub fn root(h: &Shared) -> PathBuf {
-    pins::root(&h.directory)
+    pins::root(
+        &h.directory,
+        &butterpollo_session::paths::installed_profile(),
+        &butterpollo_session::paths::data_root(),
+    )
 }
 
 /// Whether this host runs elevated (the installed service, or a portable
@@ -175,7 +181,11 @@ fn ensure_root(root: &Path) -> Result<()> {
 /// ones checked. Held first, so nothing can be swapped between a check and the
 /// hold either.
 pub fn component_for(profile: &Path) -> Result<Component> {
-    let root = pins::root(profile);
+    let root = pins::root(
+        profile,
+        &butterpollo_session::paths::installed_profile(),
+        &butterpollo_session::paths::data_root(),
+    );
     let data_root = data_root(&root)?;
     let record = Record::read(&root)?.context("the NVIDIA components are not installed")?;
     let folder = record.files(&root);

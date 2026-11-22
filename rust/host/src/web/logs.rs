@@ -142,7 +142,7 @@ fn analyze_file(path: &std::path::Path, max: u64) -> std::io::Result<Value> {
         (_, Some(end)) => &text[end + 1..],
         (_, None) => "",
     };
-    let analysis = butterpollo_core::log_analysis::analyze(text);
+    let analysis = butterpollo_session::log_analysis::analyze(text);
     Ok(json!({
         "status": true,
         "findings": analysis.findings,

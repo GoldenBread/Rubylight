@@ -3,7 +3,8 @@
 
 use crate::text::to_wide;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{config::Config, session::AudioPreparation};
+use butterpollo_config::config::Config;
+use butterpollo_session::session::AudioPreparation;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -231,7 +232,10 @@ fn all_endpoints() -> Vec<Endpoint> {
 fn host_owned(all: &[Endpoint], id: &str) -> bool {
     all.iter().any(|endpoint| {
         endpoint.id.eq_ignore_ascii_case(id)
-            && butterpollo_core::audio_defaults::host_owned(&endpoint.name, &endpoint.adapter)
+            && butterpollo_media_policy::audio_defaults::host_owned(
+                &endpoint.name,
+                &endpoint.adapter,
+            )
     })
 }
 fn device_name(all: &[Endpoint], id: Option<&str>) -> String {
@@ -305,7 +309,7 @@ fn path(directory: &Path) -> PathBuf {
     directory.join("audio-recovery.json")
 }
 fn save(directory: &Path, journal: &Journal) -> Result<()> {
-    butterpollo_core::state::write_json(&path(directory), journal)
+    butterpollo_session::state::write_json(&path(directory), journal)
 }
 fn restore(directory: &Path) -> Result<()> {
     let file = path(directory);
@@ -345,11 +349,11 @@ fn restore(directory: &Path) -> Result<()> {
                 continue;
             }
         };
-        let targets = butterpollo_core::audio_defaults::restore_targets(saved, steam);
+        let targets = butterpollo_media_policy::audio_defaults::restore_targets(saved, steam);
         for (index, target) in
-            butterpollo_core::audio_defaults::switches(&current, &targets, switchable)
+            butterpollo_media_policy::audio_defaults::switches(&current, &targets, switchable)
         {
-            let role = butterpollo_core::audio_defaults::ROLE_NAMES[index];
+            let role = butterpollo_media_policy::audio_defaults::ROLE_NAMES[index];
             match policy.set_default(&target, ROLES[index]) {
                 Ok(()) => {
                     restored += 1;
@@ -422,7 +426,7 @@ fn originals(
     let Some(pending) = pending.filter(|journal| !journal.applied.is_empty()) else {
         return current;
     };
-    butterpollo_core::audio_defaults::with_pending(current, Some(&pending.before), |id| {
+    butterpollo_media_policy::audio_defaults::with_pending(current, Some(&pending.before), |id| {
         id.eq_ignore_ascii_case(&pending.applied) || owned(id)
     })
 }
@@ -502,7 +506,7 @@ fn microphone_path(directory: &Path) -> PathBuf {
 }
 fn microphone_pending(
     directory: &Path,
-) -> Result<Option<butterpollo_core::audio_defaults::MicrophoneDefaults>> {
+) -> Result<Option<butterpollo_media_policy::audio_defaults::MicrophoneDefaults>> {
     match std::fs::read(microphone_path(directory)) {
         Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -516,7 +520,7 @@ fn microphone_owns_recording(directory: &Path) -> bool {
             .unwrap_or(true)
 }
 fn restore_microphone(directory: &Path) -> Result<()> {
-    use butterpollo_core::audio_defaults::MicrophoneDefaults;
+    use butterpollo_media_policy::audio_defaults::MicrophoneDefaults;
     let Some(journal) = microphone_pending(directory)? else {
         return Ok(());
     };
@@ -526,7 +530,7 @@ fn restore_microphone(directory: &Path) -> Result<()> {
     for (index, target) in journal.restore(&current) {
         match policy.set_default(&target, ROLES[index]) {
             Ok(()) => {
-                tracing::info!(role = butterpollo_core::audio_defaults::ROLE_NAMES[index], device = %target, "microphone default restored")
+                tracing::info!(role = butterpollo_media_policy::audio_defaults::ROLE_NAMES[index], device = %target, "microphone default restored")
             }
             Err(error) => {
                 failed.get_or_insert(error);
@@ -538,7 +542,7 @@ fn restore_microphone(directory: &Path) -> Result<()> {
     if let Some(error) = failed {
         return Err(error.context("restoring the previous microphone"));
     }
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &microphone_path(directory),
         &Option::<MicrophoneDefaults>::None,
     )
@@ -551,7 +555,7 @@ pub struct MicrophoneRoute {
 }
 impl MicrophoneRoute {
     pub fn acquire(directory: &Path) -> Result<Self> {
-        use butterpollo_core::audio_defaults::MicrophoneDefaults;
+        use butterpollo_media_policy::audio_defaults::MicrophoneDefaults;
         let _com = crate::capture::ComGuard::new()?;
         let active = ACTIVE.lock().unwrap();
         if MICROPHONE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -572,7 +576,7 @@ impl MicrophoneRoute {
         let journal =
             MicrophoneDefaults::new(current.clone(), selected.id.clone(), pending.as_ref());
         // Persist and arm crash recovery before the first Windows mutation.
-        butterpollo_core::state::write_json(&microphone_path(directory), &Some(&journal))?;
+        butterpollo_session::state::write_json(&microphone_path(directory), &Some(&journal))?;
         crate::display_recovery::microphone(true)?;
         let result = (|| -> Result<()> {
             // Once forwarding owns recording restoration, the older playback
@@ -1056,15 +1060,15 @@ impl Route {
         let pending = pending(directory);
         let all = all_endpoints();
         let owned = |id: &str| host_owned(&all, id);
-        let before = butterpollo_core::audio_defaults::restore_targets(
+        let before = butterpollo_media_policy::audio_defaults::restore_targets(
             &originals(defaults()?, pending.as_ref(), owned),
             owned,
         );
         let capture_before = if microphone_owns_recording(directory) {
             Default::default()
         } else {
-            butterpollo_core::audio_defaults::recording_targets(
-                butterpollo_core::audio_defaults::with_pending(
+            butterpollo_media_policy::audio_defaults::recording_targets(
+                butterpollo_media_policy::audio_defaults::with_pending(
                     defaults_for(eCapture)?,
                     pending.as_ref().map(|journal| &journal.capture_before),
                     owned,
@@ -1229,7 +1233,7 @@ impl Route {
         // driver arrives, is the host's and is not.
         let all = all_endpoints();
         let owned = |id: &str| id.eq_ignore_ascii_case(&self.sink) || host_owned(&all, id);
-        if butterpollo_core::audio_defaults::adopt(&mut journal.before, &current, owned) {
+        if butterpollo_media_policy::audio_defaults::adopt(&mut journal.before, &current, owned) {
             tracing::info!(
                 devices = %device_names(&all, &journal.before),
                 "audio defaults to restore after the stream (console | multimedia | communications)"

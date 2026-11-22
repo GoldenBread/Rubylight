@@ -1,10 +1,8 @@
 //! A launcher showing a prompt instead of the game (plan item B5): the windows are read while the
 //! game has not shown up, and the owner's session says what the launcher wants.
 use super::*;
-use butterpollo_core::{
-    launcher_prompt::Window,
-    native_api::session::{LauncherKind, State as SessionState},
-};
+use butterpollo_session::launcher_prompt::Window;
+use rubylight_native_api::session::{LauncherKind, State as SessionState};
 
 fn window(process: &str, title: &str, foreground: bool) -> Window {
     Window {
@@ -106,7 +104,7 @@ async fn another_device_does_not_see_the_launcher() {
     let mut other = s.client.clone();
     other.uuid = "someone-else".into();
     assert!(
-        butterpollo_core::native::session_view(&snapshot, &other)
+        butterpollo_session::native::session_view(&snapshot, &other)
             .launcher
             .is_none()
     );

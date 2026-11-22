@@ -1,7 +1,7 @@
 //! Host configuration and metadata API handlers.
 
 use crate::state::Shared;
-use butterpollo_core::{state, steamgriddb as sgdb};
+use butterpollo_session::{config_ext::ConfigExt, state, steamgriddb as sgdb};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -9,7 +9,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
     Ok(match (method, path) {
         ("GET", "/api/config") => {
             let c = if h.port_override.is_some() {
-                butterpollo_core::config::Config::load(&h.config_path)?
+                butterpollo_config::config::Config::load(&h.config_path)?
             } else {
                 h.config.read().unwrap().clone()
             };
@@ -62,7 +62,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             }
             let _save = h.config_save.lock().unwrap();
             let mut next = if h.port_override.is_some() {
-                butterpollo_core::config::Config::load(&h.config_path)?
+                butterpollo_config::config::Config::load(&h.config_path)?
             } else {
                 h.config.read().unwrap().clone()
             };
@@ -213,7 +213,7 @@ const RESTART_KEYS: &[&str] = &[
 /// Whether a save of `keys` takes a restart to apply in full, for the
 /// console's "Some changes apply after the host restarts".
 fn restart_required<'a>(mut keys: impl Iterator<Item = &'a String>) -> bool {
-    keys.any(|key| RESTART_KEYS.contains(&butterpollo_core::config::current_name(key)))
+    keys.any(|key| RESTART_KEYS.contains(&butterpollo_config::config::current_name(key)))
 }
 
 /// Saves one setting that a page manages itself: `next` gets the stored text
@@ -226,7 +226,7 @@ pub(super) fn save_setting(
 ) -> anyhow::Result<()> {
     let _save = h.config_save.lock().unwrap();
     let mut config = if h.port_override.is_some() {
-        butterpollo_core::config::Config::load(&h.config_path)?
+        butterpollo_config::config::Config::load(&h.config_path)?
     } else {
         h.config.read().unwrap().clone()
     };
@@ -301,7 +301,7 @@ fn metadata(
         .cloned()
         .unwrap_or_else(|| address(std::env::var("COMPUTERNAME").unwrap_or_default()));
     let enhancements = crate::nvidia_enhance::status(shared);
-    let value = json!({"status":true,"platform":"windows","version":env!("CARGO_PKG_VERSION"),"branch":"codex/butterpollo-rust","host_name":crate::network::host_name(&config),"pc_address":pc_address,"pc_addresses":addresses,"paired_devices":shared.paired.read().unwrap().clients.len(),"enable_pairing":config.boolean("enable_pairing",true),"qr_pairing":config.qr_pairing(),"warnings":crate::host_warnings::visible(&shared.directory,&shared.warnings),"encoder_status":{"state":if probing {"checking"} else if codecs == 0 {"failed"} else {"ready"},"h264":codecs&1!=0,"hevc":codecs&0x100!=0,"av1":codecs&0x10000!=0,"pyrowave":codecs&0x800000!=0,"yuv444":butterpollo_core::codec_support::native_444_labels(codecs)},"capture_status":{"configured_backend":config.get("capture","auto"),"virtual_display_configured":config.virtual_display_mode(butterpollo_windows::display::virtual_display_os())!="disabled","displays":displays.as_ref().ok(),"error":displays.as_ref().err().map(|e|e.to_string())},"virtual_display":virtual_display,"gpus":gpus.as_ref().ok(),"gpu_error":gpus.as_ref().err().map(|e|e.to_string()),"audio_sinks":audio.as_ref().ok(),"audio_error":audio.as_ref().err().map(|e|e.to_string()),"audio_enabled":config.boolean("stream_audio",true),"features":{"rust_host":true,"hdr":true,"pyrowave":codecs&0x800000!=0,"virtual_display":capable,"virtual_display_os":butterpollo_windows::display::virtual_display_os(),"rtx_hdr":enhancements["rtx_hdr"]==true,"rtx_video":enhancements["rtx_video"]==true},"nvidia_enhancements":enhancements,"credentials_exists":shared.credentials.read().unwrap().is_some(),"webrtc":shared.webrtc.status_json(&config)});
+    let value = json!({"status":true,"platform":"windows","version":env!("CARGO_PKG_VERSION"),"branch":"codex/butterpollo-rust","host_name":crate::network::host_name(&config),"pc_address":pc_address,"pc_addresses":addresses,"paired_devices":shared.paired.read().unwrap().clients.len(),"enable_pairing":config.boolean("enable_pairing",true),"qr_pairing":config.qr_pairing(),"warnings":crate::host_warnings::visible(&shared.directory,&shared.warnings),"encoder_status":{"state":if probing {"checking"} else if codecs == 0 {"failed"} else {"ready"},"h264":codecs&1!=0,"hevc":codecs&0x100!=0,"av1":codecs&0x10000!=0,"pyrowave":codecs&0x800000!=0,"yuv444":butterpollo_media_policy::codec_support::native_444_labels(codecs)},"capture_status":{"configured_backend":config.get("capture","auto"),"virtual_display_configured":config.virtual_display_mode(butterpollo_windows::display::virtual_display_os())!="disabled","displays":displays.as_ref().ok(),"error":displays.as_ref().err().map(|e|e.to_string())},"virtual_display":virtual_display,"gpus":gpus.as_ref().ok(),"gpu_error":gpus.as_ref().err().map(|e|e.to_string()),"audio_sinks":audio.as_ref().ok(),"audio_error":audio.as_ref().err().map(|e|e.to_string()),"audio_enabled":config.boolean("stream_audio",true),"features":{"rust_host":true,"hdr":true,"pyrowave":codecs&0x800000!=0,"virtual_display":capable,"virtual_display_os":butterpollo_windows::display::virtual_display_os(),"rtx_hdr":enhancements["rtx_hdr"]==true,"rtx_video":enhancements["rtx_video"]==true},"nvidia_enhancements":enhancements,"credentials_exists":shared.credentials.read().unwrap().is_some(),"webrtc":shared.webrtc.status_json(&config)});
     *cached = Some((Instant::now(), value.clone()));
     Ok(value)
 }

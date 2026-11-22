@@ -6,11 +6,9 @@
 //! Foundation Sunshine's (AlkaidLab/foundation-sunshine, GPL-3.0) DLSS NR
 //! settings.
 use crate::state::{Session, Shared};
-use butterpollo_core::nvidia_enhance::Enhancement;
-use butterpollo_core::{
-    config::Config,
-    nvidia_enhance::{self, RTX_HDR, RTX_VIDEO, Source},
-};
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::nvidia_enhance::Enhancement;
+use butterpollo_media_policy::nvidia_enhance::{self, RTX_HDR, RTX_VIDEO, Source};
 use butterpollo_windows::capture::{GpuImage, Pixel};
 use std::sync::{Arc, atomic::Ordering};
 
@@ -161,7 +159,7 @@ fn for_capture<'a>(
     vendor: u32,
     adapter: &'a str,
 ) -> (u8, Option<nvidia_enhance::Elsewhere<'a>>) {
-    if butterpollo_core::encoder_gpu::is_nvidia(vendor) {
+    if butterpollo_media_policy::encoder_gpu::is_nvidia(vendor) {
         return (offered, None);
     }
     let gpu = if adapter.is_empty() {

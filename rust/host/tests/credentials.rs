@@ -1,4 +1,4 @@
-use butterpollo_core::state::{Credentials, load_json};
+use butterpollo_session::state::{Credentials, load_json};
 use serde_json::json;
 
 #[test]

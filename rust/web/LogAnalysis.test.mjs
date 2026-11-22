@@ -46,7 +46,7 @@ test('a fix that names a setting links to its row in All settings', async () => 
   assert.doesNotMatch(findings([finding]), /href="\/settings/);
   // Every setting the host's rules link to is one the console shows.
   const { readFile } = await import('node:fs/promises');
-  const rules = await readFile(new URL('../core/src/log_analysis.rs', import.meta.url), 'utf8');
+  const rules = await readFile(new URL('../core/session/src/log_analysis.rs', import.meta.url), 'utf8');
   const linked = [...rules.matchAll(/setting: Some\("([a-z0-9_]+)"\)/g)].map(match => match[1]);
   assert(linked.length >= 4, `only ${linked.length} links found: the pattern no longer matches the code`);
   const { schema } = await server.ssrLoadModule('/src/lib/settings-schema.ts');

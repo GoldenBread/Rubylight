@@ -122,7 +122,7 @@ fn pipe_handshake_and_fragmented_unicode_status_match_the_packaged_plugin() {
     .unwrap();
     let message = pipe.lines.recv_timeout(Duration::from_secs(3)).unwrap();
     assert!(
-        matches!(butterpollo_core::playnite::parse(&message), butterpollo_core::playnite::Message::Status { install_dir, .. } if install_dir == "C:/Çağrı/Oyun")
+        matches!(butterpollo_session::playnite::parse(&message), butterpollo_session::playnite::Message::Status { install_dir, .. } if install_dir == "C:/Çağrı/Oyun")
     );
     pipe.send(&serde_json::json!({"done":true})).unwrap();
     thread.join().unwrap();
@@ -198,7 +198,7 @@ fn pipe_rejects_a_server_outside_the_expected_windows_session() {
 #[test]
 fn running_ignores_other_sessions_and_unreadable_processes() {
     let processes = (1..=3)
-        .map(|pid| butterpollo_core::steam::Process {
+        .map(|pid| butterpollo_session::steam::Process {
             pid,
             parent: 0,
             started: 1,

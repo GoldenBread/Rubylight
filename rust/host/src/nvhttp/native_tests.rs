@@ -10,15 +10,13 @@ use axum::{
     body::{Body, to_bytes},
     http::{HeaderMap, Request},
 };
-use butterpollo_core::{
-    crypto::Identity,
-    native::Scan,
-    native_api::{
-        capabilities::Capabilities,
-        error::ErrorCode,
-        library::Library,
-        session::{Owner, Session as ApiSession, State as SessionState},
-    },
+use butterpollo_crypto::crypto::Identity;
+use butterpollo_session::native::Scan;
+use rubylight_native_api::{
+    capabilities::Capabilities,
+    error::ErrorCode,
+    library::Library,
+    session::{Owner, Session as ApiSession, State as SessionState},
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -945,7 +943,7 @@ async fn serverinfo_xml(f: &Fixture, tls: bool) -> String {
     let mut connection = f.connection(tls);
     connection.peer = "192.168.1.5:1234".parse().unwrap();
     let client = authenticated(&f.host, &connection, 0).ok();
-    let config = butterpollo_core::config::Config::parse("sunshine_name=Snapshot").unwrap();
+    let config = butterpollo_config::config::Config::parse("sunshine_name=Snapshot").unwrap();
     let response = serverinfo_response(
         &f.host,
         &connection,

@@ -316,7 +316,7 @@ fn the_right_touchpad_stays_ignored_when_the_client_did_not_announce_two() {
 }
 #[test]
 fn the_steam_controllers_contacts_are_its_two_pads() {
-    use butterpollo_core::input_policy::VHF_STEAM_CONTROLLER as STEAM;
+    use butterpollo_input_policy::input_policy::VHF_STEAM_CONTROLLER as STEAM;
     let mut pointers = BTreeMap::new();
     // Two touchpads: each is its own pad at its full width.
     let left = submit_touch_on(&mut pointers, STEAM, 4, &touch(2, 0, 1, 0), true).unwrap();
@@ -443,8 +443,8 @@ fn virtual_touch_mapping_keeps_controller_lifecycles_and_profiles_separate() {
 fn release_skips_a_pad_that_holds_nothing_and_stays_loud_for_one_that_does() {
     // A backend without a driver handle: every report to it fails.
     let mut pads = Gamepads::open_options(
-        butterpollo_core::input_policy::USBIP_DUALSENSE,
-        butterpollo_core::input_policy::Policy::resolve(&Default::default()).unwrap(),
+        butterpollo_input_policy::input_policy::USBIP_DUALSENSE,
+        butterpollo_input_policy::input_policy::Policy::resolve(&Default::default()).unwrap(),
         Default::default(),
     )
     .unwrap();
@@ -482,8 +482,8 @@ fn release_skips_a_pad_that_holds_nothing_and_stays_loud_for_one_that_does() {
 /// (nightjar#125: the host masked the grip away for every pad).
 #[test]
 fn the_steam_controllers_left_grip_bit_reaches_its_own_pad() {
-    use butterpollo_core::input_policy::VHF_STEAM_CONTROLLER;
-    use butterpollo_core::switch2::BUTTON_C;
+    use butterpollo_input_policy::input_policy::VHF_STEAM_CONTROLLER;
+    use butterpollo_input_policy::switch2::BUTTON_C;
     assert_eq!(BUTTON_C, 0x0040_0000);
     assert_eq!(
         profile_button_word(Some(VHF_STEAM_CONTROLLER), BUTTON_C | 0x1000),
@@ -613,7 +613,7 @@ fn a_recreate_without_the_driver_keeps_the_pad_for_the_next_attempt() {
     // target in the same slot if its bus ever reports the device gone.
     pads.backend = gamepad_backend::Backend::Vigem(vigem::Client::detached().unwrap());
     pads.profiles
-        .insert(0, butterpollo_core::input_policy::VIGEM_X360);
+        .insert(0, butterpollo_input_policy::input_policy::VIGEM_X360);
     assert!(pads.recreate(0).is_err());
     assert_eq!(pads.active.get(&0), Some(&15));
     pads.active.clear();
@@ -862,8 +862,8 @@ fn refresh_recreates_a_pad_whose_driver_device_was_removed() {
 /// sleep can otherwise reach.
 fn scripted_pads() -> Gamepads {
     let mut pads = broken_pads();
-    pads.profile = butterpollo_core::input_policy::VHF_XBOX_SERIES;
-    pads.available = 1 << (butterpollo_core::input_policy::VHF_XBOX_SERIES - 1);
+    pads.profile = butterpollo_input_policy::input_policy::VHF_XBOX_SERIES;
+    pads.available = 1 << (butterpollo_input_policy::input_policy::VHF_XBOX_SERIES - 1);
     pads.backend = gamepad_backend::Backend::Fake(Default::default());
     pads
 }
@@ -895,8 +895,8 @@ fn device_removed_error() -> anyhow::Error {
 /// Gamepads whose driver handle is missing: every plug and unplug fails.
 fn broken_pads() -> Gamepads {
     let mut pads = Gamepads::open_options(
-        butterpollo_core::input_policy::USBIP_DUALSENSE,
-        butterpollo_core::input_policy::Policy::resolve(&Default::default()).unwrap(),
+        butterpollo_input_policy::input_policy::USBIP_DUALSENSE,
+        butterpollo_input_policy::input_policy::Policy::resolve(&Default::default()).unwrap(),
         Default::default(),
     )
     .unwrap();
@@ -906,11 +906,11 @@ fn broken_pads() -> Gamepads {
 #[test]
 fn only_a_plugged_vhf_driver_pad_raises_the_driver_host_and_only_when_asked() {
     let config =
-        butterpollo_core::config::Config::parse("gamepad_driver_host_priority=true\n").unwrap();
-    let policy = butterpollo_core::input_policy::Policy::resolve(&config).unwrap();
+        butterpollo_config::config::Config::parse("gamepad_driver_host_priority=true\n").unwrap();
+    let policy = butterpollo_input_policy::input_policy::Policy::resolve(&config).unwrap();
     assert!(policy.driver_host_priority);
     assert!(
-        !butterpollo_core::input_policy::Policy::resolve(&Default::default())
+        !butterpollo_input_policy::input_policy::Policy::resolve(&Default::default())
             .unwrap()
             .driver_host_priority,
         "off by default"
@@ -950,7 +950,8 @@ fn only_a_plugged_vhf_driver_pad_raises_the_driver_host_and_only_when_asked() {
     pads.follow_driver_host();
     assert_eq!(HELD.load(Ordering::SeqCst), 0, "the last pad left");
     // Off by default: the same pads raise nothing.
-    pads.policy = butterpollo_core::input_policy::Policy::resolve(&Default::default()).unwrap();
+    pads.policy =
+        butterpollo_input_policy::input_policy::Policy::resolve(&Default::default()).unwrap();
     pads.active.insert(0, 15);
     pads.follow_driver_host();
     assert_eq!(HELD.load(Ordering::SeqCst), 0);
@@ -1000,7 +1001,7 @@ fn a_pad_that_will_not_unplug_at_session_end_keeps_its_slot_until_it_does() {
 /// otherwise, and hears nothing about one.
 #[test]
 fn a_chosen_vigem_pad_is_never_replaced_by_a_steam_deck_pad() {
-    use butterpollo_core::input_policy::{
+    use butterpollo_input_policy::input_policy::{
         CTYPE_STEAM, DeckPad, VIGEM_DS4, VIGEM_PROFILES, VIGEM_X360,
     };
     for profile in [VIGEM_X360, VIGEM_DS4] {
@@ -1018,7 +1019,7 @@ fn a_chosen_vigem_pad_is_never_replaced_by_a_steam_deck_pad() {
 /// VHF PlayStation pads, its contacts with their driver slot and position.
 #[test]
 fn a_vigem_ds4_takes_touch_motion_and_battery() {
-    use butterpollo_core::input_policy::{VIGEM_DS4, VIGEM_X360};
+    use butterpollo_input_policy::input_policy::{VIGEM_DS4, VIGEM_X360};
     let pointers = BTreeMap::new();
     let update = gamepad_touch_request(&pointers, VIGEM_DS4, 3, &touch(0, 0, 1, 17), false)
         .expect("a DS4 touch");
@@ -1042,7 +1043,7 @@ fn a_vigem_ds4_takes_touch_motion_and_battery() {
 /// Back changes.
 #[test]
 fn back_clicks_a_vigem_ds4_touchpad_unless_turned_off() {
-    use butterpollo_core::input_policy::{VHF_DS4, VIGEM_DS4};
+    use butterpollo_input_policy::input_policy::{VHF_DS4, VIGEM_DS4};
     let mut pads = broken_pads();
     pads.profiles.insert(0, VIGEM_DS4);
     pads.profiles.insert(1, VHF_DS4);
@@ -1056,7 +1057,7 @@ fn back_clicks_a_vigem_ds4_touchpad_unless_turned_off() {
 /// without a Steam Controller's capabilities included.
 #[test]
 fn a_chosen_steam_controller_is_never_replaced_by_a_steam_deck_pad() {
-    use butterpollo_core::input_policy::{CTYPE_STEAM, DeckPad, VHF_STEAM_CONTROLLER};
+    use butterpollo_input_policy::input_policy::{CTYPE_STEAM, DeckPad, VHF_STEAM_CONTROLLER};
     let mut pads = broken_pads();
     pads.profile = VHF_STEAM_CONTROLLER;
     pads.policy.steam_deck = DeckPad::SteamDeck;
@@ -1121,7 +1122,9 @@ fn a_vigem_pad_that_will_not_unplug_frees_its_slot_with_its_client() {
 }
 #[test]
 fn a_nintendo_controller_without_the_switch_profile_is_warned_about() {
-    use butterpollo_core::input_policy::{VHF_DS4, VHF_DUALSENSE, VHF_SWITCH, VHF_XBOX_SERIES};
+    use butterpollo_input_policy::input_policy::{
+        VHF_DS4, VHF_DUALSENSE, VHF_SWITCH, VHF_XBOX_SERIES,
+    };
     assert_eq!(switch_fallback(0, 3, 0x30, VHF_SWITCH), None);
     assert_eq!(
         switch_fallback(0, 1, 0x30, VHF_DUALSENSE),
@@ -1148,7 +1151,7 @@ fn a_nintendo_controller_without_the_switch_profile_is_warned_about() {
 fn steam_controls_pads(steam_app: bool, running: fn() -> bool) -> Gamepads {
     let mut pads = scripted_pads();
     pads.profile = 0;
-    pads.available |= 1 << (butterpollo_core::input_policy::VHF_STEAM_CONTROLLER - 1);
+    pads.available |= 1 << (butterpollo_input_policy::input_policy::VHF_STEAM_CONTROLLER - 1);
     pads.policy.steam_app = steam_app;
     pads.steam_running = running;
     pads
@@ -1167,7 +1170,7 @@ fn steam_controls_arrival(id: u8, capabilities: u16) -> Event {
 /// Steam Controller now), leaving forgets the answer, and pads without the controls never ask.
 #[test]
 fn steam_controls_keep_the_pad_steam_gave_them_until_they_arrive_again() {
-    use butterpollo_core::input_policy::{VHF_STEAM_CONTROLLER, VHF_XBOX_SERIES};
+    use butterpollo_input_policy::input_policy::{VHF_STEAM_CONTROLLER, VHF_XBOX_SERIES};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     static RUNNING: AtomicBool = AtomicBool::new(false);
     static ASKED: AtomicUsize = AtomicUsize::new(0);
@@ -1227,7 +1230,7 @@ fn steam_controls_keep_the_pad_steam_gave_them_until_they_arrive_again() {
 /// the pad a Steam Controller mid-stream; the client's own next arrival asks again.
 #[test]
 fn a_replayed_arrival_keeps_the_steam_answer_of_the_refused_pads() {
-    use butterpollo_core::input_policy::{VHF_STEAM_CONTROLLER, VHF_XBOX_SERIES};
+    use butterpollo_input_policy::input_policy::{VHF_STEAM_CONTROLLER, VHF_XBOX_SERIES};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     static RUNNING: AtomicBool = AtomicBool::new(false);
     static ASKED: AtomicUsize = AtomicUsize::new(0);
@@ -1305,7 +1308,7 @@ fn memory_keeps_carried_steam_answers_not_yet_replayed() {
 /// warned or asks whether Steam runs.
 #[test]
 fn steam_controls_outside_a_steam_app_keep_an_xbox_pad() {
-    use butterpollo_core::input_policy::VHF_XBOX_SERIES;
+    use butterpollo_input_policy::input_policy::VHF_XBOX_SERIES;
     use std::sync::atomic::{AtomicUsize, Ordering};
     static ASKED: AtomicUsize = AtomicUsize::new(0);
     fn running() -> bool {
@@ -1337,7 +1340,7 @@ fn the_steam_controls_warning_lasts_while_a_controller_has_it() {
     pads.apply(&steam_controls_arrival(0, 0x600)).unwrap();
     pads.apply(&steam_controls_arrival(1, 0x600)).unwrap();
     assert!(warned(&pads));
-    let xbox = butterpollo_core::input_policy::VHF_XBOX_SERIES;
+    let xbox = butterpollo_input_policy::input_policy::VHF_XBOX_SERIES;
     assert_eq!((pads.profiles[&0], pads.profiles[&1]), (xbox, xbox));
     pads.apply(&state(0, 0b01)).unwrap();
     assert!(warned(&pads), "controller 0 still lacks it");
@@ -1353,7 +1356,7 @@ fn the_steam_controls_warning_lasts_while_a_controller_has_it() {
 }
 #[test]
 fn steam_controls_say_why_they_got_no_steam_controller() {
-    use butterpollo_core::input_policy::{
+    use butterpollo_input_policy::input_policy::{
         CTYPE_STEAM, VHF_DUALSENSE, VHF_STEAM_CONTROLLER, VHF_XBOX_SERIES,
     };
     let driver = (1 << (VHF_XBOX_SERIES - 1)) | (1 << (VHF_DUALSENSE - 1));

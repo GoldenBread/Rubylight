@@ -1,7 +1,7 @@
 use super::gamepads::{GamepadTouchRequest, request};
 use super::{open_interface, vigem};
 use anyhow::{Context, Result, bail};
-use butterpollo_core::input_policy::{
+use butterpollo_input_policy::input_policy::{
     USBIP_DUALSENSE, USBIP_SWITCH2, VHF_AUTO, VHF_SWITCH, VIGEM_DS4, VIGEM_PROFILES, VIGEM_X360,
 };
 use windows::{
@@ -277,9 +277,9 @@ impl Backend {
     pub(super) fn steam_attributes(
         &mut self,
         slot: u32,
-        attributes: &butterpollo_core::steam_pad::SteamAttributes,
+        attributes: &butterpollo_input_policy::steam_pad::SteamAttributes,
     ) -> Result<()> {
-        use butterpollo_core::steam_pad::{ATTRIBUTES_IOCTL, attributes_request};
+        use butterpollo_input_policy::steam_pad::{ATTRIBUTES_IOCTL, attributes_request};
         #[cfg(test)]
         if let Self::Fake(_) = self {
             return Ok(());

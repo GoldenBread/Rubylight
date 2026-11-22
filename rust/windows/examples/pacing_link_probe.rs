@@ -12,7 +12,7 @@ fn main() {
 #[cfg(windows)]
 fn main() -> anyhow::Result<()> {
     use anyhow::Context;
-    use butterpollo_core::network_pacing::{Pacer, batch_payload_limit};
+    use butterpollo_media_policy::network_pacing::{Pacer, batch_payload_limit};
     use butterpollo_windows::{
         net::{Batch, ReplySocket},
         timing::Timer,

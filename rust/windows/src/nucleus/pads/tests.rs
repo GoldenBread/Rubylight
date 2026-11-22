@@ -425,8 +425,8 @@ fn a_pad_s_rumble_goes_to_its_player_s_controller() {
 #[ignore = "plugs virtual Xbox pads: requires the virtual gamepad driver and an idle PC"]
 fn virtual_pads_take_free_xinput_indices_on_this_pc() -> Result<()> {
     let players = std::env::var("RUBYLIGHT_NUCLEUS_PLAYERS").map_or(Ok(2), |p| p.parse())?;
-    let policy = butterpollo_core::input_policy::Policy::resolve(&Default::default())?;
-    let warnings = std::sync::Arc::new(butterpollo_core::session::Warnings::default());
+    let policy = butterpollo_input_policy::input_policy::Policy::resolve(&Default::default())?;
+    let warnings = std::sync::Arc::new(butterpollo_session::session::Warnings::default());
     let pads = virtual_pads(policy.clone(), warnings.clone())?;
     let mut xinput = System::open()?;
     let before = xinput.connected()?;
@@ -468,9 +468,9 @@ fn virtual_pads_take_free_xinput_indices_on_this_pc() -> Result<()> {
 #[test]
 #[ignore = "plugs a pad on the installed ViGEmBus; needs an idle host"]
 fn a_session_with_the_vigem_pad_plugs_one_on_this_pc() -> Result<()> {
-    let config = butterpollo_core::config::Config::parse("gamepad=vigem_x360\n")?;
-    let policy = butterpollo_core::input_policy::Policy::resolve(&config)?;
-    let warnings = std::sync::Arc::new(butterpollo_core::session::Warnings::default());
+    let config = butterpollo_config::config::Config::parse("gamepad=vigem_x360\n")?;
+    let policy = butterpollo_input_policy::input_policy::Policy::resolve(&config)?;
+    let warnings = std::sync::Arc::new(butterpollo_session::session::Warnings::default());
     let pads = virtual_pads(policy, warnings)?;
     let mut xinput = System::open()?;
     let before = xinput.connected()?;

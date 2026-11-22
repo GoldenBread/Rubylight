@@ -17,13 +17,8 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
 };
-use butterpollo_core::{
+use butterpollo_session::{
     native::{self, LAUNCH, VIEW},
-    native_api::{
-        error::ErrorCode,
-        radeon::{self as api, ControlState},
-        session::State as Session,
-    },
     session_state::Refusal,
     state::Client,
 };
@@ -31,6 +26,11 @@ use butterpollo_windows::radeon::{
     Driver, Entry, ErrorKind, GpuInfo, WriteError,
     model::{self, Value},
     worker::{Panel, Phase, Status},
+};
+use rubylight_native_api::{
+    error::ErrorCode,
+    radeon::{self as api, ControlState},
+    session::State as Session,
 };
 use serde::Deserialize;
 use std::{

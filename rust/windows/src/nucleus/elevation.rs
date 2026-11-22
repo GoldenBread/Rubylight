@@ -1,5 +1,5 @@
 //! What a game's .exe asks of Windows to start, read from the PC, for
-//! [`butterpollo_core::nucleus::elevation::choose`]: its manifest's level
+//! [`butterpollo_session::nucleus::elevation::choose`]: its manifest's level
 //! (or Windows' installer detection without one), the compatibility
 //! settings of the machine and of the signed-in user, and whether that user
 //! may change the files Nucleus Co-op changes before it starts the game.
@@ -9,7 +9,7 @@
 //! have SYSTEM read any file. Every read of it is done as the user.
 use super::layers::{self, Layers};
 use anyhow::{Context, Result, bail};
-use butterpollo_core::nucleus::elevation::{self as rule, Need, Why};
+use butterpollo_session::nucleus::elevation::{self as rule, Need, Why};
 use std::collections::BTreeMap;
 use std::os::windows::io::OwnedHandle;
 use std::path::{Path, PathBuf};
@@ -89,19 +89,20 @@ pub fn manifest_need(exe: &Path) -> Result<Option<Need>> {
 }
 
 /// Whether the game at `exe` imports DirectInput
-/// ([`butterpollo_core::nucleus::imports`]), read as the user of `token`
+/// ([`butterpollo_session::nucleus::imports`]), read as the user of `token`
 /// (None: as the host, in tests).
 pub fn reads_direct_input(exe: &Path, token: Option<&OwnedHandle>) -> Result<bool> {
     read_as(token, exe, |exe| {
         let file = std::fs::File::open(exe)?;
-        let dlls =
-            butterpollo_core::nucleus::imports::imported_dlls(&mut std::io::BufReader::new(file))?;
+        let dlls = butterpollo_session::nucleus::imports::imported_dlls(
+            &mut std::io::BufReader::new(file),
+        )?;
         tracing::info!(
             exe = %exe.display(),
-            pads = ?butterpollo_core::nucleus::imports::pad_dlls(&dlls),
+            pads = ?butterpollo_session::nucleus::imports::pad_dlls(&dlls),
             "Nucleus Co-op: the DLLs the game imports to read a pad"
         );
-        Ok(butterpollo_core::nucleus::imports::direct_input(&dlls))
+        Ok(butterpollo_session::nucleus::imports::direct_input(&dlls))
     })
     .with_context(|| format!("reading the DLLs {} imports", exe.display()))
 }

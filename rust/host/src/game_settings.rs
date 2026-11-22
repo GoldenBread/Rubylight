@@ -1,5 +1,5 @@
 //! The host's side of game settings files per device (issues #72 and #69; the rules are in
-//! `butterpollo_core::game_settings`): when a swap begins and ends, its retries and the console.
+//! `butterpollo_session::game_settings`): when a swap begins and ends, its retries and the console.
 //!
 //! A stream's launch swaps the files in just before the app's process starts; a launch the
 //! files cannot be swapped for fails with the reason, so the game never starts with the wrong
@@ -27,7 +27,7 @@
 //! The devices' copies stay in the host's config folder when a device is unpaired or the app
 //! is removed; pairing the device again, or adding the app back with the same uuid, finds them.
 use crate::state::{Host, Shared};
-use butterpollo_core::{
+use butterpollo_session::{
     game_files,
     game_settings::{self, Report, Store, Watched},
     state::App,

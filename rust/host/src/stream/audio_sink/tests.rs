@@ -17,8 +17,14 @@ fn the_audio_clock_counts_packets_sent_or_not_and_what_windows_dropped() {
 #[test]
 fn a_session_that_is_ending_has_no_audio_ping_timeout() {
     let fixture = crate::state::test_support::Fixture::new();
-    let launch = fixture.launch(fixture.client(0), butterpollo_core::session::Role::Stream);
-    let session = Session::new(launch, butterpollo_core::rtsp::Negotiated::default());
+    let launch = fixture.launch(
+        fixture.client(0),
+        butterpollo_session::session::Role::Stream,
+    );
+    let session = Session::new(
+        launch,
+        butterpollo_media_policy::rtsp::Negotiated::default(),
+    );
     let host_stop = AtomicBool::new(false);
     let timeout = Duration::from_secs(10);
     let long_ago = Instant::now() - Duration::from_secs(70);
@@ -41,7 +47,7 @@ fn a_session_that_is_ending_has_no_audio_ping_timeout() {
 
 #[test]
 fn a_late_audio_ping_brings_the_sound_back_and_clears_the_warning() {
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let codes = || {
         warnings
             .snapshot()
@@ -501,7 +507,7 @@ fn gamestream_audio_is_the_packetizer_output_on_the_wire() {
     }
 }
 
-use butterpollo_core::audio::OpusLayout;
+use butterpollo_media_policy::audio::OpusLayout;
 
 /// 5.1 as Chromium's multiopus decodes it, and as Moonlight's own mapping orders it.
 fn five_one(mapping: [u8; 6]) -> OpusLayout {
@@ -516,7 +522,10 @@ fn five_one(mapping: [u8; 6]) -> OpusLayout {
 
 fn session() -> Arc<crate::state::Session> {
     let f = crate::state::test_support::Fixture::new();
-    f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream)
+    f.session(
+        f.client(u32::MAX),
+        butterpollo_session::session::Role::Stream,
+    )
 }
 
 #[test]

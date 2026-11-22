@@ -1,5 +1,7 @@
 use anyhow::Result;
-use butterpollo_core::{auth, config::Config, crypto::Identity, state};
+use butterpollo_config::config::Config;
+use butterpollo_crypto::{auth, crypto::Identity};
+use butterpollo_session::state;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -81,9 +83,9 @@ pub fn rc23_profile(profile: &Path) -> Result<()> {
         "shared_virtual_display_guid":"40000000-0000-4000-8000-000000000001",
         "app_id_aliases":{"game-uuid":{"current_id":"1234","cover_fingerprint":"default","aliases":["2345","3456"]}},
         "api_tokens":[
-            {"hash":butterpollo_core::crypto::legacy_hash(b"rc23-apps-token"),"username":"admin","created_at":now - 86400,
+            {"hash":butterpollo_crypto::crypto::legacy_hash(b"rc23-apps-token"),"username":"admin","created_at":now - 86400,
                 "scopes":[{"path":"/api/apps","methods":["GET"]}],"future_token":{"keep":true}},
-            {"hash":butterpollo_core::crypto::legacy_hash(b"rc23-config-token"),"username":"admin","created_at":now - 3600,
+            {"hash":butterpollo_crypto::crypto::legacy_hash(b"rc23-config-token"),"username":"admin","created_at":now - 3600,
                 "scopes":[{"path":"/api/config","methods":["GET","POST"]}]}
         ],
         "session_tokens":[
@@ -210,7 +212,8 @@ pub fn assert_usable(profile: &Path) -> Result<()> {
     // Every device is kept as it was, except that loading takes back the
     // file transfer bits a state from before the migration gave them.
     let mut kept = paired.document["root"]["named_devices"].clone();
-    let file_bits = butterpollo_core::native::FILE_UPLOAD | butterpollo_core::native::FILE_DOWNLOAD;
+    let file_bits =
+        butterpollo_session::native::FILE_UPLOAD | butterpollo_session::native::FILE_DOWNLOAD;
     for device in kept.as_array_mut().unwrap() {
         let perm = device["perm"].as_u64().unwrap() as u32;
         assert_ne!(perm & file_bits, 0, "the fixture grants file transfer");

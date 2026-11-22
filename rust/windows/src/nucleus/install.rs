@@ -15,7 +15,7 @@
 //! that never follows a link, and a launch holds the folder and its
 //! NucleusCoop.exe open from the check until Windows started it ([`hold`]).
 use anyhow::{Context, Result, bail};
-use butterpollo_core::nucleus::install::{self as pinned, Manifest, Problem, Shipped, Unusable};
+use butterpollo_session::nucleus::install::{self as pinned, Manifest, Problem, Shipped, Unusable};
 use std::collections::{HashMap, HashSet};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;

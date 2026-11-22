@@ -23,7 +23,7 @@ fn the_config_snapshot_is_shared_while_unchanged_and_follows_every_change() {
 }
 #[test]
 fn a_focus_check_error_marks_only_that_codec_unsupported() {
-    use butterpollo_core::encoder_focus::{Reason, Support};
+    use butterpollo_media_policy::encoder_focus::{Reason, Support};
     let mut support: [Support; 5] = std::array::from_fn(|_| Support::NotProbed);
     support[0] = focus_verdict(Ok(Support::Verified { delta: 10.0 }));
     support[1] = focus_verdict(Err(anyhow::anyhow!("frame 3 was not encoded")));
@@ -71,7 +71,7 @@ fn a_timed_out_early_or_crashed_pyrowave_probe_is_probed_again() {
 /// starts stops the probe until it has ended.
 mod pyrowave_retry {
     use crate::state::test_support::Fixture;
-    use butterpollo_core::config::Config;
+    use butterpollo_config::config::Config;
     use butterpollo_windows::codec_probe::{Crashed, Interrupted, SessionNotReady, TimedOut};
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::time::{Duration, Instant};
@@ -245,8 +245,10 @@ mod pyrowave_retry {
 /// land while the probe runs.
 mod packed_reprobe {
     use crate::state::test_support::Fixture;
-    use butterpollo_core::{config::Config, packed444::mode_bit, rtsp::Negotiated};
+    use butterpollo_config::config::Config;
+    use butterpollo_media_policy::rtsp::Negotiated;
     use butterpollo_windows::codec_probe::{Interrupted, SessionNotReady};
+    use rubylight_protocol::packed444::mode_bit;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::time::{Duration, Instant};
 
@@ -317,7 +319,7 @@ mod packed_reprobe {
             .insert("stream".into(), Instant::now());
         until("the probe stopped", || {
             f.host.packed_probe_pending.load(Ordering::Acquire)
-                == butterpollo_core::packed444::ALL_MODES
+                == rubylight_protocol::packed444::ALL_MODES
         });
         std::thread::sleep(Duration::from_millis(400));
         assert_eq!(
@@ -328,7 +330,7 @@ mod packed_reprobe {
         assert_eq!(offered(&f), 0);
         f.host.sessions.lock().unwrap().teardown.clear();
         until("the modes are probed after the stream", || {
-            offered(&f) == butterpollo_core::packed444::ALL_MODES
+            offered(&f) == rubylight_protocol::packed444::ALL_MODES
         });
     }
 
@@ -500,13 +502,13 @@ mod packed_reprobe {
         f.host.packed_modes.store(offered_before, Ordering::Release);
         save(&f, "hevc_mode", "0", probe);
         until("HEVC 10-bit is probed", || {
-            offered(&f) == butterpollo_core::packed444::ALL_MODES
+            offered(&f) == rubylight_protocol::packed444::ALL_MODES
         });
         until("the probe finished", || {
             !f.host.packed_reprobing.load(Ordering::Acquire)
         });
         assert!(!AV1_PROBED.load(Ordering::Acquire));
-        assert_eq!(offered(&f), butterpollo_core::packed444::ALL_MODES);
+        assert_eq!(offered(&f), rubylight_protocol::packed444::ALL_MODES);
     }
 
     /// Turning full chroma off while its probe runs stops the probe at
@@ -565,7 +567,7 @@ mod packed_reprobe {
         f.host.codecs.store(CODECS, Ordering::Release);
         let config = packed_on(&f);
         f.host.pass_packed_probe(&config, CODECS, &|| false, probe);
-        let all = butterpollo_core::packed444::ALL_MODES;
+        let all = rubylight_protocol::packed444::ALL_MODES;
         assert_eq!(f.host.packed_probe_pending.load(Ordering::Acquire), all);
         assert_eq!(offered(&f), 0);
         SIGNED_IN.store(true, Ordering::Release);
@@ -652,7 +654,7 @@ mod packed_reprobe {
         assert!(*f.host.startup_codecs.borrow() && *f.host.startup_packed.borrow());
         assert_eq!(
             f.host.packed_probe_pending.load(Ordering::Acquire),
-            butterpollo_core::packed444::ALL_MODES
+            rubylight_protocol::packed444::ALL_MODES
         );
     }
 
@@ -713,7 +715,7 @@ fn packed_modes_are_logged_by_name() {
     assert_eq!(super::packed_mode_names(0), "none");
     assert_eq!(super::packed_mode_names(1 | 4), "HEVC 8-bit, AV1 8-bit");
     assert_eq!(
-        super::packed_mode_names(butterpollo_core::packed444::ALL_MODES),
+        super::packed_mode_names(rubylight_protocol::packed444::ALL_MODES),
         "HEVC 8-bit, HEVC 10-bit, AV1 8-bit, AV1 10-bit"
     );
 }
@@ -834,7 +836,7 @@ fn an_older_device_layout_becomes_learned_once_with_a_notice() {
             device.extra
         );
         assert_eq!(
-            device.extra[butterpollo_core::state::LEARNED_OVER],
+            device.extra[butterpollo_session::state::LEARNED_OVER],
             json!("exclusive")
         );
         assert_eq!(
@@ -864,7 +866,8 @@ fn an_older_device_layout_becomes_learned_once_with_a_notice() {
     let third = Fixture::load(directory);
     assert!(third.host.warnings.snapshot().is_empty());
     assert_eq!(
-        third.host.paired.read().unwrap().clients[0].extra[butterpollo_core::state::LEARNED_OVER],
+        third.host.paired.read().unwrap().clients[0].extra
+            [butterpollo_session::state::LEARNED_OVER],
         json!("exclusive")
     );
 }
@@ -926,7 +929,7 @@ fn a_rejoin_in_another_mode_releases_only_the_clients_own_display() {
 #[test]
 fn a_sign_in_set_while_the_host_runs_is_taken_up_and_not_written_back() {
     use super::test_support::Fixture;
-    use butterpollo_core::state::{Credentials, load_json, write_json};
+    use butterpollo_session::state::{Credentials, load_json, write_json};
     let f = Fixture::new();
     let h = &f.host;
     // As in Apollo and Sunshine profiles, the sign-in shares the
@@ -1004,7 +1007,7 @@ fn host_load_reuses_the_shared_virtual_display_guid_without_replacing_an_existin
     let f = Fixture::new();
     let imported = "f773d31b-43da-470c-80d5-02e777a6d993";
     let existing = "15ff84bd-9db8-45ef-bfde-e60337744358";
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &f.host.aliases_path,
         &serde_json::json!({"root":{"shared_virtual_display_guid":imported}}),
     )
@@ -1304,7 +1307,7 @@ mod shutdown_audio {
         let f = Fixture::new();
         route(&f);
         let mut running = crate::process::RunningApp::with_environment(
-            &butterpollo_core::state::App::desktop(),
+            &butterpollo_session::state::App::desktop(),
             Default::default(),
         )
         .expect("the test app starts");

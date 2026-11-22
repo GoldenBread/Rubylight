@@ -237,7 +237,7 @@ mod comparison {
                     let mut deadline = start;
                     while start.elapsed() < Duration::from_secs(3) {
                         let interval = if idle && candidate {
-                            butterpollo_core::capture_policy::notification_wait_interval(
+                            butterpollo_media_policy::capture_policy::notification_wait_interval(
                                 start.elapsed(),
                                 false,
                                 period,

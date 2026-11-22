@@ -22,7 +22,7 @@ fn standard_chroma_is_left_sited_and_pyrowave_remains_center_sited() -> Result<(
         captured: Instant::now(),
     };
     let uploaded = GpuImage::upload_settled(&gpu, &image)?;
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 64,
         height: 64,
         codec: 1,
@@ -101,7 +101,7 @@ fn sdr_bt2020_gpu_matches_reference_primaries_and_transfer() -> Result<()> {
             pixel: Pixel::Bgra8,
             captured: Instant::now(),
         };
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 64,
             height: 64,
             codec: 1,
@@ -135,7 +135,7 @@ fn sdr_bt2020_gpu_matches_reference_primaries_and_transfer() -> Result<()> {
     // inside BT.2020. Mapping must happen before clamping the SDR output.
     let image = make_image(&[[-0.125, 1.2, -0.0125]], 64, 64);
     let uploaded = GpuImage::upload_settled(&gpu, &image)?;
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 64,
         height: 64,
         codec: 1,
@@ -165,8 +165,8 @@ fn sdr_bt2020_gpu_matches_reference_primaries_and_transfer() -> Result<()> {
 #[test]
 #[ignore = "requires D3D11 P010 conversion and D3D12 compute"]
 fn hdr_chroma_is_filtered_in_light_on_every_path() -> Result<()> {
-    use butterpollo_core::amf_vpe::{Source, Transfer};
-    use butterpollo_core::image_quality as q;
+    use butterpollo_media_policy::amf_vpe::{Source, Transfer};
+    use butterpollo_media_policy::image_quality as q;
     let _com = ComGuard::new()?;
     let gpu = Device::new("")?;
     let compute = crate::compute::Compute::for_device(&gpu.device)?;
@@ -222,7 +222,7 @@ fn hdr_chroma_is_filtered_in_light_on_every_path() -> Result<()> {
             apart > 8.,
             "{transfer:?}: the pattern does not separate light from codes: {apart}"
         );
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 64,
             height: 16,
             codec: 2,

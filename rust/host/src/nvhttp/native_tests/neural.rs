@@ -2,13 +2,13 @@
 //! Rendering") through the router, against the host's own Neural Rendering
 //! with a test GPU. Nothing here downloads or touches a game.
 use super::*;
-use butterpollo_core::native_api::{
+use butterpollo_session::neural::{AMD, Adapter, NVIDIA};
+use rubylight_native_api::{
     capabilities::Capabilities as Caps,
     feature,
     neural::{FRAME_GENERATION, Neural},
     radeon::ControlState,
 };
-use butterpollo_core::neural::{AMD, Adapter, NVIDIA};
 use serde_json::json;
 
 /// The host streams with `name`; `game` (and `old`, with Rubylight 3.0's
@@ -265,7 +265,7 @@ async fn the_applist_uuid_opens_the_games_switch() {
 /// the game's check, and names how and which release is in the folder.
 #[tokio::test]
 async fn the_game_is_checked_before_any_write_and_each_state_has_a_code() {
-    use butterpollo_core::native_api::neural::{Mode, Why};
+    use rubylight_native_api::neural::{Mode, Why};
     let s = Setup::new();
     host(&s, "AMD Radeon 780M Graphics", AMD, 0x1900);
     s.host_control(true);
@@ -377,7 +377,7 @@ async fn the_game_is_checked_before_any_write_and_each_state_has_a_code() {
 /// with the console's note.
 #[tokio::test]
 async fn a_missing_runtime_has_its_own_code_and_another_gpu_its_note() {
-    use butterpollo_core::native_api::neural::Why;
+    use rubylight_native_api::neural::Why;
     let s = Setup::new();
     host(&s, "NVIDIA GeForce RTX 3060", NVIDIA, 0x2504);
     s.host()

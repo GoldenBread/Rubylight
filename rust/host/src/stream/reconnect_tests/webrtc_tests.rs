@@ -6,7 +6,8 @@ use crate::webrtc::{
     sdp::{AudioMode, OfferSpec, VideoCodec, testing as peer_sdp},
     server::{self, tests::Ws},
 };
-use butterpollo_core::webrtc::auth::proof_hex;
+use butterpollo_session::config_ext::ConfigExt;
+use butterpollo_session::webrtc::auth::proof_hex;
 use serde_json::{Value, json};
 use str0m::{
     Event, Input, Output,
@@ -618,7 +619,7 @@ async fn stream_and_stop(case: Case) -> Result<()> {
     let session = web.session();
     assert_eq!(
         session.launch.transport,
-        butterpollo_core::session::Transport::WebRtc
+        butterpollo_session::session::Transport::WebRtc
     );
     // The stream is configured as the GameStream path would for the same request.
     assert_eq!(session.config.codec, codec);
@@ -1132,7 +1133,7 @@ async fn a_moonlight_launch_replaces_a_webrtc_stream() -> Result<()> {
     let (session, client) = web.harness.play(&launch).await?;
     assert_eq!(
         session.launch.transport,
-        butterpollo_core::session::Transport::GameStream
+        butterpollo_session::session::Transport::GameStream
     );
     web.harness.counts(1, 0).await?;
     web.harness.end(&session, client).await?;
@@ -1156,7 +1157,7 @@ async fn a_webrtc_launch_replaces_a_moonlight_stream() -> Result<()> {
     until("video received", WAIT, || peer.count() >= 2).await;
     assert_eq!(
         web.session().launch.transport,
-        butterpollo_core::session::Transport::WebRtc
+        butterpollo_session::session::Transport::WebRtc
     );
     drop(client);
 

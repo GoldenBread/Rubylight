@@ -2,13 +2,13 @@ use super::super::parity_tests::{request, value};
 use crate::nucleus::{Admission, Game, Held, fake};
 use crate::state::{Session, test_support::Fixture};
 use axum::http::StatusCode;
-use butterpollo_core::{
-    config::Config,
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::rtsp::Negotiated;
+use butterpollo_session::{
     nucleus::{
         elevation::{self, Account},
         install::{Problem, Unusable},
     },
-    rtsp::Negotiated,
     session::Role,
     state::{App, Client},
 };
@@ -46,7 +46,7 @@ fn coop() -> Coop {
     second.uuid = "second-device".into();
     second.name = "Second device".into();
     // Joining launches the co-op entry, so it needs Launch apps too.
-    second.perm |= butterpollo_core::state::LAUNCH_APPS;
+    second.perm |= butterpollo_session::state::LAUNCH_APPS;
     second.extra.insert("coop_join".into(), true.into());
     let seated = |client: Client| {
         let mut launch = f.launch(client, Role::Stream);
@@ -142,7 +142,7 @@ async fn the_panel_shows_the_mode_the_install_and_the_sessions() {
     assert!(
         (110..=120).contains(&left),
         "{left} of {}",
-        butterpollo_core::nucleus::coop::GRACE.as_secs()
+        butterpollo_session::nucleus::coop::GRACE.as_secs()
     );
     assert_eq!(body["sessions"][0]["players"][0]["rejoin_in"], Value::Null);
     assert_eq!(body["elevates"], true);
@@ -770,8 +770,8 @@ async fn each_game_with_an_exe_shows_its_coop_status() {
     std::fs::write(&fort, b"").unwrap();
     pc.needs.lock().unwrap().insert(
         fort.to_string_lossy().into_owned(),
-        butterpollo_core::nucleus::elevation::Need::Administrator(
-            butterpollo_core::nucleus::elevation::Why::Manifest,
+        butterpollo_session::nucleus::elevation::Need::Administrator(
+            butterpollo_session::nucleus::elevation::Why::Manifest,
         ),
     );
     f.host.apps.write().unwrap().extend([

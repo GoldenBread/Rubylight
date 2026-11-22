@@ -1,7 +1,7 @@
 //! Virtual Switch 2 Pro Controller attachment and rumble.
 use super::{gamepads::Slot, usbip_pad::UsbPad};
 use anyhow::Result;
-use butterpollo_core::{
+use butterpollo_input_policy::{
     input::Input as Event,
     switch2::{REPORT_PERIOD, Switch2Pro},
 };

@@ -1,6 +1,6 @@
 //! Wake-on-LAN and sleep on Windows: adapter facts, NIC wake settings, power capabilities and suspend (`docs/wake-and-audio-design.md`).
 use anyhow::{Context, Result};
-use butterpollo_core::wake::{Adapter, ApplyReport, FixPlan, Medium, NicReport, SystemFacts};
+use butterpollo_session::wake::{Adapter, ApplyReport, FixPlan, Medium, NicReport, SystemFacts};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},

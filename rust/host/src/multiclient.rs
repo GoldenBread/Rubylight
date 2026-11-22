@@ -1,6 +1,6 @@
 //! Guests from paired devices (docs/multiclient.md): another device joins the game a device plays,
 //! with its own stream of the same display, its own controller slot and what its guest permission
-//! allows. The policy lives in `butterpollo_core::multiclient`; this module holds its state for
+//! allows. The policy lives in `butterpollo_session::multiclient`; this module holds its state for
 //! the host, makes joins wait for the owner's answer, filters guests' input, ends guests' streams
 //! and watches the PC's own keyboard and mouse while a guest holds them.
 //!
@@ -8,7 +8,7 @@
 //! too always did (`display_session::joined_display`), so its capture is the owner's
 //! (`stream::CaptureKey`) and its encoder its own, at the codec, size and bitrate it negotiated.
 use crate::state::{Host, Launch, Session, Shared};
-use butterpollo_core::{
+use butterpollo_session::{
     multiclient::{
         self as policy, APPROVAL_WAIT, Admission, Ended, Guests, JoinPolicy, Kbm, Permission,
         Refusal, Source, Verdict,
@@ -281,7 +281,7 @@ impl DeviceGuests {
                 None => Ok(Gate::NotGuest),
             };
         }
-        let name = butterpollo_core::webrtc::guests::guest_name(&join.client.name);
+        let name = butterpollo_session::webrtc::guests::guest_name(&join.client.name);
         let (admission, ended) = {
             let mut state = locked(&self.state);
             let ended = state.follow_game(Some((&generation, &owner)));
@@ -690,7 +690,7 @@ fn permission_text<S: serde::Serializer>(permission: &Permission, s: S) -> Resul
 mod tests {
     use super::*;
     use crate::state::test_support::Fixture;
-    use butterpollo_core::{multiclient::LAUNCH_OPTION, session::Role};
+    use butterpollo_session::{multiclient::LAUNCH_OPTION, session::Role};
 
     #[test]
     fn joined_rejects_unknown_or_ended_guests_without_recording_pads() {
@@ -764,8 +764,8 @@ mod tests {
         assert!(!guests.take_release(&guest));
 
         // Owner takes KBM back by sending input: guest must release held keys.
-        let kbm_perm = butterpollo_core::input::required_permission(
-            &butterpollo_core::input::Input::Relative { x: 1, y: 1 },
+        let kbm_perm = butterpollo_input_policy::input::required_permission(
+            &butterpollo_input_policy::input::Input::Relative { x: 1, y: 1 },
         );
         assert!(guests.admits(&owner, kbm_perm));
         assert!(guests.take_release(&guest));

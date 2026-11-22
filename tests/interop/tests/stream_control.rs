@@ -3,7 +3,7 @@ mod common;
 
 use anyhow::Result;
 use butterpollo::stream::reconnect_harness::{CLOSED, Harness, until};
-use butterpollo_core::{
+use butterpollo_media_policy::{
     extensions::FecChoice,
     statistical_fec::{FEC_REPORT_MESSAGE_TYPE, FecReport},
 };
@@ -32,13 +32,13 @@ const CONTROL_EXTENSIONS: [u16; 17] = [
     ptype::LINK_NOTICE,
     // The second line: the 3.0 extensions on by default.
     FEC_REPORT_MESSAGE_TYPE,
-    butterpollo_core::text_input::TEXT_INPUT_MESSAGE_TYPE,
+    butterpollo_input_policy::text_input::TEXT_INPUT_MESSAGE_TYPE,
     ptype::PIPELINE_RATES,
-    butterpollo_core::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE,
-    butterpollo_core::frame_warp::FRAME_WARP_REQUEST_MESSAGE_TYPE,
-    butterpollo_core::frame_warp::FRAME_WARP_MODEL_MESSAGE_TYPE,
-    butterpollo_core::frame_warp::FRAME_WARP_TAGS_MESSAGE_TYPE,
-    butterpollo_core::frame_warp::FRAME_WARP_MASK_MESSAGE_TYPE,
+    butterpollo_input_policy::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE,
+    butterpollo_media_policy::frame_warp::FRAME_WARP_REQUEST_MESSAGE_TYPE,
+    butterpollo_media_policy::frame_warp::FRAME_WARP_MODEL_MESSAGE_TYPE,
+    butterpollo_media_policy::frame_warp::FRAME_WARP_TAGS_MESSAGE_TYPE,
+    butterpollo_media_policy::frame_warp::FRAME_WARP_MASK_MESSAGE_TYPE,
 ];
 
 /// Launch, the RTSP handshake and the control stream both ways: Nightjar's keyframe request
@@ -100,7 +100,7 @@ async fn nightjar_launches_and_streams_with_control_both_ways() -> Result<()> {
 /// by id, and Nightjar's disable puts the pointer back into the video.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_receives_the_cursor_it_draws() -> Result<()> {
-    use butterpollo_core::client_cursor::Pointer;
+    use butterpollo_input_policy::client_cursor::Pointer;
     use nightjar_core::control::{ClientMessage, CursorShape};
     let h = Harness::configured(10_000, 1, "capture=ddx\n").await?;
     let client = device(&h, u32::MAX, &[])?;
@@ -193,7 +193,7 @@ async fn nightjar_receives_the_cursor_it_draws() -> Result<()> {
 /// request turns it on and is answered with a model Nightjar reads, and its stop turns it off.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_hears_the_frame_warp_model() -> Result<()> {
-    use butterpollo_core::frame_warp::FrameWarpRequest;
+    use butterpollo_media_policy::frame_warp::FrameWarpRequest;
     use nightjar_core::control::ClientMessage;
     let h = Harness::new(10_000, 1).await?;
     let client = device(&h, u32::MAX, &[])?;
@@ -286,12 +286,12 @@ async fn nightjar_chooses_the_video_fec() -> Result<()> {
     assert!(used);
     assert_eq!(
         session.video_fec_percent(false, 30_000),
-        usize::from(butterpollo_core::statistical_fec::MINIMUM_PERCENT),
+        usize::from(butterpollo_media_policy::statistical_fec::MINIMUM_PERCENT),
         "no loss keeps the parity floor"
     );
     // Nightjar sends one a second; reports closer than this count without a
     // new estimate.
-    tokio::time::sleep(butterpollo_core::statistical_fec::MIN_ESTIMATE_INTERVAL).await;
+    tokio::time::sleep(butterpollo_media_policy::statistical_fec::MIN_ESTIMATE_INTERVAL).await;
     session.record_fec_report(&report(1, 540).encode()).unwrap();
     assert_eq!(
         session.video_fec_percent(true, 30_000),
@@ -343,7 +343,9 @@ async fn nightjar_chooses_the_video_fec() -> Result<()> {
 /// a request.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_changes_the_bitrate_mid_stream() -> Result<()> {
-    use butterpollo_core::rate_change::{Outcome, RateChangeRequest, RateChangeResult, Reason};
+    use butterpollo_media_policy::rate_change::{
+        Outcome, RateChangeRequest, RateChangeResult, Reason,
+    };
     use nightjar_core::control::{ClientMessage, SendError};
     let h = Harness::configured(
         10_000,

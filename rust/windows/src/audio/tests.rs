@@ -41,8 +41,8 @@ fn capture_samples_with(rate: u32, matrix: Vec<Vec<f32>>) -> CaptureSamples {
         channels: 2,
         bits: 32,
         float: true,
-        resampler: butterpollo_core::audio::Resampler::new(rate, channels).unwrap(),
-        identity: butterpollo_core::audio::mix_is_identity(&matrix),
+        resampler: butterpollo_media_policy::audio::Resampler::new(rate, channels).unwrap(),
+        identity: butterpollo_media_policy::audio::mix_is_identity(&matrix),
         matrix,
         input: vec![0.; 2],
         output: vec![0.; channels],
@@ -51,7 +51,10 @@ fn capture_samples_with(rate: u32, matrix: Vec<Vec<f32>>) -> CaptureSamples {
 }
 
 fn capture_samples(rate: u32) -> CaptureSamples {
-    capture_samples_with(rate, butterpollo_core::audio::mix_matrix(2, 3, 2).unwrap())
+    capture_samples_with(
+        rate,
+        butterpollo_media_policy::audio::mix_matrix(2, 3, 2).unwrap(),
+    )
 }
 
 fn captured(samples: &mut CaptureSamples, values: &[f32], flags: u32) {
@@ -98,8 +101,8 @@ fn an_identity_capture_queues_what_a_mixing_one_queues() {
         1.0,
         -1.0,
     ];
-    let identity = butterpollo_core::audio::mix_matrix(2, 3, 2).unwrap();
-    let mixing = butterpollo_core::audio::mix_matrix(2, 3, 6).unwrap();
+    let identity = butterpollo_media_policy::audio::mix_matrix(2, 3, 2).unwrap();
+    let mixing = butterpollo_media_policy::audio::mix_matrix(2, 3, 6).unwrap();
     for (name, matrix) in [("identity", identity), ("mixing", mixing)] {
         let mut samples = capture_samples_with(48_000, matrix.clone());
         // SAFETY: raw contains complete float stereo frames and outlives the call.
@@ -333,7 +336,8 @@ fn native_opus_round_trip_preserves_every_surround_channel_and_quality_layout() 
     ] {
         for packet_ms in [5, 10, 20] {
             let layout =
-                butterpollo_core::audio::OpusLayout::select(channels, quality, custom).unwrap();
+                butterpollo_media_policy::audio::OpusLayout::select(channels, quality, custom)
+                    .unwrap();
             let mut encoder = Opus::new_layout_duration(&root, &layout, packet_ms as u8).unwrap();
             // SAFETY: the symbol types match libopus, `layout.mapping` has `channels` entries,
             // and the library is kept in Decoder with its pointers.

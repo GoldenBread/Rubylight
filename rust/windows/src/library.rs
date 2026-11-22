@@ -1,7 +1,7 @@
 //! Local launcher discovery. Scanning never starts a launcher or changes its files.
 use crate::steam::registry_string;
 use anyhow::{Context, Result};
-use butterpollo_core::library::{self, Game, Launch, Source};
+use butterpollo_session::library::{self, Game, Launch, Source};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -461,8 +461,8 @@ pub fn discover(settings: &library::Settings) -> Discovery {
                         }
                     }
                 }
-                for game in butterpollo_core::steam::discover(&roots) {
-                    if !butterpollo_core::steam::importable(&game, false) {
+                for game in butterpollo_session::steam::discover(&roots) {
+                    if !butterpollo_session::steam::importable(&game, false) {
                         continue;
                     }
                     let mut entry = Game::new(

@@ -1,8 +1,8 @@
 //! The PC's own keyboard and mouse, told apart from what streams inject. Raw input from a device
 //! names that device; input from `SendInput`, which the host injects for its clients, names none.
 //! The host's own virtual devices (the USB/IP mouse and precision touchpad of
-//! `butterpollo_core::virtual_hid`) do name one, and are a stream's input too, not the PC's.
-//! While a guest holds the keyboard and mouse (`butterpollo_core::multiclient::Kbm`), someone at
+//! `butterpollo_input_policy::virtual_hid`) do name one, and are a stream's input too, not the PC's.
+//! While a guest holds the keyboard and mouse (`butterpollo_session::multiclient::Kbm`), someone at
 //! the PC takes them back by using them.
 use anyhow::{Context, Result};
 use std::{
@@ -160,7 +160,7 @@ fn from_local_device(input: HRAWINPUT, known: &mut HashMap<isize, bool>) -> bool
 /// Whether raw input device `name` (its interface path, `\\?\HID#VID_1209&PID_52B1&Col01#...`)
 /// is one of the host's own virtual devices.
 fn hosts_own(name: &str) -> bool {
-    use butterpollo_core::virtual_hid::{MOUSE_PRODUCT, TOUCHPAD_PRODUCT, VENDOR};
+    use butterpollo_input_policy::virtual_hid::{MOUSE_PRODUCT, TOUCHPAD_PRODUCT, VENDOR};
     let name = name.to_ascii_uppercase();
     [MOUSE_PRODUCT, TOUCHPAD_PRODUCT]
         .iter()

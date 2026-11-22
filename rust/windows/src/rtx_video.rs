@@ -46,7 +46,7 @@ pub struct Filter {
 }
 impl Filter {
     /// An enhancer on the capture's device at VSR quality level `quality`
-    /// (`butterpollo_core::nvidia_enhance::rtx_video_quality`).
+    /// (`butterpollo_media_policy::nvidia_enhance::rtx_video_quality`).
     pub fn new_gpu(image: &GpuImage, quality: u32) -> Result<Self> {
         let device = image.gpu.clone();
         if device.vendor != 0x10de {

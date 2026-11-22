@@ -1,7 +1,7 @@
 //! A PC with Nucleus Co-op and one handler, and sessions that only
 //! keep their state.
 use super::*;
-use butterpollo_core::nucleus::handler::Game;
+use butterpollo_session::nucleus::handler::Game;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub(crate) const GUID: &str = "Portal 2";
@@ -315,7 +315,7 @@ impl super::Pc for Pc {
             .lock()
             .unwrap()
             .push(copy.map(Path::to_path_buf));
-        butterpollo_core::nucleus::handler::parse(&setup.file(), &setup.handler_of(Some(USER)))
+        butterpollo_session::nucleus::handler::parse(&setup.file(), &setup.handler_of(Some(USER)))
             .map_err(anyhow::Error::msg)
     }
     fn remove_own(&self, _folder: &Path, copy: Option<&Path>, own: &Handler) -> Result<()> {

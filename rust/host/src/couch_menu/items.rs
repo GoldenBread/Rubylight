@@ -9,9 +9,9 @@
 //! catalogue (`couch_menu/items/<key>`).
 use crate::native_api::Failure;
 use crate::state::{Host, Session};
-use butterpollo_core::couch_menu::model::{Applies, Availability, Control};
-use butterpollo_core::native_api::radeon::Value;
-use butterpollo_core::state::Client;
+use butterpollo_session::couch_menu_model::model::{Applies, Availability, Control};
+use butterpollo_session::state::Client;
+use rubylight_native_api::radeon::Value;
 
 /// One extension row.
 pub(crate) trait Item: Sync {
@@ -39,7 +39,7 @@ pub(crate) fn find<'a>(items: &[&'a dyn Item], key: &str) -> Option<&'a dyn Item
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::couch_menu::model::items;
+    use butterpollo_session::couch_menu_model::model::items;
 
     #[test]
     fn couch_menu_registered_rows_are_model_items_once_each() {

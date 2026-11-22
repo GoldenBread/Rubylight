@@ -20,7 +20,7 @@ fn every_start_of_the_new_host_trusts_the_console_root() {
 fn setup_removes_the_root_by_the_name_the_host_gives_it() {
     assert_eq!(
         super::CONSOLE_ROOT_NAME,
-        butterpollo_core::crypto::CONSOLE_ROOT_NAME
+        butterpollo_crypto::crypto::CONSOLE_ROOT_NAME
     );
 }
 use super::*;
@@ -335,7 +335,7 @@ fn a_failed_side_by_side_setup_leaves_the_other_hosts_services_alone() -> Result
 }
 #[test]
 fn the_range_checked_covers_every_port_the_host_derives() {
-    use butterpollo_core::config::{Config, Ports};
+    use butterpollo_config::config::{Config, Ports};
     for base in SIDE_BY_SIDE_PORTS {
         let range = ports_of(base);
         let ports = Ports::from_base(base);
@@ -406,7 +406,7 @@ fn a_port_a_program_holds_is_not_free() -> Result<()> {
 /// in a client's list.
 #[test]
 fn the_new_profile_has_its_own_ports_and_name() {
-    use butterpollo_core::config::Config;
+    use butterpollo_config::config::Config;
     let conf = side_by_side_conf(48589, Some("GAMING-PC"));
     let config = Config::parse(&conf).unwrap();
     assert_eq!(config.get("sunshine_name", ""), "GAMING-PC (Rubylight)");
@@ -1207,7 +1207,7 @@ fn fresh_installs_move_an_untrusted_profile_aside_unchanged() -> Result<()> {
     let nucleus = nucleus_user_root(&root);
     assert_eq!(
         nucleus,
-        butterpollo_core::nucleus::install::user_root(&root)
+        butterpollo_session::nucleus::install::user_root(&root)
     );
     let copy = nucleus.join("S-1-5-21-1").join("0123456789abcdef");
     std::fs::create_dir_all(&copy)?;
@@ -1581,7 +1581,8 @@ fn an_install_that_fails_after_the_import_can_be_run_again() -> Result<()> {
 #[test]
 fn legacy_migrations_keep_complete_profiles_and_own_configured_files_and_covers() -> Result<()> {
     use crate::profile_tests::{assert_usable, package, rc23_profile, snapshot};
-    use butterpollo_core::{config::Config, migration, state};
+    use butterpollo_config::config::Config;
+    use butterpollo_session::{migration, state};
     use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
 
@@ -1772,7 +1773,7 @@ fn the_health_check_asks_the_configured_bind_address() {
 }
 #[test]
 fn the_import_error_and_its_causes_are_shown() {
-    let output = "2026-10-07T10:00:00Z  WARN butterpollo_core::migration: profile file not imported file=C:\\old\\dump.bin reason=\"it is larger than 64 MiB\"\n\
+    let output = "2026-10-07T10:00:00Z  WARN butterpollo_session::migration: profile file not imported file=C:\\old\\dump.bin reason=\"it is larger than 64 MiB\"\n\
 Error: the settings imported from C:\\old would keep Rubylight from starting\n\
 \n\
 Caused by:\n    0: invalid JSON in C:\\ProgramData\\Butterpollo\\.butterpollo-import-1\\vibeshine_state.json\n    1: expected value at line 1 column 1\n";

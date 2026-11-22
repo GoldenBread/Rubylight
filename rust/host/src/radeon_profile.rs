@@ -2,7 +2,7 @@
 //! `radeon-profile`, the host writes the profile's settings through the journaled Radeon
 //! controls and the session restores them when it ends, as it does for a client's own writes
 //! (`radeon_session`). The app's choice is validated when it is saved
-//! (`butterpollo_core::radeon_profile`). The app's config is the admin's consent: the device
+//! (`butterpollo_media_policy::radeon_profile`). The app's config is the admin's consent: the device
 //! needs no host control for it.
 //!
 //! The write runs on a thread of its own, one at a time: every driver call starts a helper
@@ -15,12 +15,10 @@
 //! the journal takes the PC's own values as the originals. Changing profiles on one device puts
 //! back only the settings the earlier profile wrote, not the device's own panel writes.
 use crate::{radeon_session::READ_WAIT, session_notes::Held, state::Shared};
-use butterpollo_core::{
-    native_api::session::{ProfileState, RadeonProfile},
-    radeon_profile::{self, Item, Selected},
-    state::App,
-};
+use butterpollo_media_policy::radeon_profile::{self, Item, Selected};
+use butterpollo_session::state::App;
 use butterpollo_windows::radeon::{Change, model::Value};
+use rubylight_native_api::session::{ProfileState, RadeonProfile};
 use std::{sync::PoisonError, time::Duration};
 
 /// The stream's frame rate from a launch `mode` (`WIDTHxHEIGHTxFPS`, the rate may have

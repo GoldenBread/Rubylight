@@ -67,7 +67,7 @@ $env:LIBCLANG_PATH = "$MsysRoot\ucrt64\bin"
 $env:BUTTERPOLLO_VULKAN_INCLUDE = "$MsysRoot\ucrt64\include"
 $env:CARGO_TARGET_DIR = $TargetDirectory
 if ($Nvidia) {
-    # The NVIDIA component (rust/core/src/nvidia_component.rs), and no host:
+    # The NVIDIA component (rust/core/media-policy/src/nvidia_component.rs), and no host:
     # the NGX adapter (rust/truehdr-runtime, an MSVC DLL linking NVIDIA's RTX
     # Video SDK) with NVIDIA's runtime DLLs and licence, in the one archive
     # the console downloads from the release. NVIDIA's files go out only
@@ -111,7 +111,7 @@ if ($Nvidia) {
         Assert-NativeExit 'NVIDIA adapter build'
         # NVIDIA's files must be exactly the ones the host trusts.
         $pinned = [regex]::Matches(
-            [IO.File]::ReadAllText((Join-Path $repo 'rust\core\src\nvidia_component.rs')),
+            [IO.File]::ReadAllText((Join-Path $repo 'rust\core\media-policy\src\nvidia_component.rs')),
             'name: "([^"]+)",\s*size: ([0-9_]+),\s*sha256: "([0-9a-f]{64})"')
         if ($pinned.Count -ne 3) { throw "Expected 3 pinned NVIDIA files in nvidia_component.rs, found $($pinned.Count)" }
         $version = (Select-String -LiteralPath (Join-Path $repo 'Cargo.toml') -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value

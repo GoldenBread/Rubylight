@@ -191,8 +191,8 @@ fn native_ltr_recovery_after_lost_frames() -> Result<()> {
         "arms: keyframe, ltr"
     );
     let forced = std::env::var("BUTTERPOLLO_TEST_LTR_FORCE").as_deref() == Ok("1");
-    let without = butterpollo_core::config::Config::parse("amd_ltr_frames=0\n")?;
-    let with = butterpollo_core::config::Config::default();
+    let without = butterpollo_config::config::Config::parse("amd_ltr_frames=0\n")?;
+    let with = butterpollo_config::config::Config::default();
     anyhow::ensure!(
         gaps.iter().all(|&gap| gap >= 1 && LOST + gap < FRAMES - 30),
         "gaps must leave frames to compare"
@@ -238,7 +238,7 @@ fn native_ltr_recovery_after_lost_frames() -> Result<()> {
                 "{content}-{format}-{}-gap{gap}",
                 if asked { "ltr" } else { "keyframe" }
             );
-            let config = butterpollo_core::rtsp::Negotiated {
+            let config = butterpollo_media_policy::rtsp::Negotiated {
                 width: WIDTH as u32,
                 height: HEIGHT as u32,
                 fps: 120,
@@ -339,7 +339,8 @@ fn native_ltr_recovery_after_lost_frames() -> Result<()> {
             // ORDER_WINDOW frames on, H.264 and AV1 at any distance.
             let repairable = asked
                 && (codec != 1
-                    || recovery - (LOST - 1) <= butterpollo_core::bitstream::ORDER_WINDOW as usize);
+                    || recovery - (LOST - 1)
+                        <= butterpollo_media_policy::bitstream::ORDER_WINDOW as usize);
             let keyframes: Vec<usize> = frames
                 .iter()
                 .filter(|frame| frame.0)

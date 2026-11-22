@@ -1,8 +1,8 @@
 use super::super::instances::tests::{Fake, ON_SCREEN, fake, process, window};
 use super::super::pads::tests::{Fake as FakeXInput, Recorder};
 use super::*;
-use butterpollo_core::nucleus::window::{Rect, Window};
-use butterpollo_core::steam::Process;
+use butterpollo_session::nucleus::window::{Rect, Window};
+use butterpollo_session::steam::Process;
 
 #[test]
 fn webview2_keeps_its_data_in_the_users_own_folder() {
@@ -1400,7 +1400,7 @@ fn a_game_nucleus_does_not_list_is_named_with_its_list() {
     let exe = folder.path().join("Game.exe");
     std::fs::write(&exe, b"MZ").unwrap();
     let setup =
-        butterpollo_core::nucleus::generic::Setup::new(&exe.to_string_lossy(), "Game", None);
+        butterpollo_session::nucleus::generic::Setup::new(&exe.to_string_lossy(), "Game", None);
     let own = files::write_own(folder.path(), &setup).unwrap();
     screen
         .0
@@ -2168,7 +2168,7 @@ fn a_session_from_the_users_own_copy_writes_and_runs_there() {
     let ini = copy.path().join("Settings.ini");
     std::fs::write(&ini, "[Dev]\r\nShowFavoriteOnly=True\r\n").unwrap();
     let favourites = || {
-        butterpollo_core::nucleus::profile::ini_value(
+        butterpollo_session::nucleus::profile::ini_value(
             &std::fs::read(&ini).unwrap(),
             "Dev",
             "ShowFavoriteOnly",
@@ -2260,7 +2260,7 @@ fn the_games_compatibility_settings_are_back_after_a_session_or_a_failed_start()
     std::fs::write(&ini, "[Dev]\r\nShowFavoriteOnly=True\r\n").unwrap();
     let favourites = || {
         let text = std::fs::read(&ini).unwrap();
-        butterpollo_core::nucleus::profile::ini_value(&text, "Dev", "ShowFavoriteOnly").unwrap()
+        butterpollo_session::nucleus::profile::ini_value(&text, "Dev", "ShowFavoriteOnly").unwrap()
     };
     let (running, _) = start_with(folder.path(), 1, [false; 4], &screen, &probe);
     let running = running.unwrap();
@@ -2463,7 +2463,7 @@ fn a_session_on_this_pc() -> Result<()> {
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let handler =
-        butterpollo_core::nucleus::handler::parse(&file, &text).map_err(anyhow::Error::msg)?;
+        butterpollo_session::nucleus::handler::parse(&file, &text).map_err(anyhow::Error::msg)?;
     let exe_path = files::catalog(&folder, true)?
         .games
         .into_iter()
@@ -2475,7 +2475,7 @@ fn a_session_on_this_pc() -> Result<()> {
     let players = env("RUBYLIGHT_NUCLEUS_PLAYERS", 1usize)?;
     let hold = Duration::from_secs(env("RUBYLIGHT_NUCLEUS_HOLD", 20u64)?);
     let since = crate::process::now();
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     let request = Start {
         id: 1,
         kind: kind(players),
@@ -2490,7 +2490,7 @@ fn a_session_on_this_pc() -> Result<()> {
         size: (1280, 720),
         instances: None,
     };
-    let policy = butterpollo_core::input_policy::Policy::resolve(&Default::default())?;
+    let policy = butterpollo_input_policy::input_policy::Policy::resolve(&Default::default())?;
     let running = start_on_pc(&request, policy, warnings.clone())?;
     println!(
         "pads {:?}",

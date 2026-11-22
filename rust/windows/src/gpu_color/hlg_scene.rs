@@ -24,7 +24,7 @@ pub(crate) struct HlgScene {
 impl HlgScene {
     pub fn new(
         gpu: &Device,
-        config: &butterpollo_core::rtsp::Negotiated,
+        config: &butterpollo_media_policy::rtsp::Negotiated,
         source: (u32, u32, Pixel),
     ) -> Result<Self> {
         if source.2 == Pixel::Bgra8 {

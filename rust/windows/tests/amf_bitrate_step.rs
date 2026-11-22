@@ -18,7 +18,7 @@
 #![cfg(windows)]
 
 use anyhow::{Result, bail};
-use butterpollo_core::rtsp::Negotiated;
+use butterpollo_media_policy::rtsp::Negotiated;
 use butterpollo_windows::{
     capture::{ComGuard, Device, GpuImage, Image, Pixel},
     encoder::Encoder,
@@ -140,7 +140,7 @@ fn upload_images(device: &Device, block: usize) -> Result<Vec<GpuImage>> {
 fn a_bitrate_step_never_forces_a_keyframe_and_the_rate_follows() -> Result<()> {
     let _com = ComGuard::new()?;
     let device = Device::new("")?;
-    let tuning = butterpollo_core::config::Config::default();
+    let tuning = butterpollo_config::config::Config::default();
     let mut failures = Vec::new();
     println!("codec/content  target_kbps  keyframes  last_second_kbps  error_pct");
     for (content, block) in [("noise", 1), ("mild", 0)] {
@@ -163,7 +163,7 @@ fn a_bitrate_step_never_forces_a_keyframe_and_the_rate_follows() -> Result<()> {
                 codec,
                 ..Default::default()
             };
-            let warnings = std::sync::Arc::new(butterpollo_core::session::Warnings::default());
+            let warnings = std::sync::Arc::new(butterpollo_session::session::Warnings::default());
             let mut encoder = Encoder::new_gpu_reported(&stream, &images[0], &tuning, &warnings)?;
             let mut picture = 0usize;
             let mut next =
@@ -259,7 +259,7 @@ fn the_rate_follows_from_other_starting_rates() -> Result<()> {
         .unwrap_or(4);
     println!("noise in {block} pixel blocks");
     let images = upload_images(&device, block)?;
-    let tuning = butterpollo_core::config::Config::default();
+    let tuning = butterpollo_config::config::Config::default();
     println!("codec  start_kbps  then_kbps  mean_kbps");
     for (name, codec) in [("h264", 0), ("hevc", 1)] {
         for start in [15_000u32] {
@@ -271,7 +271,7 @@ fn the_rate_follows_from_other_starting_rates() -> Result<()> {
                 codec,
                 ..Default::default()
             };
-            let warnings = std::sync::Arc::new(butterpollo_core::session::Warnings::default());
+            let warnings = std::sync::Arc::new(butterpollo_session::session::Warnings::default());
             let mut encoder = Encoder::new_gpu_reported(&stream, &images[0], &tuning, &warnings)?;
             let mut picture = 0usize;
             for index in 0..60 {

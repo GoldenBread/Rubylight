@@ -3,10 +3,8 @@
 use super::instance_audio::{self, Waiting};
 use crate::state::{Session, Shared};
 use anyhow::Result;
-use butterpollo_core::{
-    audio_scope::{Identity, tree},
-    config::Config,
-};
+use butterpollo_config::config::Config;
+use butterpollo_session::audio_scope::{Identity, tree};
 use butterpollo_windows::{
     audio::{Loopback, ProcessActivation},
     audio_app_route::{AppRoute, OnThePc, no_sound_yet},
@@ -149,7 +147,7 @@ fn launched_game(
     h: &Shared,
     app_id: u32,
     generation: Option<&String>,
-    list: impl FnOnce() -> Result<Vec<butterpollo_core::steam::Process>>,
+    list: impl FnOnce() -> Result<Vec<butterpollo_session::steam::Process>>,
 ) -> Result<AudioProcess> {
     let launched =
         |app: &&crate::process::RunningApp| app.id == app_id && Some(&app.generation) == generation;
@@ -352,7 +350,7 @@ impl Drop for GameAudio {
 mod tests {
     use super::*;
     use crate::state::test_support::Fixture;
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
 
     #[test]
     fn only_game_only_audio_off_the_pc_moves_the_game() {

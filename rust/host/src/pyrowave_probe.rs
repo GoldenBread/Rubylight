@@ -1,7 +1,7 @@
-//! Sends a paired client's PyroWave UDP probe (`butterpollo_core::pyrowave_probe`)
+//! Sends a paired client's PyroWave UDP probe (`butterpollo_media_policy::pyrowave_probe`)
 //! from the address its HTTPS request reached, to that client's own address.
 use anyhow::{Context, Result, bail};
-use butterpollo_core::pyrowave_probe::{self, DURATION, Request, TOKEN_LEN};
+use butterpollo_media_policy::pyrowave_probe::{self, DURATION, Request, TOKEN_LEN};
 use butterpollo_windows::net::{Batch, ReplySocket};
 use std::{
     io::ErrorKind,
@@ -96,7 +96,7 @@ pub fn send(socket: &ReplySocket, peer: SocketAddr, request: &Request) -> Result
     // A jumbo probe must fail like the stream would on a hop without jumbo
     // frames, rather than being fragmented and reassembled by the client.
     let jumbo =
-        request.packet_size > usize::from(butterpollo_core::video_packet::STOCK_MAX_VIDEO_PACKET);
+        request.packet_size > usize::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET);
     butterpollo_windows::net::set_dont_fragment(socket, jumbo)?;
     let timer = butterpollo_windows::timing::Timer::new()?;
     let ipv6 = destination.ip().to_canonical().is_ipv6();
@@ -112,15 +112,15 @@ pub fn send(socket: &ReplySocket, peer: SocketAddr, request: &Request) -> Result
         ..Default::default()
     };
     let start = Instant::now();
-    let mut pacer = butterpollo_core::network_pacing::Pacer::new(start);
+    let mut pacer = butterpollo_media_policy::network_pacing::Pacer::new(start);
     let pace_bps = u64::from(request.burst.map_or(request.kbps, |burst| burst.pace_kbps)) * 1000;
     // The stream sizes its socket to its pace; use the same buffer here, so a
     // probe at 800 Mbps is not measured with 4 MiB the stream never has.
     let _ = socket2::SockRef::from(&**socket).set_send_buffer_size(
-        butterpollo_core::network_pacing::paced_send_buffer(pace_bps),
+        butterpollo_media_policy::network_pacing::paced_send_buffer(pace_bps),
     );
     let batch_limit =
-        butterpollo_core::network_pacing::pyrowave_batch_limit(pace_bps, packet_len, ipv6);
+        butterpollo_media_policy::network_pacing::pyrowave_batch_limit(pace_bps, packet_len, ipv6);
     // An overloaded sender stops instead of queueing an ever later probe.
     let limit = DURATION + Duration::from_millis(100);
     let mut sequence = 0;

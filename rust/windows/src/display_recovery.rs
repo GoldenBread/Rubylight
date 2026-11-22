@@ -28,8 +28,8 @@ struct Entry {
     hdr: Option<(bool, bool)>,
     #[serde(default)]
     position: Option<(
-        butterpollo_core::topology::Position,
-        butterpollo_core::topology::Position,
+        butterpollo_media_policy::topology::Position,
+        butterpollo_media_policy::topology::Position,
     )>,
     #[serde(default)]
     profile: Option<(Option<String>, String, bool)>,
@@ -42,14 +42,14 @@ struct Entry {
     #[serde(default)]
     arrangement: Option<(
         crate::display::Snapshot,
-        Vec<butterpollo_core::topology::Node>,
+        Vec<butterpollo_media_policy::topology::Node>,
     )>,
     #[serde(default)]
     baseline: Option<(crate::display::Snapshot, Vec<String>)>,
     #[serde(default)]
     activation: Option<(
         crate::display::Snapshot,
-        Vec<butterpollo_core::topology::Node>,
+        Vec<butterpollo_media_policy::topology::Node>,
     )>,
     /// A `DISPLAYCONFIG_ROTATION`, (original, applied).
     #[serde(default)]
@@ -220,7 +220,7 @@ impl Drop for JournalLock {
     }
 }
 fn lock(path: &Path) -> Result<JournalLock> {
-    let hash = butterpollo_core::crypto::hash(path.to_string_lossy().to_lowercase().as_bytes());
+    let hash = butterpollo_crypto::crypto::hash(path.to_string_lossy().to_lowercase().as_bytes());
     let name: Vec<u16> = format!(
         "Local\\Butterpollo.DisplayJournal.{:x}\0",
         u64::from_le_bytes(hash[..8].try_into().unwrap())
@@ -387,13 +387,13 @@ fn change(id: &str, output: &str, update: impl FnOnce(&mut Entry)) -> Result<()>
     entry.output = output.into();
     update(entry);
     journal.entries.retain(|_, entry| entry.pending());
-    butterpollo_core::state::write_json(path, &journal)?;
+    butterpollo_session::state::write_json(path, &journal)?;
     if journal.entries.is_empty() {
         drop(guard);
         return finish_watch(path);
     }
     if let Err(e) = watch(path) {
-        butterpollo_core::state::write_json(path, &prior)?;
+        butterpollo_session::state::write_json(path, &prior)?;
         return Err(e);
     }
     Ok(())
@@ -457,7 +457,7 @@ pub fn microphone(pending: bool) -> Result<()> {
 pub fn arrangement(
     value: Option<(
         crate::display::Snapshot,
-        Vec<butterpollo_core::topology::Node>,
+        Vec<butterpollo_media_policy::topology::Node>,
     )>,
 ) -> Result<()> {
     change("display-arrangement", "", |e| e.arrangement = value)
@@ -489,7 +489,7 @@ pub fn baseline(value: Option<(crate::display::Snapshot, Vec<String>)>) -> Resul
 pub fn activation(
     value: Option<(
         crate::display::Snapshot,
-        Vec<butterpollo_core::topology::Node>,
+        Vec<butterpollo_media_policy::topology::Node>,
     )>,
 ) -> Result<()> {
     change("display-activation", "", |entry| entry.activation = value)
@@ -570,13 +570,13 @@ pub(crate) fn release_in(path: &Path, id: &str) -> Result<()> {
         entry.scale = None;
     }
     journal.entries.retain(|_, e| e.pending());
-    butterpollo_core::state::write_json(path, &journal)
+    butterpollo_session::state::write_json(path, &journal)
 }
 pub fn position(
     id: &str,
     output: &str,
-    before: butterpollo_core::topology::Position,
-    applied: butterpollo_core::topology::Position,
+    before: butterpollo_media_policy::topology::Position,
+    applied: butterpollo_media_policy::topology::Position,
 ) -> Result<()> {
     change(id, output, |e| e.position = Some((before, applied)))
 }
@@ -590,7 +590,7 @@ pub fn release_position(id: &str) -> Result<()> {
         entry.position = None;
     }
     journal.entries.retain(|_, e| e.pending());
-    butterpollo_core::state::write_json(path, &journal)?;
+    butterpollo_session::state::write_json(path, &journal)?;
     drop(guard);
     finish_watch(path)
 }
@@ -616,7 +616,7 @@ pub fn release_profile(id: &str) -> Result<()> {
         entry.profile = None;
     }
     journal.entries.retain(|_, e| e.pending());
-    butterpollo_core::state::write_json(path, &journal)?;
+    butterpollo_session::state::write_json(path, &journal)?;
     drop(guard);
     finish_watch(path)
 }
@@ -801,7 +801,7 @@ fn recover_inline(path: &Path) -> Result<()> {
                             id,
                             previous.0,
                             previous.1,
-                            butterpollo_core::framegen::Rate(previous.2),
+                            butterpollo_media_policy::framegen::Rate(previous.2),
                         )?;
                         Ok(())
                     })(),
@@ -876,7 +876,7 @@ fn recover_inline(path: &Path) -> Result<()> {
     // Keep a valid document so interrupted reads never see partial JSON. The
     // kept entries have no owner until the next host records a change.
     kept.entries.retain(|_, entry| entry.pending());
-    butterpollo_core::state::write_json(path, &kept)?;
+    butterpollo_session::state::write_json(path, &kept)?;
     if !failures.is_empty() {
         bail!("display recovery incomplete: {}", failures.join("; "));
     }

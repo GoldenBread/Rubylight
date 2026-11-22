@@ -2,7 +2,7 @@
 //! clipboard (`clipboard_sync::tests::FAKE`).
 use super::*;
 use crate::stream::clipboard_sync::{Clipboard, tests::FAKE};
-use butterpollo_core::clipboard_sync::{
+use rubylight_protocol::clipboard_sync::{
     CLIPBOARD_SYNC_MESSAGE_TYPE, Frame, KIND_TEXT, LAUNCH_PARAMETER,
 };
 

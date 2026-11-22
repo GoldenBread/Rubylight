@@ -3,7 +3,7 @@
 //! the hook is created or its secret is replaced.
 
 use crate::state::Shared;
-use butterpollo_core::webhook::{self, DeliveryHost, Webhook};
+use butterpollo_session::webhook::{self, DeliveryHost, Webhook};
 use serde_json::{Value, json};
 
 pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyhow::Result<Value> {
@@ -40,11 +40,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
         }
         ("POST", "/api/webhooks/test") => {
             let url = text("url");
-            let hook = h
-                .config
-                .read()
-                .unwrap()
-                .webhooks()
+            let hook = butterpollo_session::webhook::from_config(&h.config.read().unwrap())
                 .into_iter()
                 .find(|hook| hook.url == url)
                 .ok_or_else(|| {
@@ -161,7 +157,7 @@ fn save(
         {
             anyhow::bail!("a webhook already sends to this URL");
         }
-        let fresh = || hex::encode(butterpollo_core::crypto::random::<32>());
+        let fresh = || hex::encode(butterpollo_crypto::crypto::random::<32>());
         match at {
             Some(at) => {
                 let hook = &mut hooks[at];

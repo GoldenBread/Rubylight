@@ -6,7 +6,7 @@
 //! `Enable-NetAdapter` and the `root\wmi` wake classes do, through WMI and the
 //! driver's registry key, with no script host. The report is keyed by
 //! InterfaceGuid, PnP id and registry keyword, never by display names, which
-//! are localized; core judges it (butterpollo_core::wake).
+//! are localized; core judges it (butterpollo_session::wake).
 //!
 //! The logic works on [`Nics`], which tests fake; [`Native`] is Windows.
 
@@ -16,7 +16,7 @@ use crate::{
     wmi::{self, Wmi},
 };
 use anyhow::{Context, Result, bail};
-use butterpollo_core::wake::{
+use butterpollo_session::wake::{
     ApplyReport, FixPlan, MAGIC_PACKET, MODERN_STANDBY_MAGIC_PACKET, NicReport, NicSettings,
     SHUTDOWN_WAKE, WAKE_ON_PATTERN,
 };

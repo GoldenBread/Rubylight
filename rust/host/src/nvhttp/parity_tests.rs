@@ -4,7 +4,7 @@ use axum::{
     body::{Body, to_bytes},
     http::Request,
 };
-use butterpollo_core::power_action::SleepStates;
+use butterpollo_session::power_action::SleepStates;
 use std::sync::atomic::Ordering;
 use tower::ServiceExt;
 
@@ -27,7 +27,7 @@ fn background_game_can_only_resume_on_its_owner_in_the_same_mode() {
     assert!(validate_background_launch(&fixture.host, &launch).is_ok());
     // The device's second screen is the same owner.
     let device = launch.client.uuid.clone();
-    launch.client.uuid = butterpollo_core::state::second_screen_uuid(&device);
+    launch.client.uuid = butterpollo_session::state::second_screen_uuid(&device);
     assert!(validate_background_launch(&fixture.host, &launch).is_ok());
 
     launch.client.uuid = "another-device".into();
@@ -37,7 +37,7 @@ fn background_game_can_only_resume_on_its_owner_in_the_same_mode() {
             .to_string()
             .contains("another device")
     );
-    launch.client.uuid = butterpollo_core::state::second_screen_uuid("another-device");
+    launch.client.uuid = butterpollo_session::state::second_screen_uuid("another-device");
     assert!(validate_background_launch(&fixture.host, &launch).is_err());
     launch.client.uuid = "parity-device".into();
     launch.client.extra.clear();
@@ -95,7 +95,7 @@ fn a_background_stream_never_plays_its_game_on_the_pc() {
     keep_background_sound_off_the_pc(&mut launch);
     assert!(!launch.host_audio);
     // So the session's routes move the instance, as the launch reads it.
-    let config = butterpollo_core::config::Config::default();
+    let config = butterpollo_config::config::Config::default();
     assert!(!crate::stream::plays_on_pc(&config, launch.host_audio));
 }
 
@@ -250,7 +250,7 @@ async fn hardware_metrics_capability_requires_opt_in_and_viewer_permission() {
         (true, true, 1 << 26, "1"),
     ] {
         let config =
-            butterpollo_core::config::Config::parse(&format!("hardware_metrics={enabled}"))
+            butterpollo_config::config::Config::parse(&format!("hardware_metrics={enabled}"))
                 .unwrap();
         f.host.paired.write().unwrap().clients[0].perm = permission;
         let connection = f.connection(tls);
@@ -302,7 +302,7 @@ async fn network_path_requires_paired_tls_viewer_and_returns_only_route_category
         let root = document(serverinfo_response(
             &f.host,
             &connection,
-            &butterpollo_core::config::Config::default(),
+            &butterpollo_config::config::Config::default(),
             client.as_ref(),
             true,
             String::new(),
@@ -334,7 +334,7 @@ async fn serverinfo_shows_a_devices_game_on_both_its_screens_and_no_other_device
     running.owner = client.uuid.clone();
     let id = running.id;
     *f.host.current_app.lock().unwrap() = Some(running);
-    let config = butterpollo_core::config::Config::default();
+    let config = butterpollo_config::config::Config::default();
     let mut other = client.clone();
     other.uuid = "another-device".into();
     for (asking, expected) in [
@@ -367,7 +367,7 @@ async fn serverinfo_shows_a_devices_game_on_both_its_screens_and_no_other_device
 async fn serverinfo_extras_preserve_permissions_codecs_commands_and_limiter_units() {
     let f = Fixture::new();
     let client = f.client(0x071f1f00);
-    let config = butterpollo_core::config::Config::parse("sunshine_name=PC <&>\nvirtual_display_mode=shared\nframe_limiter_fps_limit=59.94\nserver_cmd=[{\"name\":\"Lock <&>\",\"cmd\":\"must never run\"},{\"name\":\"Sleep\"}]").unwrap();
+    let config = butterpollo_config::config::Config::parse("sunshine_name=PC <&>\nvirtual_display_mode=shared\nframe_limiter_fps_limit=59.94\nserver_cmd=[{\"name\":\"Lock <&>\",\"cmd\":\"must never run\"},{\"name\":\"Sleep\"}]").unwrap();
     f.host
         .codecs
         .store(0x4000_0000 | 0x0003_0301, Ordering::Release);
@@ -468,7 +468,7 @@ async fn serverinfo_extras_preserve_permissions_codecs_commands_and_limiter_unit
 async fn serverinfo_shows_a_tunnelled_device_nothing_only_this_pc_sees() {
     let f = Fixture::new();
     let client = f.client(u32::MAX);
-    let config = butterpollo_core::config::Config::default();
+    let config = butterpollo_config::config::Config::default();
     let local = document(serverinfo_response(
         &f.host,
         &f.connection(true),
@@ -515,7 +515,7 @@ async fn serverinfo_shows_a_tunnelled_device_nothing_only_this_pc_sees() {
 async fn serverinfo_for_a_default_config_is_byte_identical() {
     let f = Fixture::new();
     let client = f.client(u32::MAX);
-    let config = butterpollo_core::config::Config::default();
+    let config = butterpollo_config::config::Config::default();
     let text = |response: Response| async move {
         assert_eq!(response.status(), StatusCode::OK);
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
@@ -546,7 +546,7 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
     let hostname = crate::network::host_name(&config);
     let unique_id = f.host.paired.read().unwrap().unique_id.clone();
     let version = env!("CARGO_PKG_VERSION");
-    let profile = butterpollo_core::migration::profile_id(&f.host.directory);
+    let profile = butterpollo_session::migration::profile_id(&f.host.directory);
     let sleep = u8::from(f.host.power.supported());
     // AudioCodecs 3 is Opus and PCM: the test binary's folder has no FFmpeg for AC3 and E-AC3.
     assert_eq!(
@@ -685,7 +685,7 @@ async fn serverinfo_for_a_default_config_is_byte_identical() {
 
 #[tokio::test]
 async fn serverinfo_carries_the_packed_444_modes_only_when_packed_is_on() {
-    use butterpollo_core::packed444::mode_bit;
+    use rubylight_protocol::packed444::mode_bit;
     let f = Fixture::new();
     let client = f.client(0x071f1f00);
     let packed = |config: &'static str| {
@@ -693,7 +693,7 @@ async fn serverinfo_carries_the_packed_444_modes_only_when_packed_is_on() {
         let connection = f.connection(true);
         let client = client.clone();
         async move {
-            let config = butterpollo_core::config::Config::parse(config).unwrap();
+            let config = butterpollo_config::config::Config::parse(config).unwrap();
             let root = document(serverinfo_response(
                 &host,
                 &connection,
@@ -730,10 +730,10 @@ async fn serverinfo_carries_the_packed_444_modes_only_when_packed_is_on() {
 /// full chroma off withdraws it at once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn saving_packed_444_changes_the_offered_modes_without_a_restart() {
-    use butterpollo_core::packed444::mode_bit;
+    use rubylight_protocol::packed444::mode_bit;
     fn probe(
-        _: &butterpollo_core::config::Config,
-        stream: &butterpollo_core::rtsp::Negotiated,
+        _: &butterpollo_config::config::Config,
+        stream: &butterpollo_media_policy::rtsp::Negotiated,
         _: &dyn Fn() -> bool,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(stream.codec == 1 || !stream.ten_bit(), "no 10-bit AV1 here");
@@ -942,12 +942,12 @@ async fn otp_handshake_persists_the_device_name_and_consumes_the_pin_once() {
     )
     .await
     .unwrap();
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     assert_eq!(saved.clients.len(), 1);
     assert_eq!(saved.clients[0].name, "Console name");
     assert_eq!(
         saved.clients[0].perm,
-        butterpollo_core::state::FIRST_DEVICE_PERMISSION
+        butterpollo_session::state::FIRST_DEVICE_PERMISSION
     );
     assert!(saved.clients[0].enabled);
     // Pairing never grants Host control, even to the first device.
@@ -1092,7 +1092,7 @@ pub(super) async fn finish_pairing(
     Ok(())
 }
 fn permission_of(f: &Fixture, name: &str) -> u32 {
-    let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+    let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
     saved.clients.iter().find(|c| c.name == name).unwrap().perm
 }
 pub(super) fn one_time_pin(pin: &str, passphrase: &str, permission: Option<u32>) -> OneTimePin {
@@ -1108,10 +1108,10 @@ pub(super) fn one_time_pin(pin: &str, passphrase: &str, permission: Option<u32>)
 
 #[tokio::test]
 async fn the_qr_code_and_the_typed_pin_each_pair_once_with_their_own_access() {
-    use butterpollo_core::state::{LATER_DEVICE_PERMISSION, PLAY_DEVICE_PERMISSION};
+    use butterpollo_session::state::{LATER_DEVICE_PERMISSION, PLAY_DEVICE_PERMISSION};
     let f = Fixture::new();
     // The first device, so the next ones get the access chosen for them.
-    f.client(butterpollo_core::state::FIRST_DEVICE_PERMISSION);
+    f.client(butterpollo_session::state::FIRST_DEVICE_PERMISSION);
     let peer = "127.0.0.1".parse().unwrap();
     {
         let mut otp = f.host.otp.lock().unwrap();
@@ -1144,7 +1144,7 @@ async fn the_qr_code_and_the_typed_pin_each_pair_once_with_their_own_access() {
     assert_eq!(permission_of(&f, "typed"), LATER_DEVICE_PERMISSION);
     // Play games also joins co-op sessions; view only does not.
     let joins = |name: &str| {
-        let saved = butterpollo_core::state::PairedState::load(&f.host.paired_path).unwrap();
+        let saved = butterpollo_session::state::PairedState::load(&f.host.paired_path).unwrap();
         saved
             .clients
             .iter()
@@ -1289,7 +1289,7 @@ async fn a_wrong_one_time_pin_counts_against_each_live_slot_and_expiry_closes_on
 
 #[tokio::test]
 async fn the_access_typed_with_a_console_pin_is_applied_and_the_first_device_gets_everything() {
-    use butterpollo_core::state::{
+    use butterpollo_session::state::{
         FIRST_DEVICE_PERMISSION, LATER_DEVICE_PERMISSION, PLAY_DEVICE_PERMISSION,
     };
     let f = Fixture::new();
@@ -1565,7 +1565,7 @@ async fn unpair_get_and_post_require_tls_and_stop_only_the_paired_device() {
         assert!(mine.stopping());
         assert!(!theirs.stopping());
         assert!(
-            butterpollo_core::state::PairedState::load(&f.host.paired_path)
+            butterpollo_session::state::PairedState::load(&f.host.paired_path)
                 .unwrap()
                 .clients
                 .is_empty()
@@ -2008,7 +2008,7 @@ async fn virtual_display_advertisement_matches_configuration_and_codecs() {
         ("virtual_display_mode=shared", true, 1, "true", "false"),
         ("virtual_display_mode=shared", true, 0x200, "true", "true"),
     ] {
-        let config = butterpollo_core::config::Config::parse(config).unwrap();
+        let config = butterpollo_config::config::Config::parse(config).unwrap();
         f.host.codecs.store(codecs, Ordering::Release);
         let root = document(serverinfo_response(
             &f.host,
@@ -2030,14 +2030,14 @@ async fn virtual_display_advertisement_matches_configuration_and_codecs() {
 async fn serverinfo_encoder_bitrate_tracks_only_own_video_sessions() {
     let f = Fixture::new();
     let client = f.client(1 << 25);
-    let config = butterpollo_core::config::Config::parse("fec_percentage=20").unwrap();
-    let mut negotiated = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_config::config::Config::parse("fec_percentage=20").unwrap();
+    let mut negotiated = butterpollo_media_policy::rtsp::Negotiated {
         configured_bitrate_kbps: 50_000,
         audio_channels: 2,
         audio_quality: true,
         ..Default::default()
     };
-    butterpollo_core::stream_policy::apply(&mut negotiated, 60_000, &config);
+    butterpollo_media_policy::stream_policy::apply(&mut negotiated, 60_000, &config);
     assert_eq!(negotiated.bitrate_kbps, 38_988);
     let mine = crate::state::Session::new(f.launch(client.clone(), Role::Stream), negotiated);
     f.host
@@ -2082,7 +2082,7 @@ async fn serverinfo_encoder_bitrate_tracks_only_own_video_sessions() {
     }
     let second = crate::state::Session::new(
         f.launch(client.clone(), Role::RemoteMonitor),
-        butterpollo_core::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             bitrate_kbps: 18_000,
             ..Default::default()
         },
@@ -2318,7 +2318,7 @@ async fn post_png(
 
 #[tokio::test]
 async fn clipboard_images_travel_as_png_within_the_limit() {
-    use butterpollo_core::clipboard_image::{Image, decode_png, encode_png};
+    use butterpollo_session::clipboard_image::{Image, decode_png, encode_png};
     const MIB: usize = 1024 * 1024;
     let _turn = clipboard::TURN.lock().await;
     let f = Fixture::new();
@@ -2551,9 +2551,12 @@ fn microphone_only_does_not_make_the_device_the_remote_input_owner() {
     let mut launch = f.launch(client.clone(), Role::InputOnly);
     launch
         .options
-        .insert(butterpollo_core::mic::ONLY_OPTION.into(), "1".into());
+        .insert(butterpollo_session::mic::ONLY_OPTION.into(), "1".into());
     assert!(launch.mic_only());
-    let session = crate::state::Session::new(launch, butterpollo_core::rtsp::Negotiated::default());
+    let session = crate::state::Session::new(
+        launch,
+        butterpollo_media_policy::rtsp::Negotiated::default(),
+    );
     f.host
         .sessions
         .lock()
@@ -2566,11 +2569,11 @@ fn microphone_only_does_not_make_the_device_the_remote_input_owner() {
 #[test]
 fn a_device_that_may_only_view_streams_cannot_start_microphone_only() {
     let f = Fixture::new();
-    let viewer = f.client(butterpollo_core::state::LATER_DEVICE_PERMISSION);
+    let viewer = f.client(butterpollo_session::state::LATER_DEVICE_PERMISSION);
     let app_id = f.host.apps.read().unwrap()[0].id();
     let mut args = Args::new();
     args.insert("input_only".into(), "1".into());
-    args.insert(butterpollo_core::mic::ONLY_OPTION.into(), "1".into());
+    args.insert(butterpollo_session::mic::ONLY_OPTION.into(), "1".into());
     // /launch, /resume, and /launch naming the Resume tile or the running game.
     for (control, resume) in [
         (None, false),
@@ -2600,7 +2603,7 @@ fn a_device_that_may_only_view_streams_starts_no_remote_monitor_or_input_by_quer
         .unwrap()
         .values
         .insert("enable_input_only_mode".into(), "true".into());
-    let viewer = f.client(butterpollo_core::state::LATER_DEVICE_PERMISSION);
+    let viewer = f.client(butterpollo_session::state::LATER_DEVICE_PERMISSION);
     let player = f.client(u32::MAX);
     let app_id = f.host.apps.read().unwrap()[0].id();
     for (option, role) in [
@@ -2666,7 +2669,7 @@ fn a_microphone_only_launch_needs_no_input_only_mode_and_keeps_no_input() {
     };
     // Plain input-only stays the administrator's choice.
     assert!(resolve(&args).is_err());
-    args.insert(butterpollo_core::mic::ONLY_OPTION.into(), "1".into());
+    args.insert(butterpollo_session::mic::ONLY_OPTION.into(), "1".into());
     let (role, app, _, coop) = resolve(&args).unwrap();
     assert_eq!(role, Role::InputOnly);
     // Naming an app does not start it.
@@ -2687,10 +2690,17 @@ fn a_microphone_only_launch_needs_no_input_only_mode_and_keeps_no_input() {
     assert!(
         !launch
             .client
-            .allows(butterpollo_core::input::KEYBOARD_PERMISSION)
+            .allows(butterpollo_input_policy::input::KEYBOARD_PERMISSION)
     );
-    assert_eq!(launch.client.perm & butterpollo_core::state::ALL_INPUT, 0);
-    assert!(launch.client.allows(butterpollo_core::state::LAUNCH_APPS));
+    assert_eq!(
+        launch.client.perm & butterpollo_session::state::ALL_INPUT,
+        0
+    );
+    assert!(
+        launch
+            .client
+            .allows(butterpollo_session::state::LAUNCH_APPS)
+    );
     // It is a launch: never a resume or a remote session tile.
     assert!(
         resolve_launch_app(
@@ -2717,7 +2727,7 @@ fn a_microphone_only_launch_needs_no_input_only_mode_and_keeps_no_input() {
         .is_err()
     );
     // Without the option an input-only launch keeps the device's input.
-    args.remove(butterpollo_core::mic::ONLY_OPTION);
+    args.remove(butterpollo_session::mic::ONLY_OPTION);
     let input = build_launch(
         "127.0.0.1".parse().unwrap(),
         &args,
@@ -2729,8 +2739,8 @@ fn a_microphone_only_launch_needs_no_input_only_mode_and_keeps_no_input() {
     );
     assert!(!input.mic_only());
     assert_eq!(
-        input.client.perm & butterpollo_core::state::ALL_INPUT,
-        butterpollo_core::state::ALL_INPUT
+        input.client.perm & butterpollo_session::state::ALL_INPUT,
+        butterpollo_session::state::ALL_INPUT
     );
 }
 
@@ -2775,7 +2785,7 @@ fn input_and_monitor_roles_resolve_without_starting_an_app_or_preparing_hardware
 
 #[test]
 fn only_hdr_mode_zero_makes_a_ten_bit_format_sdr() {
-    use butterpollo_core::{rtsp::Negotiated, stream_policy::infer_sdr_10bit};
+    use butterpollo_media_policy::{rtsp::Negotiated, stream_policy::infer_sdr_10bit};
     let f = Fixture::new();
     let client = f.client(0);
     let sdp = b"a=x-nv-vqos[0].bitStreamFormat:1\na=x-nv-video[0].dynamicRangeMode:1\n";

@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::child_session::Registry;
+use butterpollo_session::child_session::Registry;
 use std::cell::Cell;
 
 thread_local! {

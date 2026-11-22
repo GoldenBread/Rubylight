@@ -27,7 +27,9 @@ test = false
 
 [dependencies]
 anyhow.workspace = true
-butterpollo-core = { path = "../core" }
+butterpollo-crypto = { path = "../core/crypto" }
+butterpollo-config = { path = "../core/config" }
+butterpollo-media-policy = { path = "../core/media-policy" }
 butterpollo-windows = { path = "../windows" }
 hex = "0.4"
 serde_json.workspace = true

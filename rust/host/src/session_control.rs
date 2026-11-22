@@ -1,6 +1,6 @@
 //! The host's session state (plan item A4).
 //!
-//! `butterpollo_core::session_state::Machine` holds the state:
+//! `butterpollo_session::session_state::Machine` holds the state:
 //! idle, preparing, launching, streaming, suspended, stopping. This module
 //! feeds it what the host observes (stream sessions, the running app, the
 //! displays kept between streams), moves it at the points where the host
@@ -15,13 +15,13 @@
 //! Lock order: the session mutex is outermost. Nothing calls into it while
 //! holding `sessions`, `current_app` or `app_display`.
 use crate::state::Host;
-use butterpollo_core::{
+use butterpollo_session::{
     native::{self, SessionSnapshot},
-    native_api::session::{SessionApp, State},
     session::Role,
     session_state::{Facts, Journal, Machine, Outcome, Plan, Refusal},
     state::App,
 };
+use rubylight_native_api::session::{SessionApp, State};
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},

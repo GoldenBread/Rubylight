@@ -52,7 +52,7 @@ pub struct Wgc {
     staging: Option<ID3D11Texture2D>,
     pub(super) owned: GpuPool,
     pub(super) grid: Option<std::sync::Arc<std::sync::Mutex<ClaimGrid>>>,
-    intervals: butterpollo_core::capture_policy::Intervals,
+    intervals: butterpollo_media_policy::capture_policy::Intervals,
     origin: Instant,
     last_publish: Instant,
     pub(super) held: Option<(Direct3D11CaptureFrame, Instant, Instant, Option<Instant>)>,
@@ -186,7 +186,7 @@ fn open_session(
     cursor: bool,
     high_rate: bool,
 ) -> Result<(Direct3D11CaptureFramePool, GraphicsCaptureSession)> {
-    use butterpollo_core::os_gate::{Feature, missing};
+    use butterpollo_session::os_gate::{Feature, missing};
     let build = crate::display::windows_build();
     let dxgi: IDXGIDevice = gpu.device.cast()?;
     // SAFETY: `dxgi` is the live device the capture runs on.
@@ -285,7 +285,7 @@ impl Wgc {
                 .unwrap_or(hdr);
             // Say which Windows build lacks WGC or display capture, and what to
             // use instead, before the generic COM error would hide it.
-            use butterpollo_core::os_gate::{Feature, missing};
+            use butterpollo_session::os_gate::{Feature, missing};
             let build = crate::display::windows_build();
             if window.is_some() {
                 window::require_capture(build)?;
@@ -470,7 +470,7 @@ impl Wgc {
             }
             let deadline = self.grid.as_ref().and_then(|grid| {
                 let grid = grid.lock().unwrap();
-                butterpollo_core::capture_policy::publication_deadline(
+                butterpollo_media_policy::capture_policy::publication_deadline(
                     grid.period.as_nanos().min(i64::MAX as u128) as i64,
                     nanos(now, grid.anchor),
                     composition,

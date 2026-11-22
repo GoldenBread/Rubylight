@@ -1,7 +1,7 @@
 //! What a device keeps from a stream: its chosen layout, resolution and scale. A device's second
 //! screen keeps its own resolution and scale and learns no layout: the layout is the device's.
 use super::*;
-use butterpollo_core::state::{device_uuid, screen_setting};
+use butterpollo_session::state::{device_uuid, screen_setting};
 
 impl Prepared {
     pub(super) fn active_layout(&self) -> Result<Vec<(String, bool)>> {
@@ -47,7 +47,7 @@ impl Prepared {
             }
         };
         let Some(chosen) =
-            butterpollo_core::display_policy::chosen_layout(planned, &self.output, &active)
+            butterpollo_media_policy::display_policy::chosen_layout(planned, &self.output, &active)
         else {
             return;
         };

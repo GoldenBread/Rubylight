@@ -1,5 +1,5 @@
 //! A stream of the launched app's window in place of its display
-//! (`capture_window = window`, butterpollo_core::app_window): this worker
+//! (`capture_window = window`, butterpollo_media_policy::app_window): this worker
 //! finds the window among the app's process tree's windows, lays its capture
 //! target over the display's ([`Ready::show_app_window`]) and says on the
 //! device what the stream shows while it shows the display instead. The
@@ -12,7 +12,7 @@
 //! moment later.
 use crate::display_session::Ready;
 use crate::state::{Session, Shared};
-use butterpollo_core::app_window::{self, Decision, Follow, Frame, Settings, Target};
+use butterpollo_media_policy::app_window::{self, Decision, Follow, Frame, Settings, Target};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{

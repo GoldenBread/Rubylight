@@ -10,7 +10,7 @@ use super::sdp::{
     VideoCodec,
 };
 use anyhow::{Context, Result, anyhow, bail};
-use butterpollo_core::{audio::OpusLayout, network_pacing};
+use butterpollo_media_policy::{audio::OpusLayout, network_pacing};
 use butterpollo_windows::net::Segments;
 use butterpollo_windows::timing::{Signal, Timer};
 use socket2::{Domain, Protocol as SockProtocol, Socket, Type};

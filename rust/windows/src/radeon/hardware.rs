@@ -439,14 +439,14 @@ fn worker_writes_and_restores_anti_lag() {
     );
 }
 
-/// The per-game profiles of plan B5 (`butterpollo_core::radeon_profile`) against the real
+/// The per-game profiles of plan B5 (`butterpollo_media_policy::radeon_profile`) against the real
 /// driver: each named profile is written as the host writes it at launch (the stream's 60 fps
 /// in place of `$stream_fps`), every value is read back, and the session's restore must leave
 /// the driver as it was found.
 #[test]
 #[ignore = "changes real driver settings"]
 fn game_profiles_apply_and_restore() {
-    use butterpollo_core::radeon_profile::selected;
+    use butterpollo_media_policy::radeon_profile::selected;
     let _exclusive = exclusive();
     assert_host_idle();
     let gpu = first_gpu();

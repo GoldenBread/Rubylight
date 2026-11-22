@@ -2,7 +2,7 @@
 use super::{WAIT, address, udp, until};
 use crate::state::Launch;
 use anyhow::Result;
-use butterpollo_core::config::Ports;
+use butterpollo_config::config::Ports;
 use rusty_enet::{Event, Host, HostSettings, Packet, PacketKind};
 use std::{
     net::{SocketAddr, UdpSocket},
@@ -174,7 +174,7 @@ impl Client {
                         worker_disconnected.store(true, Ordering::Release);
                     }
                     if let Event::Receive { packet, .. } = event {
-                        let (_, kind, payload) = butterpollo_core::packet::decrypt_control(
+                        let (_, kind, payload) = butterpollo_media_policy::packet::decrypt_control(
                             &launch.key,
                             packet.data(),
                             false,
@@ -192,19 +192,19 @@ impl Client {
                                 .unwrap()
                                 .push((Instant::now(), payload.clone()));
                         }
-                        if kind == butterpollo_core::text_input::TEXT_INPUT_MESSAGE_TYPE {
+                        if kind == butterpollo_input_policy::text_input::TEXT_INPUT_MESSAGE_TYPE {
                             worker_text_notices
                                 .lock()
                                 .unwrap()
                                 .push((Instant::now(), payload.clone()));
                         }
-                        if kind == butterpollo_core::rate_change::RATE_CHANGE_MESSAGE_TYPE {
+                        if kind == butterpollo_media_policy::rate_change::RATE_CHANGE_MESSAGE_TYPE {
                             worker_rate_answers
                                 .lock()
                                 .unwrap()
                                 .push((Instant::now(), payload.clone()));
                         }
-                        if kind == butterpollo_core::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE {
+                        if kind == rubylight_protocol::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE {
                             worker_clipboard
                                 .lock()
                                 .unwrap()
@@ -212,16 +212,16 @@ impl Client {
                         }
                         if matches!(
                             kind,
-                            butterpollo_core::frame_warp::FRAME_WARP_MODEL_MESSAGE_TYPE
-                                | butterpollo_core::frame_warp::FRAME_WARP_TAGS_MESSAGE_TYPE
-                                | butterpollo_core::frame_warp::FRAME_WARP_MASK_MESSAGE_TYPE
+                            butterpollo_media_policy::frame_warp::FRAME_WARP_MODEL_MESSAGE_TYPE
+                                | butterpollo_media_policy::frame_warp::FRAME_WARP_TAGS_MESSAGE_TYPE
+                                | butterpollo_media_policy::frame_warp::FRAME_WARP_MASK_MESSAGE_TYPE
                         ) {
                             worker_frame_warp
                                 .lock()
                                 .unwrap()
                                 .push((kind, payload.clone()));
                         }
-                        if kind == butterpollo_core::link_notice::LINK_NOTICE_MESSAGE_TYPE {
+                        if kind == butterpollo_media_policy::link_notice::LINK_NOTICE_MESSAGE_TYPE {
                             worker_notices
                                 .lock()
                                 .unwrap()
@@ -331,7 +331,8 @@ impl Client {
     /// streams' version 1 control encryption has it; `seq` counts up from 0 per stream.
     pub fn send_encrypted(&self, key: &[u8; 16], seq: u32, kind: u16, payload: &[u8]) {
         let message =
-            butterpollo_core::packet::encrypted_control(key, seq, kind, payload, false).unwrap();
+            butterpollo_media_policy::packet::encrypted_control(key, seq, kind, payload, false)
+                .unwrap();
         self.outbox.lock().unwrap().push(message);
     }
     /// Stops the video pings and returns once no round that could still send one is running.

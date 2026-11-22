@@ -19,13 +19,13 @@ use crate::{
     nvenc_abi::*,
 };
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
-    config::Config,
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::{
     encoder_focus::{self, Reason},
     nvenc::{ApiVersion, Budget, RateControl, Recovery, References, SPLIT_DISABLED, Tuning},
     rtsp::Negotiated,
-    session::Warnings,
 };
+use butterpollo_session::session::Warnings;
 use std::{
     collections::VecDeque,
     ffi::{CStr, c_void},
@@ -224,7 +224,7 @@ fn api_fallback_warning(
         lost.push("HDR10 mastering metadata is sent on the control channel only");
     }
     if stream.codec != 0
-        && tuning.split != butterpollo_core::nvenc::SPLIT_DISABLED
+        && tuning.split != butterpollo_media_policy::nvenc::SPLIT_DISABLED
         && !api.modern_depth()
     {
         lost.push("split-frame encoding is unavailable");
@@ -377,10 +377,10 @@ struct Metadata {
 impl Metadata {
     fn new(codec: u8) -> Self {
         let mut metadata = Self::default();
-        metadata.update(butterpollo_core::hdr::Metadata::default(), codec);
+        metadata.update(butterpollo_media_policy::hdr::Metadata::default(), codec);
         metadata
     }
-    fn update(&mut self, metadata: butterpollo_core::hdr::Metadata, codec: u8) {
+    fn update(&mut self, metadata: butterpollo_media_policy::hdr::Metadata, codec: u8) {
         // NVENC takes each codec's syntax units, not a common HDR10 unit.
         // AV1 uses 0.16 chromaticities, 24.8 maximum and 18.14 minimum nits;
         // HEVC uses 1/50000 chromaticities and 1/10000 nit luminance.
@@ -704,7 +704,7 @@ struct Session {
     force_idr: bool,
 }
 impl Session {
-    fn set_hdr_metadata(&mut self, metadata: butterpollo_core::hdr::Metadata) {
+    fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
         self.metadata.update(metadata, self.stream.codec);
     }
     /// Refuse a session a stream has set up ([`Encoder::probe_focus`]
@@ -1016,8 +1016,12 @@ impl Session {
         let weighted = tuning.weighted_prediction
             && self.d3d12.is_none()
             && self.optional_cap(_NV_ENC_CAPS_NV_ENC_CAPS_SUPPORT_WEIGHTED_PREDICTION);
-        let split_capable =
-            butterpollo_core::nvenc::split_capable(self.stream.codec, self.api, engines, weighted);
+        let split_capable = butterpollo_media_policy::nvenc::split_capable(
+            self.stream.codec,
+            self.api,
+            engines,
+            weighted,
+        );
         let mut split = tuning.split;
         let mut split_reason = if split == SPLIT_DISABLED {
             "disabled"
@@ -1044,7 +1048,7 @@ impl Session {
             // `auto` may use both engines when one engine's estimate misses
             // the frame budget. This is a split decision, independent of
             // whether the guard lowers the preset.
-            let one_engine = butterpollo_core::nvenc::frame_budget(
+            let one_engine = butterpollo_media_policy::nvenc::frame_budget(
                 tuning.preset,
                 (self.stream.width, self.stream.height),
                 f64::from(self.stream.fps_millihz()) / 1000.,
@@ -1062,7 +1066,7 @@ impl Session {
         // HEVC split encoding and subframe readback exclude each other. Where
         // split encoding engages it keeps the frame budget (`frame_budget`),
         // so it is kept; where it would not, slices leave as they finish.
-        let splits = butterpollo_core::nvenc::SplitContext {
+        let splits = butterpollo_media_policy::nvenc::SplitContext {
             codec: self.stream.codec,
             api: self.api,
             engines,
@@ -1112,7 +1116,7 @@ impl Session {
         // The guard tries each candidate preset with the split that preset
         // would get: implicit split only inside its thresholds, a forced mode
         // at every preset.
-        let split_context = butterpollo_core::nvenc::SplitContext {
+        let split_context = butterpollo_media_policy::nvenc::SplitContext {
             codec: self.stream.codec,
             api: self.api,
             engines,
@@ -1152,7 +1156,7 @@ impl Session {
             },
             ..Default::default()
         };
-        let budget = butterpollo_core::nvenc::frame_budget(
+        let budget = butterpollo_media_policy::nvenc::frame_budget(
             tuning.preset,
             (self.stream.width, self.stream.height),
             f64::from(self.stream.fps_millihz()) / 1000.,
@@ -2136,7 +2140,7 @@ impl Session {
                 !slot.event.is_invalid() || self.subframe || self.d3d12.is_some(),
             ));
             if pending.measured {
-                let (columns, rows) = butterpollo_core::nvenc::delta_grid(
+                let (columns, rows) = butterpollo_media_policy::nvenc::delta_grid(
                     self.stream.codec,
                     self.stream.width,
                     self.stream.height,
@@ -2342,7 +2346,7 @@ impl Session {
             }
             let pending = self.pending.pop_front().unwrap();
             if pending.measured {
-                let (width, height) = butterpollo_core::nvenc::delta_grid(
+                let (width, height) = butterpollo_media_policy::nvenc::delta_grid(
                     self.stream.codec,
                     self.stream.width,
                     self.stream.height,
@@ -2475,7 +2479,7 @@ impl Session {
         // `averageBitRate` and `maxBitRate` as 32-bit bits per second, and
         // 2 Gbit/s stays inside them.
         let requested = bitrate;
-        let bitrate = bitrate.min(butterpollo_core::rtsp::MAX_BITRATE_KBPS);
+        let bitrate = bitrate.min(butterpollo_media_policy::rtsp::MAX_BITRATE_KBPS);
         if bitrate != requested {
             tracing::warn!(
                 requested,
@@ -2776,7 +2780,7 @@ fn refuse_native_444(coded: &Negotiated) -> Result<()> {
     if !coded.yuv444 {
         return Ok(());
     }
-    match butterpollo_core::nvenc::sdk_444_refusal(coded.codec) {
+    match butterpollo_media_policy::nvenc::sdk_444_refusal(coded.codec) {
         Some(reason) => bail!(
             "NVENC cannot encode {} 4:4:4: {reason}",
             codec_name(coded.codec)
@@ -2939,8 +2943,8 @@ impl Encoder {
         // it; the D3D12 compute conversion writes 4:2:0 only.
         let compute = compute.filter(|_| !coded.yuv444);
         if coded.yuv444 {
-            use butterpollo_core::nvenc::Input444;
-            let input = match butterpollo_core::nvenc::input_444(coded.ten_bit()) {
+            use butterpollo_media_policy::nvenc::Input444;
+            let input = match butterpollo_media_policy::nvenc::input_444(coded.ten_bit()) {
                 Input444::Ayuv => "AYUV on the D3D11 device",
                 Input444::Planar16 => "three 16-bit planes copied through CUDA",
             };
@@ -3052,7 +3056,7 @@ impl Encoder {
     }
     /// HDR10 static metadata for the bitstream (API 13 and newer) and as the
     /// stand-in of dynamic metadata.
-    pub fn set_hdr_metadata(&mut self, metadata: butterpollo_core::hdr::Metadata) {
+    pub fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
         if let Some(dynamic) = self.dynamic.as_deref_mut() {
             dynamic.set_metadata(metadata);
         }
@@ -3199,7 +3203,7 @@ impl Encoder {
         let mut frames = self.session.poll()?;
         self.focus_feedback();
         if let Some(error) = self.session.reencode_failure.take() {
-            self.warnings.event("encoder_reencode", format!("NVENC could not encode an oversize scene cut again as a keyframe ({error}); the frame goes without full FEC and may freeze the picture briefly. Report this with the host log."), butterpollo_core::session::EVENT_PERIOD);
+            self.warnings.event("encoder_reencode", format!("NVENC could not encode an oversize scene cut again as a keyframe ({error}); the frame goes without full FEC and may freeze the picture briefly. Report this with the host log."), butterpollo_session::session::EVENT_PERIOD);
         }
         for frame in &mut frames {
             splice(self.dynamic.as_deref_mut(), frame);
@@ -3218,7 +3222,7 @@ impl Encoder {
                 self.warnings.event(
                     "encoder_output_event",
                     format!("NVENC could not arm its output event ({error:#}); polling for output instead. Report this with the host log."),
-                    butterpollo_core::session::EVENT_PERIOD,
+                    butterpollo_session::session::EVENT_PERIOD,
                 );
                 None
             }
@@ -3412,7 +3416,7 @@ impl Encoder {
         {
             // The last map's buffer, refilled.
             let mut deltas = std::mem::take(&mut self.session.map_scratch);
-            match butterpollo_core::nvenc::focus_deltas(
+            match butterpollo_media_policy::nvenc::focus_deltas(
                 self.config.codec,
                 (self.session.stream.width, self.session.stream.height),
                 &fixed.values,
@@ -3463,7 +3467,7 @@ impl Encoder {
         };
         // The last map's buffer, refilled.
         let mut deltas = std::mem::take(&mut self.session.map_scratch);
-        match butterpollo_core::nvenc::focus_deltas(
+        match butterpollo_media_policy::nvenc::focus_deltas(
             self.config.codec,
             (self.session.stream.width, self.session.stream.height),
             view.rows,

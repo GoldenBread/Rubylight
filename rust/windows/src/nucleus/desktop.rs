@@ -3,8 +3,8 @@
 //! that loads the host's profile in Nucleus Co-op's window.
 use super::instances::{Desktop, MessageBox};
 use anyhow::{Result, bail, ensure};
-use butterpollo_core::nucleus::window::{Rect, Window};
-use butterpollo_core::steam::Process;
+use butterpollo_session::nucleus::window::{Rect, Window};
+use butterpollo_session::steam::Process;
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::windows::io::OwnedHandle;
 use std::sync::Arc;

@@ -1,16 +1,16 @@
-//! Haptics from game audio on the control loop (`butterpollo_core::audio_haptics`):
+//! Haptics from game audio on the control loop (`butterpollo_input_policy::audio_haptics`):
 //! the settings follow saves mid-stream, and a value the host would not use
 //! says so and keeps them off.
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use butterpollo_core::audio_haptics::{Arbiter, Settings, Tap};
-use butterpollo_core::config::Config;
-use butterpollo_core::controller_audio::PcmTraffic;
-use butterpollo_core::haptics;
-use butterpollo_core::input::Input;
-use butterpollo_core::session::Warnings;
+use butterpollo_config::config::Config;
+use butterpollo_input_policy::audio_haptics::{Arbiter, Settings, Tap};
+use butterpollo_input_policy::controller_audio::PcmTraffic;
+use butterpollo_input_policy::haptics;
+use butterpollo_input_policy::input::Input;
+use butterpollo_session::session::Warnings;
 
 /// The session warning code while a setting is refused.
 pub(super) const WARNING: &str = "audio_haptics";
@@ -114,7 +114,7 @@ impl PeerHaptics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::audio_haptics::{Curve, STRENGTH};
+    use butterpollo_input_policy::audio_haptics::{Curve, STRENGTH};
 
     fn warned(warnings: &Warnings) -> bool {
         warnings.snapshot().iter().any(|w| w.code == WARNING)

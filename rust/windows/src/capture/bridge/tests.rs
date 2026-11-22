@@ -276,7 +276,7 @@ fn helper_learns_whether_an_app_window_draws_the_pointer_but_not_its_match_rules
     let filtered = capture_config(&source);
     assert_eq!(filtered.values.len(), 2);
     assert_eq!(
-        filtered.get(butterpollo_core::app_window::FRAME, ""),
+        filtered.get(butterpollo_media_policy::app_window::FRAME, ""),
         "client"
     );
     assert!(crate::capture::window_client(&filtered));

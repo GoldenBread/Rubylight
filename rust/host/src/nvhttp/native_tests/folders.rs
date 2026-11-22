@@ -3,7 +3,7 @@
 //! the folders are opened without impersonation.
 use super::*;
 use axum::response::Response;
-use butterpollo_core::native_api::{
+use rubylight_native_api::{
     feature,
     files::Uploaded,
     folders::{EntryKind, FolderAccess, FolderEntries, FolderList, SharedFolder},

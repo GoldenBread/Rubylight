@@ -6,7 +6,7 @@ use crate::overlay::{
     Overlay,
     reference::{self, Layout},
 };
-use butterpollo_core::rtsp::Negotiated;
+use butterpollo_media_policy::rtsp::Negotiated;
 use windows::Win32::Graphics::Direct3D12::{D3D12_FENCE_FLAG_NONE, ID3D12Fence};
 
 const WIDTH: u32 = 128;

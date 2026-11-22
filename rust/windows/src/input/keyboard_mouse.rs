@@ -406,7 +406,7 @@ fn legacy_extended_key(key: u16) -> bool {
     )
 }
 pub(super) fn mapped_keyboard_identity(
-    policy: &butterpollo_core::input_policy::Policy,
+    policy: &butterpollo_input_policy::input_policy::Policy,
     key: u16,
     modifiers: u8,
 ) -> u32 {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::state::test_support::Fixture;
-use butterpollo_core::{rtsp::Negotiated, session::Role};
+use butterpollo_media_policy::rtsp::Negotiated;
+use butterpollo_session::session::Role;
 use serde_json::Value;
 use std::sync::Mutex;
 
@@ -885,7 +886,8 @@ fn the_histogram_buckets_are_exact_below_eight_and_a_quarter_octave_above() {
 #[test]
 fn a_co_op_players_input_drives_only_its_slots_pad() {
     use crate::nucleus::{Admission, Game, fake};
-    use butterpollo_core::{config::Config, state::App};
+    use butterpollo_config::config::Config;
+    use butterpollo_session::state::App;
     use butterpollo_windows::input::PadReport;
     let f = Fixture::new();
     let h = f.host.clone();
@@ -986,7 +988,7 @@ fn a_co_op_players_input_drives_only_its_slots_pad() {
     assert_eq!(rumble[0]["strongMagnitude"], 1.0);
     // A session the registry no longer has: no sink at all.
     let mut gone = f.launch(f.client(u32::MAX), Role::Stream);
-    gone.nucleus = Some(butterpollo_core::session::Seat {
+    gone.nucleus = Some(butterpollo_session::session::Seat {
         session: seat.session + 1,
         slot: 0,
     });

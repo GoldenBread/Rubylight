@@ -4,7 +4,7 @@ mod run;
 mod setup;
 mod teardown;
 use super::*;
-use butterpollo_core::session::EncoderFailure;
+use butterpollo_session::session::EncoderFailure;
 
 /// How soon the stream looks again when another thread held the running app.
 const QUIT_SCAN_RETRY: Duration = Duration::from_millis(50);
@@ -422,7 +422,7 @@ impl EncoderRecovery {
     pub(super) fn collect(
         &mut self,
         encoder: &mut Option<impl EncoderOutput>,
-        warnings: &butterpollo_core::session::Warnings,
+        warnings: &butterpollo_session::session::Warnings,
         now: impl Fn() -> Instant,
     ) -> Result<Vec<butterpollo_windows::encoder::Encoded>> {
         let Some(active) = encoder.as_mut() else {
@@ -463,13 +463,13 @@ impl EncoderRecovery {
     pub(super) fn poll_full(
         &mut self,
         encoder: &mut Option<impl EncoderOutput>,
-        warnings: &butterpollo_core::session::Warnings,
+        warnings: &butterpollo_session::session::Warnings,
         now: impl Fn() -> Instant,
     ) -> Result<Option<Vec<butterpollo_windows::encoder::Encoded>>> {
         if self.failing.is_none() {
             self.recreations = 0;
         }
-        let limit = butterpollo_core::stream_policy::encoder_stall_limit(self.recreations);
+        let limit = butterpollo_media_policy::stream_policy::encoder_stall_limit(self.recreations);
         let backlog_since = *self.backlog_since.get_or_insert_with(&now);
         // The host can be descheduled while the GPU finishes its work. Poll
         // before declaring a stall, or a late wake destroys healthy output
@@ -560,9 +560,9 @@ fn phase_interval(
 /// `applied`, and a rate change the switch carried is answered with `reason`.
 fn refuse_switch(
     s: &Session,
-    from: butterpollo_core::reconfigure::Mode,
-    applied: butterpollo_core::reconfigure::Mode,
-    reason: butterpollo_core::rate_change::Reason,
+    from: butterpollo_media_policy::reconfigure::Mode,
+    applied: butterpollo_media_policy::reconfigure::Mode,
+    reason: butterpollo_media_policy::rate_change::Reason,
 ) {
     let mut reconfigure = s.reconfigure.lock().unwrap();
     reconfigure.refused(from, applied);
@@ -615,7 +615,9 @@ struct Workers {
     coop_watch: Option<crate::nucleus::Watch>,
     #[cfg(any(test, feature = "test-harness"))]
     fixture_preparation: Option<
-        Box<dyn butterpollo_core::session::Preparation<crate::display_session::StreamPreparation>>,
+        Box<
+            dyn butterpollo_session::session::Preparation<crate::display_session::StreamPreparation>,
+        >,
     >,
     // Ends the host-side timing record's writer, which writes its footer, on every
     // way out of the stream.

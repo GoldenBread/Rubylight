@@ -10,11 +10,11 @@
 //! the relay closes, and with its stream.
 
 use anyhow::{Context, Result, anyhow, bail};
-use butterpollo_core::{
-    native_api::usb::TOKEN_TTL_SECS,
-    state::Client,
-    usb_forward::{TOKEN_BYTES, UsbMessage, UsbReason, UsbState},
-    usbip_wire::{self as wire, Header},
+use butterpollo_session::state::Client;
+use rubylight_native_api::usb::TOKEN_TTL_SECS;
+use rubylight_protocol::{
+    usb::{TOKEN_BYTES, UsbMessage, UsbReason, UsbState},
+    usbip::{self as wire, Header},
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},

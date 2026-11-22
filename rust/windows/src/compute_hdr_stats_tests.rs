@@ -3,7 +3,7 @@
 //! taken on the CPU.
 use super::*;
 use crate::capture::{ComGuard, Device, GpuImage, Image, Pixel};
-use butterpollo_core::hdr_dynamic::{FrameStats, nits_to_pq};
+use butterpollo_media_policy::hdr_dynamic::{FrameStats, nits_to_pq};
 
 /// Words for `samples` in `bins` (bin, count), with `min` and `max`.
 fn words(min: f32, max: f32, bins: &[(usize, u32)]) -> Vec<u32> {
@@ -108,7 +108,7 @@ impl Rig {
         let hdr = image.pixel != Pixel::Bgra8;
         let mut converter = Converter::new(self.compute.clone(), image.width, image.height, hdr)?;
         converter.values = crate::gpu_color::constants(
-            &butterpollo_core::rtsp::Negotiated {
+            &butterpollo_media_policy::rtsp::Negotiated {
                 width: image.width,
                 height: image.height,
                 codec: 1,
@@ -656,7 +656,7 @@ fn graphics(
     newer_than: u64,
 ) -> Result<Option<HdrStatsReadout>> {
     let hdr = image.pixel != Pixel::Bgra8;
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: image.width,
         height: image.height,
         codec: 1,

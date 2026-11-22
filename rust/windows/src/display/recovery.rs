@@ -8,7 +8,7 @@ use super::*;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     pub version: u32,
-    pub nodes: Vec<butterpollo_core::topology::Node>,
+    pub nodes: Vec<butterpollo_media_policy::topology::Node>,
     pub hdr: std::collections::BTreeMap<String, bool>,
     #[serde(default)]
     pub clone_groups: Vec<Vec<String>>,
@@ -74,7 +74,7 @@ impl Snapshot {
             }
             return Ok(snapshot);
         }
-        use butterpollo_core::topology::{Kind, Mode, Node, Position};
+        use butterpollo_media_policy::topology::{Kind, Mode, Node, Position};
         let groups: Vec<Vec<String>> = serde_json::from_value(
             value
                 .get("topology")
@@ -273,7 +273,9 @@ impl Snapshot {
                     &m.display_name,
                     n.mode.width,
                     n.mode.height,
-                    butterpollo_core::framegen::Rate((n.mode.refresh_hz * 1000.0).round() as u32),
+                    butterpollo_media_policy::framegen::Rate(
+                        (n.mode.refresh_hz * 1000.0).round() as u32
+                    ),
                 ),
             ) {
                 mode_failures.insert(n.device_id.clone());
@@ -335,7 +337,9 @@ impl Snapshot {
                 &n.device_id,
                 n.mode.width,
                 n.mode.height,
-                butterpollo_core::framegen::Rate((n.mode.refresh_hz * 1000.0).round() as u32),
+                butterpollo_media_policy::framegen::Rate(
+                    (n.mode.refresh_hz * 1000.0).round() as u32
+                ),
             ) {
                 failures.push(format!(
                     "{} ({}) mode after layout: {error:#}",
@@ -372,13 +376,13 @@ pub(crate) fn restore_was_refused(error: &anyhow::Error) -> bool {
 type PositionChanges = std::collections::BTreeMap<
     String,
     (
-        butterpollo_core::topology::Position,
-        butterpollo_core::topology::Position,
+        butterpollo_media_policy::topology::Position,
+        butterpollo_media_policy::topology::Position,
     ),
 >;
 static POSITIONS: std::sync::Mutex<PositionChanges> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
-pub fn baseline_nodes() -> Result<Vec<butterpollo_core::topology::Node>> {
+pub fn baseline_nodes() -> Result<Vec<butterpollo_media_policy::topology::Node>> {
     let mut nodes = Topology::query()?.nodes()?;
     let changes = POSITIONS.lock().unwrap();
     for node in &mut nodes {
@@ -388,8 +392,8 @@ pub fn baseline_nodes() -> Result<Vec<butterpollo_core::topology::Node>> {
     }
     Ok(nodes)
 }
-pub fn apply_layout(nodes: &[butterpollo_core::topology::Node]) -> Result<()> {
-    use butterpollo_core::topology::Kind;
+pub fn apply_layout(nodes: &[butterpollo_media_policy::topology::Node]) -> Result<()> {
+    use butterpollo_media_policy::topology::Kind;
     let mut topology = Topology::query()?;
     let current = topology.nodes()?;
     let monitors = topology.monitors();
@@ -537,7 +541,7 @@ pub fn stream_display_rotation(output: &str) -> Result<(u16, (u32, u32))> {
     let rotation = rotation(&chosen.device_id)?;
     let desktop = mode(&chosen.display_name)?;
     Ok((
-        butterpollo_core::display_policy::rotation_degrees(rotation)
+        butterpollo_media_policy::display_policy::rotation_degrees(rotation)
             .context("Windows reports an unknown display rotation")?,
         (desktop.dmPelsWidth, desktop.dmPelsHeight),
     ))
@@ -692,7 +696,7 @@ fn restore_mode_rate(
             output,
             previous.0,
             previous.1,
-            butterpollo_core::framegen::Rate(previous.2),
+            butterpollo_media_policy::framegen::Rate(previous.2),
         )?;
     }
     Ok(())
@@ -745,10 +749,13 @@ impl Guard {
             stable_id,
             width,
             height,
-            butterpollo_core::framegen::Rate(fps.checked_mul(1000).context("refresh overflow")?),
+            butterpollo_media_policy::framegen::Rate(
+                fps.checked_mul(1000).context("refresh overflow")?,
+            ),
             Some(hdr),
             physical_resolution,
-            physical_refresh.map(|r| butterpollo_core::framegen::Rate(r.saturating_mul(1000))),
+            physical_refresh
+                .map(|r| butterpollo_media_policy::framegen::Rate(r.saturating_mul(1000))),
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -758,10 +765,10 @@ impl Guard {
         stable_id: &str,
         width: u32,
         height: u32,
-        rate: butterpollo_core::framegen::Rate,
+        rate: butterpollo_media_policy::framegen::Rate,
         hdr: Option<bool>,
         physical_resolution: Option<(u32, u32)>,
-        physical_refresh: Option<butterpollo_core::framegen::Rate>,
+        physical_refresh: Option<butterpollo_media_policy::framegen::Rate>,
     ) -> Result<Self> {
         Self::new_virtual_options(
             output,
@@ -783,10 +790,10 @@ impl Guard {
         stable_id: &str,
         width: u32,
         height: u32,
-        rate: butterpollo_core::framegen::Rate,
+        rate: butterpollo_media_policy::framegen::Rate,
         hdr: Option<bool>,
         physical_resolution: Option<(u32, u32)>,
-        physical_refresh: Option<butterpollo_core::framegen::Rate>,
+        physical_refresh: Option<butterpollo_media_policy::framegen::Rate>,
         options: &VirtualOptions,
     ) -> Result<Self> {
         let (virtual_display, needed) = if virtual_mode {
@@ -836,7 +843,7 @@ impl Guard {
                         .unwrap_or((previous.dmPelsWidth, previous.dmPelsHeight));
                     (width, height, physical_refresh.unwrap_or(previous_rate).0)
                 } else {
-                    butterpollo_core::display_policy::physical_mode(
+                    butterpollo_media_policy::display_policy::physical_mode(
                         &supported,
                         (physical_resolution, physical_refresh.map(|rate| rate.0)),
                         current,
@@ -879,7 +886,7 @@ impl Guard {
                         &guard.output,
                         width,
                         height,
-                        butterpollo_core::framegen::Rate(fps),
+                        butterpollo_media_policy::framegen::Rate(fps),
                     );
                     // Record what the display has now even when the rate
                     // was refused: a TV can take the resolution and keep
@@ -946,7 +953,7 @@ impl Guard {
         if self.virtual_display.is_some() {
             bail!("a virtual display is shaped for a stream, not turned");
         }
-        let requested = butterpollo_core::display_policy::rotation_code(degrees)
+        let requested = butterpollo_media_policy::display_policy::rotation_code(degrees)
             .with_context(|| format!("{degrees}° is not a display rotation"))?;
         let current = rotation(&self.identity)?;
         let mut all = SETTINGS.lock().unwrap();
@@ -1028,7 +1035,10 @@ impl Guard {
     /// recreating it, returning the refresh (millihertz) it has now. A shared
     /// one is raised too, as for a stream that joins it. None without a
     /// virtual display, or when Windows refused the rate.
-    pub fn raise_virtual_rate(&self, rate: butterpollo_core::framegen::Rate) -> Option<u32> {
+    pub fn raise_virtual_rate(
+        &self,
+        rate: butterpollo_media_policy::framegen::Rate,
+    ) -> Option<u32> {
         raise_lease(self.virtual_display.as_ref()?, rate.0)
     }
     /// Give this guard's own virtual display another size at the stream's
@@ -1304,7 +1314,9 @@ impl Retained {
             id,
             width,
             height,
-            butterpollo_core::framegen::Rate(fps.checked_mul(1000).context("refresh overflow")?),
+            butterpollo_media_policy::framegen::Rate(
+                fps.checked_mul(1000).context("refresh overflow")?,
+            ),
             hdr,
         )
     }
@@ -1312,7 +1324,7 @@ impl Retained {
         id: &str,
         width: u32,
         height: u32,
-        rate: butterpollo_core::framegen::Rate,
+        rate: butterpollo_media_policy::framegen::Rate,
         hdr: bool,
     ) -> Result<Self> {
         Self::create_options(
@@ -1330,7 +1342,7 @@ impl Retained {
         id: &str,
         width: u32,
         height: u32,
-        rate: butterpollo_core::framegen::Rate,
+        rate: butterpollo_media_policy::framegen::Rate,
         hdr: bool,
         options: &VirtualOptions,
         on_recovery: Option<Box<dyn Fn() -> Result<()> + Send>>,
@@ -1359,7 +1371,8 @@ impl Retained {
             .spawn(move || {
                 let mut pending = false;
                 let mut retry_at = Instant::now();
-                let mut heartbeat = butterpollo_core::display_policy::HeartbeatThrottle::default();
+                let mut heartbeat =
+                    butterpollo_media_policy::display_policy::HeartbeatThrottle::default();
                 while !worker_stop.load(std::sync::atomic::Ordering::Acquire) {
                     // Windows refuses display configuration from the normal
                     // desktop while it is locked.

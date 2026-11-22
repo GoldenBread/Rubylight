@@ -1,6 +1,7 @@
 //! Reproducible CPU cost of frame packetization, FEC and optional encryption.
 use anyhow::Result;
-use butterpollo_core::{crypto, packet::VideoPacketizer};
+use butterpollo_crypto::crypto;
+use butterpollo_media_policy::packet::VideoPacketizer;
 use std::{
     hint::black_box,
     time::{Duration, Instant},

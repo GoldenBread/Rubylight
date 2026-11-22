@@ -39,7 +39,7 @@ impl SessionThread<'_> {
         // The host's `max_stream_resolution` cap shrinks only the coded picture.
         let mut stream = s.effective_config();
         let resolution_cap = c.max_stream_resolution();
-        let mut rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
+        let mut rates = butterpollo_media_policy::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
         // A constant-rate capture publishes for its fastest stream: this one's
         // stream rate, shared with any other stream on the same capture.
         capture_wake.set_period(rates.period);
@@ -47,8 +47,8 @@ impl SessionThread<'_> {
         let mut paced_rate = stream.fps_millihz();
         let stream_period = std::cell::Cell::new(rates.period);
         // A mode change being applied: the mode before it, and since when.
-        let mut switching: Option<(butterpollo_core::reconfigure::Mode, Instant)> = None;
-        let mut cadence = butterpollo_core::stream_policy::Cadence::new(Instant::now(), rates.period, c.boolean("wgc_pacing_smoothing", true));
+        let mut switching: Option<(butterpollo_media_policy::reconfigure::Mode, Instant)> = None;
+        let mut cadence = butterpollo_media_policy::stream_policy::Cadence::new(Instant::now(), rates.period, c.boolean("wgc_pacing_smoothing", true));
         // VRR claims each frame as it arrives, but no faster than the
         // stream rate. The encoder budgets every frame from that rate,
         // and the VRR virtual display runs at 1000 Hz: uncapped, a game
@@ -62,12 +62,12 @@ impl SessionThread<'_> {
         // with the game's updates.
         let vrr = s.config.vrr_low_latency;
         let arrival_pacing = vrr
-            || butterpollo_core::stream_policy::Pacing::from_config(&c) == butterpollo_core::stream_policy::Pacing::Arrival;
+            || butterpollo_media_policy::stream_policy::Pacing::from_config(&c) == butterpollo_media_policy::stream_policy::Pacing::Arrival;
         let source_phase_eligible = vrr || c.boolean("frame_pacing_predictive", true);
         // Read once: the setting is the session's, and a lookup a frame costs.
-        let direct_encoder_input = c.boolean("wgc_direct_encoder_input", true);        let new_pacer = |rates: &butterpollo_core::reconfigure::Rates| {
+        let direct_encoder_input = c.boolean("wgc_direct_encoder_input", true);        let new_pacer = |rates: &butterpollo_media_policy::reconfigure::Rates| {
             let predictive = c.boolean("frame_pacing_predictive", true);
-            butterpollo_core::stream_policy::Pacer::new(Instant::now(), rates.period)
+            butterpollo_media_policy::stream_policy::Pacer::new(Instant::now(), rates.period)
                 .with_static_period(rates.static_period)
                 .with_prediction(predictive)
                 .with_prediction_floor(if vrr { Duration::from_millis(2) } else { Duration::ZERO })
@@ -134,7 +134,7 @@ impl SessionThread<'_> {
         let mut backend = latest.backend();
         let mut backend_due = false;
         let mut source_phase = source_phase_eligible
-            && butterpollo_core::stream_policy::source_phase(&c, backend);
+            && butterpollo_media_policy::stream_policy::source_phase(&c, backend);
         let mut calibration_due = s.launch.client.extra.get("hdr_profile")
             .and_then(serde_json::Value::as_str).filter(|profile| !profile.is_empty())
             .map(|_| Instant::now() + Duration::from_secs(30));
@@ -143,7 +143,7 @@ impl SessionThread<'_> {
         let mut quit_scan: Option<butterpollo_windows::foreground::Tracker> = None;
         let mut quit_scan_due = Instant::now() + Duration::from_secs(1);
         let _background_windows = if s.launch.role == Role::Stream
-            && butterpollo_core::background::enabled(&c)
+            && butterpollo_session::background::enabled(&c)
         {
             background::GameWindows::start(h.clone(), s.clone())
                 .inspect_err(|error| tracing::warn!(%error, "background stream window placement unavailable"))
@@ -160,8 +160,8 @@ impl SessionThread<'_> {
         let mut timing_due = Instant::now() + Duration::from_secs(5);
         // Pipeline frame rates: the capture slot's counts this stream
         // has taken, and the 5 s timing log's own window.
-        let mut pipeline_follow = butterpollo_core::pipeline_rates::Follow::default();
-        let mut pipeline_log = butterpollo_core::pipeline_rates::Sampler::default();
+        let mut pipeline_follow = butterpollo_media_policy::pipeline_rates::Follow::default();
+        let mut pipeline_log = butterpollo_media_policy::pipeline_rates::Sampler::default();
         // Baseline the rate sampler at the instant the first window starts,
         // so the first timing window is the stream's first five seconds
         // instead of a start-up grace window; a slow game then warns after
@@ -173,14 +173,14 @@ impl SessionThread<'_> {
         );
         // Whether the game or desktop delivers the stream's rate, over the
         // same 5 s windows.
-        let mut source_rate = butterpollo_core::pipeline_rates::SourceRate::default();
+        let mut source_rate = butterpollo_media_policy::pipeline_rates::SourceRate::default();
         // The refresh rate the stream's display last had, to say when it changes.
         let mut display_refresh_mhz: Option<u32> = None;
         // The stream's stutter report over the windows that ended. This thread
         // owns it: the stage samples are copied out under the send path's lock
         // and the medians run after it is released, and the console reads the
         // copy published after each window.
-        let mut stutter_totals = butterpollo_core::stutter_report::Totals::default();
+        let mut stutter_totals = butterpollo_media_policy::stutter_report::Totals::default();
         // Identity only: a weak reference releases the previous capture's
         // texture and ring slot once it is encoded, while the live `Weak`
         // still pins the allocation so its address can't be reused by a new
@@ -218,7 +218,7 @@ impl SessionThread<'_> {
         recovery.queries = trace_send.then(Vec::new);
         let mut trace_attempt = 0_u64;
         batch.waits = trace_send.then(Default::default);
-        let mut network_pacer = butterpollo_core::network_pacing::Pacer::new(Instant::now());
+        let mut network_pacer = butterpollo_media_policy::network_pacing::Pacer::new(Instant::now());
         let mut link = None;
         // The address `link` was routed for.
         let mut routed = None;
@@ -241,7 +241,7 @@ impl SessionThread<'_> {
         // with where the time went, at most every five seconds.
         const SLOW_SEND: Duration = Duration::from_millis(100);
         let mut slow_send_reported: Option<Instant> = None;
-        let send_outage = butterpollo_core::stream_policy::SendOutage::from_env();
+        let send_outage = butterpollo_media_policy::stream_policy::SendOutage::from_env();
         // On a link paced near the stream bitrate, sending a frame
         // takes a good part of a period; a sender thread lets the
         // next picture be claimed meanwhile. On a fast link the
@@ -250,7 +250,7 @@ impl SessionThread<'_> {
         let send_thread = c.boolean("video_send_thread", true);
         // A test send jitter stalls only the sender thread's paced sends,
         // which a stall never holds back from capture.
-        let mut send_jitter = butterpollo_core::stream_policy::SendJitter::from_env();
+        let mut send_jitter = butterpollo_media_policy::stream_policy::SendJitter::from_env();
         if let Some(jitter) = &send_jitter {
             let ignored_by = if pyrowave_sender.is_some() {
                 Some("pyrowave")
@@ -268,7 +268,7 @@ impl SessionThread<'_> {
         // An inline frame was paced near the stream bitrate, as after
         // a lost keyframe: later frames move to the sender thread.
         let mut inline_paced = false;
-        let mut send_loss = butterpollo_core::stream_policy::SendLossRecovery::default();
+        let mut send_loss = butterpollo_media_policy::stream_policy::SendLossRecovery::default();
         // `video_slice_delivery`: AMF returns a P-frame in slices and
         // they are sent in FEC blocks as they arrive, here or on the
         // sender thread. Off for the rest of the session after a
@@ -280,7 +280,7 @@ impl SessionThread<'_> {
         let mut streaming: Option<slices::Streaming> = None;
         // The streamed frames' payload buffer, kept between frames.
         let mut slice_spare: Vec<Vec<u8>> = Vec::new();
-        let mut send_drop = butterpollo_core::stream_policy::SendDrop::from_env();
+        let mut send_drop = butterpollo_media_policy::stream_policy::SendDrop::from_env();
         let batch_kb = match c.integer("video_max_batch_size_kb", 64) {
             16 => 16,
             32 => 32,
@@ -315,10 +315,10 @@ impl SessionThread<'_> {
                 let mut frame_packetizer = packetizer.clone();
                 let large_frame = output.iter().any(|frame| {
                     frame_packetizer.fec_percent = s.video_fec_percent(frame.idr || frame.after_invalidation, frame.bytes.len());
-                    let wire = butterpollo_core::network_pacing::video_frame_wire_rate_bps(&frame_packetizer, frame.bytes.len(), stream_period.get(), peer.ip().to_canonical().is_ipv6());
-                    butterpollo_core::network_pacing::paced(bps, wire)
+                    let wire = butterpollo_media_policy::network_pacing::video_frame_wire_rate_bps(&frame_packetizer, frame.bytes.len(), stream_period.get(), peer.ip().to_canonical().is_ipv6());
+                    butterpollo_media_policy::network_pacing::paced(bps, wire)
                 });
-                if std::mem::take(&mut inline_paced) || loss_paced || large_frame || automatic_pacing || send_jitter_set || butterpollo_core::network_pacing::paced(bps, needed) {
+                if std::mem::take(&mut inline_paced) || loss_paced || large_frame || automatic_pacing || send_jitter_set || butterpollo_media_policy::network_pacing::paced(bps, needed) {
                     // The sender continues the inline sends' frame,
                     // packet and IV numbering; nothing sends inline
                     // after this.
@@ -358,7 +358,7 @@ impl SessionThread<'_> {
                             }
                         }
                         let next = slices::drop_frame(&mut streaming, &mut packetizer, &mut slice_spare);
-                        s.launch.warnings.event("network_frame", "A streamed video frame lost its last slice; requesting a recovery frame.", butterpollo_core::session::EVENT_PERIOD);
+                        s.launch.warnings.event("network_frame", "A streamed video frame lost its last slice; requesting a recovery frame.", butterpollo_session::session::EVENT_PERIOD);
                         s.request_host_keyframe();
                         next_wire_frame.set(u64::from(next));
                     }
@@ -393,9 +393,9 @@ impl SessionThread<'_> {
                         let bitrate = s.bitrate.load(Ordering::Relaxed);
                         let crate::video_send::recovery::Pace { bps, needed } =
                             crate::video_send::recovery::pace(&s, &c, &packetizer, stream_period.get(), peer, route);
-                        let safe = butterpollo_core::network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
+                        let safe = butterpollo_media_policy::network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
                         let bps = s.keyframe_loss_bps(bps, safe, wire_frame, false);
-                        inline_paced |= butterpollo_core::network_pacing::paced(bps, needed);
+                        inline_paced |= butterpollo_media_policy::network_pacing::paced(bps, needed);
                         let packetize_started = Instant::now();
                         let processing = micros(packetize_started.saturating_duration_since(processing_started));
                         let cap = frame.frame_cap_bytes.unwrap_or(0) as usize;
@@ -415,7 +415,7 @@ impl SessionThread<'_> {
                             }),
                             Err(error) => {
                                 delivery.turn_off();
-                                s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame."), butterpollo_core::session::EVENT_PERIOD);
+                                s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame."), butterpollo_session::session::EVENT_PERIOD);
                                 s.request_host_keyframe();
                                 next_wire_frame.set(u64::from(slices::refuse_frame(&mut packetizer)));
                                 None
@@ -434,8 +434,8 @@ impl SessionThread<'_> {
                             if block.index == 0 {
                                 // The frame's batches share one wait for a full socket.
                                 batch.begin_frame_with_enobufs(
-                                    butterpollo_core::network_pacing::frame_send_wait(stream_period.get()),
-                                    butterpollo_core::network_pacing::enobufs_frame_wait(wire_frame),
+                                    butterpollo_media_policy::network_pacing::frame_send_wait(stream_period.get()),
+                                    butterpollo_media_policy::network_pacing::enobufs_frame_wait(wire_frame),
                                 );
                                 next_wire_frame.set(u64::from(wire_frame.wrapping_add(1)));
                                 s.stats.video_frame.store(u64::from(wire_frame) + 1, Ordering::Release);
@@ -450,7 +450,7 @@ impl SessionThread<'_> {
                                 if network_pacer.due() > now {
                                     timer.until_paced(network_pacer.due());
                                 }
-                                let budget = butterpollo_core::network_pacing::startup_batch_payload_limit(
+                                let budget = butterpollo_media_policy::network_pacing::startup_batch_payload_limit(
                                     wire_frame, bps, remaining[0].len(), peer.ip().to_canonical().is_ipv6(), batch_kb * 1024,
                                 );
                                 let count = butterpollo_windows::net::Batch::count(remaining, budget);
@@ -476,7 +476,7 @@ impl SessionThread<'_> {
                                 if bytes > 0 {
                                     s.record_transport_sent(
                                         &remaining[..count],
-                                        butterpollo_core::network_pacing::overhead(peer.ip().to_canonical().is_ipv6()),
+                                        butterpollo_media_policy::network_pacing::overhead(peer.ip().to_canonical().is_ipv6()),
                                     );
                                 }
                                 sent.first_sent.get_or_insert(Instant::now());
@@ -509,7 +509,7 @@ impl SessionThread<'_> {
                             if let Some(overflow) = slices::note_failure(&delivery, &s.stats, &error) {
                                 slices::report_overflow(&s, st.wire_frame, overflow);
                             } else {
-                                s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_core::session::EVENT_PERIOD);
+                                s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_session::session::EVENT_PERIOD);
                             }
                             s.request_host_keyframe();
                             next_wire_frame.set(u64::from(packetizer.frame));
@@ -541,14 +541,14 @@ impl SessionThread<'_> {
                         send_loss.delivered(false);
                     }
                     if refused {
-                        s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+                        s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_session::session::EVENT_PERIOD);
                     }
                     crate::video_send::report_oversized(&s, &batch, sent.oversized_at_start);
                     // As the whole-frame path judges it, from the frame's size, so an
                     // abandoned frame reports as well as a finished one.
                     if (streamed.fec_limited() || packetizer.fec_limited(payload_bytes)) && fec_reported.is_none_or(|at: Instant| at.elapsed() >= Duration::from_secs(1)) {
                         fec_reported = Some(Instant::now());
-                        s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_core::session::EVENT_PERIOD);
+                        s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_session::session::EVENT_PERIOD);
                     }
                     let latency = micros(frame.latency.unwrap_or(call_latency));
                     s.stats.latency_us.store(latency, Ordering::Relaxed);
@@ -561,12 +561,12 @@ impl SessionThread<'_> {
                         payload_bytes, cap_bytes: frame.frame_cap_bytes,
                         cap_target_bytes: frame.frame_cap_target, reencoded: frame.reencoded,
                         fec_limited: streamed.fec_limited() || packetizer.fec_limited(payload_bytes),
-                        wire_bytes: frame_bytes.saturating_add((sent.packets * butterpollo_core::network_pacing::overhead(peer.ip().to_canonical().is_ipv6())) as u64),
+                        wire_bytes: frame_bytes.saturating_add((sent.packets * butterpollo_media_policy::network_pacing::overhead(peer.ip().to_canonical().is_ipv6())) as u64),
                         pace_bps: bps, elapsed: finished.saturating_duration_since(started), lost: unrecoverable,
                     });
                     {
                         let mut performance = s.stats.performance.lock().unwrap();
-                        performance.record_timing(finished,butterpollo_core::performance::Timing{period:stream_period.get(),encode:latency,host:processing,age,sent:micros(finished.saturating_duration_since(claimed))},frame_bytes);
+                        performance.record_timing(finished,butterpollo_media_policy::performance::Timing{period:stream_period.get(),encode:latency,host:processing,age,sent:micros(finished.saturating_duration_since(claimed))},frame_bytes);
                         if let Some(claim) = claim.filter(|_| !unrecoverable) {
                             let stamps = slices::stamps(&claim, (first_polled, last_polled), streamed.early_blocks(), packetize_started, sent.first_sent, finished);
                             performance.record_stages(&stamps, processing);
@@ -616,12 +616,12 @@ impl SessionThread<'_> {
                 let bitrate = s.bitrate.load(Ordering::Relaxed);
                 let crate::video_send::recovery::Pace { bps, needed } =
                     crate::video_send::recovery::pace(&s, &c, &packetizer, stream_period.get(), peer, route);
-                let safe = butterpollo_core::network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
+                let safe = butterpollo_media_policy::network_pacing::rate_bps(0, bitrate, route.bps, true, needed);
                 let bps = s.keyframe_loss_bps(bps, safe, wire_frame, frame.idr);
-                inline_paced |= butterpollo_core::network_pacing::paced(bps, needed);
+                inline_paced |= butterpollo_media_policy::network_pacing::paced(bps, needed);
                 if Instant::now() >= pacing_report_due {
                     pacing_report_due = Instant::now() + Duration::from_secs(2);
-                    butterpollo_core::network_pacing::report_rate(&s.launch.warnings, bps, needed, c.manual_pacing_kbps().unwrap_or(0));
+                    butterpollo_media_policy::network_pacing::report_rate(&s.launch.warnings, bps, needed, c.manual_pacing_kbps().unwrap_or(0));
                     if reported_pacing != Some(bps) {
                         tracing::info!(pacing_bps=bps, wire_budget_bps=needed, link_bps=route.bps, client_link_mbps=s.client_link_mbps(), client_wireless=s.config.client_wireless, configured_kbps=c.manual_pacing_kbps().unwrap_or(0), "network pacing selected");
                         reported_pacing = Some(bps);
@@ -634,7 +634,7 @@ impl SessionThread<'_> {
                 let processing = micros(packetize_started.saturating_duration_since(processing_started));
                 let prepared_blocks = packetizer.conventional_blocks_planned(&frame.bytes,frame.idr,frame.after_invalidation,timestamp,processing,&plan);
                 if let Err(error) = &prepared_blocks {
-                    s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_core::session::EVENT_PERIOD);
+                    s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_session::session::EVENT_PERIOD);
                     s.request_host_keyframe();
                     drop(prepared_blocks);
                     next_wire_frame.set(u64::from(packetizer.frame));
@@ -656,7 +656,7 @@ impl SessionThread<'_> {
                     && fec_reported.is_none_or(|at: Instant| at.elapsed() >= Duration::from_secs(1))
                 {
                     fec_reported = Some(Instant::now());
-                    s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_core::session::EVENT_PERIOD);
+                    s.launch.warnings.event("network_fec", "FEC was reduced or omitted for large video frames because they exceed Moonlight's four-block limit. Packet loss in those frames is harder to recover; lower bitrate or resolution to keep full FEC protection.", butterpollo_session::session::EVENT_PERIOD);
                 }
                 let frame_bytes = (packet_count * packet_bytes) as u64;
                 let dropped = batch.dropped;
@@ -668,21 +668,21 @@ impl SessionThread<'_> {
                 let mut first_send = None;
                 let mut last_send = None;
                 let mut first_sent = None;
-                let mut lost = butterpollo_core::stream_policy::SendLoss::new(plan.layout);
+                let mut lost = butterpollo_media_policy::stream_policy::SendLoss::new(plan.layout);
                 let mut abandoned = 0;
                 let mut sent_packets = 0;
                 let mut sent_bytes = 0;
                 // The frame's batches share one wait for a full socket.
                 batch.begin_frame_with_enobufs(
-                    butterpollo_core::network_pacing::frame_send_wait(stream_period.get()),
-                    butterpollo_core::network_pacing::enobufs_frame_wait(wire_frame),
+                    butterpollo_media_policy::network_pacing::frame_send_wait(stream_period.get()),
+                    butterpollo_media_policy::network_pacing::enobufs_frame_wait(wire_frame),
                 );
                 'blocks: loop {
                     let block_started = Instant::now();
                     let block_count = match next_block(&mut packets) {
                         Ok(count) => count,
                         Err(error) => {
-                            s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_core::session::EVENT_PERIOD);
+                            s.launch.warnings.event("network_frame", format!("Encoded video frame dropped ({error:#}); requesting a recovery frame. Lower bitrate or resolution to stay within Moonlight's packet limit."), butterpollo_session::session::EVENT_PERIOD);
                             s.request_host_keyframe();
                             drop(next_block);
                             next_wire_frame.set(u64::from(packetizer.frame));
@@ -703,7 +703,7 @@ impl SessionThread<'_> {
                             timer.until_paced(network_pacer.due());
                             pacing_wait += now.elapsed();
                         }
-                        let budget = butterpollo_core::network_pacing::startup_batch_payload_limit(
+                        let budget = butterpollo_media_policy::network_pacing::startup_batch_payload_limit(
                             wire_frame, bps, remaining[0].len(), peer.ip().to_canonical().is_ipv6(), batch_kb * 1024,
                         );
                         let count =
@@ -725,7 +725,7 @@ impl SessionThread<'_> {
                         if bytes > 0 {
                             s.record_transport_sent(
                                 &remaining[..count],
-                                butterpollo_core::network_pacing::overhead(peer.ip().to_canonical().is_ipv6()),
+                                butterpollo_media_policy::network_pacing::overhead(peer.ip().to_canonical().is_ipv6()),
                             );
                         }
                         let finished = Instant::now();
@@ -768,7 +768,7 @@ impl SessionThread<'_> {
                     send_loss.delivered(frame.idr);
                 }
                 if refused {
-                    s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+                    s.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so video packets were dropped. You may see stutter or recovery frames; close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_session::session::EVENT_PERIOD);
                 }
                 crate::video_send::report_oversized(&s, &batch, oversized);
                 s.stats.frames.fetch_add(1, Ordering::Relaxed);
@@ -777,7 +777,7 @@ impl SessionThread<'_> {
                     frame: wire_frame, idr: frame.idr, after_invalidation: frame.after_invalidation,
                     payload_bytes: frame.bytes.len(), cap_bytes: frame.frame_cap_bytes,
                     cap_target_bytes: frame.frame_cap_target, reencoded: frame.reencoded, fec_limited,
-                    wire_bytes: frame_bytes.saturating_add((packet_count * butterpollo_core::network_pacing::overhead(peer.ip().to_canonical().is_ipv6())) as u64),
+                    wire_bytes: frame_bytes.saturating_add((packet_count * butterpollo_media_policy::network_pacing::overhead(peer.ip().to_canonical().is_ipv6())) as u64),
                     pace_bps: bps, elapsed: sent.saturating_duration_since(frame_started), lost: lost.unrecoverable(),
                 });
                 if let (Some(first), Some(last), Some(before), Some(after)) = (first_send, last_send, waits_before, batch.waits) {
@@ -789,7 +789,7 @@ impl SessionThread<'_> {
                 }
                 {
                     let mut performance = s.stats.performance.lock().unwrap();
-                    performance.record_timing(sent,butterpollo_core::performance::Timing{period:stream_period.get(),encode:latency,host:processing,age,sent:micros(sent.saturating_duration_since(claimed))},frame_bytes);
+                    performance.record_timing(sent,butterpollo_media_policy::performance::Timing{period:stream_period.get(),encode:latency,host:processing,age,sent:micros(sent.saturating_duration_since(claimed))},frame_bytes);
                     // A frame abandoned on send never had its last packet sent.
                     if let Some(claim) = claim.filter(|_| !lost.unrecoverable()) {
                         let stamps = claim.sent(polled, packetize_started, first_sent.unwrap_or(sent), sent);
@@ -878,7 +878,7 @@ impl SessionThread<'_> {
                             }
                             display_refresh_mhz = Some(now_mhz);
                         }
-                        butterpollo_windows::limiter::follow_display(display_mhz.map(butterpollo_core::framegen::Rate));
+                        butterpollo_windows::limiter::follow_display(display_mhz.map(butterpollo_media_policy::framegen::Rate));
                     }
                     if window_due {
                         let now = Instant::now();
@@ -898,7 +898,7 @@ impl SessionThread<'_> {
                         // feeds the console at every `min_log_level`, so it
                         // samples and runs before the INFO-only timing line.
                         let rates = pipeline_log.sample(now, s.pipeline_counts(), Duration::from_secs(5));
-                        let pipeline = rates.as_ref().map(butterpollo_core::pipeline_rates::PipelineRates::from);
+                        let pipeline = rates.as_ref().map(butterpollo_media_policy::pipeline_rates::PipelineRates::from);
                         let source_mhz = pipeline.as_ref().and_then(|rates| rates.source_mhz);
                         // What the stream can show: its own rate, or the
                         // captured display's where that is lower (read above).
@@ -908,7 +908,7 @@ impl SessionThread<'_> {
                         // WARN line; `SourceRate` limits re-words to one per
                         // 60 s (`REWORD`).
                         if let Some(change) = source_rate.window(now, stream.fps_millihz(), display_mhz, source_mhz) {
-                            use butterpollo_core::pipeline_rates::{SourceRateWarning, below_message};
+                            use butterpollo_media_policy::pipeline_rates::{SourceRateWarning, below_message};
                             match change {
                                 SourceRateWarning::Below { source_mhz, limit_mhz } => {
                                     // `idd-push` captures Rubylight's virtual display: a low rate
@@ -962,7 +962,7 @@ impl SessionThread<'_> {
                             let cc_u64 = |key: &str| cc[key].as_u64();
                             let ms = |key: &str| timing[key].as_f64().unwrap_or(0.);
                             let input = s.stats.input_latency.lock().unwrap().take();
-                            let fps_of = |pick: fn(&butterpollo_core::pipeline_rates::PipelineRates) -> Option<u32>| {
+                            let fps_of = |pick: fn(&butterpollo_media_policy::pipeline_rates::PipelineRates) -> Option<u32>| {
                                 pipeline.as_ref().and_then(pick).map(|mhz| f64::from(mhz) / 1000.)
                             };
                             let split = |pick: fn(&(u64, u64)) -> u64| {
@@ -1132,11 +1132,11 @@ impl SessionThread<'_> {
                     requested
                 };
                 if let Some(to) = requested {
-                    let from = butterpollo_core::reconfigure::Mode::of(&stream);
+                    let from = butterpollo_media_policy::reconfigure::Mode::of(&stream);
                     let enabled = runtime_config.boolean("stream_reconfigure", true);
-                    match butterpollo_core::reconfigure::refusal(&stream, enabled) {
+                    match butterpollo_media_policy::reconfigure::refusal(&stream, enabled) {
                         Some(reason) => {
-                            refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::refusal_reason(enabled));
+                            refuse_switch(&s, from, butterpollo_media_policy::reconfigure::Mode::applied(&stream), butterpollo_media_policy::rate_change::refusal_reason(enabled));
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, reason, "reconfigure refused");
                         }
                         None => {
@@ -1151,7 +1151,7 @@ impl SessionThread<'_> {
                             s.reconfigure
                                 .lock()
                                 .unwrap()
-                                .applied_now(butterpollo_core::reconfigure::Mode::applied(&stream));
+                                .applied_now(butterpollo_media_policy::reconfigure::Mode::applied(&stream));
                             switching.get_or_insert((from, Instant::now()));
                             rebuild_encoder = true;
                         }
@@ -1161,11 +1161,11 @@ impl SessionThread<'_> {
                 // cadence, and a phase lock locks again at it.
                 if stream.fps_millihz() != paced_rate {
                     paced_rate = stream.fps_millihz();
-                    rates = butterpollo_core::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
+                    rates = butterpollo_media_policy::reconfigure::Rates::new(&stream, c.get("minimum_fps_target", "20"));
                     capture_wake.set_period(rates.period);
                     stream_period.set(rates.period);
                     progress.set_period(rates.period);
-                    cadence = butterpollo_core::stream_policy::Cadence::new(Instant::now(), rates.period, c.boolean("wgc_pacing_smoothing", true));
+                    cadence = butterpollo_media_policy::stream_policy::Cadence::new(Instant::now(), rates.period, c.boolean("wgc_pacing_smoothing", true));
                     pacer = new_pacer(&rates);
                     unlocked_grid_period = None;
                     {
@@ -1252,7 +1252,7 @@ impl SessionThread<'_> {
                     backend = latest.backend();
                     backend_due = false;
                     source_phase = source_phase_eligible
-                        && butterpollo_core::stream_policy::source_phase(&c, backend);
+                        && butterpollo_media_policy::stream_policy::source_phase(&c, backend);
                 }
                 // Whether this capture only extends the focus window's
                 // picture, read before an enhancement replaces the image and
@@ -1314,7 +1314,7 @@ impl SessionThread<'_> {
                     && !s.idr.load(Ordering::Acquire)
                     && invalidation_clear
                     && let interval = pacing.picture_interval
-                    && let butterpollo_core::stream_policy::Pace::WaitUntil(deadline) =
+                    && let butterpollo_media_policy::stream_policy::Pace::WaitUntil(deadline) =
                         pacer.decide(Instant::now(), raw_image.captured, interval)
                 {
                     AdmissionTrace::measure(&mut admission_trace, AdmissionWait::FreshRate, || -> Result<()> {
@@ -1365,7 +1365,7 @@ impl SessionThread<'_> {
                 let reencode_at = if !recovering {
                     if arrival_pacing { pacer.resend_at(repeat_due, Instant::now()) } else { repeat_due }
                 } else if arrival_pacing {
-                    butterpollo_core::stream_policy::reencode_at(true, raw_image.captured, period, pacing.source_interval, repeat_due)
+                    butterpollo_media_policy::stream_policy::reencode_at(true, raw_image.captured, period, pacing.source_interval, repeat_due)
                 } else {
                     Instant::now()
                 };
@@ -1554,7 +1554,7 @@ impl SessionThread<'_> {
                             // The encoder cannot make the size or rate the client
                             // asked for: the stream goes back to the mode it had.
                             if let Some((from, _)) = switching.take() {
-                                let to = butterpollo_core::reconfigure::Mode::of(&stream);
+                                let to = butterpollo_media_policy::reconfigure::Mode::of(&stream);
                                 from.apply_to(&mut stream, resolution_cap);
                                 report_stream_resolution_cap(&stream, resolution_cap, &s.launch.warnings);
                                 // The link rate, and the display or co-op window, were
@@ -1564,7 +1564,7 @@ impl SessionThread<'_> {
                                 if (to.width, to.height) != (from.width, from.height) {
                                     self.follow_size(&prepared, stream.display_size());
                                 }
-                                refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::Reason::EncoderFailed);
+                                refuse_switch(&s, from, butterpollo_media_policy::reconfigure::Mode::applied(&stream), butterpollo_media_policy::rate_change::Reason::EncoderFailed);
                                 tracing::info!(client = %s.launch.client.name, from = %from, to = %to, error = %format!("{error:#}"), "reconfigure refused: the encoder cannot make this mode; keeping the previous one");
                                 continue;
                             }
@@ -1739,7 +1739,7 @@ impl SessionThread<'_> {
                     // even while ordinary frames use adaptive FEC.
                     recovery_packetizer.fec_percent = s.recovery_fec_percent();
                     let pace = crate::video_send::recovery::preview_pace(&s, &c, &recovery_packetizer, period, peer, encode_route);
-                    let cap = butterpollo_core::network_pacing::recovery_frame_cap(
+                    let cap = butterpollo_media_policy::network_pacing::recovery_frame_cap(
                         pace.bps, bitrate, period, recovery_packetizer.fec_percent,
                         recovery_packetizer.packet_size, peer.ip().to_canonical().is_ipv6(),
                     );
@@ -1755,12 +1755,12 @@ impl SessionThread<'_> {
                         fec_whole = (key, whole);
                         fec_whole_due = now + Duration::from_secs(1);
                     }
-                    let cap = butterpollo_core::network_pacing::fec_whole_frame_cap(cap, fec_whole.1, bitrate, period);
-                    let _ = active.set_frame_cap(cap, butterpollo_core::network_pacing::two_frames(bitrate, period));
+                    let cap = butterpollo_media_policy::network_pacing::fec_whole_frame_cap(cap, fec_whole.1, bitrate, period);
+                    let _ = active.set_frame_cap(cap, butterpollo_media_policy::network_pacing::two_frames(bitrate, period));
                     // AMF does not hold a scene cut's inter frame to the cap: one
                     // past this bound is encoded again as a keyframe, on NVENC too.
                     active.set_cut_limit(
-                        butterpollo_core::network_pacing::fec_whole_frame_limit(fec_whole.1, bitrate, period)
+                        butterpollo_media_policy::network_pacing::fec_whole_frame_limit(fec_whole.1, bitrate, period)
                             .unwrap_or(0),
                     );
                 }
@@ -1770,7 +1770,7 @@ impl SessionThread<'_> {
                 // device is told to hide its own.
                 let leave_pointer_out = s.client_cursor.active() && {
                     let ddx = backend == "ddx";
-                    let pointer = image.pointer().filter(|_| ddx).map(|p| butterpollo_core::client_cursor::Pointer {
+                    let pointer = image.pointer().filter(|_| ddx).map(|p| butterpollo_input_policy::client_cursor::Pointer {
                         width: p.width,
                         height: p.height,
                         hotspot: p.hotspot,
@@ -1858,7 +1858,7 @@ impl SessionThread<'_> {
                         // go back to the mode the stream had, as when the encoder
                         // cannot be created at it.
                         if let Some((from, _)) = switching.take() {
-                            let to = butterpollo_core::reconfigure::Mode::of(&stream);
+                            let to = butterpollo_media_policy::reconfigure::Mode::of(&stream);
                             from.apply_to(&mut stream, resolution_cap);
                             report_stream_resolution_cap(&stream, resolution_cap, &s.launch.warnings);
                             s.rebuild_link_rate(&stream, c.link_rate_adaptation(), max_bitrate_kbps(&s, &c));
@@ -1866,7 +1866,7 @@ impl SessionThread<'_> {
                             if (to.width, to.height) != (from.width, from.height) {
                                 self.follow_size(&prepared, stream.display_size());
                             }
-                            refuse_switch(&s, from, butterpollo_core::reconfigure::Mode::applied(&stream), butterpollo_core::rate_change::Reason::EncoderFailed);
+                            refuse_switch(&s, from, butterpollo_media_policy::reconfigure::Mode::applied(&stream), butterpollo_media_policy::rate_change::Reason::EncoderFailed);
                             tracing::info!(client = %s.launch.client.name, from = %from, to = %to, error = %format!("{error:#}"), "reconfigure refused: the encoder failed at this mode; keeping the previous one");
                             rebuild_encoder = true;
                             continue;
@@ -1896,11 +1896,11 @@ impl SessionThread<'_> {
                     stutter_totals.forget_usual();
                     s.stats.publish_stutter(&stutter_totals);
                     s.rate_changes
-                        .switched(butterpollo_core::reconfigure::Mode::of(&stream), None);
+                        .switched(butterpollo_media_policy::reconfigure::Mode::of(&stream), None);
                     tracing::info!(
                         client = %s.launch.client.name,
                         from = %from,
-                        to = %butterpollo_core::reconfigure::Mode::of(&stream),
+                        to = %butterpollo_media_policy::reconfigure::Mode::of(&stream),
                         switch_ms = started.elapsed().as_millis() as u64,
                         source_width = image.width,
                         source_height = image.height,
@@ -1915,7 +1915,7 @@ impl SessionThread<'_> {
                 // reads it as the repeat it is (`capture = wgcc`).
                 s.stats.pipeline.submitted(!fresh || raw_image.repeat);
                 if fresh && !raw_image.repeat {
-                    claims.borrow_mut().push(butterpollo_core::performance::Claim {
+                    claims.borrow_mut().push(butterpollo_media_policy::performance::Claim {
                         key: presented_image.captured,
                         presented: image.captured,
                         acquired: image.acquired,
@@ -1929,7 +1929,7 @@ impl SessionThread<'_> {
                 // A static resend stays on its grid with either pacing, or
                 // the wake-up latency of every resend adds up to a slower
                 // stream; a new picture or a recovery re-anchors here.
-                encoded_at = butterpollo_core::stream_policy::resend_anchor(
+                encoded_at = butterpollo_media_policy::stream_policy::resend_anchor(
                     encoded_at,
                     begin,
                     rates.static_period,
@@ -1944,7 +1944,7 @@ impl SessionThread<'_> {
                     // late. An unchanged picture encoded again for the
                     // client's recovery request does not, or a client
                     // losing packets left every game frame late.
-                    if butterpollo_core::stream_policy::counts_toward_rate(fresh, recovering) {
+                    if butterpollo_media_policy::stream_policy::counts_toward_rate(fresh, recovering) {
                         // Phase lock: holding frames here would only move the
                         // wait from the client to the host, so the lock sets
                         // the rate cap to the client's refresh instead. VRR

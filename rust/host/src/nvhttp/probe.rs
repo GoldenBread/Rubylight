@@ -22,7 +22,7 @@ pub(super) async fn pyrowave_bandwidth(
     )
         .into_response()
 }
-/// `GET /bandwidth-probe?bytes=N` (`butterpollo_core::bandwidth_probe`): an
+/// `GET /bandwidth-probe?bytes=N` (`butterpollo_media_policy::bandwidth_probe`): an
 /// incompressible body a paired client times before it picks its first
 /// bitrate, for every codec. Refused while a stream runs or starts, cut short
 /// when one starts meanwhile, and past each client's cooldown and budget.
@@ -31,7 +31,7 @@ pub(super) async fn bandwidth_probe(
     Extension(connection): Extension<Connection>,
     Query(args): Query<Args>,
 ) -> Response {
-    use butterpollo_core::bandwidth_probe as probe;
+    use butterpollo_media_policy::bandwidth_probe as probe;
     let offered = {
         let config = h.config.read().unwrap();
         crate::extensions::bandwidth_probe(&h, &config)
@@ -124,7 +124,7 @@ impl<F: Fn() -> bool> ProbeBody<F> {
         static NOISE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
         NOISE.get_or_init(|| {
             use rand::RngCore;
-            let mut bytes = vec![0; butterpollo_core::bandwidth_probe::MAX_BYTES as usize];
+            let mut bytes = vec![0; butterpollo_media_policy::bandwidth_probe::MAX_BYTES as usize];
             rand::thread_rng().fill_bytes(&mut bytes);
             bytes
         })
@@ -171,7 +171,7 @@ pub(super) async fn pyrowave_udp_probe(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let Some(request) =
-        butterpollo_core::pyrowave_probe::parse(|key| args.get(key).map(String::as_str))
+        butterpollo_media_policy::pyrowave_probe::parse(|key| args.get(key).map(String::as_str))
     else {
         return (StatusCode::BAD_REQUEST, "Invalid UDP probe parameters").into_response();
     };

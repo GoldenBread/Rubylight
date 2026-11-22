@@ -8,7 +8,7 @@
 use super::*;
 use crate::ipc::Pipe;
 use anyhow::ensure;
-use butterpollo_core::config::Config;
+use butterpollo_config::config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -146,9 +146,9 @@ fn capture_config(config: &Config) -> Config {
         "wgc_drain_to_newest",
         "wgc_helper_streaming_scope",
         // Whether a window's capture draws the pointer (`window_cursor`).
-        butterpollo_core::app_window::SETTING,
+        butterpollo_media_policy::app_window::SETTING,
         // What part of a window is captured (`capture_window_frame`).
-        butterpollo_core::app_window::FRAME,
+        butterpollo_media_policy::app_window::FRAME,
     ];
     Config {
         values: config
@@ -162,7 +162,7 @@ fn capture_config(config: &Config) -> Config {
 fn handoff(
     gpu: &Device,
     config: &Config,
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
 ) -> Option<crate::compute::Handoff> {
     if !config.boolean("wgc_compute_copy", true) || !crate::compute::enabled(config) {
         return None;
@@ -349,7 +349,7 @@ pub struct Session {
     published: u64,
     held: Option<(GpuImage, Instant)>,
     grid: Option<Arc<Mutex<ClaimGrid>>>,
-    intervals: butterpollo_core::capture_policy::Intervals,
+    intervals: butterpollo_media_policy::capture_policy::Intervals,
     origin: Instant,
     last_publish: Instant,
     desktop_check: Instant,
@@ -372,7 +372,7 @@ impl Session {
         window: Option<usize>,
         hdr: bool,
         config: &Config,
-        warnings: Arc<butterpollo_core::session::Warnings>,
+        warnings: Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
         ensure!(
             desktop_available(),
@@ -652,7 +652,7 @@ impl Session {
                 Ok(None)
             };
             self.pending.remove(index);
-            self.focus = butterpollo_core::capture_policy::merge_focus(self.focus, focus);
+            self.focus = butterpollo_media_policy::capture_policy::merge_focus(self.focus, focus);
             // A lent texture goes back when its image is dropped.
             if !matches!(&copied, Ok(Some(image)) if image.lease.is_some()) {
                 // Handoff orders the context after its compute copy. Releasing the
@@ -681,7 +681,7 @@ impl Session {
                 .as_ref()
                 .and_then(|grid| {
                     let grid = grid.lock().unwrap();
-                    butterpollo_core::capture_policy::publication_deadline(
+                    butterpollo_media_policy::capture_policy::publication_deadline(
                         grid.period.as_nanos().min(i64::MAX as u128) as i64,
                         nanos(now, grid.anchor),
                         composition,
@@ -996,7 +996,7 @@ fn worker(pipe: &Pipe) -> Result<()> {
         desc.Width = crop.width();
         desc.Height = crop.height();
     }
-    let compute_warnings = butterpollo_core::session::Warnings::default();
+    let compute_warnings = butterpollo_session::session::Warnings::default();
     let mut copy = handoff(&gpu, &config, &compute_warnings);
     let mut textures = Vec::with_capacity(SLOTS);
     let mut handles = Vec::with_capacity(SLOTS);

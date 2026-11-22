@@ -1,5 +1,5 @@
 //! Previous root.session_tokens format; only one-way token hashes are persisted.
-use butterpollo_core::crypto;
+use butterpollo_crypto::crypto;
 use serde_json::{Map, Value, json};
 use std::{
     collections::HashMap,

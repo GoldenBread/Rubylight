@@ -4,13 +4,15 @@
 //! test host is a real PC.
 
 use super::*;
-use butterpollo_core::{
-    clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE, keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE,
+use butterpollo_input_policy::{
+    keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE, text_input::TEXT_INPUT_MESSAGE_TYPE,
+};
+use butterpollo_media_policy::{
     rate_change::RATE_CHANGE_MESSAGE_TYPE, reconfigure::RECONFIGURE_MESSAGE_TYPE,
-    text_input::TEXT_INPUT_MESSAGE_TYPE, usb_forward::USB_MESSAGE_TYPE,
 };
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::TestRunner;
+use rubylight_protocol::{clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE, usb::USB_MESSAGE_TYPE};
 
 /// Kinds with effects outside the stream.
 const OUTSIDE: [u16; 11] = [
@@ -34,9 +36,10 @@ enum Message {
 }
 
 fn messages() -> impl Strategy<Value = Vec<Message>> {
-    use butterpollo_core::{
-        client_cursor, clock_sync, congestion, display_caps, frame_warp, host_timing, link_notice,
-        phase_sync, pipeline_rates, statistical_fec,
+    use butterpollo_input_policy::client_cursor;
+    use butterpollo_media_policy::{
+        clock_sync, congestion, display_caps, frame_warp, host_timing, link_notice, phase_sync,
+        pipeline_rates, statistical_fec,
     };
     use proptest::prelude::*;
     let kind = prop_oneof![

@@ -1,0 +1,2388 @@
+//! Lowers the encoder bitrate when the network cannot carry the stream.
+//!
+//! A pure state machine: the session feeds it what the host sent and what the
+//! client reports back, a periodic `tick` returns the encoder bitrate to use,
+//! and every instant is passed in, so tests are deterministic.
+//!
+//! It acts only on loss that FEC cannot absorb (see the `*_FRAMES`, `LOSS_*`
+//! and `KEYFRAME_REQUESTS` constants). On a healthy link it never returns a
+//! target and never touches pacing, so the stream takes exactly the path it
+//! takes without it. The one delay signal, a standing queue (see
+//! [`QUEUE_MARGIN`]), is a lossless queue held for seconds, which no loss
+//! evidence can show. After a cut it ignores reports
+//! for frames sent before the cut took effect (the [`Fence`]); the opt-in
+//! `adaptive_bitrate` controller lacks this, and on the 2026-10-23 link-speed
+//! runs it cut once a second (179 to 24.7 Mbps in 9 s on a link that carries
+//! about 115) because late reports kept counting against the lower bitrate.
+//!
+//! PyroWave streams get it too: nothing else on the host reacts to their loss
+//! (the loss guard and Wi-Fi pacing leave PyroWave alone), and on 2026-10-29 a
+//! 200 Mbps stream to a phone on 5 GHz Wi-Fi lost about a quarter of its
+//! packets for the whole stream. Its rate control holds every picture to one
+//! frame's budget, so a cut shrinks every picture; the pace shrinks with it only
+//! where it follows the stream's demand, not a client pace hint,
+//! a fixed `packet_pacing` rate or a wired client link. With record framing only a
+//! lost coarse block loses the frame ([`LinkRate::frame_lost`]). PyroWave stops
+//! at its test-scene detail level, and its keyframe requests are no evidence:
+//! every picture is intra, so the session passes none of them on, and a
+//! PyroWave client is judged by its FEC status reports alone.
+//!
+//! A path that cannot carry the stream loses at a rate near its edge, and the
+//! plain "climb back to the requested rate" probe found that edge again and
+//! again: a mesh node's wireless backhaul, or any hop the host cannot see,
+//! repeated a cut every ten to fifty seconds (2026-11-17: a 4K120 PyroWave
+//! client on a path good for about 600 Mbps asked for 800 and collapsed from
+//! 641 to 676 Mbps into 116 to 279 ms of round trip). The controller now
+//! keeps a learned ceiling: the rate a cut or a failed step landed on, which
+//! probes climb back to and stop at. One step past it (a retry) goes
+//! [`NEAR_STEP_DIVISOR`] up, alone, after [`HOLD`] for a new edge and after
+//! [`RETRY_FIRST`], doubling to [`RETRY_MAX`], for a failure at the same edge
+//! (within [`EDGE_PERCENT`], or a retry that failed, or a cut soon after a
+//! retry confirmed). On a path that has shown a queue, a step confirms only
+//! after the time its overshoot would take to fill that queue
+//! ([`LinkRate::confirm_window`]) and while the RTT has not risen. A retry
+//! that confirms well under the failed rate lifts the ceiling, so a dip that
+//! passes is climbed out of at the usual pace; a link that never congests
+//! never learns one and takes exactly the path it took before.
+//!
+//! The host's own socket refusing frames, with no loss reported and the RTT
+//! flat, is not the path's limit: it stops probes for [`HOST_LOSS_HOLD`] and
+//! moves no learned ceiling. Refusals that come with client loss or a queue
+//! (a switch pausing the host's adapter behind a full uplink) are the path's.
+//!
+//! A still or calm picture needs a fraction of the stream's bitrate, and loss
+//! during it is not the rate's doing: a cut that would land at or above what
+//! the stream sent, in the largest frame around the loss too, is held back and
+//! only remembered ([`HELD_FOR`]), so the bitrate is whole when the picture moves
+//! again, and loss that goes on still reaches the cut that lowers what is
+//! sent.
+//!
+//! Inactive (`State::Off`) when disabled in the configuration and once the
+//! client sets the bitrate itself.
+//!
+//! # Calling it (brief 3)
+//!
+//! - One `Mutex<LinkRate>` per session, shared by the video send path, the
+//!   control thread that reads client reports and the stream tick. Every
+//!   method takes `&mut self` and does bounded work with no allocation after
+//!   `new`.
+//! - [`LinkRate::on_sent`] comes once the host has sent the frame, with the
+//!   wire frame number the client will report and the packets (data and
+//!   parity) and wire bytes actually sent. The host cannot say it earlier: a
+//!   frame sent in slices has no size until its last slice, and a frame the
+//!   host abandons part way counts only what left. It is stamped with the
+//!   time the host recorded it. A report that arrives before `on_sent` for
+//!   its frame (the first blocks of a large frame, on a fast link) has
+//!   nothing to count against and is dropped: loss is under-counted, never
+//!   over-counted.
+//! - Feed [`LinkRate::on_status`] only deduplicated FEC blocks (the same block
+//!   repeated in several reports once); a frame with several blocks is
+//!   counted once for E1, and its packets once for E2.
+//! - From one client report call `on_status` first, then `on_unrecoverable`
+//!   for the same frame, then `on_latch` (a fast-rate latch is a reaction to
+//!   the same loss and starts the fence).
+//! - Call `tick` from the stream tick with the current RTT, the FEC percentage
+//!   in use, the frame period, the encoder bitrate now in effect and whether
+//!   the picture is moving (`busy`: a static desktop sends almost nothing, so a
+//!   probe sent then proves nothing). A returned kbps is applied through the
+//!   encoder bitrate path; `None` means the requested rate. Log the result of
+//!   `take_change` after each call.
+//! - The wire frame counter must not restart under one controller. Use
+//!   [`LinkRate::rebuild`] when the stream is reconfigured (new bitrate, FEC,
+//!   mode or a restarted frame counter): it keeps a client takeover and
+//!   forgets the rest.
+//!
+//! Units: the controller works in total wire bits per second (video with FEC
+//! and framing plus the audio reserve), the unit of
+//! [`WireBudget::total_bps`], and converts to encoder kbps at the current FEC
+//! percentage with [`WireBudget::encoder_kbps`].
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
+
+use crate::{adaptive_bitrate::WireBudget, rtsp::Negotiated};
+use rubylight_wire::fec_status::Status;
+
+#[cfg(test)]
+mod sim;
+#[cfg(test)]
+mod tests;
+
+/// Every evidence test runs over this window.
+pub const EVIDENCE_WINDOW: Duration = Duration::from_secs(2);
+/// Evidence is evaluated at most this often.
+pub const EVALUATE_EVERY: Duration = Duration::from_millis(100);
+/// Distinct unrecoverable frames in the window that cut the bitrate (E1).
+/// Matches the loss guard's "3 unrecoverable frames in 2 s" (Oct 17).
+pub const UNRECOVERABLE_FRAMES: usize = 3;
+/// Share of the packets the host sent that the FEC reports show missing in
+/// blocks the client could not rebuild, and that cuts (E2). Blocks FEC rebuilt
+/// count their missing data packets only while the RTT is elevated: the report
+/// is made when enough packets are in, so what is still in flight reads as
+/// missing (14 % on the 2026-10-24 Wi-Fi arm, 0.5 % real loss, RTT flat), but
+/// with a queue filling the same share is real loss FEC is absorbing. The
+/// share is over all packets sent, not only those of reported frames.
+pub const LOSS_SHARE_PERCENT: u64 = 5;
+/// E2 needs the share in this many consecutive windows of [`LOSS_WINDOW`].
+pub const LOSS_WINDOWS: u8 = 2;
+pub const LOSS_WINDOW: Duration = Duration::from_millis(500);
+/// A window in which the host sent fewer packets than this says nothing: a
+/// quiet stream loses 5 % to a single packet.
+pub const LOSS_MIN_PACKETS: u64 = 100;
+/// After a fast-to-slow pacing latch has had its fence, this long a single
+/// event is enough (E1 is otherwise [`UNRECOVERABLE_FRAMES`]) if it proves the
+/// latch failed: a lost keyframe, or a lost frame or keyframe request while no
+/// keyframe has come through whole since the latch. Once one has, a lone event
+/// is not proof: the latch can be provisional (start-up) and almost every IDR
+/// request is counted as a network request. A client waiting for a keyframe reports little (one
+/// lost keyframe per request), so three frames took 4 s on the 2026-10-24
+/// `r50-hevc-hi` arm (75 Mbps into 50 Mbit/s) and the stream lost its first
+/// 5.8 s. A cut with no measured share goes to [`MIN_CUT_PERCENT`] then.
+///
+/// The events of the watch count whether or not they fall inside the fence
+/// (the fence only keeps them out of the cut's evidence): two of them at least
+/// [`WATCH_EVENT_GAP`] apart show the latch failed, and the next admitted event
+/// cuts. A keyframe sent inside the fence that nothing was reported about
+/// may be one that never got through (the same 2026-10-24 arm, where the
+/// client asked again 100 ms and 1.3 s after the latch and lost 321 frames).
+pub const LATCH_WATCH: Duration = Duration::from_secs(4);
+/// Events of a latch watch closer together than this are one burst.
+pub const WATCH_EVENT_GAP: Duration = Duration::from_millis(100);
+/// Two events fail a latch only when they come within this span: a latch that
+/// fixed the loss and a stray frame lost every couple of seconds is not a
+/// failed latch (the r50 arm's requests came 1.2 s apart).
+pub const WATCH_EVENT_SPAN: Duration = Duration::from_millis(1_500);
+/// Frames lost on send (WSAENOBUFS and the like) that cut (E3).
+pub const SEND_LOSS_FRAMES: usize = 3;
+/// Network-classified keyframe requests that cut (E4): from a client that
+/// sends no FEC status, or from any client while a probe step is unconfirmed.
+/// A storm of recovery keyframes after a probe (38 in 3.5 s on r50-hevc-hi)
+/// is not reported as unrecoverable frames, so the requests are the evidence.
+pub const KEYFRAME_REQUESTS: usize = 3;
+/// Reference invalidations that continue the frame range of the incident
+/// counted last, within this time of its first request, are the same
+/// incident (see [`LinkRate::on_invalidation`]). The r-def client asked
+/// eleven times in about 90 ms; one that is still asking after this long has
+/// not got its repair, and that counts again, so three counts in
+/// [`EVIDENCE_WINDOW`] take a client stuck for one second.
+pub const INCIDENT_GAP: Duration = Duration::from_millis(500);
+/// The loss share a cut will believe. Losses come in bursts, and the share is
+/// measured up to the newest lost frame, so a short window can read 100% on a
+/// link that carries half the rate; a cut never goes below a quarter of what
+/// was sent.
+const MAX_LOSS_SHARE: f64 = 0.75;
+/// Rebuilt blocks the running share of reordered data packets averages over.
+const REORDER_BLOCKS: f64 = 64.;
+
+/// The running reordering share fades toward zero with this time constant
+/// while no flat-RTT block renews it, so a spell of heavy loss in the past does
+/// not hide a queue now.
+const REORDER_FADE: Duration = Duration::from_secs(20);
+
+/// A silence this long between rebuilt blocks fades the baseline even while
+/// the RTT is up.
+const REORDER_GAP: Duration = Duration::from_secs(1);
+
+/// What reordering produces at most, over the block's parity share: a block is
+/// reported when `data` packets are in, so what is still on the way is at most
+/// the parity (0.18 at 20 % FEC, 0.24 at 30 %). The running baseline is held to
+/// the block's parity share plus this, so a flat-RTT share of loss does not
+/// raise it past what a path can reorder. Each block is averaged unclipped.
+const REORDER_MARGIN: f64 = 0.02;
+
+/// How far below the baseline the excess of rebuilt data loss may sink, in
+/// packets, so that a run of clean blocks pays for the next noisy ones.
+const EXCESS_CREDIT_CAP: i64 = 64;
+
+/// A cut aims at this share of the delivered rate, FEC included.
+pub const DELIVERED_PERCENT: u64 = 85;
+/// One cut lowers the target by at least 15 % ...
+pub const MAX_CUT_PERCENT: u64 = 85;
+/// ... and a first cut at most by half, so one late or inflated estimate
+/// cannot collapse the stream. A further cut inside [`EVIDENCE_WINDOW`] is
+/// not held to half (see [`REPEAT_CUT_FLOOR_BPS`]).
+pub const MIN_CUT_PERCENT: u64 = 50;
+/// A further cut within [`EVIDENCE_WINDOW`] of the last one is not held to
+/// that limit, only to this many wire bits per second.
+pub const REPEAT_CUT_FLOOR_BPS: u64 = 1_000_000;
+/// A still or calm picture needs a fraction of its bitrate, so the rate is not
+/// what the path failed to carry, and a cut would only meet the picture when
+/// it moves again (after three frames lost to one Wi-Fi gap in a menu, half
+/// the bitrate and a climb of 12 % a step). A cut that would land at or above
+/// what the stream sent, on average and in the largest frame the loss can have
+/// come from ([`LARGE_FRAME_LEAD`]), is held: not applied, only remembered for
+/// this long as the rate the next cut starts from. Loss that goes on halves
+/// that rate with each round of evidence until a cut lowers what is sent, and
+/// that one is made; from there cuts go as deep as they did. What a held cut
+/// leaves as it was: the pace and the size limit of the keyframe that repairs
+/// the loss, which a made cut would have halved. That keyframe does not count
+/// as the large frame, rebuilt by error correction or not yet reported,
+/// unless it is lost too: with that report in before the cut is weighed the
+/// cut is made; later it is behind the fence the hold sets, and keyframes
+/// that fail after the fence are lost frames like any other, large ones, so
+/// the cut is made then. Not held: with a queue standing in the path, the
+/// PC's own refused sends, a failed pacing latch, a failing probe step, and
+/// PyroWave, whose pictures shrink with every cut.
+pub const HELD_FOR: Duration = Duration::from_secs(10);
+/// How many frames before the first one with loss evidence may be the large
+/// frame the loss came from: a frame of several times the usual size takes
+/// that many frame times to leave a link at the stream's rate, and the frames
+/// behind it are dropped from the queue it filled.
+const LARGE_FRAME_LEAD: u32 = 6;
+/// Target after a cut when the loss share is unknown (E4 alone).
+pub const UNKNOWN_SHARE_PERCENT: u64 = 70;
+/// After a change, evidence from frames sent within this long is ignored so
+/// the bottleneck queue can drain; the longer of this and
+/// `2 x RTT + FENCE_MARGIN` applies.
+pub const MIN_FENCE: Duration = Duration::from_millis(500);
+pub const FENCE_MARGIN: Duration = Duration::from_millis(250);
+/// Frames in the encoder when the bitrate changes (Oct 7: "two frames in the
+/// encoder"); the fence frame is this far past the next frame sent.
+pub const PIPELINE_FRAMES: u32 = 2;
+/// After a cut, frames sent past the fence that run more than this share above
+/// the target mean the encoder cannot go that low (H.264 on AMD stops at about
+/// 5 Mbps at 1080p60 however low it is asked, 14 Mbps on noise): cutting again
+/// only collapses the target while the stream stays the same.
+pub const ENCODER_OVERSHOOT_PERCENT: u64 = 120;
+/// Wait after a step down before the first probe.
+pub const HOLD: Duration = Duration::from_secs(2);
+/// A second failure at the same edge (see [`LinkRate::learn`]) waits at least
+/// this long before the next retry past the learned ceiling, and each further
+/// one doubles the wait up to [`RETRY_MAX`]. A fixed edge then pays rarer and
+/// rarer small retries instead of a climb and a collapse every few seconds,
+/// while a path that improves is found again by the same retries. A first
+/// failure at a new edge retries after [`HOLD`], as before: one bad moment is
+/// not a fixed limit.
+pub const RETRY_FIRST: Duration = Duration::from_secs(10);
+/// Each failure at the same edge doubles the wait before the next retry, up
+/// to this: a link whose capacity stays put is still checked every five
+/// minutes, and one whose capacity rises is found within that time.
+pub const RETRY_MAX: Duration = Duration::from_secs(300);
+/// Two failures within this share of each other are the same edge.
+pub const EDGE_PERCENT: u64 = 10;
+/// The longest a step waits to confirm on a path with a deep queue (see
+/// [`LinkRate::confirm_window`]).
+pub const CONFIRM_MAX: Duration = Duration::from_secs(10);
+/// A queue deeper than this counts as this deep for the confirm window.
+const QUEUE_PEAK_MAX: Duration = Duration::from_secs(1);
+/// After [`SEND_LOSS_FRAMES`] frames the host's socket refused within
+/// [`EVIDENCE_WINDOW`], no probe goes up for this long: a busy PC keeps the
+/// socket full for tens of milliseconds at a time, and raising the bitrate
+/// into it only makes the next refusals worse. The rate still steps down on
+/// further refusals.
+pub const HOST_LOSS_HOLD: Duration = Duration::from_secs(5);
+/// A failed probe doubles the wait up to this. The link may have recovered
+/// since, and only a probe can tell, so the wait stays short; a repeat probe is
+/// cheap because it goes only [`NEAR_STEP_DIVISOR`] past the bad rate.
+pub const MAX_HOLD: Duration = Duration::from_secs(8);
+/// A probe that fails within [`KNEE_PERCENT`] of the previous bad rate means
+/// the link has a fixed knee there. Each such failure doubles a wait, up to
+/// [`KNEE_MAX_HOLD`], during which probes stay under [`KNEE_CAP_PERCENT`] of
+/// the bad rate. Without it a fixed link pays a failed probe every 9 s forever:
+/// on 45 fixed-link runs of 5 minutes (225 on 150, 120 on 80, 40 on 20, 20 on
+/// 20 and 179 on 138 Mbit/s, three feedback delays, three burst/queue models)
+/// 4.7 failed probes a minute and 1.00 % of frames lost fell to 1.4 a minute
+/// and 0.77 % (0.76 % is the periodic 3x frame). 16 s left 2.5 a minute, 60 s
+/// 0.9, but a 60 s wait keeps a recovered link at 90 % of its old rate that
+/// long; 30 s is the middle.
+pub const KNEE_MAX_HOLD: Duration = Duration::from_secs(30);
+/// A failed probe keeps probes under the knee this long, at least; so does a
+/// cut, but only one made with the RTT elevated (a queue standing in the
+/// path). Such a cut from a rate the stream climbed to goes only
+/// [`KNEE_BACKOFF_PERCENT`] of it when it has no estimate. r50-hevc-hi (50 Mbit/s, 50 ms queue, 59 Mbps asked) cut to
+/// 70 % from every standing queue and climbed back into the next one, a
+/// sawtooth with a freeze at each tooth.
+pub const KNEE_QUIET: Duration = Duration::from_secs(20);
+pub const KNEE_BACKOFF_PERCENT: u64 = 85;
+pub const KNEE_PERCENT: u64 = 5;
+/// A standing queue: the RTT stays this far above the lowest of the last
+/// [`QUEUE_FLOOR_WINDOW`] for [`QUEUE_HOLD`], in every sample, while video is
+/// busy and no loss signal fired. The 2026-10-24 r50-hevc-hi run held 36.8 Mbps
+/// into 50 Mbit/s with a 25 ms queue and no loss at all (p50 48 ms), where
+/// nothing else could cut. The wifi arm's jitter reaches 8 ms, and its RTT
+/// excursions (20 to 60 ms for 1.5 s) are bursty, so a dip below the margin
+/// starts the wait over.
+pub const QUEUE_MARGIN: Duration = Duration::from_millis(15);
+pub const QUEUE_HOLD: Duration = Duration::from_secs(2);
+/// The floor is the lowest RTT of this long, in one-second buckets, so a
+/// route that got slower for good is the floor after it.
+pub const QUEUE_FLOOR_WINDOW: Duration = Duration::from_secs(30);
+/// The queue has to start within this long of a probe step.
+pub const QUEUE_RAISED: Duration = Duration::from_secs(8);
+/// A queue cut waits this long for the queue to drain before it looks again.
+pub const QUEUE_SETTLE: Duration = Duration::from_secs(1);
+/// A queue cut goes down by 12 %, not deep: the stream is near the link's
+/// edge, and the next step is a few seconds away if the RTT stays up.
+pub const QUEUE_CUT_PERCENT: u64 = 88;
+/// A queue that a cut did not change (the excess stays within a quarter or
+/// 5 ms) is no queue: a slower route or another flow. The floor is re-learned
+/// there and the stream is not cut again for it.
+const QUEUE_FLAT_MS: u64 = 5;
+/// A queue that three cuts (about a third of the rate) did not drain is
+/// another flow's: further cuts would only take the stream's own share.
+const QUEUE_STEPS_MAX: u8 = 3;
+const FLOOR_BUCKETS: usize = 32;
+/// A step down from within this share of the bad rate is a knee failure too.
+pub const KNEE_CUT_PERCENT: u64 = 90;
+/// 95 % left the stream at the link's edge, where each periodic big frame
+/// cost a cut (a window at 62 % of the link); 90 % never fell below 76 %.
+pub const KNEE_CAP_PERCENT: u64 = 90;
+/// Minimum time between probes (also at least the fence).
+pub const PROBE_EVERY: Duration = Duration::from_millis(500);
+/// Probe step as a fraction of the current rate: 1/8. A 25 % step loses more
+/// than 20 % FEC can repair (2.2.19).
+pub const PROBE_STEP_DIVISOR: u64 = 8;
+/// Step within [`NEAR_BAD_PERCENT`] of the last bad rate, one step at a time
+/// and confirmed before the next.
+pub const NEAR_STEP_DIVISOR: u64 = 20;
+pub const NEAR_BAD_PERCENT: u64 = 90;
+/// A probe step counts as good after this long without evidence.
+pub const CONFIRM_AFTER: Duration = EVIDENCE_WINDOW;
+/// `bad` is forgotten after this long clean at 95 % of it or more.
+pub const FORGET_BAD_AFTER: Duration = Duration::from_secs(60);
+/// `Full` again after this long clean at the ceiling.
+pub const FULL_AFTER: Duration = Duration::from_secs(10);
+/// A control ping this recent counts as fresh feedback.
+const PING_FRESH: Duration = Duration::from_secs(2);
+const RING: usize = 1024;
+const EVENT_CAP: usize = 32;
+const PENDING_CAP: usize = 4;
+
+/// A confirmed probe step, kept for one evidence window: loss that FEC
+/// absorbs for two seconds shows up just after the step was confirmed.
+#[derive(Clone, Copy)]
+struct Confirmed {
+    /// The good rate before the step.
+    before: u64,
+    /// The lowest rate confirmed.
+    rate: u64,
+    at: Instant,
+    /// How long after `at` a failure is still this step's: the evidence
+    /// window, or the step's own confirm window if that is longer.
+    window: Duration,
+    /// The step went past the learned ceiling.
+    retry: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    /// Disabled, or the client owns the bitrate.
+    Off,
+    /// At the requested bitrate. `tick` returns `None`.
+    Full,
+    /// Below the requested bitrate because of the network, probing back up.
+    Limited,
+    /// At the minimum bitrate and still losing.
+    Floor,
+}
+impl State {
+    pub fn name(self) -> &'static str {
+        match self {
+            State::Off => "off",
+            State::Full => "full",
+            State::Limited => "limited",
+            State::Floor => "floor",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeKind {
+    StepDown,
+    Probe,
+    ProbeFailed,
+    Floor,
+    /// The encoder keeps sending far more than the target; the rate it sends
+    /// is now the lowest this controller asks for.
+    EncoderFloor,
+    Full,
+}
+
+/// The evidence behind a step down, for the log and the session warning.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Evidence {
+    pub unrecoverable_frames: usize,
+    pub send_losses: usize,
+    pub keyframe_requests: usize,
+    /// Consecutive 500 ms windows at or over [`LOSS_SHARE_PERCENT`].
+    pub loss_windows: u8,
+    /// Missing packets over packets sent, 0..1, since the last change.
+    pub loss_share: f64,
+}
+
+/// One change of state or bitrate, taken with [`LinkRate::take_change`] and
+/// logged by the host.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Change {
+    pub kind: ChangeKind,
+    /// `unrecoverable_frames`, `fec_loss_share`, `send_losses` (the PC's own
+    /// socket refused frames, the RTT flat), `send_losses_queued` (refusals
+    /// with a queue in the path: the network's), `keyframe_requests`,
+    /// `probe`, `recovered`.
+    pub reason: &'static str,
+    pub from_kbps: u32,
+    pub to_kbps: u32,
+    /// Video wire rate the link delivered, kbps (0 when unknown).
+    pub delivered_kbps: u32,
+    pub evidence: Evidence,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Sent {
+    frame: u32,
+    packets: u32,
+    bytes: u32,
+    /// Packets the client reported missing (FEC status).
+    missing: u32,
+    at: Option<Instant>,
+}
+
+/// Evidence counts only for frames sent at or after `frame` and at or after
+/// `at`.
+#[derive(Clone, Copy)]
+struct Fence {
+    frame: Option<u32>,
+    at: Instant,
+}
+impl Fence {
+    fn admits(&self, frame: Option<u32>, sent: Instant) -> bool {
+        sent >= self.at
+            && match (self.frame, frame) {
+                (Some(fence), Some(frame)) => frame.wrapping_sub(fence) < 1 << 31,
+                _ => true,
+            }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct WatchedKeyframe {
+    frame: u32,
+    at: Instant,
+    failed: bool,
+}
+
+#[derive(Default)]
+struct Events {
+    unrecoverable: Vec<(Instant, u32)>,
+    send_losses: Vec<(Instant, u32)>,
+    /// Frames the host's socket refused (not those too large for the path),
+    /// fence or not: they decide [`LinkRate::host_limited`].
+    refused: Vec<(Instant, u32)>,
+    requests: Vec<Instant>,
+    window: Option<Instant>,
+    /// Packets reported missing and packets sent in the current E2 window.
+    missing: u64,
+    sent: u64,
+    hot: u8,
+    /// The oldest frame with any loss evidence; the delivered rate is
+    /// measured from there, not diluted by the clean frames before the drop.
+    first_loss: Option<u32>,
+    /// The newest frame with loss evidence. Frames after it may simply not
+    /// have been reported yet (feedback lag), so the loss share is measured
+    /// only up to here.
+    last_loss: Option<u32>,
+    /// During a latch watch: a keyframe the client could not rebuild, or a
+    /// keyframe request made while no keyframe had arrived whole since the
+    /// latch. Either shows the latch did not fix the loss.
+    latch_failed: bool,
+}
+impl Events {
+    fn clear(&mut self) {
+        self.unrecoverable.clear();
+        self.send_losses.clear();
+        self.requests.clear();
+        self.window = None;
+        self.missing = 0;
+        self.sent = 0;
+        self.hot = 0;
+        self.first_loss = None;
+        self.last_loss = None;
+        self.latch_failed = false;
+    }
+    fn lost(&mut self, frame: u32) {
+        if self
+            .last_loss
+            .is_none_or(|last| frame.wrapping_sub(last) < 1 << 31)
+        {
+            self.last_loss = Some(frame);
+        }
+        if self
+            .first_loss
+            .is_none_or(|first| first.wrapping_sub(frame) < 1 << 31)
+        {
+            self.first_loss = Some(frame);
+        }
+    }
+    fn distinct(events: &mut Vec<(Instant, u32)>, now: Instant, frame: u32) {
+        if events.iter().any(|(_, seen)| *seen == frame) {
+            return;
+        }
+        if events.len() >= EVENT_CAP {
+            events.remove(0);
+        }
+        events.push((now, frame));
+    }
+    fn prune(&mut self, now: Instant) {
+        let recent = |at: &Instant| now.saturating_duration_since(*at) < EVIDENCE_WINDOW;
+        self.unrecoverable.retain(|(at, _)| recent(at));
+        self.send_losses.retain(|(at, _)| recent(at));
+        self.refused.retain(|(at, _)| recent(at));
+        self.requests.retain(recent);
+    }
+    /// Closes the finished 500 ms windows of reported loss.
+    fn roll(&mut self, now: Instant) {
+        let Some(start) = self.window else {
+            self.window = Some(now);
+            self.missing = 0;
+            self.sent = 0;
+            return;
+        };
+        if now.saturating_duration_since(start) < LOSS_WINDOW {
+            return;
+        }
+        let hot =
+            self.sent >= LOSS_MIN_PACKETS && self.missing * 100 >= self.sent * LOSS_SHARE_PERCENT;
+        self.hot = if hot { self.hot.saturating_add(1) } else { 0 };
+        self.missing = 0;
+        self.sent = 0;
+        self.window = Some(now);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Step {
+    rate: u64,
+    at: Instant,
+    /// How long it must stay clean ([`LinkRate::confirm_window`]).
+    confirm: Duration,
+    /// The RTT when it was sent: on a path that has shown a queue, a step
+    /// confirms only while the RTT stays within [`QUEUE_MARGIN`] of this.
+    rtt: Duration,
+    /// It went past the learned ceiling.
+    retry: bool,
+}
+
+pub struct LinkRate {
+    budget: Option<WireBudget>,
+    reason: &'static str,
+    client_owned: bool,
+    state: State,
+    ceiling_kbps: u32,
+    floor_kbps: u32,
+    /// Total wire bits per second the encoder is held to.
+    current: u64,
+    /// The last rate that stayed clean.
+    good: u64,
+    /// The last rate that did not.
+    bad: Option<u64>,
+    /// The learned ceiling, total wire bits per second: where the last cut
+    /// or failed step landed, raised only by a retry that confirmed. Probes
+    /// climb to it and stop (see [`Self::learn`]).
+    learned: Option<u64>,
+    /// When the next retry past `learned` may go.
+    next_retry: Option<Instant>,
+    /// The wait before that retry; doubles after each failure at the same
+    /// edge, and stays across a return to `Full`.
+    retry_wait: Duration,
+    /// The rate the last failure was at, to tell the same edge.
+    failed_at: Option<u64>,
+    /// When the host's socket last refused [`SEND_LOSS_FRAMES`] frames
+    /// within the evidence window (see [`Self::host_limited`]).
+    host_loss_at: Option<Instant>,
+    /// The deepest queue (RTT over its floor) seen when a network cut or a
+    /// failed step was made: how long an overshoot can hide on this path.
+    queue_peak: Duration,
+    /// Total wire bits per second the encoder was seen to send after a cut
+    /// asked for less (see [`ENCODER_OVERSHOOT_PERCENT`]); cuts stop here.
+    encoder_floor: Option<u64>,
+    /// Evidence rounds in a row whose frames ran above the target.
+    overshoots: u8,
+    /// Probe steps above `good` not yet confirmed clean, oldest first.
+    pending: [Option<Step>; PENDING_CAP],
+    confirmed: Option<Confirmed>,
+    hold: Duration,
+    /// Knee wait, doubled by failures at the bad rate, reset past it.
+    knee: Duration,
+    /// Probes stay under [`KNEE_CAP_PERCENT`] of `bad` until then.
+    knee_until: Option<Instant>,
+    next_probe: Option<Instant>,
+    at_ceiling: Option<Instant>,
+    near_bad: Option<Instant>,
+    fence: Option<Fence>,
+    /// Until when one unrecoverable frame cuts (see [`LATCH_WATCH`]).
+    latch_watch: Option<Instant>,
+    /// When the latch being watched happened: a keyframe sent from then on
+    /// answers it, even one sent inside the fence.
+    latch_at: Option<Instant>,
+    /// Keyframes sent since the latch of the latch being watched, with whether
+    /// the client reported each unrecoverable.
+    watch_keyframes: Vec<WatchedKeyframe>,
+    /// Unrecoverable frames (with their number) and network keyframe requests
+    /// since the latch being watched, inside the fence or not.
+    watch_events: Vec<(Instant, Option<u32>)>,
+    /// Rebuilt blocks seen, their packets and those of them reported missing
+    /// before the block was rebuilt (data only), for the snapshot: on a path
+    /// that reorders, nearly every block is "missing" its trailing packets.
+    rebuilt_blocks: u64,
+    rebuilt_packets: u64,
+    rebuilt_data_missing: u64,
+    /// The last tick saw a static picture: next to nothing was sent.
+    static_picture: bool,
+    /// Running share of a rebuilt block's data packets reported missing while
+    /// the RTT is flat (what reordering looks like on this path), and the
+    /// excess over it seen while the RTT is up, in packets (see
+    /// [`Self::on_status`]).
+    reorder_share: f64,
+    reorder_at: Option<Instant>,
+    excess_credit: i64,
+    excess_high: i64,
+    last_sent: Option<u32>,
+    ring: Box<[Sent]>,
+    events: Events,
+    fec_status_seen: bool,
+    /// PyroWave record framing: only the coarse block (block 0) carries the
+    /// picture, so only its loss loses the frame (see [`Self::frame_lost`]).
+    records: bool,
+    /// PyroWave whose test-scene detail level is at or above the
+    /// stream's own bitrate: cuts stop at half the bitrate instead, and the
+    /// floor warning says this link loses PyroWave (see
+    /// [`Self::pyrowave_no_room`]).
+    pyrowave_no_room: bool,
+    /// The newest frame of the reference invalidation incident counted last,
+    /// and when it began: the client's repeats for the same loss are one
+    /// request (see [`Self::on_invalidation`]).
+    incident: Option<(u64, Instant)>,
+    last_ping: Option<Instant>,
+    minimum_rtt: Option<Duration>,
+    /// Lowest RTT per second over [`QUEUE_FLOOR_WINDOW`], oldest first.
+    rtt_floor: VecDeque<(Instant, Duration)>,
+    /// Since when every RTT sample was over the floor by [`QUEUE_MARGIN`].
+    queue_since: Option<Instant>,
+    /// A probe raised the rate at this time.
+    raised_at: Option<Instant>,
+    /// A loss cut was made at this time: a queue that stands on after it
+    /// (a deep buffer the cut did not drain; 2026-11-17 sim: 400 ms at 50
+    /// Mbit/s) is the stream's own, as one after a probe step is.
+    loss_cut_at: Option<Instant>,
+    queue_quiet_until: Option<Instant>,
+    /// The excess over the floor when the last queue cut was made, and the
+    /// cuts of this queue so far.
+    queue_excess: Option<Duration>,
+    queue_steps: u8,
+    rtt: Duration,
+    next_eval: Option<Instant>,
+    cache: Option<((u64, usize, Duration), u32)>,
+    delivered_bps: u64,
+    last_change: Option<Instant>,
+    change: Option<Change>,
+    steps_down: u32,
+    last_cut: Option<Instant>,
+    /// Where the cuts held back since the stream last sent more would have
+    /// left the rate, and when the last of them was held (see [`HELD_FOR`]).
+    held: Option<(u64, Instant)>,
+    held_cuts: u32,
+    probes: u32,
+    failed_probes: u32,
+}
+
+impl Default for LinkRate {
+    fn default() -> Self {
+        Self::off("disabled")
+    }
+}
+
+/// PyroWave's detail floor: the bitrate below which the project's test scenes lost
+/// detail ([`crate::pyrowave::minimum_kbps`], about 186 Mbps at 1080p60), in the
+/// session's bitrate, which the sender scales by configured over negotiated. The
+/// floor uses the whole frame rate, as the client's own minimum does, so 59.94 fps
+/// is compared as 60.
+pub fn pyrowave_floor_kbps(stream: &Negotiated) -> u32 {
+    let minimum =
+        crate::pyrowave::minimum_kbps(stream.width, stream.height, stream.fps.saturating_mul(1000));
+    in_session_bitrate(minimum, stream)
+}
+
+/// PyroWave's recommended rate ([`crate::pyrowave::recommended_kbps`]) in the session's bitrate,
+/// scaled exactly as the floor is, so the stream card's amber level, the log and the launch
+/// warning agree. The whole frame rate is used, as for the floor.
+pub fn pyrowave_recommended_kbps(stream: &Negotiated) -> u32 {
+    let recommended = crate::pyrowave::recommended_kbps(
+        stream.width,
+        stream.height,
+        stream.fps.saturating_mul(1000),
+    );
+    in_session_bitrate(recommended, stream)
+}
+
+/// `rate_kbps` reduced from the bitrate the client configured to the one the sender codes
+/// (`bitrate_kbps` over `configured_bitrate_kbps`), unchanged when the client's number is unknown.
+fn in_session_bitrate(rate_kbps: u32, stream: &Negotiated) -> u32 {
+    if stream.configured_bitrate_kbps == 0 {
+        return rate_kbps;
+    }
+    (u64::from(rate_kbps) * u64::from(stream.bitrate_kbps)
+        / u64::from(stream.configured_bitrate_kbps))
+    .min(u64::from(u32::MAX)) as u32
+}
+
+impl LinkRate {
+    fn off(reason: &'static str) -> Self {
+        Self {
+            budget: None,
+            reason,
+            client_owned: false,
+            state: State::Off,
+            ceiling_kbps: 0,
+            floor_kbps: 0,
+            current: 0,
+            good: 0,
+            bad: None,
+            learned: None,
+            next_retry: None,
+            retry_wait: HOLD,
+            failed_at: None,
+            host_loss_at: None,
+            queue_peak: Duration::ZERO,
+            encoder_floor: None,
+            overshoots: 0,
+            pending: [None; PENDING_CAP],
+            confirmed: None,
+            hold: HOLD,
+            knee: HOLD,
+            knee_until: None,
+            next_probe: None,
+            at_ceiling: None,
+            near_bad: None,
+            fence: None,
+            latch_watch: None,
+            latch_at: None,
+            watch_keyframes: Vec::new(),
+            watch_events: Vec::new(),
+            rebuilt_blocks: 0,
+            rebuilt_packets: 0,
+            rebuilt_data_missing: 0,
+            static_picture: false,
+            reorder_share: 0.,
+            reorder_at: None,
+            excess_credit: 0,
+            excess_high: 0,
+            last_sent: None,
+            ring: Box::default(),
+            events: Events::default(),
+            fec_status_seen: false,
+            records: false,
+            pyrowave_no_room: false,
+            incident: None,
+            last_ping: None,
+            minimum_rtt: None,
+            rtt_floor: VecDeque::with_capacity(FLOOR_BUCKETS),
+            queue_since: None,
+            raised_at: None,
+            loss_cut_at: None,
+            queue_quiet_until: None,
+            queue_excess: None,
+            queue_steps: 0,
+            rtt: Duration::ZERO,
+            next_eval: None,
+            cache: None,
+            delivered_bps: 0,
+            last_change: None,
+            change: None,
+            steps_down: 0,
+            last_cut: None,
+            held: None,
+            held_cuts: 0,
+            probes: 0,
+            failed_probes: 0,
+        }
+    }
+
+    /// Whether a block the client could not rebuild lost its frame (E1). In
+    /// PyroWave's record framing the coarse block (block 0) carries the
+    /// picture and the detail blocks have no parity while it moves: a lost
+    /// detail packet blurs part of one picture, so it counts toward the loss
+    /// share (E2) only. 0.1 % random loss hits about one picture in six at
+    /// 200 Mbps, and counted as lost frames it cut a healthy link to the floor.
+    /// Block 0 is the coarse block only while it carries parity: with
+    /// `pyrowave_critical_fec_percentage = 0`, or coarse records and parity
+    /// over 255 packets, the sender splits the picture into quarters without
+    /// parity (`packet.rs`), and block 0 is a quarter of the detail.
+    pub fn frame_lost(&self, status: &Status) -> bool {
+        let received = u32::from(status.received_data) + u32::from(status.received_parity);
+        received < u32::from(status.data)
+            && (!self.records || (status.block == 0 && status.parity > 0))
+    }
+
+    /// PyroWave's floor is at or above the stream's own bitrate (1080p120 at
+    /// 200 Mbps needs 373, 4K120 at 800 about 1490): there is no quality floor
+    /// to stop at, so cuts stop at half the bitrate.
+    pub fn pyrowave_no_room(&self) -> bool {
+        self.pyrowave_no_room
+    }
+
+    /// `enabled` is the configuration (`link_rate_adaptation`). `max_kbps` is
+    /// the user's `max_bitrate` (0 for none), `fec` the FEC percentage in use.
+    pub fn new(enabled: bool, stream: &Negotiated, max_kbps: u32, fec: usize) -> Self {
+        let mut this = Self::off("disabled");
+        if !enabled {
+            return this;
+        }
+        let pyrowave = stream.codec == 3;
+        let ceiling = stream
+            .bitrate_kbps
+            .min(if pyrowave { 2_000_000 } else { 500_000 })
+            .min(if max_kbps > 0 { max_kbps } else { u32::MAX });
+        let budget = WireBudget::of(stream);
+        let period = crate::reconfigure::Mode::of(stream).period();
+        let Some(minimum) = budget.minimum_encoder_kbps(ceiling, fec, period) else {
+            this.reason = "wire_budget_too_small";
+            return this;
+        };
+        // Below the level where the project's test scenes kept detail, PyroWave loses text and texture detail:
+        // it stops there and the warning says to use HEVC or AV1.
+        let lowest = if pyrowave {
+            pyrowave_floor_kbps(stream)
+        } else {
+            2_000
+        };
+        this.pyrowave_no_room = pyrowave && lowest >= ceiling;
+        // A stream already under PyroWave's floor has no quality floor to keep.
+        // Until 2026-11-17 client loss could not lower it at all, so a path
+        // that carried less than the request (a mesh node's wireless backhaul
+        // at 4K120) held it there into hundreds of lost pictures and 279 ms of
+        // queue; only the host's own refused sends could cut, and to half.
+        // Half the bitrate is now the floor for every cut.
+        let lowest = if this.pyrowave_no_room {
+            ceiling / 2
+        } else {
+            lowest
+        };
+        this.floor_kbps = ceiling.min(lowest).max(minimum).min(ceiling);
+        this.ceiling_kbps = ceiling;
+        this.records = pyrowave && stream.pyrowave_records;
+        // A client that announced FEC status reports every frame it lost, so
+        // its keyframe requests are no loss evidence from the first frame on,
+        // as `KeyframeLoss` already treats them (it calls such a client's
+        // repeated request its decoder asking again). The trade-off: a client
+        // that sets the flag but never sends a valid report (0x5502) gets no
+        // request-based evidence either, except while a probe step is
+        // unconfirmed or under a latch watch.
+        this.fec_status_seen = stream.moonlight_features & crate::rtsp::FEC_STATUS_FEATURE != 0;
+        this.budget = Some(budget);
+        this.ring = vec![Sent::default(); RING].into_boxed_slice();
+        for events in [
+            &mut this.events.unrecoverable,
+            &mut this.events.send_losses,
+            &mut this.events.refused,
+        ] {
+            events.reserve_exact(EVENT_CAP);
+        }
+        this.events.requests.reserve_exact(EVENT_CAP);
+        this.state = State::Full;
+        this.reason = "healthy";
+        this
+    }
+
+    /// A new controller for a reconfigured stream (new bitrate, FEC or
+    /// codec). It keeps what the stream already decided: once the client set
+    /// the bitrate, it stays in charge.
+    pub fn rebuild(&self, enabled: bool, stream: &Negotiated, max_kbps: u32, fec: usize) -> Self {
+        let mut this = Self::new(enabled, stream, max_kbps, fec);
+        if self.client_owned {
+            this.client_takeover();
+        }
+        this
+    }
+
+    pub fn state(&self) -> State {
+        self.state
+    }
+
+    pub fn ceiling_kbps(&self) -> u32 {
+        self.ceiling_kbps
+    }
+
+    /// The client set the bitrate itself (`/bitrate`); this controller stays
+    /// off until the stream is reconfigured.
+    pub fn client_takeover(&mut self) {
+        self.client_owned = true;
+        self.state = State::Off;
+        self.reason = "client_controlled";
+        self.events.clear();
+        self.pending = [None; PENDING_CAP];
+        self.confirmed = None;
+        self.learned = None;
+        self.next_retry = None;
+    }
+
+    /// Record the video frame the host just sent: its wire frame number,
+    /// packets (data and parity) and wire bytes. One store, no allocation.
+    pub fn on_sent(&mut self, frame: u32, packets: u32, wire_bytes: u32, now: Instant) {
+        if self.state == State::Off {
+            return;
+        }
+        self.last_sent = Some(match self.last_sent {
+            Some(last) if frame.wrapping_sub(last) >= 1 << 31 => last,
+            _ => frame,
+        });
+        self.ring[frame as usize % RING] = Sent {
+            frame,
+            packets,
+            bytes: wire_bytes,
+            missing: 0,
+            at: Some(now),
+        };
+        self.events.sent += u64::from(packets);
+    }
+
+    fn sent(&self, frame: u32) -> Option<Sent> {
+        if self.ring.is_empty() {
+            return None;
+        }
+        Some(self.ring[frame as usize % RING]).filter(|s| s.at.is_some() && s.frame == frame)
+    }
+
+    fn admits(&self, frame: Option<u32>, now: Instant) -> bool {
+        let Some(fence) = self.fence else {
+            return true;
+        };
+        let sent = frame.and_then(|f| self.sent(f)).and_then(|s| s.at);
+        fence.admits(frame, sent.unwrap_or(now))
+    }
+
+    /// One validated, deduplicated block of a client FEC status (0x5502).
+    /// Feeds the packet-loss share (E2) and records that this client reports
+    /// FEC, which turns the keyframe-request trigger (E4) off.
+    pub fn on_status(&mut self, status: &Status, now: Instant) {
+        self.fec_status_seen = true;
+        if !self.is_active() || !self.admits(Some(status.frame), now) {
+            return;
+        }
+        if self.sent(status.frame).is_none() {
+            return;
+        }
+        let total = u32::from(status.data) + u32::from(status.parity);
+        let received = u32::from(status.received_data) + u32::from(status.received_parity);
+        // A block the client rebuilt, or had enough packets to rebuild, is
+        // FEC's job and says nothing about the link on its own. Its report is
+        // made the moment `data` packets are in, so the parity (and, on a path
+        // that reorders, some data) not yet arrived is in flight, not lost: on
+        // the 2026-10-24 Wi-Fi arm (3 +/- 2 ms delay, 0.5 % loss) that read as
+        // 14 % of the data missing and cut the stream to its floor. While the
+        // RTT is up, a queue is filling: the same share is then loss FEC is
+        // absorbing for now, and the next step up in load breaks it.
+        if received >= u32::from(status.data) {
+            let data_missing = u32::from(status.data.saturating_sub(status.received_data));
+            self.rebuilt_blocks += 1;
+            self.rebuilt_packets += u64::from(total);
+            self.rebuilt_data_missing += u64::from(data_missing);
+            let data = u64::from(status.data.max(1));
+            let elevated = self.rtt_elevated();
+            // The baseline fades with the time since the last block that
+            // renewed it; while the RTT is up only a silence counts, or a
+            // long queue would fade its own baseline and cut itself.
+            if let Some(at) = self.reorder_at.replace(now) {
+                let dt = now.saturating_duration_since(at);
+                if !elevated || dt >= REORDER_GAP {
+                    self.reorder_share *= (-dt.as_secs_f64() / REORDER_FADE.as_secs_f64()).exp();
+                }
+            }
+            let cap = f64::from(status.parity) / total.max(1) as f64 + REORDER_MARGIN;
+            if !elevated {
+                // What this path reorders, learned while nothing queues.
+                let share = f64::from(data_missing) / data as f64;
+                self.reorder_share += (share - self.reorder_share) / REORDER_BLOCKS;
+                self.reorder_share = self.reorder_share.min(cap);
+                self.excess_credit = 0;
+                self.excess_high = 0;
+            }
+            // Reordering does not stop when the RTT rises for a moment (a roam,
+            // a competing flow): only the packets over what the flat RTT
+            // already showed are a queue. The excess is a running sum; only
+            // what it rises over its own high-water mark counts, so noise
+            // around the baseline counts nothing however long it goes on, and
+            // a standing queue's extra loss adds up.
+            let excess = if elevated {
+                let expected = (self.reorder_share.min(cap) * data as f64).round() as i64;
+                let credit = (self.excess_credit + i64::from(data_missing) - expected)
+                    .max(-EXCESS_CREDIT_CAP);
+                let counted = (credit - self.excess_high).max(0);
+                self.excess_high = self.excess_high.max(credit);
+                self.excess_credit = credit;
+                u64::try_from(counted).unwrap_or(0)
+            } else {
+                0
+            };
+            if excess > 0 {
+                // The parity still in flight cannot be told from lost, so the
+                // share is taken from the data packets and scaled up to all of
+                // them: 5 % of the data lost is 6 % of the block.
+                let missing = (excess * u64::from(total)).div_ceil(data);
+                self.events.missing += missing;
+                self.events.lost(status.frame);
+                self.ring[status.frame as usize % RING].missing +=
+                    u32::try_from(missing).unwrap_or(u32::MAX);
+            }
+            return;
+        }
+        let missing = total - received;
+        if missing > 0 {
+            self.events.missing += u64::from(missing);
+            self.events.lost(status.frame);
+            self.ring[status.frame as usize % RING].missing += missing;
+        }
+    }
+
+    /// A distinct frame the client could not rebuild, already classified by
+    /// `KeyframeLoss` (not inside a host-change window, not counted as lost on
+    /// send). Feeds E1.
+    /// `keyframe` is whether the frame is one the host sent as a keyframe: one
+    /// of those lost while a latch is watched shows the latch did not help.
+    pub fn on_unrecoverable(&mut self, frame: u32, keyframe: bool, now: Instant) {
+        if !self.is_active() {
+            return;
+        }
+        // The keyframe answering a latch is often sent, and reported lost,
+        // inside the fence: it still did not arrive.
+        if keyframe {
+            for k in self.watch_keyframes.iter_mut().filter(|k| k.frame == frame) {
+                k.failed = true;
+            }
+        }
+        self.watch_event(Some(frame), now);
+        if self.admits(Some(frame), now) {
+            Events::distinct(&mut self.events.unrecoverable, now, frame);
+            self.events.lost(frame);
+            // A frame lost while no keyframe has come through since the latch
+            // is the same proof a request is: the latch has not helped yet.
+            if self.watching(now) && (keyframe || !self.keyframe_arrived(now)) {
+                self.events.latch_failed = true;
+            }
+        }
+    }
+
+    /// An unrecoverable frame or network request under a latch watch. Two,
+    /// [`WATCH_EVENT_GAP`] or more and [`WATCH_EVENT_SPAN`] or less apart, fail
+    /// the latch. A frame sent before
+    /// the latch is not evidence about it.
+    fn watch_event(&mut self, frame: Option<u32>, now: Instant) {
+        let Some(latched) = self.latch_at.filter(|_| self.watching(now)) else {
+            return;
+        };
+        if let Some(frame) = frame
+            && (self
+                .sent(frame)
+                .and_then(|s| s.at)
+                .is_some_and(|at| at < latched)
+                || self
+                    .watch_events
+                    .iter()
+                    .any(|(_, seen)| *seen == Some(frame)))
+        {
+            return;
+        }
+        if self.watch_events.iter().any(|(at, _)| {
+            let apart = now.saturating_duration_since(*at);
+            apart >= WATCH_EVENT_GAP && apart <= WATCH_EVENT_SPAN
+        }) {
+            self.events.latch_failed = true;
+        }
+        if self.watch_events.len() >= EVENT_CAP {
+            self.watch_events.remove(0);
+        }
+        self.watch_events.push((now, frame));
+    }
+
+    /// The host is sending `frame` as a keyframe.
+    pub fn on_keyframe_sent(&mut self, frame: u32, now: Instant) {
+        if !self.is_active() || !self.watching(now) || self.latch_at.is_none_or(|at| now < at) {
+            return;
+        }
+        if self.watch_keyframes.len() >= EVENT_CAP {
+            self.watch_keyframes.remove(0);
+        }
+        self.watch_keyframes.push(WatchedKeyframe {
+            frame,
+            at: now,
+            failed: false,
+        });
+    }
+
+    /// A keyframe sent since the latch's fence that the client had time to
+    /// report lost and did not.
+    fn keyframe_arrived(&self, now: Instant) -> bool {
+        self.watch_keyframes
+            .iter()
+            .any(|k| !k.failed && now.saturating_duration_since(k.at) >= self.fence_wait())
+    }
+
+    /// A frame the host could not send whole because its socket refused
+    /// packets (a full buffer, WSAEWOULDBLOCK or WSAENOBUFS). Feeds E3 and
+    /// [`Self::host_limited`].
+    pub fn on_send_loss(&mut self, frame: u32, now: Instant) {
+        if !self.is_active() {
+            return;
+        }
+        Events::distinct(&mut self.events.refused, now, frame);
+        self.events
+            .refused
+            .retain(|(at, _)| now.saturating_duration_since(*at) < EVIDENCE_WINDOW);
+        if self.events.refused.len() >= SEND_LOSS_FRAMES {
+            self.host_loss_at = Some(now);
+        }
+        self.on_send_too_large(frame, now);
+    }
+
+    /// A frame the host could not send whole because the path refused its
+    /// datagrams' size. Feeds E3 only: the PC is not short of anything.
+    pub fn on_send_too_large(&mut self, frame: u32, now: Instant) {
+        if self.is_active() && self.admits(Some(frame), now) {
+            Events::distinct(&mut self.events.send_losses, now, frame);
+            self.events.lost(frame);
+        }
+    }
+
+    /// The host's socket refused [`SEND_LOSS_FRAMES`] frames within
+    /// [`EVIDENCE_WINDOW`], less than [`HOST_LOSS_HOLD`] ago: the PC's own
+    /// send path is the limit for now, and no probe goes up until it has been
+    /// quiet that long.
+    pub fn host_limited(&self, now: Instant) -> bool {
+        self.host_loss_at
+            .is_some_and(|at| now.saturating_duration_since(at) < HOST_LOSS_HOLD)
+    }
+
+    /// A keyframe or RFI request. `network` is `KeyframeLoss`'s verdict that
+    /// the network, not the host or the decoder queue, caused it. Feeds E4,
+    /// and only from a client that has sent no FEC status.
+    pub fn on_keyframe_request(&mut self, network: bool, now: Instant) {
+        if !network || !self.is_active() {
+            return;
+        }
+        self.watch_event(None, now);
+        if !self.admits(None, now) {
+            return;
+        }
+        // Under a latch watch a request from a client that reports FEC status
+        // counts when no keyframe has got through since the latch.
+        if self.watching(now) && (self.events.latch_failed || !self.keyframe_arrived(now)) {
+            self.events.latch_failed = true;
+        } else if self.fec_status_seen && !self.probe_unconfirmed(now) {
+            return;
+        }
+        if self.events.requests.len() >= EVENT_CAP {
+            self.events.requests.remove(0);
+        }
+        self.events.requests.push(now);
+    }
+
+    /// A reference invalidation request for frames `first..=last` (0x0301).
+    /// The client asks again for every frame it cannot decode until the
+    /// repair arrives, so a request whose range starts at or before the
+    /// newest frame of the incident counted last, within [`INCIDENT_GAP`] of
+    /// its first request, is the same loss and not counted again (2026-10-29:
+    /// 11 requests for frames 2685-2695 after one lost frame counted as 10
+    /// and cut 21 to 14.5 Mbps on a link that carried the stream). A range
+    /// the host cannot read (`first` 0 or past `last`) is a request of its own.
+    /// Under a latch watch or an unconfirmed probe step every request counts,
+    /// as keyframe requests do: there repeats are the evidence.
+    pub fn on_invalidation(&mut self, first: u64, last: u64, network: bool, now: Instant) {
+        if first == 0 || first > last {
+            self.on_keyframe_request(network, now);
+            return;
+        }
+        let merge = !(self.watching(now) || self.probe_unconfirmed(now));
+        match &mut self.incident {
+            Some((newest, began))
+                if merge
+                    && first <= newest.saturating_add(1)
+                    && now.saturating_duration_since(*began) < INCIDENT_GAP =>
+            {
+                *newest = (*newest).max(last);
+            }
+            incident => {
+                *incident = Some((last, now));
+                self.on_keyframe_request(network, now);
+            }
+        }
+    }
+
+    /// `KeyframeLoss` latched (paced like Wi-Fi). If the pacing before the
+    /// latch was faster than the Wi-Fi rate the latch may be the whole fix
+    /// (the Onn burst-loss port), so give it one fence before cutting. `new`
+    /// is whether the latch is new; a latch reported again starts nothing, so
+    /// the caller may report every latch event without a second fence.
+    pub fn on_latch(&mut self, now: Instant, was_fast: bool, new: bool) {
+        if new && was_fast && self.is_active() {
+            self.set_fence(now);
+            self.latch_watch = self.fence.map(|f| f.at + LATCH_WATCH);
+            self.latch_at = Some(now);
+        }
+    }
+
+    /// A provisional (start-up) latch lifted: pacing is back at the route's
+    /// rate. `now_fast` is whether that rate is faster than the Wi-Fi rate. The
+    /// pace changed under frames already in flight, so one fence keeps their
+    /// reports (made under the slow pace) from deciding anything at the new one.
+    pub fn on_unlatch(&mut self, now: Instant, now_fast: bool) {
+        if now_fast && self.is_active() {
+            self.set_fence(now);
+        }
+    }
+
+    /// When the current fence was set to expire, for tests.
+    #[cfg(any(test, feature = "test-internals"))]
+    pub fn fence_at(&self) -> Option<Instant> {
+        self.fence.map(|f| f.at)
+    }
+
+    /// A client control ping (`type 4`, 8 bytes), the proof that feedback is
+    /// fresh.
+    pub fn on_ping(&mut self, now: Instant, payload: &[u8]) {
+        if payload.len() == 8 && payload[..4] == 4u32.to_le_bytes() {
+            self.last_ping = Some(now);
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        self.budget.is_some() && self.state != State::Off
+    }
+
+    /// A probe step is unconfirmed, or was confirmed within the evidence
+    /// window: whatever breaks now is likely the step. Not while the picture
+    /// is static: a pending step waits for motion (its clock is held), and
+    /// requests made when next to nothing is sent are not the step's doing.
+    fn probe_unconfirmed(&self, now: Instant) -> bool {
+        !self.static_picture
+            && (self.pending.iter().any(Option::is_some) || self.recent(now).is_some())
+    }
+
+    /// The step confirmed last, while a failure is still its own: within the
+    /// evidence window, or its confirm window if that is longer (loss behind
+    /// a deep buffer shows up late).
+    fn recent(&self, now: Instant) -> Option<Confirmed> {
+        self.confirmed
+            .filter(|c| now.saturating_duration_since(c.at) < c.window)
+    }
+
+    /// The step that a failure now belongs to: its rate, the rate to go back
+    /// to, and whether it went past the learned ceiling.
+    fn failing(&self, now: Instant) -> Option<(u64, u64, bool)> {
+        match self.pending.iter().flatten().next() {
+            Some(oldest) => Some((oldest.rate, self.good, oldest.retry)),
+            None => self.recent(now).map(|c| (c.rate, c.before, c.retry)),
+        }
+    }
+
+    /// Whether a latch is still being judged (see [`LATCH_WATCH`]).
+    fn watching(&self, now: Instant) -> bool {
+        self.latch_watch.is_some_and(|until| now < until)
+    }
+
+    fn set_fence(&mut self, now: Instant) {
+        self.latch_watch = None;
+        self.latch_at = None;
+        self.watch_keyframes.clear();
+        self.watch_events.clear();
+        let wait = MIN_FENCE.max(self.rtt * 2 + FENCE_MARGIN);
+        self.fence = Some(Fence {
+            frame: self.last_sent.map(|f| f.wrapping_add(1 + PIPELINE_FRAMES)),
+            at: now + wait,
+        });
+        self.events.clear();
+    }
+
+    fn fence_wait(&self) -> Duration {
+        MIN_FENCE.max(self.rtt * 2 + FENCE_MARGIN)
+    }
+
+    /// Call every feedback tick (8 ms is fine; it evaluates every 100 ms). Returns
+    /// the encoder bitrate to use while limited, `None` while `Full` or off.
+    /// `fec` is the FEC percentage now in use, `current_kbps` the bitrate the
+    /// encoder runs at, `busy` whether video traffic is busy (at least 60 % of
+    /// the frames and bytes expected), and `rtt` the control RTT (zero when
+    /// unknown).
+    pub fn tick(
+        &mut self,
+        now: Instant,
+        rtt: Duration,
+        fec: usize,
+        period: Duration,
+        current_kbps: u32,
+        busy: bool,
+    ) -> Option<u32> {
+        if !self.is_active() {
+            return None;
+        }
+        self.rtt = rtt;
+        self.static_picture = !busy;
+        if self.next_eval.is_none_or(|at| now >= at) {
+            self.next_eval = Some(now + EVALUATE_EVERY);
+            self.observe_rtt(now, rtt);
+            self.events.roll(now);
+            self.events.prune(now);
+            if let Some(why) = self.triggered(now) {
+                self.queue_since = None;
+                self.on_evidence(now, why, fec, period, current_kbps);
+            } else if self.standing_queue(now, busy) {
+                self.queue_cut(now, fec, period, current_kbps);
+            } else if self.state != State::Full {
+                self.advance(now, busy, fec, period);
+            }
+        }
+        (self.state != State::Full).then(|| self.encoder_kbps(fec, period))
+    }
+
+    fn observe_rtt(&mut self, now: Instant, rtt: Duration) {
+        if !rtt.is_zero() && self.ping_fresh(now) {
+            self.minimum_rtt = Some(self.minimum_rtt.map_or(rtt, |m| m.min(rtt)));
+            match self.rtt_floor.back_mut() {
+                Some((at, low)) if now.saturating_duration_since(*at) < Duration::from_secs(1) => {
+                    *low = (*low).min(rtt);
+                }
+                _ => {
+                    if self.rtt_floor.len() >= FLOOR_BUCKETS {
+                        self.rtt_floor.pop_front();
+                    }
+                    self.rtt_floor.push_back((now, rtt));
+                }
+            }
+            while self
+                .rtt_floor
+                .front()
+                .is_some_and(|(at, _)| now.saturating_duration_since(*at) > QUEUE_FLOOR_WINDOW)
+            {
+                self.rtt_floor.pop_front();
+            }
+        }
+    }
+
+    fn rtt_floor(&self) -> Option<Duration> {
+        self.rtt_floor.iter().map(|(_, low)| *low).min()
+    }
+
+    /// The RTT has been over the floor by [`QUEUE_MARGIN`] in every sample for
+    /// [`QUEUE_HOLD`] while video is busy: a lossless queue stands in the path.
+    /// A queue that a cut did not change at all is no queue (see
+    /// [`QUEUE_FLAT_MS`]): the floor is re-learned and this says no.
+    fn standing_queue(&mut self, now: Instant, busy: bool) -> bool {
+        let excess = self
+            .rtt_floor()
+            .filter(|_| !self.rtt.is_zero())
+            .map(|floor| self.rtt.saturating_sub(floor));
+        if excess.is_some_and(|excess| excess <= QUEUE_MARGIN) {
+            // The RTT came back: the queue is over, the next is a new one.
+            self.queue_excess = None;
+            self.queue_steps = 0;
+        }
+        if !(busy && self.ping_fresh(now) && excess.is_some_and(|e| e > QUEUE_MARGIN)) {
+            self.queue_since = None;
+            return false;
+        }
+        if self.queue_quiet_until.is_some_and(|until| now < until) {
+            return false;
+        }
+        let since = match self.queue_since {
+            Some(since) => since,
+            None => {
+                // Only a queue the stream's own rate can have made: one that
+                // starts soon after a probe step or while one is unconfirmed
+                // (behind a deep buffer a small step fills it slowly), or goes
+                // on after a cut. A slower route or a competing flow shows up
+                // as the same rise at any other time.
+                let caused = self.queue_excess.is_some()
+                    || self.pending.iter().any(Option::is_some)
+                    || self
+                        .loss_cut_at
+                        .is_some_and(|at| now.saturating_duration_since(at) <= QUEUE_RAISED)
+                    || self
+                        .raised_at
+                        .is_some_and(|at| now.saturating_duration_since(at) <= QUEUE_RAISED);
+                if !caused {
+                    return false;
+                }
+                self.queue_since = Some(now);
+                now
+            }
+        };
+        if now.saturating_duration_since(since) < QUEUE_HOLD {
+            return false;
+        }
+        if let (Some(before), Some(excess)) = (self.queue_excess, excess) {
+            let slack = (before / 4).max(Duration::from_millis(QUEUE_FLAT_MS));
+            if excess + slack < before {
+                // Draining, only slowly: the cut works, wait for it. The
+                // ENet round trip is smoothed and lags a queue by seconds.
+                self.queue_excess = Some(excess);
+                self.queue_since = None;
+                return false;
+            }
+            let flat = excess.abs_diff(before) <= slack;
+            if flat || self.queue_steps >= QUEUE_STEPS_MAX {
+                // A slower route, or a flow that keeps the queue full whatever
+                // the stream sends. Only the queue's own floor is re-learned:
+                // `minimum_rtt` stays, so `rtt_elevated` keeps holding probes
+                // and the reorder baseline sees the same RTT as before. No
+                // new queue is looked for until a probe raises the rate again.
+                self.rtt_floor.clear();
+                self.rtt_floor.push_back((now, self.rtt));
+                self.raised_at = None;
+                self.loss_cut_at = None;
+                self.queue_since = None;
+                self.queue_excess = None;
+                self.queue_steps = 0;
+                return false;
+            }
+        }
+        true
+    }
+
+    fn ping_fresh(&self, now: Instant) -> bool {
+        self.last_ping
+            .is_some_and(|at| now.saturating_duration_since(at) < PING_FRESH)
+    }
+
+    fn rtt_elevated(&self) -> bool {
+        !self.rtt.is_zero()
+            && self
+                .minimum_rtt
+                .is_some_and(|min| self.rtt > min + (min / 2).max(Duration::from_millis(8)))
+    }
+
+    fn encoder_kbps(&mut self, fec: usize, period: Duration) -> u32 {
+        let key = (self.current, fec, period);
+        if let Some((cached, kbps)) = self.cache
+            && cached == key
+        {
+            return kbps;
+        }
+        let mut kbps = self
+            .budget()
+            .encoder_kbps(self.current, self.ceiling_kbps, fec, period)
+            .clamp(self.floor_kbps, self.ceiling_kbps);
+        // Less FEC frees wire bits for video, but only a probe may spend them.
+        if let Some(((current, was_fec, was_period), cached)) = self.cache
+            && current == self.current
+            && period == was_period
+            && fec < was_fec
+        {
+            kbps = kbps.min(cached);
+        }
+        self.cache = Some((key, kbps));
+        kbps
+    }
+
+    fn kbps_for(&self, total: u64, fec: usize, period: Duration) -> u32 {
+        self.budget()
+            .encoder_kbps(total, self.ceiling_kbps, fec, period)
+            .clamp(self.floor_kbps, self.ceiling_kbps)
+    }
+
+    /// The learned ceiling in total wire bits per second, 0 while the path
+    /// has shown no edge; for the simulated-link tests.
+    #[cfg(test)]
+    pub fn learned_bps(&self) -> u64 {
+        self.learned.unwrap_or(0)
+    }
+
+    /// A cut or a failed step at `failed` landed on `safe`. A first failure
+    /// at a new edge changes nothing else: the knee and the hold deal with
+    /// it as before, so a dip that passes costs what it did. A failure at
+    /// the same edge as the last one (within [`EDGE_PERCENT`]), or one a
+    /// retry caused (`retry_failed`), makes `safe` the learned ceiling and
+    /// doubles the wait before the next retry, from [`RETRY_FIRST`] up to
+    /// [`RETRY_MAX`]. Once there is a ceiling, every cut lowers it to where
+    /// it landed; only a retry that confirms raises it.
+    fn learn(&mut self, safe: u64, failed: u64, now: Instant, retry_failed: bool) {
+        let same_edge = self.failed_at.is_some_and(|at| {
+            failed * 100 >= at * (100 - EDGE_PERCENT) && failed * 100 <= at * (100 + EDGE_PERCENT)
+        });
+        let repeat = retry_failed || same_edge;
+        self.retry_wait = if repeat {
+            (self.retry_wait * 2).clamp(RETRY_FIRST, RETRY_MAX)
+        } else {
+            HOLD
+        };
+        self.failed_at = Some(failed);
+        if repeat || self.learned.is_some() {
+            self.learned = Some(self.learned.map_or(safe, |learned| learned.min(safe)));
+        }
+        self.next_retry = Some(now + self.retry_wait);
+        self.queue_peak = self
+            .queue_peak
+            .max(self.queue_excess_now())
+            .min(QUEUE_PEAK_MAX);
+    }
+
+    /// The RTT over its floor right now.
+    fn queue_excess_now(&self) -> Duration {
+        self.rtt_floor()
+            .filter(|_| !self.rtt.is_zero())
+            .map_or(Duration::ZERO, |floor| self.rtt.saturating_sub(floor))
+    }
+
+    /// How long a step from `from` to `rate` must stay clean. On a path that
+    /// has shown no queue, [`CONFIRM_AFTER`]. Behind a deep buffer an
+    /// overshoot fills the queue slowly and loses nothing for seconds (the
+    /// 2026-11-17 path held 270 ms): the step waits as long as its overshoot
+    /// would take to fill the deepest queue this path has shown, up to
+    /// [`CONFIRM_MAX`].
+    fn confirm_window(&self, from: u64, rate: u64) -> Duration {
+        if self.queue_peak.is_zero() || rate <= from {
+            return CONFIRM_AFTER;
+        }
+        let fill = self.queue_peak.mul_f64(rate as f64 / (rate - from) as f64);
+        fill.clamp(CONFIRM_AFTER, CONFIRM_MAX)
+    }
+
+    fn budget(&self) -> WireBudget {
+        self.budget.expect("active controller has a budget")
+    }
+
+    fn triggered(&self, now: Instant) -> Option<Trigger> {
+        let e = &self.events;
+        let evidence = Evidence {
+            unrecoverable_frames: e.unrecoverable.len(),
+            send_losses: e.send_losses.len(),
+            keyframe_requests: e.requests.len(),
+            loss_windows: e.hot,
+            loss_share: 0.,
+        };
+        let latch_failed = self.watching(now) && e.latch_failed;
+        let (reason, share_known) = if evidence.unrecoverable_frames >= UNRECOVERABLE_FRAMES
+            || (latch_failed && evidence.unrecoverable_frames > 0)
+        {
+            ("unrecoverable_frames", true)
+        } else if evidence.loss_windows >= LOSS_WINDOWS {
+            ("fec_loss_share", true)
+        } else if evidence.send_losses >= SEND_LOSS_FRAMES {
+            // Refused sends with a queue standing in the path are the path's
+            // (a switch pausing the adapter); the PC's own only when flat.
+            if self.host_only(&evidence) {
+                ("send_losses", true)
+            } else {
+                ("send_losses_queued", true)
+            }
+        } else if ((!self.fec_status_seen || self.probe_unconfirmed(now))
+            && evidence.keyframe_requests >= KEYFRAME_REQUESTS)
+            || (latch_failed && evidence.keyframe_requests > 0)
+        {
+            ("keyframe_requests", false)
+        } else {
+            return None;
+        };
+        Some(Trigger {
+            reason,
+            share_known,
+            latch_failed,
+            evidence,
+        })
+    }
+
+    /// Frames sent since the fence and since the first frame with loss
+    /// evidence, within the evidence window: the video wire rate the host
+    /// offered, and the share of its packets the client reports missing.
+    fn delivered(&self, now: Instant) -> Option<(u64, f64)> {
+        let mut frames = 0usize;
+        let (mut first, mut last): (Option<Instant>, Option<Instant>) = (None, None);
+        let (mut bytes, mut first_bytes, mut packets, mut missing) = (0u64, 0u64, 0u64, 0u64);
+        for s in self.ring.iter() {
+            let Some(at) = s.at else { continue };
+            if now.saturating_duration_since(at) >= EVIDENCE_WINDOW
+                || !self.fence.is_none_or(|f| f.admits(Some(s.frame), at))
+                || self
+                    .events
+                    .first_loss
+                    .is_some_and(|first| s.frame.wrapping_sub(first) >= 1 << 31)
+                || self
+                    .events
+                    .last_loss
+                    .is_some_and(|last| last.wrapping_sub(s.frame) >= 1 << 31)
+            {
+                continue;
+            }
+            frames += 1;
+            bytes += u64::from(s.bytes);
+            packets += u64::from(s.packets);
+            missing += u64::from(s.missing);
+            if first.is_none_or(|f| at < f) {
+                first = Some(at);
+                first_bytes = u64::from(s.bytes);
+            }
+            if last.is_none_or(|l| at > l) {
+                last = Some(at);
+            }
+        }
+        let span = last?.saturating_duration_since(first?).as_secs_f64();
+        if frames < 2 || span <= 0. || packets == 0 {
+            return None;
+        }
+        let e = &self.events;
+        let packet_share = (missing as f64 / packets as f64).min(1.);
+        let frame_share =
+            ((e.unrecoverable.len() + e.send_losses.len()) as f64 / frames as f64).min(1.);
+        Some((
+            ((bytes - first_bytes) as f64 * 8. / span) as u64,
+            packet_share.max(frame_share).min(MAX_LOSS_SHARE),
+        ))
+    }
+
+    /// The largest frame the loss can have come from, as the wire rate of a
+    /// stream of such frames: a keyframe or a scene cut among small frames may
+    /// be what the path lost to, and a lower bitrate makes those smaller. That
+    /// is a frame between the first and the last with loss evidence, or one of
+    /// the [`LARGE_FRAME_LEAD`] before the first. Frames after the last do not
+    /// count: the keyframe that repairs a loss is sent because of it, and it
+    /// is in the window by the time the cut is weighed. Rebuilt by error
+    /// correction it is no loss evidence (`on_status`, while the RTT is flat);
+    /// lost too, it is the last such frame and counts. Without a frame to
+    /// place the loss at, every frame of the window counts.
+    fn largest_frame_bps(&self, now: Instant, period: Duration) -> Option<u64> {
+        let e = &self.events;
+        let bytes = self
+            .ring
+            .iter()
+            .filter(|s| {
+                s.at.is_some_and(|at| {
+                    now.saturating_duration_since(at) < EVIDENCE_WINDOW
+                        && self.fence.is_none_or(|f| f.admits(Some(s.frame), at))
+                }) && e.first_loss.is_none_or(|first| {
+                    s.frame.wrapping_sub(first.wrapping_sub(LARGE_FRAME_LEAD)) < 1 << 31
+                }) && e
+                    .last_loss
+                    .is_none_or(|last| last.wrapping_sub(s.frame) < 1 << 31)
+            })
+            .map(|s| u64::from(s.bytes))
+            .max()?;
+        Some((bytes as f64 * 8. / period.as_secs_f64().max(1e-6)) as u64)
+    }
+
+    fn floor_total(&self, fec: usize, period: Duration) -> u64 {
+        self.budget().total_bps(self.floor_kbps, fec, period)
+    }
+
+    /// The lowest total a cut may ask for: the configured minimum, or the rate
+    /// the encoder was seen to send if that is higher.
+    fn cut_floor(&self, fec: usize, period: Duration) -> u64 {
+        self.floor_total(fec, period)
+            .max(self.encoder_floor.unwrap_or(0))
+    }
+
+    /// Frames the host's socket refused, with no client loss and no queue
+    /// behind them: the PC's limit, which teaches no learned ceiling. Field
+    /// log 2026-11-17: refusals came in the same seconds as hundreds of
+    /// unrecoverable frames and a 200 ms round trip, where they are the path's.
+    fn host_only(&self, evidence: &Evidence) -> bool {
+        evidence.send_losses >= SEND_LOSS_FRAMES
+            && evidence.unrecoverable_frames < UNRECOVERABLE_FRAMES
+            && evidence.loss_windows < LOSS_WINDOWS
+            && !self.rtt_elevated()
+    }
+
+    fn ceiling_total(&self, fec: usize, period: Duration) -> u64 {
+        self.budget().total_bps(self.ceiling_kbps, fec, period)
+    }
+
+    fn record(&mut self, now: Instant, change: Change) {
+        self.last_change = Some(now);
+        self.change = Some(change);
+    }
+
+    /// Take the change made by the last `tick`, once, to log it.
+    pub fn take_change(&mut self) -> Option<Change> {
+        self.change.take()
+    }
+
+    fn on_evidence(
+        &mut self,
+        now: Instant,
+        why: Trigger,
+        fec: usize,
+        period: Duration,
+        current_kbps: u32,
+    ) {
+        let from_kbps = if self.state == State::Full {
+            current_kbps.min(self.ceiling_kbps)
+        } else {
+            self.encoder_kbps(fec, period)
+        };
+        let budget = self.budget();
+        if self.state == State::Full {
+            self.current = budget
+                .total_bps(from_kbps.max(1), fec, period)
+                .min(self.ceiling_total(fec, period));
+            self.good = self.current;
+        }
+        let evidence = why.evidence;
+        // A host that cannot send is not the path: it limits probes and the
+        // rate, but must not teach a network ceiling.
+        let host_only = self.host_only(&evidence);
+        // A probe is failing: go back to the last good rate, not below it.
+        if let Some((failed, back_to, retry)) = self.failing(now) {
+            self.pending = [None; PENDING_CAP];
+            self.confirmed = None;
+            let knee = self.bad.is_some_and(|bad| {
+                failed * 100 >= bad * (100 - KNEE_PERCENT)
+                    && failed * 100 <= bad * (100 + KNEE_PERCENT)
+            });
+            self.bad = Some(match self.bad {
+                Some(bad) if knee => bad.min(failed),
+                _ => failed,
+            });
+            // A second failure at the knee goes back to under it, not to a rate
+            // a step above the first.
+            let back_to = match self.bad {
+                Some(bad) if knee => back_to
+                    .min((bad * KNEE_CAP_PERCENT).div_ceil(100))
+                    .max(self.encoder_floor.unwrap_or(0)),
+                _ => back_to,
+            };
+            self.good = back_to;
+            self.current = back_to;
+            // A failed step found the path's edge: hold under it. A step
+            // rolled back by the host's own refused sends says nothing about
+            // where that edge is.
+            if !host_only {
+                self.learn(back_to, failed, now, retry);
+            }
+            self.hold = (self.hold * 2).min(MAX_HOLD);
+            self.next_probe = Some(now + self.hold);
+            self.knee_failed(now, knee);
+            self.long_knee(now);
+            self.failed_probes += 1;
+            self.at_ceiling = None;
+            self.near_bad = None;
+            self.set_fence(now);
+            let to_kbps = self.encoder_kbps(fec, period);
+            self.record(
+                now,
+                Change {
+                    kind: ChangeKind::ProbeFailed,
+                    reason: why.reason,
+                    from_kbps,
+                    to_kbps,
+                    delivered_kbps: (self.delivered_bps / 1000) as u32,
+                    evidence,
+                },
+            );
+            return;
+        }
+        let cur = self.current;
+        let estimate = self.delivered(now);
+        // A cut was made and the frames sent since still run well above what
+        // it asked for, twice running: the encoder has a minimum, and cutting
+        // below it only lowers a target nothing follows. Two rounds, because a
+        // keyframe among the few frames of one round looks the same.
+        let overshoot = match estimate {
+            Some((sent, _)) if self.state != State::Full && !host_only => {
+                let offered = sent + budget.audio_bps;
+                (offered * 100 > cur * ENCODER_OVERSHOOT_PERCENT).then_some((sent, offered))
+            }
+            _ => None,
+        };
+        let Some((sent, offered)) = overshoot else {
+            self.overshoots = 0;
+            return self.cut(now, why, fec, period, from_kbps, estimate);
+        };
+        self.overshoots += 1;
+        if self.overshoots < 2 {
+            return self.cut(now, why, fec, period, from_kbps, estimate);
+        }
+        self.overshoots = 0;
+        let observed = offered.min(self.ceiling_total(fec, period));
+        self.encoder_floor = Some(observed);
+        self.current = observed.max(cur);
+        self.good = self.current;
+        self.confirmed = None;
+        self.pending = [None; PENDING_CAP];
+        self.delivered_bps = sent;
+        self.at_ceiling = None;
+        self.near_bad = None;
+        self.reason = "encoder_floor";
+        self.next_probe = Some(now + self.hold.max(self.fence_wait()));
+        self.set_fence(now);
+        let to_kbps = self.encoder_kbps(fec, period);
+        self.record(
+            now,
+            Change {
+                kind: ChangeKind::EncoderFloor,
+                reason: "encoder_floor",
+                from_kbps,
+                to_kbps,
+                delivered_kbps: (sent / 1000) as u32,
+                evidence,
+            },
+        );
+    }
+
+    /// Cut the rate toward what the link delivered, or hold at the floor.
+    fn cut(
+        &mut self,
+        now: Instant,
+        why: Trigger,
+        fec: usize,
+        period: Duration,
+        from_kbps: u32,
+        estimate: Option<(u64, f64)>,
+    ) {
+        let cur = self.current;
+        let budget = self.budget();
+        let mut evidence = why.evidence;
+        let host_only = self.host_only(&evidence);
+        let floor = self.cut_floor(fec, period).min(cur);
+        if cur <= floor {
+            // Nothing left to cut. At the encoder's own minimum the stream is
+            // already as low as it goes and has said so. Loss at the floor
+            // restarts the wait for `Full`: where the floor is the ceiling
+            // (PyroWave with no room) the state would otherwise flip between
+            // `Floor` and `Full` every ten seconds while the loss goes on.
+            self.at_ceiling = None;
+            if let Some((sent, share)) = estimate.filter(|_| why.share_known) {
+                evidence.loss_share = share;
+                self.delivered_bps = (sent as f64 * (1. - share)) as u64;
+            }
+            if self.state != State::Floor && self.encoder_floor.is_none() {
+                self.state = State::Floor;
+                self.reason = "floor";
+                self.record(
+                    now,
+                    Change {
+                        kind: ChangeKind::Floor,
+                        reason: why.reason,
+                        from_kbps,
+                        to_kbps: from_kbps,
+                        delivered_kbps: (self.delivered_bps / 1000) as u32,
+                        evidence,
+                    },
+                );
+            }
+            self.set_fence(now);
+            return;
+        }
+        // What the stream sent, audio included, on average and in the largest
+        // frame the loss can have come from: a cut that lands at or above
+        // both is held, not made (see [`HELD_FOR`]).
+        let offered = estimate.and_then(|(sent, _)| {
+            let largest = self.largest_frame_bps(now, period)?;
+            Some(sent.max(largest) + budget.audio_bps)
+        });
+        // PyroWave fills a share of its budget whatever the picture, so any
+        // cut lowers what it sends.
+        let holdable = budget.pyrowave_records.is_none()
+            && !host_only
+            && !why.latch_failed
+            && !self.rtt_elevated();
+        // The cuts held back lately count as made: this one starts from where
+        // they would have left the rate, unless the stream has sent more
+        // than that since.
+        let held = self.held.filter(|(level, at)| {
+            holdable
+                && now.saturating_duration_since(*at) < HELD_FOR
+                && offered.is_some_and(|offered| offered <= *level)
+        });
+        let from = held.map_or(cur, |(level, _)| level.min(cur));
+        // The first cut of an episode goes down by at most half; one right
+        // after it means the estimate was too high, so it may go to the
+        // delivered rate. A held cut lowered nothing, so loss after it says
+        // nothing about the estimate: the next goes down by half again.
+        let repeat = self
+            .last_cut
+            .is_some_and(|at| now.saturating_duration_since(at) < EVIDENCE_WINDOW);
+        let lowest = if repeat {
+            REPEAT_CUT_FLOOR_BPS
+        } else {
+            from * MIN_CUT_PERCENT / 100
+        };
+        let estimate = estimate.filter(|_| why.share_known);
+        // A queue standing at a rate the stream climbed to after an earlier
+        // cut: the link edge is just under it, not far below.
+        let climbing = self.state == State::Limited && self.bad.is_some() && self.rtt_elevated();
+        let target = match estimate {
+            Some((sent, share)) => {
+                evidence.loss_share = share;
+                let delivered = (sent as f64 * (1. - share)) as u64;
+                self.delivered_bps = delivered;
+                (delivered + budget.audio_bps) * DELIVERED_PERCENT / 100
+            }
+            None => {
+                self.delivered_bps = 0;
+                // The latch did not help, so the loss is the rate, by an
+                // amount nothing here measured: a client waiting for a
+                // keyframe reports almost nothing. A 30 % cut left r50-hevc-hi
+                // at 41 Mbps on a 50 Mbit/s link with 75 % of packets lost for
+                // another 1.6 s; go as deep as a cut may, and probe back.
+                let percent = if why.latch_failed {
+                    MIN_CUT_PERCENT
+                } else if climbing {
+                    KNEE_BACKOFF_PERCENT
+                } else {
+                    UNKNOWN_SHARE_PERCENT
+                };
+                from * percent / 100
+            }
+        }
+        .clamp(
+            lowest.min(from * MAX_CUT_PERCENT / 100),
+            from * MAX_CUT_PERCENT / 100,
+        );
+        // A cut never lands above a learned ceiling: the path's edge is below
+        // that, and holding over it only fills the queue again. A host-side
+        // cut is not the path's edge, and it must be free to go below it.
+        let target = match (self.learned, host_only) {
+            (Some(learned), false) => target.min(learned),
+            _ => target,
+        };
+        let target = target.max(floor);
+        if holdable && offered.is_some_and(|offered| target >= offered) {
+            // The picture needs less than the cut would leave it, frame by
+            // frame: nothing is cut or learned.
+            self.held = Some((target, now));
+            self.held_cuts += 1;
+            self.set_fence(now);
+            return;
+        }
+        self.held = None;
+        // The rate the stream now holds, after the floor had its say, is the
+        // learned ceiling: loss and queue cuts lower it, nothing else does.
+        if !host_only {
+            self.learn(target, from, now, false);
+        }
+        let knee = self
+            .bad
+            .is_some_and(|bad| from * 100 >= bad * KNEE_CUT_PERCENT);
+        self.bad = Some(self.bad.map_or(from, |bad| bad.min(from)));
+        self.confirmed = None;
+        self.current = target;
+        self.good = target;
+        // A cut from the knee is a failed probe that confirmed first.
+        self.hold = if knee {
+            (self.hold * 2).min(MAX_HOLD)
+        } else {
+            HOLD
+        };
+        self.next_probe = Some(now + self.hold.max(self.fence_wait()));
+        self.knee_failed(now, knee);
+        if self.rtt_elevated() {
+            self.long_knee(now);
+        }
+        self.at_ceiling = None;
+        self.near_bad = None;
+        self.steps_down += 1;
+        self.last_cut = Some(now);
+        if !host_only {
+            self.loss_cut_at = Some(now);
+        }
+        self.state = State::Limited;
+        self.reason = why.reason;
+        self.set_fence(now);
+        let to_kbps = self.encoder_kbps(fec, period);
+        self.record(
+            now,
+            Change {
+                kind: ChangeKind::StepDown,
+                reason: why.reason,
+                from_kbps,
+                to_kbps,
+                delivered_kbps: (self.delivered_bps / 1000) as u32,
+                evidence,
+            },
+        );
+    }
+
+    /// Step down 12 % for a standing queue, or back to the last good rate when
+    /// a probe is the one that raised it, and keep probes under it for the
+    /// quiet hold.
+    fn queue_cut(&mut self, now: Instant, fec: usize, period: Duration, current_kbps: u32) {
+        let from_kbps = if self.state == State::Full {
+            current_kbps.min(self.ceiling_kbps)
+        } else {
+            self.encoder_kbps(fec, period)
+        };
+        let budget = self.budget();
+        if self.state == State::Full {
+            self.current = budget
+                .total_bps(from_kbps.max(1), fec, period)
+                .min(self.ceiling_total(fec, period));
+            self.good = self.current;
+        }
+        let cur = self.current;
+        let floor = self.cut_floor(fec, period).min(cur);
+        let excess = self
+            .rtt_floor()
+            .map_or(Duration::ZERO, |low| self.rtt.saturating_sub(low));
+        self.queue_since = None;
+        self.queue_quiet_until = Some(now + QUEUE_SETTLE);
+        if cur <= floor {
+            // Nothing to cut; a delay alone never makes a floor.
+            self.queue_excess = None;
+            return;
+        }
+        self.queue_excess = Some(excess);
+        self.queue_steps += 1;
+        // A probe that raised the rate into this queue is the failed one.
+        let failing = self.failing(now);
+        let back_to = failing.map(|(_, back_to, _)| back_to);
+        self.pending = [None; PENDING_CAP];
+        self.confirmed = None;
+        if back_to.is_some() {
+            self.failed_probes += 1;
+        }
+        let mut target = cur * QUEUE_CUT_PERCENT / 100;
+        if let Some(back_to) = back_to {
+            target = target.min(back_to);
+        }
+        // A queue above a learned ceiling is the ceiling's fault; never cut
+        // to a rate over what the path was last seen to carry.
+        if let Some(learned) = self.learned {
+            target = target.min(learned);
+        }
+        let target = target.max(floor);
+        let (failed, retry) = failing.map_or((cur, false), |(rate, _, retry)| (rate, retry));
+        self.learn(target, failed, now, retry);
+        let knee = self
+            .bad
+            .is_some_and(|bad| cur * 100 >= bad * KNEE_CUT_PERCENT);
+        self.bad = Some(self.bad.map_or(cur, |bad| bad.min(cur)));
+        self.current = target;
+        self.good = target;
+        self.hold = if knee {
+            (self.hold * 2).min(MAX_HOLD)
+        } else {
+            HOLD
+        };
+        self.next_probe = Some(now + self.hold.max(self.fence_wait()));
+        self.knee_failed(now, knee);
+        self.long_knee(now);
+        self.at_ceiling = None;
+        self.near_bad = None;
+        if back_to.is_none() {
+            self.steps_down += 1;
+        }
+        self.last_cut = Some(now);
+        self.state = State::Limited;
+        self.reason = "queue";
+        self.set_fence(now);
+        let to_kbps = self.encoder_kbps(fec, period);
+        self.record(
+            now,
+            Change {
+                kind: if back_to.is_some() {
+                    ChangeKind::ProbeFailed
+                } else {
+                    ChangeKind::StepDown
+                },
+                reason: "queue",
+                from_kbps,
+                to_kbps,
+                delivered_kbps: (self.delivered_bps / 1000) as u32,
+                evidence: Evidence::default(),
+            },
+        );
+    }
+
+    /// A failure at the bad rate (`knee`) doubles the wait that keeps probes
+    /// under it; any other failure leaves the bad rate somewhere new.
+    fn knee_failed(&mut self, now: Instant, knee: bool) {
+        if knee {
+            self.knee = (self.knee * 2).min(KNEE_MAX_HOLD);
+            self.knee_until = Some(now + self.knee);
+        } else {
+            self.knee = HOLD;
+            self.knee_until = None;
+        }
+    }
+
+    /// A probe that failed, or a cut with a queue standing in the path, found
+    /// the link's edge: keep probes under it for a long quiet hold, then let
+    /// a small step past it show whether the link improved.
+    fn long_knee(&mut self, now: Instant) {
+        self.knee = self.knee.max(KNEE_QUIET);
+        self.knee_until = Some(now + self.knee);
+    }
+
+    /// The bad rate is gone (passed or forgotten): probe freely again.
+    fn forget_knee(&mut self) {
+        self.knee = HOLD;
+        self.knee_until = None;
+    }
+
+    /// No evidence this round: confirm earlier probe steps, then probe or
+    /// return to `Full`.
+    fn advance(&mut self, now: Instant, busy: bool, fec: usize, period: Duration) {
+        let host_limited = self.host_limited(now);
+        // On a path that has shown a queue, a step whose RTT has risen is
+        // filling it, however slowly: it is not clean yet.
+        let queued = !self.queue_peak.is_zero() && self.ping_fresh(now);
+        for slot in &mut self.pending {
+            let Some(step) = slot else { continue };
+            // A static picture proves nothing: a step sent just before it
+            // needs its seconds of motion. Nor does a step past the learned
+            // ceiling while the host's own socket refuses frames.
+            if !busy || (step.retry && host_limited) {
+                step.at = now;
+                continue;
+            }
+            if now.saturating_duration_since(step.at) < step.confirm
+                || (queued && self.rtt > step.rtt + QUEUE_MARGIN)
+            {
+                continue;
+            }
+            if step.rate > self.good {
+                // A failure now goes back to the rate before this step,
+                // not to where the climb began.
+                self.confirmed = Some(Confirmed {
+                    before: self.good,
+                    rate: step.rate,
+                    at: now,
+                    window: step.confirm.max(EVIDENCE_WINDOW),
+                    retry: step.retry,
+                });
+            }
+            self.good = self.good.max(step.rate);
+            if step.retry {
+                // The path carries more than the learned ceiling. Near the
+                // rate that failed, it rises by this step and the next
+                // retry may follow at once; well under it the edge has moved
+                // (a dip that passed), and probes climb at the usual pace.
+                if self
+                    .failed_at
+                    .is_some_and(|failed| step.rate * 100 >= failed * NEAR_BAD_PERCENT)
+                {
+                    self.learned = Some(step.rate);
+                    self.next_retry = Some(now);
+                } else {
+                    self.learned = None;
+                    self.next_retry = None;
+                }
+            }
+            self.hold = HOLD;
+            if self.bad.is_none_or(|bad| step.rate > bad) {
+                self.bad = None;
+                self.knee = HOLD;
+                self.knee_until = None;
+            }
+            *slot = None;
+        }
+        self.pending.sort_by_key(|s| s.is_none());
+        // Quiet video, stale pings or a queue in the path prove nothing.
+        if !(busy && self.ping_fresh(now) && !self.rtt.is_zero() && !self.rtt_elevated()) {
+            return;
+        }
+        // A PC that cannot send is the limit: no probe goes up until its
+        // socket has been quiet for HOST_LOSS_HOLD.
+        if host_limited {
+            return;
+        }
+        let ceiling = self.ceiling_total(fec, period);
+        let unconfirmed = self.pending.iter().any(Option::is_some);
+        if self.current >= ceiling {
+            let since = *self.at_ceiling.get_or_insert(now);
+            if !unconfirmed && now.saturating_duration_since(since) >= FULL_AFTER {
+                self.finish(now, fec, period);
+            }
+            return;
+        }
+        match (self.bad, self.near_bad) {
+            (Some(bad), None) if self.current * 100 >= bad * 95 => self.near_bad = Some(now),
+            (Some(bad), Some(since)) => {
+                if self.current * 100 < bad * 95 {
+                    self.near_bad = None;
+                } else if now.saturating_duration_since(since) >= FORGET_BAD_AFTER && !unconfirmed {
+                    self.bad = None;
+                    self.near_bad = None;
+                    self.forget_knee();
+                    // A minute clean near it: the next failure there is new.
+                    if self.learned.is_none() {
+                        self.failed_at = None;
+                        self.retry_wait = HOLD;
+                    }
+                }
+            }
+            _ => {}
+        }
+        if self.next_probe.is_some_and(|at| now < at) || self.pending[PENDING_CAP - 1].is_some() {
+            return;
+        }
+        let mut divisor = PROBE_STEP_DIVISOR;
+        let wait = PROBE_EVERY.max(self.fence_wait());
+        if let Some(bad) = self.bad
+            && (self.current + self.current / PROBE_STEP_DIVISOR) * 100 >= bad * NEAR_BAD_PERCENT
+        {
+            if unconfirmed {
+                return;
+            }
+            divisor = NEAR_STEP_DIVISOR;
+        }
+        // The packet count per frame quantizes the encoder bitrate; a step that
+        // changes nothing is no probe.
+        let level = self.kbps_for(self.current, fec, period);
+        // On a known knee, probes stop just under it until the wait is over.
+        let limit = match (self.bad, self.knee_until) {
+            (Some(bad), Some(until)) if now < until => {
+                ceiling.min((bad * KNEE_CAP_PERCENT).div_ceil(100))
+            }
+            _ => ceiling,
+        };
+        // Up to the learned ceiling probes climb as before.
+        let under = limit.min(self.learned.unwrap_or(u64::MAX));
+        let step = (self.current / divisor).max(1);
+        let below = self.climb(self.current, step, under, ceiling, level, fec, period);
+        let (next, retry) = match (below, self.learned) {
+            (Some(next), _) => (next, false),
+            (None, None) => return,
+            // At the learned ceiling: hold until a retry is due, then one
+            // small step past it, alone, to the next rate the encoder shows.
+            (None, Some(learned)) => {
+                if unconfirmed || self.next_retry.is_none_or(|at| now < at) {
+                    return;
+                }
+                let from = learned.max(self.current);
+                let step = (learned / NEAR_STEP_DIVISOR).max(1);
+                match self.climb(from, step, limit, ceiling, level, fec, period) {
+                    Some(next) => (next, true),
+                    None => return,
+                }
+            }
+        };
+        let from_kbps = self.encoder_kbps(fec, period);
+        let confirm = self.confirm_window(self.current, next);
+        self.current = next;
+        self.next_probe = Some(now + wait);
+        if let Some(slot) = self.pending.iter_mut().find(|s| s.is_none()) {
+            *slot = Some(Step {
+                rate: next,
+                at: now,
+                confirm,
+                rtt: self.rtt,
+                retry,
+            });
+        }
+        self.probes += 1;
+        self.raised_at = Some(now);
+        if self.state == State::Floor {
+            self.state = State::Limited;
+        }
+        let to_kbps = self.encoder_kbps(fec, period);
+        self.record(
+            now,
+            Change {
+                kind: ChangeKind::Probe,
+                reason: "probe",
+                from_kbps,
+                to_kbps,
+                delivered_kbps: (self.delivered_bps / 1000) as u32,
+                evidence: Evidence::default(),
+            },
+        );
+    }
+
+    /// The first rate `step` apart above `from`, up to `limit`, at which the
+    /// encoder runs faster than at `level`; `None` when there is none above
+    /// the current rate. A step to the request itself always counts.
+    #[allow(clippy::too_many_arguments)]
+    fn climb(
+        &self,
+        from: u64,
+        step: u64,
+        limit: u64,
+        ceiling: u64,
+        level: u32,
+        fec: usize,
+        period: Duration,
+    ) -> Option<u64> {
+        let mut next = from;
+        while next < limit && self.kbps_for(next, fec, period) <= level {
+            next += step;
+        }
+        let next = next.min(limit);
+        (next > self.current && (next >= ceiling || self.kbps_for(next, fec, period) > level))
+            .then_some(next)
+    }
+
+    fn finish(&mut self, now: Instant, fec: usize, period: Duration) {
+        let kbps = self.encoder_kbps(fec, period);
+        self.cache = None;
+        self.state = State::Full;
+        self.reason = "healthy";
+        self.bad = None;
+        // The path carried the request: no ceiling, no edge and no queue
+        // remembered. A later dip is a new edge, handled as the first was.
+        self.learned = None;
+        self.next_retry = None;
+        self.retry_wait = HOLD;
+        self.failed_at = None;
+        self.queue_peak = Duration::ZERO;
+        self.encoder_floor = None;
+        self.overshoots = 0;
+        self.hold = HOLD;
+        self.forget_knee();
+        self.at_ceiling = None;
+        self.near_bad = None;
+        self.pending = [None; PENDING_CAP];
+        self.confirmed = None;
+        self.record(
+            now,
+            Change {
+                kind: ChangeKind::Full,
+                reason: "recovered",
+                from_kbps: kbps,
+                to_kbps: kbps,
+                delivered_kbps: 0,
+                evidence: Evidence::default(),
+            },
+        );
+    }
+
+    /// State for the session API and the `stream timings` log line.
+    pub fn snapshot(&self, now: Instant) -> serde_json::Value {
+        let current_kbps = match self.cache {
+            Some((_, kbps)) if matches!(self.state, State::Limited | State::Floor) => kbps,
+            _ => self.ceiling_kbps,
+        };
+        serde_json::json!({
+            "state": self.state.name(),
+            "reason": self.reason,
+            "ceiling_kbps": self.ceiling_kbps,
+            "current_kbps": current_kbps,
+            "delivered_kbps": self.delivered_bps / 1000,
+            "bad_kbps": self.bad.map_or(0, |bad| self.kbps_of(bad)),
+            "learned_kbps": self.learned.map_or(0, |learned| self.kbps_of(learned)),
+            "host_limited": self.host_limited(now),
+            "encoder_floor_kbps": self.encoder_floor.map_or(0, |floor| self.kbps_of(floor)),
+            "steps_down": self.steps_down,
+            "held_cuts": self.held_cuts,
+            "probes": self.probes,
+            "failed_probes": self.failed_probes,
+            "rebuilt_blocks": self.rebuilt_blocks,
+            "rebuilt_data_missing_percent": if self.rebuilt_packets == 0 {
+                0.
+            } else {
+                self.rebuilt_data_missing as f64 * 100. / self.rebuilt_packets as f64
+            },
+            "rtt_ms": self.rtt.as_millis() as u64,
+            "rtt_floor_ms": self.rtt_floor().map_or(0, |floor| floor.as_millis() as u64),
+            "last_change_ms_ago": self
+                .last_change
+                .map(|at| now.saturating_duration_since(at).as_millis() as u64),
+        })
+    }
+
+    /// Rough encoder kbps for a wire rate at the last FEC seen; only for the
+    /// snapshot.
+    fn kbps_of(&self, wire: u64) -> u32 {
+        match (self.cache, self.budget) {
+            (Some(((_, fec, period), _)), Some(budget)) => {
+                budget.encoder_kbps(wire, self.ceiling_kbps, fec, period)
+            }
+            _ => 0,
+        }
+    }
+}
+
+struct Trigger {
+    reason: &'static str,
+    share_known: bool,
+    /// A watched latch is known not to have fixed the loss.
+    latch_failed: bool,
+    evidence: Evidence,
+}

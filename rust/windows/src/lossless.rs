@@ -82,18 +82,18 @@ pub fn program(configured: &str) -> Option<PathBuf> {
     }
     let mut folders: Vec<PathBuf> = vec![];
     for root in crate::steam::roots() {
-        let Some(apps) = butterpollo_core::steam::steamapps(&root) else {
+        let Some(apps) = butterpollo_session::steam::steamapps(&root) else {
             continue;
         };
         folders.push(apps.join("common"));
         if let Ok(text) = std::fs::read_to_string(apps.join("libraryfolders.vdf")) {
-            let folders_vdf = butterpollo_core::steam::Vdf::parse(&text);
+            let folders_vdf = butterpollo_session::steam::Vdf::parse(&text);
             let list = folders_vdf.get("libraryfolders").unwrap_or(&folders_vdf);
             for (_, folder) in list.entries() {
                 if let Some(path) = folder
                     .get("path")
                     .or(Some(folder))
-                    .and_then(butterpollo_core::steam::Vdf::text)
+                    .and_then(butterpollo_session::steam::Vdf::text)
                 {
                     folders.push(Path::new(path).join("steamapps").join("common"));
                 }

@@ -8,7 +8,7 @@
 //! A start time is still reported only for a process this one may open, as before: callers tell
 //! the processes of other sessions and of the system apart by the zero an unreadable one gets.
 
-use butterpollo_core::steam::Process;
+use butterpollo_session::steam::Process;
 use std::{collections::HashSet, ffi::c_void, mem::size_of};
 
 /// `SystemProcessInformation`.

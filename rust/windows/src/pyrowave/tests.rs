@@ -21,7 +21,7 @@ fn repeated_fallbacks_give_one_line_per_period() {
     // Frames of different sizes get the same text, so Warnings dedups them to one entry: the
     // message is built from the config (packet size, limit) only, and no frame size is in it.
     let limit = 1_000_000;
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let frame_sizes = [limit + 1, limit + 4096, limit * 3, 1_234_567, 99_999_999];
     for frame_bytes in frame_sizes {
         let text = frame_size_message(limit);
@@ -291,7 +291,7 @@ fn legacy_and_record_frames_do_not_accumulate_a_pause_budget() {
         };
         let mut interval = interval(&config);
         let now = Instant::now();
-        let period = butterpollo_core::framegen::Rate(config.fps_millihz()).period();
+        let period = butterpollo_media_policy::framegen::Rate(config.fps_millihz()).period();
         assert_eq!(interval.next(now, false), period);
         assert_eq!(interval.next(now + Duration::from_secs(5), true), period);
         assert_eq!(

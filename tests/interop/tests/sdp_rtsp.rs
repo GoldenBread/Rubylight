@@ -1,7 +1,9 @@
 //! SDP and RTSP handshake interop between Nightjar and butterpollo-core's RTSP/mic helpers.
 mod common;
 
-use butterpollo_core::{crypto, mic, rtsp as host_rtsp};
+use butterpollo_crypto::crypto;
+use butterpollo_media_policy::rtsp as host_rtsp;
+use butterpollo_session::mic;
 use nightjar_core::rtsp::{self, DescribeInfo, HandshakeParams, MicrophoneState};
 use nightjar_core::sdp::*;
 use std::io::{Read, Write};
@@ -258,7 +260,7 @@ fn row_order_is_requested_from_the_host_and_both_sides_share_the_step_table() {
     ] {
         assert_eq!(
             rubylight_protocol::pyrowave::rows::row_steps(width, height, chroma444),
-            butterpollo_core::pyrowave::row_steps(width, height, chroma444),
+            butterpollo_media_policy::pyrowave::row_steps(width, height, chroma444),
             "{width}x{height} 444={chroma444}"
         );
     }

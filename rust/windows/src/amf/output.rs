@@ -59,7 +59,7 @@ impl Encoder {
                 Unreturned::Warning(message) => self.warnings.event(
                     "encoder_dropped",
                     message,
-                    butterpollo_core::session::EVENT_PERIOD,
+                    butterpollo_session::session::EVENT_PERIOD,
                 ),
                 Unreturned::Probe(message) => tracing::info!("{message}"),
             }
@@ -266,7 +266,7 @@ impl Encoder {
                     Err(error) => {
                         self.reencode_failures += 1;
                         tracing::error!(error = %format!("{error:#}"), pts, bytes = size, failures = self.reencode_failures, "AMF could not encode an oversize scene cut again as a keyframe; sending the inter frame, which loses its FEC. Report this with the host log.");
-                        self.warnings.event("encoder_reencode", format!("AMF could not encode an oversize scene cut again as a keyframe ({error:#}); the frame goes without full FEC and may freeze the picture briefly. Report this with the host log."), butterpollo_core::session::EVENT_PERIOD);
+                        self.warnings.event("encoder_reencode", format!("AMF could not encode an oversize scene cut again as a keyframe ({error:#}); the frame goes without full FEC and may freeze the picture briefly. Report this with the host log."), butterpollo_session::session::EVENT_PERIOD);
                     }
                 }
             }
@@ -365,7 +365,7 @@ impl Encoder {
                 let bytes =
                     if whole && self.codec == 0 && pushed.meta.idr && self.references.enabled() {
                         let mut recovered = crate::frame_pool::take(bytes.len());
-                        butterpollo_core::bitstream::h264_reference_recovery_into(
+                        butterpollo_media_policy::bitstream::h264_reference_recovery_into(
                             &bytes,
                             &mut recovered,
                         );
@@ -397,7 +397,10 @@ impl Encoder {
             // into it. H.264 carries no dynamic metadata (`dynamic::wanted`).
             let (bytes, frame_cap_bytes) = if self.codec == 0 && idr && self.references.enabled() {
                 let mut recovered = crate::frame_pool::take(bytes.len());
-                butterpollo_core::bitstream::h264_reference_recovery_into(bytes, &mut recovered);
+                butterpollo_media_policy::bitstream::h264_reference_recovery_into(
+                    bytes,
+                    &mut recovered,
+                );
                 (recovered, frame_cap_bytes)
             } else {
                 let owned = match sent {
@@ -485,7 +488,7 @@ impl Encoder {
     /// `None` to drop them: after a rewrite fails, every output until the
     /// requested keyframe, which brings AMF's own headers back.
     ///
-    /// [`RepairHeaders`]: butterpollo_core::bitstream::RepairHeaders
+    /// [`RepairHeaders`]: butterpollo_media_policy::bitstream::RepairHeaders
     fn repaired<'a>(
         &mut self,
         bytes: &'a [u8],
@@ -505,7 +508,7 @@ impl Encoder {
         let result = match self.repair_headers.as_mut() {
             // HEVC's rewrite of every P-frame goes into a pooled buffer,
             // returned to the pool when nothing in the frame changed.
-            Some(butterpollo_core::bitstream::RepairHeaders::Hevc(order)) => {
+            Some(butterpollo_media_policy::bitstream::RepairHeaders::Hevc(order)) => {
                 let mut pooled = crate::frame_pool::take(bytes.len());
                 match order.rewrite_into(bytes, &mut pooled) {
                     Ok(true) => Ok(std::borrow::Cow::Owned(pooled)),
@@ -519,7 +522,7 @@ impl Encoder {
                     }
                 }
             }
-            headers => butterpollo_core::bitstream::repaired(headers, bytes, skipped),
+            headers => butterpollo_media_policy::bitstream::repaired(headers, bytes, skipped),
         };
         match result {
             Ok(bytes) => Some(bytes),
@@ -536,7 +539,7 @@ impl Encoder {
     /// Slice output of a frame that never got its last unit: the sender may
     /// have started it, so the next frame is a keyframe.
     fn lost_frame(&mut self, pts: i64) {
-        self.warnings.event("encoder_dropped", format!("AMF returned frame {pts} in slices and never finished it; requesting a keyframe. You may see a pause; lower game GPU load or update the AMD driver if this repeats."), butterpollo_core::session::EVENT_PERIOD);
+        self.warnings.event("encoder_dropped", format!("AMF returned frame {pts} in slices and never finished it; requesting a keyframe. You may see a pause; lower game GPU load or update the AMD driver if this repeats."), butterpollo_session::session::EVENT_PERIOD);
         self.recover = true;
     }
     /// Blocks a P-frame is sent in, as its slices leave the encoder; 0 when

@@ -106,7 +106,7 @@ impl Activation {
             started: std::time::Instant::now(),
         })
     }
-    pub fn identity(&self) -> butterpollo_core::audio_scope::Identity {
+    pub fn identity(&self) -> butterpollo_session::audio_scope::Identity {
         self.process.identity
     }
     /// Poll without waiting so a slow activation keeps sending silence at the
@@ -157,7 +157,7 @@ mod tests {
 
     fn current_process() -> crate::process::AudioProcess {
         let pid = std::process::id();
-        crate::process::AudioProcess::open(butterpollo_core::audio_scope::Identity {
+        crate::process::AudioProcess::open(butterpollo_session::audio_scope::Identity {
             pid,
             started: crate::process::creation_time(pid),
         })

@@ -10,15 +10,15 @@ use super::pads::{self, Dropped, Pads, XInput};
 use super::{files, user_copy};
 use crate::input::PadReport;
 use anyhow::{Context, Result, bail, ensure};
-use butterpollo_core::audio_scope::Identity;
-use butterpollo_core::input::Input;
-use butterpollo_core::nucleus::coop::{self, End, Phase};
-use butterpollo_core::nucleus::elevation::{Account, Refused, Run};
-use butterpollo_core::nucleus::generic::{self, Inject};
-use butterpollo_core::nucleus::handler::Handler;
-use butterpollo_core::nucleus::install::EXECUTABLE;
-use butterpollo_core::nucleus::profile::{Player, TITLE};
-use butterpollo_core::nucleus::window;
+use butterpollo_input_policy::input::Input;
+use butterpollo_session::audio_scope::Identity;
+use butterpollo_session::nucleus::coop::{self, End, Phase};
+use butterpollo_session::nucleus::elevation::{Account, Refused, Run};
+use butterpollo_session::nucleus::generic::{self, Inject};
+use butterpollo_session::nucleus::handler::Handler;
+use butterpollo_session::nucleus::install::EXECUTABLE;
+use butterpollo_session::nucleus::profile::{Player, TITLE};
+use butterpollo_session::nucleus::window;
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::windows::io::OwnedHandle;
 use std::path::{Path, PathBuf};
@@ -622,7 +622,7 @@ impl Runner {
                 .as_ref()
                 .is_some_and(|(_, exe)| files::epic_game(exe))
         {
-            why = butterpollo_core::nucleus::generic::epic_exit(&why, &self.title);
+            why = butterpollo_session::nucleus::generic::epic_exit(&why, &self.title);
         }
         self.failure(why)
     }
@@ -1036,8 +1036,8 @@ fn brought_to_front(start: &Start) -> Result<bool> {
 /// user's own copy.
 pub fn start_on_pc(
     start: &Start,
-    policy: butterpollo_core::input_policy::Policy,
-    warnings: Arc<butterpollo_core::session::Warnings>,
+    policy: butterpollo_input_policy::input_policy::Policy,
+    warnings: Arc<butterpollo_session::session::Warnings>,
 ) -> Result<Running> {
     let mut launcher: Box<dyn Launcher> = match start.user_copy {
         Some(_) => Box::new(Unelevated::signed_in()?),

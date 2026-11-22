@@ -9,7 +9,9 @@ use axum::{
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
-use butterpollo_core::multiclient::{MAX_LIFETIME, MIN_LIFETIME, Permission, default_permission};
+use butterpollo_session::multiclient::{
+    MAX_LIFETIME, MIN_LIFETIME, Permission, default_permission,
+};
 use serde_json::{Value, json};
 use std::time::Duration;
 

@@ -1,6 +1,6 @@
 use crate::state::Shared;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::version::newer;
+use butterpollo_session::version::newer;
 use serde_json::{Value, json};
 use std::{
     io::{Read, Seek, SeekFrom, Write},
@@ -8,7 +8,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-fn compatible_release(release: &Value, config: &butterpollo_core::config::Config) -> bool {
+fn compatible_release(release: &Value, config: &butterpollo_config::config::Config) -> bool {
     release["draft"] != true
         && (release["prerelease"] != true || config.boolean("notify_pre_releases", false))
         && release["assets"].as_array().is_some_and(|assets| {
@@ -123,7 +123,7 @@ pub fn trigger_update(h: &Shared, tell: bool) {
                         notify_update(&latest);
                     }
                     let automatic = h.config.read().unwrap().updates()
-                        == butterpollo_core::config::UpdatesMode::Install;
+                        == butterpollo_config::config::UpdatesMode::Install;
                     if automatic && let Err(error) = crate::updater::queue(&h, true, false, None) {
                         tracing::warn!(error = %format!("{error:#}"), "automatic update could not be queued");
                     }
@@ -175,7 +175,7 @@ fn announce(h: &Shared, version: &str) -> bool {
         next["root"] = json!({});
     }
     next["root"]["last_notified_version"] = json!(version);
-    if butterpollo_core::state::write_json(&h.aliases_path, &next).is_ok() {
+    if butterpollo_session::state::write_json(&h.aliases_path, &next).is_ok() {
         *aliases = next;
     }
     drop(aliases);
@@ -251,8 +251,10 @@ pub fn crash_status(h: &Shared) -> Result<Value> {
     };
     let filename = dump.path.file_name().unwrap().to_string_lossy();
     let captured = iso(dump.modified);
-    let dismissed =
-        butterpollo_core::state::load_json(&h.directory.join("crash-dismissal.json"), json!({}))?;
+    let dismissed = butterpollo_session::state::load_json(
+        &h.directory.join("crash-dismissal.json"),
+        json!({}),
+    )?;
     Ok(
         json!({"available":true,"filename":filename,"path":dump.path,"process":filename.split('.').next(),"size_bytes":dump.size,"captured_at":captured,"age_seconds":SystemTime::now().duration_since(dump.modified)?.as_secs(),"dismissed":dismissed["filename"].as_str()==Some(filename.as_ref()) && dismissed["captured_at"]==captured,"dismissed_at":dismissed["dismissed_at"]}),
     )
@@ -266,7 +268,7 @@ pub fn dismiss_crash(h: &Shared, data: &Value) -> Result<Value> {
         bail!("crash dump metadata changed");
     }
     let dismissed_at = iso(SystemTime::now());
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &h.directory.join("crash-dismissal.json"),
         &json!({"filename":status["filename"],"captured_at":status["captured_at"],"dismissed_at":dismissed_at}),
     )?;
@@ -295,7 +297,7 @@ pub fn capture_golden(h: &Shared) -> Result<Value> {
     if crate::display_session::displays_settling() {
         bail!(DISPLAYS_SETTLING);
     }
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &h.directory.join("display-baseline-rust.json"),
         &butterpollo_windows::display::Snapshot::capture()?,
     )?;
@@ -318,7 +320,7 @@ pub fn restore_golden(h: &Shared) -> Result<Value> {
 }
 /// Displays a baseline restore leaves alone. Vibepollo also accepts
 /// `{"devices": [...]}` and entries naming `device_id` or `id`.
-pub fn display_exclusions(config: &butterpollo_core::config::Config) -> Result<Vec<String>> {
+pub fn display_exclusions(config: &butterpollo_config::config::Config) -> Result<Vec<String>> {
     let value = config.get("dd_snapshot_exclude_devices", "");
     let parsed = serde_json::from_str::<serde_json::Value>(value).ok();
     let entries = parsed.as_ref().and_then(|v| {
@@ -407,7 +409,7 @@ fn bundle_with_dump(h: &Shared, dump: impl FnOnce() -> Option<Dump>) -> Result<P
         ("logs/butterpollo.log", host_log.clone()),
         (
             "logs/butterpollo.log.1",
-            butterpollo_core::logfile::RotatingFile::rotated(&host_log, 1),
+            butterpollo_session::logfile::RotatingFile::rotated(&host_log, 1),
         ),
         ("logs/service.log", service_log),
         ("crashes/panic.txt", h.directory.join("crashes/panic.txt")),
@@ -468,7 +470,7 @@ pub fn integration_status(h: &Shared) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::config::Config;
+    use butterpollo_config::config::Config;
 
     #[test]
     fn a_baseline_is_not_read_or_restored_while_a_streams_end_is_at_work_on_the_displays() {
@@ -568,7 +570,7 @@ mod tests {
         }
         assert_eq!(
             Config::default().updates(),
-            butterpollo_core::config::UpdatesMode::TellMe
+            butterpollo_config::config::UpdatesMode::TellMe
         );
     }
     #[test]
@@ -580,7 +582,7 @@ mod tests {
         std::fs::create_dir(&logs).unwrap();
         std::fs::write(logs.join("butterpollo.log"), "host log\n").unwrap();
         std::fs::write(logs.join("service.log"), "service log fixture\n").unwrap();
-        *f.host.config.write().unwrap() = butterpollo_core::config::Config::parse("sunshine_name=Test PC\npassword=secret-password\nserver_cmd=[{\"cmd\":\"secret-command\"}]\napi_token=secret-token").unwrap();
+        *f.host.config.write().unwrap() = butterpollo_config::config::Config::parse("sunshine_name=Test PC\npassword=secret-password\nserver_cmd=[{\"cmd\":\"secret-command\"}]\napi_token=secret-token").unwrap();
         let path = bundle_with_dump(&f.host, || None).unwrap();
         let mut archive = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
         let names: Vec<_> = archive.file_names().map(str::to_owned).collect();

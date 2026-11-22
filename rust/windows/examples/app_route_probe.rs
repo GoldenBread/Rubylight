@@ -11,7 +11,7 @@
 //!
 //! Every line also goes to OUT, since a SYSTEM task shows no console.
 use anyhow::{Context, Result};
-use butterpollo_core::config::Config;
+use butterpollo_config::config::Config;
 use butterpollo_windows::audio_app_route::{AppRoute, no_sound_yet};
 use std::{io::Write, path::Path, sync::mpsc, time::Duration};
 use windows::{

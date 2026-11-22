@@ -1,6 +1,6 @@
 //! Loopback USB/IP attachment shared by Steam Deck and DualSense.
 use anyhow::{Context, Result, bail};
-use butterpollo_core::usbip::{BUS_ID, Device, Export};
+use butterpollo_input_policy::usbip::{BUS_ID, Device, Export};
 use std::{
     ffi::OsStr,
     io::Read,

@@ -4,6 +4,7 @@ use super::*;
 use crate::state::test_support::Fixture;
 use crate::webrtc::server::{Console, tests::Ws};
 use axum::body::{Body, to_bytes};
+use butterpollo_session::config_ext::ConfigExt;
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     server::conn::auto::Builder,
@@ -307,7 +308,7 @@ async fn the_consoles_device_unpairs_no_tv_and_gets_everything_in_one_save() {
     let f = Fixture::new();
     configure(&f, json!({"webrtc_server": true}));
     // As many TVs as the host keeps.
-    for n in 0..butterpollo_core::webrtc::auth::MAX_PAIRED as u8 {
+    for n in 0..butterpollo_session::webrtc::auth::MAX_PAIRED as u8 {
         let id = format!("{:02x}", n + 1).repeat(16);
         let secret = format!("{:02x}", n + 1).repeat(32);
         f.host
@@ -317,7 +318,7 @@ async fn the_consoles_device_unpairs_no_tv_and_gets_everything_in_one_save() {
             .add_webrtc(
                 &f.host.paired_path,
                 state::Client::paired_over_webrtc(format!("TV {n}"), &id, &secret),
-                butterpollo_core::webrtc::auth::MAX_PAIRED,
+                butterpollo_session::webrtc::auth::MAX_PAIRED,
             )
             .unwrap();
     }

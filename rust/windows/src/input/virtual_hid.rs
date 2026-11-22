@@ -1,4 +1,4 @@
-//! The virtual USB mouse and Precision Touchpad (`butterpollo_core::virtual_hid`), plugged in
+//! The virtual USB mouse and Precision Touchpad (`butterpollo_input_policy::virtual_hid`), plugged in
 //! through usbip-win2 while a stream wants them and unplugged when the last one ends.
 //!
 //! Mouse input keeps its whole injection logic (button ownership across clients, the
@@ -6,7 +6,7 @@
 //! would take a mouse `INPUT`, [`hid_ops`] turns it into the virtual mouse's reports, so a
 //! game reads it as a USB mouse's raw input instead of injected input.
 use super::usbip_pad::{UsbPad, usbip_exe};
-use butterpollo_core::{
+use butterpollo_input_policy::{
     usbip::Device,
     virtual_hid::{self, HidMouse, POLL, PrecisionTouchpad},
 };

@@ -2,7 +2,7 @@
 
 use crate::state::Shared;
 use anyhow::Context;
-use butterpollo_core::state;
+use butterpollo_session::state;
 use serde_json::{Value, json};
 
 pub(super) fn handle(

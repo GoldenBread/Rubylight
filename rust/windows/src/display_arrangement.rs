@@ -2,7 +2,7 @@
 use crate::display::{Snapshot, Topology};
 mod remembered;
 use anyhow::{Result, bail};
-use butterpollo_core::{display_policy::Arrangement, topology::Node};
+use butterpollo_media_policy::{display_policy::Arrangement, topology::Node};
 pub use remembered::initialize as initialize_remembered;
 use std::sync::{
     Arc, Condvar, Mutex, OnceLock,
@@ -187,7 +187,7 @@ fn with_kept(mut nodes: Vec<Node>, current: &[Node], kept: &[String]) -> Vec<Nod
             .iter()
             .any(|n| n.active && n.device_id == node.device_id)
         {
-            nodes = butterpollo_core::display_policy::beside_the_users(&nodes, node);
+            nodes = butterpollo_media_policy::display_policy::beside_the_users(&nodes, node);
         }
     }
     nodes
@@ -677,7 +677,7 @@ fn entry_layout(
         .cloned()
         .collect();
     let mut layout = before.clone();
-    layout.nodes = butterpollo_core::display_policy::beside_the_users(&present, target);
+    layout.nodes = butterpollo_media_policy::display_policy::beside_the_users(&present, target);
     Ok(layout)
 }
 /// Whether a virtual display's arrival handed a layout that keeps the other
@@ -693,7 +693,7 @@ fn recall_to_undo(
     connected: &[String],
 ) -> bool {
     !saves
-        && butterpollo_core::display_policy::recalled_over(
+        && butterpollo_media_policy::display_policy::recalled_over(
             before,
             current,
             connected,
@@ -804,7 +804,7 @@ fn departure_repair(
         return None;
     }
     let targets: Vec<_> = state.owners.iter().map(|(t, _)| t.clone()).collect();
-    if !butterpollo_core::display_policy::recalled_over(
+    if !butterpollo_media_policy::display_policy::recalled_over(
         &state.applied,
         current,
         connected,
@@ -1199,7 +1199,7 @@ fn layout_is_back(
     keep: &[String],
 ) -> bool {
     let active: Vec<_> = active_ids(current).into_iter().collect();
-    !butterpollo_core::display_policy::recalled_over(before, current, connected, &[], true)
+    !butterpollo_media_policy::display_policy::recalled_over(before, current, connected, &[], true)
         && strays(before, &active, physical, keep).0.is_empty()
 }
 /// The user's layout, for what a stopped watch left. What is already right isn't touched,
@@ -1403,7 +1403,7 @@ fn wake_layout_wrong(
     keeps_primary: bool,
 ) -> bool {
     let active: Vec<_> = active_ids(current).into_iter().collect();
-    butterpollo_core::display_policy::recalled_over(
+    butterpollo_media_policy::display_policy::recalled_over(
         before,
         current,
         connected,
@@ -2154,7 +2154,7 @@ impl Lease {
         let Some(before) = &state.before else {
             return Ok(Vec::new());
         };
-        Ok(butterpollo_core::display_policy::switched_back_on(
+        Ok(butterpollo_media_policy::display_policy::switched_back_on(
             &before.nodes,
             &state.applied,
             &active,

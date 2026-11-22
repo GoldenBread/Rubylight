@@ -1,7 +1,7 @@
 use crate::text::from_wide;
 use anyhow::{Context, Result, bail, ensure};
-use butterpollo_core::capture_policy::notification_wait_interval;
-use butterpollo_core::encoder_gpu;
+use butterpollo_media_policy::capture_policy::notification_wait_interval;
+use butterpollo_media_policy::encoder_gpu;
 use serde::Serialize;
 use std::time::{Duration, Instant};
 use windows::{
@@ -138,14 +138,15 @@ pub fn check_window(target: &WindowTarget) -> Result<()> {
 /// Whether a window's capture draws the pointer: an app's window streamed in
 /// place of a display (`capture_window = window`) takes the device's mouse.
 /// A co-op player's window does not; its stream's settings never ask for it.
-pub(crate) fn window_cursor(config: &butterpollo_core::config::Config) -> bool {
-    butterpollo_core::app_window::settings(config).is_some()
+pub(crate) fn window_cursor(config: &butterpollo_config::config::Config) -> bool {
+    butterpollo_media_policy::app_window::settings(config).is_some()
 }
 /// Whether a window's capture keeps only its client area
 /// (`capture_window_frame = client`), without the title bar and borders.
-pub(crate) fn window_client(config: &butterpollo_core::config::Config) -> bool {
-    butterpollo_core::app_window::settings(config)
-        .is_some_and(|settings| settings.frame == butterpollo_core::app_window::Frame::Client)
+pub(crate) fn window_client(config: &butterpollo_config::config::Config) -> bool {
+    butterpollo_media_policy::app_window::settings(config).is_some_and(|settings| {
+        settings.frame == butterpollo_media_policy::app_window::Frame::Client
+    })
 }
 
 /// The desktop rectangle of `name` as [left, top, right, bottom], the primary
@@ -345,7 +346,7 @@ pub fn stream_gpu(display: &str, adapter_name: &str, pnp_id: &str) -> Result<(St
 }
 /// The PCI vendor of [`stream_gpu`]'s GPU for the configured display and adapter, None when it
 /// can't be found.
-pub fn stream_gpu_vendor(config: &butterpollo_core::config::Config) -> Option<u32> {
+pub fn stream_gpu_vendor(config: &butterpollo_config::config::Config) -> Option<u32> {
     let [display, adapter_name, pnp_id] =
         ["output_name", "adapter_name", "adapter_pnp_id"].map(|key| config.get(key, ""));
     let (_, luid) = stream_gpu(display, adapter_name, pnp_id)
@@ -359,7 +360,7 @@ pub fn stream_gpu_vendor(config: &butterpollo_core::config::Config) -> Option<u3
 }
 
 /// Whose driver settings the panel controls, for the configured stream GPU.
-pub fn panel_driver(config: &butterpollo_core::config::Config) -> crate::radeon::Driver {
+pub fn panel_driver(config: &butterpollo_config::config::Config) -> crate::radeon::Driver {
     let vendors: Vec<u32> = gpus()
         .map(|gpus| gpus.iter().map(|gpu| gpu.vendor).collect())
         .unwrap_or_default();
@@ -595,7 +596,7 @@ impl Device {
             .context("no monitor is attached to this GPU")
     }
     /// Read the selected output's luminance; conversion produces Rec.2020/D65.
-    pub fn hdr_metadata(&self) -> butterpollo_core::hdr::Metadata {
+    pub fn hdr_metadata(&self) -> butterpollo_media_policy::hdr::Metadata {
         self.color
             .as_ref()
             .map(|color| color.read().1)
@@ -886,7 +887,7 @@ fn duplication_device<D>(
     selected: D,
     mismatch: impl FnOnce(&D) -> Option<GpuMismatch>,
     owner: impl FnOnce() -> Result<D>,
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
 ) -> Result<D> {
     let Some(mismatch) = mismatch(&selected) else {
         return Ok(selected);
@@ -942,7 +943,7 @@ impl Duplication {
             bail!("{}", mismatch.refusal());
         }
         let build = crate::display::windows_build();
-        use butterpollo_core::os_gate::{Feature, missing};
+        use butterpollo_session::os_gate::{Feature, missing};
         if hdr && let Some(reason) = missing(build, Feature::OutputDesc1) {
             tracing::warn!("{reason} An HDR stream will be captured as SDR.");
         }
@@ -1330,7 +1331,7 @@ impl GpuImage {
 
 #[derive(Default)]
 pub(crate) struct GpuPool {
-    pub(crate) warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+    pub(crate) warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     textures: Vec<std::sync::Arc<ID3D11Texture2D>>,
     /// Width, height and format of every texture in `textures`.
     shape: Option<(u32, u32, DXGI_FORMAT)>,
@@ -1668,7 +1669,7 @@ fn switches_in_place(
 
 fn open_stream_capture<T>(
     kind: &str,
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
     mut open: impl FnMut(&str) -> Result<T>,
 ) -> Result<T> {
     match open(kind) {
@@ -1804,8 +1805,8 @@ impl Capture {
         name: &str,
         kind: &str,
         hdr: bool,
-        config: &butterpollo_core::config::Config,
-        warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+        config: &butterpollo_config::config::Config,
+        warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
         warnings.clear("capture_compute");
         warnings.clear("capture_helper_compute");
@@ -1850,8 +1851,8 @@ impl Capture {
         name: &str,
         kind: &str,
         hdr: bool,
-        config: &butterpollo_core::config::Config,
-        warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+        config: &butterpollo_config::config::Config,
+        warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     ) -> Option<Result<Self>> {
         if self.device_removed().is_some() {
             return None;
@@ -1913,7 +1914,7 @@ impl Capture {
         name: &str,
         kind: &str,
         hdr: bool,
-        config: &butterpollo_core::config::Config,
+        config: &butterpollo_config::config::Config,
     ) -> Result<Self> {
         Self::new_options_reported(name, kind, hdr, config, Default::default())
     }
@@ -1921,8 +1922,8 @@ impl Capture {
         name: &str,
         kind: &str,
         hdr: bool,
-        config: &butterpollo_core::config::Config,
-        warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+        config: &butterpollo_config::config::Config,
+        warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
         let target = WindowTarget::parse(name)?;
         if let Some(target) = &target {
@@ -1960,7 +1961,7 @@ impl Capture {
             // authoritative there too, as it is in-process.
             let mut helper_config = config.clone();
             helper_config.values.insert(
-                butterpollo_core::app_window::FRAME.into(),
+                butterpollo_media_policy::app_window::FRAME.into(),
                 if client { "client" } else { "full" }.into(),
             );
             return Ok(Self::WgcWorker(Box::new(bridge::Session::new(

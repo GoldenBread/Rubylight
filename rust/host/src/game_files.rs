@@ -1,5 +1,5 @@
 //! The host's side of managed game files (issue #63; the rules are in
-//! `butterpollo_core::game_files`): which session wrote keys, and when they go back.
+//! `butterpollo_session::game_files`): which session wrote keys, and when they go back.
 //!
 //! A stream that starts its app writes the keys the app lists for its device (the device's
 //! block in `device-overrides` on top) just before the app's process starts, with the stream's
@@ -10,11 +10,11 @@
 //! console has no stream, so it writes nothing.
 //!
 //! The files are reached as the signed-in Windows user, never as SYSTEM (see
-//! `butterpollo_core::game_files::Access`). Restores run on a thread of their own, so a file
+//! `butterpollo_session::game_files::Access`). Restores run on a thread of their own, so a file
 //! that is slow to open never holds the session lock; one that fails stays journaled and is
 //! tried again.
 use crate::state::{Host, Shared};
-use butterpollo_core::{
+use butterpollo_session::{
     game_files::{self, JOURNAL_FILE, Report, Scope, Unusable},
     state::App,
 };
@@ -336,7 +336,7 @@ pub fn check(app: &App) -> anyhow::Result<()> {
     let mut entries = game_files::entries(&app.extra)?;
     for block in app
         .extra
-        .get(butterpollo_core::device_overrides::SETTING)
+        .get(butterpollo_session::device_overrides::SETTING)
         .and_then(serde_json::Value::as_object)
         .into_iter()
         .flat_map(|blocks| blocks.values())

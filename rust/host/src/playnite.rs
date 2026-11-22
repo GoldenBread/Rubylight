@@ -3,9 +3,9 @@
 //! environment, ending when Playnite reports the game stopped.
 use crate::state::Shared;
 use anyhow::{Context, Result, bail, ensure};
-use butterpollo_core::game_settings::Watched;
-use butterpollo_core::playnite::{self, Artwork, Game, Message, Settings};
-use butterpollo_core::version;
+use butterpollo_session::game_settings::Watched;
+use butterpollo_session::playnite::{self, Artwork, Game, Message, Settings};
+use butterpollo_session::version;
 use butterpollo_windows::playnite::Pipe;
 use serde_json::{Value, json};
 use std::{
@@ -125,7 +125,7 @@ pub fn install_worker(source: &Path, target: &Path) -> Result<()> {
         .with_context(|| format!("creating Playnite plugin folder {}", target.display()))?;
     // Publish the version last so an interrupted copy is retried.
     for file in PLUGIN_FILES.iter().rev() {
-        butterpollo_core::state::atomic_write(
+        butterpollo_session::state::atomic_write(
             &target.join(file),
             &std::fs::read(source.join(file)).with_context(|| {
                 format!(
@@ -359,7 +359,7 @@ fn png(h: &Shared, source: &str, name: &str) -> Option<PathBuf> {
     }
     match butterpollo_windows::image::to_png(source, &png) {
         Ok(_) => {
-            let _ = butterpollo_core::state::atomic_write(&record, stamp.as_bytes());
+            let _ = butterpollo_session::state::atomic_write(&record, stamp.as_bytes());
             Some(png)
         }
         Err(error) => {
@@ -561,7 +561,7 @@ pub fn last_played() -> Vec<(String, u64)> {
         .filter(|game| !game.last_played_unknown)
         .map(|game| {
             let at = u64::try_from(game.last_played.unwrap_or(0)).unwrap_or(0);
-            (butterpollo_core::native::playnite_key(&game.id), at)
+            (butterpollo_session::native::playnite_key(&game.id), at)
         })
         .collect()
 }
@@ -576,11 +576,11 @@ pub fn playtime() -> Vec<(String, u64)> {
         .iter()
         .filter_map(|game| {
             let minutes = game.playtime_minutes?;
-            Some((butterpollo_core::native::playnite_key(&game.id), minutes))
+            Some((butterpollo_session::native::playnite_key(&game.id), minutes))
         })
         .collect()
 }
-/// The categories of the games the plugin last reported, by [`butterpollo_core::native::playnite_key`].
+/// The categories of the games the plugin last reported, by [`butterpollo_session::native::playnite_key`].
 #[cfg(not(any(test, feature = "test-harness")))]
 pub fn collections() -> Vec<(String, Vec<String>)> {
     let catalog = CATALOG.lock().unwrap();
@@ -590,7 +590,7 @@ pub fn collections() -> Vec<(String, Vec<String>)> {
         .filter(|game| !game.categories.is_empty())
         .map(|game| {
             (
-                butterpollo_core::native::playnite_key(&game.id),
+                butterpollo_session::native::playnite_key(&game.id),
                 game.categories.clone(),
             )
         })
@@ -688,7 +688,7 @@ struct GameWatch {
     next: Instant,
 }
 impl GameWatch {
-    fn new(baseline: &[butterpollo_core::steam::Process], now: Instant) -> Self {
+    fn new(baseline: &[butterpollo_session::steam::Process], now: Instant) -> Self {
         Self {
             baseline: baseline.iter().map(|p| (p.pid, p.started)).collect(),
             seen: BTreeSet::new(),
@@ -712,7 +712,7 @@ impl GameWatch {
         &mut self,
         now: Instant,
         (folder, exe): (&str, &str),
-        processes: &[butterpollo_core::steam::Process],
+        processes: &[butterpollo_session::steam::Process],
         program: impl Fn(u32) -> Option<String>,
     ) -> Vec<Watched> {
         if self.game.0 != folder || self.game.1 != exe {
@@ -960,7 +960,7 @@ pub struct Launch {
     state: Arc<Mutex<LaunchState>>,
     stop: Arc<AtomicBool>,
     worker: Option<std::thread::JoinHandle<()>>,
-    baseline: Vec<butterpollo_core::steam::Process>,
+    baseline: Vec<butterpollo_session::steam::Process>,
 }
 impl Launch {
     /// Start a game, or the fullscreen menu without an id, with the
@@ -1043,7 +1043,7 @@ impl Launch {
     /// are excluded by the same path policy used to follow game lifetime.
     pub fn audio_processes(
         &self,
-        processes: &[butterpollo_core::steam::Process],
+        processes: &[butterpollo_session::steam::Process],
     ) -> Result<BTreeMap<u32, u64>> {
         let (folder, exe) = {
             let state = self.state.lock().unwrap();
@@ -1107,7 +1107,7 @@ impl Launch {
         if state.install_dir.trim().is_empty() || state.phase == Phase::Exited {
             return;
         }
-        let mut tracker = butterpollo_core::steam::Tracker::new(
+        let mut tracker = butterpollo_session::steam::Tracker::new(
             &self.baseline,
             &state.install_dir,
             Duration::ZERO,

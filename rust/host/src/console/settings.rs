@@ -586,7 +586,7 @@ mod tests {
         let Choice(choices) = setting.control else {
             panic!("a choice")
         };
-        let ids: Vec<_> = butterpollo_core::stream_preset::table()
+        let ids: Vec<_> = butterpollo_media_policy::stream_preset::table()
             .presets
             .iter()
             .map(|preset| preset.id.as_str())
@@ -621,7 +621,7 @@ mod tests {
         };
         for choice in choices {
             assert!(
-                butterpollo_core::encoder_focus::Requested::parse(choice).is_ok(),
+                butterpollo_media_policy::encoder_focus::Requested::parse(choice).is_ok(),
                 "{choice}"
             );
         }
@@ -642,7 +642,7 @@ mod tests {
         // The encoder's settings, the GPU priority it runs at and the
         // driver's power profile.
         let source = [
-            include_str!("../../../core/src/nvenc.rs"),
+            include_str!("../../../core/media-policy/src/nvenc.rs"),
             include_str!("../../../windows/src/gpu_priority.rs"),
             include_str!("../../../windows/src/nvidia_profile.rs"),
         ]
@@ -684,7 +684,7 @@ mod tests {
                 && setting.key != "nvenc_latency_over_power"
             {
                 assert!(
-                    butterpollo_core::config::override_allowed(setting.key),
+                    butterpollo_config::config::override_allowed(setting.key),
                     "{} is not an encoder setting",
                     setting.key
                 );
@@ -699,7 +699,7 @@ mod tests {
             .unwrap();
         assert!(matches!(setting.control, Bool));
         assert_eq!(setting.label, "Let devices use Frame Warp");
-        assert!(butterpollo_core::config::override_allowed("frame_warp"));
+        assert!(butterpollo_config::config::override_allowed("frame_warp"));
         let mut fields = Fields::new();
         fields.insert("cfg_frame_warp".into(), "false".into());
         let mut values = serde_json::Map::new();

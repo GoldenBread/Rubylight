@@ -1,7 +1,7 @@
 //! A session thread's teardown: the failure report, the session's end, and its workers,
 //! records and leases released in a fixed order.
 use super::*;
-use butterpollo_core::stutter_report::Stage;
+use butterpollo_media_policy::stutter_report::Stage;
 use std::sync::PoisonError;
 
 // The moved code still borrows `m`, `h`, `s` and the other values it now receives by
@@ -73,9 +73,9 @@ impl SessionThread<'_> {
         h.sessions.lock().unwrap_or_else(PoisonError::into_inner).begin_teardown(&s);
         // For the Sessions page: one entry per stream, with why it ended.
         let reason = if s.failed() {
-            butterpollo_core::session_history::REASON_FAILED
+            butterpollo_session::session_history::REASON_FAILED
         } else {
-            butterpollo_core::session_history::REASON_ENDED
+            butterpollo_session::session_history::REASON_ENDED
         };
         h.record_session(&s, reason);
         h.session_webhook("session.ended", &s);

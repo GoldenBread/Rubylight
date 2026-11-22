@@ -275,7 +275,7 @@ async fn a_host_shutdown_detaches_usb_before_it_tells_the_client() -> Result<()>
         &paired,
         true,
         8,
-        butterpollo_core::usb_forward::UsbMessage::AttachRequest {
+        rubylight_protocol::usb::UsbMessage::AttachRequest {
             request_id: 7,
             vid: 0x0781,
             pid: 0x5581,
@@ -312,8 +312,8 @@ async fn a_host_shutdown_detaches_usb_before_it_tells_the_client() -> Result<()>
     assert_eq!(
         &kinds[termination - 2..termination],
         &[
-            butterpollo_core::usb_forward::USB_MESSAGE_TYPE,
-            butterpollo_core::usb_forward::USB_MESSAGE_TYPE,
+            rubylight_protocol::usb::USB_MESSAGE_TYPE,
+            rubylight_protocol::usb::USB_MESSAGE_TYPE,
         ],
         "{kinds:?}"
     );

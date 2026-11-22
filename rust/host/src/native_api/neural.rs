@@ -17,16 +17,11 @@ use axum::{
     extract::{RawQuery, Request, State},
     http::StatusCode,
 };
-use butterpollo_core::{
-    native::VIEW,
-    native_api::{
-        error::ErrorCode,
-        neural::{
-            self as api, Action, FRAME_GENERATION, Job, Mode, Neural, Phase, SettingsWrite, Why,
-        },
-        radeon::ControlState,
-    },
-    state::Client,
+use butterpollo_session::{native::VIEW, state::Client};
+use rubylight_native_api::{
+    error::ErrorCode,
+    neural::{self as api, Action, FRAME_GENERATION, Job, Mode, Neural, Phase, SettingsWrite, Why},
+    radeon::ControlState,
 };
 use serde_json::Value;
 
@@ -69,7 +64,7 @@ pub async fn read(
         .map(|(_, value)| value.into_owned())
         .filter(|app| !app.is_empty())
         .ok_or_else(|| Failure::new(ErrorCode::InvalidRequest, "Name the game: ?app=<id>."))?;
-    let host_control = butterpollo_core::native::host_control(&client);
+    let host_control = butterpollo_session::native::host_control(&client);
     tokio::task::spawn_blocking(move || {
         state(&h, &app, host_control, true).map(|state| json(StatusCode::OK, &state))
     })

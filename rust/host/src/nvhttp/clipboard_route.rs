@@ -168,7 +168,7 @@ pub(super) fn clipboard_client(
     // playing in the background.
     if sessions.iter().any(|s| {
         crate::stream::effective_config(h, &s.launch).map_or(true, |config| {
-            butterpollo_core::background::enabled(&config) || crate::nucleus::player(&config)
+            butterpollo_session::background::enabled(&config) || crate::nucleus::player(&config)
         })
     }) {
         bail!("clipboard access is off for background streams");
@@ -217,7 +217,7 @@ pub(super) async fn clipboard_read(
 /// The body takes no more memory than the type's limit: a longer one is 413
 /// before it is read, if it says so, and once it passes the limit if not.
 /// An image's dimensions are then checked before its pixels are decoded
-/// (`butterpollo_core::clipboard_image`).
+/// (`butterpollo_session::clipboard_image`).
 pub(super) async fn clipboard_write(
     State(h): State<Shared>,
     Extension(c): Extension<Connection>,
@@ -317,7 +317,7 @@ async fn body_within(mut body: axum::body::Body, limit: usize) -> Result<Vec<u8>
 /// 413 for an image over the limit, `malformed` for one that can't be
 /// converted, 500 when the clipboard itself failed. Each is logged.
 fn clipboard_image_failure(doing: &str, error: &anyhow::Error, malformed: StatusCode) -> Response {
-    use butterpollo_core::clipboard_image::ImageError;
+    use butterpollo_session::clipboard_image::ImageError;
     let status = match error.downcast_ref::<ImageError>() {
         Some(ImageError::TooLarge | ImageError::TooManyBytes { .. }) => {
             StatusCode::PAYLOAD_TOO_LARGE
@@ -334,7 +334,7 @@ fn clipboard_image_failure(doing: &str, error: &anyhow::Error, malformed: Status
 mod tests {
     use super::*;
     use crate::state::{Session, test_support::Fixture};
-    use butterpollo_core::{multiclient::LAUNCH_OPTION, session::Role};
+    use butterpollo_session::{multiclient::LAUNCH_OPTION, session::Role};
 
     #[test]
     fn clipboard_client_refuses_guest_without_full_access() {

@@ -1,8 +1,8 @@
 //! The Windows clipboard: text (`CF_UNICODETEXT`) and images, which travel
 //! as PNG and are kept here as `CF_DIBV5` and the registered `PNG` format
-//! (`butterpollo_core::clipboard_image`).
+//! (`butterpollo_session::clipboard_image`).
 use anyhow::{Result, bail};
-use butterpollo_core::clipboard_image::{self, ImageError};
+use butterpollo_session::clipboard_image::{self, ImageError};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use windows::{
     Win32::{
@@ -294,7 +294,7 @@ pub fn write_png(png: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::clipboard_image::Image;
+    use butterpollo_session::clipboard_image::Image;
     use std::sync::mpsc;
 
     /// A clipboard of `formats`, copied out as [`copied`] would, with the

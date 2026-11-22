@@ -28,7 +28,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use butterpollo_core::{
+use butterpollo_session::{
     catalog,
     webrtc::{
         auth::{Challenge, PAIRING_LIFETIME},
@@ -1022,7 +1022,7 @@ impl Connection {
         } else {
             name.trim()
         };
-        if butterpollo_core::pairing::validate_device_name(name).is_err() {
+        if butterpollo_crypto::pairing::validate_device_name(name).is_err() {
             out.push(Self::error(
                 ErrorCode::InvalidMessage,
                 "request-pairing",
@@ -1247,7 +1247,7 @@ pub(super) fn host_probe(h: &Host) -> EncoderProbe {
 
 /// The frame rates offered per mode. `webrtc_frame_rates = 30,60,90,120` replaces them for every
 /// mode, so a test host can stream rates that are not offered by default.
-pub(super) fn frame_rate_offer(config: &butterpollo_core::config::Config) -> FrameRateOffer {
+pub(super) fn frame_rate_offer(config: &butterpollo_config::config::Config) -> FrameRateOffer {
     let rates: Vec<u32> = config
         .get("webrtc_frame_rates", "")
         .split(',')

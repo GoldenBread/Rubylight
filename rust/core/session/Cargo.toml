@@ -1,0 +1,39 @@
+[package]
+name = "butterpollo-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+butterpollo-config = { path = "../config" }
+butterpollo-crypto = { path = "../crypto" }
+butterpollo-input-policy = { path = "../input-policy" }
+butterpollo-media-policy = { path = "../media-policy" }
+crc32fast = "1.5"
+hex = "0.4"
+png = "0.18"
+prost = "0.14"
+quick-xml = { version = "0.42", features = ["serialize"] }
+rand = "0.8"
+regex = "1.12"
+ring = "0.17"
+rubylight-native-api = { path = "../../../client/protocol/native-api" }
+rubylight-protocol = { path = "../../../client/protocol/core" }
+rubylight-wire = { path = "../../../client/protocol/wire" }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = { version = "0.10", features = ["oid"] }
+subtle = "2.6"
+tracing.workspace = true
+uuid = { version = "1.18", features = ["v4", "v5", "serde"] }
+zip = { version = "4.6", default-features = false }
+
+[dev-dependencies]
+butterpollo-media-policy = { path = "../media-policy", features = ["test-internals"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
+tempfile = "3.23"
+
+[lints]
+workspace = true

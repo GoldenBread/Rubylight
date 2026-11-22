@@ -4,15 +4,13 @@
 //! fake.
 use crate::state::Host;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{
-    native_api::{session::State as Session, wake as api},
-    wake::{
-        self as readiness, Adapter, ApplyReport, FixPlan, NicReport, SystemFacts,
-        grace::WakeGrace,
-        idle::{self, IdleSleep, Input, Settings, Snapshot, Status},
-    },
+use butterpollo_session::wake::{
+    self as readiness, Adapter, ApplyReport, FixPlan, NicReport, SystemFacts,
+    grace::WakeGrace,
+    idle::{self, IdleSleep, Input, Settings, Snapshot, Status},
 };
 use butterpollo_windows::wake::{IDLE_FAILED, IDLE_READ};
+use rubylight_native_api::{session::State as Session, wake as api};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{

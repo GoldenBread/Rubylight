@@ -9,7 +9,7 @@
 //! to the recording side unconverted, so the host first gives the endpoint the
 //! recording side's format (`audio_route::match_steam_microphone_format`).
 use anyhow::{Result, bail};
-use butterpollo_core::mic::{Conceal, Playout, RATE};
+use butterpollo_session::mic::{Conceal, Playout, RATE};
 use std::{sync::Mutex, time::Duration};
 use windows::{
     Win32::{

@@ -23,7 +23,7 @@
 
 use super::*;
 use crate::display::rubylight_vdd::{Control, Owned, Remote, owned_display};
-use butterpollo_core::virtual_output::{PushedFrame, PushedFrames};
+use butterpollo_media_policy::virtual_output::{PushedFrame, PushedFrames};
 use rubylight_vdisplay_proto::control::{
     CAP_FENCE_RING, CAP_SCOPED_CLEAR, MonitorStatus, SetFenceRingRequest, SetFrameRingRequest,
 };
@@ -249,7 +249,7 @@ pub(super) fn wanted(kind: &str, capture_setting: &str, own_display: bool) -> bo
 pub(super) fn wanted_for(
     name: &str,
     kind: &str,
-    config: &butterpollo_core::config::Config,
+    config: &butterpollo_config::config::Config,
 ) -> bool {
     let setting = config.get("capture", "auto");
     wanted(kind, setting, false)
@@ -769,8 +769,8 @@ impl Session {
     pub(super) fn new(
         name: &str,
         hdr: bool,
-        config: &butterpollo_core::config::Config,
-        warnings: Arc<butterpollo_core::session::Warnings>,
+        config: &butterpollo_config::config::Config,
+        warnings: Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
         let monitor = owned_display(name)?.with_context(|| {
             format!("{name} is not a display this host created with the Rubylight display driver")
@@ -907,7 +907,7 @@ impl Session {
         gpu: &Device,
         mut layout: Layout,
         zero_copy: bool,
-        warnings: &butterpollo_core::session::Warnings,
+        warnings: &butterpollo_session::session::Warnings,
         scope: FenceScope,
     ) -> Result<Ring> {
         if layout.kind == Kind::Fence {

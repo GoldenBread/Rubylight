@@ -2,13 +2,13 @@
 mod transport;
 use crate::state::{Session, Shared};
 use anyhow::{Result, bail};
-use butterpollo_core::{
-    config::Config,
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::{
     packet::{BlockPool, PacketBlock, PyrowaveFec, VideoPacketizer},
     performance::{Claim, Claims},
     pyrowave::DetailFec,
-    session::Warnings,
 };
+use butterpollo_session::session::Warnings;
 use butterpollo_windows::{encoder::Encoded, net::ReplySocket, timing::Signal};
 use std::{
     collections::VecDeque,
@@ -116,7 +116,7 @@ impl DroppedFrames {
         match result {
             Ok(packets) => Some(packets),
             Err(error) => {
-                warnings.event("pyrowave_frame", format!("PyroWave frame dropped ({error:#}); the client may hold the previous picture. Lower bitrate or resolution to stay within Moonlight's packet limit, or use HEVC/AV1."), butterpollo_core::session::EVENT_PERIOD);
+                warnings.event("pyrowave_frame", format!("PyroWave frame dropped ({error:#}); the client may hold the previous picture. Lower bitrate or resolution to stay within Moonlight's packet limit, or use HEVC/AV1."), butterpollo_session::session::EVENT_PERIOD);
                 self.unreported += 1;
                 if self
                     .reported
@@ -140,12 +140,13 @@ fn demand_bps(
     fps_millihz: u32,
 ) -> u64 {
     let packet_bytes = packet_size + 16 + if encrypted { 32 } else { 0 };
-    let wire_bytes = packets * (packet_bytes + butterpollo_core::network_pacing::overhead(ipv6));
+    let wire_bytes =
+        packets * (packet_bytes + butterpollo_media_policy::network_pacing::overhead(ipv6));
     (wire_bytes as u64).saturating_mul(u64::from(fps_millihz)) / 1000 * 8
 }
 /// Calibration and live traffic share the same one-millisecond wire batches.
 fn batch_limit(bps: u64, packet: usize, ipv6: bool) -> usize {
-    butterpollo_core::network_pacing::pyrowave_batch_limit(bps, packet, ipv6)
+    butterpollo_media_policy::network_pacing::pyrowave_batch_limit(bps, packet, ipv6)
 }
 struct Slot {
     pending: Mutex<Option<Frame>>,
@@ -335,7 +336,7 @@ impl Sender {
                 let Some((packets, limited, blocks)) = dropped.prepared(prepared, wire_len, now, &current.launch.warnings) else { continue };
                 if limited && fec_reported.is_none_or(|at| at.elapsed() >= Duration::from_secs(1)) {
                     fec_reported = Some(Instant::now());
-                    current.launch.warnings.event("pyrowave_fec_frame", "PyroWave error correction was reduced or omitted because the frame and its parity cannot fit the supported wire blocks. Recovery protection is reduced; lower bitrate/resolution or use HEVC/AV1 on a lossy link.", butterpollo_core::session::EVENT_PERIOD);
+                    current.launch.warnings.event("pyrowave_fec_frame", "PyroWave error correction was reduced or omitted because the frame and its parity cannot fit the supported wire blocks. Recovery protection is reduced; lower bitrate/resolution or use HEVC/AV1 on a lossy link.", butterpollo_session::session::EVENT_PERIOD);
                 }
                 let demand = demand_bps(packets, current.config.packet_size, current.config.encryption & 2 != 0, peer.ip().to_canonical().is_ipv6(), current.config.fps_millihz());
                 let details = |blocks, streamed| Prepared { blocks, peer, claimed, processing, latency: micros(latency),

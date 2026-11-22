@@ -838,7 +838,7 @@ fn parking_releases_controls_without_unplugging_and_arrival_becomes_ready() {
 
 #[test]
 fn missing_driver_is_visible_without_blocking_other_input() {
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     let pads = GamepadThread::spawn_reported::<Fake>(
         || anyhow::bail!("test driver missing"),
         warnings.clone(),
@@ -861,7 +861,7 @@ fn missing_driver_is_visible_without_blocking_other_input() {
 
 #[test]
 fn an_unmapped_back_grip_press_shows_a_hint_and_still_reaches_the_pads() {
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     let gate = Arc::new(Gate::default());
     gate.open();
     let log = Arc::new(Mutex::new(Vec::new()));
@@ -885,7 +885,7 @@ fn an_unmapped_back_grip_press_shows_a_hint_and_still_reaches_the_pads() {
     pads.send(state(0, 1, 0x02_0000, 0));
     assert!(warnings.snapshot().is_empty());
     // A Switch 2 Pro pad has R4 (GR): no hint for it.
-    pads.profile = butterpollo_core::input_policy::USBIP_SWITCH2;
+    pads.profile = butterpollo_input_policy::input_policy::USBIP_SWITCH2;
     pads.send(state(0, 1, 0x01_0000, 0));
     assert!(warnings.snapshot().is_empty());
     pads.profile = 0;
@@ -900,7 +900,7 @@ fn an_unmapped_back_grip_press_shows_a_hint_and_still_reaches_the_pads() {
 /// runs) has every back grip: an unmapped press says nothing, unlike on another controller's pad.
 #[test]
 fn an_automatic_steam_controller_keeps_its_back_grips_without_a_hint() {
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     let mut pads = GamepadThread::spawn_reported(
         || {
             Ok(SteamFake {
@@ -1230,7 +1230,7 @@ type RefusingThread = (
     GamepadThread,
     Arc<Mutex<Vec<String>>>,
     Arc<AtomicBool>,
-    Arc<butterpollo_core::session::Warnings>,
+    Arc<butterpollo_session::session::Warnings>,
 );
 fn refusing(refuse: bool) -> RefusingThread {
     refusing_with(
@@ -1246,7 +1246,7 @@ fn refusing(refuse: bool) -> RefusingThread {
 fn refusing_with(refuse: bool, poll: Polling) -> RefusingThread {
     let log = Arc::new(Mutex::new(Vec::new()));
     let refuse = Arc::new(AtomicBool::new(refuse));
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     let mut opened = 0;
     let pads = GamepadThread::spawn_polled(
         {
@@ -1488,7 +1488,7 @@ fn a_driver_that_will_not_open_after_a_refusal_is_tried_every_retry_without_stop
     let log = Arc::new(Mutex::new(Vec::new()));
     let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let device_back = Arc::new(AtomicBool::new(false));
-    let warnings = Arc::new(butterpollo_core::session::Warnings::default());
+    let warnings = Arc::new(butterpollo_session::session::Warnings::default());
     let pads = GamepadThread::spawn_polled(
         {
             let (log, attempts, device_back) = (log.clone(), attempts.clone(), device_back.clone());

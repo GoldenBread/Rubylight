@@ -5,9 +5,9 @@
 //! player k that pad's XInput index, and ProtoInput feeds it to instance k.
 use crate::input::{GamepadThread, PadReport};
 use anyhow::{Context, Result, bail, ensure};
-use butterpollo_core::input::Input;
-use butterpollo_core::nucleus::coop::{self, MAX_PLAYERS};
-use butterpollo_core::session::Warnings;
+use butterpollo_input_policy::input::Input;
+use butterpollo_session::nucleus::coop::{self, MAX_PLAYERS};
+use butterpollo_session::session::Warnings;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -162,9 +162,9 @@ impl Pads for SessionPads {
 /// The session's pads on the PC: [`Policy::session_pad`], whatever the
 /// clients' controllers are.
 ///
-/// [`Policy::session_pad`]: butterpollo_core::input_policy::Policy::session_pad
+/// [`Policy::session_pad`]: butterpollo_input_policy::input_policy::Policy::session_pad
 pub fn virtual_pads(
-    policy: butterpollo_core::input_policy::Policy,
+    policy: butterpollo_input_policy::input_policy::Policy,
     warnings: Arc<Warnings>,
 ) -> Result<SessionPads> {
     let thread = GamepadThread::new(policy.session_pad, policy, warnings.clone())

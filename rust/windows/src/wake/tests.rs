@@ -62,7 +62,7 @@ fn physical_nics_without_ip_bindings_are_not_lost() -> Result<()> {
                 row.InterfaceAndOperStatusFlags._bitfield & 5 == 5
                     && medium(row.Type, row.PhysicalMediumType.0) != Medium::Other
                     && six(&row.PhysicalAddress, row.PhysicalAddressLength)
-                        .is_some_and(butterpollo_core::wake::unicast_mac)
+                        .is_some_and(butterpollo_session::wake::unicast_mac)
             })
             .map(|row| (format!("{{{:?}}}", row.InterfaceGuid), row.InterfaceIndex))
             .collect();

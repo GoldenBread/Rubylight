@@ -6,7 +6,8 @@ use axum::{
     body::{Body, to_bytes},
     http::{HeaderMap, Request},
 };
-use butterpollo_core::{bandwidth_probe as probe, session::Role};
+use butterpollo_media_policy::bandwidth_probe as probe;
+use butterpollo_session::session::Role;
 use tower::ServiceExt;
 
 async fn get(f: &Fixture, paired: bool, query: &str) -> (StatusCode, HeaderMap, Vec<u8>) {

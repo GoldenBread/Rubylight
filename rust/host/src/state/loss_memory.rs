@@ -2,7 +2,7 @@
 //! boundaries, never from packet delivery or the control feedback callback.
 use super::{Host, Session, Shared};
 use anyhow::{Context, Result};
-use butterpollo_core::state::{Client, PairedSnapshot, PairedState};
+use butterpollo_session::state::{Client, PairedSnapshot, PairedState};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -223,7 +223,7 @@ impl Host {
         let mut state = self.paired.write().unwrap();
         // The history is the paired device's: its second screen streams over the same path.
         let client = &Client {
-            uuid: butterpollo_core::state::device_uuid(&session.launch.client.uuid).to_owned(),
+            uuid: butterpollo_session::state::device_uuid(&session.launch.client.uuid).to_owned(),
             ..session.launch.client.clone()
         };
         // Use the TLS-authenticated launch identity, never a name or a UUID

@@ -20,7 +20,7 @@
 //! sound it plays at once, so a route is tried again until then.
 
 use anyhow::{Context, Result};
-use butterpollo_core::config::Config;
+use butterpollo_config::config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -269,7 +269,7 @@ fn load(directory: &Path) -> Result<Journal> {
     }
 }
 fn save(directory: &Path, journal: &Journal) -> Result<()> {
-    butterpollo_core::state::write_json(&path(directory), journal)
+    butterpollo_session::state::write_json(&path(directory), journal)
 }
 
 #[derive(Default)]

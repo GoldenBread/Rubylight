@@ -7,7 +7,7 @@
 //!
 //! Every call blocks and impersonates on the calling thread: run them on a
 //! blocking thread, not an async worker.
-use butterpollo_core::file_transfer::{self, NameError};
+use butterpollo_session::file_transfer::{self, NameError};
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, Metadata, OpenOptions},

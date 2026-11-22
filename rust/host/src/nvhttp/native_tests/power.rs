@@ -8,10 +8,8 @@ use crate::{
     wake::fake::Fake as FakeWake,
 };
 use anyhow::Result;
-use butterpollo_core::{
-    native_api::power::{Power, Update},
-    power_action::{Action, RESTART_SHUTDOWN_OFF, SleepStates, Unconfirmed},
-};
+use butterpollo_session::power_action::{Action, RESTART_SHUTDOWN_OFF, SleepStates, Unconfirmed};
+use rubylight_native_api::power::{Power, Update};
 use std::{
     sync::{Mutex, Weak},
     time::{Duration, Instant},

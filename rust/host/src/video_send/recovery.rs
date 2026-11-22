@@ -1,6 +1,7 @@
 //! Shared pacing decisions for encoder admission and both conventional send paths.
 use crate::state::Session;
-use butterpollo_core::{config::Config, network_pacing, packet::VideoPacketizer};
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::{network_pacing, packet::VideoPacketizer};
 use butterpollo_windows::net::Link;
 use std::{net::SocketAddr, time::Duration};
 
@@ -14,9 +15,9 @@ pub(crate) struct Pace {
 /// for a client that reports a wireless route; the two are mutually exclusive.
 pub(crate) fn configure(session: &Session, config: &Config) -> bool {
     // FEC parity, for this stream and the ones after it: GFNI where the CPU has it.
-    butterpollo_core::packet::use_gfni(config.boolean("fec_gfni", true));
+    butterpollo_media_policy::packet::use_gfni(config.boolean("fec_gfni", true));
     tracing::info!(
-        gfni = butterpollo_core::packet::gfni_active(),
+        gfni = butterpollo_media_policy::packet::gfni_active(),
         "FEC parity path"
     );
     let (codec, wireless) = (session.config.codec, session.config.client_wireless);

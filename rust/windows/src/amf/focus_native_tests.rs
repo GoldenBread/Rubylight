@@ -1,7 +1,7 @@
 //! Opt-in M0 probe (docs/encoder-focus-design.md section 7): does this GPU's
 //! AMF honour an ROI map, per codec and bit depth? Synthetic textures only.
 use super::*;
-use butterpollo_core::encoder_focus::Support;
+use butterpollo_media_policy::encoder_focus::Support;
 
 #[test]
 #[ignore = "requires an idle AMD GPU and AMF"]
@@ -19,7 +19,7 @@ fn focus_native_probe_verifies_roi_per_codec_and_depth() -> Result<()> {
         ("av1", 2, true),
     ] {
         for (width, height, bitrate_kbps) in [(640, 480, 2_000), (1920, 1080, 20_000)] {
-            let config = butterpollo_core::rtsp::Negotiated {
+            let config = butterpollo_media_policy::rtsp::Negotiated {
                 width,
                 height,
                 fps: 60,
@@ -141,12 +141,12 @@ fn focus_native_diag() -> Result<()> {
         let bitrate_kbps: u32 = parts[2].parse()?;
         let ten_bit = parts.get(3) == Some(&"10");
         for variant in env("FOCUS_DIAG_VARIANTS", "default").split('|') {
-            let mut options = butterpollo_core::config::Config::default();
+            let mut options = butterpollo_config::config::Config::default();
             for pair in variant.split(';').filter(|pair| pair.contains('=')) {
                 let (key, value) = pair.split_once('=').unwrap();
                 options.values.insert(key.into(), value.into());
             }
-            let config = butterpollo_core::rtsp::Negotiated {
+            let config = butterpollo_media_policy::rtsp::Negotiated {
                 width,
                 height,
                 fps: 60,
@@ -194,7 +194,7 @@ fn focus_native_diag() -> Result<()> {
                 .map(|name| format!("{name}={:?}", encoder.read(name)))
                 .collect();
             let (cw, ch) = focus::coded_size((width, height));
-            let (columns, lines) = butterpollo_core::encoder_focus::grid(codec, cw, ch);
+            let (columns, lines) = butterpollo_media_policy::encoder_focus::grid(codec, cw, ch);
             let pitch = focus::map_pitch(encoder.context_for_tests(), columns, lines)?;
             println!(
                 "== codec {codec} {width}x{height} {bitrate_kbps} kbps ten_bit {ten_bit} [{variant}] map {columns}x{lines} pitch {pitch}\n   {}",

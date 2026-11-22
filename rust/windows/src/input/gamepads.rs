@@ -1,7 +1,7 @@
 //! Virtual gamepad lifecycle, controller reports, and feedback.
 
 use super::*;
-use butterpollo_core::{
+use butterpollo_input_policy::{
     input_policy::{VHF_STEAM_CONTROLLER, VIGEM_DS4},
     steam_pad,
 };
@@ -85,8 +85,8 @@ pub struct Gamepads {
     available: u32,
     profiles: BTreeMap<u16, u16>,
     arrivals: BTreeMap<u16, (u8, u16)>,
-    states: BTreeMap<u16, (Event, butterpollo_core::input_policy::BackButton)>,
-    policy: butterpollo_core::input_policy::Policy,
+    states: BTreeMap<u16, (Event, butterpollo_input_policy::input_policy::BackButton)>,
+    policy: butterpollo_input_policy::input_policy::Policy,
     started: std::time::Instant,
     pointers: BTreeMap<(u8, u32), u8>,
     unsupported_touchpads: BTreeSet<u8>,
@@ -137,7 +137,7 @@ pub struct Gamepads {
     /// USB vendor and product of each controller whose client said which it
     /// is (0x55000080), sent before its arrival.
     identities: BTreeMap<u16, (u16, u16)>,
-    warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+    warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     /// Each Steam Controller client's real firmware attributes, applied
     /// again whenever its pad is plugged anew.
     steam_attributes: BTreeMap<u16, steam_pad::SteamAttributes>,
@@ -252,21 +252,21 @@ impl Drop for Slot {
 impl Gamepads {
     pub(super) fn set_warnings(
         &mut self,
-        warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+        warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     ) {
         self.warnings = warnings;
     }
     pub fn open(profile: u16) -> Result<Self> {
         Self::open_options(
             profile,
-            butterpollo_core::input_policy::Policy::resolve(&Default::default())?,
+            butterpollo_input_policy::input_policy::Policy::resolve(&Default::default())?,
             Default::default(),
         )
     }
     pub(super) fn open_options(
         profile: u16,
-        policy: butterpollo_core::input_policy::Policy,
-        warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+        policy: butterpollo_input_policy::input_policy::Policy,
+        warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
         let (backend, available) = gamepad_backend::Backend::open(profile)?;
         Ok(Self {
@@ -310,7 +310,7 @@ impl Gamepads {
     /// the `steam_deck_controller` setting and the host allow it. Returns
     /// whether controller `id` is one.
     fn ensure_deck(&mut self, id: u16) -> Result<bool> {
-        use butterpollo_core::input_policy::{
+        use butterpollo_input_policy::input_policy::{
             CTYPE_STEAM, DeckPad, USBIP_DUALSENSE, USBIP_SWITCH2, VIGEM_X360,
         };
         // A pad chosen by name is the one every client gets.
@@ -386,7 +386,7 @@ impl Gamepads {
     /// Switch 2 Pro Controller, or for every controller when `gamepad =
     /// usbip_switch2` chose it. Returns whether controller `id` is one.
     fn ensure_switch2(&mut self, id: u16) -> Result<bool> {
-        use butterpollo_core::input_policy::{USBIP_SWITCH2, wants_switch2};
+        use butterpollo_input_policy::input_policy::{USBIP_SWITCH2, wants_switch2};
         if self.switch2s.contains_key(&id) {
             return Ok(true);
         }
@@ -457,7 +457,7 @@ impl Gamepads {
         if self.profile != 0
             || !self.policy.steam_app
             || self.available & (1 << (VHF_STEAM_CONTROLLER - 1)) == 0
-            || !butterpollo_core::input_policy::steam_controls(kind, capabilities)
+            || !butterpollo_input_policy::input_policy::steam_controls(kind, capabilities)
         {
             return false;
         }
@@ -493,7 +493,7 @@ impl Gamepads {
         }
         if self.profile == 0
             && !self.policy.steam_app
-            && butterpollo_core::input_policy::steam_controls(kind, capabilities)
+            && butterpollo_input_policy::input_policy::steam_controls(kind, capabilities)
         {
             tracing::info!(
                 controller = id,
@@ -637,7 +637,7 @@ impl Gamepads {
         }
     }
     fn ensure_dualsense(&mut self, id: u16) -> Result<bool> {
-        use butterpollo_core::{
+        use butterpollo_input_policy::{
             haptics,
             input_policy::{USBIP_DUALSENSE, VHF_DUALSENSE},
         };
@@ -812,7 +812,7 @@ impl Gamepads {
                 // A controller that is no longer a Switch 2 Pro Controller
                 // (another one in its place) gets its own pad.
                 if self.switch2s.contains_key(&id)
-                    && !butterpollo_core::input_policy::wants_switch2(
+                    && !butterpollo_input_policy::input_policy::wants_switch2(
                         self.profile,
                         self.identities.get(&id).copied(),
                     )
@@ -846,7 +846,7 @@ impl Gamepads {
                 // Whichever branch gave it its pad (a USB/IP DualSense returns from `ensure`
                 // early), and also when the pad stayed as it was.
                 let pad = if self.dualsenses.contains_key(&id) {
-                    Some(butterpollo_core::input_policy::VHF_DUALSENSE)
+                    Some(butterpollo_input_policy::input_policy::VHF_DUALSENSE)
                 } else {
                     self.profiles.get(&id).copied()
                 };
@@ -939,7 +939,7 @@ impl Gamepads {
                 let id = u16::from(attributes.controller);
                 // Only from a Steam Controller that announced them.
                 if !self.arrivals.get(&id).is_some_and(|(kind, capabilities)| {
-                    *kind == butterpollo_core::input_policy::CTYPE_STEAM
+                    *kind == butterpollo_input_policy::input_policy::CTYPE_STEAM
                         && capabilities & LI_CCAP_STEAM_ATTRIBUTES != 0
                 }) {
                     return Ok(());
@@ -1207,13 +1207,13 @@ impl Gamepads {
     pub(super) fn take_steam_haptics(&mut self) -> Vec<steam_pad::SteamHaptic> {
         std::mem::take(&mut self.steam_haptics)
     }
-    pub(super) fn haptics(&self) -> Vec<butterpollo_core::haptics::Frame> {
+    pub(super) fn haptics(&self) -> Vec<butterpollo_input_policy::haptics::Frame> {
         self.dualsenses
             .values()
             .flat_map(|pad| pad.haptics())
             .collect()
     }
-    pub(super) fn speaker(&self) -> Vec<butterpollo_core::haptics::Frame> {
+    pub(super) fn speaker(&self) -> Vec<butterpollo_input_policy::haptics::Frame> {
         self.dualsenses.values().flat_map(|p| p.speaker()).collect()
     }
     pub(super) fn audio(&mut self, id: u16, kind: u16, payload: &[u8]) {
@@ -1540,7 +1540,7 @@ fn poll_feedback(
 }
 fn profile_name(profile: u16) -> &'static str {
     match profile {
-        butterpollo_core::input_policy::VIGEM_X360 => "vigem_x360",
+        butterpollo_input_policy::input_policy::VIGEM_X360 => "vigem_x360",
         VIGEM_DS4 => "vigem_ds4",
         3 => "vhf_xbox_one",
         4 => "vhf_xbox",
@@ -1548,7 +1548,7 @@ fn profile_name(profile: u16) -> &'static str {
         6 => "vhf_ds5",
         7 => "vhf_switch",
         VHF_STEAM_CONTROLLER => "vhf_steam",
-        butterpollo_core::input_policy::USBIP_SWITCH2 => "usbip_switch2",
+        butterpollo_input_policy::input_policy::USBIP_SWITCH2 => "usbip_switch2",
         _ => "vhf",
     }
 }
@@ -1561,7 +1561,7 @@ fn profile_button_word(profile: Option<u16>, buttons: u32) -> u32 {
     if profile == Some(VHF_STEAM_CONTROLLER) {
         buttons
     } else {
-        buttons & !butterpollo_core::switch2::BUTTON_C
+        buttons & !butterpollo_input_policy::switch2::BUTTON_C
     }
 }
 /// Whether an error is the driver saying its device is gone: what the VHF
@@ -1580,7 +1580,7 @@ fn device_removed(error: &anyhow::Error) -> bool {
 /// The session warning for a Nintendo controller (Moonlight type 3) that automatic
 /// selection made another pad because the driver has no Switch Pro profile.
 fn switch_fallback(configured: u16, kind: u8, capabilities: u16, profile: u16) -> Option<String> {
-    use butterpollo_core::input_policy::{VHF_DS4, VHF_DUALSENSE, VHF_SWITCH};
+    use butterpollo_input_policy::input_policy::{VHF_DS4, VHF_DUALSENSE, VHF_SWITCH};
     if configured != 0 || kind != 3 || profile == VHF_SWITCH {
         return None;
     }
@@ -1612,7 +1612,7 @@ fn steam_controls_fallback(
     available: u32,
     profile: u16,
 ) -> Option<String> {
-    use butterpollo_core::input_policy::{VHF_DS4, VHF_DUALSENSE, steam_controls};
+    use butterpollo_input_policy::input_policy::{VHF_DS4, VHF_DUALSENSE, steam_controls};
     if configured != 0
         || !steam_app
         || profile == VHF_STEAM_CONTROLLER

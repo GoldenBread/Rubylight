@@ -575,7 +575,7 @@ fn a_listed_set_of_monitors_gives_refresh_rotations_and_clone_groups() {
     let listed = [first, second];
     assert_eq!(
         topology.refresh_in(&listed, "second").unwrap(),
-        butterpollo_core::framegen::Rate(120_000)
+        butterpollo_media_policy::framegen::Rate(120_000)
     );
     assert!(topology.refresh_in(&listed, "third").is_err());
     assert_eq!(

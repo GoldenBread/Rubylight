@@ -1,6 +1,7 @@
 //! Display scale for a stream: the virtual display's, a kept or remembered scale, and the
 //! physical display's calibration.
 use super::*;
+use butterpollo_session::config_ext::ConfigExt;
 
 /// The scale a stream's display gets: the configured virtual display scale for a
 /// virtual display or a remote monitor's retained one, and 0 (leave it alone) for a
@@ -50,7 +51,7 @@ pub(super) fn scale_setup(
     largest: impl FnOnce() -> Result<u32>,
 ) -> Result<ScaleSetup> {
     // Checked at /launch too, so a bad value never gets this far.
-    let requested = butterpollo_core::display_policy::client_display_scale(options)?;
+    let requested = butterpollo_media_policy::display_policy::client_display_scale(options)?;
     if let Some(chosen) = requested.filter(|_| virtual_layout) {
         let (scale, lowered) = fit_client_scale(chosen, largest());
         return Ok(ScaleSetup {
@@ -266,7 +267,7 @@ pub(super) fn set_up_scale(
 /// `dd_virtual_display_scale` override only. The host's setting and an app's
 /// are for virtual displays; a physical display's scale is the user's unless
 /// the device asks for one. 0 leaves it.
-pub(super) fn physical_scale(client: &butterpollo_core::state::Client) -> i64 {
+pub(super) fn physical_scale(client: &butterpollo_session::state::Client) -> i64 {
     const KEY: &str = "dd_virtual_display_scale";
     let Some(value) = client
         .extra
@@ -298,7 +299,7 @@ pub(super) fn virtual_display_size(
     size: (u32, u32),
     stream: (u32, u32),
 ) -> (u32, u32) {
-    butterpollo_core::display_policy::virtual_shape(
+    butterpollo_media_policy::display_policy::virtual_shape(
         config.dd_rotation_option(),
         config.dd_manual_rotation(),
         size,

@@ -1,6 +1,6 @@
 use crate::state::Shared;
 use anyhow::{Result, ensure};
-use butterpollo_core::{
+use butterpollo_session::{
     library::{self, Selection},
     native::Scan,
 };
@@ -53,8 +53,8 @@ fn scan_installed(settings: library::Settings) -> Scan {
         let roots = butterpollo_windows::steam::roots();
         (
             discovery,
-            butterpollo_core::steam::discover(&roots),
-            butterpollo_core::steam::collections(&roots),
+            butterpollo_session::steam::discover(&roots),
+            butterpollo_session::steam::collections(&roots),
         )
     });
     let collections = LAST_COLLECTIONS
@@ -111,14 +111,14 @@ fn scan_installed(settings: library::Settings) -> Scan {
         .collecting(crate::playnite::collections())
 }
 /// Tells once how many collection names `/library` leaves out or shortens for these apps.
-pub fn tell_collections_cut(apps: &[butterpollo_core::state::App], scan: &Scan) {
+pub fn tell_collections_cut(apps: &[butterpollo_session::state::App], scan: &Scan) {
     let cut = scan.collections_cut(apps);
     if newly_told(&TOLD_CUT, (cut > 0).then(|| cut.to_string()).as_deref()) {
         tracing::warn!(
             names = cut,
-            per_game = butterpollo_core::native::MAX_COLLECTIONS_PER_GAME,
-            name_bytes = butterpollo_core::native::MAX_COLLECTION_NAME_BYTES,
-            json_bytes = butterpollo_core::native::MAX_COLLECTIONS_JSON_BYTES,
+            per_game = butterpollo_session::native::MAX_COLLECTIONS_PER_GAME,
+            name_bytes = butterpollo_session::native::MAX_COLLECTION_NAME_BYTES,
+            json_bytes = butterpollo_session::native::MAX_COLLECTIONS_JSON_BYTES,
             "collection names left out or shortened in the library"
         );
     }
@@ -131,7 +131,7 @@ fn scan_installed(_: library::Settings) -> Scan {
 
 /// The last collections Steam's file gave, kept through a read that fails.
 #[cfg(not(any(test, feature = "test-harness")))]
-static LAST_COLLECTIONS: LazyLock<Mutex<butterpollo_core::steam::LastCollections>> =
+static LAST_COLLECTIONS: LazyLock<Mutex<butterpollo_session::steam::LastCollections>> =
     LazyLock::new(Default::default);
 /// The last problem told about Steam's collections: a scan every few minutes says it once.
 #[cfg(not(any(test, feature = "test-harness")))]
@@ -376,7 +376,7 @@ fn downloaded_cover(folder: &Path, uuid: &str, url: &str) -> Option<PathBuf> {
     }
     let saved = crate::steam::download_artwork(url).and_then(|bytes| {
         std::fs::create_dir_all(folder)?;
-        butterpollo_core::state::atomic_write(&file, &bytes)
+        butterpollo_session::state::atomic_write(&file, &bytes)
     });
     match saved {
         Ok(()) => {
@@ -524,7 +524,7 @@ fn steam_moved(directory: &Path, stamp: u64) -> bool {
 }
 #[cfg(not(any(test, feature = "test-harness")))]
 fn steam_stamp(roots: &crate::steam::Roots) -> u64 {
-    butterpollo_windows::library::in_background(|| butterpollo_core::steam::library_stamp(roots))
+    butterpollo_windows::library::in_background(|| butterpollo_session::steam::library_stamp(roots))
 }
 /// Tests never read the registry and the launchers' folders.
 #[cfg(any(test, feature = "test-harness"))]

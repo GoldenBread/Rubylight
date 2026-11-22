@@ -2,7 +2,7 @@
 pub(super) use super::usbip_pad::usbip_exe;
 use super::{gamepads::Slot, usbip_pad::UsbPad};
 use anyhow::Result;
-use butterpollo_core::{
+use butterpollo_input_policy::{
     input::Input as Event,
     steam_deck::{REPORT_PERIOD, SteamDeck},
 };

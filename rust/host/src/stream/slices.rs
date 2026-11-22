@@ -9,12 +9,12 @@
 
 use crate::state::Session;
 use anyhow::Result;
-use butterpollo_core::{
+use butterpollo_media_policy::{
     packet::{SliceOverflow, StreamedFrame, VideoPacketizer},
     performance::{Claim, Stamps},
-    session::Stats,
     stream_policy::{SendDrop, SendLoss},
 };
+use butterpollo_session::session::Stats;
 use butterpollo_windows::{
     encoder::{Encoded, Unit},
     frame_pool,
@@ -99,7 +99,7 @@ pub fn report_overflow(session: &Session, frame: u32, overflow: SliceOverflow) {
         frame_bytes = overflow.bytes,
         "a streamed video frame passed the byte cap its blocks were planned for; slice delivery is off for this stream"
     );
-    session.launch.warnings.event("slice_delivery_overflow", format!("A video frame reached {} bytes, past the {} byte cap its blocks were planned for. Slice delivery is off for the rest of this stream and a recovery frame follows. Report this with the host log.", overflow.bytes, overflow.cap), butterpollo_core::session::EVENT_PERIOD);
+    session.launch.warnings.event("slice_delivery_overflow", format!("A video frame reached {} bytes, past the {} byte cap its blocks were planned for. Slice delivery is off for the rest of this stream and a recovery frame follows. Report this with the host log.", overflow.bytes, overflow.cap), butterpollo_session::session::EVENT_PERIOD);
 }
 
 /// A streamed frame is open (units sent, the last one not seen), so the

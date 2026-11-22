@@ -1,7 +1,7 @@
 //! Which WGC compositions of a display changed the foreground window, for
 //! `Freshness::observe_focus`: a window animating beside a game made every
 //! refresh a composition of its own.
-use butterpollo_core::capture_policy::{focus_changed, focus_on_display, merge_focus};
+use butterpollo_media_policy::capture_policy::{focus_changed, focus_on_display, merge_focus};
 use std::time::{Duration, Instant};
 use windows::Graphics::Capture::Direct3D11CaptureFrame;
 use windows::Win32::{

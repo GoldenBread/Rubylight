@@ -1,9 +1,9 @@
-"""Writes rust/core/src/nucleus/release-2.4.2.txt from Nucleus Co-op's release
+"""Writes rust/core/session/src/nucleus/release-2.4.2.txt from Nucleus Co-op's release
 archive: each file as `<sha256> <size> <path>` and each empty folder as
 `<path>\\`, `\\`-separated as it unpacks, in the archive's order. Run once per
 pinned release, with the archive downloaded from its release page:
 
-    python -I tools/nucleus_manifest.py NucleusApp.zip > rust/core/src/nucleus/release-2.4.2.txt
+    python -I tools/nucleus_manifest.py NucleusApp.zip > rust/core/session/src/nucleus/release-2.4.2.txt
 
 The archive is only read, never unpacked. Its entries are encrypted with the
 password SplitScreen.Me publishes, "nucleus".

@@ -7,7 +7,8 @@
 
 use crate::capture::{GpuImage, Image};
 use anyhow::{Context, Result};
-use butterpollo_core::{encoder_focus, encoder_gpu, rtsp::Negotiated, session::Warnings};
+use butterpollo_media_policy::{encoder_focus, encoder_gpu, rtsp::Negotiated};
+use butterpollo_session::session::Warnings;
 
 /// How `Encoded::bytes` relates to a picture. Only slice delivery
 /// (`video_slice_delivery`: AMF's slice output mode, NVENC's subframe
@@ -26,7 +27,7 @@ pub struct Encoded {
     /// sets its record framing or older clients' container here, as pieces of
     /// `bytes`, which the packetizer copies straight into packets
     /// ([`Self::payload`]): `bytes` then holds the codec's own output.
-    pub framing: Option<butterpollo_core::pyrowave::Framing>,
+    pub framing: Option<butterpollo_media_policy::pyrowave::Framing>,
     pub unit: Unit,
     pub idr: bool,
     pub after_invalidation: bool,
@@ -45,17 +46,18 @@ pub struct Encoded {
 }
 impl Encoded {
     /// The picture as the packetizer reads it: `bytes`, or `bytes` framed.
-    pub fn payload(&self) -> Result<butterpollo_core::pyrowave::Payload<'_>> {
+    pub fn payload(&self) -> Result<butterpollo_media_policy::pyrowave::Payload<'_>> {
         Ok(match &self.framing {
-            None => butterpollo_core::pyrowave::Payload::Bytes(&self.bytes),
+            None => butterpollo_media_policy::pyrowave::Payload::Bytes(&self.bytes),
             Some(framing) => framing.view(&self.bytes)?.into(),
         })
     }
     /// Bytes the picture takes on the wire, before packet headers.
     pub fn wire_len(&self) -> usize {
-        self.framing
-            .as_ref()
-            .map_or(self.bytes.len(), butterpollo_core::pyrowave::Framing::len)
+        self.framing.as_ref().map_or(
+            self.bytes.len(),
+            butterpollo_media_policy::pyrowave::Framing::len,
+        )
     }
 }
 /// A large frame's buffer goes back to the encoders' pool
@@ -155,12 +157,12 @@ fn require_encoding_among(name: &str, vendor: u32, gpus: &[crate::capture::Gpu])
     Ok(encoder_gpu::check_adapter(&adapter, &all)?)
 }
 /// AMF or NVENC for this device and the `encoder` setting
-/// ([`butterpollo_core::encoder_policy::backend`]).
+/// ([`butterpollo_media_policy::encoder_policy::backend`]).
 fn backend(
     device: &crate::capture::Device,
-    tuning: &butterpollo_core::config::Config,
+    tuning: &butterpollo_config::config::Config,
 ) -> Result<&'static str> {
-    butterpollo_core::encoder_policy::backend(
+    butterpollo_media_policy::encoder_policy::backend(
         tuning.get("encoder", "auto"),
         device.vendor,
         &device.display.adapter,
@@ -232,7 +234,7 @@ impl Encoder {
             _ => 1.,
         }
     }
-    pub fn set_hdr_metadata(&mut self, metadata: butterpollo_core::hdr::Metadata) {
+    pub fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
         match self {
             Self::Amf(encoder) => encoder.set_hdr_metadata(metadata),
             Self::Nvenc(encoder) => encoder.set_hdr_metadata(metadata),
@@ -276,19 +278,23 @@ impl Encoder {
         }
     }
     pub fn new_gpu(config: &Negotiated, image: &GpuImage) -> Result<Self> {
-        Self::new_gpu_options(config, image, &butterpollo_core::config::Config::default())
+        Self::new_gpu_options(
+            config,
+            image,
+            &butterpollo_config::config::Config::default(),
+        )
     }
     pub fn new_gpu_options(
         config: &Negotiated,
         image: &GpuImage,
-        tuning: &butterpollo_core::config::Config,
+        tuning: &butterpollo_config::config::Config,
     ) -> Result<Self> {
         Self::new_gpu_reported(config, image, tuning, &Default::default())
     }
     pub fn new_gpu_reported(
         config: &Negotiated,
         image: &GpuImage,
-        tuning: &butterpollo_core::config::Config,
+        tuning: &butterpollo_config::config::Config,
         warnings: &std::sync::Arc<Warnings>,
     ) -> Result<Self> {
         warnings.clear("encoder_conversion");
@@ -530,7 +536,9 @@ impl Encoder {
             Self::Amf(e) => e.backlog_limit(),
             // PyroWave holds at most two frames in flight, the default limit:
             // with `pyrowave_encode_overlap` off its backlog stays empty.
-            Self::Nvenc(_) | Self::Pyrowave(_) => butterpollo_core::encoder_backlog::DEFAULT_LIMIT,
+            Self::Nvenc(_) | Self::Pyrowave(_) => {
+                butterpollo_media_policy::encoder_backlog::DEFAULT_LIMIT
+            }
         }
     }
     pub fn recovery_backlog_limit(&self) -> usize {
@@ -648,14 +656,14 @@ impl Encoder {
         Self::new_options(
             config,
             display,
-            &butterpollo_core::config::Config::default(),
+            &butterpollo_config::config::Config::default(),
         )
     }
     /// An encoder for CPU images, such as the codec probe's.
     pub fn new_options(
         config: &Negotiated,
         display: &str,
-        tuning: &butterpollo_core::config::Config,
+        tuning: &butterpollo_config::config::Config,
     ) -> Result<Self> {
         // The GPU the encoding adapter setting names, as capture opens it;
         // the display's own GPU only when nothing is set. A Radeon beside
@@ -988,7 +996,7 @@ mod tests {
         // A GPU that is not there: the encoder must not quietly use the
         // display's GPU instead, as the codec probe did with two GPUs.
         let tuning =
-            butterpollo_core::config::Config::parse("adapter_name = No Such GPU\n").unwrap();
+            butterpollo_config::config::Config::parse("adapter_name = No Such GPU\n").unwrap();
         let error = Encoder::new_options(&stream, "", &tuning)
             .err()
             .expect("an encoder on a missing GPU");

@@ -2,10 +2,8 @@
 //! applies a fractional limit and checks restoration through the lease. It
 //! requires write access to RTSS's profile; it never requests elevation.
 use anyhow::{Context, Result, ensure};
-use butterpollo_core::{
-    config::Config,
-    framegen::{Policy, Provider, Rate},
-};
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::framegen::{Policy, Provider, Rate};
 use butterpollo_windows::{display_recovery, limiter, rtss};
 use std::{
     collections::BTreeMap,
@@ -86,7 +84,7 @@ fn main() -> Result<()> {
         .open(root.join("Profiles/Global"))
         .context("the exercise needs write access to the RTSS profile")?;
     drop(_writable);
-    butterpollo_core::state::write_json(
+    butterpollo_session::state::write_json(
         &directory.join("before.json"),
         &serde_json::json!({"profile":original,"reply":before}),
     )?;

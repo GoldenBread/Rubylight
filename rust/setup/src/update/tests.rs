@@ -547,7 +547,7 @@ fn a_failed_installed_record_does_not_leave_a_rollback_behind() -> Result<()> {
     assert!(format!("{error:#}").contains("disk full"));
     assert!(!result.exists());
     assert_eq!(
-        butterpollo_core::update_recovery::recover(root.path(), &install)?,
+        butterpollo_session::update_recovery::recover(root.path(), &install)?,
         None
     );
     Ok(())

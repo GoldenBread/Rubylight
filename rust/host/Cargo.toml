@@ -11,7 +11,13 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tracing.workspace = true
 log = "0.4"
-butterpollo-core = { path = "../core" }
+butterpollo-crypto = { path = "../core/crypto" }
+butterpollo-config = { path = "../core/config" }
+butterpollo-media-policy = { path = "../core/media-policy" }
+butterpollo-input-policy = { path = "../core/input-policy" }
+butterpollo-session = { path = "../core/session" }
+rubylight-native-api = { path = "../../client/protocol/native-api" }
+rubylight-protocol = { path = "../../client/protocol/core" }
 butterpollo-windows = { path = "../windows" }
 tokio = { version = "1.48", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }

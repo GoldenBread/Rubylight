@@ -97,7 +97,7 @@ pub(super) async fn serverinfo(
     if let Some(client) = &client {
         note_client_agent(
             &h,
-            butterpollo_core::state::device_uuid(&client.uuid),
+            butterpollo_session::state::device_uuid(&client.uuid),
             &headers,
         );
     }
@@ -181,7 +181,7 @@ fn note_client_agent(h: &Shared, uuid: &str, headers: &axum::http::HeaderMap) {
 pub(super) fn serverinfo_response(
     h: &Shared,
     connection: &Connection,
-    config: &butterpollo_core::config::Config,
+    config: &butterpollo_config::config::Config,
     client: Option<&Client>,
     windows_11: bool,
     mac: String,
@@ -190,7 +190,7 @@ pub(super) fn serverinfo_response(
 ) -> Response {
     let ports = config.ports().unwrap();
     let paired = client.is_some();
-    let (limiter, virtual_limiter, limit) = butterpollo_core::framegen::advertised(
+    let (limiter, virtual_limiter, limit) = butterpollo_media_policy::framegen::advertised(
         config,
         config.virtual_display_mode(windows_11) != "disabled",
     );
@@ -256,10 +256,10 @@ pub(super) fn serverinfo_response(
         .filter(|game| {
             client.as_ref().is_some_and(|client| {
                 (device_uuid(&game.owner) == device_uuid(&client.uuid)
-                    && remote_owner(h, &client.uuid) == butterpollo_core::remote::Owner::None)
+                    && remote_owner(h, &client.uuid) == butterpollo_session::remote::Owner::None)
                     || h.confirmations.lock().unwrap().active(
                         &client.uuid,
-                        butterpollo_core::remote::Confirmation::Replace,
+                        butterpollo_session::remote::Confirmation::Replace,
                         &game.generation,
                     )
             })
@@ -282,9 +282,9 @@ pub(super) fn serverinfo_response(
         // 0 for plain HTTP and unpaired requests; the native API
         // (`docs/native-api.md`) answers paired HTTPS only.
         (
-            butterpollo_core::native_api::SERVERINFO_FIELD,
+            rubylight_native_api::SERVERINFO_FIELD,
             if paired {
-                butterpollo_core::native_api::API_VERSION
+                rubylight_native_api::API_VERSION
             } else {
                 0
             }
@@ -350,7 +350,7 @@ pub(super) fn serverinfo_response(
         (
             "RustHostProfile",
             if crate::network::from_this_pc(connection.peer) {
-                butterpollo_core::migration::profile_id(&h.directory)
+                butterpollo_session::migration::profile_id(&h.directory)
             } else {
                 String::new()
             },
@@ -380,7 +380,7 @@ pub(super) fn serverinfo_response(
         (
             "PyroWaveMinParityShards",
             if paired {
-                butterpollo_core::pyrowave::MIN_PARITY_SHARDS.to_string()
+                butterpollo_media_policy::pyrowave::MIN_PARITY_SHARDS.to_string()
             } else {
                 String::new()
             },
@@ -415,7 +415,7 @@ pub(super) fn serverinfo_response(
         fields.extend([
             (
                 "PowerActionVersion",
-                butterpollo_core::power_action::VERSION.to_string(),
+                butterpollo_session::power_action::VERSION.to_string(),
             ),
             ("SleepSupported", u8::from(h.power.supported()).to_string()),
             ("SleepAllowed", u8::from(client.allows_sleep()).to_string()),

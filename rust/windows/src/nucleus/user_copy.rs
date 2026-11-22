@@ -28,10 +28,10 @@
 //! rights only.
 use super::{files, install};
 use anyhow::{Context, Result, bail, ensure};
-use butterpollo_core::nucleus::generic::{self, Setup};
-use butterpollo_core::nucleus::handler::Handler;
-use butterpollo_core::nucleus::install::{self as pinned, Part};
-use butterpollo_core::nucleus::profile;
+use butterpollo_session::nucleus::generic::{self, Setup};
+use butterpollo_session::nucleus::handler::Handler;
+use butterpollo_session::nucleus::install::{self as pinned, Part};
+use butterpollo_session::nucleus::profile;
 use std::collections::BTreeSet;
 use std::os::windows::fs::MetadataExt;
 use std::os::windows::io::OwnedHandle;

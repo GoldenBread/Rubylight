@@ -154,7 +154,7 @@ fn a_frame_counts_as_unreturned_from_its_acceptance_not_from_its_conversion() {
 fn native_output_survives_a_late_poll_without_losing_submission_metadata() -> Result<()> {
     let _com = crate::capture::ComGuard::new()?;
     let device = Device::new("")?;
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 640,
         height: 480,
         codec: 0,
@@ -261,7 +261,7 @@ fn native_runtime_frame_caps_survive_bitrate_changes_and_follow_submissions() ->
     let _com = crate::capture::ComGuard::new()?;
     let device = Device::new("")?;
     for codec in 0..=2 {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 1280,
             height: 720,
             codec,
@@ -293,7 +293,7 @@ fn native_runtime_frame_caps_survive_bitrate_changes_and_follow_submissions() ->
             (54_000_000, 27_000),
             (800_000_000, 54_000),
         ] {
-            let cap = butterpollo_core::network_pacing::recovery_frame_cap(
+            let cap = butterpollo_media_policy::network_pacing::recovery_frame_cap(
                 pace,
                 bitrate,
                 Duration::from_secs_f64(1. / 119.88),
@@ -404,7 +404,7 @@ fn output_range_verifies_rejected_setters_and_initialized_readback() -> Result<(
 fn hdr_request(maximum_nits: u16) -> metadata::EncodedMetadata {
     metadata::EncodedMetadata::new(
         1,
-        butterpollo_core::hdr::Metadata {
+        butterpollo_media_policy::hdr::Metadata {
             maximum_nits,
             ..Default::default()
         },
@@ -696,7 +696,7 @@ fn keyframe_acknowledges_all_reasons_only_on_successful_idr_submission() {
 #[test]
 fn hdr_effective_metadata_ignores_control_only_values_and_preserves_codec_units() {
     use metadata::{EncodedMetadata, State, Update};
-    let metadata = butterpollo_core::hdr::Metadata::display(1000., 0.005, 400.);
+    let metadata = butterpollo_media_policy::hdr::Metadata::display(1000., 0.005, 400.);
     for codec in [1, 2] {
         let encoded = EncodedMetadata::new(codec, metadata);
         let value = encoded.value();
@@ -724,7 +724,7 @@ fn hdr_effective_metadata_ignores_control_only_values_and_preserves_codec_units(
             state.update(
                 EncodedMetadata::new(
                     codec,
-                    butterpollo_core::hdr::Metadata {
+                    butterpollo_media_policy::hdr::Metadata {
                         full_frame_nits: 600,
                         ..metadata
                     }
@@ -738,7 +738,7 @@ fn hdr_effective_metadata_ignores_control_only_values_and_preserves_codec_units(
     }
     let extreme = EncodedMetadata::new(
         2,
-        butterpollo_core::hdr::Metadata {
+        butterpollo_media_policy::hdr::Metadata {
             primaries: [[u16::MAX; 2]; 3],
             white: [u16::MAX; 2],
             maximum_nits: u16::MAX,
@@ -825,7 +825,7 @@ impl FakeRateProperties {
         state: &mut rate_control::State,
         codec: u8,
         bitrate: u32,
-        warnings: &butterpollo_core::session::Warnings,
+        warnings: &butterpollo_session::session::Warnings,
     ) {
         let driver = std::cell::RefCell::new(self);
         state.update(
@@ -859,18 +859,19 @@ impl FakeRateProperties {
 #[test]
 fn frame_size_rejection_or_readback_mismatch_warns_without_blocking_streams() -> Result<()> {
     for codec in 0..=2 {
-        let stream = butterpollo_core::rtsp::Negotiated {
+        let stream = butterpollo_media_policy::rtsp::Negotiated {
             codec,
             ..Default::default()
         };
         for text in ["", "amd_max_frame_size=2", "amd_max_frame_size=1"] {
-            let config = butterpollo_core::config::Config::parse(text)?;
-            let properties = butterpollo_core::encoder_policy::amf_rate_control(&config, &stream)?;
+            let config = butterpollo_config::config::Config::parse(text)?;
+            let properties =
+                butterpollo_media_policy::encoder_policy::amf_rate_control(&config, &stream)?;
             for failure in [
                 "mock AMF_NOT_SUPPORTED",
                 "mock readback differs from requested size",
             ] {
-                let warnings = butterpollo_core::session::Warnings::default();
+                let warnings = butterpollo_session::session::Warnings::default();
                 let mut attempted = Vec::new();
                 rate_control::configure(&properties, &warnings, |property| {
                     attempted.push(property.name.clone());
@@ -886,9 +887,10 @@ fn frame_size_rejection_or_readback_mismatch_warns_without_blocking_streams() ->
             }
         }
         for key in ["amd_peak_bitrate_ratio", "amd_vbv_buffer_frames"] {
-            let config = butterpollo_core::config::Config::parse(&format!("{key}=1"))?;
-            let properties = butterpollo_core::encoder_policy::amf_rate_control(&config, &stream)?;
-            let warnings = butterpollo_core::session::Warnings::default();
+            let config = butterpollo_config::config::Config::parse(&format!("{key}=1"))?;
+            let properties =
+                butterpollo_media_policy::encoder_policy::amf_rate_control(&config, &stream)?;
+            let warnings = butterpollo_session::session::Warnings::default();
             assert!(
                 rate_control::configure(&properties, &warnings, |_| {
                     bail!("mock AMF_NOT_SUPPORTED")
@@ -911,7 +913,7 @@ fn rate_control_keeps_each_failed_property_on_its_own_applied_bitrate() {
         for failed in initial.keys() {
             let mut driver = FakeRateProperties::new(codec);
             let mut state = rate_control::State::new(80_000, true);
-            let warnings = butterpollo_core::session::Warnings::default();
+            let warnings = butterpollo_session::session::Warnings::default();
             driver.rejected.insert(failed.clone());
             driver.apply(&mut state, codec, 40_000, &warnings);
             assert_eq!(driver.values[failed].value, initial[failed].value);
@@ -941,15 +943,16 @@ fn only_explicit_frame_caps_scale_with_bitrate_and_driver_default_stays_disabled
             "amd_max_frame_size=2",
             "amd_max_frame_size=0",
         ] {
-            let stream = butterpollo_core::rtsp::Negotiated {
+            let stream = butterpollo_media_policy::rtsp::Negotiated {
                 codec,
                 bitrate_kbps: 80_000,
                 fps: 120,
                 rate_millihz: 120_000,
                 ..Default::default()
             };
-            let config = butterpollo_core::config::Config::parse(text)?;
-            let properties = butterpollo_core::encoder_policy::amf_rate_control(&config, &stream)?;
+            let config = butterpollo_config::config::Config::parse(text)?;
+            let properties =
+                butterpollo_media_policy::encoder_policy::amf_rate_control(&config, &stream)?;
             let mut driver = FakeRateProperties::new(codec);
             let cap = match codec {
                 0 => "MaxAUSize",
@@ -957,9 +960,11 @@ fn only_explicit_frame_caps_scale_with_bitrate_and_driver_default_stays_disabled
                 _ => "Av1MaxCompressedFrameSize",
             };
             driver.values.get_mut(cap).unwrap().value = 0;
-            let warnings = butterpollo_core::session::Warnings::default();
+            let warnings = butterpollo_session::session::Warnings::default();
             rate_control::configure(&properties, &warnings, |property| {
-                let butterpollo_core::encoder_policy::Value::Integer(value) = property.value else {
+                let butterpollo_media_policy::encoder_policy::Value::Integer(value) =
+                    property.value
+                else {
                     panic!("rate limits are integer bit budgets")
                 };
                 driver.values.get_mut(&property.name).unwrap().value = value;
@@ -970,7 +975,8 @@ fn only_explicit_frame_caps_scale_with_bitrate_and_driver_default_stays_disabled
                 driver.values[cap].value,
                 if disabled { 0 } else { 1_333_333 }
             );
-            let automatic = butterpollo_core::encoder_policy::amf_frame_cap_automatic(&config);
+            let automatic =
+                butterpollo_media_policy::encoder_policy::amf_frame_cap_automatic(&config);
             let mut state = rate_control::State::new(stream.bitrate_kbps, !automatic && !disabled);
             driver.apply(&mut state, codec, 40_000, &warnings);
             assert_eq!(
@@ -1005,7 +1011,7 @@ fn only_explicit_frame_caps_scale_with_bitrate_and_driver_default_stays_disabled
 fn rate_control_retains_failed_basis_and_warning_across_read_failures_and_clamps() {
     let mut driver = FakeRateProperties::new(1);
     let mut state = rate_control::State::new(80_000, true);
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let peak = "HevcPeakBitrate";
     driver.rejected.insert(peak.into());
     driver.apply(&mut state, 1, 40_000, &warnings);
@@ -1043,7 +1049,7 @@ fn rate_control_retains_failed_basis_and_warning_across_read_failures_and_clamps
 fn rate_control_target_rejection_preserves_limits_and_existing_buffer_warning() {
     let mut driver = FakeRateProperties::new(2);
     let mut state = rate_control::State::new(80_000, true);
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     driver.rejected.insert("Av1PeakBitrate".into());
     driver.apply(&mut state, 2, 40_000, &warnings);
     let reads = driver.reads;
@@ -1114,7 +1120,7 @@ fn bitrate_ceiling_takes_the_lower_driver_report_and_ignores_nonpositive_ones() 
 /// and the peak to the bitrate ceiling where the driver gives no range.
 #[test]
 fn start_up_peak_and_vbv_limits_are_held_to_their_property_ranges() {
-    use butterpollo_core::encoder_policy::{Property, Value};
+    use butterpollo_media_policy::encoder_policy::{Property, Value};
     let property = |name: &str, value| Property {
         name: name.into(),
         value: Value::Integer(value),
@@ -1159,14 +1165,14 @@ fn start_up_peak_and_vbv_limits_are_held_to_their_property_ranges() {
 fn a_bitrate_above_the_driver_ceiling_starts_held_to_it_on_every_codec() -> Result<()> {
     let _com = crate::capture::ComGuard::new()?;
     let gpu = Device::new("")?;
-    let options = butterpollo_core::config::Config::default();
+    let options = butterpollo_config::config::Config::default();
     let requested = 1_900_000u32;
     for (codec, width, height, target) in [
         (0u8, 1920u32, 1080u32, "TargetBitrate"),
         (1, 3840, 2160, "HevcTargetBitrate"),
         (2, 3840, 2160, "Av1TargetBitrate"),
     ] {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width,
             height,
             codec,
@@ -1213,8 +1219,8 @@ fn a_bitrate_above_the_driver_ceiling_starts_held_to_it_on_every_codec() -> Resu
     }
     // An explicit peak ratio over the held target starts too: its peak is held
     // to Av1PeakBitrate's range instead of being refused.
-    let options = butterpollo_core::config::Config::parse("amd_peak_bitrate_ratio=2")?;
-    let config = butterpollo_core::rtsp::Negotiated {
+    let options = butterpollo_config::config::Config::parse("amd_peak_bitrate_ratio=2")?;
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 3840,
         height: 2160,
         codec: 2,
@@ -1246,7 +1252,7 @@ fn rate_control_holds_runtime_targets_to_the_driver_ceiling() {
     // #80: AMF refuses Av1TargetBitrate above its range with
     // AMF_OUT_OF_RANGE, so a request above the ceiling runs at the ceiling.
     let mut driver = FakeRateProperties::new(2);
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     let mut state = rate_control::State::new(1_000_000, true).with_ceiling(Some(800_000_000));
     // The stream started held at 800 Mbps: the same request writes nothing.
     driver.apply(&mut state, 2, 1_000_000, &warnings);
@@ -1286,7 +1292,7 @@ fn rate_control_holds_runtime_targets_to_the_driver_ceiling() {
 #[test]
 fn a_peak_held_to_the_ceiling_scales_from_its_asked_value() {
     let mut driver = FakeRateProperties::new(2);
-    let warnings = butterpollo_core::session::Warnings::default();
+    let warnings = butterpollo_session::session::Warnings::default();
     // amd_peak_bitrate_ratio=2 at 1.9 Gbps: target and peak start at 1 Gbps.
     let mut state = rate_control::State::new(1_900_000, true).with_ceiling(Some(1_000_000_000));
     state.held_at_start(&[("Av1PeakBitrate".to_string(), 2_000_000_000, 1_000_000_000)]);
@@ -1396,13 +1402,13 @@ fn hdr10_metadata_and_range_reach_the_bitstream() -> Result<()> {
         },
     )?;
     source.readback(&mut None)?;
-    let mut metadata = butterpollo_core::hdr::Metadata::display(1015., 0.005, 400.);
+    let mut metadata = butterpollo_media_policy::hdr::Metadata::display(1015., 0.005, 400.);
     metadata.max_cll = 1000;
     metadata.max_fall = 400;
-    let options = butterpollo_core::config::Config::parse(
+    let options = butterpollo_config::config::Config::parse(
         "amd_usage=ultralowlatency\namd_quality=speed\namd_smart_access_video=disabled\namd_ltr_frames=4\n",
     )?;
-    let defaults = butterpollo_core::config::Config::default();
+    let defaults = butterpollo_config::config::Config::default();
     for codec in [1u8, 2] {
         for full_range in [false, true] {
             for compute in [false, true] {
@@ -1411,17 +1417,17 @@ fn hdr10_metadata_and_range_reach_the_bitstream() -> Result<()> {
                     (4, metadata, &defaults),
                     (
                         1,
-                        butterpollo_core::hdr::Metadata::display(1015., 0., 1015.),
+                        butterpollo_media_policy::hdr::Metadata::display(1015., 0., 1015.),
                         &options,
                     ),
                     (
                         4,
-                        butterpollo_core::hdr::Metadata::display(1015., 0., 1015.),
+                        butterpollo_media_policy::hdr::Metadata::display(1015., 0., 1015.),
                         &options,
                     ),
                     (4, metadata, &options),
                 ] {
-                    let config = butterpollo_core::rtsp::Negotiated {
+                    let config = butterpollo_media_policy::rtsp::Negotiated {
                         width,
                         height,
                         codec,
@@ -1440,17 +1446,18 @@ fn hdr10_metadata_and_range_reach_the_bitstream() -> Result<()> {
                         encoder.supports_invalidation(),
                         // `references` sets the client's limit; whether LTR
                         // recovery is enabled also depends on the options.
-                        butterpollo_core::encoder_policy::amf_ltr_frames(options, &config) > 0
+                        butterpollo_media_policy::encoder_policy::amf_ltr_frames(options, &config)
+                            > 0
                     );
                     let changes = [
                         metadata,
-                        butterpollo_core::hdr::Metadata {
+                        butterpollo_media_policy::hdr::Metadata {
                             maximum_nits: 600,
                             max_cll: 0,
                             max_fall: 0,
                             ..metadata
                         },
-                        butterpollo_core::hdr::Metadata {
+                        butterpollo_media_policy::hdr::Metadata {
                             maximum_nits: 1400,
                             max_cll: 1200,
                             max_fall: 500,
@@ -1593,7 +1600,7 @@ fn hdr10_metadata_and_range_reach_the_bitstream() -> Result<()> {
 #[test]
 fn hlg_and_dolby_vision_8_4_signal_arib_std_b67() {
     // rubylight_protocol::hdr: PQ 1, HLG 2, DV_81 4, DV_84 8.
-    let stream = |codec, hdr, hdr_format, csc_mode| butterpollo_core::rtsp::Negotiated {
+    let stream = |codec, hdr, hdr_format, csc_mode| butterpollo_media_policy::rtsp::Negotiated {
         codec,
         hdr,
         hdr_format,
@@ -1643,11 +1650,11 @@ fn hlg_and_dolby_vision_8_4_reach_the_bitstream() -> Result<()> {
         },
     )?;
     source.readback(&mut None)?;
-    let options = butterpollo_core::config::Config::default();
+    let options = butterpollo_config::config::Config::default();
     // rubylight_protocol::hdr: HLG 2, DV_84 8 (HEVC only).
     for (codec, hdr_format) in [(1u8, 2u8), (2, 2), (1, 8)] {
         for compute in [false, true] {
-            let config = butterpollo_core::rtsp::Negotiated {
+            let config = butterpollo_media_policy::rtsp::Negotiated {
                 width,
                 height,
                 codec,
@@ -1662,7 +1669,9 @@ fn hlg_and_dolby_vision_8_4_reach_the_bitstream() -> Result<()> {
                 .then(|| crate::compute::Compute::for_device(&gpu.device))
                 .transpose()?;
             let mut encoder = Encoder::new_gpu(&config, gpu.clone(), &options, queue)?;
-            encoder.set_hdr_metadata(butterpollo_core::hdr::Metadata::display(1000., 0.005, 400.));
+            encoder.set_hdr_metadata(butterpollo_media_policy::hdr::Metadata::display(
+                1000., 0.005, 400.,
+            ));
             let mut output = encoder.encode_gpu(&source, true, config.bitrate_kbps)?;
             let deadline = Instant::now() + Duration::from_secs(2);
             while encoder.pending() {
@@ -1732,7 +1741,7 @@ fn native_av1_geometry_and_hdr_are_preserved() -> Result<()> {
         std::env::var_os("BUTTERPOLLO_TEST_FFPROBE").context("set BUTTERPOLLO_TEST_FFPROBE")?;
     let ffmpeg =
         std::env::var_os("BUTTERPOLLO_TEST_FFMPEG").context("set BUTTERPOLLO_TEST_FFMPEG")?;
-    let options = butterpollo_core::config::Config::parse(
+    let options = butterpollo_config::config::Config::parse(
         "amd_usage=ultralowlatency\namd_quality=speed\namd_smart_access_video=disabled\n",
     )?;
     let mut reports = vec![];
@@ -1785,7 +1794,7 @@ fn native_av1_geometry_and_hdr_are_preserved() -> Result<()> {
                 )?
             };
             for alignment in [3, 4] {
-                let config = butterpollo_core::rtsp::Negotiated {
+                let config = butterpollo_media_policy::rtsp::Negotiated {
                     width,
                     height,
                     codec: 2,
@@ -1939,13 +1948,13 @@ fn native_h264_one_reference_budget_decodes_without_ltr_corruption() -> Result<(
         .parent()
         .context("report requires a parent directory")?;
     std::fs::create_dir_all(directory)?;
-    let config = butterpollo_core::rtsp::Negotiated {
+    let config = butterpollo_media_policy::rtsp::Negotiated {
         width: 640,
         height: 480,
         references: 1,
         ..Default::default()
     };
-    let options = butterpollo_core::config::Config::parse(
+    let options = butterpollo_config::config::Config::parse(
         "amd_ltr_frames=4\namd_usage=ultralowlatency\namd_quality=speed\n",
     )?;
     // Synthetic input avoids capturing or changing any user's desktop/window.
@@ -2110,10 +2119,10 @@ fn native_reference_recovery_decodes_after_dropping_the_invalidated_packets() ->
         }
         std::thread::sleep(Duration::from_millis(1));
     };
-    let options = butterpollo_core::config::Config::parse("amd_ltr_frames=4\n")?;
+    let options = butterpollo_config::config::Config::parse("amd_ltr_frames=4\n")?;
     let mut reports = vec![];
     for codec in 0..3 {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 640,
             height: 480,
             codec,
@@ -2296,9 +2305,9 @@ fn only_an_automatic_cap_is_a_keyframe_target() {
 fn native_an_oversize_scene_cut_goes_out_once_as_a_keyframe_at_its_own_index() -> Result<()> {
     let _com = crate::capture::ComGuard::new()?;
     let device = Device::new("")?;
-    let options = butterpollo_core::config::Config::parse("amd_ltr_frames=4\n")?;
+    let options = butterpollo_config::config::Config::parse("amd_ltr_frames=4\n")?;
     for codec in 0..3 {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 1280,
             height: 720,
             codec,
@@ -2372,7 +2381,7 @@ fn native_an_oversize_scene_cut_goes_out_once_as_a_keyframe_at_its_own_index() -
 fn native_a_stream_larger_than_the_encoder_takes_fails_as_size_too_large() -> Result<()> {
     let _com = crate::capture::ComGuard::new()?;
     for codec in [0, 1, 2] {
-        let config = butterpollo_core::rtsp::Negotiated {
+        let config = butterpollo_media_policy::rtsp::Negotiated {
             width: 8192,
             height: 8192,
             codec,

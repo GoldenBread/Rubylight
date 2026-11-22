@@ -2,7 +2,7 @@
 //! it. Nothing here touches the real adapters.
 use super::*;
 use crate::wake::fake::Fake;
-use butterpollo_core::native_api::wake::{TargetState, Wake};
+use rubylight_native_api::wake::{TargetState, Wake};
 
 const FIXTURE: &str =
     include_str!("../../../../../client/protocol/native-api/tests/fixtures/wake.json");

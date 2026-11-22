@@ -1,7 +1,7 @@
 use super::*;
 use anyhow::{anyhow, ensure};
-use butterpollo_core::nucleus::coop::{Phase, Refused};
-use butterpollo_core::nucleus::elevation::Why;
+use butterpollo_session::nucleus::coop::{Phase, Refused};
+use butterpollo_session::nucleus::elevation::Why;
 use serde_json::json;
 
 fn app(name: &str, cmd: &str) -> App {
@@ -18,7 +18,7 @@ fn app(name: &str, cmd: &str) -> App {
 fn client(uuid: &str, coop_join: bool) -> Client {
     let mut client: Client = serde_json::from_value(serde_json::json!({
         "name": format!("Device {uuid}"), "cert": "", "uuid": uuid,
-        "perm": butterpollo_core::state::PLAY_DEVICE_PERMISSION,
+        "perm": butterpollo_session::state::PLAY_DEVICE_PERMISSION,
     }))
     .unwrap();
     // Set either way: never set, a device that launches apps may join.
@@ -1605,7 +1605,7 @@ fn ours_goes_once_the_user_added_the_game_with_a_hub_handler() {
         });
         catalog
             .games
-            .push(butterpollo_core::nucleus::handler::Game {
+            .push(butterpollo_session::nucleus::handler::Game {
                 guid: ours.guid(),
                 exe_path: fake::EXE.into(),
             });
@@ -1641,7 +1641,7 @@ fn ours_goes_as_soon_as_a_hub_handler_for_its_exe_is_installed() {
         let mut catalog = pc.catalog.lock().unwrap();
         for setup in [&ours, &unused] {
             catalog.handlers.push(
-                butterpollo_core::nucleus::handler::parse(
+                butterpollo_session::nucleus::handler::parse(
                     &setup.file(),
                     &setup.handler_of(Some(fake::USER)),
                 )
@@ -1650,7 +1650,7 @@ fn ours_goes_as_soon_as_a_hub_handler_for_its_exe_is_installed() {
         }
         catalog
             .games
-            .push(butterpollo_core::nucleus::handler::Game {
+            .push(butterpollo_session::nucleus::handler::Game {
                 guid: ours.guid(),
                 exe_path: ours.exe_path.clone(),
             });
@@ -1875,7 +1875,7 @@ fn another_game_is_busy_while_a_session_runs() {
         catalog.handlers.push(handler);
         catalog
             .games
-            .push(butterpollo_core::nucleus::handler::Game {
+            .push(butterpollo_session::nucleus::handler::Game {
                 guid: "Racer".into(),
                 exe_path: r"C:\Games\racer.exe".into(),
             });
@@ -2305,7 +2305,7 @@ fn a_player_stream_leaves_the_desktop_input_and_clipboard_alone() {
     assert!(!config.boolean("mouse", true));
     assert_eq!(config.get("audio_capture_mode", "system"), "game");
     // Not a background stream: no isolated display is made for it.
-    assert!(!butterpollo_core::background::enabled(&config));
+    assert!(!butterpollo_session::background::enabled(&config));
     let mut owner = client("A", false);
     owner.perm = u32::MAX;
     assert!(!crate::stream::clipboard_sync::allowed(&config, &owner).any());
@@ -2350,7 +2350,7 @@ fn a_hardware_case_streams_the_exe_or_the_steam_link_as_an_app_would() {
     let link = case_app(None, Some(2155180)).unwrap();
     assert!(!starts_exe(&link));
     assert_eq!(
-        butterpollo_core::steam::game_of(&serde_json::to_value(&link).unwrap()),
+        butterpollo_session::steam::game_of(&serde_json::to_value(&link).unwrap()),
         Some(2155180)
     );
     assert!(case_app(None, None).is_err());
@@ -2539,7 +2539,7 @@ impl KeptFiles {
             let path = entry?.path();
             if path.is_file()
                 && std::fs::read(&path).is_ok_and(|text| {
-                    butterpollo_core::nucleus::generic::owns(&String::from_utf8_lossy(&text))
+                    butterpollo_session::nucleus::generic::owns(&String::from_utf8_lossy(&text))
                 })
             {
                 own.push(path);
@@ -2636,7 +2636,7 @@ fn a_hardware_case_puts_the_game_list_and_our_handlers_back_exactly() {
     let ours = |name: &str| {
         format!(
             "{}\nGame.GUID='Rubylight-{name}'\n",
-            butterpollo_core::nucleus::generic::MARKER
+            butterpollo_session::nucleus::generic::MARKER
         )
     };
     let (earlier, hub, list) = (
@@ -2682,7 +2682,7 @@ fn a_hardware_case_puts_the_users_copy_handlers_back_too() {
     let list = root.join("userprofile.json");
     let ours = format!(
         "{}\nGame.GUID='Rubylight-case'\n",
-        butterpollo_core::nucleus::generic::MARKER
+        butterpollo_session::nucleus::generic::MARKER
     );
     std::fs::write(host.join("Rubylight-earlier.js"), &ours).unwrap();
     // The user's copy is not there yet: the session makes it.
@@ -2712,7 +2712,7 @@ fn a_hardware_case_puts_nothing_back_through_a_link() {
     std::fs::create_dir_all(&elsewhere).unwrap();
     let ours = format!(
         "{}\nGame.GUID='Rubylight-case'\n",
-        butterpollo_core::nucleus::generic::MARKER
+        butterpollo_session::nucleus::generic::MARKER
     );
     let list = copy.join("content").join("userprofile.json");
     let kept = KeptFiles::take(&[&handlers], &list).unwrap();
@@ -3017,14 +3017,14 @@ const FORCED: [(&str, &str, &str); 6] = [
 
 /// Nucleus' `Settings.ini` with [`COLD`]'s values.
 fn cold_settings(text: &[u8]) -> Vec<u8> {
-    butterpollo_core::nucleus::profile::ini_set(text, &COLD)
+    butterpollo_session::nucleus::profile::ini_set(text, &COLD)
 }
 
 /// Fails unless `Settings.ini` has each of `values`, naming the first
 /// that differs.
 fn settings_are(text: &[u8], values: &[(&str, &str, &str)]) -> Result<()> {
     for &(section, key, value) in values {
-        let found = butterpollo_core::nucleus::profile::ini_value(text, section, key)
+        let found = butterpollo_session::nucleus::profile::ini_value(text, section, key)
             .map(|v| String::from_utf8_lossy(&v).into_owned());
         ensure!(
             found.as_deref() == Some(value),
@@ -3053,18 +3053,18 @@ fn click_delay(lines: &[(Instant, String)]) -> Result<Duration> {
 
 #[test]
 fn the_cold_case_seeds_the_bad_settings_and_checks_the_forced_ones() {
-    let shipped = butterpollo_core::nucleus::profile::DEFAULT_SETTINGS.as_bytes();
+    let shipped = butterpollo_session::nucleus::profile::DEFAULT_SETTINGS.as_bytes();
     let cold = cold_settings(shipped);
     settings_are(&cold, &COLD).unwrap();
     assert!(settings_are(&cold, &FORCED).is_err());
     // What a session writes passes, and what it puts back is the cold file.
-    let settings = butterpollo_core::nucleus::profile::settings_ini(&cold);
+    let settings = butterpollo_session::nucleus::profile::settings_ini(&cold);
     settings_are(&settings.text, &FORCED).unwrap();
     let (back, _) =
-        butterpollo_core::nucleus::profile::put_back_settings(&settings.text, &settings.forced);
+        butterpollo_session::nucleus::profile::put_back_settings(&settings.text, &settings.forced);
     settings_are(&back, &COLD).unwrap();
     // Each value is checked and named.
-    let filtered = butterpollo_core::nucleus::profile::ini_set(
+    let filtered = butterpollo_session::nucleus::profile::ini_set(
         &settings.text,
         &[("Misc", "GameSortingOpt", "Show_Type1")],
     );

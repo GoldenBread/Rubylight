@@ -37,7 +37,7 @@ const WDDM_2_7_CAPS: u32 = 70;
 /// on: at high, NVENC falls behind a game that fills the GPU. Every other
 /// adapter, AMD included, stays at high.
 fn priority(vendor: u32, hags: bool, realtime_hags: bool) -> i32 {
-    if butterpollo_core::encoder_gpu::is_nvidia(vendor) && (!hags || realtime_hags) {
+    if butterpollo_media_policy::encoder_gpu::is_nvidia(vendor) && (!hags || realtime_hags) {
         REALTIME
     } else {
         HIGH
@@ -165,7 +165,7 @@ pub(crate) fn restore() -> Result<()> {
 }
 pub fn configure(
     gpu: &crate::capture::Device,
-    config: &butterpollo_core::config::Config,
+    config: &butterpollo_config::config::Config,
 ) -> Result<()> {
     // SAFETY: the symbol types and repr(C) structs match the D3DKMT exports (the test checks their
     // layout), every pointer passed is a live local, and `library` outlives each symbol.
@@ -184,7 +184,7 @@ pub fn configure(
         let set = library.get::<unsafe extern "system" fn(*mut std::ffi::c_void, i32) -> i32>(
             b"D3DKMTSetProcessSchedulingPriorityClass\0",
         )?;
-        let hags = if butterpollo_core::encoder_gpu::is_nvidia(gpu.vendor) {
+        let hags = if butterpollo_media_policy::encoder_gpu::is_nvidia(gpu.vendor) {
             let open = library.get::<unsafe extern "system" fn(*mut Open) -> i32>(
                 b"D3DKMTOpenAdapterFromLuid\0",
             )?;

@@ -7,7 +7,7 @@
 //! own thread (031dc57e5) had lost it. Each block is a [`Prepared`] part, as
 //! for a streamed frame, and the first carries the whole frame's wire bytes.
 use super::*;
-use butterpollo_core::network_pacing;
+use butterpollo_media_policy::network_pacing;
 
 /// Packetize `frame` and enqueue its blocks as they are built. `part` makes
 /// a block's [`Prepared`] from its buffers, packet count, layout, place in

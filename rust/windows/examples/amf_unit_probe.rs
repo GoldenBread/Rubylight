@@ -25,7 +25,8 @@ fn main() {
 #[cfg(windows)]
 fn main() -> anyhow::Result<()> {
     use anyhow::{Context, bail};
-    use butterpollo_core::{config::Config, rtsp::Negotiated};
+    use butterpollo_config::config::Config;
+    use butterpollo_media_policy::rtsp::Negotiated;
     use butterpollo_windows::{
         amf::Encoder,
         capture::{ComGuard, Device, GpuImage, Image, Pixel, Priority},

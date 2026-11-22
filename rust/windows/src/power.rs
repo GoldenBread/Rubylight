@@ -3,7 +3,7 @@
 //! sleep with wake events enabled, and only on a PC with S1, S2 or S3: a
 //! Modern Standby laptop with hibernate on hibernated instead.
 use anyhow::{Context, Result, bail};
-use butterpollo_core::power_action::{SleepStates, Unconfirmed};
+use butterpollo_session::power_action::{SleepStates, Unconfirmed};
 use windows::{
     Win32::{
         Foundation::{

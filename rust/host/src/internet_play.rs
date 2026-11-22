@@ -8,7 +8,7 @@
 
 use crate::state::Shared;
 use anyhow::{Context, Result};
-use butterpollo_core::config::Config;
+use butterpollo_config::config::Config;
 use rubylight_traverse::{
     self as traverse,
     host::{Device, HostConfig, HostService},
@@ -453,7 +453,7 @@ pub(crate) fn refresh(h: &Shared) {
 
 /// Whether a paired device's internet play is on: everyone's while the setting is on, else that
 /// of a device paired from an invite until its time ends.
-pub(crate) fn enabled_for(config: &Config, client: &butterpollo_core::state::Client) -> bool {
+pub(crate) fn enabled_for(config: &Config, client: &butterpollo_session::state::Client) -> bool {
     enabled(config) || crate::invites::invited_live(client)
 }
 
@@ -507,7 +507,7 @@ pub(crate) fn hints(config: &Config) -> Result<Hints> {
 fn secret(h: &Shared, certificate: &str) -> Result<[u8; 32]> {
     let mut paired = h.paired.write().unwrap();
     let matching =
-        |client: &&mut butterpollo_core::state::Client| client.cert.trim() == certificate.trim();
+        |client: &&mut butterpollo_session::state::Client| client.cert.trim() == certificate.trim();
     if let Some(secret) = paired
         .clients
         .iter_mut()

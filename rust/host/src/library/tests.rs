@@ -54,7 +54,7 @@ fn a_moved_steam_library_rescans_on_the_next_tick_with_the_sync_off() {
     let f = Fixture::new();
     // Off for every launcher (the earlier shared switch, read as each launcher's): the tick
     // never reaches the sync, which would read the launchers' folders.
-    let off = butterpollo_core::config::Config::parse("library_auto_sync = false\n").unwrap();
+    let off = butterpollo_config::config::Config::parse("library_auto_sync = false\n").unwrap();
     f.host.config.write().unwrap().values.extend(off.values);
     assert!(!settings(&f.host).any_automatic());
     seed(&f.host, Scan::new(["steam:570".to_owned()]));
@@ -184,7 +184,7 @@ fn the_launcher_sync_adds_games_keeps_deleted_ones_out_and_an_import_brings_one_
     // Ubisoft not synced automatically: the automatic sync leaves its new game out, Sync now
     // adds it, as Steam's does.
     let by_hand = library::Settings::from_config(
-        &butterpollo_core::config::Config::parse("ubisoft_auto_sync = false\n").unwrap(),
+        &butterpollo_config::config::Config::parse("ubisoft_auto_sync = false\n").unwrap(),
     );
     let other = library::ubisoft("1", Path::new("F:/Games/Other"), "Other").unwrap();
     assert!(
@@ -346,7 +346,7 @@ fn the_start_stamps_synced_apps_once_and_steam_apps_only_after_the_old_opt_in() 
         std::fs::write(directory.join("apps.json"), apps.to_string()).unwrap();
         let f = Fixture::load(directory.clone());
         stamp_synced(&f.host).unwrap();
-        let saved = butterpollo_core::state::load_json(&f.host.apps_path, json!({})).unwrap();
+        let saved = butterpollo_session::state::load_json(&f.host.apps_path, json!({})).unwrap();
         assert_eq!(saved[library::SYNC_OWNER_VERSION], 1, "{conf}");
         let stamps: Vec<Value> = saved["apps"]
             .as_array()
@@ -376,7 +376,7 @@ fn the_start_stamps_synced_apps_once_and_steam_apps_only_after_the_old_opt_in() 
         let f = Fixture::load(directory);
         stamp_synced(&f.host).unwrap();
         assert_eq!(
-            butterpollo_core::state::load_json(&f.host.apps_path, json!({})).unwrap(),
+            butterpollo_session::state::load_json(&f.host.apps_path, json!({})).unwrap(),
             later
         );
     }

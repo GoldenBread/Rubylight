@@ -107,7 +107,7 @@ fn the_next_arrangement_adopts_the_original_layout_after_a_failed_restore() -> R
             ..Default::default()
         },
     );
-    butterpollo_core::state::write_json(&path, &journal)?;
+    butterpollo_session::state::write_json(&path, &journal)?;
     let original = read_pending_arrangement(&path)?.expect("unfinished layout");
     assert_eq!(original.nodes[0].device_id, "physical");
     assert!(original.nodes[0].active);
@@ -118,7 +118,7 @@ fn the_next_arrangement_adopts_the_original_layout_after_a_failed_restore() -> R
         .get_mut("display-arrangement")
         .unwrap()
         .arrangement = pending;
-    butterpollo_core::state::write_json(&path, &journal)?;
+    butterpollo_session::state::write_json(&path, &journal)?;
     assert!(read_pending_arrangement(&path)?.is_none());
     // Corrupt recovery data must not be overwritten by a new baseline.
     std::fs::write(&path, b"{")?;
@@ -313,7 +313,10 @@ fn completed_journal_wakes_watcher_while_host_is_alive() -> Result<()> {
         started: identity(pid)?.unwrap(),
         ..Default::default()
     };
-    butterpollo_core::state::write_json(&directory.path().join("display-recovery.json"), &journal)?;
+    butterpollo_session::state::write_json(
+        &directory.path().join("display-recovery.json"),
+        &journal,
+    )?;
     let done = watch_done(pid)?;
     // SAFETY: `done` owns the event while the watcher opens and waits for it.
     unsafe { ResetEvent(HANDLE(done.as_raw_handle()))? };
@@ -404,7 +407,7 @@ fn recover_pending_retries_after_incomplete_and_stops_once_restored() {
             },
         )]),
     };
-    butterpollo_core::state::write_json(&path, &kept).unwrap();
+    butterpollo_session::state::write_json(&path, &kept).unwrap();
 
     // First retry fails (e.g. Access denied on Winlogon): pending journal remains.
     let err =
@@ -438,7 +441,7 @@ fn recover_pending_skips_when_current_process_owns_a_live_journal() {
             },
         )]),
     };
-    butterpollo_core::state::write_json(&path, &live).unwrap();
+    butterpollo_session::state::write_json(&path, &live).unwrap();
 
     let ran = recover_pending_at(&path, |_| panic!("must not recover live host journal")).unwrap();
     assert!(!ran);

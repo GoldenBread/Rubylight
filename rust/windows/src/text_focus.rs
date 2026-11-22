@@ -10,7 +10,9 @@
 //! keyboard does not lower and raise again for it.
 
 use anyhow::{Context, Result};
-use butterpollo_core::text_input::{self, Field, Focused, FocusedElement, Surrounding, Watch};
+use butterpollo_input_policy::text_input::{
+    self, Field, Focused, FocusedElement, Surrounding, Watch,
+};
 use std::sync::{
     Arc, Condvar, Mutex, MutexGuard, PoisonError,
     atomic::{AtomicBool, Ordering},

@@ -1,7 +1,7 @@
 //! A notice on the PC when a device starts a stream the person at the PC
 //! can't see: a background stream or a seat in a Nucleus Co-op session. The
 //! main stream takes over the screen, so it needs none.
-use butterpollo_core::session::Seat;
+use butterpollo_session::session::Seat;
 use std::{
     collections::BTreeMap,
     sync::{

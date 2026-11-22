@@ -19,7 +19,7 @@ const PIPE_PREFIX: &str = r"\\.\pipe\Butterpollo.Rtss.";
 const TIMEOUT: Duration = Duration::from_secs(2);
 /// Starting the helper as SYSTEM in the user's session can take longer.
 const STARTUP: Duration = Duration::from_secs(5);
-pub fn root(config: &butterpollo_core::config::Config) -> PathBuf {
+pub fn root(config: &butterpollo_config::config::Config) -> PathBuf {
     let configured = config.get("rtss_install_path", "");
     let path = PathBuf::from(if configured.is_empty() {
         "RivaTuner Statistics Server"
@@ -620,7 +620,7 @@ pub fn write_profile(root: &Path, values: &BTreeMap<String, Option<u32>>) -> Res
         return Ok(());
     }
     let content = replace(&original, values)?;
-    if let Err(error) = butterpollo_core::state::atomic_write(&path, content.as_bytes()) {
+    if let Err(error) = butterpollo_session::state::atomic_write(&path, content.as_bytes()) {
         // RTSS's UI opens the selected profile without delete sharing. It
         // still permits writing the file; keep unknown fields and truncate
         // only after the complete replacement has been written successfully.

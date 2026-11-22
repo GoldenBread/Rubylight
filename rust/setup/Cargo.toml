@@ -25,7 +25,9 @@ windows = { version = "0.62.2", features = [
 ] }
 
 [dev-dependencies]
-butterpollo-core = { path = "../core" }
+butterpollo-crypto = { path = "../core/crypto" }
+butterpollo-config = { path = "../core/config" }
+butterpollo-session = { path = "../core/session" }
 tempfile = "3.23"
 
 [build-dependencies]

@@ -2,7 +2,7 @@
 //! tags its frames as the video senders do; no GPU pass runs, so the host learns nothing and
 //! sends only the model a request is answered with and the tags.
 use super::*;
-use butterpollo_core::frame_warp::{
+use butterpollo_media_policy::frame_warp::{
     FRAME_WARP_MODEL_MESSAGE_TYPE, FRAME_WARP_REQUEST_MESSAGE_TYPE, FRAME_WARP_TAGS_MESSAGE_TYPE,
     FrameWarpRequest, Model, Tag, Tags,
 };

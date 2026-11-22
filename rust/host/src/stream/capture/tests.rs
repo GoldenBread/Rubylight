@@ -2,8 +2,8 @@ use super::*;
 use std::time::Duration;
 #[test]
 fn pending_idr_is_served_within_the_short_poll_instead_of_a_stream_period() -> Result<()> {
-    use butterpollo_core::{
-        rtsp::Negotiated,
+    use butterpollo_media_policy::rtsp::Negotiated;
+    use butterpollo_session::{
         session::{Launch, Role, Session},
         state::Client,
     };

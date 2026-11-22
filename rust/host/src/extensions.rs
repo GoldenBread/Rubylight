@@ -1,12 +1,12 @@
 //! What this host offers of the 3.0 protocol extensions
-//! (`butterpollo_core::extensions`), one function per offer so each
+//! (`butterpollo_media_policy::extensions`), one function per offer so each
 //! workstream turns on only its own. An offer adds serverinfo fields and
 //! DESCRIBE lines that stock clients ignore, and the messages behind it go
 //! only to a client that asks; an ANNOUNCE that picks an extension that is
 //! not offered is refused.
-use butterpollo_core::config::Config;
-use butterpollo_core::extensions::Offered;
-use butterpollo_core::native_api::feature;
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::extensions::Offered;
+use rubylight_native_api::feature;
 
 use crate::state::{Launch, Shared};
 
@@ -75,7 +75,7 @@ fn max_video_packet(peer: std::net::IpAddr) -> u16 {
             1500
         }
     };
-    let packet = butterpollo_core::video_packet::for_mtu(mtu);
+    let packet = rubylight_protocol::video_packet::for_mtu(mtu);
     if packet != 0 {
         tracing::info!(%peer, mtu, packet, "jumbo video packets offered");
     } else {
@@ -89,7 +89,7 @@ fn max_video_packet(peer: std::net::IpAddr) -> u16 {
 /// clipboard, on a stream that is not playing in the background, as the
 /// `/actions/clipboard` routes require. Never in serverinfo.
 fn clipboard_sync(config: &Config, launch: &Launch) -> bool {
-    use butterpollo_core::clipboard_sync::{LAUNCH_PARAMETER, requested};
+    use rubylight_protocol::clipboard_sync::{LAUNCH_PARAMETER, requested};
     requested(launch.options.get(LAUNCH_PARAMETER).map(String::as_str))
         && crate::stream::clipboard_sync::allowed(config, &launch.client).any()
 }
@@ -124,7 +124,7 @@ fn offer(h: &Shared, config: &Config, dolby: u8) -> Offered {
             .nvidia_enhancements
             .load(std::sync::atomic::Ordering::Acquire),
         // The most this host accepts at all; `stream_offered` has the path's own.
-        max_video_packet: butterpollo_core::video_packet::MAX_VIDEO_PACKET,
+        max_video_packet: rubylight_protocol::video_packet::MAX_VIDEO_PACKET,
     }
 }
 
@@ -141,7 +141,7 @@ const ENCODER_WRITES_HLG: bool = true;
 /// `hdr::PYROWAVE_HLG`; its conversion takes the same HLG curve from
 /// `gpu_color::constants`.
 fn hdr_formats(h: &Shared, config: &Config) -> u8 {
-    butterpollo_core::extensions::hdr_offer(
+    butterpollo_media_policy::extensions::hdr_offer(
         h.codecs.load(std::sync::atomic::Ordering::Acquire),
         ENCODER_WRITES_HLG && config.hdr_hlg(),
         config.hdr_dolby_vision(),
@@ -170,7 +170,7 @@ fn usb(h: &Shared, config: &Config) -> bool {
 /// Audio (E): `audio_ext::CODEC_*` bits besides Opus, while `audio_passthrough` is on: PCM,
 /// and the AC3 and E-AC3 bits `dolby` whose FFmpeg encoder opens.
 fn audio_codecs(_h: &Shared, config: &Config, dolby: u8) -> u8 {
-    use butterpollo_core::audio_ext::{CODEC_AC3, CODEC_EAC3, CODEC_PCM};
+    use rubylight_protocol::audio_ext::{CODEC_AC3, CODEC_EAC3, CODEC_PCM};
     if !config.audio_passthrough() {
         return 0;
     }
@@ -193,7 +193,7 @@ fn text_input(_h: &Shared, config: &Config) -> bool {
 /// `keyboard_layout` leaves the layout to the device.
 fn keyboard_layout(_h: &Shared, config: &Config) -> bool {
     config.boolean("keyboard", true)
-        && config.keyboard_layout() == butterpollo_core::config::KeyboardLayoutSetting::Client
+        && config.keyboard_layout() == butterpollo_config::config::KeyboardLayoutSetting::Client
 }
 
 /// Input (F): pen barrel roll (0x5500000B), while `pen_barrel_roll` and native pen
@@ -244,7 +244,7 @@ fn pipeline_rates(_h: &Shared, _config: &Config) -> bool {
 /// element: a stock client's serverinfo and DESCRIBE stay as they were.
 fn rate_change(options: &std::collections::BTreeMap<String, String>) -> bool {
     matches!(
-        butterpollo_core::rate_change::launch_choice(options),
+        butterpollo_media_policy::rate_change::launch_choice(options),
         Ok(true)
     )
 }
@@ -265,7 +265,7 @@ pub fn native_features(h: &Shared, config: &Config) -> Vec<&'static str> {
 /// driver is ready.
 fn usb_feature(h: &Shared, config: &Config) -> Vec<&'static str> {
     if usb(h, config) {
-        vec![butterpollo_core::native_api::feature::USB]
+        vec![rubylight_native_api::feature::USB]
     } else {
         Vec::new()
     }

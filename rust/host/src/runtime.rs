@@ -3,8 +3,9 @@ use crate::{
     maintenance,
     state::{AppStop, Shared},
 };
-use butterpollo_core::{native_api::session::State, session::Role};
+use butterpollo_session::session::Role;
 use butterpollo_windows::{process::StopSignal, tray::Action};
+use rubylight_native_api::session::State;
 use std::{
     sync::{
         Arc,
@@ -37,7 +38,7 @@ fn application_finished(h: &Shared) -> bool {
 /// they were read for.
 fn application_finished_with(
     h: &Shared,
-    processes: impl FnOnce() -> anyhow::Result<Vec<butterpollo_core::steam::Process>>,
+    processes: impl FnOnce() -> anyhow::Result<Vec<butterpollo_session::steam::Process>>,
     image_path: impl Fn(u32) -> Option<String>,
 ) -> bool {
     // Between a press of Continue here and its stream a device is on its way to the game, and
@@ -238,14 +239,14 @@ fn user_action(h: &Shared, action: Action, web_port: u16) {
 }
 /// Keep routine app status in the tray instead of covering the captured
 /// desktop with launch, pause and resume notifications.
-fn show_app(h: &Shared, tray: &mut butterpollo_core::tray::Tracker) {
+fn show_app(h: &Shared, tray: &mut butterpollo_session::tray::Tracker) {
     let app = h
         .current_app
         .lock()
         .unwrap()
         .as_ref()
         .map(|app| app.name.clone());
-    let current = butterpollo_core::tray::Status {
+    let current = butterpollo_session::tray::Status {
         app,
         streaming: streaming(h),
     };
@@ -294,7 +295,7 @@ impl RestoreHotkey {
             return;
         }
         self.checked = Some(revision);
-        let wanted = butterpollo_core::hotkey::restore_hotkey(&h.config.read().unwrap());
+        let wanted = butterpollo_input_policy::hotkey::restore_hotkey(&h.config.read().unwrap());
         if wanted == self.wanted {
             return;
         }
@@ -495,7 +496,7 @@ pub async fn maintain(
     let mut display_recovery = DisplayRecoveryRetry::default();
     let mut library_tick_watch = LibraryTickWatch::default();
     let mut hotkey = RestoreHotkey::default();
-    let mut tray = butterpollo_core::tray::Tracker::default();
+    let mut tray = butterpollo_session::tray::Tracker::default();
     let mut auto_lock = crate::auto_lock::Watch::default();
     let mut housekeeping: Option<tokio::task::JoinHandle<()>> = None;
     let ticking = Arc::new(AtomicBool::new(false));
@@ -563,7 +564,7 @@ pub async fn maintain(
             spawn_exclusive(&focus_reading, move || crate::launch_focus::watch(&h));
         }
         if Instant::now() >= wake_at {
-            wake_at = Instant::now() + butterpollo_core::wake::idle::TICK;
+            wake_at = Instant::now() + butterpollo_session::wake::idle::TICK;
             let h = h.clone();
             spawn_exclusive(&waking, move || crate::wake::tick(&h));
         }
@@ -686,7 +687,7 @@ fn recovery_session_ready() -> bool {
 #[derive(Default)]
 struct DisplayRecoveryRetry {
     waiting_for_session: bool,
-    throttle: butterpollo_core::display_policy::HeartbeatThrottle,
+    throttle: butterpollo_media_policy::display_policy::HeartbeatThrottle,
     next_at: Option<Instant>,
     active: Arc<AtomicBool>,
     result: Arc<std::sync::Mutex<Option<std::result::Result<bool, String>>>>,

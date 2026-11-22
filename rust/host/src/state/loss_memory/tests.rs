@@ -1,6 +1,8 @@
 use super::*;
 use crate::state::test_support::Fixture;
-use butterpollo_core::{config::Config, rtsp::Negotiated, session::Role};
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::rtsp::Negotiated;
+use butterpollo_session::session::Role;
 
 fn session(f: &Fixture, client: &Client, address: &str, codec: u8) -> Arc<Session> {
     let mut launch = f.launch(client.clone(), Role::Stream);
@@ -251,7 +253,7 @@ fn another_host_interface_or_client_link_starts_fresh() {
     let on = |interface: u64, hint: u32| {
         let s = Session::new(
             {
-                let mut launch = f.launch(c.clone(), butterpollo_core::session::Role::Stream);
+                let mut launch = f.launch(c.clone(), butterpollo_session::session::Role::Stream);
                 launch.peer = "192.0.2.1".parse().unwrap();
                 launch
             },
@@ -483,7 +485,7 @@ fn a_wireless_client_stream_the_controller_owns_leaves_remembered_routes_alone()
     seed(&f, &c);
     let before = read(&f.host.paired.read().unwrap(), now());
     assert_eq!(before.len(), 1);
-    let mut launch = f.launch(c.clone(), butterpollo_core::session::Role::Stream);
+    let mut launch = f.launch(c.clone(), butterpollo_session::session::Role::Stream);
     launch.peer = "192.0.2.1".parse().unwrap();
     let s = Session::new(
         launch,

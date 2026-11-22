@@ -121,7 +121,11 @@ mod tests {
         let folder = h.directory.join("Game");
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("Game.exe"), "MZ").unwrap();
-        std::fs::write(folder.join(butterpollo_core::neural::MANIFEST), "damaged").unwrap();
+        std::fs::write(
+            folder.join(butterpollo_session::neural::MANIFEST),
+            "damaged",
+        )
+        .unwrap();
         crate::steam::update_library(h, |apps, _| {
             apps.push(json!({"name": "Game", "uuid": "game",
                 crate::neural::KEY: {"exe": folder.join("Game.exe")}}));
@@ -169,7 +173,10 @@ mod tests {
             true
         })
         .unwrap();
-        f.session(f.client(u32::MAX), butterpollo_core::session::Role::Stream);
+        f.session(
+            f.client(u32::MAX),
+            butterpollo_session::session::Role::Stream,
+        );
         let refused = value(
             request(&f, "POST", "/api/neural/disable", json!({"uuid": "game"})).await,
             StatusCode::CONFLICT,

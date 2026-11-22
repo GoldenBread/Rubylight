@@ -170,7 +170,7 @@ cases:
         & $script @rest
         if ($LASTEXITCODE -eq 3) { exit 3 }
       }
-      $d = '{{repo}}\rust\core\src\audio_dsp'
+      $d = '{{repo}}\rust\core\media-policy\src\audio_dsp'
       foreach ($arm in 'surround-on8', 'surround-off8') {
         & {{python}} "$t\tone_analysis.py" sweep "C:\tests\audio-h2\e2e-$arm" "$d\hrir_sadie2_ku100_48k.bin" "$d\hrir_sadie2_ku100_48k.json"
       }

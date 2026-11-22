@@ -1,6 +1,6 @@
 //! Covers from SteamGridDB for apps that have none, with the API key the user saved
 //! (`steamgriddb_api_key`). What to ask and how to read the answers is decided in
-//! `butterpollo_core::steamgriddb`; this module asks, from the housekeeping loop and never from a
+//! `butterpollo_session::steamgriddb`; this module asks, from the housekeeping loop and never from a
 //! request, and saves each cover into the profile's covers folder as the app's `image-path`, the
 //! file `/appasset` and every client's library read.
 //!
@@ -15,7 +15,7 @@
 
 use crate::state::Shared;
 use anyhow::{Result, bail};
-use butterpollo_core::steamgriddb as sgdb;
+use butterpollo_session::steamgriddb as sgdb;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -176,11 +176,7 @@ pub fn api_key(h: &Shared) -> Option<String> {
     {
         return Some(key.to_owned());
     }
-    h.config
-        .read()
-        .unwrap()
-        .steamgriddb_api_key()
-        .map(str::to_owned)
+    sgdb::api_key(&h.config.read().unwrap()).map(str::to_owned)
 }
 
 /// Whether a key is saved anywhere, for the console's mask.
@@ -210,7 +206,7 @@ pub fn store_key(h: &Shared, key: Option<&str>) -> Result<()> {
             {
                 tracing::warn!(%error, "the credentials folder could not be kept to administrators");
             }
-            butterpollo_core::state::atomic_write(&file, key.as_bytes())?;
+            butterpollo_session::state::atomic_write(&file, key.as_bytes())?;
         }
         None => match std::fs::remove_file(&file) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
@@ -236,11 +232,11 @@ fn as_system() -> bool {
 
 /// When the host runs as SYSTEM, a key typed into `sunshine.conf` by hand (`config`) moves to the
 /// credentials folder and out of `config`: true when it moved. The caller writes `config`.
-pub fn take_conf_key(h: &Shared, config: &mut butterpollo_core::config::Config) -> Result<bool> {
+pub fn take_conf_key(h: &Shared, config: &mut butterpollo_config::config::Config) -> Result<bool> {
     if !as_system() {
         return Ok(false);
     }
-    let Some(key) = config.steamgriddb_api_key().map(str::to_owned) else {
+    let Some(key) = sgdb::api_key(config).map(str::to_owned) else {
         return Ok(false);
     };
     let saved = std::fs::read_to_string(key_file(h)).ok();
@@ -264,14 +260,14 @@ pub fn migrate_key(h: &Shared) {
     let moved = (|| -> Result<bool> {
         let _save = h.config_save.lock().unwrap();
         let mut config = if h.port_override.is_some() {
-            butterpollo_core::config::Config::load(&h.config_path)?
+            butterpollo_config::config::Config::load(&h.config_path)?
         } else {
             h.config.read().unwrap().clone()
         };
         if !take_conf_key(h, &mut config)? {
             return Ok(false);
         }
-        butterpollo_core::state::atomic_write(&h.config_path, config.text().as_bytes())?;
+        butterpollo_session::state::atomic_write(&h.config_path, config.text().as_bytes())?;
         if let Some(port) = h.port_override {
             config.values.insert("port".into(), port.to_string());
         }
@@ -334,7 +330,7 @@ fn wants_cover(app: &Value) -> bool {
             .and_then(Value::as_str)
             .is_none_or(|image| {
                 let image = image.trim();
-                image.is_empty() || image == butterpollo_core::steam::FALLBACK_IMAGE
+                image.is_empty() || image == butterpollo_session::steam::FALLBACK_IMAGE
             })
 }
 fn wanted(h: &Shared) -> Vec<Wanted> {
@@ -355,7 +351,7 @@ fn wanted(h: &Shared) -> Vec<Wanted> {
             safe.then(|| Wanted {
                 uuid,
                 name: app.name.clone(),
-                steam: butterpollo_core::steam::game_of(&value),
+                steam: butterpollo_session::steam::game_of(&value),
             })
         })
         .collect()
@@ -604,7 +600,7 @@ fn save(http: &dyn Http, folder: &Path, uuid: &str, url: &str) -> Result<()> {
     }
     std::fs::create_dir_all(folder)?;
     let download = folder.join(format!("sgdb_{uuid}.download"));
-    butterpollo_core::state::atomic_write(&download, &reply.body)?;
+    butterpollo_session::state::atomic_write(&download, &reply.body)?;
     let converted =
         butterpollo_windows::image::to_png(&download, &folder.join(format!("sgdb_{uuid}.png")));
     let _ = std::fs::remove_file(&download);

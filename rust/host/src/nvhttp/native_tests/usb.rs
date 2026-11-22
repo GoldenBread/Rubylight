@@ -1,7 +1,7 @@
 //! `GET /usb/tunnel`: the setting, the device's permission and the token decide who opens it.
 use super::*;
 use crate::usb_forward::Vhci;
-use butterpollo_core::usb_forward::{UsbMessage, UsbReason, UsbState};
+use rubylight_protocol::usb::{UsbMessage, UsbReason, UsbState};
 use std::time::{Duration, Instant};
 
 const TOKEN_HEADER: &str = "X-Rubylight-Usb-Token";

@@ -413,7 +413,7 @@ fn restricted(work: &mut dyn FnMut()) -> io::Result<()> {
 
 #[test]
 fn game_files_reached_through_a_swapped_folder_keep_the_users_rights() {
-    use butterpollo_core::game_files::{self, JOURNAL_FILE, Journal, Report, Scope};
+    use butterpollo_session::game_files::{self, JOURNAL_FILE, Journal, Report, Scope};
     let base = tempfile::tempdir().unwrap();
     icacls(base.path(), &["/grant", "*S-1-5-11:(OI)(CI)F"]);
     // A game in a library folder, and a folder only this user's SID may

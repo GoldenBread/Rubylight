@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::network_pacing::{self, ClientPath, Pacer};
+use butterpollo_media_policy::network_pacing::{self, ClientPath, Pacer};
 use butterpollo_windows::{
     net::{Batch, Link},
     timing::Timer,
@@ -182,7 +182,7 @@ pub(super) fn run(
         let sent_at = Instant::now();
         current.stats.performance.lock().unwrap().record_timing(
             sent_at,
-            butterpollo_core::performance::Timing {
+            butterpollo_media_policy::performance::Timing {
                 period: current.stream_mode().period(),
                 encode: frame.latency,
                 host: frame.processing,
@@ -387,14 +387,14 @@ fn host_dropped(current: &Session, wire_frame: u32, oversized: bool, transient: 
         crate::video_send::oversized_warning(current);
     }
     if transient {
-        current.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so PyroWave video packets were dropped and the client may stutter. Close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_core::session::EVENT_PERIOD);
+        current.launch.warnings.event("network_send", "The PC could not send the video fast enough (its CPU or network adapter fell behind), so PyroWave video packets were dropped and the client may stutter. Close other work on the PC, or lower the bitrate, resolution or frame rate. The log includes the socket error code.", butterpollo_session::session::EVENT_PERIOD);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::session::Role;
+    use butterpollo_session::session::Role;
 
     #[test]
     fn a_roam_routes_the_new_path_at_once() {
@@ -438,7 +438,7 @@ mod tests {
         let stream = |link, pace| {
             let session = Session::new(
                 fixture.launch(fixture.client(0), Role::Stream),
-                butterpollo_core::rtsp::Negotiated {
+                butterpollo_media_policy::rtsp::Negotiated {
                     codec: 3,
                     bitrate_kbps: 40_000,
                     pyrowave_client_link_mbps: link,
@@ -479,7 +479,7 @@ mod tests {
         let fixture = crate::state::test_support::Fixture::new();
         let session = Session::new(
             fixture.launch(fixture.client(0), Role::Stream),
-            butterpollo_core::rtsp::Negotiated {
+            butterpollo_media_policy::rtsp::Negotiated {
                 codec: 3,
                 bitrate_kbps: 40_000,
                 ..Default::default()
@@ -516,7 +516,7 @@ mod tests {
         let fixture = crate::state::test_support::Fixture::new();
         let session = Session::new(
             fixture.launch(fixture.client(0), Role::Stream),
-            butterpollo_core::rtsp::Negotiated {
+            butterpollo_media_policy::rtsp::Negotiated {
                 codec: 3,
                 pyrowave_records: true,
                 bitrate_kbps: 400_000,

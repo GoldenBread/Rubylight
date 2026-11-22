@@ -4,7 +4,7 @@
 //! its hotkey starts scaling the game. When the app stops, Lossless Scaling
 //! is closed and the profile removed.
 use anyhow::{Context, Result, bail};
-use butterpollo_core::lossless::{Options, Profile};
+use butterpollo_media_policy::lossless::{Options, Profile};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     path::{Path, PathBuf},
@@ -155,7 +155,7 @@ pub fn without_profile(settings: &str) -> Result<Option<String>> {
 /// The hotkey Lossless Scaling scales with.
 pub fn hotkey(settings: &str) -> Option<(Vec<u16>, u16)> {
     let root = parse(settings).ok()?;
-    butterpollo_core::lossless::hotkey(
+    butterpollo_media_policy::lossless::hotkey(
         &text_of(&root, "Hotkey"),
         &text_of(&root, "HotkeyModifierKeys"),
     )
@@ -195,7 +195,7 @@ const POLL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug)]
 struct Sample {
-    process: butterpollo_core::steam::Process,
+    process: butterpollo_session::steam::Process,
     path: String,
     cpu_time: u64,
     working_set: u64,
@@ -363,7 +363,7 @@ impl Session {
     pub fn start(
         options: Options,
         configured_program: String,
-        baseline: Vec<butterpollo_core::steam::Process>,
+        baseline: Vec<butterpollo_session::steam::Process>,
         root_pid: u32,
         folder: Box<dyn Fn() -> Option<String> + Send>,
     ) -> Self {
@@ -401,7 +401,7 @@ impl Session {
             .map_err(anyhow::Error::from)
             .and_then(|text| without_profile(&text))
             .and_then(|text| match text {
-                Some(text) => butterpollo_core::state::atomic_write(&settings, text.as_bytes()),
+                Some(text) => butterpollo_session::state::atomic_write(&settings, text.as_bytes()),
                 None => Ok(()),
             });
         match restored {
@@ -456,7 +456,7 @@ fn wait(stop: &AtomicBool, duration: Duration) -> bool {
 fn run(
     options: &Options,
     configured_program: &str,
-    baseline: &[butterpollo_core::steam::Process],
+    baseline: &[butterpollo_session::steam::Process],
     root_pid: u32,
     folder: &(dyn Fn() -> Option<String> + Send),
     stop: &AtomicBool,
@@ -580,7 +580,7 @@ fn apply_game(
             std::slice::from_ref(&game.process.name),
         ),
     )?;
-    butterpollo_core::state::atomic_write(settings, updated.as_bytes())?;
+    butterpollo_session::state::atomic_write(settings, updated.as_bytes())?;
     *applied.lock().unwrap() = Some(Applied {
         settings: settings.to_owned(),
         program: program.to_owned(),

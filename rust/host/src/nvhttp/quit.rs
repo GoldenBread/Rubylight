@@ -16,13 +16,13 @@ pub(crate) fn terminate_refused(h: &Shared, client: &str) -> bool {
             .values()
             .any(|s| !s.stopping() && s.launch.role != Role::Stream);
     (remote_active
-        && butterpollo_core::state::device_uuid(&game.owner)
-            != butterpollo_core::state::device_uuid(client))
+        && butterpollo_session::state::device_uuid(&game.owner)
+            != butterpollo_session::state::device_uuid(client))
         || h.claimed_by_other(client)
 }
 /// Whether two clients are one device's screens: a quit closes the game of both.
 pub(crate) fn same_device(a: &str, b: &str) -> bool {
-    butterpollo_core::state::device_uuid(a) == butterpollo_core::state::device_uuid(b)
+    butterpollo_session::state::device_uuid(a) == butterpollo_session::state::device_uuid(b)
 }
 /// Unplug the controllers that streams which ended still park and wait until XInput shows them
 /// gone, so a new Nucleus Co-op session's players take the first free slots (#56). A pending
@@ -94,7 +94,7 @@ fn quit_nucleus_player(
     for seat in seats {
         let background = listed.iter().any(|listed| {
             listed.session.id == seat.session
-                && listed.session.kind == butterpollo_core::nucleus::coop::Kind::Background
+                && listed.session.kind == butterpollo_session::nucleus::coop::Kind::Background
         });
         if background && !disconnect {
             tracing::info!(
@@ -131,7 +131,7 @@ pub(crate) fn quit_nucleus_stream(
     h: &Shared,
     client: &str,
     disconnect: bool,
-) -> Result<bool, butterpollo_core::session_state::Refusal> {
+) -> Result<bool, butterpollo_session::session_state::Refusal> {
     let _transition = h.transition()?;
     let Some(ids) = quit_nucleus_player(h, client, disconnect, true) else {
         return Ok(false);

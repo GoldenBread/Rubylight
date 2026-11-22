@@ -76,7 +76,7 @@ impl Drop for JournalLock {
 
 /// Take the journal's mutex; wait for another thread or process that holds it.
 pub fn lock(path: &Path) -> Result<JournalLock> {
-    let hash = butterpollo_core::crypto::hash(path.to_string_lossy().to_lowercase().as_bytes());
+    let hash = butterpollo_crypto::crypto::hash(path.to_string_lossy().to_lowercase().as_bytes());
     // `Global\`: the installed host runs as SYSTEM in the console session and a development host
     // as the user, possibly in another session; a `Local\` name would not be shared between them.
     // The mutex is created with an explicit descriptor that lets SYSTEM, Administrators and the
@@ -233,7 +233,8 @@ mod tests {
         use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_ACCESS_RIGHTS};
         let path = std::env::temp_dir().join(format!("radeon-rights-{}.json", std::process::id()));
         let _held = lock(&path).unwrap();
-        let hash = butterpollo_core::crypto::hash(path.to_string_lossy().to_lowercase().as_bytes());
+        let hash =
+            butterpollo_crypto::crypto::hash(path.to_string_lossy().to_lowercase().as_bytes());
         let name: Vec<u16> = format!(
             "Global\\Butterpollo.RadeonJournal.{:x}\0",
             u64::from_le_bytes(hash[..8].try_into().unwrap())

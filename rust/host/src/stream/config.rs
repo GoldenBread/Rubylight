@@ -1,5 +1,6 @@
 //! A launch's effective configuration: host, device, app and stream-preset layers.
 use super::*;
+use butterpollo_session::config_ext::ConfigExt;
 
 /// Whether `overrides` set the peak brightness, under its name before or
 /// after it moved out of RTX HDR.
@@ -17,17 +18,17 @@ pub(super) fn sets_peak(overrides: &serde_json::Map<String, serde_json::Value>) 
 /// a stream (the native capabilities): no app has its say yet.
 pub(crate) fn device_config(
     h: &Shared,
-    client: &butterpollo_core::state::Client,
+    client: &butterpollo_session::state::Client,
 ) -> Result<Config> {
     let mut config = h.config.read().unwrap().clone();
     device_layer(&mut config, client)?;
-    butterpollo_core::stream_preset::fill(&mut config);
+    butterpollo_media_policy::stream_preset::fill(&mut config);
     Ok(config)
 }
 
 /// Applies the device's overrides. Returns whether they chose the peak
 /// brightness.
-fn device_layer(config: &mut Config, client: &butterpollo_core::state::Client) -> Result<bool> {
+fn device_layer(config: &mut Config, client: &butterpollo_session::state::Client) -> Result<bool> {
     let mut peak_chosen = false;
     if let Some(overrides) = client
         .extra
@@ -55,29 +56,29 @@ fn device_layer(config: &mut Config, client: &butterpollo_core::state::Client) -
 
 /// The app `launch` streams as its device streams it: the device's block in the app's
 /// `device-overrides` laid over the app's own settings (app × device, then app).
-pub(crate) fn launch_app(h: &Shared, launch: &Launch) -> Option<butterpollo_core::state::App> {
+pub(crate) fn launch_app(h: &Shared, launch: &Launch) -> Option<butterpollo_session::state::App> {
     h.apps
         .read()
         .unwrap()
         .iter()
         .find(|app| app.id() == launch.app_id || app.aliases.contains(&launch.app_id))
         .map(|app| {
-            butterpollo_core::device_overrides::for_device(
+            butterpollo_session::device_overrides::for_device(
                 app,
-                butterpollo_core::state::device_uuid(&launch.client.uuid),
+                butterpollo_session::state::device_uuid(&launch.client.uuid),
             )
         })
 }
 
-/// Whether `launch`'s app starts through Steam ([`butterpollo_core::steam::launched_through_steam`]),
-/// for its controllers' [`butterpollo_core::input_policy::Policy::steam_app`]. A Nucleus Co-op
+/// Whether `launch`'s app starts through Steam ([`butterpollo_session::steam::launched_through_steam`]),
+/// for its controllers' [`butterpollo_input_policy::input_policy::Policy::steam_app`]. A Nucleus Co-op
 /// launch (a co-op entry or a background stream) never does, whatever its app: Nucleus Co-op
 /// starts the game's .exe itself, a Steam game's too.
 pub(crate) fn launched_through_steam(h: &Shared, launch: &Launch) -> bool {
     launch.nucleus.is_none()
         && launch_app(h, launch)
             .and_then(|app| serde_json::to_value(app).ok())
-            .is_some_and(|app| butterpollo_core::steam::launched_through_steam(&app))
+            .is_some_and(|app| butterpollo_session::steam::launched_through_steam(&app))
 }
 
 /// The stream's settings: host, then device, then app, then the app's block for the device.
@@ -107,14 +108,26 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
             // the peak is still what a virtual display reports.
             ("rtx-hdr-peak-brightness", "hdr_peak_brightness"),
             // The app's window in place of a display (app_window.rs).
-            ("capture-window", butterpollo_core::app_window::SETTING),
-            ("capture-window-exe", butterpollo_core::app_window::EXE),
-            ("capture-window-title", butterpollo_core::app_window::TITLE),
+            (
+                "capture-window",
+                butterpollo_media_policy::app_window::SETTING,
+            ),
+            (
+                "capture-window-exe",
+                butterpollo_media_policy::app_window::EXE,
+            ),
+            (
+                "capture-window-title",
+                butterpollo_media_policy::app_window::TITLE,
+            ),
             (
                 "capture-window-closed",
-                butterpollo_core::app_window::CLOSED,
+                butterpollo_media_policy::app_window::CLOSED,
             ),
-            ("capture-window-frame", butterpollo_core::app_window::FRAME),
+            (
+                "capture-window-frame",
+                butterpollo_media_policy::app_window::FRAME,
+            ),
         ] {
             if let Some(value) = app
                 .extra
@@ -134,13 +147,13 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
         // The NVIDIA image enhancements, marked as chosen: RTX HDR runs only
         // for an app, device or stream that chose it.
         let inherited = config.clone();
-        for (source, target) in butterpollo_core::nvidia_enhance::APP_KEYS {
+        for (source, target) in butterpollo_media_policy::nvidia_enhance::APP_KEYS {
             if let Some(value) = app
                 .extra
                 .get(*source)
                 .filter(|value| !value.is_null() && value.as_str() != Some(""))
             {
-                butterpollo_core::nvidia_enhance::choose(
+                butterpollo_media_policy::nvidia_enhance::choose(
                     &mut config,
                     &inherited,
                     target,
@@ -167,15 +180,15 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
     let offered = h
         .nvidia_enhancements
         .load(std::sync::atomic::Ordering::Acquire);
-    butterpollo_core::nvidia_enhance::apply_launch(&mut config, &launch.options, offered);
+    butterpollo_media_policy::nvidia_enhance::apply_launch(&mut config, &launch.options, offered);
     config.values.insert(
-        butterpollo_core::nvidia_enhance::OFFERED_KEY.into(),
+        butterpollo_media_policy::nvidia_enhance::OFFERED_KEY.into(),
         offered.to_string(),
     );
     // Every explicit value of the host, the device and the app is in place;
     // the most specific preset any of them named fills the covered settings
     // that are still unset.
-    butterpollo_core::stream_preset::fill(&mut config);
+    butterpollo_media_policy::stream_preset::fill(&mut config);
     // A device's HDR calibration gives its screen's peak unless the device
     // or app chose one.
     if !peak_chosen
@@ -203,7 +216,7 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
     if launch.nucleus.is_some() || launch.role != Role::Stream {
         // A co-op player's stream is its game window already; a stream that
         // shows no app has no window to find.
-        for key in butterpollo_core::app_window::KEYS {
+        for key in butterpollo_media_policy::app_window::KEYS {
             config.values.remove(key);
         }
     } else {
@@ -211,23 +224,27 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
     }
     if launch.nucleus.is_some() {
         crate::nucleus::isolate(&mut config);
-        config.values.remove(butterpollo_core::background::SETTING);
+        config
+            .values
+            .remove(butterpollo_session::background::SETTING);
     } else if launch.role == Role::Stream
         && launch.background.unwrap_or_else(|| {
-            butterpollo_core::background::enabled(&config)
-                || butterpollo_core::background::requested(
+            butterpollo_session::background::enabled(&config)
+                || butterpollo_session::background::requested(
                     &launch.client.extra,
                     app.as_ref().map(|app| &app.extra),
                 )
         })
     {
-        butterpollo_core::background::apply(&mut config);
+        butterpollo_session::background::apply(&mut config);
     } else {
-        config.values.remove(butterpollo_core::background::SETTING);
+        config
+            .values
+            .remove(butterpollo_session::background::SETTING);
     }
     // WebRTC takes whole access units: the browser's depacketizer wants a frame, not the
     // slices a GameStream client would reassemble from the wire.
-    if launch.transport == butterpollo_core::session::Transport::WebRtc {
+    if launch.transport == butterpollo_session::session::Transport::WebRtc {
         config
             .values
             .insert("video_slice_delivery".into(), "off".into());
@@ -241,8 +258,8 @@ const APP_WINDOW_METHOD: &str = "capture_app_window_method";
 /// A stream of the app's window captures with Windows Graphics Capture, the
 /// only method that captures one window; one set to another method uses WGC
 /// and says so (Automatic already is WGC for this).
-fn app_window_capture(config: &mut Config, warnings: &butterpollo_core::session::Warnings) {
-    if butterpollo_core::app_window::settings(config).is_none() {
+fn app_window_capture(config: &mut Config, warnings: &butterpollo_session::session::Warnings) {
+    if butterpollo_media_policy::app_window::settings(config).is_none() {
         warnings.clear(APP_WINDOW_METHOD);
         return;
     }
@@ -271,7 +288,7 @@ pub(super) fn apply_overrides(
     // Overrides saved by an earlier release, not yet migrated on load, are
     // read under their current names and values.
     let mut layer = overrides.clone();
-    butterpollo_core::config::migrate_overrides(&mut layer);
+    butterpollo_config::config::migrate_overrides(&mut layer);
     // The retired bitrate, pacing and remote monitor switches the layer still
     // holds alone fold over the layers below, as the earlier switches combined.
     config.fold_layer(&mut layer);
@@ -280,14 +297,16 @@ pub(super) fn apply_overrides(
         .filter(|(_, v)| v.as_str() != Some(""))
         // No preset of its own, like "": the layer below keeps its preset,
         // where a null would remove it and fall back to Balanced.
-        .filter(|(k, v)| !(k.as_str() == butterpollo_core::stream_preset::SETTING && v.is_null()))
-        .filter(|(k, _)| !butterpollo_core::config::removed(k))
-        .map(|(k, v)| (butterpollo_core::config::current_name(k).to_owned(), v))
+        .filter(|(k, v)| {
+            !(k.as_str() == butterpollo_media_policy::stream_preset::SETTING && v.is_null())
+        })
+        .filter(|(k, _)| !butterpollo_config::config::removed(k))
+        .map(|(k, v)| (butterpollo_config::config::current_name(k).to_owned(), v))
         .filter(|(k, _)| {
             // A retired HDR request without the layer's own Display HDR folds
             // over the layers below in `Config::update`.
-            let allowed = k == butterpollo_core::config::HDR_REQUEST
-                || butterpollo_core::config::override_allowed(k);
+            let allowed = k == butterpollo_config::config::HDR_REQUEST
+                || butterpollo_config::config::override_allowed(k);
             if !allowed {
                 tracing::warn!(key = %k, "ignoring an override of a host-wide setting");
             }
@@ -319,13 +338,14 @@ pub(super) fn apply_overrides(
     // A device or app that sets an enhancement chose it (`nvidia_enhance::marker`);
     // a null restores the inherited value.
     for (key, value) in &overrides {
-        if butterpollo_core::nvidia_enhance::is_key(key) {
+        if butterpollo_media_policy::nvidia_enhance::is_key(key) {
             if value.is_null() {
-                butterpollo_core::nvidia_enhance::choose(config, &inherited, key, None);
+                butterpollo_media_policy::nvidia_enhance::choose(config, &inherited, key, None);
             } else {
-                config
-                    .values
-                    .insert(butterpollo_core::nvidia_enhance::marker(key), "true".into());
+                config.values.insert(
+                    butterpollo_media_policy::nvidia_enhance::marker(key),
+                    "true".into(),
+                );
             }
         }
     }
@@ -337,9 +357,9 @@ pub(super) fn apply_overrides(
 /// console why when the picture is smaller. `stream` holds the requested size
 /// when this is called (a launch's mode or an ANNOUNCE).
 pub(crate) fn cap_stream_resolution(
-    stream: &mut butterpollo_core::rtsp::Negotiated,
+    stream: &mut butterpollo_media_policy::rtsp::Negotiated,
     config: &Config,
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
 ) {
     let cap = config.max_stream_resolution();
     stream.set_display_size((stream.width, stream.height), cap);
@@ -351,9 +371,9 @@ pub(crate) fn cap_stream_resolution(
 /// connection and after a size change the client asked for, so a switch into
 /// the cap takes the reason off the stream card.
 pub(crate) fn report_stream_resolution_cap(
-    stream: &butterpollo_core::rtsp::Negotiated,
+    stream: &butterpollo_media_policy::rtsp::Negotiated,
     cap: Option<(u32, u32)>,
-    warnings: &butterpollo_core::session::Warnings,
+    warnings: &butterpollo_session::session::Warnings,
 ) {
     let Some((cap_width, cap_height)) = cap.filter(|_| stream.capped()) else {
         warnings.clear("stream_resolution_cap");
@@ -382,15 +402,15 @@ pub(crate) fn report_stream_resolution_cap(
 mod tests {
     use super::*;
 
-    fn negotiated(width: u32, height: u32) -> butterpollo_core::rtsp::Negotiated {
-        butterpollo_core::rtsp::Negotiated {
+    fn negotiated(width: u32, height: u32) -> butterpollo_media_policy::rtsp::Negotiated {
+        butterpollo_media_policy::rtsp::Negotiated {
             width,
             height,
             ..Default::default()
         }
     }
 
-    fn reason(warnings: &butterpollo_core::session::Warnings) -> Option<String> {
+    fn reason(warnings: &butterpollo_session::session::Warnings) -> Option<String> {
         warnings
             .snapshot()
             .into_iter()
@@ -400,7 +420,7 @@ mod tests {
 
     #[test]
     fn a_resolution_cap_codes_1440p_while_the_display_keeps_4k_and_says_why() {
-        let warnings = butterpollo_core::session::Warnings::default();
+        let warnings = butterpollo_session::session::Warnings::default();
         let config = Config::parse("max_stream_resolution = 2560x1440\n").unwrap();
         let mut capped = negotiated(3840, 2160);
         cap_stream_resolution(&mut capped, &config, &warnings);
@@ -425,7 +445,7 @@ mod tests {
 
     #[test]
     fn a_size_change_into_the_cap_takes_the_reason_off_the_stream_card() {
-        let warnings = butterpollo_core::session::Warnings::default();
+        let warnings = butterpollo_session::session::Warnings::default();
         let cap = Some((2560, 1440));
         let mut capped = negotiated(3840, 2160);
         capped.set_display_size((3840, 2160), cap);

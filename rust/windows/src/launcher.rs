@@ -2,7 +2,8 @@
 
 use crate::text::to_wide;
 use anyhow::{Context, Result, bail};
-use butterpollo_core::{config::Config, migration};
+use butterpollo_config::config::Config;
+use butterpollo_session::migration;
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
@@ -204,7 +205,7 @@ fn service_profile() -> Result<Option<PathBuf>> {
                         ServiceState::Running => break,
                         ServiceState::Stopped => bail!(
                             "The Rubylight service stopped again. Check logs\\service.log in {}.",
-                            butterpollo_core::paths::installed_profile().display()
+                            butterpollo_session::paths::installed_profile().display()
                         ),
                         _ if Instant::now() >= deadline => return Err(stopped()),
                         _ => std::thread::sleep(Duration::from_millis(250)),
@@ -212,7 +213,7 @@ fn service_profile() -> Result<Option<PathBuf>> {
                 }
             }
         }
-        return Ok(Some(butterpollo_core::paths::installed_profile()));
+        return Ok(Some(butterpollo_session::paths::installed_profile()));
     }
     Ok(None)
 }
@@ -266,7 +267,7 @@ pub fn run() -> Result<()> {
     }
     let directory = match directory {
         Some(directory) => directory,
-        None => butterpollo_core::paths::portable_profile()?,
+        None => butterpollo_session::paths::portable_profile()?,
     };
     let has_profile = directory.is_dir() && std::fs::read_dir(&directory)?.next().is_some();
     if !has_profile && import.is_none() && interactive {

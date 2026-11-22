@@ -295,7 +295,7 @@ fn interface_detection_keeps_physical_link_limits_separate_from_pacing_demand() 
             assert!(link.wireless);
             assert_eq!(link.bps, 0);
             assert_eq!(
-                butterpollo_core::network_pacing::rate_bps(
+                butterpollo_media_policy::network_pacing::rate_bps(
                     0,
                     50_000,
                     link.bps,
@@ -318,7 +318,7 @@ fn interface_detection_keeps_physical_link_limits_separate_from_pacing_demand() 
         let link = interface_link(&interface(kind, false));
         assert_eq!(link, Link::default());
         assert_eq!(
-            butterpollo_core::network_pacing::rate_bps(
+            butterpollo_media_policy::network_pacing::rate_bps(
                 0,
                 50_000,
                 link.bps,
@@ -410,7 +410,7 @@ fn loopback_including_mapped_ipv4_keeps_fast_pacing_without_a_link_cap() {
         let link = routed_link(peer.parse().unwrap());
         assert_eq!(link, Link::default());
         assert_eq!(
-            butterpollo_core::network_pacing::rate_bps(
+            butterpollo_media_policy::network_pacing::rate_bps(
                 0,
                 50_000,
                 link.bps,
@@ -449,7 +449,7 @@ fn local_mac_never_reports_a_virtual_adapter() -> Result<()> {
     let physical: Vec<_> = adapters
         .iter()
         .filter(|a| a.physical())
-        .map(|a| butterpollo_core::wake::format_mac(a.mac))
+        .map(|a| butterpollo_session::wake::format_mac(a.mac))
         .collect();
     for address in adapters.iter().flat_map(|a| a.addresses.clone()) {
         let mac = local_mac(address)?;
@@ -1378,8 +1378,8 @@ fn a_loopback_route_reports_an_mtu_and_a_socket_can_refuse_fragmentation() -> Re
         assert!(routed_same_link(peer), "{peer}");
         // The packet size offered for it is the largest this version defines.
         assert_eq!(
-            butterpollo_core::video_packet::for_mtu(mtu),
-            butterpollo_core::video_packet::MAX_VIDEO_PACKET,
+            rubylight_protocol::video_packet::for_mtu(mtu),
+            rubylight_protocol::video_packet::MAX_VIDEO_PACKET,
             "{peer}: {mtu}"
         );
         let socket = UdpSocket::bind(bind)?;

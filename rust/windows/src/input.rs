@@ -1,8 +1,8 @@
 //! Input event dispatch and shared per-session injection state.
 
 use anyhow::{Context, Result, bail};
-use butterpollo_core::input::Input as Event;
-use butterpollo_core::input_policy::{VHF_AUTO, gamepad_profile};
+use butterpollo_input_policy::input::Input as Event;
+use butterpollo_input_policy::input_policy::{VHF_AUTO, gamepad_profile};
 use std::{
     collections::{BTreeMap, BTreeSet},
     mem::size_of,
@@ -62,7 +62,7 @@ const VIRTUAL_BUTTON_FLAG: u32 = 1 << 16;
 /// from its update to its send, and a pass's send waits for it. Taken before HELD.
 static SEND_ORDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub fn capabilities(config: &butterpollo_core::config::Config) -> u32 {
+pub fn capabilities(config: &butterpollo_config::config::Config) -> u32 {
     use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
     let mut flags = 0;
     if config.boolean("mouse", true)
@@ -113,7 +113,7 @@ pub struct Injector {
     /// The pass's touch moves not yet injected, by client id: they go out in one frame.
     touch_moves: BTreeMap<u32, POINTER_TOUCH_INFO>,
     /// Touches on their way to mouse input, with a mouse or trackpad touch profile.
-    touch_profile: butterpollo_core::touch_profile::TouchProfile,
+    touch_profile: butterpollo_input_policy::touch_profile::TouchProfile,
     touch_device: Option<HSYNTHETICPOINTERDEVICE>,
     pen_device: Option<HSYNTHETICPOINTERDEVICE>,
     pen: POINTER_PEN_INFO,
@@ -129,7 +129,7 @@ pub struct Injector {
     feedback_waker: Option<std::sync::Arc<std::net::UdpSocket>>,
     /// The display's desktop rectangle, None until the display exists.
     rect: Option<RECT>,
-    policy: butterpollo_core::input_policy::Policy,
+    policy: butterpollo_input_policy::input_policy::Policy,
     /// The layout that gives keys the client did not normalize their scan codes (None:
     /// the host's), and the one asked for since. It takes over once no key is held, so
     /// a release sends its press's scan code.
@@ -161,7 +161,7 @@ pub struct Injector {
     inject: fn(&[INPUT]) -> usize,
     /// `inject_pointer` for touch frames, or a stand-in in tests.
     inject_touch: unsafe fn(HSYNTHETICPOINTERDEVICE, &[POINTER_TYPE_INFO]) -> Result<()>,
-    warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+    warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     /// This stream holds a share of the virtual mouse (`mouse_mode` auto or virtual_mouse):
     /// mouse input goes to it while it is plugged in.
     virtual_mouse: bool,
@@ -256,7 +256,7 @@ const MISSING_DISPLAY_WARNING: std::time::Duration = std::time::Duration::from_s
 /// the first display.
 fn display_rect(output: &str) -> Result<RECT> {
     // The app's window streamed in place of a display: input maps onto the
-    // window's captured area, wherever it is (butterpollo_core::app_window).
+    // window's captured area, wherever it is (butterpollo_media_policy::app_window).
     if output.starts_with(WINDOW_PREFIX) {
         return crate::capture::window_target_rect(output)
             .ok_or_else(|| anyhow::anyhow!("input window missing"));
@@ -339,24 +339,24 @@ impl Injector {
         Self::new_options(
             output,
             profile,
-            &butterpollo_core::config::Config::default(),
+            &butterpollo_config::config::Config::default(),
         )
     }
     pub fn new_options(
         output: &str,
         profile: &str,
-        config: &butterpollo_core::config::Config,
+        config: &butterpollo_config::config::Config,
     ) -> Result<Self> {
         Self::new_options_reported(output, profile, config, Default::default())
     }
     pub fn new_options_reported(
         output: &str,
         profile: &str,
-        config: &butterpollo_core::config::Config,
-        warnings: std::sync::Arc<butterpollo_core::session::Warnings>,
+        config: &butterpollo_config::config::Config,
+        warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
     ) -> Result<Self> {
         let profile = gamepad_profile(profile);
-        let policy = butterpollo_core::input_policy::Policy::resolve(config)?;
+        let policy = butterpollo_input_policy::input_policy::Policy::resolve(config)?;
         // Keyboard, relative mouse and controllers must work before the
         // stream's display exists: a controller's arrival is sent only once.
         let mut injector = Self {
@@ -416,7 +416,7 @@ impl Injector {
             virtual_hid::MOUSE.acquire();
             self.virtual_mouse = true;
             let availability = virtual_hid::MOUSE
-                .plug(|| butterpollo_core::virtual_hid::HidMouse::new(virtual_hid::SERIAL));
+                .plug(|| butterpollo_input_policy::virtual_hid::HidMouse::new(virtual_hid::SERIAL));
             self.report_virtual_mouse(&availability);
         }
         if self.policy.native_touchpad {
@@ -427,7 +427,7 @@ impl Injector {
     /// Says why mouse input is injected when the virtual mouse cannot take it: a log line
     /// for `auto`, and a stream warning too when the setting asked for the virtual mouse.
     fn report_virtual_mouse(&self, availability: &virtual_hid::Availability) {
-        use butterpollo_core::input_policy::MouseMode;
+        use butterpollo_input_policy::input_policy::MouseMode;
         use virtual_hid::Availability;
         let asked = self.policy.mouse_mode == MouseMode::VirtualMouse;
         let why = match availability {
@@ -576,7 +576,7 @@ impl Injector {
         buttons: u8,
         width_mm: u16,
         height_mm: u16,
-        contacts: &[butterpollo_core::virtual_hid::Contact],
+        contacts: &[butterpollo_input_policy::virtual_hid::Contact],
     ) {
         use virtual_hid::Availability;
         if !self.touchpad {
@@ -598,7 +598,7 @@ impl Injector {
             ),
             Some(_) => return,
             None => match virtual_hid::TOUCHPAD.plug(move || {
-                butterpollo_core::virtual_hid::PrecisionTouchpad::new(
+                butterpollo_input_policy::virtual_hid::PrecisionTouchpad::new(
                     width_mm,
                     height_mm,
                     virtual_hid::SERIAL,
@@ -675,13 +675,14 @@ impl Injector {
             u32::try_from(rect.right - rect.left).ok()?,
             u32::try_from(rect.bottom - rect.top).ok()?,
         );
-        butterpollo_core::display_policy::picture(display, stream).map(|picture| (stream, picture))
+        butterpollo_media_policy::display_policy::picture(display, stream)
+            .map(|picture| (stream, picture))
     }
     /// A point on the stream as fractions of the display.
     fn on_display(&self, x: f32, y: f32) -> (f32, f32) {
         match self.picture() {
             Some((stream, picture)) => {
-                let (x, y) = butterpollo_core::display_policy::stream_to_picture(
+                let (x, y) = butterpollo_media_policy::display_policy::stream_to_picture(
                     (f64::from(x), f64::from(y)),
                     stream,
                     picture,
@@ -1041,7 +1042,7 @@ impl Injector {
                 let (px, py) = match self.picture() {
                     // The client's size is the stream's picture with its bars.
                     Some((stream, picture)) => {
-                        let (fx, fy) = butterpollo_core::display_policy::stream_to_picture(
+                        let (fx, fy) = butterpollo_media_policy::display_policy::stream_to_picture(
                             (
                                 i64::from(*x).clamp(0, width) as f64 / width as f64,
                                 i64::from(*y).clamp(0, height) as f64 / height as f64,
@@ -1400,7 +1401,7 @@ impl Injector {
     }
     /// Lets go of the keys, mouse buttons and touches this injector holds and keeps its
     /// controllers: a guest's stream that lost the keyboard and mouse to another holder
-    /// (`butterpollo_core::multiclient::Kbm`).
+    /// (`butterpollo_session::multiclient::Kbm`).
     pub fn release_keyboard_mouse(&mut self) {
         if let Err(error) = self.release_pointers() {
             tracing::warn!(%error, "keyboard and mouse release incomplete");

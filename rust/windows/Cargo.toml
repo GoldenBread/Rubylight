@@ -10,7 +10,12 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-butterpollo-core = { path = "../core" }
+butterpollo-crypto = { path = "../core/crypto" }
+butterpollo-config = { path = "../core/config" }
+butterpollo-media-policy = { path = "../core/media-policy" }
+butterpollo-input-policy = { path = "../core/input-policy" }
+butterpollo-session = { path = "../core/session" }
+rubylight-protocol = { path = "../../client/protocol/core" }
 rubylight-vdisplay-proto = { path = "../drivers/rubylight-vdisplay-proto" }
 rubylight-vgamepad-proto = { path = "../drivers/rubylight-vgamepad-proto" }
 libloading = "0.8"

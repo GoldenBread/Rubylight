@@ -180,7 +180,7 @@ fn a_closed_games_stream_ends_after_the_wait_that_is_set() {
 /// files, so every stream of one ended with the "no process was seen" warning.
 #[test]
 fn a_running_games_new_processes_are_found_once_for_its_settings_files() {
-    let process = |pid, started| butterpollo_core::steam::Process {
+    let process = |pid, started| butterpollo_session::steam::Process {
         pid,
         parent: 1,
         started,
@@ -482,7 +482,7 @@ fn failed_sync_retries_on_the_next_watch_tick() {
 #[test]
 fn the_tick_keeps_the_fullscreen_entry_without_rewriting_the_library() {
     let f = crate::state::test_support::Fixture::new();
-    *f.host.config.write().unwrap() = butterpollo_core::config::Config::parse(
+    *f.host.config.write().unwrap() = butterpollo_config::config::Config::parse(
         "playnite_fullscreen_entry_enabled=true\nplaynite_auto_sync=false",
     )
     .unwrap();

@@ -113,7 +113,7 @@ fn a_file_that_is_no_program_is_an_error() {
 fn a_programs_imports_are_read_from_its_file() {
     let system = std::env::var("SystemRoot").unwrap();
     let exe = Path::new(&system).join(r"System32\where.exe");
-    let dlls = butterpollo_core::nucleus::imports::imported_dlls(&mut std::io::BufReader::new(
+    let dlls = butterpollo_session::nucleus::imports::imported_dlls(&mut std::io::BufReader::new(
         std::fs::File::open(&exe).unwrap(),
     ))
     .unwrap();
