@@ -638,7 +638,7 @@ pub(super) fn discard_partial(part: &Path, error: FileError) -> FileError {
 #[cfg(windows)]
 fn rename_new(from: &Path, to: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
-    extern "system" {
+    unsafe extern "system" {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
     let wide = |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain([0]).collect() };

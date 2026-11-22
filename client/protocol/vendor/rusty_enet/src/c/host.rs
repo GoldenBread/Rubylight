@@ -47,6 +47,8 @@ pub(crate) struct ENetHost<S: Socket> {
     pub(crate) duplicate_peers: usize,
     pub(crate) maximum_packet_size: usize,
     pub(crate) maximum_waiting_data: usize,
+    pub(crate) round_up_srtt: bool,
+    pub(crate) lenient_peer_address: bool,
 }
 pub(crate) unsafe fn enet_host_create<S: Socket>(
     mut socket: S,
@@ -56,6 +58,8 @@ pub(crate) unsafe fn enet_host_create<S: Socket>(
     outgoing_bandwidth: u32,
     time: Box<dyn Fn() -> Duration>,
     seed: Option<u32>,
+    round_up_srtt: bool,
+    lenient_peer_address: bool,
 ) -> Result<*mut ENetHost<S>, S::Error> {
     let mut current_peer: *mut ENetPeer<S>;
     let host: *mut ENetHost<S> = enet_malloc(Layout::new::<ENetHost<S>>()).cast();
@@ -104,6 +108,8 @@ pub(crate) unsafe fn enet_host_create<S: Socket>(
     (*host).duplicate_peers = PROTOCOL_MAXIMUM_PEER_ID as i32 as usize;
     (*host).maximum_packet_size = HOST_DEFAULT_MAXIMUM_PACKET_SIZE as i32 as usize;
     (*host).maximum_waiting_data = HOST_DEFAULT_MAXIMUM_WAITING_DATA as i32 as usize;
+    (*host).round_up_srtt = round_up_srtt;
+    (*host).lenient_peer_address = lenient_peer_address;
     (*host).compressor.write(None);
     enet_list_clear(&mut (*host).dispatch_queue);
     current_peer = (*host).peers;

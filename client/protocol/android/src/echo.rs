@@ -116,7 +116,7 @@ impl Canceller {
     /// Takes the stream's sound out of one microphone frame in place. `pcm` is whole 10 ms
     /// frames; anything else is left untouched and returns false.
     pub fn process(&self, pcm: &mut [i16]) -> bool {
-        if pcm.is_empty() || pcm.len() % FRAME != 0 {
+        if pcm.is_empty() || !pcm.len().is_multiple_of(FRAME) {
             return false;
         }
         let mut processing = self.processing.lock().unwrap();
@@ -132,13 +132,13 @@ impl Canceller {
             render.extend(reference.queued.drain(..whole));
             reference.output_ms
         };
-        for frame in render.chunks_exact(FRAME) {
+        for frame in render.as_chunks::<FRAME>().0 {
             // Only the analysis matters; the render output is not played.
             let _ = apm.process_render_i16(frame, scratch);
         }
         // Clamped to AEC3's 0-500 ms; a clamp is no error here.
         let _ = apm.set_stream_delay_ms(output_ms + DEVICE_DELAY_MS);
-        for frame in pcm.chunks_exact_mut(FRAME) {
+        for frame in pcm.as_chunks_mut::<FRAME>().0 {
             if apm.process_capture_i16(frame, scratch).is_err() {
                 return false;
             }
@@ -164,10 +164,11 @@ thread_local! {
 /// # Safety
 /// `handle` is 0 or a live handle from `nativeCreate`; EchoCanceller.java keeps it so.
 unsafe fn canceller<'a>(handle: jlong) -> Option<&'a Canceller> {
-    (handle as *const Canceller).as_ref()
+    // SAFETY: caller guarantees `handle` is 0 or a live `Canceller` pointer.
+    unsafe { (handle as *const Canceller).as_ref() }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeCreate(
     _: JNIEnv,
     _: JClass,
@@ -175,7 +176,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeCrea
     Box::into_raw(Box::new(Canceller::new())) as jlong
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeReference(
     env: JNIEnv,
     _: JClass,
@@ -204,7 +205,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeRefe
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeProcess(
     env: JNIEnv,
     _: JClass,
@@ -232,7 +233,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeProc
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeRestart(
     _: JNIEnv,
     _: JClass,
@@ -245,7 +246,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeRest
 }
 
 /// `{ERLE in tenths of a dB, delay in ms}`, -1 for what AEC3 has not estimated yet.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeStats(
     env: JNIEnv,
     _: JClass,
@@ -271,7 +272,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeStat
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeDestroy(
     _: JNIEnv,
     _: JClass,

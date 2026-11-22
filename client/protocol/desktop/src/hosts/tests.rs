@@ -16,7 +16,7 @@ fn the_read_for_a_selected_game_gives_up_at_its_deadline_and_says_why() {
 /// The native-api capabilities fixture with these features added, and the folder grant.
 pub(crate) fn native_caps(features: &[&str], shared_folders: bool) -> NativeCapabilities {
     let mut value: serde_json::Value =
-        serde_json::from_str(include_str!("../../../client/tests/fixtures/native-api/capabilities.json")).unwrap();
+        serde_json::from_str(include_str!("../../../native-api/tests/fixtures/capabilities.json")).unwrap();
     let listed = value["features"].as_array_mut().unwrap();
     listed.extend(features.iter().map(|f| serde_json::Value::from(*f)));
     value["permissions"]["shared_folders"] = shared_folders.into();
@@ -540,11 +540,11 @@ fn paired_record(unique_id: &str) -> HostRecord {
 }
 
 fn library() -> Library {
-    serde_json::from_str(include_str!("../../../client/tests/fixtures/native-api/library.json")).unwrap()
+    serde_json::from_str(include_str!("../../../native-api/tests/fixtures/library.json")).unwrap()
 }
 
 fn session(state: &str) -> Session {
-    let text = include_str!("../../../client/tests/fixtures/native-api/session.json")
+    let text = include_str!("../../../native-api/tests/fixtures/session.json")
         .replace("\"suspended\"", &format!("\"{state}\""));
     serde_json::from_str(&text).unwrap()
 }

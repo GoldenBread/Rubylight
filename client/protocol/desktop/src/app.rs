@@ -23,11 +23,10 @@ pub(crate) use session::*;
 
 /// The name of app `app` on `host`: its entry in the PC's list, else its game in the PC's library.
 fn app_name_of(host: &hosts::Host, app: i32) -> Option<String> {
-    if let Apps::Loaded(apps) = &host.apps {
-        if let Some(entry) = apps.iter().find(|a| a.id == app) {
+    if let Apps::Loaded(apps) = &host.apps
+        && let Some(entry) = apps.iter().find(|a| a.id == app) {
             return Some(entry.name.clone());
         }
-    }
     host.library()?.games.iter().find(|g| g.app_id as i32 == app).map(|g| g.title.clone())
 }
 
@@ -46,11 +45,9 @@ impl App {
         // Under gamescope, or straight to the display, the window was never placed from the saved
         // place, so the desktop's stays. A fullscreen launcher keeps the windowed place saved
         // before it, and records the display it is on.
-        if !handheld::fills_screen() {
-            if let Some(placement) = window_place::current(self.window, self.store.window_placement().as_ref()) {
-                if let Err(e) = self.store.save_window_placement(&placement) { eprintln!("nightjar: window place not saved: {e}"); }
-            }
-        }
+        if !handheld::fills_screen()
+            && let Some(placement) = window_place::current(self.window, self.store.window_placement().as_ref())
+                && let Err(e) = self.store.save_window_placement(&placement) { eprintln!("nightjar: window place not saved: {e}"); }
     }
 
     /// Before an update's hand-over, with nothing streaming: the next Nightjar can read these files

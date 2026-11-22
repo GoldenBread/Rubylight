@@ -236,7 +236,8 @@ impl FrameBytes {
     /// # Safety
     /// `raw` came from `into_raw` and is given back once.
     pub unsafe fn from_raw(raw: *const std::ffi::c_void) -> Self {
-        Self(Arc::from_raw(raw.cast()))
+        // SAFETY: caller guarantees `raw` came from `FrameBytes::into_raw` and is reclaimed once.
+        Self(unsafe { Arc::from_raw(raw.cast()) })
     }
 
     /// The storage, emptied, for the next frame; None while another holder still has the bytes

@@ -33,7 +33,7 @@ rubylight-protocol = { path = "../../client/protocol/core" }
 regex = "1.12"
 quick-xml = { version = "0.42", features = ["serialize"] }
 prost = "0.14"
-rubylight-native-api = { path = "native-api" }
+rubylight-native-api = { path = "../../client/protocol/native-api" }
 # Settings backup archives (src/settings_backup.rs), stored without compression;
 # also the release archives of the neural rendering package checks (src/neural).
 zip = { version = "4.6", default-features = false }

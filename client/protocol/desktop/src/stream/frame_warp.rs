@@ -638,22 +638,25 @@ pub fn unshifted(path: &str, error: &str) {
 /// `renderer` and `texture` are live, on the calling thread.
 pub unsafe fn render_texture(renderer: *mut SDL_Renderer, texture: *mut SDL_Texture, source: Option<&SDL_FRect>, destination: &SDL_FRect, warp: &WarpDraw,
     mesh: &mut Mesh) -> bool {
-    let plain = || SDL_RenderTexture(renderer, texture, source.map_or(std::ptr::null(), |rect| rect as *const _), destination);
-    if warp.is_identity() {
-        return plain();
-    }
-    let (mut width, mut height) = (0.0, 0.0);
-    if SDL_GetTextureSize(texture, &mut width, &mut height) && width > 0.0 && height > 0.0 {
-        let source = source.copied().unwrap_or(SDL_FRect { x: 0.0, y: 0.0, w: width, h: height });
-        mesh.build(warp.shift, warp.lens, warp.mask().map_or(&[][..], |hud| hud.areas()));
-        // SDL copies the vertices into its queue: the mesh is free again once this returns.
-        let (vertices, indices) = mesh.geometry(source, (width, height), *destination);
-        if SDL_RenderGeometry(renderer, texture, vertices.as_ptr(), vertices.len() as i32, indices.as_ptr(), indices.len() as i32) {
-            return true;
+    // SAFETY: caller guarantees `renderer` and `texture` are live on the calling thread.
+    unsafe {
+        let plain = || SDL_RenderTexture(renderer, texture, source.map_or(std::ptr::null(), |rect| rect as *const _), destination);
+        if warp.is_identity() {
+            return plain();
         }
+        let (mut width, mut height) = (0.0, 0.0);
+        if SDL_GetTextureSize(texture, &mut width, &mut height) && width > 0.0 && height > 0.0 {
+            let source = source.copied().unwrap_or(SDL_FRect { x: 0.0, y: 0.0, w: width, h: height });
+            mesh.build(warp.shift, warp.lens, warp.mask().map_or(&[][..], |hud| hud.areas()));
+            // SDL copies the vertices into its queue: the mesh is free again once this returns.
+            let (vertices, indices) = mesh.geometry(source, (width, height), *destination);
+            if SDL_RenderGeometry(renderer, texture, vertices.as_ptr(), vertices.len() as i32, indices.as_ptr(), indices.len() as i32) {
+                return true;
+            }
+        }
+        unshifted("SDL's renderer", &crate::sdl::error());
+        plain()
     }
-    unshifted("SDL's renderer", &crate::sdl::error());
-    plain()
 }
 
 /// When the display waits and when the next picture is expected, for `Repeat::decide`.
@@ -951,12 +954,13 @@ impl D3d11Mask {
     pub unsafe fn view(&mut self, device: &windows::Win32::Graphics::Direct3D11::ID3D11Device, warp: &WarpDraw)
         -> Option<windows::Win32::Graphics::Direct3D11::ID3D11ShaderResourceView> {
         let hud = warp.mask()?;
-        if let Some((made, view)) = &self.made {
-            if Arc::ptr_eq(made, hud) {
-                return view.clone();
-            }
+        if let Some((made, view)) = &self.made
+            && Arc::ptr_eq(made, hud)
+        {
+            return view.clone();
         }
-        let view = match Self::make(device, &hud.mask) {
+        // SAFETY: caller guarantees `device` is live on this thread.
+        let view = match unsafe { Self::make(device, &hud.mask) } {
             Ok(view) => Some(view),
             Err(error) => {
                 if !std::mem::replace(&mut self.failed, true) {
@@ -976,14 +980,17 @@ impl D3d11Mask {
         let (row, bytes) = mask_bytes(mask);
         let data = D3D11_SUBRESOURCE_DATA { pSysMem: bytes.as_ptr().cast(), SysMemPitch: row as u32, SysMemSlicePitch: 0 };
         let mut texture = None;
-        device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: row as u32, Height: u32::from(mask.height), MipLevels: 1, ArraySize: 1,
-            Format: DXGI_FORMAT_R8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, Some(std::ptr::from_ref(&data)), Some(&mut texture))
-            .map_err(|e| format!("its texture: {e}"))?;
-        let texture = texture.ok_or("no texture")?;
-        let mut view = None;
-        device.CreateShaderResourceView(&texture, None, Some(&mut view)).map_err(|e| format!("its view: {e}"))?;
-        view.ok_or_else(|| "no view".to_owned())
+        // SAFETY: caller guarantees `device` is live; `bytes` outlives `CreateTexture2D`.
+        unsafe {
+            device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: row as u32, Height: u32::from(mask.height), MipLevels: 1, ArraySize: 1,
+                Format: DXGI_FORMAT_R8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, Some(std::ptr::from_ref(&data)), Some(&mut texture))
+                .map_err(|e| format!("its texture: {e}"))?;
+            let texture = texture.ok_or("no texture")?;
+            let mut view = None;
+            device.CreateShaderResourceView(&texture, None, Some(&mut view)).map_err(|e| format!("its view: {e}"))?;
+            view.ok_or_else(|| "no view".to_owned())
+        }
     }
 }
 

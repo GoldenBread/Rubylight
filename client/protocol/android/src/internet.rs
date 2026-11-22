@@ -15,7 +15,7 @@ pub fn call(request: Option<&str>) -> String {
 }
 
 /// Blocks up to `nightjar_core::internet::PUNCH_WAIT` for `connect`: call it off the main thread.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_computers_InternetPlay_call(
     mut env: JNIEnv,
     _: JClass,

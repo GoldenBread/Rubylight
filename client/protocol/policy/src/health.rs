@@ -147,7 +147,7 @@ impl StreamHealth {
         }
         self.samples.push_back(*stats);
         if stats.recent_video && budget_ms(stats).is_finite() && network_evidence(stats) {
-            if self.last_stall_ms.map_or(true, |last| {
+            if self.last_stall_ms.is_none_or(|last| {
                 stats.now_ms.saturating_sub(last) > BURST_GAP_MS
             }) {
                 if self.stall_starts.len() == MAX_STALLS {
@@ -226,10 +226,11 @@ impl StreamHealth {
                 measured(s.shown_fps),
                 measured(s.released_fps),
                 measured(s.display_p95_ms),
-            ) {
-                if released >= 10.0 && shown < released * 0.85 && display > budget * 2.0 {
-                    votes[Finding::Presentation as usize] += 1;
-                }
+            ) && released >= 10.0
+                && shown < released * 0.85
+                && display > budget * 2.0
+            {
+                votes[Finding::Presentation as usize] += 1;
             }
             if s.thermal_level >= 2 {
                 votes[Finding::Heat as usize] += 1;

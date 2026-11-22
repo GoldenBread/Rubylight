@@ -85,7 +85,8 @@ impl<'a> QueueHeld<'a> {
     /// `info`'s callbacks and userdata must be a live lock.
     unsafe fn new(info: &'a SharedDeviceCreateInfo) -> Self {
         if let Some(lock) = info.queue_lock_callback {
-            lock(info.userdata);
+            // SAFETY: Caller guarantees `info`'s callbacks and `userdata` are a live lock.
+            unsafe { lock(info.userdata) };
         }
         Self(info)
     }
@@ -105,8 +106,11 @@ impl Drop for QueueHeld<'_> {
 /// # Safety
 /// As `pyrowave_create_device`, with `info`'s lock live.
 unsafe fn create_shared(create: unsafe extern "C" fn(*const SharedDeviceCreateInfo, *mut RawDevice) -> PyroResult, info: &SharedDeviceCreateInfo, device: &mut RawDevice) -> PyroResult {
-    let _held = QueueHeld::new(info);
-    create(info, device)
+    // SAFETY: Caller guarantees `info`'s lock is live and `create` arguments match `pyrowave_create_device`.
+    unsafe {
+        let _held = QueueHeld::new(info);
+        create(info, device)
+    }
 }
 
 /// Destroys `decoder`, then `device` (each skipped when null), under the queue lock of `shared`
@@ -121,12 +125,15 @@ unsafe fn release(
     device: RawDevice,
     shared: Option<&SharedDeviceCreateInfo>,
 ) {
-    let _held = shared.map(|info| QueueHeld::new(info));
-    if !decoder.is_null() {
-        decoder_destroy(decoder);
-    }
-    if !device.is_null() {
-        device_destroy(device);
+    // SAFETY: Caller guarantees handles are live and `shared`'s lock is live.
+    unsafe {
+        let _held = shared.map(|info| QueueHeld::new(info));
+        if !decoder.is_null() {
+            decoder_destroy(decoder);
+        }
+        if !device.is_null() {
+            device_destroy(device);
+        }
     }
 }
 
@@ -578,7 +585,8 @@ pub fn diagnose_vulkan() -> String {
 }
 
 unsafe fn describe_devices(instance: &ash::Instance) -> String {
-    let devices = match instance.enumerate_physical_devices() {
+    // SAFETY: Caller guarantees `instance` is a live Vulkan instance.
+    let devices = match unsafe { instance.enumerate_physical_devices() } {
         Ok(devices) => devices,
         Err(e) => return format!("Vulkan lists no devices ({e})"),
     };
@@ -589,7 +597,8 @@ unsafe fn describe_devices(instance: &ash::Instance) -> String {
     for device in devices {
         let mut subgroup = vk::PhysicalDeviceSubgroupProperties::default();
         let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut subgroup);
-        instance.get_physical_device_properties2(device, &mut properties);
+        // SAFETY: `device` is an enumerated physical device of `instance`.
+        unsafe { instance.get_physical_device_properties2(device, &mut properties) };
         let properties = properties.properties;
         let name = properties.device_name_as_c_str().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let version = properties.api_version;
@@ -610,7 +619,8 @@ unsafe fn describe_devices(instance: &ash::Instance) -> String {
         }
         let mut v13 = vk::PhysicalDeviceVulkan13Features::default();
         let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut v13);
-        instance.get_physical_device_features2(device, &mut features);
+        // SAFETY: `device` is an enumerated physical device of `instance`.
+        unsafe { instance.get_physical_device_features2(device, &mut features) };
         if v13.subgroup_size_control == vk::FALSE {
             verdicts.push(format!("{name} lacks subgroup size control"));
             continue;
@@ -657,7 +667,8 @@ mod tests {
 
     unsafe extern "C" fn fake_create(_: *const SharedDeviceCreateInfo, device: *mut RawDevice) -> PyroResult {
         record("create_device");
-        *device = 0x1 as RawDevice;
+        // SAFETY: Test caller passes a valid `&mut RawDevice` pointer.
+        unsafe { *device = 0x1 as RawDevice };
         SUCCESS
     }
 

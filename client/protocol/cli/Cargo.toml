@@ -22,3 +22,6 @@ rubylight-protocol = { path = "../core" }
 
 [build-dependencies]
 cc = { version = "1", optional = true }
+
+[lints]
+workspace = true

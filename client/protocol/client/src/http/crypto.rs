@@ -20,7 +20,7 @@ pub(crate) fn aes_ecb(key: &[u8; 16], data: &[u8], encrypt: bool) -> Vec<u8> {
     let cipher = aes::Aes128::new(key.into());
     let mut out = data.to_vec();
     out.resize(data.len().div_ceil(16) * 16, 0);
-    for block in out.chunks_exact_mut(16) {
+    for block in out.as_chunks_mut::<16>().0 {
         let block = aes::Block::from_mut_slice(block);
         if encrypt {
             cipher.encrypt_block(block);

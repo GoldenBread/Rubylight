@@ -587,7 +587,8 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         let socket = handheld::gamescope_socket(std::env::var_os("XDG_RUNTIME_DIR").as_deref(), std::env::var_os("GAMESCOPE_WAYLAND_DISPLAY").as_deref());
         if handheld::gamescope_layer_off(socket.as_deref(), std::path::Path::exists) {
             eprintln!("nightjar: gamescope: its socket {} is not reachable here, so gamescope's Vulkan layer is off (DISABLE_GAMESCOPE_WSI=1) and the output is SDR", socket.unwrap_or_default().display());
-            std::env::set_var("DISABLE_GAMESCOPE_WSI", "1");
+            // SAFETY: called at startup in `main` before threads or Vulkan initialize.
+            unsafe { std::env::set_var("DISABLE_GAMESCOPE_WSI", "1") };
         }
     }
     // Before SDL, VAAPI or Vulkan load Mesa.
@@ -868,21 +869,19 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     }
     // A frontend's start ends with its stream, and a link waiting behind it would be lost: the
     // link starts its own window then.
-    if launch.is_none() && !cfg!(feature = "demo-library") {
-        if let Err(e) = link_channel::listen(links.clone(), waker.clone()) {
+    if launch.is_none() && !cfg!(feature = "demo-library")
+        && let Err(e) = link_channel::listen(links.clone(), waker.clone()) {
             eprintln!("nightjar: pairing links do not come to this window: {e}");
         }
-    }
     #[cfg(not(feature = "demo-library"))]
     let records = store.hosts();
     #[cfg(feature = "demo-library")]
     let records = ui::demo::records();
     // An install from before Home's setup card that has a PC paired made its first pairing long ago.
-    if records.iter().any(|record| record.server_certificate.is_some()) && launcher.paired_before_setup_card() {
-        if let Err(e) = store.save_settings(&launcher.settings) {
+    if records.iter().any(|record| record.server_certificate.is_some()) && launcher.paired_before_setup_card()
+        && let Err(e) = store.save_settings(&launcher.settings) {
             eprintln!("nightjar: saving settings failed: {e}");
         }
-    }
     // The demo library looks for nobody, and the second screen streams from the first's PC.
     let mut hosts = if cfg!(feature = "demo-library") || second_screen::this_process() { Hosts::without_discovery(records, waker.clone()) } else { Hosts::new(records, waker.clone()) };
     let cli = match launch {
@@ -911,13 +910,12 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     ui::demo::fill(&mut hosts, &mut launcher, &gui.ctx);
     // A stream started from the command line waits for the next ordinary start.
     let mut save_failed_told = false;
-    if cli.is_none() && std::env::var_os("NIGHTJAR_AUTOSTREAM").is_none() && launcher.show_kept_settings_once(&hosts.list) {
-        if let Err(e) = store.save_settings(&launcher.settings) {
+    if cli.is_none() && std::env::var_os("NIGHTJAR_AUTOSTREAM").is_none() && launcher.show_kept_settings_once(&hosts.list)
+        && let Err(e) = store.save_settings(&launcher.settings) {
             eprintln!("nightjar: saving settings failed: {e}");
             save_failed_told = true;
             launcher.notify(crate::strings::tr("Changes could not be saved"), app::save_failed_text(store.dir()));
         }
-    }
     // A file that is there but cannot be read is not an identity to create a new one over: its
     // pairing key may still be recovered, so it stays as it is and the player is told.
     let mut identity_unreadable = false;

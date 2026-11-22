@@ -92,16 +92,19 @@ impl Look {
     /// # Safety
     /// `renderer` and `texture` must be live, on the calling thread.
     pub unsafe fn of(renderer: *mut SDL_Renderer, texture: *mut SDL_Texture) -> Self {
-        let props = SDL_GetRendererProperties(renderer);
-        let mut color_scale = 1.0;
-        SDL_GetRenderColorScale(renderer, &mut color_scale);
-        Self {
-            // SDL leaves a texture's headroom out when it is 0, its default for the linear format.
-            texture_headroom: SDL_GetFloatProperty(SDL_GetTextureProperties(texture), SDL_PROP_TEXTURE_HDR_HEADROOM_FLOAT, 0.0),
-            output_headroom: SDL_GetFloatProperty(props, SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT, 0.0),
-            sdr_white: SDL_GetFloatProperty(props, SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, 1.0),
-            color_scale,
-            linear_output: SDL_GetNumberProperty(props, SDL_PROP_RENDERER_OUTPUT_COLORSPACE_NUMBER, i64::from(SDL_COLORSPACE_SRGB.0)) == i64::from(SDL_COLORSPACE_SRGB_LINEAR.0),
+        // SAFETY: caller guarantees `renderer` and `texture` are live on the calling thread.
+        unsafe {
+            let props = SDL_GetRendererProperties(renderer);
+            let mut color_scale = 1.0;
+            SDL_GetRenderColorScale(renderer, &mut color_scale);
+            Self {
+                // SDL leaves a texture's headroom out when it is 0, its default for the linear format.
+                texture_headroom: SDL_GetFloatProperty(SDL_GetTextureProperties(texture), SDL_PROP_TEXTURE_HDR_HEADROOM_FLOAT, 0.0),
+                output_headroom: SDL_GetFloatProperty(props, SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT, 0.0),
+                sdr_white: SDL_GetFloatProperty(props, SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, 1.0),
+                color_scale,
+                linear_output: SDL_GetNumberProperty(props, SDL_PROP_RENDERER_OUTPUT_COLORSPACE_NUMBER, i64::from(SDL_COLORSPACE_SRGB.0)) == i64::from(SDL_COLORSPACE_SRGB_LINEAR.0),
+            }
         }
     }
 

@@ -427,9 +427,12 @@ pub fn launcher_white(renderer: *mut SDL_Renderer, launcher: bool) -> bool {
 /// `window` is live.
 #[cfg(target_os = "linux")]
 unsafe fn forget_pass_through(window: *mut SDL_Window) {
-    crate::stream::wl_scanout::uninstall(window);
-    SDL_ClearProperty(SDL_GetWindowProperties(window), PASS_THROUGH_PROPERTY.as_ptr());
-    crate::stream::wl_scanout::set_label(None);
+    // SAFETY: caller guarantees `window` is live.
+    unsafe {
+        crate::stream::wl_scanout::uninstall(window);
+        SDL_ClearProperty(SDL_GetWindowProperties(window), PASS_THROUGH_PROPERTY.as_ptr());
+        crate::stream::wl_scanout::set_label(None);
+    }
 }
 
 /// The PQ renderer for `window` from `props` (with the PQ present set). On a Wayland desktop it
@@ -442,7 +445,8 @@ unsafe fn forget_pass_through(window: *mut SDL_Window) {
 #[cfg(any(not(target_os = "macos"), test))]
 unsafe fn pq_renderer(window: *mut SDL_Window, props: SDL_PropertiesID) -> *mut SDL_Renderer {
     #[cfg(target_os = "linux")]
-    {
+    // SAFETY: caller guarantees `window` is live and `props` is a live property set.
+    unsafe {
         use crate::stream::wl_scanout::{self as scanout, HdrDescription, Label};
         let refused = scanout::description_refused(
             video_driver() == "wayland",
@@ -482,7 +486,8 @@ unsafe fn pq_renderer(window: *mut SDL_Window, props: SDL_PropertiesID) -> *mut 
     #[cfg(not(target_os = "linux"))]
     {
         let _ = window;
-        SDL_CreateRendererWithProperties(props)
+        // SAFETY: caller guarantees `props` is a live renderer property set.
+        unsafe { SDL_CreateRendererWithProperties(props) }
     }
 }
 
@@ -956,13 +961,16 @@ const PQ_FRAGMENT_SPIRV: &[u8] = include_bytes!("pq_present_fragment.spv");
 unsafe fn set_pq_present(props: SDL_PropertiesID, on: bool) {
     let shaders = [(c"SDL.renderer.create.gpu.pq_vertex_spirv", c"SDL.renderer.create.gpu.pq_vertex_spirv_size", PQ_VERTEX_SPIRV),
         (c"SDL.renderer.create.gpu.pq_fragment_spirv", c"SDL.renderer.create.gpu.pq_fragment_spirv_size", PQ_FRAGMENT_SPIRV)];
-    for (code, size, spirv) in shaders {
-        if on {
-            SDL_SetPointerProperty(props, code.as_ptr(), spirv.as_ptr().cast_mut().cast());
-            SDL_SetNumberProperty(props, size.as_ptr(), spirv.len() as i64);
-        } else {
-            SDL_ClearProperty(props, code.as_ptr());
-            SDL_ClearProperty(props, size.as_ptr());
+    // SAFETY: caller guarantees `props` is a live property set; shader SPIR-V slices are `'static`.
+    unsafe {
+        for (code, size, spirv) in shaders {
+            if on {
+                SDL_SetPointerProperty(props, code.as_ptr(), spirv.as_ptr().cast_mut().cast());
+                SDL_SetNumberProperty(props, size.as_ptr(), spirv.len() as i64);
+            } else {
+                SDL_ClearProperty(props, code.as_ptr());
+                SDL_ClearProperty(props, size.as_ptr());
+            }
         }
     }
 }
@@ -989,9 +997,12 @@ const PRESENT_MAX_NITS_PROPERTY: &CStr = c"SDL.renderer.gpu.present_max_nits";
 #[cfg(target_os = "linux")]
 unsafe fn set_scanout_present(props: SDL_PropertiesID, on: bool) {
     let fragment = if on { SCANOUT_FRAGMENT_SPIRV } else { PQ_FRAGMENT_SPIRV };
-    SDL_SetPointerProperty(props, c"SDL.renderer.create.gpu.pq_fragment_spirv".as_ptr(), fragment.as_ptr().cast_mut().cast());
-    SDL_SetNumberProperty(props, c"SDL.renderer.create.gpu.pq_fragment_spirv_size".as_ptr(), fragment.len() as i64);
-    SDL_SetNumberProperty(props, c"SDL.renderer.create.gpu.pq_fragment_uniform_buffers".as_ptr(), i64::from(on));
+    // SAFETY: caller guarantees `props` is a live property set; SPIR-V slices are `'static`.
+    unsafe {
+        SDL_SetPointerProperty(props, c"SDL.renderer.create.gpu.pq_fragment_spirv".as_ptr(), fragment.as_ptr().cast_mut().cast());
+        SDL_SetNumberProperty(props, c"SDL.renderer.create.gpu.pq_fragment_spirv_size".as_ptr(), fragment.len() as i64);
+        SDL_SetNumberProperty(props, c"SDL.renderer.create.gpu.pq_fragment_uniform_buffers".as_ptr(), i64::from(on));
+    }
 }
 
 /// What the present of `renderer` writes into its pass-through swapchain from its next present
@@ -1044,11 +1055,14 @@ static WINDOW_HDR_SET: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// `window` is live.
 #[cfg(any(not(target_os = "macos"), test))]
 unsafe fn set_window_hdr(window: *mut SDL_Window, hdr: Option<(f32, f32)>) {
-    let props = SDL_GetWindowProperties(window);
     let (white, headroom) = hdr.unwrap_or((1.0, 1.0));
-    SDL_SetFloatProperty(props, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, white);
-    SDL_SetFloatProperty(props, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, headroom);
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, hdr.is_some());
+    // SAFETY: caller guarantees `window` is live.
+    unsafe {
+        let props = SDL_GetWindowProperties(window);
+        SDL_SetFloatProperty(props, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, white);
+        SDL_SetFloatProperty(props, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, headroom);
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, hdr.is_some());
+    }
     WINDOW_HDR_SET.store(hdr.is_some(), std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -1060,12 +1074,15 @@ unsafe fn set_window_hdr(window: *mut SDL_Window, hdr: Option<(f32, f32)>) {
 /// `window` is live.
 #[cfg(any(not(target_os = "macos"), test))]
 unsafe fn set_renderer_sdr_white(window: *mut SDL_Window, white: Option<f32>) {
-    let props = SDL_GetWindowProperties(window);
     let name = crate::handheld::RENDERER_SDR_WHITE_PROPERTY.as_ptr();
-    match white {
-        Some(white) => SDL_SetFloatProperty(props, name, white),
-        None => SDL_ClearProperty(props, name),
-    };
+    // SAFETY: caller guarantees `window` is live.
+    unsafe {
+        let props = SDL_GetWindowProperties(window);
+        match white {
+            Some(white) => SDL_SetFloatProperty(props, name, white),
+            None => SDL_ClearProperty(props, name),
+        };
+    }
 }
 
 /// What the log adds to a window's HDR report (`handheld::describe_levels`): the compositor's SDR
@@ -1102,78 +1119,81 @@ pub fn window_hdr_levels(window: SDL_WindowID) -> String {
 #[cfg(any(not(target_os = "macos"), test))]
 unsafe fn hdr_output(window: *mut SDL_Window, props: SDL_PropertiesID, renderer: *mut SDL_Renderer) -> *mut SDL_Renderer {
     use crate::handheld::{self, Output};
-    let gamescope = handheld::gamescope();
-    let window_hdr = handheld::window_hdr_reported(
-        SDL_GetBooleanProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false),
-        WINDOW_HDR_SET.load(std::sync::atomic::Ordering::Relaxed),
-    );
-    let offered = offered(renderer);
-    let name = renderer_name(renderer);
-    let display_hdr = any_display_hdr();
-    let hdr_asked = HDR_ASKED.load(std::sync::atomic::Ordering::Relaxed);
-    let hdr_stream = HDR_STREAM.load(std::sync::atomic::Ordering::Relaxed);
-    // Gamescope kept at scRGB (`NIGHTJAR_GAMESCOPE_PQ=0`) plans as for no HDR stream.
-    let scrgb_first = handheld::keeps_scrgb_first();
-    // PQ that failed once this run is not tried again: its fallback serves HDR streams. Gamescope
-    // offering HDR10 alone has no other, and tries it each time as before.
-    let pq_failed_before = hdr_stream && !scrgb_first && offered.hdr10 && (!gamescope || offered.scrgb) && pq_failed();
-    let plan = handheld::plan(gamescope, window_hdr, display_hdr, hdr_asked, hdr_stream && !scrgb_first && !pq_failed_before, offered);
-    let mut decision = plan.decision;
-    // The stream asked for HDR and PQ failed before: say that, not that PQ is for HDR streams only.
-    if pq_failed_before && decision == Err(handheld::SdrReason::PqWithoutHdrStream) {
-        decision = Err(handheld::SdrReason::PqFailed);
-    }
-    let mut renderer = renderer;
-    let mut pq_error = None;
-    let mut pq_failed = false;
-    if let Ok(output) = decision {
-        if plan.set_window_hdr {
-            set_window_hdr(window, Some(handheld::gamescope_hdr_properties()));
+    // SAFETY: caller guarantees `window`, `renderer`, and `props` are live.
+    unsafe {
+        let gamescope = handheld::gamescope();
+        let window_hdr = handheld::window_hdr_reported(
+            SDL_GetBooleanProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false),
+            WINDOW_HDR_SET.load(std::sync::atomic::Ordering::Relaxed),
+        );
+        let offered = offered(renderer);
+        let name = renderer_name(renderer);
+        let display_hdr = any_display_hdr();
+        let hdr_asked = HDR_ASKED.load(std::sync::atomic::Ordering::Relaxed);
+        let hdr_stream = HDR_STREAM.load(std::sync::atomic::Ordering::Relaxed);
+        // Gamescope kept at scRGB (`NIGHTJAR_GAMESCOPE_PQ=0`) plans as for no HDR stream.
+        let scrgb_first = handheld::keeps_scrgb_first();
+        // PQ that failed once this run is not tried again: its fallback serves HDR streams. Gamescope
+        // offering HDR10 alone has no other, and tries it each time as before.
+        let pq_failed_before = hdr_stream && !scrgb_first && offered.hdr10 && (!gamescope || offered.scrgb) && pq_failed();
+        let plan = handheld::plan(gamescope, window_hdr, display_hdr, hdr_asked, hdr_stream && !scrgb_first && !pq_failed_before, offered);
+        let mut decision = plan.decision;
+        // The stream asked for HDR and PQ failed before: say that, not that PQ is for HDR streams only.
+        if pq_failed_before && decision == Err(handheld::SdrReason::PqWithoutHdrStream) {
+            decision = Err(handheld::SdrReason::PqFailed);
         }
-        // SDL reads the window's HDR state when it makes the renderer.
-        if plan.rebuild {
-            crate::sdl::destroy_renderer(renderer);
-            set_renderer_sdr_white(window, handheld::renderer_sdr_white(gamescope, output == Output::Pq));
-            if output == Output::Pq {
-                set_pq_present(props, true);
-                renderer = pq_renderer(window, props);
-            } else {
+        let mut renderer = renderer;
+        let mut pq_error = None;
+        let mut pq_failed = false;
+        if let Ok(output) = decision {
+            if plan.set_window_hdr {
+                set_window_hdr(window, Some(handheld::gamescope_hdr_properties()));
+            }
+            // SDL reads the window's HDR state when it makes the renderer.
+            if plan.rebuild {
+                crate::sdl::destroy_renderer(renderer);
+                set_renderer_sdr_white(window, handheld::renderer_sdr_white(gamescope, output == Output::Pq));
+                if output == Output::Pq {
+                    set_pq_present(props, true);
+                    renderer = pq_renderer(window, props);
+                } else {
+                    renderer = SDL_CreateRendererWithProperties(props);
+                }
+                if output == Output::Pq {
+                    set_pq_present(props, false);
+                    if renderer.is_null() { pq_error = Some(error()); }
+                }
+            }
+            decision = handheld::settle(output, !renderer.is_null(), !renderer.is_null() && swapchain_takes_hdr(renderer));
+            if output == Output::Pq && decision.is_err() {
+                PQ_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            // A desktop's PQ that could not be made: scRGB where it is offered, not SDR.
+            if let (Err(_), Some(next)) = (decision, handheld::fallback(output, offered)) {
+                if !renderer.is_null() { crate::sdl::destroy_renderer(renderer); }
+                #[cfg(target_os = "linux")]
+                forget_pass_through(window);
+                set_renderer_sdr_white(window, handheld::renderer_sdr_white(gamescope, next == Output::Pq));
                 renderer = SDL_CreateRendererWithProperties(props);
-            }
-            if output == Output::Pq {
-                set_pq_present(props, false);
-                if renderer.is_null() { pq_error = Some(error()); }
+                pq_failed = true;
+                decision = handheld::settle(next, !renderer.is_null(), !renderer.is_null() && swapchain_takes_hdr(renderer));
             }
         }
-        decision = handheld::settle(output, !renderer.is_null(), !renderer.is_null() && swapchain_takes_hdr(renderer));
-        if output == Output::Pq && decision.is_err() {
-            PQ_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        // A desktop's PQ that could not be made: scRGB where it is offered, not SDR.
-        if let (Err(_), Some(next)) = (decision, handheld::fallback(output, offered)) {
+        if decision.is_err() {
             if !renderer.is_null() { crate::sdl::destroy_renderer(renderer); }
             #[cfg(target_os = "linux")]
             forget_pass_through(window);
-            set_renderer_sdr_white(window, handheld::renderer_sdr_white(gamescope, next == Output::Pq));
-            renderer = SDL_CreateRendererWithProperties(props);
-            pq_failed = true;
-            decision = handheld::settle(next, !renderer.is_null(), !renderer.is_null() && swapchain_takes_hdr(renderer));
+            renderer = std::ptr::null_mut();
+            if WINDOW_HDR_SET.load(std::sync::atomic::Ordering::Relaxed) { set_window_hdr(window, None); }
         }
+        let line = handheld::describe(&name, gamescope, window_hdr, display_hdr, hdr_asked, hdr_stream, offered, decision, pq_failed || pq_failed_before);
+        match pq_error {
+            Some(why) => eprintln!("nightjar: {line} ({why})"),
+            None => eprintln!("nightjar: {line}"),
+        }
+        *OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(decision);
+        renderer
     }
-    if decision.is_err() {
-        if !renderer.is_null() { crate::sdl::destroy_renderer(renderer); }
-        #[cfg(target_os = "linux")]
-        forget_pass_through(window);
-        renderer = std::ptr::null_mut();
-        if WINDOW_HDR_SET.load(std::sync::atomic::Ordering::Relaxed) { set_window_hdr(window, None); }
-    }
-    let line = handheld::describe(&name, gamescope, window_hdr, display_hdr, hdr_asked, hdr_stream, offered, decision, pq_failed || pq_failed_before);
-    match pq_error {
-        Some(why) => eprintln!("nightjar: {line} ({why})"),
-        None => eprintln!("nightjar: {line}"),
-    }
-    *OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(decision);
-    renderer
 }
 
 /// Measurement runs on one PC (`NIGHTJAR_EXCLUDE_FROM_CAPTURE=1`): keeps the window out of

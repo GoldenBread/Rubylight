@@ -1,7 +1,7 @@
 use super::*;
 use std::ffi::c_void;
 
-extern "C" {
+unsafe extern "C" {
     fn opus_encoder_create(
         rate: i32,
         channels: i32,

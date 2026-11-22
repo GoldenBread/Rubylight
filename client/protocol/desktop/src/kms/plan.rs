@@ -391,11 +391,10 @@ pub fn parse_in_formats(blob: &[u8]) -> Result<Vec<(u32, Vec<u64>)>, String> {
         let offset = u32_at(at + 8).ok_or_else(short)? as usize;
         let modifier = u64_at(at + 16).ok_or_else(short)?;
         for bit in 0..64 {
-            if mask & (1 << bit) != 0 {
-                if let Some((_, mods)) = formats.get_mut(offset + bit) {
+            if mask & (1 << bit) != 0
+                && let Some((_, mods)) = formats.get_mut(offset + bit) {
                     mods.push(modifier);
                 }
-            }
         }
     }
     Ok(formats)

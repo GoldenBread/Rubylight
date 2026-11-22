@@ -237,8 +237,8 @@ impl Reconfigure {
         };
         let plausible = (256..=8192).contains(&request.width)
             && (256..=8192).contains(&request.height)
-            && request.width % 2 == 0
-            && request.height % 2 == 0
+            && request.width.is_multiple_of(2)
+            && request.height.is_multiple_of(2)
             && (10_000..=500_000).contains(&request.fps_millihz);
         plausible.then_some(request)
     }

@@ -163,10 +163,10 @@ impl AudioQueue {
     }
 
     fn allocate_block(&mut self, block_size: u16) -> FecBlock {
-        if let Some(block) = self.free_blocks.pop() {
-            if block.block_size == block_size {
-                return block;
-            }
+        if let Some(block) = self.free_blocks.pop()
+            && block.block_size == block_size
+        {
+            return block;
         }
         let size =
             DATA_SHARDS * (RTP_HEADER + block_size as usize) + FEC_SHARDS * block_size as usize;

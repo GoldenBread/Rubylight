@@ -31,21 +31,25 @@ fn count_into(counter: Option<&'static AtomicU64>) {
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         count();
-        System.alloc(layout)
+        // SAFETY: forwards to `System` with the caller's layout invariants.
+        unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         count();
-        System.alloc_zeroed(layout)
+        // SAFETY: forwards to `System` with the caller's layout invariants.
+        unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         count();
-        System.realloc(ptr, layout, new_size)
+        // SAFETY: `ptr` was allocated via `System` with `layout`.
+        unsafe { System.realloc(ptr, layout, new_size) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout)
+        // SAFETY: `ptr` was allocated via `System` with `layout`.
+        unsafe { System.dealloc(ptr, layout) }
     }
 }
 

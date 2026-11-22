@@ -251,8 +251,8 @@ impl Streaming {
                 }
                 SDL_EVENT_GAMEPAD_REMOVED => {
                     self.session.input(|q| pads.release_mouse(event.gdevice.which, q));
-                    if let Some(index) = pads.removed(event.gdevice.which) {
-                        if self.sends_controllers() {
+                    if let Some(index) = pads.removed(event.gdevice.which)
+                        && self.sends_controllers() {
                             // A controller the host had refused may have taken the freed slot:
                             // its neutral state and arrival follow the removed one's.
                             self.session.input(|q| {
@@ -260,7 +260,6 @@ impl Streaming {
                                 pads.announce_new(q);
                             });
                         }
-                    }
                 }
                 SDL_EVENT_AUDIO_DEVICE_ADDED => {
                     if self.controller_audio_available() {

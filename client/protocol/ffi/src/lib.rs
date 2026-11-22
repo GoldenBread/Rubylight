@@ -24,7 +24,12 @@ use rubylight_protocol::pyrowave::{self, Records};
 pub type PushPacket = unsafe extern "C" fn(user: *mut c_void, data: *const u8, length: usize) -> bool;
 
 unsafe fn bytes<'a>(data: *const u8, length: usize) -> &'a [u8] {
-    if length == 0 { &[] } else { slice::from_raw_parts(data, length) }
+    if length == 0 {
+        &[]
+    } else {
+        // SAFETY: caller guarantees `data` points to `length` readable bytes.
+        unsafe { slice::from_raw_parts(data, length) }
+    }
 }
 
 fn forward(push: PushPacket, user: *mut c_void) -> impl FnMut(&[u8]) -> bool {
@@ -33,7 +38,7 @@ fn forward(push: PushPacket, user: *mut c_void) -> impl FnMut(&[u8]) -> bool {
 
 /// Creates record reassembly state for a stream of the negotiated geometry; a zero width or
 /// height means none was negotiated.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rp_pyrowave_records_new(width: u32, height: u32, chroma444: bool) -> *mut Records {
     let records = if width == 0 || height == 0 { Records::default() } else { Records::with_geometry(width, height, chroma444) };
     Box::into_raw(Box::new(records))
@@ -41,10 +46,11 @@ pub extern "C" fn rp_pyrowave_records_new(width: u32, height: u32, chroma444: bo
 
 /// # Safety
 /// `records` comes from `rp_pyrowave_records_new` and is not used afterwards; null is ignored.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_pyrowave_records_free(records: *mut Records) {
     if !records.is_null() {
-        drop(Box::from_raw(records));
+        // SAFETY: caller guarantees `records` was allocated by `rp_pyrowave_records_new`.
+        unsafe { drop(Box::from_raw(records)) };
     }
 }
 
@@ -53,7 +59,7 @@ pub unsafe extern "C" fn rp_pyrowave_records_free(records: *mut Records) {
 /// # Safety
 /// `records` is live, `data` points to `length` readable bytes, and `push` is safe to call
 /// with `user`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_pyrowave_records_push_frame(
     records: *mut Records,
     data: *const u8,
@@ -61,44 +67,48 @@ pub unsafe extern "C" fn rp_pyrowave_records_push_frame(
     push: PushPacket,
     user: *mut c_void,
 ) -> bool {
-    (*records).push_frame(bytes(data, length), forward(push, user))
+    // SAFETY: caller guarantees `records` is live and `data` has `length` readable bytes.
+    unsafe { (*records).push_frame(bytes(data, length), forward(push, user)) }
 }
 
 /// Share of the last frame's records that were lost, 0-100.
 ///
 /// # Safety
 /// `records` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_pyrowave_records_loss_percent(records: *const Records) -> f32 {
-    (*records).loss_percent
+    // SAFETY: caller guarantees `records` is live.
+    unsafe { (*records).loss_percent }
 }
 
 /// Validates an ordinary (pre-record) container and feeds its packets to `push`.
 ///
 /// # Safety
 /// `data` points to `length` readable bytes, and `push` is safe to call with `user`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_pyrowave_push_container(
     data: *const u8,
     length: usize,
     push: PushPacket,
     user: *mut c_void,
 ) -> bool {
-    pyrowave::push_container(bytes(data, length), forward(push, user))
+    // SAFETY: caller guarantees `data` points to `length` readable bytes.
+    pyrowave::push_container(unsafe { bytes(data, length) }, forward(push, user))
 }
 
 /// Creates early record push state (`pyrowave::early::EarlyPush`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rp_pyrowave_early_new() -> *mut EarlyPush {
     Box::into_raw(Box::new(EarlyPush::default()))
 }
 
 /// # Safety
 /// `early` comes from `rp_pyrowave_early_new` and is not used afterwards; null is ignored.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_pyrowave_early_free(early: *mut EarlyPush) {
     if !early.is_null() {
-        drop(Box::from_raw(early));
+        // SAFETY: caller guarantees `early` was allocated by `rp_pyrowave_early_new`.
+        unsafe { drop(Box::from_raw(early)) };
     }
 }
 
@@ -109,7 +119,7 @@ pub unsafe extern "C" fn rp_pyrowave_early_free(early: *mut EarlyPush) {
 /// # Safety
 /// `early` and `records` are live, `data` points to `length` readable bytes, and `push` is safe
 /// to call with `user`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_pyrowave_early_chunks(
     early: *mut EarlyPush,
     records: *mut Records,
@@ -119,12 +129,15 @@ pub unsafe extern "C" fn rp_pyrowave_early_chunks(
     push: PushPacket,
     user: *mut c_void,
 ) {
-    (*early).chunks(
-        &mut *records,
-        bytes(data, length),
-        first,
-        forward(push, user),
-    );
+    // SAFETY: caller guarantees `early`, `records`, and `data[..length]` are valid.
+    unsafe {
+        (*early).chunks(
+            &mut *records,
+            bytes(data, length),
+            first,
+            forward(push, user),
+        );
+    }
 }
 
 /// `rp_pyrowave_early_finish`: no packet came early, push the frame whole.
@@ -140,7 +153,7 @@ pub const RP_PYROWAVE_EARLY_DONE: i32 = 2;
 /// # Safety
 /// `early` and `records` are live, `data` points to `length` readable bytes, and `push` is safe
 /// to call with `user`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_pyrowave_early_finish(
     early: *mut EarlyPush,
     records: *mut Records,
@@ -149,7 +162,8 @@ pub unsafe extern "C" fn rp_pyrowave_early_finish(
     push: PushPacket,
     user: *mut c_void,
 ) -> i32 {
-    match (*early).finish(&mut *records, bytes(data, length), forward(push, user)) {
+    // SAFETY: caller guarantees `early`, `records`, and `data[..length]` are valid.
+    match unsafe { (*early).finish(&mut *records, bytes(data, length), forward(push, user)) } {
         Finish::Whole => RP_PYROWAVE_EARLY_WHOLE,
         Finish::Fallback => RP_PYROWAVE_EARLY_FALLBACK,
         Finish::Done => RP_PYROWAVE_EARLY_DONE,
@@ -160,28 +174,32 @@ pub unsafe extern "C" fn rp_pyrowave_early_finish(
 ///
 /// # Safety
 /// `early` is live; `done` and `fallback` are writable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_pyrowave_early_stats(
     early: *const EarlyPush,
     done: *mut u64,
     fallback: *mut u64,
 ) {
-    *done = (*early).stats.done;
-    *fallback = (*early).stats.fallback;
+    // SAFETY: caller guarantees `early` is live and `done`/`fallback` are writable.
+    unsafe {
+        *done = (*early).stats.done;
+        *fallback = (*early).stats.fallback;
+    }
 }
 
 /// Creates an empty phase-lock slack window.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rp_slack_window_new() -> *mut SlackWindow {
     Box::into_raw(Box::default())
 }
 
 /// # Safety
 /// `window` comes from `rp_slack_window_new` and is not used afterwards; null is ignored.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_slack_window_free(window: *mut SlackWindow) {
     if !window.is_null() {
-        drop(Box::from_raw(window));
+        // SAFETY: caller guarantees `window` was allocated by `rp_slack_window_new`.
+        unsafe { drop(Box::from_raw(window)) };
     }
 }
 
@@ -189,18 +207,20 @@ pub unsafe extern "C" fn rp_slack_window_free(window: *mut SlackWindow) {
 ///
 /// # Safety
 /// `window` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_slack_window_push(window: *mut SlackWindow, slack_ns: i64, period_ns: i64) {
-    (*window).push(slack_ns, period_ns);
+    // SAFETY: caller guarantees `window` is live.
+    unsafe { (*window).push(slack_ns, period_ns) };
 }
 
 /// Frames recorded since the last report.
 ///
 /// # Safety
 /// `window` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_slack_window_len(window: *const SlackWindow) -> usize {
-    (*window).len()
+    // SAFETY: caller guarantees `window` is live.
+    unsafe { (*window).len() }
 }
 
 /// Summarises and clears the window into the 16-byte report message at `out`. Returns false
@@ -208,11 +228,12 @@ pub unsafe extern "C" fn rp_slack_window_len(window: *const SlackWindow) -> usiz
 ///
 /// # Safety
 /// `window` is live and `out` points to `RP_PHASE_REPORT_BYTES` writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_slack_window_report(window: *mut SlackWindow, min_frames: usize, out: *mut u8) -> bool {
-    match (*window).report(min_frames) {
+    // SAFETY: caller guarantees `window` is live and `out` has `REPORT_BYTES` writable bytes.
+    match unsafe { (*window).report(min_frames) } {
         Some(report) => {
-            core::ptr::copy_nonoverlapping(report.encode().as_ptr(), out, REPORT_BYTES);
+            unsafe { core::ptr::copy_nonoverlapping(report.encode().as_ptr(), out, REPORT_BYTES) };
             true
         }
         None => false,
@@ -225,16 +246,17 @@ pub unsafe extern "C" fn rp_slack_window_report(window: *mut SlackWindow, min_fr
 ///
 /// # Safety
 /// `window` is live and `out` points to `RP_PHASE_REPORT_BYTES` writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_slack_window_report_over(
     window: *mut SlackWindow,
     min_frames: usize,
     elapsed_ns: i64,
     out: *mut u8,
 ) -> bool {
-    match (*window).report_over(min_frames, elapsed_ns) {
+    // SAFETY: caller guarantees `window` is live and `out` has `REPORT_BYTES` writable bytes.
+    match unsafe { (*window).report_over(min_frames, elapsed_ns) } {
         Some(report) => {
-            core::ptr::copy_nonoverlapping(report.encode().as_ptr(), out, REPORT_BYTES);
+            unsafe { core::ptr::copy_nonoverlapping(report.encode().as_ptr(), out, REPORT_BYTES) };
             true
         }
         None => false,
@@ -246,7 +268,7 @@ pub unsafe extern "C" fn rp_slack_window_report_over(
 ///
 /// # Safety
 /// `out` points to `RP_DISPLAY_CAPS_BYTES` writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_display_caps_encode(hdr: bool, max_nits: f32, max_average_nits: f32, min_nits: f32, out: *mut u8) {
     let scale = |nits: f32, per_nit: f32| if nits.is_finite() && nits > 0.0 { (nits * per_nit + 0.5).min(u32::MAX as f32) as u32 } else { 0 };
     let caps = DisplayCaps {
@@ -255,21 +277,23 @@ pub unsafe extern "C" fn rp_display_caps_encode(hdr: bool, max_nits: f32, max_av
         max_average_centinits: scale(max_average_nits, 100.0),
         min_decimillinits: scale(min_nits, 10_000.0),
     };
-    core::ptr::copy_nonoverlapping(caps.encode().as_ptr(), out, DISPLAY_CAPS_BYTES);
+    // SAFETY: caller guarantees `out` points to `DISPLAY_CAPS_BYTES` writable bytes.
+    unsafe { core::ptr::copy_nonoverlapping(caps.encode().as_ptr(), out, DISPLAY_CAPS_BYTES) };
 }
 
 /// Creates an empty FEC loss tally for the once-a-second report (0x5539).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rp_fec_tally_new() -> *mut FecTally {
     Box::into_raw(Box::default())
 }
 
 /// # Safety
 /// `tally` comes from `rp_fec_tally_new` and is not used afterwards; null is ignored.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_fec_tally_free(tally: *mut FecTally) {
     if !tally.is_null() {
-        drop(Box::from_raw(tally));
+        // SAFETY: caller guarantees `tally` was allocated by `rp_fec_tally_new`.
+        unsafe { drop(Box::from_raw(tally)) };
     }
 }
 
@@ -279,7 +303,7 @@ pub unsafe extern "C" fn rp_fec_tally_free(tally: *mut FecTally) {
 ///
 /// # Safety
 /// `tally` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn rp_fec_tally_block(
     tally: *mut FecTally,
@@ -303,7 +327,8 @@ pub unsafe extern "C" fn rp_fec_tally_block(
         missing_shards,
         unrecovered,
     };
-    (*tally).block(block, now_ms);
+    // SAFETY: caller guarantees `tally` is live.
+    unsafe { (*tally).block(block, now_ms) };
 }
 
 /// Writes the 24-byte report to `out` once its interval is a second old and returns true; an
@@ -312,11 +337,12 @@ pub unsafe extern "C" fn rp_fec_tally_block(
 ///
 /// # Safety
 /// `tally` is live and `out` points to `RP_FEC_REPORT_BYTES` writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_fec_tally_report(tally: *mut FecTally, now_ms: u64, out: *mut u8) -> bool {
-    match (*tally).take(now_ms) {
+    // SAFETY: caller guarantees `tally` is live and `out` has `FEC_REPORT_BYTES` writable bytes.
+    match unsafe { (*tally).take(now_ms) } {
         Some(report) => {
-            core::ptr::copy_nonoverlapping(report.encode().as_ptr(), out, FEC_REPORT_BYTES);
+            unsafe { core::ptr::copy_nonoverlapping(report.encode().as_ptr(), out, FEC_REPORT_BYTES) };
             true
         }
         None => false,
@@ -327,20 +353,22 @@ pub unsafe extern "C" fn rp_fec_tally_report(tally: *mut FecTally, now_ms: u64, 
 ///
 /// # Safety
 /// `out` points to `RP_RECONFIGURE_BYTES` writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_reconfigure_encode(width: u16, height: u16, fps_millihz: u32, out: *mut u8) {
     let request = Reconfigure { width, height, fps_millihz };
-    core::ptr::copy_nonoverlapping(request.encode().as_ptr(), out, RECONFIGURE_BYTES);
+    // SAFETY: caller guarantees `out` points to `RECONFIGURE_BYTES` writable bytes.
+    unsafe { core::ptr::copy_nonoverlapping(request.encode().as_ptr(), out, RECONFIGURE_BYTES) };
 }
 
 /// Writes the 16-byte clock sync request (0x5537) to `out`.
 ///
 /// # Safety
 /// `out` points to `RP_CLOCK_SYNC_REQUEST_BYTES` writable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_clock_sync_request_encode(sequence: u32, client_us: u64, out: *mut u8) {
     let request = ClockSyncRequest { sequence, client_us };
-    core::ptr::copy_nonoverlapping(request.encode().as_ptr(), out, CLOCK_SYNC_REQUEST_BYTES);
+    // SAFETY: caller guarantees `out` points to `CLOCK_SYNC_REQUEST_BYTES` writable bytes.
+    unsafe { core::ptr::copy_nonoverlapping(request.encode().as_ptr(), out, CLOCK_SYNC_REQUEST_BYTES) };
 }
 
 /// Values of [`PresentClock`]'s settings; see `present_clock::Settings`.
@@ -374,16 +402,18 @@ impl From<&RpPresentSettings> for Settings {
 ///
 /// # Safety
 /// `out` is writable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_settings_default(out: *mut RpPresentSettings) {
-    out.write((&Settings::default()).into());
+    // SAFETY: caller guarantees `out` is writable.
+    unsafe { out.write((&Settings::default()).into()) };
 }
 
 /// # Safety
 /// `out` is writable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_settings_adaptive(out: *mut RpPresentSettings) {
-    out.write((&Settings::adaptive(0)).into());
+    // SAFETY: caller guarantees `out` is writable.
+    unsafe { out.write((&Settings::adaptive(0)).into()) };
 }
 
 impl From<&Settings> for RpPresentSettings {
@@ -402,17 +432,20 @@ impl From<&Settings> for RpPresentSettings {
 
 /// # Safety
 /// `settings` is readable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_new(settings: *const RpPresentSettings) -> *mut PresentClock {
-    Box::into_raw(Box::new(PresentClock::new((&*settings).into())))
+    // SAFETY: caller guarantees `settings` is readable.
+    let settings = unsafe { &*settings };
+    Box::into_raw(Box::new(PresentClock::new(settings.into())))
 }
 
 /// # Safety
 /// `clock` comes from `rp_present_clock_new` and is not used afterwards; null is ignored.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_free(clock: *mut PresentClock) {
     if !clock.is_null() {
-        drop(Box::from_raw(clock));
+        // SAFETY: caller guarantees `clock` was allocated by `rp_present_clock_new`.
+        unsafe { drop(Box::from_raw(clock)) };
     }
 }
 
@@ -421,16 +454,19 @@ pub unsafe extern "C" fn rp_present_clock_free(clock: *mut PresentClock) {
 ///
 /// # Safety
 /// `clock` is live and `data` points to `length` readable bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_sync(
     clock: *mut PresentClock,
     data: *const u8,
     length: usize,
     client_receive_us: u64,
 ) -> i64 {
-    ClockSyncReply::decode(bytes(data, length))
-        .and_then(|reply| (*clock).offset.add(&reply, client_receive_us))
-        .unwrap_or(-1)
+    // SAFETY: caller guarantees `clock` is live and `data[..length]` is readable.
+    unsafe {
+        ClockSyncReply::decode(bytes(data, length))
+            .and_then(|reply| (*clock).offset.add(&reply, client_receive_us))
+            .unwrap_or(-1)
+    }
 }
 
 /// One frame's schedule; see `present_clock::Schedule`. `latency_us` is -1 without clock sync.
@@ -447,9 +483,10 @@ pub struct RpPresentSchedule {
 ///
 /// # Safety
 /// `clock` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_schedule(clock: *mut PresentClock, rtp: u32, ready_us: u64) -> RpPresentSchedule {
-    present_schedule((*clock).schedule(rtp, ready_us))
+    // SAFETY: caller guarantees `clock` is live.
+    present_schedule(unsafe { (*clock).schedule(rtp, ready_us) })
 }
 
 /// As `rp_present_clock_schedule` given the frames still waiting in the decode queue: once it
@@ -458,14 +495,15 @@ pub unsafe extern "C" fn rp_present_clock_schedule(clock: *mut PresentClock, rtp
 ///
 /// # Safety
 /// `clock` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_schedule_queued(
     clock: *mut PresentClock,
     rtp: u32,
     ready_us: u64,
     queued: u32,
 ) -> RpPresentSchedule {
-    present_schedule((*clock).schedule_queued(rtp, ready_us, queued as usize))
+    // SAFETY: caller guarantees `clock` is live.
+    present_schedule(unsafe { (*clock).schedule_queued(rtp, ready_us, queued as usize) })
 }
 
 fn present_schedule(s: rubylight_protocol::present_clock::Schedule) -> RpPresentSchedule {
@@ -505,14 +543,15 @@ pub struct RpPresentGridSchedule {
 ///
 /// # Safety
 /// `clock` is live and `grid` is readable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_schedule_on_grid(
     clock: *mut PresentClock,
     rtp: u32,
     ready_us: u64,
     grid: *const RpPresentGrid,
 ) -> RpPresentGridSchedule {
-    grid_schedule((*clock).schedule_on_grid(rtp, ready_us, grid_of(&*grid)))
+    // SAFETY: caller guarantees `clock` is live and `grid` is readable.
+    grid_schedule(unsafe { (*clock).schedule_on_grid(rtp, ready_us, grid_of(&*grid)) })
 }
 
 /// As `rp_present_clock_schedule_on_grid` given the frames still waiting in the decode queue, as
@@ -520,7 +559,7 @@ pub unsafe extern "C" fn rp_present_clock_schedule_on_grid(
 ///
 /// # Safety
 /// `clock` is live and `grid` is readable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_schedule_on_grid_queued(
     clock: *mut PresentClock,
     rtp: u32,
@@ -528,7 +567,8 @@ pub unsafe extern "C" fn rp_present_clock_schedule_on_grid_queued(
     grid: *const RpPresentGrid,
     queued: u32,
 ) -> RpPresentGridSchedule {
-    grid_schedule((*clock).schedule_on_grid_queued(rtp, ready_us, grid_of(&*grid), queued as usize))
+    // SAFETY: caller guarantees `clock` is live and `grid` is readable.
+    grid_schedule(unsafe { (*clock).schedule_on_grid_queued(rtp, ready_us, grid_of(&*grid), queued as usize) })
 }
 
 fn grid_of(g: &RpPresentGrid) -> Grid {
@@ -552,44 +592,50 @@ fn grid_schedule(s: rubylight_protocol::present_clock::GridSchedule) -> RpPresen
 ///
 /// # Safety
 /// `clock` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_observe(clock: *mut PresentClock, rtp: u32) {
-    (*clock).observe(rtp);
+    // SAFETY: caller guarantees `clock` is live.
+    unsafe { (*clock).observe(rtp) };
 }
 
 /// The content rate in millihertz once it held steady for two seconds, else 0.
 ///
 /// # Safety
 /// `clock` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_content_rate(clock: *const PresentClock) -> u32 {
-    (*clock).content_rate_mhz().unwrap_or(0)
+    // SAFETY: caller guarantees `clock` is live.
+    unsafe { (*clock).content_rate_mhz().unwrap_or(0) }
 }
 
 /// Forgets the frames seen, for a new stream size or a decoder reset; clock sync stays.
 ///
 /// # Safety
 /// `clock` is live.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_reset(clock: *mut PresentClock) {
-    (*clock).reset();
+    // SAFETY: caller guarantees `clock` is live.
+    unsafe { (*clock).reset() };
 }
 
 /// Frames scheduled, frames shown late, and the clock sync round trip (-1 without one).
 ///
 /// # Safety
 /// `clock` is live; the out pointers are writable or null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_stats(clock: *const PresentClock, frames: *mut u64, late: *mut u64, rtt_us: *mut i64) {
-    let clock = &*clock;
-    if !frames.is_null() {
-        frames.write(clock.frames);
-    }
-    if !late.is_null() {
-        late.write(clock.late_frames);
-    }
-    if !rtt_us.is_null() {
-        rtt_us.write(clock.offset.rtt_us().unwrap_or(-1));
+    // SAFETY: caller guarantees `clock` is live and non-null out pointers are writable.
+    unsafe {
+        let clock = &*clock;
+        if !frames.is_null() {
+            frames.write(clock.frames);
+        }
+        if !late.is_null() {
+            late.write(clock.late_frames);
+        }
+        if !rtt_us.is_null() {
+            rtt_us.write(clock.offset.rtt_us().unwrap_or(-1));
+        }
     }
 }
 
@@ -599,19 +645,22 @@ pub unsafe extern "C" fn rp_present_clock_stats(clock: *const PresentClock, fram
 ///
 /// # Safety
 /// `clock` is live; the out pointers are writable or null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rp_present_clock_offset(clock: *const PresentClock, local_us: u64, offset_us: *mut i64, rtt_us: *mut i64) -> bool {
-    let clock = &*clock;
-    let (Some(offset), Some(rtt)) = (clock.offset.offset_at(local_us as i64), clock.offset.rtt_us()) else {
-        return false;
-    };
-    if !offset_us.is_null() {
-        offset_us.write(offset);
+    // SAFETY: caller guarantees `clock` is live and non-null out pointers are writable.
+    unsafe {
+        let clock = &*clock;
+        let (Some(offset), Some(rtt)) = (clock.offset.offset_at(local_us as i64), clock.offset.rtt_us()) else {
+            return false;
+        };
+        if !offset_us.is_null() {
+            offset_us.write(offset);
+        }
+        if !rtt_us.is_null() {
+            rtt_us.write(rtt);
+        }
+        true
     }
-    if !rtt_us.is_null() {
-        rtt_us.write(rtt);
-    }
-    true
 }
 
 // Windows clients link the standard library (the MSVC CRT has no posix_memalign).
@@ -620,7 +669,7 @@ mod runtime {
     use core::alloc::{GlobalAlloc, Layout};
     use core::ffi::c_void;
 
-    extern "C" {
+    unsafe extern "C" {
         fn malloc(size: usize) -> *mut c_void;
         fn free(pointer: *mut c_void);
         fn realloc(pointer: *mut c_void, size: usize) -> *mut c_void;
@@ -636,27 +685,38 @@ mod runtime {
     unsafe impl GlobalAlloc for CAllocator {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             if layout.align() <= MALLOC_ALIGN {
-                return malloc(layout.size()) as *mut u8;
+                // SAFETY: `malloc` returns 16-byte aligned memory on Android ABIs.
+                return unsafe { malloc(layout.size()) } as *mut u8;
             }
             let mut pointer = core::ptr::null_mut();
             let alignment = layout.align().max(core::mem::size_of::<usize>());
-            if posix_memalign(&mut pointer, alignment, layout.size()) == 0 { pointer as *mut u8 } else { core::ptr::null_mut() }
+            // SAFETY: `pointer` is a valid out-pointer and `alignment` is a power of two >= pointer size.
+            if unsafe { posix_memalign(&mut pointer, alignment, layout.size()) } == 0 {
+                pointer as *mut u8
+            } else {
+                core::ptr::null_mut()
+            }
         }
 
         unsafe fn dealloc(&self, pointer: *mut u8, _: Layout) {
-            free(pointer as *mut c_void);
+            // SAFETY: `pointer` was allocated by `CAllocator::alloc`.
+            unsafe { free(pointer as *mut c_void) };
         }
 
         unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
             if layout.align() <= MALLOC_ALIGN {
-                return realloc(pointer as *mut c_void, size) as *mut u8;
+                // SAFETY: `pointer` was allocated with `malloc` and `size` is the new size.
+                return unsafe { realloc(pointer as *mut c_void, size) } as *mut u8;
             }
-            let moved = self.alloc(Layout::from_size_align_unchecked(size, layout.align()));
-            if !moved.is_null() {
-                core::ptr::copy_nonoverlapping(pointer, moved, layout.size().min(size));
-                self.dealloc(pointer, layout);
+            // SAFETY: `size` and `layout.align()` satisfy GlobalAlloc::realloc preconditions.
+            unsafe {
+                let moved = self.alloc(Layout::from_size_align_unchecked(size, layout.align()));
+                if !moved.is_null() {
+                    core::ptr::copy_nonoverlapping(pointer, moved, layout.size().min(size));
+                    self.dealloc(pointer, layout);
+                }
+                moved
             }
-            moved
         }
     }
 

@@ -529,27 +529,30 @@ impl GpuDecoder {
     /// # Safety
     /// `self.device` must be a live SDK device.
     unsafe fn shared_fence(&self, device5: &ID3D11Device5, name: &str) -> Result<(ID3D11Fence, RawSyncObject), String> {
-        let mut fence: Option<ID3D11Fence> = None;
-        device5.CreateFence(0, D3D11_FENCE_FLAG_SHARED, &mut fence).map_err(|e| format!("creating the shared D3D11 {name} fence: {e}"))?;
-        let fence = fence.ok_or_else(|| format!("creating the shared D3D11 {name} fence: no fence returned"))?;
-        let handle = fence.CreateSharedHandle(None, GENERIC_ALL.0, PCWSTR::null()).map_err(|e| format!("sharing the D3D11 {name} fence: {e}"))?;
-        let mut sync = ptr::null_mut();
-        let result = (self.api.sync_object_create)(
-            &SyncObjectCreateInfo {
-                device: self.device,
-                external_handle: handle.0 as usize,
-                handle_type: vk::ExternalSemaphoreHandleTypeFlags::D3D12_FENCE,
-                semaphore_type: vk::SemaphoreType::TIMELINE,
-                import_flags: vk::SemaphoreImportFlags::empty(),
-            },
-            &mut sync,
-        );
-        if result != SUCCESS {
-            // The SDK takes the handle only when the import succeeds.
-            let _ = CloseHandle(handle);
-            return Err(check(result, &format!("importing the D3D11 {name} fence as a Vulkan timeline semaphore")).unwrap_err());
+        // SAFETY: caller guarantees `self.device` is a live SDK device and `device5` is its D3D11.5 interface.
+        unsafe {
+            let mut fence: Option<ID3D11Fence> = None;
+            device5.CreateFence(0, D3D11_FENCE_FLAG_SHARED, &mut fence).map_err(|e| format!("creating the shared D3D11 {name} fence: {e}"))?;
+            let fence = fence.ok_or_else(|| format!("creating the shared D3D11 {name} fence: no fence returned"))?;
+            let handle = fence.CreateSharedHandle(None, GENERIC_ALL.0, PCWSTR::null()).map_err(|e| format!("sharing the D3D11 {name} fence: {e}"))?;
+            let mut sync = ptr::null_mut();
+            let result = (self.api.sync_object_create)(
+                &SyncObjectCreateInfo {
+                    device: self.device,
+                    external_handle: handle.0 as usize,
+                    handle_type: vk::ExternalSemaphoreHandleTypeFlags::D3D12_FENCE,
+                    semaphore_type: vk::SemaphoreType::TIMELINE,
+                    import_flags: vk::SemaphoreImportFlags::empty(),
+                },
+                &mut sync,
+            );
+            if result != SUCCESS {
+                // The SDK takes the handle only when the import succeeds.
+                let _ = CloseHandle(handle);
+                return Err(check(result, &format!("importing the D3D11 {name} fence as a Vulkan timeline semaphore")).unwrap_err());
+            }
+            Ok((fence, sync))
         }
-        Ok((fence, sync))
     }
 
     /// One plane set: three shared textures, imported and bound for storage writes.
@@ -562,74 +565,77 @@ impl GpuDecoder {
         let plane_format = if config.ten_bit { "R16 (10-bit)" } else { "R8" };
         let mut textures: Vec<ID3D11Texture2D> = Vec::with_capacity(3);
         let mut images: Vec<RawImage> = Vec::with_capacity(3);
-        let mut views = [std::mem::zeroed::<ImageView>(); 3];
-        let built = (|| -> Result<(), String> {
-            for (plane, view) in views.iter_mut().enumerate() {
-                let (width, height) = config.plane_size(plane);
-                let mut texture = None;
-                d3d.CreateTexture2D(
-                    &D3D11_TEXTURE2D_DESC {
-                        Width: width,
-                        Height: height,
-                        MipLevels: 1,
-                        ArraySize: 1,
-                        Format: format,
-                        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                        Usage: D3D11_USAGE_DEFAULT,
-                        BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_UNORDERED_ACCESS.0) as u32,
-                        MiscFlags: (D3D11_RESOURCE_MISC_SHARED.0 | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0) as u32,
-                        ..Default::default()
-                    },
-                    None,
-                    Some(&mut texture),
-                )
-                .map_err(|e| format!("creating a {width}x{height} shared {plane_format} plane texture: {e}"))?;
-                let texture = texture.ok_or("creating a plane texture: none returned")?;
-                let handle = texture
-                    .cast::<IDXGIResource1>()
-                    .and_then(|resource| resource.CreateSharedHandle(None, DXGI_SHARED_RESOURCE_READ.0 | DXGI_SHARED_RESOURCE_WRITE.0, PCWSTR::null()))
-                    .map_err(|e| format!("sharing a {plane_format} plane texture: {e}"))?;
-                let info = vk::ImageCreateInfo::default()
-                    .image_type(vk::ImageType::TYPE_2D)
-                    .format(vk_format)
-                    .extent(vk::Extent3D { width, height, depth: 1 })
-                    .mip_levels(1)
-                    .array_layers(1)
-                    .samples(vk::SampleCountFlags::TYPE_1)
-                    .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                let mut image = ptr::null_mut();
-                let result = (self.api.image_create)(
-                    &ImageCreateInfo {
-                        device: self.device,
-                        external_handle: handle.0 as usize,
-                        handle_type: vk::ExternalMemoryHandleTypeFlags::D3D11_TEXTURE,
-                        image_create_info: (&raw const info).cast(),
-                    },
-                    &mut image,
-                );
-                if result != SUCCESS {
-                    let _ = CloseHandle(handle);
-                    return check(result, &format!("importing a {width}x{height} {plane_format} D3D11 plane texture into Vulkan"));
+        // SAFETY: `ImageView` is a C handle struct; caller guarantees `self.device` and `d3d` are live.
+        unsafe {
+            let mut views = [std::mem::zeroed::<ImageView>(); 3];
+            let built = (|| -> Result<(), String> {
+                for (plane, view) in views.iter_mut().enumerate() {
+                    let (width, height) = config.plane_size(plane);
+                    let mut texture = None;
+                    d3d.CreateTexture2D(
+                        &D3D11_TEXTURE2D_DESC {
+                            Width: width,
+                            Height: height,
+                            MipLevels: 1,
+                            ArraySize: 1,
+                            Format: format,
+                            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                            Usage: D3D11_USAGE_DEFAULT,
+                            BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_UNORDERED_ACCESS.0) as u32,
+                            MiscFlags: (D3D11_RESOURCE_MISC_SHARED.0 | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0) as u32,
+                            ..Default::default()
+                        },
+                        None,
+                        Some(&mut texture),
+                    )
+                    .map_err(|e| format!("creating a {width}x{height} shared {plane_format} plane texture: {e}"))?;
+                    let texture = texture.ok_or("creating a plane texture: none returned")?;
+                    let handle = texture
+                        .cast::<IDXGIResource1>()
+                        .and_then(|resource| resource.CreateSharedHandle(None, DXGI_SHARED_RESOURCE_READ.0 | DXGI_SHARED_RESOURCE_WRITE.0, PCWSTR::null()))
+                        .map_err(|e| format!("sharing a {plane_format} plane texture: {e}"))?;
+                    let info = vk::ImageCreateInfo::default()
+                        .image_type(vk::ImageType::TYPE_2D)
+                        .format(vk_format)
+                        .extent(vk::Extent3D { width, height, depth: 1 })
+                        .mip_levels(1)
+                        .array_layers(1)
+                        .samples(vk::SampleCountFlags::TYPE_1)
+                        .tiling(vk::ImageTiling::OPTIMAL)
+                        .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
+                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                    let mut image = ptr::null_mut();
+                    let result = (self.api.image_create)(
+                        &ImageCreateInfo {
+                            device: self.device,
+                            external_handle: handle.0 as usize,
+                            handle_type: vk::ExternalMemoryHandleTypeFlags::D3D11_TEXTURE,
+                            image_create_info: (&raw const info).cast(),
+                        },
+                        &mut image,
+                    );
+                    if result != SUCCESS {
+                        let _ = CloseHandle(handle);
+                        return check(result, &format!("importing a {width}x{height} {plane_format} D3D11 plane texture into Vulkan"));
+                    }
+                    images.push(image);
+                    textures.push(texture);
+                    check(
+                        (self.api.image_get_image_view)(image, vk::ImageAspectFlags::COLOR, vk::ImageUsageFlags::STORAGE, view),
+                        "creating a plane view",
+                    )?;
                 }
-                images.push(image);
-                textures.push(texture);
-                check(
-                    (self.api.image_get_image_view)(image, vk::ImageAspectFlags::COLOR, vk::ImageUsageFlags::STORAGE, view),
-                    "creating a plane view",
-                )?;
+                Ok(())
+            })();
+            if let Err(error) = built {
+                for image in images {
+                    (self.api.image_destroy)(image);
+                }
+                return Err(error);
             }
-            Ok(())
-        })();
-        if let Err(error) = built {
-            for image in images {
-                (self.api.image_destroy)(image);
-            }
-            return Err(error);
+            let textures: [ID3D11Texture2D; 3] = textures.try_into().map_err(|_| "plane count")?;
+            Ok(Slot { textures, images: images.try_into().map_err(|_| "plane count")?, buffers: GpuBuffers { planes: views } })
         }
-        let textures: [ID3D11Texture2D; 3] = textures.try_into().map_err(|_| "plane count")?;
-        Ok(Slot { textures, images: images.try_into().map_err(|_| "plane count")?, buffers: GpuBuffers { planes: views } })
     }
 
     pub fn config(&self) -> GpuConfig {
@@ -914,51 +920,54 @@ pub fn diagnose_vulkan(luid: &Luid) -> String {
 
 #[cfg(windows)]
 unsafe fn describe_adapter(instance: &ash::Instance, luid: &Luid) -> String {
-    let devices = match instance.enumerate_physical_devices() {
-        Ok(devices) => devices,
-        Err(e) => return format!("Vulkan lists no devices ({e})"),
-    };
-    let mut names = Vec::new();
-    for device in devices {
-        let mut id = vk::PhysicalDeviceIDProperties::default();
-        let mut subgroup = vk::PhysicalDeviceSubgroupProperties::default();
-        let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut id).push_next(&mut subgroup);
-        instance.get_physical_device_properties2(device, &mut properties);
-        let properties = properties.properties;
-        let name = properties.device_name_as_c_str().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        if id.device_luid_valid == vk::FALSE || id.device_luid != luid.luid {
-            names.push(name);
-            continue;
-        }
-        let version = properties.api_version;
-        if version < vk::make_api_version(0, 1, 3, 0) {
-            return format!("{name} supports Vulkan {}.{}, the decoder needs 1.3", vk::api_version_major(version), vk::api_version_minor(version));
-        }
-        let needed = vk::SubgroupFeatureFlags::BASIC
-            | vk::SubgroupFeatureFlags::VOTE
-            | vk::SubgroupFeatureFlags::ARITHMETIC
-            | vk::SubgroupFeatureFlags::BALLOT
-            | vk::SubgroupFeatureFlags::SHUFFLE
-            | vk::SubgroupFeatureFlags::SHUFFLE_RELATIVE;
-        let missing = needed & !subgroup.supported_operations;
-        if !missing.is_empty() {
-            return format!("{name} lacks subgroup operations (missing bits {:#x} of VkSubgroupFeatureFlags)", missing.as_raw());
-        }
-        let mut v13 = vk::PhysicalDeviceVulkan13Features::default();
-        let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut v13);
-        instance.get_physical_device_features2(device, &mut features);
-        if v13.subgroup_size_control == vk::FALSE {
-            return format!("{name} lacks subgroup size control");
-        }
-        let extensions = instance.enumerate_device_extension_properties(device).unwrap_or_default();
-        for required in [c"VK_KHR_external_memory_win32", c"VK_KHR_external_semaphore_win32"] {
-            if !extensions.iter().any(|e| e.extension_name_as_c_str().is_ok_and(|n| n == required)) {
-                return format!("{name} lacks {}", required.to_string_lossy());
+    // SAFETY: caller guarantees `instance` is a live Vulkan instance.
+    unsafe {
+        let devices = match instance.enumerate_physical_devices() {
+            Ok(devices) => devices,
+            Err(e) => return format!("Vulkan lists no devices ({e})"),
+        };
+        let mut names = Vec::new();
+        for device in devices {
+            let mut id = vk::PhysicalDeviceIDProperties::default();
+            let mut subgroup = vk::PhysicalDeviceSubgroupProperties::default();
+            let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut id).push_next(&mut subgroup);
+            instance.get_physical_device_properties2(device, &mut properties);
+            let properties = properties.properties;
+            let name = properties.device_name_as_c_str().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if id.device_luid_valid == vk::FALSE || id.device_luid != luid.luid {
+                names.push(name);
+                continue;
             }
+            let version = properties.api_version;
+            if version < vk::make_api_version(0, 1, 3, 0) {
+                return format!("{name} supports Vulkan {}.{}, the decoder needs 1.3", vk::api_version_major(version), vk::api_version_minor(version));
+            }
+            let needed = vk::SubgroupFeatureFlags::BASIC
+                | vk::SubgroupFeatureFlags::VOTE
+                | vk::SubgroupFeatureFlags::ARITHMETIC
+                | vk::SubgroupFeatureFlags::BALLOT
+                | vk::SubgroupFeatureFlags::SHUFFLE
+                | vk::SubgroupFeatureFlags::SHUFFLE_RELATIVE;
+            let missing = needed & !subgroup.supported_operations;
+            if !missing.is_empty() {
+                return format!("{name} lacks subgroup operations (missing bits {:#x} of VkSubgroupFeatureFlags)", missing.as_raw());
+            }
+            let mut v13 = vk::PhysicalDeviceVulkan13Features::default();
+            let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut v13);
+            instance.get_physical_device_features2(device, &mut features);
+            if v13.subgroup_size_control == vk::FALSE {
+                return format!("{name} lacks subgroup size control");
+            }
+            let extensions = instance.enumerate_device_extension_properties(device).unwrap_or_default();
+            for required in [c"VK_KHR_external_memory_win32", c"VK_KHR_external_semaphore_win32"] {
+                if !extensions.iter().any(|e| e.extension_name_as_c_str().is_ok_and(|n| n == required)) {
+                    return format!("{name} lacks {}", required.to_string_lossy());
+                }
+            }
+            return format!("{name} meets the decoder's Vulkan requirements, but the SDK still refused it");
         }
-        return format!("{name} meets the decoder's Vulkan requirements, but the SDK still refused it");
+        format!("Vulkan lists no device with this adapter's LUID (it lists {})", if names.is_empty() { "none".to_owned() } else { names.join(", ") })
     }
-    format!("Vulkan lists no device with this adapter's LUID (it lists {})", if names.is_empty() { "none".to_owned() } else { names.join(", ") })
 }
 
 /// Where the DLL is looked for: the executable's folder.

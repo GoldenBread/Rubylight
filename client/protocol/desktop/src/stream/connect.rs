@@ -420,11 +420,10 @@ fn resume_moved_to(paired: bool, running: bool, offered: bool, read: impl FnOnce
 /// What a resume checks before it goes to the PC, which reports the game to its owner only. A join
 /// does not look for the game, nor for a note saying it moved: the user chose to stream beside it.
 fn check_resume(join: bool, paired: bool, running: bool, offered: bool, read: impl FnOnce() -> Result<nightjar_core::http::StreamMove, nightjar_core::http::Error>) -> Result<(), ConnectError> {
-    if !join {
-        if let Some(device) = resume_moved_to(paired, running, offered, read)? {
+    if !join
+        && let Some(device) = resume_moved_to(paired, running, offered, read)? {
             return Err(ConnectError { message: String::new(), retryable: false, asks_replace: false, moved_to: Some(device), packed_refused: false, cause: None });
         }
-    }
     if !paired || !(running || join) {
         return Err(APP_GONE.to_string().into());
     }

@@ -343,7 +343,7 @@ fn mix(a: Color32, b: Color32, along: f32) -> Color32 {
 }
 
 /// A CSS linear gradient over `rect`: `degrees` as CSS counts them, `stops` as (place, colour).
-pub fn gradient(rect: Rect, degrees: f32, stops: &[(f32, Color32)]) -> impl Fn(Pos2) -> Color32 {
+pub fn gradient(rect: Rect, degrees: f32, stops: &[(f32, Color32)]) -> impl Fn(Pos2) -> Color32 + use<> {
     let (dx, dy) = (degrees.to_radians().sin(), -degrees.to_radians().cos());
     let span = (dx.abs() * rect.width() + dy.abs() * rect.height()).max(1e-3);
     let center = rect.center();

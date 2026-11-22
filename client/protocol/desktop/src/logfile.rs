@@ -617,12 +617,11 @@ pub fn pump_writer(chunks: Receiver<Chunk>, backlog: &Backlog, mut log: LogFile,
             }
             next = chunks.try_recv().ok();
         }
-        if healthy {
-            if let Err(e) = log.flush() {
+        if healthy
+            && let Err(e) = log.flush() {
                 healthy = false;
                 warn(&format!("log file stopped: {e}"));
             }
-        }
     }
     if healthy && owed > 0 {
         let _ = note_dropped(&mut log, &mut owed, last);

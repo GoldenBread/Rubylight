@@ -478,44 +478,47 @@ pub unsafe fn finish_drawing(renderer: *mut sdl3_sys::everything::SDL_Renderer, 
     use windows::Win32::Graphics::Direct3D11::{
         ID3D11Device, D3D11_ASYNC_GETDATA_DONOTFLUSH, D3D11_QUERY_DESC, D3D11_QUERY_EVENT,
     };
-    let device_ptr = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
-    let device = ID3D11Device::from_raw_borrowed(&device_ptr)?;
-    // SDL's own draws reach the context first.
-    if !SDL_FlushRenderer(renderer) { return None; }
-    let key = device_ptr as usize;
-    if !cache.0.as_ref().is_some_and(|(cached_dev, _)| *cached_dev == key) {
-        cache.0 = None;
-        let mut created = None;
-        device.CreateQuery(&D3D11_QUERY_DESC { Query: D3D11_QUERY_EVENT, MiscFlags: 0 }, Some(&mut created)).ok()?;
-        cache.0 = Some((key, created?));
-    }
-    let query = cache.0.as_ref()?.1.clone();
-    let context = device.GetImmediateContext().ok()?;
-    let begun = std::time::Instant::now();
-    context.End(&query);
-    context.Flush();
-    // An event query's data is a BOOL, true once everything before it is done; until then the
-    // call succeeds (S_FALSE) and leaves it alone. DONOTFLUSH avoids re-flushing on every poll,
-    // and yielding keeps the shared multithreaded immediate-context lock free for the decode thread.
-    let mut done = 0i32;
-    let mut polls = 0u32;
-    loop {
-        if context.GetData(
-            &query,
-            Some(std::ptr::from_mut(&mut done).cast()),
-            std::mem::size_of::<i32>() as u32,
-            D3D11_ASYNC_GETDATA_DONOTFLUSH.0 as u32,
-        ).is_err() {
+    // SAFETY: caller guarantees `renderer` is a live D3D11 renderer on the calling thread.
+    unsafe {
+        let device_ptr = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
+        let device = ID3D11Device::from_raw_borrowed(&device_ptr)?;
+        // SDL's own draws reach the context first.
+        if !SDL_FlushRenderer(renderer) { return None; }
+        let key = device_ptr as usize;
+        if !cache.0.as_ref().is_some_and(|(cached_dev, _)| *cached_dev == key) {
             cache.0 = None;
-            return None;
+            let mut created = None;
+            device.CreateQuery(&D3D11_QUERY_DESC { Query: D3D11_QUERY_EVENT, MiscFlags: 0 }, Some(&mut created)).ok()?;
+            cache.0 = Some((key, created?));
         }
-        if done != 0 { return Some(begun.elapsed()); }
-        if begun.elapsed() >= limit { return None; }
-        polls += 1;
-        if polls < 4 {
-            std::thread::yield_now();
-        } else {
-            std::thread::sleep(std::time::Duration::from_micros(50));
+        let query = cache.0.as_ref()?.1.clone();
+        let context = device.GetImmediateContext().ok()?;
+        let begun = std::time::Instant::now();
+        context.End(&query);
+        context.Flush();
+        // An event query's data is a BOOL, true once everything before it is done; until then the
+        // call succeeds (S_FALSE) and leaves it alone. DONOTFLUSH avoids re-flushing on every poll,
+        // and yielding keeps the shared multithreaded immediate-context lock free for the decode thread.
+        let mut done = 0i32;
+        let mut polls = 0u32;
+        loop {
+            if context.GetData(
+                &query,
+                Some(std::ptr::from_mut(&mut done).cast()),
+                std::mem::size_of::<i32>() as u32,
+                D3D11_ASYNC_GETDATA_DONOTFLUSH.0 as u32,
+            ).is_err() {
+                cache.0 = None;
+                return None;
+            }
+            if done != 0 { return Some(begun.elapsed()); }
+            if begun.elapsed() >= limit { return None; }
+            polls += 1;
+            if polls < 4 {
+                std::thread::yield_now();
+            } else {
+                std::thread::sleep(std::time::Duration::from_micros(50));
+            }
         }
     }
 }

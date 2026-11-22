@@ -145,7 +145,8 @@ impl Drop for UrbBox {
 /// # Safety
 /// `urb` points at a URB allocated with its packets, as [`UrbBox`] does.
 pub unsafe fn frames_of(urb: *mut Urb) -> *mut IsoFrame {
-    urb.cast::<u8>().add(std::mem::size_of::<Urb>()).cast()
+    // SAFETY: caller guarantees `urb` was allocated with trailing `IsoFrame` slots.
+    unsafe { urb.cast::<u8>().add(std::mem::size_of::<Urb>()).cast() }
 }
 
 /// What [`Kernel::wait`] saw.
@@ -893,10 +894,10 @@ impl<K: Kernel> UsbDevice for UsbfsDevice<K> {
                 return done.complete(Reply::failed(wire::ENODEV));
             }
         }
-        if transfer.is_control() {
-            if let Some(reply) = self.intercept(&transfer) {
-                return done.complete(reply);
-            }
+        if transfer.is_control()
+            && let Some(reply) = self.intercept(&transfer)
+        {
+            return done.complete(reply);
         }
         let (urb, buffer, shape) = match self.build(&transfer) {
             Ok(built) => built,
@@ -980,10 +981,10 @@ impl<K: Kernel> UsbDevice for UsbfsDevice<K> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        if let Some(reaper) = reaper {
-            if reaper.thread().id() != std::thread::current().id() {
-                let _ = reaper.join();
-            }
+        if let Some(reaper) = reaper
+            && reaper.thread().id() != std::thread::current().id()
+        {
+            let _ = reaper.join();
         }
         release_all(&self.inner);
         let disconnected = std::mem::take(&mut self.inner.state().disconnected);

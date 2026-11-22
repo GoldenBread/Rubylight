@@ -274,10 +274,10 @@ impl Job {
 
     /// The next step, given the reply to the last [`Step::Send`] (None after a wait or at the start).
     pub fn next(&mut self, reply: Option<Reply>, now_ms: u64) -> Step {
-        if let Some(reply) = reply {
-            if std::mem::take(&mut self.sent) {
-                self.answer(reply, now_ms);
-            }
+        if let Some(reply) = reply
+            && std::mem::take(&mut self.sent)
+        {
+            self.answer(reply, now_ms);
         }
         if !self.sent && self.session.token.as_ref().is_some_and(|t| t.until_ms <= now_ms) {
             // Out of date: a new one first, and the request made with the old one made again.

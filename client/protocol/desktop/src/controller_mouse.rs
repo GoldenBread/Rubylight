@@ -111,9 +111,8 @@ impl Touchpad {
         if down && self.button.is_none() {
             let button = if self.contacts.len() > 1 { mouse_button::RIGHT } else { mouse_button::LEFT };
             if queue.send_mouse_button(button, true).is_ok() { self.button = Some(button); }
-        } else if !down {
-            if let Some(button) = self.button.take() { let _ = queue.send_mouse_button(button, false); }
-        }
+        } else if !down
+            && let Some(button) = self.button.take() { let _ = queue.send_mouse_button(button, false); }
     }
 
     pub fn touch(&mut self, event: &sdl3_sys::everything::SDL_GamepadTouchpadEvent, queue: &mut InputQueue) {

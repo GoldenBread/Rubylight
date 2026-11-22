@@ -273,15 +273,14 @@ fn a_focused_controls_glow_ends_before_anything_cuts_it() {
             assert!(shape.clip_rect.expand(0.6).contains_rect(glow), "{glow:?} is cut by its clip {:?}", shape.clip_rect);
             assert!(panel.expand(0.6).contains_rect(glow), "{glow:?} leaves the panel {panel:?}");
         }
-        if pass >= 30 {
-            if let Some(on) = on {
+        if pass >= 30
+            && let Some(on) = on {
                 assert_eq!(glows, 1, "{on} glows");
                 if order.last().is_none_or(|(id, _)| *id != tree.focus) {
                     order.push((tree.focus, on.clone()));
                 }
                 focused.insert(on);
             }
-        }
     }
     // The loop: the last way out wraps to the head's close, and the close to the first tile.
     let said: Vec<&str> = order.iter().map(|(_, on)| on.as_str()).collect();

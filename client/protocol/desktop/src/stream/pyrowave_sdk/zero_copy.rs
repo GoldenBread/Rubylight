@@ -352,17 +352,21 @@ fn query_devices() -> Result<Vec<DeviceCaps>, String> {
 pub unsafe fn caps_of(instance: &ash::Instance, device: vk::PhysicalDevice) -> DeviceCaps {
     let mut subgroup = vk::PhysicalDeviceSubgroupProperties::default();
     let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut subgroup);
-    instance.get_physical_device_properties2(device, &mut properties);
-    let properties = properties.properties;
     let mut chain = Chain::new();
-    instance.get_physical_device_features2(device, &mut chain.pdf2);
+    // SAFETY: Caller guarantees `instance` and `device` are valid Vulkan handles.
+    unsafe {
+        instance.get_physical_device_properties2(device, &mut properties);
+        instance.get_physical_device_features2(device, &mut chain.pdf2);
+    }
+    let properties = properties.properties;
     DeviceCaps {
         name: properties.device_name_as_c_str().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
         kind: properties.device_type,
         api: properties.api_version,
         subgroup_ops: subgroup.supported_operations,
         supported: chain.features(),
-        video: crate::vulkan_video::extensions_of(instance, device),
+        // SAFETY: Caller guarantees `instance` and `device` are valid Vulkan handles.
+        video: unsafe { crate::vulkan_video::extensions_of(instance, device) },
     }
 }
 
@@ -457,13 +461,16 @@ impl RendererRequest {
     /// # Safety
     /// `renderer` must be a live renderer created with `options`.
     pub unsafe fn mark(&self, renderer: *mut SDL_Renderer) -> bool {
-        let device: *mut SDL_GPUDevice = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER).cast();
-        if device.is_null() || driver_of(device) != "vulkan" {
-            return false;
+        // SAFETY: Caller guarantees `renderer` is a live SDL renderer created with `options`.
+        unsafe {
+            let device: *mut SDL_GPUDevice = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER).cast();
+            if device.is_null() || driver_of(device) != "vulkan" {
+                return false;
+            }
+            let props = SDL_GetGPUDeviceProperties(device);
+            SDL_SetNumberProperty(props, FEATURES_PROPERTY.as_ptr(), i64::from(self.features.0))
+                && SDL_SetNumberProperty(props, crate::vulkan_video::EXTENSIONS_PROPERTY.as_ptr(), i64::from(self.video.0))
         }
-        let props = SDL_GetGPUDeviceProperties(device);
-        SDL_SetNumberProperty(props, FEATURES_PROPERTY.as_ptr(), i64::from(self.features.0))
-            && SDL_SetNumberProperty(props, crate::vulkan_video::EXTENSIONS_PROPERTY.as_ptr(), i64::from(self.video.0))
     }
 }
 
@@ -473,8 +480,11 @@ fn has_pyrowave(features: Features) -> bool {
 }
 
 unsafe fn driver_of(device: *mut SDL_GPUDevice) -> String {
-    let driver = SDL_GetGPUDeviceDriver(device);
-    if driver.is_null() { String::new() } else { CStr::from_ptr(driver).to_string_lossy().into_owned() }
+    // SAFETY: Caller guarantees `device` is a live SDL GPU device.
+    unsafe {
+        let driver = SDL_GetGPUDeviceDriver(device);
+        if driver.is_null() { String::new() } else { CStr::from_ptr(driver).to_string_lossy().into_owned() }
+    }
 }
 
 /// The renderer's Vulkan device as the patched SDL shares it, and the features it was made with.
@@ -499,7 +509,8 @@ impl SdlVulkan {
         if device.is_null() {
             return Err("the renderer has no SDL GPU device".into());
         }
-        Self::from_properties(SDL_GetGPUDeviceProperties(device), &driver_of(device))
+        // SAFETY: `device` is non-null and live per caller's guarantee.
+        unsafe { Self::from_properties(SDL_GetGPUDeviceProperties(device), &driver_of(device)) }
     }
 
     /// Reads the device of `props`, the properties of an SDL GPU device whose driver is `driver`.
@@ -510,24 +521,27 @@ impl SdlVulkan {
         if driver != "vulkan" {
             return Err(format!("the renderer draws with {driver:?}, not Vulkan"));
         }
-        let handles = [INSTANCE, PHYSICAL_DEVICE, DEVICE, QUEUE, QUEUE_LOCK].map(|name| SDL_GetPointerProperty(props, name.as_ptr(), ptr::null_mut()));
-        if handles.iter().any(|handle| handle.is_null()) || !SDL_HasProperty(props, QUEUE_FAMILY.as_ptr()) {
-            return Err("this SDL does not share its Vulkan device (the Nightjar SDL patch is missing)".into());
+        // SAFETY: Caller guarantees `props` is a live SDL properties group.
+        unsafe {
+            let handles = [INSTANCE, PHYSICAL_DEVICE, DEVICE, QUEUE, QUEUE_LOCK].map(|name| SDL_GetPointerProperty(props, name.as_ptr(), ptr::null_mut()));
+            if handles.iter().any(|handle| handle.is_null()) || !SDL_HasProperty(props, QUEUE_FAMILY.as_ptr()) {
+                return Err("this SDL does not share its Vulkan device (the Nightjar SDL patch is missing)".into());
+            }
+            if !SDL_HasProperty(props, FEATURES_PROPERTY.as_ptr()) {
+                return Err("the renderer's Vulkan device was created without the decoders' features".into());
+            }
+            let features = Features(SDL_GetNumberProperty(props, FEATURES_PROPERTY.as_ptr(), 0) as u32);
+            Ok(Self {
+                instance: vk::Instance::from_raw(handles[0] as u64),
+                physical_device: vk::PhysicalDevice::from_raw(handles[1] as u64),
+                device: vk::Device::from_raw(handles[2] as u64),
+                queue: vk::Queue::from_raw(handles[3] as u64),
+                family: SDL_GetNumberProperty(props, QUEUE_FAMILY.as_ptr(), 0) as u32,
+                lock: handles[4].cast(),
+                features,
+                compute: compute_of(props),
+            })
         }
-        if !SDL_HasProperty(props, FEATURES_PROPERTY.as_ptr()) {
-            return Err("the renderer's Vulkan device was created without the decoders' features".into());
-        }
-        let features = Features(SDL_GetNumberProperty(props, FEATURES_PROPERTY.as_ptr(), 0) as u32);
-        Ok(Self {
-            instance: vk::Instance::from_raw(handles[0] as u64),
-            physical_device: vk::PhysicalDevice::from_raw(handles[1] as u64),
-            device: vk::Device::from_raw(handles[2] as u64),
-            queue: vk::Queue::from_raw(handles[3] as u64),
-            family: SDL_GetNumberProperty(props, QUEUE_FAMILY.as_ptr(), 0) as u32,
-            lock: handles[4].cast(),
-            features,
-            compute: compute_of(props),
-        })
     }
 
     /// Whether the device was created with `needed` (PyroWave's `Features::required`, or
@@ -544,16 +558,19 @@ impl SdlVulkan {
 /// `props` must be a live properties group.
 unsafe fn compute_of(props: SDL_PropertiesID) -> super::queue::RendererCompute {
     use super::queue::{QueueSlot, RendererCompute};
-    if !SDL_HasProperty(props, COMPUTE_FAMILY.as_ptr()) {
-        return RendererCompute::NotAsked;
-    }
-    let family = SDL_GetNumberProperty(props, COMPUTE_FAMILY.as_ptr(), -1);
-    let index = SDL_GetNumberProperty(props, COMPUTE_INDEX.as_ptr(), 0);
-    let queue = SDL_GetPointerProperty(props, COMPUTE_QUEUE.as_ptr(), ptr::null_mut());
-    // The patch takes the first free queue of a family, beside at most one of its own (index 1).
-    match (u32::try_from(family), queue.is_null(), index) {
-        (Ok(family), false, 0..=1) => RendererCompute::Queue(vk::Queue::from_raw(queue as u64), QueueSlot { family, index: index as u32 }),
-        _ => RendererCompute::None,
+    // SAFETY: Caller guarantees `props` is a live SDL properties group.
+    unsafe {
+        if !SDL_HasProperty(props, COMPUTE_FAMILY.as_ptr()) {
+            return RendererCompute::NotAsked;
+        }
+        let family = SDL_GetNumberProperty(props, COMPUTE_FAMILY.as_ptr(), -1);
+        let index = SDL_GetNumberProperty(props, COMPUTE_INDEX.as_ptr(), 0);
+        let queue = SDL_GetPointerProperty(props, COMPUTE_QUEUE.as_ptr(), ptr::null_mut());
+        // The patch takes the first free queue of a family, beside at most one of its own (index 1).
+        match (u32::try_from(family), queue.is_null(), index) {
+            (Ok(family), false, 0..=1) => RendererCompute::Queue(vk::Queue::from_raw(queue as u64), QueueSlot { family, index: index as u32 }),
+            _ => RendererCompute::None,
+        }
     }
 }
 
@@ -568,11 +585,13 @@ pub fn get_instance_proc_addr() -> Result<vk::PFN_vkGetInstanceProcAddr, String>
 }
 
 unsafe extern "C" fn lock_queue(mutex: *mut std::ffi::c_void) {
-    SDL_LockMutex(mutex.cast());
+    // SAFETY: Caller passes a valid `SDL_Mutex` pointer from `SdlVulkan::lock`.
+    unsafe { SDL_LockMutex(mutex.cast()) };
 }
 
 unsafe extern "C" fn unlock_queue(mutex: *mut std::ffi::c_void) {
-    SDL_UnlockMutex(mutex.cast());
+    // SAFETY: Caller passes a valid `SDL_Mutex` pointer from `SdlVulkan::lock`.
+    unsafe { SDL_UnlockMutex(mutex.cast()) };
 }
 
 /// What `pyrowave_create_device` is told about the renderer's device: Vulkan 1.3 without
@@ -700,7 +719,8 @@ impl SharedImages {
     /// # Safety
     /// `sdl` must describe a live device that outlives the images.
     pub unsafe fn new(sdl: &SdlVulkan, get_instance_proc_addr: vk::PFN_vkGetInstanceProcAddr, config: GpuConfig, decode_family: Option<u32>) -> Result<Arc<Self>, String> {
-        Self::with_handoff(sdl, get_instance_proc_addr, config, decode_family, PlaneHandoff::Copy)
+        // SAFETY: Caller guarantees `sdl` describes a live device that outlives the images.
+        unsafe { Self::with_handoff(sdl, get_instance_proc_addr, config, decode_family, PlaneHandoff::Copy) }
     }
 
     /// `new` for a presenter that reads the sets as `handoff` says. Sampling in place falls back
@@ -709,55 +729,58 @@ impl SharedImages {
     /// # Safety
     /// As `new`.
     pub unsafe fn with_handoff(sdl: &SdlVulkan, get_instance_proc_addr: vk::PFN_vkGetInstanceProcAddr, config: GpuConfig, decode_family: Option<u32>, handoff: PlaneHandoff) -> Result<Arc<Self>, String> {
-        let families = sharing(sdl.family, decode_family);
-        let instance = ash::Instance::load(&ash::StaticFn { get_instance_proc_addr }, sdl.instance);
-        let memory = instance.get_physical_device_memory_properties(sdl.physical_device);
-        let device = ash::Device::load(instance.fp_v1_0(), sdl.device);
-        let mut images = Self {
-            device, queue: sdl.queue, lock: sdl.lock, family: sdl.family, config, handoff: PlaneHandoff::Copy, planes: Vec::new(),
-            decode: vk::Semaphore::null(), reuse: vk::Semaphore::null(), decoded: AtomicU64::new(0), reused: AtomicU64::new(0),
-            transitions_pool: vk::CommandPool::null(), transitions: Vec::new(),
-        };
-        for semaphore in [&mut images.decode, &mut images.reuse] {
-            let mut timeline = vk::SemaphoreTypeCreateInfo::default().semaphore_type(vk::SemaphoreType::TIMELINE);
-            *semaphore = images.device.create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut timeline), None)
-                .map_err(|e| format!("a timeline semaphore cannot be created ({e})"))?;
-        }
-        for _ in 0..config.slots {
-            for plane in 0..3 {
-                let (width, height) = config.plane_size(plane);
-                let image = images.device.create_image(&vk::ImageCreateInfo::default()
-                    .image_type(vk::ImageType::TYPE_2D).format(images.format()).extent(vk::Extent3D { width, height, depth: 1 })
-                    .mip_levels(1).array_layers(1).samples(vk::SampleCountFlags::TYPE_1).tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST)
-                    .sharing_mode(if families.is_empty() { vk::SharingMode::EXCLUSIVE } else { vk::SharingMode::CONCURRENT })
-                    .queue_family_indices(&families).initial_layout(vk::ImageLayout::UNDEFINED), None)
-                    .map_err(|e| format!("a {width}x{height} plane image cannot be created ({e})"))?;
-                images.planes.push((image, vk::DeviceMemory::null()));
-                let needs = images.device.get_image_memory_requirements(image);
-                let kinds = &memory.memory_types[..memory.memory_type_count as usize];
-                let usable = |index: &usize| needs.memory_type_bits & (1 << index) != 0;
-                let kind = (0..kinds.len()).filter(usable).find(|&index| kinds[index].property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL))
-                    .or_else(|| (0..kinds.len()).find(usable))
-                    .ok_or("no memory type holds the plane images")?;
-                let allocated = images.device.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(needs.size).memory_type_index(kind as u32), None)
-                    .map_err(|e| format!("{} bytes of plane memory cannot be allocated ({e})", needs.size))?;
-                images.planes.last_mut().unwrap().1 = allocated;
-                images.device.bind_image_memory(image, allocated, 0).map_err(|e| format!("the plane memory cannot be bound ({e})"))?;
+        // SAFETY: Caller guarantees `sdl` describes a live Vulkan device and `get_instance_proc_addr` is valid.
+        unsafe {
+            let families = sharing(sdl.family, decode_family);
+            let instance = ash::Instance::load(&ash::StaticFn { get_instance_proc_addr }, sdl.instance);
+            let memory = instance.get_physical_device_memory_properties(sdl.physical_device);
+            let device = ash::Device::load(instance.fp_v1_0(), sdl.device);
+            let mut images = Self {
+                device, queue: sdl.queue, lock: sdl.lock, family: sdl.family, config, handoff: PlaneHandoff::Copy, planes: Vec::new(),
+                decode: vk::Semaphore::null(), reuse: vk::Semaphore::null(), decoded: AtomicU64::new(0), reused: AtomicU64::new(0),
+                transitions_pool: vk::CommandPool::null(), transitions: Vec::new(),
+            };
+            for semaphore in [&mut images.decode, &mut images.reuse] {
+                let mut timeline = vk::SemaphoreTypeCreateInfo::default().semaphore_type(vk::SemaphoreType::TIMELINE);
+                *semaphore = images.device.create_semaphore(&vk::SemaphoreCreateInfo::default().push_next(&mut timeline), None)
+                    .map_err(|e| format!("a timeline semaphore cannot be created ({e})"))?;
             }
-        }
-        if let Err(e) = images.to_general() {
-            // The transition may still be pending on a hung queue: nothing it uses may be freed.
-            std::mem::forget(images);
-            return Err(e);
-        }
-        if handoff == PlaneHandoff::Sample {
-            match images.record_transitions() {
-                Ok(()) => images.handoff = PlaneHandoff::Sample,
-                Err(e) => note(&format!("the presenter copies the PyroWave planes: their layout changes for sampling in place cannot be recorded ({e})")),
+            for _ in 0..config.slots {
+                for plane in 0..3 {
+                    let (width, height) = config.plane_size(plane);
+                    let image = images.device.create_image(&vk::ImageCreateInfo::default()
+                        .image_type(vk::ImageType::TYPE_2D).format(images.format()).extent(vk::Extent3D { width, height, depth: 1 })
+                        .mip_levels(1).array_layers(1).samples(vk::SampleCountFlags::TYPE_1).tiling(vk::ImageTiling::OPTIMAL)
+                        .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST)
+                        .sharing_mode(if families.is_empty() { vk::SharingMode::EXCLUSIVE } else { vk::SharingMode::CONCURRENT })
+                        .queue_family_indices(&families).initial_layout(vk::ImageLayout::UNDEFINED), None)
+                        .map_err(|e| format!("a {width}x{height} plane image cannot be created ({e})"))?;
+                    images.planes.push((image, vk::DeviceMemory::null()));
+                    let needs = images.device.get_image_memory_requirements(image);
+                    let kinds = &memory.memory_types[..memory.memory_type_count as usize];
+                    let usable = |index: &usize| needs.memory_type_bits & (1 << index) != 0;
+                    let kind = (0..kinds.len()).filter(usable).find(|&index| kinds[index].property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL))
+                        .or_else(|| (0..kinds.len()).find(usable))
+                        .ok_or("no memory type holds the plane images")?;
+                    let allocated = images.device.allocate_memory(&vk::MemoryAllocateInfo::default().allocation_size(needs.size).memory_type_index(kind as u32), None)
+                        .map_err(|e| format!("{} bytes of plane memory cannot be allocated ({e})", needs.size))?;
+                    images.planes.last_mut().unwrap().1 = allocated;
+                    images.device.bind_image_memory(image, allocated, 0).map_err(|e| format!("the plane memory cannot be bound ({e})"))?;
+                }
             }
+            if let Err(e) = images.to_general() {
+                // The transition may still be pending on a hung queue: nothing it uses may be freed.
+                std::mem::forget(images);
+                return Err(e);
+            }
+            if handoff == PlaneHandoff::Sample {
+                match images.record_transitions() {
+                    Ok(()) => images.handoff = PlaneHandoff::Sample,
+                    Err(e) => note(&format!("the presenter copies the PyroWave planes: their layout changes for sampling in place cannot be recorded ({e})")),
+                }
+            }
+            Ok(Arc::new(images))
         }
-        Ok(Arc::new(images))
     }
 
     /// How the presenter reads the sets.
@@ -768,62 +791,66 @@ impl SharedImages {
     /// Records each set's two layout changes for sampling in place. Nothing is submitted, so on
     /// an error the pool (and the buffers in it) can go at once.
     unsafe fn record_transitions(&mut self) -> Result<(), vk::Result> {
-        let device = &self.device;
-        self.transitions_pool = device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(self.family), None)?;
-        let sets = self.config.slots;
-        let buffers = match device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default()
-            .command_pool(self.transitions_pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(2 * sets as u32))
-        {
-            Ok(buffers) => buffers,
-            Err(e) => { self.drop_transitions(); return Err(e); }
-        };
-        let range = vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 };
-        let decode_stages = vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER;
-        let decode_writes = vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE;
-        for set in 0..sets {
-            let commands = [buffers[2 * set], buffers[2 * set + 1]];
-            for (index, &buffer) in commands.iter().enumerate() {
-                let to_sampled = index == 0;
-                let barriers: Vec<_> = (0..3).map(|plane| {
-                    let barrier = vk::ImageMemoryBarrier::default()
-                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .image(self.image(set, plane)).subresource_range(range);
-                    if to_sampled {
-                        // After the decode's writes (on any queue: `sampled` waits for its
-                        // timeline), before the draws' reads.
-                        barrier.src_access_mask(decode_writes).dst_access_mask(vk::AccessFlags::SHADER_READ)
-                            .old_layout(vk::ImageLayout::GENERAL).new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        // SAFETY: Caller guarantees `self.device` is live and handles are owned by `self`.
+        unsafe {
+            let device = &self.device;
+            self.transitions_pool = device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(self.family), None)?;
+            let sets = self.config.slots;
+            let buffers = match device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default()
+                .command_pool(self.transitions_pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(2 * sets as u32))
+            {
+                Ok(buffers) => buffers,
+                Err(e) => { self.drop_transitions(); return Err(e); }
+            };
+            let range = vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 };
+            let decode_stages = vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER;
+            let decode_writes = vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_WRITE;
+            for set in 0..sets {
+                let commands = [buffers[2 * set], buffers[2 * set + 1]];
+                for (index, &buffer) in commands.iter().enumerate() {
+                    let to_sampled = index == 0;
+                    let barriers: Vec<_> = (0..3).map(|plane| {
+                        let barrier = vk::ImageMemoryBarrier::default()
+                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .image(self.image(set, plane)).subresource_range(range);
+                        if to_sampled {
+                            // After the decode's writes (on any queue: `sampled` waits for its
+                            // timeline), before the draws' reads.
+                            barrier.src_access_mask(decode_writes).dst_access_mask(vk::AccessFlags::SHADER_READ)
+                                .old_layout(vk::ImageLayout::GENERAL).new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                        } else {
+                            // After the draws' reads (an execution dependency suffices), before the
+                            // next decode's reads and writes, which wait for the reuse signal behind it.
+                            barrier.src_access_mask(vk::AccessFlags::empty()).dst_access_mask(vk::AccessFlags::SHADER_READ | decode_writes)
+                                .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL).new_layout(vk::ImageLayout::GENERAL)
+                        }
+                    }).collect();
+                    let (from, to) = if to_sampled {
+                        (decode_stages, vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER)
                     } else {
-                        // After the draws' reads (an execution dependency suffices), before the
-                        // next decode's reads and writes, which wait for the reuse signal behind it.
-                        barrier.src_access_mask(vk::AccessFlags::empty()).dst_access_mask(vk::AccessFlags::SHADER_READ | decode_writes)
-                            .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL).new_layout(vk::ImageLayout::GENERAL)
+                        (vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER, decode_stages)
+                    };
+                    let recorded = device.begin_command_buffer(buffer, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE))
+                        .and_then(|()| {
+                            device.cmd_pipeline_barrier(buffer, from, to, vk::DependencyFlags::empty(), &[], &[], &barriers);
+                            device.end_command_buffer(buffer)
+                        });
+                    if let Err(e) = recorded {
+                        self.drop_transitions();
+                        return Err(e);
                     }
-                }).collect();
-                let (from, to) = if to_sampled {
-                    (decode_stages, vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER)
-                } else {
-                    (vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER, decode_stages)
-                };
-                let recorded = device.begin_command_buffer(buffer, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE))
-                    .and_then(|()| {
-                        device.cmd_pipeline_barrier(buffer, from, to, vk::DependencyFlags::empty(), &[], &[], &barriers);
-                        device.end_command_buffer(buffer)
-                    });
-                if let Err(e) = recorded {
-                    self.drop_transitions();
-                    return Err(e);
                 }
+                self.transitions.push(commands);
             }
-            self.transitions.push(commands);
+            Ok(())
         }
-        Ok(())
     }
 
     /// Frees the recorded layout changes (never submitted, or done).
     unsafe fn drop_transitions(&mut self) {
         if self.transitions_pool != vk::CommandPool::null() {
-            self.device.destroy_command_pool(self.transitions_pool, None);
+            // SAFETY: Caller guarantees no recorded command buffer is still pending on the GPU.
+            unsafe { self.device.destroy_command_pool(self.transitions_pool, None) };
         }
         self.transitions_pool = vk::CommandPool::null();
         self.transitions.clear();
@@ -938,41 +965,44 @@ impl SharedImages {
 
     /// Moves every image from UNDEFINED to GENERAL with a command buffer of ours, and waits for it.
     unsafe fn to_general(&self) -> Result<(), String> {
-        let device = &self.device;
-        let pool = device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(self.family), None)
-            .map_err(|e| format!("a command pool cannot be created ({e})"))?;
-        let fence = match device.create_fence(&vk::FenceCreateInfo::default(), None) {
-            Ok(fence) => fence,
-            Err(e) => { device.destroy_command_pool(pool, None); return Err(format!("a fence cannot be created ({e})")); }
-        };
-        let mut submitted = false;
-        let mut run = || -> Result<(), vk::Result> {
-            let commands = device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1))?[0];
-            device.begin_command_buffer(commands, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))?;
-            let barriers: Vec<_> = self.planes.iter().map(|&(image, _)| vk::ImageMemoryBarrier::default()
-                .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_READ)
-                .old_layout(vk::ImageLayout::UNDEFINED).new_layout(vk::ImageLayout::GENERAL)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .image(image).subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 }))
-                .collect();
-            device.cmd_pipeline_barrier(commands, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(), &[], &[], &barriers);
-            device.end_command_buffer(commands)?;
-            let buffers = [commands];
-            SDL_LockMutex(self.lock);
-            let queued = device.queue_submit(self.queue, &[vk::SubmitInfo::default().command_buffers(&buffers)], fence);
-            SDL_UnlockMutex(self.lock);
-            submitted = queued.is_ok();
-            queued?;
-            device.wait_for_fences(&[fence], true, RELEASE_WAIT.as_nanos() as u64)
-        };
-        let result = run();
-        if result.is_ok() || !submitted {
-            // Done, or never submitted. A submission still pending keeps both.
-            device.destroy_fence(fence, None);
-            device.destroy_command_pool(pool, None);
+        // SAFETY: Caller guarantees `self.device`, `self.queue`, and `self.planes` are valid and unused.
+        unsafe {
+            let device = &self.device;
+            let pool = device.create_command_pool(&vk::CommandPoolCreateInfo::default().queue_family_index(self.family), None)
+                .map_err(|e| format!("a command pool cannot be created ({e})"))?;
+            let fence = match device.create_fence(&vk::FenceCreateInfo::default(), None) {
+                Ok(fence) => fence,
+                Err(e) => { device.destroy_command_pool(pool, None); return Err(format!("a fence cannot be created ({e})")); }
+            };
+            let mut submitted = false;
+            let mut run = || -> Result<(), vk::Result> {
+                let commands = device.allocate_command_buffers(&vk::CommandBufferAllocateInfo::default().command_pool(pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(1))?[0];
+                device.begin_command_buffer(commands, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))?;
+                let barriers: Vec<_> = self.planes.iter().map(|&(image, _)| vk::ImageMemoryBarrier::default()
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_READ)
+                    .old_layout(vk::ImageLayout::UNDEFINED).new_layout(vk::ImageLayout::GENERAL)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(image).subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 }))
+                    .collect();
+                device.cmd_pipeline_barrier(commands, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(), &[], &[], &barriers);
+                device.end_command_buffer(commands)?;
+                let buffers = [commands];
+                SDL_LockMutex(self.lock);
+                let queued = device.queue_submit(self.queue, &[vk::SubmitInfo::default().command_buffers(&buffers)], fence);
+                SDL_UnlockMutex(self.lock);
+                submitted = queued.is_ok();
+                queued?;
+                device.wait_for_fences(&[fence], true, RELEASE_WAIT.as_nanos() as u64)
+            };
+            let result = run();
+            if result.is_ok() || !submitted {
+                // Done, or never submitted. A submission still pending keeps both.
+                device.destroy_fence(fence, None);
+                device.destroy_command_pool(pool, None);
+            }
+            result.map_err(|e| format!("the plane images cannot be prepared ({e})"))
         }
-        result.map_err(|e| format!("the plane images cannot be prepared ({e})"))
     }
 }
 

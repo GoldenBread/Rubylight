@@ -370,11 +370,10 @@ pub fn hdr_label(support: &ColorSupport, preferred: &DescriptionInfo, brightness
         return Err("the compositor's preferred description is an ICC profile".into());
     }
     if brightness == Brightness::Absolute {
-        if let (true, true, Some((min_lum, max, reference))) = (gamma22, preferred.blending_bt2020(), preferred.luminances) {
-            if u64::from(max) * 10_000 > u64::from(min_lum) && u64::from(reference) * 10_000 > u64::from(min_lum) {
+        if let (true, true, Some((min_lum, max, reference))) = (gamma22, preferred.blending_bt2020(), preferred.luminances)
+            && u64::from(max) * 10_000 > u64::from(min_lum) && u64::from(reference) * 10_000 > u64::from(min_lum) {
                 return Ok(HdrLabel::Blending { min_lum, max, reference });
             }
-        }
         if preferred.pq_bt2020() {
             return Ok(HdrLabel::Preferred);
         }
@@ -691,11 +690,10 @@ impl Report<'_> {
                 let gamma22 = if tf == TF_GAMMA22 && !env_on(GAMMA22_PRESENT_ENV) { "; NIGHTJAR_WAYLAND_GAMMA22_PRESENT is 0" } else { "" };
                 hints.push(format!("the surface is PQ and the compositor blends in {}, so it converts each frame unless the display engine does{kwin}{gamma22}", tf_name(tf)));
             }
-            if let (Some((whose, described)), Some((_, _, reference))) = (described, preferred.luminances) {
-                if reference != described {
+            if let (Some((whose, described)), Some((_, _, reference))) = (described, preferred.luminances)
+                && reference != described {
                     hints.push(format!("{whose} description puts reference white at {described} nits and the output's is {reference}, so the compositor scales each frame"));
                 }
-            }
         }
         if self.seen.dmabuf.format_missing(self.facts.fourcc) {
             hints.push("the swapchain's format is not in the scanout tranche".into());

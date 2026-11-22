@@ -330,15 +330,14 @@ impl App {
         }
         // A start's decoder checks, run on a worker since the last frame.
         self.probe_step();
-        if let Some(receiver) = &self.network_query {
-            if let Ok(network) = receiver.try_recv() {
+        if let Some(receiver) = &self.network_query
+            && let Ok(network) = receiver.try_recv() {
                 self.launcher.network = network;
                 self.network_query = None;
                 if let Some((host, app, resume, kind)) = self.network_launch.take() { self.launch_ready(host, app, resume, kind); }
             }
-        }
-        if let Some((export, receiver)) = &self.shortcut_file {
-            if let Ok(result) = receiver.try_recv() {
+        if let Some((export, receiver)) = &self.shortcut_file
+            && let Ok(result) = receiver.try_recv() {
                 let export = *export;
                 self.shortcut_file = None;
                 match result {
@@ -356,7 +355,6 @@ impl App {
                     Err(e) => self.launcher.message(tr("File dialog unavailable"), e),
                 }
             }
-        }
         if let Some(result) = self.latency_csv_file.as_ref().and_then(|receiver| receiver.try_recv().ok()) {
             self.latency_csv_file = None;
             let kept = self.store.dir().join("statistics").join(stream::LATENCY_CSV);
@@ -381,15 +379,13 @@ impl App {
                 self.launcher.notify(tr(offer.action.failed()), why);
             }
         }
-        if let Some(result) = self.folder_pick.as_ref().and_then(|(_, receiver)| receiver.try_recv().ok()) {
-            if let Some((pick, _)) = self.folder_pick.take() {
-                if let Some((title, body)) = finish_folder_pick(&mut self.launcher.folders, pick, result) {
+        if let Some(result) = self.folder_pick.as_ref().and_then(|(_, receiver)| receiver.try_recv().ok())
+            && let Some((pick, _)) = self.folder_pick.take()
+                && let Some((title, body)) = finish_folder_pick(&mut self.launcher.folders, pick, result) {
                     self.launcher.message(title, body);
                 }
-            }
-        }
-        if let Some(receiver) = &self.identity {
-            if let Ok(result) = receiver.try_recv() {
+        if let Some(receiver) = &self.identity
+            && let Ok(result) = receiver.try_recv() {
                 self.identity = None;
                 match result {
                     Ok(identity) => {
@@ -410,7 +406,6 @@ impl App {
                     Err(e) => self.launcher.notify(tr("No pairing key"), e),
                 }
             }
-        }
         // While the window is minimized or hidden only the PC being woken and those just quit or
         // left are polled: the others are asked again, all at once, when it is back.
         if !self.attempts.is_connecting() {
@@ -463,11 +458,10 @@ impl App {
                 }
                 HostEvent::Paired { id, result, .. } => {
                     // The first pairing on this install: Home says what Auto set up for this PC.
-                    if result.is_ok() && self.launcher.offer_setup_card(id, self.hosts.paired_with(id)) {
-                        if let Err(e) = self.store.save_settings(&self.launcher.settings) {
+                    if result.is_ok() && self.launcher.offer_setup_card(id, self.hosts.paired_with(id))
+                        && let Err(e) = self.store.save_settings(&self.launcher.settings) {
                             eprintln!("nightjar: saving settings failed: {e}");
                         }
-                    }
                     if self.launcher.pairing_finished(id, result.map(|_| ())) {
                         self.save_hosts();
                         self.hosts.load_apps(id);
@@ -481,11 +475,10 @@ impl App {
                     }
                     Ok(()) => {
                         if self.quitting_on_leave.as_ref().is_some_and(|(host, _)| *host == id) { self.quitting_on_leave = None; }
-                        if let Some((host, app)) = self.pending_launch.take() {
-                            if host == id {
+                        if let Some((host, app)) = self.pending_launch.take()
+                            && host == id {
                                 self.launch(host, app, false, LaunchKind::Stream, LaunchFrom::Replace);
                             }
-                        }
                     }
                     Err(e) => {
                         self.pending_launch = None;
@@ -585,14 +578,12 @@ impl App {
         }
         // A launch without a network query in flight is waiting for its app list (see
         // `launch_ready`); it goes on once the list is no longer loading.
-        if self.network_query.is_none() {
-            if let Some((host, app, resume, kind)) = self.network_launch {
-                if !matches!(self.hosts.get(host).map(|h| &h.apps), Some(Apps::Loading)) {
+        if self.network_query.is_none()
+            && let Some((host, app, resume, kind)) = self.network_launch
+                && !matches!(self.hosts.get(host).map(|h| &h.apps), Some(Apps::Loading)) {
                     self.network_launch = None;
                     self.launch_ready(host, app, resume, kind);
                 }
-            }
-        }
         self.wake_step();
         self.replace_step();
         self.autostream_step();

@@ -944,10 +944,10 @@ fn receive_thread(
                     socket = next;
                 }
                 // A direct decoder's held key frame request, due with no frame to carry it.
-                if let Some(direct) = direct.as_mut() {
-                    if direct.send_held(&shared, &mut signals) {
-                        route(&control, &mut signals);
-                    }
+                if let Some(direct) = direct.as_mut()
+                    && direct.send_held(&shared, &mut signals)
+                {
+                    route(&control, &mut signals);
                 }
                 if first_data.is_none() {
                     waiting += UDP_RECV_POLL_TIMEOUT;
@@ -1003,10 +1003,10 @@ fn receive_thread(
             |signals| route(&control, signals),
         );
         // Datagrams that completed no frame (a held request needs a frame or this to go out).
-        if let Some(direct) = direct.as_mut() {
-            if direct.send_held(&shared, &mut signals) {
-                route(&control, &mut signals);
-            }
+        if let Some(direct) = direct.as_mut()
+            && direct.send_held(&shared, &mut signals)
+        {
+            route(&control, &mut signals);
         }
     }
     if let Some(trace) = trace {

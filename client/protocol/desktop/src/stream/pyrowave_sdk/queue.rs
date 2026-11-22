@@ -154,18 +154,21 @@ pub fn shared_device_queue(setting: bool, compute: RendererCompute) -> DecodeQue
 /// `device` must be a live SDK device of `api`.
 pub unsafe fn sdk_families(api: &Api, device: RawDevice) -> Result<Vec<QueueFamily>, String> {
     let (mut instance, mut physical) = (vk::Instance::null(), vk::PhysicalDevice::null());
-    (api.device_get_vk_device_handles)(device, &mut instance, &mut physical, ptr::null_mut());
-    if instance == vk::Instance::null() || physical == vk::PhysicalDevice::null() {
-        return Err("the SDK names no Vulkan instance or physical device".into());
+    // SAFETY: caller guarantees `device` is a live SDK device of `api`.
+    unsafe {
+        (api.device_get_vk_device_handles)(device, &mut instance, &mut physical, ptr::null_mut());
+        if instance == vk::Instance::null() || physical == vk::PhysicalDevice::null() {
+            return Err("the SDK names no Vulkan instance or physical device".into());
+        }
+        // The same Vulkan loader the SDK loaded, so its instance is one of this loader's.
+        let entry = ash::Entry::load().map_err(|e| format!("the Vulkan loader cannot be loaded ({e})"))?;
+        let instance = ash::Instance::load(entry.static_fn(), instance);
+        Ok(instance
+            .get_physical_device_queue_family_properties(physical)
+            .iter()
+            .map(|family| QueueFamily { flags: family.queue_flags, count: family.queue_count })
+            .collect())
     }
-    // The same Vulkan loader the SDK loaded, so its instance is one of this loader's.
-    let entry = ash::Entry::load().map_err(|e| format!("the Vulkan loader cannot be loaded ({e})"))?;
-    let instance = ash::Instance::load(entry.static_fn(), instance);
-    Ok(instance
-        .get_physical_device_queue_family_properties(physical)
-        .iter()
-        .map(|family| QueueFamily { flags: family.queue_flags, count: family.queue_count })
-        .collect())
 }
 
 /// Moves the SDK device's decodes to its compute queue when `queue` says so, before the decoder is
@@ -178,7 +181,8 @@ pub unsafe fn apply(api: &Api, device: RawDevice, queue: DecodeQueue) -> DecodeQ
     if !queue.is_compute() {
         return queue;
     }
-    let result = (api.device_set_queue_type)(device, vk::QueueFlags::COMPUTE);
+    // SAFETY: caller guarantees `device` is a live SDK device of `api` without a decoder yet.
+    let result = unsafe { (api.device_set_queue_type)(device, vk::QueueFlags::COMPUTE) };
     if result == SUCCESS {
         queue
     } else {

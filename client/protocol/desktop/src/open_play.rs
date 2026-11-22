@@ -605,11 +605,10 @@ impl crate::App {
     pub(crate) fn open_play_step(&mut self) {
         self.sign_in_step();
         self.open_play.keep_claiming(self.store.dir(), Instant::now());
-        if self.open_play.notice.is_some() && matches!(self.launcher.dialog, Dialog::None) && !self.launcher.pin.as_ref().is_some_and(crate::pin_ui::PinLock::app_locked) {
-            if let Some((title, body)) = self.open_play.notice.take() {
+        if self.open_play.notice.is_some() && matches!(self.launcher.dialog, Dialog::None) && !self.launcher.pin.as_ref().is_some_and(crate::pin_ui::PinLock::app_locked)
+            && let Some((title, body)) = self.open_play.notice.take() {
                 self.launcher.message(title, body);
             }
-        }
         let Some(run) = self.open_play.run.as_ref() else { return };
         let host = run.target.host;
         if !self.running {

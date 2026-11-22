@@ -248,7 +248,7 @@ pub(crate) fn hex_encode(data: &[u8]) -> String {
 }
 
 pub(crate) fn hex_decode(text: &str) -> Result<Vec<u8>, Error> {
-    if text.len() % 2 != 0 {
+    if !text.len().is_multiple_of(2) {
         return Err(Error::Malformed(format!(
             "invalid pairing hex length: {}",
             text.len()

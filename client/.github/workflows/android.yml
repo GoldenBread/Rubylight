@@ -55,7 +55,7 @@ jobs:
             libasound2-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libdecor-0-dev \
             glslang-tools libvulkan1 mesa-vulkan-drivers
           cd protocol
-          cargo clippy -p nightjar-desktop --all-targets --locked -- -D warnings
+          cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test -p nightjar-desktop --locked
       # The PQ pass: its SPIR-V against glslang 15 (a missing or other glslang fails here), and the
       # ignored GPU test on Mesa's software Vulkan (lavapipe, the runner has no GPU).

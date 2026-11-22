@@ -113,15 +113,15 @@ impl ContentRate {
             self.hitches = 0;
             return;
         }
-        if let Some((median, _)) = self.median_interval(last) {
-            if interval > median * HITCH_FACTOR {
-                self.hitches += 1;
-                if self.hitches < HITCHES_FOR_NEW_RATE {
-                    return;
-                }
-                // The game moved to a slower rate: forget the old one.
-                self.clear_window();
+        if let Some((median, _)) = self.median_interval(last)
+            && interval > median * HITCH_FACTOR
+        {
+            self.hitches += 1;
+            if self.hitches < HITCHES_FOR_NEW_RATE {
+                return;
             }
+            // The game moved to a slower rate: forget the old one.
+            self.clear_window();
         }
         self.hitches = 0;
         self.ring[self.next] = (host_us, interval);

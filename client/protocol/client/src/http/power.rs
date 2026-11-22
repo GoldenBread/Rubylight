@@ -191,10 +191,9 @@ fn decode(
         if let Some(Err(error @ Error::Status { code, .. })) = std::str::from_utf8(&response.body)
             .ok()
             .map(xml::parse_reply)
+            && code != i32::from(success)
         {
-            if code != i32::from(success) {
-                return Err(error.into());
-            }
+            return Err(error.into());
         }
         return Err(PowerError::Host(match status {
             404 => Error::NotFound(format!("/{path}")),

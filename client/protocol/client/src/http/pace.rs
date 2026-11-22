@@ -126,7 +126,7 @@ fn measure(probe: &mut impl FnMut(u32) -> Result<Measurement, Error>, measuremen
     cancelled: &impl Fn() -> bool) -> Result<Measurement, Error> {
     if cancelled() { return Err(Error::Cancelled); }
     let result = probe(pace)?;
-    if measurements.get(&pace).map_or(true, |old| !result.measured() || (old.measured() && old.ranking() < result.ranking())) {
+    if measurements.get(&pace).is_none_or(|old| !result.measured() || (old.measured() && old.ranking() < result.ranking())) {
         measurements.insert(pace, result.clone());
     }
     Ok(result)
@@ -147,8 +147,10 @@ pub fn search(link_kbps: u32, floor_kbps: u32, mut probe: impl FnMut(u32) -> Res
     if cap < STEP { return Ok(None); }
     let floor = (floor_kbps.min(cap).div_ceil(STEP) * STEP).clamp(STEP, cap);
     let mut measurements = BTreeMap::new();
-    if measure(&mut probe, &mut measurements, cap, &cancelled)?.qualified() {
-        if let Some(outcome) = confirmed(&mut probe, &mut measurements, cap, &cancelled)? { return Ok(Some(outcome)); }
+    if measure(&mut probe, &mut measurements, cap, &cancelled)?.qualified()
+        && let Some(outcome) = confirmed(&mut probe, &mut measurements, cap, &cancelled)?
+    {
+        return Ok(Some(outcome));
     }
     let (mut low, mut high) = (0, cap);
     if floor < cap {
@@ -174,8 +176,10 @@ pub fn search(link_kbps: u32, floor_kbps: u32, mut probe: impl FnMut(u32) -> Res
             Some(previous) => previous.qualified(),
             None => measure(&mut probe, &mut measurements, pace, &cancelled)?.qualified(),
         };
-        if passes {
-            if let Some(outcome) = confirmed(&mut probe, &mut measurements, pace, &cancelled)? { return Ok(Some(outcome)); }
+        if passes
+            && let Some(outcome) = confirmed(&mut probe, &mut measurements, pace, &cancelled)?
+        {
+            return Ok(Some(outcome));
         }
     }
     let best = measurements.iter().filter(|(_, result)| result.measured()).min_by(|(pace_a, a), (pace_b, b)| {

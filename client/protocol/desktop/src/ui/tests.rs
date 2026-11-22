@@ -631,6 +631,9 @@ fn the_shoulders_step_through_the_destinations() {
         installed: Some(true),
         running: false,
         artwork: Artwork { cover: None, version: String::new() },
+        last_played: None,
+        playtime_minutes: None,
+        collections: Vec::new(),
     };
     f.hosts.list[0].native.library = Some(Library { revision: "r1".into(), games: vec![game] });
     f.l.go(Screen::Home);
@@ -2930,6 +2933,9 @@ fn home_with_games(count: u32) -> Frames {
             installed: Some(true),
             running: false,
             artwork: Artwork { cover: None, version: String::new() },
+            last_played: None,
+            playtime_minutes: None,
+            collections: Vec::new(),
         })
         .collect();
     let mut f = Frames::with(record("Desk", true, true), Reach::Online, Some(answer(true, 0)), Vec::new());
@@ -3841,6 +3847,9 @@ fn the_home_card_of_a_pc_to_pair_fits_its_state() {
         installed: Some(true),
         running: false,
         artwork: Artwork { cover: None, version: String::new() },
+        last_played: None,
+        playtime_minutes: None,
+        collections: Vec::new(),
     };
     f.hosts.list[0].native.library = Some(Library { revision: "r1".into(), games: vec![game] });
     f.hosts.list[1].reach = Reach::Online;
@@ -4486,6 +4495,9 @@ fn a_pcs_page_asks_for_the_covers_on_screen_at_the_version_every_page_asks_with(
             installed: Some(true),
             running: false,
             artwork: Artwork { cover: Some(format!("/cover/{n}")), version: format!("cover-{n}") },
+            last_played: None,
+            playtime_minutes: None,
+            collections: Vec::new(),
         })
         .collect();
     f.hosts.list[0].native.library = Some(Library { revision: "r1".into(), games });
@@ -5126,6 +5138,9 @@ fn glass_page_screenshots() {
                 installed: Some(true),
                 running: n == hero,
                 artwork: Artwork { cover: (!art_less.contains(&n)).then(|| format!("/cover/{n}")), version: "1".into() },
+                last_played: None,
+                playtime_minutes: None,
+                collections: Vec::new(),
             })
             .collect();
         let apps: Vec<nightjar_core::http::App> = games
@@ -5326,6 +5341,9 @@ fn polish_screenshots() {
                 installed: Some(*title != "Frostline"),
                 running: n == 1,
                 artwork: Artwork { cover: Some(format!("/cover/{n}")), version: "1".into() },
+                last_played: None,
+                playtime_minutes: None,
+                collections: Vec::new(),
             })
             .collect();
         let apps: Vec<nightjar_core::http::App> = games
@@ -5567,6 +5585,9 @@ fn polish_screenshots() {
             installed: Some(false),
             running: false,
             artwork: Artwork { cover: None, version: String::new() },
+            last_played: None,
+            playtime_minutes: None,
+            collections: Vec::new(),
         };
         f.hosts.list[0].native.library = Some(Library { revision: "r2".into(), games: vec![none("Night Drive", 0), none("Farm Life", 1)] });
         f.l.library_filter = console::LibraryFilter::Installed;
@@ -5747,6 +5768,9 @@ fn home_with_stores(games: &[(&str, &str, bool)]) -> Frames {
             installed: Some(*installed),
             running: false,
             artwork: Artwork { cover: None, version: String::new() },
+            last_played: None,
+            playtime_minutes: None,
+            collections: Vec::new(),
         })
         .collect();
     let mut f = Frames::with(record("Desk", true, true), Reach::Online, Some(answer(true, 0)), Vec::new());
@@ -6560,11 +6584,10 @@ fn a_risen_covers_ring_is_not_cut_at_the_top_of_the_grid() {
             let color = if high { design_tokens::HC_FOCUS_RING_COLOR } else { design_tokens::FOCUS_RING_COLOR };
             let mut rings = Vec::new();
             for clipped in &f.shapes {
-                if let egui::Shape::Mesh(mesh) = &clipped.shape {
-                    if mesh.vertices.iter().any(|v| v.color == color) {
+                if let egui::Shape::Mesh(mesh) = &clipped.shape
+                    && mesh.vertices.iter().any(|v| v.color == color) {
                         rings.push((mesh.calc_bounds(), clipped.clip_rect));
                     }
-                }
             }
             let (ring, clip) = *rings.first().unwrap_or_else(|| panic!("{page}, {high}: a ring"));
             assert!(ring.top() < cover.top() - design_tokens::FOCUS_GAP - 1.0, "{page}, {high}: the cover rose: {ring:?} for {cover:?}");

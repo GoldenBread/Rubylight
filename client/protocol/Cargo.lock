@@ -2397,9 +2397,9 @@ dependencies = [
 [[package]]
 name = "rubylight-native-api"
 version = "1.1.0"
-source = "git+https://github.com/RamazanKara/Rubylight?rev=17fc45bb7ab4c7528d4f533916f4ea79eb9653a3#17fc45bb7ab4c7528d4f533916f4ea79eb9653a3"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]

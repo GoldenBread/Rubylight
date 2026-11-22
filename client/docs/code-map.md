@@ -13,6 +13,7 @@ All Rust is one Cargo workspace in `protocol/`.
 | Crate | Folder | Holds |
 | --- | --- | --- |
 | `rubylight-protocol` | `protocol/core/` | Wire formats shared with the host, `no_std`: each extension message in a module of its own, every message id in [`ids.rs`](../protocol/core/src/ids.rs). |
+| `rubylight-native-api` | `protocol/native-api/` | Wire types of the Rubylight native API v1, versioned on their own and shared with the host. |
 | `rubylight-traverse` | `protocol/traverse/` | Internet play, shared with the host: DHT records, STUN, PCP and NAT-PMP, hole punching and the tunnel that reach a paired PC from outside its network. |
 | `nightjar-core` | `protocol/client/` | The streaming engine: pairing and HTTPS, RTSP, control, video and audio receive, input, USB forwarding. |
 | `nightjar-policy` | `protocol/policy/` | Decisions without I/O or a clock: bitrate, the quality ladder, the recovery budget, the overlay, the stream menu, the SteamGridDB and IGDB lookup (`game_info/`). Both apps call it, so they decide alike. |

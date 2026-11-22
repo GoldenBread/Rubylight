@@ -379,7 +379,7 @@ fn owned_file(_fd: jint) -> Option<File> {
     None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_create(
     _: JNIEnv,
     _: JClass,
@@ -387,7 +387,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_create
     create()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_destroy(
     _: JNIEnv,
     _: JClass,
@@ -396,7 +396,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_destro
     destroy(handle)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_queueUpload(
     mut env: JNIEnv,
     _: JClass,
@@ -413,7 +413,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_queueU
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_queueDownload(
     mut env: JNIEnv,
     _: JClass,
@@ -432,7 +432,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_queueD
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_cancel(
     _: JNIEnv,
     _: JClass,
@@ -442,7 +442,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_cancel
     flag(cancel(handle, id(transfer)))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_cancelAll(
     _: JNIEnv,
     _: JClass,
@@ -451,7 +451,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_cancel
     cancel_all(handle)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_retry(
     _: JNIEnv,
     _: JClass,
@@ -461,7 +461,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_retry(
     flag(retry(handle, id(transfer)))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_clearFinished(
     _: JNIEnv,
     _: JClass,
@@ -470,7 +470,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_clearF
     clear_finished(handle)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_snapshot(
     mut env: JNIEnv,
     _: JClass,
@@ -480,7 +480,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_snapsh
     reply(&mut env, rows)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_startNext(
     mut env: JNIEnv,
     _: JClass,
@@ -490,7 +490,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_startN
     reply(&mut env, started)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_list(
     mut env: JNIEnv,
@@ -517,7 +517,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_list(
     reply(&mut env, files)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_run(
     mut env: JNIEnv,

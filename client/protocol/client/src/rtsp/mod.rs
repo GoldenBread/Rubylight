@@ -841,15 +841,14 @@ impl Handshake {
                     let error = failed();
                     // Rubylight answers 400 naming packed 4:4:4 in each of its ANNOUNCE refusals of
                     // it (disabled, a mode that failed its probe, a geometry its encoder cannot take).
-                    if let RtspError::Status { code, reason, .. } = &error {
-                        if self.out.config.experimental_packed_444
-                            && *code == 400
-                            && reason.to_ascii_lowercase().contains("packed")
-                        {
-                            return Err(RtspError::PackedRefused(format!(
-                                "host refused packed 4:4:4 at ANNOUNCE: {code} {reason}"
-                            )));
-                        }
+                    if let RtspError::Status { code, reason, .. } = &error
+                        && self.out.config.experimental_packed_444
+                        && *code == 400
+                        && reason.to_ascii_lowercase().contains("packed")
+                    {
+                        return Err(RtspError::PackedRefused(format!(
+                            "host refused packed 4:4:4 at ANNOUNCE: {code} {reason}"
+                        )));
                     }
                     return Err(error);
                 }

@@ -4,7 +4,7 @@ use super::*;
 
 #[cfg(windows)]
 #[link(name = "winmm")]
-extern "system" {
+unsafe extern "system" {
     fn timeBeginPeriod(period: u32) -> u32;
     fn timeEndPeriod(period: u32) -> u32;
 }
@@ -114,9 +114,8 @@ impl App {
         // A stream with full chroma: what its PC offered is kept for the next launch there.
         let outcome = session.outcome();
         let (packed, describe_modes) = (outcome.config.experimental_packed_444, outcome.host_packed444_modes);
-        if let Some(host) = self.hosts.get_mut(connecting.host_id) {
-            if full_chroma::started(&mut host.record, packed, describe_modes) { self.save_hosts(); }
-        }
+        if let Some(host) = self.hosts.get_mut(connecting.host_id)
+            && full_chroma::started(&mut host.record, packed, describe_modes) { self.save_hosts(); }
         // A bitrate the player set before a reconnect keeps automatic bitrate off, as it was.
         let manual_bitrate = connecting.plan().bitrate_before_manual.is_some();
         let mut streaming = Streaming::new(connecting, session, facts, display);
@@ -301,11 +300,10 @@ impl App {
         };
         self.second_screen = None;
         self.second_screen_gone();
-        if failed {
-            if let Some((streaming, _)) = self.streaming.as_mut() {
+        if failed
+            && let Some((streaming, _)) = self.streaming.as_mut() {
                 streaming.show_toast(tr("The second screen could not be opened."));
             }
-        }
     }
 
     /// Notes the game of a stream that just started, for Home's "Recently played".
@@ -515,11 +513,10 @@ impl App {
         }
         // A held D-pad or stick steps the stream menu again, as in the launcher.
         if self.streaming.as_ref().is_some_and(|(s, _)| s.menu_visible) {
-            if self.repeat_navigation() {
-                if let Some((s, _)) = self.streaming.as_mut() {
+            if self.repeat_navigation()
+                && let Some((s, _)) = self.streaming.as_mut() {
                     s.needs_redraw = true;
                 }
-            }
         } else {
             self.nav_repeat.clear();
         }
@@ -619,30 +616,27 @@ impl App {
         });
         self.pads = pads.take_back();
         // A shortcut saved or deleted in the stream menu lands in the same file as the settings' list.
-        if shortcuts_changed {
-            if let Err(e) = self.store.save_shortcuts(&self.launcher.shortcuts) {
+        if shortcuts_changed
+            && let Err(e) = self.store.save_shortcuts(&self.launcher.shortcuts) {
                 streaming.show_toast(trf("Could not save shortcuts: {}", &[&e]));
             }
-        }
         // No picture for 12 s after the start means the stream never came up.
         if streaming.facts.role != nightjar_core::http::AppRole::InputOnly
             && !streaming.has_picture() && streaming.since_start() > Duration::from_secs(12) && streaming.exit.is_none() {
             streaming.exit = Some(Exit::Terminated(nightjar_core::session::error::NO_VIDEO_TRAFFIC));
         }
-        if let Some(auto) = &self.autostream {
-            if streaming.exit.is_none() && auto.ran_its_time() {
+        if let Some(auto) = &self.autostream
+            && streaming.exit.is_none() && auto.ran_its_time() {
                 streaming.exit = Some(Exit::User);
             }
-        }
         if let Some(exit) = streaming.exit.take() {
             let planned = matches!(exit, Exit::User);
             self.end_stream(exit);
             // A dropped stream may reconnect (end_stream started it); a failed reconnect ends the
             // run through its message, in autostream_step.
             let reconnecting = self.attempts.is_connecting();
-            if let Some(auto) = self.autostream.as_mut() {
-                if !auto.stream_ended(planned, reconnecting) { self.running = false; }
-            }
+            if let Some(auto) = self.autostream.as_mut()
+                && !auto.stream_ended(planned, reconnecting) { self.running = false; }
         }
     }
 
@@ -669,9 +663,8 @@ impl App {
         }
         if kind.0 == self.wake_event {
             // The Session page's worker published something new.
-            if let Some((s, _)) = self.streaming.as_mut() {
-                if s.session_page.is_some() { s.needs_redraw = true; }
-            }
+            if let Some((s, _)) = self.streaming.as_mut()
+                && s.session_page.is_some() { s.needs_redraw = true; }
             return;
         }
         // SAFETY: a key event's members.
@@ -693,11 +686,10 @@ impl App {
                 | SDL_EVENT_WINDOW_EXPOSED
                 | SDL_EVENT_WINDOW_HDR_STATE_CHANGED
                 | SDL_EVENT_WINDOW_DISPLAY_CHANGED
-        ) {
-            if let Some((s, _)) = self.streaming.as_mut() {
+        )
+            && let Some((s, _)) = self.streaming.as_mut() {
                 s.needs_redraw = true;
             }
-        }
         let Some((streaming, _)) = self.streaming.as_mut() else {
             return;
         };

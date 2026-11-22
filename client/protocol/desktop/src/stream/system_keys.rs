@@ -724,11 +724,10 @@ impl Drop for ShellKeyHook {
         GRAB.store(false, Ordering::Release);
         GUARD.store(false, Ordering::Release);
         // SAFETY: the hook thread's id; it ends at WM_QUIT.
-        if unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) }.is_ok() {
-            if let Some(thread) = self.thread.take() {
+        if unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) }.is_ok()
+            && let Some(thread) = self.thread.take() {
                 let _ = thread.join();
             }
-        }
     }
 }
 

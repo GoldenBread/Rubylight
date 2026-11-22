@@ -85,9 +85,8 @@ impl Assembler {
         }
         if starts_new {
             self.pending = Some(Pending { count: report.contact_count.unwrap_or(0), scan: report.scan_time, contacts: BTreeMap::new() });
-        } else if let (Some(count), false) = (report.contact_count, zero_continuation) {
-            if let Some(p) = self.pending.as_mut() { p.count = count; }
-        }
+        } else if let (Some(count), false) = (report.contact_count, zero_continuation)
+            && let Some(p) = self.pending.as_mut() { p.count = count; }
         let pending = self.pending.as_mut()?;
         let expected = (pending.count as usize).min(MAX_CONTACTS);
         for contact in report.contacts {

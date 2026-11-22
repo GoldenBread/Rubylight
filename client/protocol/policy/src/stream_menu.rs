@@ -173,10 +173,10 @@ pub fn label(id: &str) -> Option<Label> {
 pub fn labels() -> Vec<Label> {
     let mut all: Vec<Label> = Vec::new();
     for id in [MORE, CLOSE, ADD].into_iter().chain(TILES.iter().map(|t| t.id)) {
-        if let Some(label) = label(id) {
-            if !all.iter().any(|known| known.key == label.key) {
-                all.push(label);
-            }
+        if let Some(label) = label(id)
+            && !all.iter().any(|known| known.key == label.key)
+        {
+            all.push(label);
         }
     }
     all

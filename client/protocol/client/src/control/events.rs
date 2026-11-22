@@ -54,8 +54,10 @@ impl HdrMetadata {
     /// Reads as many fields as present, leaving the rest 0, as the C does for older hosts.
     fn decode(data: &[u8]) -> Self {
         let mut words = data
-            .chunks_exact(2)
-            .map(|w| u16::from_le_bytes([w[0], w[1]]));
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|w| u16::from_le_bytes(*w));
         let mut next = || words.next().unwrap_or(0);
         let mut metadata = Self::default();
         for primary in &mut metadata.display_primaries {

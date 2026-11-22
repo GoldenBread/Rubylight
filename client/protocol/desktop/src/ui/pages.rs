@@ -596,11 +596,10 @@ impl Launcher {
                     self.profiles.home_wifi.push(name);
                     self.home_wifi_name.clear();
                 }
-                if let Some(ssid) = &self.network.ssid {
-                    if ui.add_enabled(!self.profiles.home_wifi.contains(ssid) && self.profiles.home_wifi.len() < 50, egui::Button::new(tr("Add current Wi-Fi"))).clicked() {
+                if let Some(ssid) = &self.network.ssid
+                    && ui.add_enabled(!self.profiles.home_wifi.contains(ssid) && self.profiles.home_wifi.len() < 50, egui::Button::new(tr("Add current Wi-Fi"))).clicked() {
                         self.profiles.home_wifi.push(ssid.clone());
                     }
-                }
             });
             self.profiles.home_wifi.retain(|name| {
                 !ui.horizontal(|ui| { ui.label(name); text_button(ui, "Remove").clicked() }).inner

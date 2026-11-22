@@ -50,13 +50,13 @@ pub fn mapped_address(response: &[u8], transaction: &[u8; 12]) -> Option<SocketA
         let size = u16::from_be_bytes([attributes[at + 2], attributes[at + 3]]) as usize;
         let value = attributes.get(at + 4..at + 4 + size)?;
         let xor = kind == XOR_MAPPED_ADDRESS;
-        if kind == XOR_MAPPED_ADDRESS || kind == MAPPED_ADDRESS {
-            if let Some(address) = address(value, xor, transaction) {
-                if xor {
-                    return Some(address);
-                }
-                plain = Some(address);
+        if (kind == XOR_MAPPED_ADDRESS || kind == MAPPED_ADDRESS)
+            && let Some(address) = address(value, xor, transaction)
+        {
+            if xor {
+                return Some(address);
             }
+            plain = Some(address);
         }
         // Attributes are padded to four bytes.
         at += 4 + size.div_ceil(4) * 4;

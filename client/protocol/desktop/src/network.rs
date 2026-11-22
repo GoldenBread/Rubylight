@@ -519,9 +519,8 @@ impl RoamWatch {
                         }
                     };
                     unreadable = false;
-                    if let Some(event) = watch.event(look) {
-                        if !on_change(event) { return; }
-                    }
+                    if let Some(event) = watch.event(look)
+                        && !on_change(event) { return; }
                 }
             })
             .map_err(|e| e.to_string())?;

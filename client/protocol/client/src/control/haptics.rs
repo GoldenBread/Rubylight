@@ -56,7 +56,7 @@ pub fn decode(payload: &[u8]) -> Option<Pcm> {
 /// `None` for a controller over 15 or samples that are not 1 to 240 whole frames.
 pub fn encode(controller: u16, sequence: u32, samples: &[u8]) -> Option<Vec<u8>> {
     let frames = samples.len() / FRAME_BYTES;
-    if controller >= 16 || samples.len() % FRAME_BYTES != 0 || !(1..=MAX_FRAMES).contains(&frames) {
+    if controller >= 16 || !samples.len().is_multiple_of(FRAME_BYTES) || !(1..=MAX_FRAMES).contains(&frames) {
         return None;
     }
     let mut out = Vec::with_capacity(HEADER_BYTES + samples.len());

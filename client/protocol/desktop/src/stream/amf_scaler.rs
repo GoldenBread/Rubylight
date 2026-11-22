@@ -71,17 +71,22 @@ impl Object {
     /// The function in `index` of the object's vtable, as `F`.
     unsafe fn method<F: Copy>(&self, index: usize) -> F {
         debug_assert_eq!(std::mem::size_of::<F>(), std::mem::size_of::<*const c_void>());
-        let table = *(self.0 as *const *const *const c_void);
-        std::mem::transmute_copy(&*table.add(index))
+        // SAFETY: caller guarantees `self.0` is a valid AMF COM interface pointer and `index` is in its vtable.
+        unsafe {
+            let table = *(self.0 as *const *const *const c_void);
+            std::mem::transmute_copy(&*table.add(index))
+        }
     }
 
     unsafe fn call0(&self, index: usize) -> i32 {
-        self.method::<unsafe extern "system" fn(*mut c_void) -> i32>(index)(self.0)
+        // SAFETY: caller guarantees `self.0` and vtable slot `index` match `fn(*mut c_void) -> i32`.
+        unsafe { self.method::<unsafe extern "system" fn(*mut c_void) -> i32>(index)(self.0) }
     }
 
     unsafe fn set(&self, name: &str, value: Variant) -> Result<(), String> {
         let name16 = wide(name);
-        let result = self.method::<unsafe extern "system" fn(*mut c_void, *const u16, Variant) -> i32>(slot::SET_PROPERTY)(self.0, name16.as_ptr(), value);
+        // SAFETY: caller guarantees `self.0` is a live AMF PropertyStorage interface.
+        let result = unsafe { self.method::<unsafe extern "system" fn(*mut c_void, *const u16, Variant) -> i32>(slot::SET_PROPERTY)(self.0, name16.as_ptr(), value) };
         check(result, name)
     }
 }
@@ -138,48 +143,51 @@ impl HqScaler {
         if p.width <= 0 || p.height <= 0 || p.output_width <= 0 || p.output_height <= 0 || p.frame_rate <= 0 {
             return Err(format!("AMF scaler parameters are not usable: {p:?}"));
         }
-        let library = libloading::Library::new("amfrt64.dll")
-            .or_else(|_| libloading::Library::new("amfrtlt64.dll"))
-            .map_err(|e| format!("the AMF runtime (amfrt64.dll) is not installed: {e}"))?;
-        let init = library.get::<unsafe extern "C" fn(u64, *mut *mut c_void) -> i32>(b"AMFInit\0")
-            .map_err(|e| format!("the AMF runtime has no AMFInit: {e}"))?;
-        let mut factory = ptr::null_mut();
-        check(init(VERSION, &mut factory), "AMFInit")?;
-        if factory.is_null() { return Err("AMFInit returned no factory".into()); }
-        // The factory belongs to the runtime and is not reference counted.
-        let factory = std::mem::ManuallyDrop::new(Object(factory));
-        let mut context = ptr::null_mut();
-        check(factory.method::<unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32>(slot::FACTORY_CREATE_CONTEXT)(factory.0, &mut context), "CreateContext")?;
-        let context = Object(context);
-        check(context.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, i32) -> i32>(slot::CONTEXT_INIT_DX11)(context.0, device.as_raw(), DX11_0), "InitDX11")?;
-        let name = wide("AMFHQScaler");
-        let mut scaler = ptr::null_mut();
-        let created = factory.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, *const u16, *mut *mut c_void) -> i32>(slot::FACTORY_CREATE_COMPONENT)(factory.0, context.0, name.as_ptr(), &mut scaler);
-        let result = Self { scaler: Object(scaler), context, parameters: p, input_desc: Default::default(), _library: library };
-        check(created, "CreateComponent(AMFHQScaler)")?;
-        if result.scaler.0.is_null() { return Err("AMF has no HQ Scaler".into()); }
-        let mut caps = ptr::null_mut();
-        check(result.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32>(slot::COMPONENT_GET_CAPS)(result.scaler.0, &mut caps), "GetCaps")?;
-        let caps = Object(caps);
-        if caps.0.is_null() || caps.call0(slot::CAPS_ACCELERATION_TYPE) == ACCEL_NOT_SUPPORTED {
-            return Err("the GPU does not accelerate AMF's HQ Scaler".into());
+        // SAFETY: caller guarantees `device` is a live D3D11 device; AMF library/interfaces are used on this thread.
+        unsafe {
+            let library = libloading::Library::new("amfrt64.dll")
+                .or_else(|_| libloading::Library::new("amfrtlt64.dll"))
+                .map_err(|e| format!("the AMF runtime (amfrt64.dll) is not installed: {e}"))?;
+            let init = library.get::<unsafe extern "C" fn(u64, *mut *mut c_void) -> i32>(b"AMFInit\0")
+                .map_err(|e| format!("the AMF runtime has no AMFInit: {e}"))?;
+            let mut factory = ptr::null_mut();
+            check(init(VERSION, &mut factory), "AMFInit")?;
+            if factory.is_null() { return Err("AMFInit returned no factory".into()); }
+            // The factory belongs to the runtime and is not reference counted.
+            let factory = std::mem::ManuallyDrop::new(Object(factory));
+            let mut context = ptr::null_mut();
+            check(factory.method::<unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32>(slot::FACTORY_CREATE_CONTEXT)(factory.0, &mut context), "CreateContext")?;
+            let context = Object(context);
+            check(context.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, i32) -> i32>(slot::CONTEXT_INIT_DX11)(context.0, device.as_raw(), DX11_0), "InitDX11")?;
+            let name = wide("AMFHQScaler");
+            let mut scaler = ptr::null_mut();
+            let created = factory.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, *const u16, *mut *mut c_void) -> i32>(slot::FACTORY_CREATE_COMPONENT)(factory.0, context.0, name.as_ptr(), &mut scaler);
+            let result = Self { scaler: Object(scaler), context, parameters: p, input_desc: Default::default(), _library: library };
+            check(created, "CreateComponent(AMFHQScaler)")?;
+            if result.scaler.0.is_null() { return Err("AMF has no HQ Scaler".into()); }
+            let mut caps = ptr::null_mut();
+            check(result.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32>(slot::COMPONENT_GET_CAPS)(result.scaler.0, &mut caps), "GetCaps")?;
+            let caps = Object(caps);
+            if caps.0.is_null() || caps.call0(slot::CAPS_ACCELERATION_TYPE) == ACCEL_NOT_SUPPORTED {
+                return Err("the GPU does not accelerate AMF's HQ Scaler".into());
+            }
+            // V+ allocates a surface of the input's shape as part of its capability check.
+            let mut surface = ptr::null_mut();
+            check(result.context.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32, i32, *mut *mut c_void) -> i32>(slot::CONTEXT_ALLOC_SURFACE)(
+                result.context.0, MEMORY_DX11, result.format(), p.width, p.height, &mut surface), "AllocSurface")?;
+            drop(Object(surface));
+            let s = &result.scaler;
+            s.set("HQSOutputSize", Variant::size(p.output_width, p.output_height))?;
+            s.set("HQScalerEngineType", Variant::int(i64::from(MEMORY_DX11)))?;
+            s.set("HQScalerAlgorithm", Variant::int(ALGORITHM_VIDEOSR1_0))?;
+            s.set("KeepAspectRatio", Variant::boolean(true))?;
+            s.set("Fill", Variant::boolean(true))?;
+            s.set("FillColor", Variant::color([0, 0, 0, 255]))?;
+            s.set("HQScalerSharpness", Variant::double(p.sharpness))?;
+            s.set("HQScalerFrameRate", Variant::int(i64::from(p.frame_rate)))?;
+            result.init()?;
+            Ok(result)
         }
-        // V+ allocates a surface of the input's shape as part of its capability check.
-        let mut surface = ptr::null_mut();
-        check(result.context.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32, i32, *mut *mut c_void) -> i32>(slot::CONTEXT_ALLOC_SURFACE)(
-            result.context.0, MEMORY_DX11, result.format(), p.width, p.height, &mut surface), "AllocSurface")?;
-        drop(Object(surface));
-        let s = &result.scaler;
-        s.set("HQSOutputSize", Variant::size(p.output_width, p.output_height))?;
-        s.set("HQScalerEngineType", Variant::int(i64::from(MEMORY_DX11)))?;
-        s.set("HQScalerAlgorithm", Variant::int(ALGORITHM_VIDEOSR1_0))?;
-        s.set("KeepAspectRatio", Variant::boolean(true))?;
-        s.set("Fill", Variant::boolean(true))?;
-        s.set("FillColor", Variant::color([0, 0, 0, 255]))?;
-        s.set("HQScalerSharpness", Variant::double(p.sharpness))?;
-        s.set("HQScalerFrameRate", Variant::int(i64::from(p.frame_rate)))?;
-        result.init()?;
-        Ok(result)
     }
 
     fn format(&self) -> i32 {
@@ -188,45 +196,49 @@ impl HqScaler {
 
     unsafe fn init(&self) -> Result<(), String> {
         let p = &self.parameters;
-        check(self.scaler.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32) -> i32>(slot::COMPONENT_INIT)(self.scaler.0, self.format(), p.width, p.height), "Init")
+        // SAFETY: caller guarantees `self.scaler` is a live AMF component.
+        unsafe { check(self.scaler.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32) -> i32>(slot::COMPONENT_INIT)(self.scaler.0, self.format(), p.width, p.height), "Init") }
     }
 
     /// Scales the top left input size of `input` (NV12 or P010, at least that size: a larger one
     /// is cropped, its alignment padding left out) and copies the result into the top left of
     /// `output` (at least the output size, same format) on `context`.
     pub unsafe fn render(&mut self, input: &ID3D11Texture2D, output: &ID3D11Texture2D, context: &ID3D11DeviceContext) -> Result<(), String> {
-        let mut surface = ptr::null_mut();
-        check(self.context.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, *mut *mut c_void, *mut c_void) -> i32>(slot::CONTEXT_SURFACE_FROM_DX11)(
-            self.context.0, input.as_raw(), &mut surface, ptr::null_mut()), "CreateSurfaceFromDX11Native")?;
-        let surface = Object(surface);
-        if surface.0.is_null() { return Err("AMF made no surface of the picture".into()); }
-        let desc = self.input_desc.of(input);
-        let p = &self.parameters;
-        if let Some((width, height)) = crop(p, (desc.Width, desc.Height))? {
-            check(surface.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32, i32) -> i32>(slot::SURFACE_SET_CROP)(surface.0, 0, 0, width, height), "SetCrop")?;
+        // SAFETY: caller guarantees `input`, `output`, and `context` are live D3D11 objects on this thread.
+        unsafe {
+            let mut surface = ptr::null_mut();
+            check(self.context.method::<unsafe extern "system" fn(*mut c_void, *mut c_void, *mut *mut c_void, *mut c_void) -> i32>(slot::CONTEXT_SURFACE_FROM_DX11)(
+                self.context.0, input.as_raw(), &mut surface, ptr::null_mut()), "CreateSurfaceFromDX11Native")?;
+            let surface = Object(surface);
+            if surface.0.is_null() { return Err("AMF made no surface of the picture".into()); }
+            let desc = self.input_desc.of(input);
+            let p = &self.parameters;
+            if let Some((width, height)) = crop(p, (desc.Width, desc.Height))? {
+                check(surface.method::<unsafe extern "system" fn(*mut c_void, i32, i32, i32, i32) -> i32>(slot::SURFACE_SET_CROP)(surface.0, 0, 0, width, height), "SetCrop")?;
+            }
+            check(self.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32>(slot::COMPONENT_SUBMIT_INPUT)(self.scaler.0, surface.0), "SubmitInput")?;
+            let mut data = ptr::null_mut();
+            let queried = self.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32>(slot::COMPONENT_QUERY_OUTPUT)(self.scaler.0, &mut data);
+            let data = Object(data);
+            let flushed = self.scaler.call0(slot::COMPONENT_FLUSH);
+            check(queried, "QueryOutput")?;
+            check(flushed, "Flush")?;
+            if data.0.is_null() { return Err("AMF's HQ Scaler returned no picture".into()); }
+            let mut scaled = ptr::null_mut();
+            check(data.method::<unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32>(slot::QUERY_INTERFACE)(data.0, &SURFACE_IID, &mut scaled), "QueryInterface(AMFSurface)")?;
+            let scaled = Object(scaled);
+            if scaled.0.is_null() { return Err("AMF's HQ Scaler returned no surface".into()); }
+            // The plane belongs to the surface and is not reference counted.
+            let plane = scaled.method::<unsafe extern "system" fn(*mut c_void, usize) -> *mut c_void>(slot::SURFACE_PLANE_AT)(scaled.0, 0);
+            if plane.is_null() { return Err("AMF's scaled surface has no plane".into()); }
+            let plane = std::mem::ManuallyDrop::new(Object(plane));
+            let native = plane.method::<unsafe extern "system" fn(*mut c_void) -> *mut c_void>(slot::PLANE_NATIVE)(plane.0);
+            let texture = ID3D11Texture2D::from_raw_borrowed(&native).ok_or("AMF's scaled surface is not a Direct3D 11 texture")?;
+            // A box, not CopyResource: AMF may allocate its surfaces larger than the picture.
+            context.CopySubresourceRegion(output, 0, 0, 0, 0, texture, 0,
+                Some(&D3D11_BOX { left: 0, top: 0, front: 0, right: p.output_width as u32, bottom: p.output_height as u32, back: 1 }));
+            Ok(())
         }
-        check(self.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32>(slot::COMPONENT_SUBMIT_INPUT)(self.scaler.0, surface.0), "SubmitInput")?;
-        let mut data = ptr::null_mut();
-        let queried = self.scaler.method::<unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32>(slot::COMPONENT_QUERY_OUTPUT)(self.scaler.0, &mut data);
-        let data = Object(data);
-        let flushed = self.scaler.call0(slot::COMPONENT_FLUSH);
-        check(queried, "QueryOutput")?;
-        check(flushed, "Flush")?;
-        if data.0.is_null() { return Err("AMF's HQ Scaler returned no picture".into()); }
-        let mut scaled = ptr::null_mut();
-        check(data.method::<unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> i32>(slot::QUERY_INTERFACE)(data.0, &SURFACE_IID, &mut scaled), "QueryInterface(AMFSurface)")?;
-        let scaled = Object(scaled);
-        if scaled.0.is_null() { return Err("AMF's HQ Scaler returned no surface".into()); }
-        // The plane belongs to the surface and is not reference counted.
-        let plane = scaled.method::<unsafe extern "system" fn(*mut c_void, usize) -> *mut c_void>(slot::SURFACE_PLANE_AT)(scaled.0, 0);
-        if plane.is_null() { return Err("AMF's scaled surface has no plane".into()); }
-        let plane = std::mem::ManuallyDrop::new(Object(plane));
-        let native = plane.method::<unsafe extern "system" fn(*mut c_void) -> *mut c_void>(slot::PLANE_NATIVE)(plane.0);
-        let texture = ID3D11Texture2D::from_raw_borrowed(&native).ok_or("AMF's scaled surface is not a Direct3D 11 texture")?;
-        // A box, not CopyResource: AMF may allocate its surfaces larger than the picture.
-        context.CopySubresourceRegion(output, 0, 0, 0, 0, texture, 0,
-            Some(&D3D11_BOX { left: 0, top: 0, front: 0, right: p.output_width as u32, bottom: p.output_height as u32, back: 1 }));
-        Ok(())
     }
 }
 

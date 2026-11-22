@@ -146,10 +146,10 @@ impl Table {
             .iter()
             .filter(|e| !e.attachment.is_active())
             .count();
-        if ended > ENDED_KEPT {
-            if let Some(at) = self.entries.iter().position(|e| !e.attachment.is_active()) {
-                self.entries.remove(at);
-            }
+        if ended > ENDED_KEPT
+            && let Some(at) = self.entries.iter().position(|e| !e.attachment.is_active())
+        {
+            self.entries.remove(at);
         }
         Some(cleanup)
     }

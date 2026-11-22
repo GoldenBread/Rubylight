@@ -334,7 +334,7 @@ fn the_start_waits_for_the_first_read_of_the_session() {
 #[test]
 fn only_a_live_session_of_another_device_counts_as_elsewhere() {
     let session = |state: &str, owner: &str| -> Session {
-        serde_json::from_str(&include_str!("../../../client/tests/fixtures/native-api/session.json").replace("\"suspended\"", &format!("\"{state}\"")).replace("\"you\"", &format!("\"{owner}\""))).unwrap()
+        serde_json::from_str(&include_str!("../../../native-api/tests/fixtures/session.json").replace("\"suspended\"", &format!("\"{state}\"")).replace("\"you\"", &format!("\"{owner}\""))).unwrap()
     };
     assert_eq!(SessionSeen::of(true, Some(&session("streaming", "other_device")), false), SessionSeen::Elsewhere);
     assert_eq!(SessionSeen::of(true, Some(&session("suspended", "other_device")), false), SessionSeen::Elsewhere);

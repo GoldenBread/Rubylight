@@ -240,23 +240,23 @@ impl Reliable {
             return resend;
         }
         // A closed window still lets one segment through, so a lost window update can't stall.
-        if (self.in_flight.len() as u32) < self.peer_window.clamp(1, WINDOW) {
-            if let Some((seq, bytes, payload)) = self.unsent.pop_front() {
-                let copy = bytes.clone();
-                self.in_flight.insert(
-                    seq,
-                    Sent {
-                        bytes,
-                        payload,
-                        first_sent: now,
-                        sent_at: now,
-                        retries: 0,
-                        sacked: false,
-                        force: false,
-                    },
-                );
-                return Some(copy);
-            }
+        if (self.in_flight.len() as u32) < self.peer_window.clamp(1, WINDOW)
+            && let Some((seq, bytes, payload)) = self.unsent.pop_front()
+        {
+            let copy = bytes.clone();
+            self.in_flight.insert(
+                seq,
+                Sent {
+                    bytes,
+                    payload,
+                    first_sent: now,
+                    sent_at: now,
+                    retries: 0,
+                    sacked: false,
+                    force: false,
+                },
+            );
+            return Some(copy);
         }
         None
     }
@@ -338,10 +338,10 @@ impl Reliable {
             }
         }
         for offset in 0..64 {
-            if sack & (1 << offset) != 0 {
-                if let Some(sent) = self.in_flight.get_mut(&cum.wrapping_add(1 + offset)) {
-                    sent.sacked = true;
-                }
+            if sack & (1 << offset) != 0
+                && let Some(sent) = self.in_flight.get_mut(&cum.wrapping_add(1 + offset))
+            {
+                sent.sacked = true;
             }
         }
         if progressed || cum != self.last_cum {
@@ -349,10 +349,10 @@ impl Reliable {
             self.repeats = 0;
         } else if sack != 0 {
             self.repeats += 1;
-            if self.repeats == 3 {
-                if let Some(sent) = self.in_flight.get_mut(&cum) {
-                    sent.force = true;
-                }
+            if self.repeats == 3
+                && let Some(sent) = self.in_flight.get_mut(&cum)
+            {
+                sent.force = true;
             }
         }
     }
@@ -494,7 +494,7 @@ mod tests {
         // About one datagram in five lost, both ways.
         let lose = move |_| {
             seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
-            (seed >> 16) % 5 == 0
+            (seed >> 16).is_multiple_of(5)
         };
         written += client.write(stream, &data[written..]);
         assert_eq!(written, data.len());
@@ -577,7 +577,7 @@ mod tests {
         let mut seed = 777u32;
         let lose = move |_| {
             seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
-            (seed >> 16) % 7 == 0
+            (seed >> 16).is_multiple_of(7)
         };
         let (_, at_host) = run(&mut client, &mut host, lose, 15, 30_000);
         assert_eq!(received(&at_host, stream), data);

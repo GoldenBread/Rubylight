@@ -352,7 +352,7 @@ fn addresses_parse() {
 
 #[test]
 fn saved_libraries_and_versioned_covers() {
-    let library: nightjar_core::http::native_api::library::Library = serde_json::from_str(include_str!("../../../client/tests/fixtures/native-api/library.json")).unwrap();
+    let library: nightjar_core::http::native_api::library::Library = serde_json::from_str(include_str!("../../../native-api/tests/fixtures/library.json")).unwrap();
     let dir = std::env::temp_dir().join(format!("nightjar-library-{}", std::process::id()));
     let store = Store::at(dir.clone()).unwrap();
     let host = "5E0F4B1C-7A3D-4C52-9E10-0B6F2D8A4C11";

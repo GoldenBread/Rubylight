@@ -103,10 +103,11 @@ pub fn parse_control_messages(sdp: &str) -> Vec<u16> {
             if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
                 continue;
             }
-            if let Ok(id) = u16::from_str_radix(digits, radix) {
-                if !ids.contains(&id) && ids.len() < MAX_CONTROL_MESSAGES {
-                    ids.push(id);
-                }
+            if let Ok(id) = u16::from_str_radix(digits, radix)
+                && !ids.contains(&id)
+                && ids.len() < MAX_CONTROL_MESSAGES
+            {
+                ids.push(id);
             }
         }
     }

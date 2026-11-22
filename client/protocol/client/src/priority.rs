@@ -257,7 +257,7 @@ mod qwave {
     type RemoveSocketFromFlow = unsafe extern "system" fn(Handle, usize, u32, u32) -> i32;
 
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn LoadLibraryW(name: *const u16) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
     }
@@ -932,7 +932,7 @@ mod windows_thread {
 
     // Handles as isize, as the receive bench declares GetCurrentThread.
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn GetCurrentThread() -> isize;
         fn SetThreadPriority(thread: isize, priority: i32) -> i32;
         #[cfg(test)]

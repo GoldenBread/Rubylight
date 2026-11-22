@@ -290,11 +290,9 @@ pub struct Progress {
 /// Downloads to `part` and checks it. Afterwards `part` is the complete, verified file, or gone.
 pub fn download(net: &dyn Transport, allow: fn(&Url) -> bool, asset: &Asset, part: &Path, progress: &Progress) -> Result<(), Failure> {
     let result = download_inner(net, allow, asset, part, progress);
-    if result.is_err() {
-        if let Err(e) = std::fs::remove_file(part) {
-            if e.kind() != std::io::ErrorKind::NotFound { eprintln!("nightjar: update: leftover {}: {e}", part.display()); }
-        }
-    }
+    if result.is_err()
+        && let Err(e) = std::fs::remove_file(part)
+            && e.kind() != std::io::ErrorKind::NotFound { eprintln!("nightjar: update: leftover {}: {e}", part.display()); }
     result
 }
 
@@ -571,9 +569,8 @@ pub fn remove_stale(dir: &Path, own_dir: bool) {
         let name = name.to_string_lossy();
         let ours = name.starts_with(PART_PREFIX) || (own_dir && name.starts_with("nightjar-desktop-") && (name.ends_with("-setup.exe") || name.ends_with("-setup.log")));
         let old = entry.metadata().and_then(|m| m.modified()).is_ok_and(|at| at.elapsed().is_ok_and(|age| age > STALE_AFTER));
-        if ours && old {
-            if let Err(e) = std::fs::remove_file(entry.path()) { eprintln!("nightjar: update: leftover {name}: {e}"); }
-        }
+        if ours && old
+            && let Err(e) = std::fs::remove_file(entry.path()) { eprintln!("nightjar: update: leftover {name}: {e}"); }
     }
 }
 

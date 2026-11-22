@@ -200,14 +200,14 @@ struct RawError {
 
 /// A non-2xx answer: a documented refusal, or the native API's error for anything else.
 fn refusal(response: transport::Response, path: &str) -> FileError {
-    if let Ok(ErrorBody { error }) = serde_json::from_slice(&response.body) {
-        if let Some(refusal) = FileRefusal::from_answer(response.status, &error.code) {
-            return FileError::Refused {
-                refusal,
-                status: response.status,
-                message: error.message,
-            };
-        }
+    if let Ok(ErrorBody { error }) = serde_json::from_slice(&response.body)
+        && let Some(refusal) = FileRefusal::from_answer(response.status, &error.code)
+    {
+        return FileError::Refused {
+            refusal,
+            status: response.status,
+            message: error.message,
+        };
     }
     FileError::Host(error_of(response, path))
 }

@@ -131,6 +131,9 @@ pub(crate) fn fill(hosts: &mut Hosts, launcher: &mut Launcher, ctx: &egui::Conte
                 cover: Some(format!("/cover/{n}")),
                 version: "1".into(),
             },
+            last_played: None,
+            playtime_minutes: None,
+            collections: Vec::new(),
         })
         .collect();
     let apps: Vec<App> = games

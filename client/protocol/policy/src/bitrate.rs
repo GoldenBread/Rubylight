@@ -332,20 +332,19 @@ impl AdaptiveBitrateController {
         if let Some(from) = self
             .step_back_from_kbps
             .filter(|&from| from > 0 && from < current)
+            && now_ms.saturating_sub(self.last_change_ms) < STABLE_MS
         {
-            if now_ms.saturating_sub(self.last_change_ms) < STABLE_MS {
-                // The step back brought the trouble again: return to the rate that was fine and
-                // remember that the stable rate lies between the two.
-                let between = (from + current) / 2;
-                self.stable_kbps = if between - from < STEP_BACK_MIN_KBPS {
-                    from
-                } else {
-                    between
-                };
-                self.step_back_failures += 1;
-                self.step_back_from_kbps = None;
-                return floor.max(from);
-            }
+            // The step back brought the trouble again: return to the rate that was fine and
+            // remember that the stable rate lies between the two.
+            let between = (from + current) / 2;
+            self.stable_kbps = if between - from < STEP_BACK_MIN_KBPS {
+                from
+            } else {
+                between
+            };
+            self.step_back_failures += 1;
+            self.step_back_from_kbps = None;
+            return floor.max(from);
         }
         let cut = floor.max(current * 80 / 100);
         if cut >= current {

@@ -44,7 +44,7 @@ pub enum Level {
 pub fn log(level: Level, message: &str) {
     use std::ffi::CString;
     use std::os::raw::{c_char, c_int};
-    extern "C" {
+    unsafe extern "C" {
         fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
     }
     let text = CString::new(message.replace('\0', " ")).unwrap_or_default();
@@ -61,7 +61,7 @@ pub fn log(level: Level, message: &str) {
 #[cfg(target_os = "android")]
 pub fn system_property(name: &std::ffi::CStr) -> String {
     use std::os::raw::{c_char, c_int};
-    extern "C" {
+    unsafe extern "C" {
         fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
     }
     // PROP_VALUE_MAX, the terminator included.

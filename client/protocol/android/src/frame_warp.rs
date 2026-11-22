@@ -145,10 +145,10 @@ pub fn decline() {
     if DECLINED.swap(true, Ordering::SeqCst) {
         return;
     }
-    if let Some(warp) = current() {
-        if engine::session_id().is_some() {
-            engine::send(ClientMessage::FrameWarpRequest(warp.request(false)));
-        }
+    if let Some(warp) = current()
+        && engine::session_id().is_some()
+    {
+        engine::send(ClientMessage::FrameWarpRequest(warp.request(false)));
     }
 }
 

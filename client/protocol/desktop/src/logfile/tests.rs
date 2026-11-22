@@ -177,9 +177,11 @@ fn a_chunk_cut_mid_line_over_the_cap_starts_the_new_file_with_a_stamp() {
 fn the_logs_folder_follows_the_config_folder() {
     // The only test that sets the variable.
     let dir = temp("env");
-    std::env::set_var("NIGHTJAR_CONFIG_DIR", &dir);
+    // SAFETY: single test setting `NIGHTJAR_CONFIG_DIR`; no other test mutates it.
+    unsafe { std::env::set_var("NIGHTJAR_CONFIG_DIR", &dir) };
     let found = logs_dir().unwrap();
-    std::env::remove_var("NIGHTJAR_CONFIG_DIR");
+    // SAFETY: restoring environment after the check above.
+    unsafe { std::env::remove_var("NIGHTJAR_CONFIG_DIR") };
     assert_eq!(found, dir.join("logs"));
     let _ = std::fs::remove_dir_all(&dir);
 }

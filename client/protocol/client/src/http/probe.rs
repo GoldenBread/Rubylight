@@ -92,8 +92,10 @@ impl HostClient {
                 ipv6 = peer.is_ipv6();
                 let mut peer = peer;
                 peer.set_port(port);
-                if dual {
-                    if let SocketAddr::V4(v4) = peer { peer = SocketAddr::new(v4.ip().to_ipv6_mapped().into(), port); }
+                if dual
+                    && let SocketAddr::V4(v4) = peer
+                {
+                    peer = SocketAddr::new(v4.ip().to_ipv6_mapped().into(), port);
                 }
                 socket.connect(peer)?;
                 receiver = Some(scope.spawn(|| receive(&socket, token.as_bytes(), packet_size + 48, expected, &stop, &self.cancel)));
@@ -172,7 +174,7 @@ fn receive(socket: &UdpSocket, token: &[u8], packet_size: u32, expected: u32, st
     let mut last_hello = None;
     let mut attempts = 0;
     while !stop.load(Ordering::Acquire) && !cancel.is_cancelled() {
-        if !authenticated && attempts < 15 && last_hello.map_or(true, |t: Instant| t.elapsed() >= Duration::from_millis(100)) {
+        if !authenticated && attempts < 15 && last_hello.is_none_or(|t: Instant| t.elapsed() >= Duration::from_millis(100)) {
             socket.send(token)?;
             last_hello = Some(Instant::now());
             attempts += 1;

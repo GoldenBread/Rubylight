@@ -137,73 +137,82 @@ impl IMediaBuffer_Impl for Buffer_Impl {
 
 /// The index of the default endpoint of `flow` among the active ones.
 unsafe fn default_index(enumerator: &IMMDeviceEnumerator, flow: EDataFlow) -> windows::core::Result<(u32, IMMDevice)> {
-    let id = |device: &IMMDevice| -> windows::core::Result<String> {
-        let raw = device.GetId()?;
-        let text = raw.to_string();
-        CoTaskMemFree(Some(raw.0 as *const _));
-        text.map_err(|_| E_INVALIDARG.into())
-    };
-    let default = enumerator.GetDefaultAudioEndpoint(flow, eConsole)?;
-    let wanted = id(&default)?;
-    let all = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)?;
-    for index in 0..all.GetCount()? {
-        if id(&all.Item(index)?)? == wanted {
-            return Ok((index, default));
+    // SAFETY: COM apartment initialized on calling thread; COM calls are valid for `enumerator`.
+    unsafe {
+        let id = |device: &IMMDevice| -> windows::core::Result<String> {
+            let raw = device.GetId()?;
+            let text = raw.to_string();
+            CoTaskMemFree(Some(raw.0 as *const _));
+            text.map_err(|_| E_INVALIDARG.into())
+        };
+        let default = enumerator.GetDefaultAudioEndpoint(flow, eConsole)?;
+        let wanted = id(&default)?;
+        let all = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)?;
+        for index in 0..all.GetCount()? {
+            if id(&all.Item(index)?)? == wanted {
+                return Ok((index, default));
+            }
         }
+        Err(windows::core::Error::new(E_INVALIDARG, "the default device is not among the active ones"))
     }
-    Err(windows::core::Error::new(E_INVALIDARG, "the default device is not among the active ones"))
 }
 
 /// Opts this process's session on `device`, the speakers the stream plays on, out of Windows'
 /// ducking, which would turn the stream's sound down by 80% while a communications capture runs
 /// (the Sound panel's default). Ducking applies to playback sessions, so it is the render device's.
 unsafe fn keep_other_sounds(device: &IMMDevice) -> windows::core::Result<()> {
-    let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
-    manager.GetAudioSessionControl(None, 0)?.cast::<IAudioSessionControl2>()?.SetDuckingPreference(true)
+    // SAFETY: `device` is a live COM audio endpoint on this COM-initialized thread.
+    unsafe {
+        let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
+        manager.GetAudioSessionControl(None, 0)?.cast::<IAudioSessionControl2>()?.SetDuckingPreference(true)
+    }
 }
 
 /// Sets up the DSP for the default microphone and speakers, 16 kHz mono 16-bit output, with its
 /// noise suppression and automatic gain as `choice` says.
 unsafe fn open_dsp(choice: Choice) -> windows::core::Result<IMediaObject> {
-    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-    let (capture, _) = default_index(&enumerator, eCapture)?;
-    let (render, speakers) = default_index(&enumerator, eRender)?;
-    if let Err(error) = keep_other_sounds(&speakers) {
-        eprintln!("nightjar: Windows may turn the stream's sound down while the microphone runs ({error})");
+    // SAFETY: COM apartment initialized on calling thread; `format` outlives `SetOutputType`.
+    unsafe {
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        let (capture, _) = default_index(&enumerator, eCapture)?;
+        let (render, speakers) = default_index(&enumerator, eRender)?;
+        if let Err(error) = keep_other_sounds(&speakers) {
+            eprintln!("nightjar: Windows may turn the stream's sound down while the microphone runs ({error})");
+        }
+        let dsp: IMediaObject = CoCreateInstance(&CLSID_CWMAUDIOAEC, None, CLSCTX_INPROC_SERVER)?;
+        let properties: IPropertyStore = dsp.cast()?;
+        properties.SetValue(&SYSTEM_MODE, &PROPVARIANT::from(SINGLE_CHANNEL_AEC))?;
+        properties.SetValue(&DEVICE_INDEXES, &PROPVARIANT::from(device_indexes(render, capture)))?;
+        // Before the output type, as the DSP reads them when it sets up its processing.
+        if let Some((noise_suppression, auto_gain)) = features(choice) {
+            properties.SetValue(&FEATURE_MODE, &PROPVARIANT::from(true))?;
+            properties.SetValue(&FEATR_NS, &PROPVARIANT::from(noise_suppression))?;
+            properties.SetValue(&FEATR_AGC, &PROPVARIANT::from(auto_gain))?;
+        }
+        let mut format = WAVEFORMATEX {
+            wFormatTag: WAVE_FORMAT_PCM as u16,
+            nChannels: 1,
+            nSamplesPerSec: RATE,
+            nAvgBytesPerSec: RATE * 2,
+            nBlockAlign: 2,
+            wBitsPerSample: 16,
+            cbSize: 0,
+        };
+        let media_type = DMO_MEDIA_TYPE {
+            majortype: MEDIATYPE_AUDIO,
+            subtype: MEDIASUBTYPE_PCM,
+            bFixedSizeSamples: true.into(),
+            bTemporalCompression: false.into(),
+            lSampleSize: 2,
+            formattype: FORMAT_WAVEFORMATEX,
+            pUnk: std::mem::ManuallyDrop::new(None),
+            cbFormat: std::mem::size_of::<WAVEFORMATEX>() as u32,
+            pbFormat: (&mut format as *mut WAVEFORMATEX).cast(),
+        };
+        dsp.SetOutputType(0, Some(&media_type), 0)?;
+        dsp.AllocateStreamingResources()?;
+        Ok(dsp)
     }
-    let dsp: IMediaObject = CoCreateInstance(&CLSID_CWMAUDIOAEC, None, CLSCTX_INPROC_SERVER)?;
-    let properties: IPropertyStore = dsp.cast()?;
-    properties.SetValue(&SYSTEM_MODE, &PROPVARIANT::from(SINGLE_CHANNEL_AEC))?;
-    properties.SetValue(&DEVICE_INDEXES, &PROPVARIANT::from(device_indexes(render, capture)))?;
-    // Before the output type, as the DSP reads them when it sets up its processing.
-    if let Some((noise_suppression, auto_gain)) = features(choice) {
-        properties.SetValue(&FEATURE_MODE, &PROPVARIANT::from(true))?;
-        properties.SetValue(&FEATR_NS, &PROPVARIANT::from(noise_suppression))?;
-        properties.SetValue(&FEATR_AGC, &PROPVARIANT::from(auto_gain))?;
-    }
-    let mut format = WAVEFORMATEX {
-        wFormatTag: WAVE_FORMAT_PCM as u16,
-        nChannels: 1,
-        nSamplesPerSec: RATE,
-        nAvgBytesPerSec: RATE * 2,
-        nBlockAlign: 2,
-        wBitsPerSample: 16,
-        cbSize: 0,
-    };
-    let media_type = DMO_MEDIA_TYPE {
-        majortype: MEDIATYPE_AUDIO,
-        subtype: MEDIASUBTYPE_PCM,
-        bFixedSizeSamples: true.into(),
-        bTemporalCompression: false.into(),
-        lSampleSize: 2,
-        formattype: FORMAT_WAVEFORMATEX,
-        pUnk: std::mem::ManuallyDrop::new(None),
-        cbFormat: std::mem::size_of::<WAVEFORMATEX>() as u32,
-        pbFormat: (&mut format as *mut WAVEFORMATEX).cast(),
-    };
-    dsp.SetOutputType(0, Some(&media_type), 0)?;
-    dsp.AllocateStreamingResources()?;
-    Ok(dsp)
 }
 
 /// The capture thread: started once the DSP is set up, stopped and joined on drop.

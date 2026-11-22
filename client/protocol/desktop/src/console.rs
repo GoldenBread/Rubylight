@@ -93,6 +93,9 @@ pub fn classic_library(apps: &crate::config::ClassicApps, running: Option<(i32, 
             installed: None,
             running: running.is_some_and(|(id, uuid)| classic_running(app, id, uuid)),
             artwork: nightjar_core::http::native_api::library::Artwork { cover: Some(String::new()), version: app.art_version.clone() },
+            last_played: None,
+            playtime_minutes: None,
+            collections: Vec::new(),
         })
         .collect();
     Library { revision: CLASSIC_REVISION.into(), games }

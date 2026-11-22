@@ -233,7 +233,7 @@ impl FakeDevice {
             .enumerate()
             .map(|(at, packet)| {
                 let actual = packet.length.min(4);
-                data.extend(std::iter::repeat(at as u8).take(actual as usize));
+                data.extend(std::iter::repeat_n(at as u8, actual as usize));
                 IsoPacket {
                     actual_length: actual,
                     status: 0,

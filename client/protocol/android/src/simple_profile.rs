@@ -16,7 +16,7 @@ pub fn call(request: Option<&str>) -> String {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_preferences_SimpleProfileModel_call(
     mut env: JNIEnv,
     _: JClass,

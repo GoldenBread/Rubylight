@@ -221,10 +221,10 @@ impl ControlSession {
         if message.sunshine_only() && !self.caps.sunshine_extensions() {
             return Err(SendError::Unsupported);
         }
-        if let Some(id) = message.announcement() {
-            if !self.caps.supports_control_message(id) {
-                return Err(SendError::Unsupported);
-            }
+        if let Some(id) = message.announcement()
+            && !self.caps.supports_control_message(id)
+        {
+            return Err(SendError::Unsupported);
         }
         if matches!(message, ClientMessage::LtrFrameAck { .. })
             && !self.options.reference_frame_invalidation

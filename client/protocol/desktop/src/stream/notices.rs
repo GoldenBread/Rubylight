@@ -263,7 +263,7 @@ impl Streaming {
             }
             ControlEvent::LinkNotice(notice) => {
                 // A cut before the PC's answer to the bitrate query: that answer may hold it.
-                if notice.state != LinkState::Full { if let Some(rates) = &mut self.rate_change { rates.pc_lowered(); } }
+                if notice.state != LinkState::Full && let Some(rates) = &mut self.rate_change { rates.pc_lowered(); }
                 if let Some(toast) = super::stats::link_notice_toast(&notice, self.link_lowered_told, self.overlay_visible, self.settings.lower_bitrate.keeps(), self.bitrate_kept()) {
                     self.link_lowered_told = true;
                     self.show_toast(toast);

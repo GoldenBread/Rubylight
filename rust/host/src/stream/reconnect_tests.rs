@@ -2200,7 +2200,7 @@ async fn keyboard_layout_reports_need_the_keyboard_permission() -> Result<()> {
 
 /// Reliable control messages the host sent during a 10 s outage reach the client right after
 /// it: ENet resends them once the client is heard again, not when the timeouts that doubled
-/// in the outage run out (rust/vendor/rusty_enet).
+/// in the outage run out (client/protocol/vendor/rusty_enet).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reliable_messages_sent_in_an_outage_arrive_when_it_ends() -> Result<()> {
     use butterpollo_core::link_notice::{

@@ -474,21 +474,19 @@ pub fn use_parent_console() {
         // SAFETY: plain console and file calls on handles of this process; a failure leaves stdout
         // as it was, and printing then shows nothing, as before.
         unsafe {
-            if let Ok(handle) = GetStdHandle(STD_OUTPUT_HANDLE) {
-                if !handle.is_invalid() && !handle.0.is_null() {
+            if let Ok(handle) = GetStdHandle(STD_OUTPUT_HANDLE)
+                && !handle.is_invalid() && !handle.0.is_null() {
                     let kind = GetFileType(handle);
                     if kind == FILE_TYPE_DISK || kind == FILE_TYPE_PIPE {
                         return;
                     }
                 }
-            }
             // A console parent hands a window program its own console's handles, which are no use
             // to it until it attaches; then CONOUT$ is that console's screen.
-            if AttachConsole(ATTACH_PARENT_PROCESS).is_ok() {
-                if let Ok(out) = CreateFileW(w!("CONOUT$"), (GENERIC_READ | GENERIC_WRITE).0, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None) {
+            if AttachConsole(ATTACH_PARENT_PROCESS).is_ok()
+                && let Ok(out) = CreateFileW(w!("CONOUT$"), (GENERIC_READ | GENERIC_WRITE).0, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None) {
                     let _ = SetStdHandle(STD_OUTPUT_HANDLE, out);
                 }
-            }
         }
     }
 }

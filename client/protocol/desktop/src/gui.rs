@@ -212,11 +212,10 @@ fn follow_focus_inset(ui: &mut egui::Ui, last: &mut Option<egui::Id>, top_inset:
         return;
     }
     *last = focused;
-    if let Some(response) = focused.and_then(|id| ui.ctx().read_response(id)) {
-        if holds(ui, &response) {
+    if let Some(response) = focused.and_then(|id| ui.ctx().read_response(id))
+        && holds(ui, &response) {
             ui.scroll_to_rect(response.rect.with_min_y(response.rect.top() - top_inset), None);
         }
-    }
 }
 
 /// Whether the scroll area whose content `ui` is holds the widget: not a header or a side list
@@ -590,12 +589,11 @@ impl Gui {
             }
         }
         for command in &output.commands {
-            if let egui::OutputCommand::CopyText(text) = command {
-                if let Ok(text) = CString::new(text.as_str()) {
+            if let egui::OutputCommand::CopyText(text) = command
+                && let Ok(text) = CString::new(text.as_str()) {
                     // SAFETY: a NUL-terminated string.
                     unsafe { SDL_SetClipboardText(text.as_ptr()) };
                 }
-            }
         }
         if self.cursor != Some(output.cursor_icon) {
             self.cursor = Some(output.cursor_icon);

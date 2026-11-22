@@ -38,13 +38,12 @@ impl VideoTexture {
     pub(super) fn upload_planes(&mut self, renderer: *mut SDL_Renderer, decoded: &Decoded, lease: &super::super::gpu_planes::Lease, fence_value: u64, rows: Option<(u32, u32)>) -> bool {
         let Some(parameters) = self.prepare_planes(renderer, decoded.setup) else { return false };
         // The picture's set stays with the presenter while the planes wait for the back buffer.
-        if self.goes_direct(renderer, rows.is_some()) {
-            if let Some(held) = lease.hand_over() {
+        if self.goes_direct(renderer, rows.is_some())
+            && let Some(held) = lease.hand_over() {
                 self.pyrowave_stages.reset();
                 self.hold_direct(DirectPlanes { source: PlanesHold::Lease { lease: held, fence_value }, parameters, in_texture: false, timed: false, what: "PyroWave" });
                 return true;
             }
-        }
         self.finish_direct();
         self.say_planes_path(false, "PyroWave");
         let step = std::time::Instant::now();

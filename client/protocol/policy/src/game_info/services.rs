@@ -72,7 +72,7 @@ pub fn sgdb_best_image(body: &str) -> Option<Option<String>> {
     for image in data {
         let Some(url) = image.get("url").and_then(Value::as_str).filter(|u| u.starts_with("https://")) else { continue };
         let score = image.get("score").and_then(Value::as_i64).unwrap_or(0);
-        if best.map_or(true, |(top, _)| score > top) {
+        if best.is_none_or(|(top, _)| score > top) {
             best = Some((score, url));
         }
     }

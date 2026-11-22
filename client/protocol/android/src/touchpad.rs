@@ -38,7 +38,7 @@ pub fn contacts(ids: &[i32], xs: &[f32], ys: &[f32], pressures: &[f32]) -> Vec<R
 /// What the session's tracker sends for `f`; a tracker of another session is dropped first.
 pub fn track(session: u64, f: impl FnOnce(&mut Tracker) -> Vec<Out>) -> Vec<Out> {
     let mut guard = TRACKER.lock().unwrap_or_else(|p| p.into_inner());
-    if guard.as_ref().map_or(true, |(id, _)| *id != session) {
+    if guard.as_ref().is_none_or(|(id, _)| *id != session) {
         *guard = Some((session, Tracker::default()));
     }
     let (_, tracker) = guard.as_mut().expect("set above");

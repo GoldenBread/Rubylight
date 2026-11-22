@@ -54,8 +54,11 @@ pub fn request() {
     };
     eprintln!("nightjar: AMD low-latency decode asked for: AMD_DEBUG={amd} RADV_PERFTEST={radv} (Mesa drivers with lowlatencydec use it)");
     let _ = ORIGINALS.set(["AMD_DEBUG", "RADV_PERFTEST"].map(|name| (name, std::env::var_os(name))));
-    std::env::set_var("AMD_DEBUG", amd);
-    std::env::set_var("RADV_PERFTEST", radv);
+    // SAFETY: called once from `main` before worker threads spawn and before Mesa loads.
+    unsafe {
+        std::env::set_var("AMD_DEBUG", amd);
+        std::env::set_var("RADV_PERFTEST", radv);
+    }
 }
 
 /// `command` with the user's own `AMD_DEBUG` and `RADV_PERFTEST` (unset when they had none), so

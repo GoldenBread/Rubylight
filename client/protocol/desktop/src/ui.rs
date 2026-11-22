@@ -1365,11 +1365,10 @@ impl Launcher {
         // A Files page left while it transfers: its transfers go on, and this opens it again. One
         // that failed meanwhile keeps it until the page shows the failure.
         let files_shown = match self.screen { Screen::Files(id) => Some(id), _ => None };
-        if let Some((host, away)) = self.files.running_away(files_shown) {
-            if files::running_button(&ctx, away) {
+        if let Some((host, away)) = self.files.running_away(files_shown)
+            && files::running_button(&ctx, away) {
                 commands.push(Command::OpenFiles(host));
             }
-        }
         self.draw_toast(&ctx);
         commands
     }
@@ -1527,11 +1526,10 @@ impl Launcher {
     /// them in reading order. What the row's title leaves them is said to it next frame.
     pub(super) fn actions(&mut self, ui: &mut Ui, view: &View<'_>, commands: &mut Vec<Command>) {
         let mut used = 0.0;
-        if let Screen::Apps(id) = self.screen {
-            if let Some(host) = view.hosts.get(id) {
+        if let Screen::Apps(id) = self.screen
+            && let Some(host) = view.hosts.get(id) {
                 used = self.apps_head(ui, host, commands);
             }
-        }
         if (used - self.header_width).abs() > 0.5 {
             self.header_width = used;
             ui.ctx().request_repaint();

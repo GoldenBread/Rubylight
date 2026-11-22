@@ -349,13 +349,16 @@ mod linux {
     unsafe fn export_surface(display: *mut c_void, surface: c_uint) -> Result<Descriptor, String> {
         let va = libva()?;
         let mut descriptor = Descriptor::default();
-        let status = (va.export)(
-            display,
-            surface,
-            VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
-            VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
-            (&mut descriptor as *mut Descriptor).cast(),
-        );
+        // SAFETY: Caller guarantees `display` is a live `VADisplay` and `surface` belongs to it.
+        let status = unsafe {
+            (va.export)(
+                display,
+                surface,
+                VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
+                VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+                (&mut descriptor as *mut Descriptor).cast(),
+            )
+        };
         if status != 0 {
             return Err(format!("vaExportSurfaceHandle failed ({status:#x})"));
         }
@@ -371,25 +374,28 @@ mod linux {
     /// export (the export goes with the frame).
     pub unsafe fn export(frame: *const AVFrame, decline: &Arc<AtomicBool>) -> Result<Export, String> {
         let va = libva()?;
-        let frame = &*frame;
-        if frame.hw_frames_ctx.is_null() {
-            return Err("the picture has no VAAPI frames context".into());
+        // SAFETY: Caller guarantees `frame` is a live `AV_PIX_FMT_VAAPI` frame with its frames context.
+        unsafe {
+            let frame = &*frame;
+            if frame.hw_frames_ctx.is_null() {
+                return Err("the picture has no VAAPI frames context".into());
+            }
+            let frames = &*((*frame.hw_frames_ctx).data.cast::<AVHWFramesContext>());
+            let device: &AVHWDeviceContext = &*frames.device_ctx;
+            // AVVAAPIDeviceContext begins with the VADisplay.
+            let display = *device.hwctx.cast::<*mut c_void>();
+            let surface = frame.data[3] as usize as c_uint;
+            let status = (va.sync)(display, surface);
+            if status != 0 {
+                return Err(format!("vaSyncSurface failed ({status:#x})"));
+            }
+            let generation = Generation { frames: (*frame.hw_frames_ctx).data as usize, width: frame.width.max(0) as u32, height: frame.height.max(0) as u32 };
+            let export = Export { display, surface, frames: frame.hw_frames_ctx, generation, exported: std::cell::OnceCell::new(), decline: decline.clone() };
+            if !caching() {
+                export.descriptor()?;
+            }
+            Ok(export)
         }
-        let frames = &*((*frame.hw_frames_ctx).data.cast::<AVHWFramesContext>());
-        let device: &AVHWDeviceContext = &*frames.device_ctx;
-        // AVVAAPIDeviceContext begins with the VADisplay.
-        let display = *device.hwctx.cast::<*mut c_void>();
-        let surface = frame.data[3] as usize as c_uint;
-        let status = (va.sync)(display, surface);
-        if status != 0 {
-            return Err(format!("vaSyncSurface failed ({status:#x})"));
-        }
-        let generation = Generation { frames: (*frame.hw_frames_ctx).data as usize, width: frame.width.max(0) as u32, height: frame.height.max(0) as u32 };
-        let export = Export { display, surface, frames: frame.hw_frames_ctx, generation, exported: std::cell::OnceCell::new(), decline: decline.clone() };
-        if !caching() {
-            export.descriptor()?;
-        }
-        Ok(export)
     }
 
     unsafe extern "C" {
@@ -408,7 +414,8 @@ mod linux {
         /// # Safety
         /// `frames` is a live frames context reference.
         pub unsafe fn of(frames: *mut AVBufferRef) -> Self {
-            Self(if frames.is_null() { frames } else { av_buffer_ref(frames) })
+            // SAFETY: Caller guarantees `frames` is null or a live `AVBufferRef`.
+            Self(if frames.is_null() { frames } else { unsafe { av_buffer_ref(frames) } })
         }
     }
 
@@ -543,8 +550,8 @@ mod linux {
     }
 
     unsafe fn function<T>(pointer: SDL_FunctionPointer, name: &str) -> Result<T, String> {
-        // SAFETY (caller): T is the function's pointer type.
-        pointer.map(|f| std::mem::transmute_copy(&f)).ok_or_else(|| format!("no {name}"))
+        // SAFETY: Caller guarantees `T` matches the C function pointer signature of `pointer`.
+        pointer.map(|f| unsafe { std::mem::transmute_copy(&f) }).ok_or_else(|| format!("no {name}"))
     }
 
     impl Importer {
@@ -589,46 +596,55 @@ mod linux {
         /// its first picture, the pool's earlier ones dropped when the pool changed), or without
         /// the cache new ones. True when they came from the cache.
         unsafe fn images_of(&mut self, export: &Export, width: u32, height: u32) -> Result<([*mut c_void; 2], bool), String> {
-            if !self.caching {
-                return Ok((self.create_images(export.descriptor()?, width, height)?, false));
+            // SAFETY: Caller guarantees current EGL context and valid `export`.
+            unsafe {
+                if !self.caching {
+                    return Ok((self.create_images(export.descriptor()?, width, height)?, false));
+                }
+                let (changed, gone) = self.cache.retarget(export.generation());
+                // Destroyed EGL images stay in a texture they were bound to until it takes others.
+                for images in gone {
+                    self.destroy_images(images);
+                }
+                if changed {
+                    self.frames = FramesRef::of(export.frames());
+                }
+                if let Some(&images) = self.cache.get(export.surface()) {
+                    return Ok((images, true));
+                }
+                let images = self.create_images(export.descriptor()?, width, height)?;
+                for gone in self.cache.insert(export.surface(), images) {
+                    self.destroy_images(gone);
+                }
+                Ok((images, false))
             }
-            let (changed, gone) = self.cache.retarget(export.generation());
-            // Destroyed EGL images stay in a texture they were bound to until it takes others.
-            for images in gone {
-                self.destroy_images(images);
-            }
-            if changed {
-                self.frames = FramesRef::of(export.frames());
-            }
-            if let Some(&images) = self.cache.get(export.surface()) {
-                return Ok((images, true));
-            }
-            let images = self.create_images(export.descriptor()?, width, height)?;
-            for gone in self.cache.insert(export.surface(), images) {
-                self.destroy_images(gone);
-            }
-            Ok((images, false))
         }
 
         unsafe fn create_images(&self, descriptor: &Descriptor, width: u32, height: u32) -> Result<[*mut c_void; 2], String> {
             check_nv12_layers(descriptor)?;
             let mut images = [std::ptr::null_mut(); 2];
-            for index in 0..2 {
-                let attributes = layer_attributes(descriptor, index, width, height, self.modifiers);
-                images[index] = (self.create)(self.display, std::ptr::null_mut(), EGL_LINUX_DMA_BUF_EXT, std::ptr::null_mut(), attributes.as_ptr());
-                if images[index].is_null() {
-                    self.destroy_images(images);
-                    let layer = &descriptor.layers[index];
-                    let modifier = descriptor.objects[layer.object_index[0] as usize].drm_format_modifier;
-                    return Err(format!("eglCreateImageKHR refused layer {index} ({}, modifier {modifier:#x})", fourcc_name(layer.drm_format)));
+            // SAFETY: Caller guarantees current EGL context on `self.display` and open DMA-BUF fds in `descriptor`.
+            unsafe {
+                for index in 0..2 {
+                    let attributes = layer_attributes(descriptor, index, width, height, self.modifiers);
+                    images[index] = (self.create)(self.display, std::ptr::null_mut(), EGL_LINUX_DMA_BUF_EXT, std::ptr::null_mut(), attributes.as_ptr());
+                    if images[index].is_null() {
+                        self.destroy_images(images);
+                        let layer = &descriptor.layers[index];
+                        let modifier = descriptor.objects[layer.object_index[0] as usize].drm_format_modifier;
+                        return Err(format!("eglCreateImageKHR refused layer {index} ({}, modifier {modifier:#x})", fourcc_name(layer.drm_format)));
+                    }
                 }
             }
             Ok(images)
         }
 
         unsafe fn destroy_images(&self, images: [*mut c_void; 2]) {
-            for image in images.into_iter().filter(|image| !image.is_null()) {
-                (self.destroy)(self.display, image);
+            // SAFETY: Caller guarantees `images` were created on `self.display` and are unused.
+            unsafe {
+                for image in images.into_iter().filter(|image| !image.is_null()) {
+                    (self.destroy)(self.display, image);
+                }
             }
         }
 
@@ -638,50 +654,53 @@ mod linux {
         /// # Safety
         /// On the renderer's thread, with its context current; `texture` is live.
         pub unsafe fn import(&mut self, renderer: *mut SDL_Renderer, texture: *mut SDL_Texture, export: &Export, width: u32, height: u32) -> Result<(), String> {
-            let properties = SDL_GetTextureProperties(texture);
-            let mut names = [
-                SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_NUMBER, 0),
-                SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_UV_NUMBER, 0),
-            ];
-            if names[0] != 0 {
-                let target = SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_TARGET_NUMBER, 0);
-                if target != i64::from(GL_TEXTURE_2D) {
-                    return Err(format!("SDL's texture target is {target:#x}, not GL_TEXTURE_2D"));
-                }
-            } else {
-                names = [
-                    SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_NUMBER, 0),
-                    SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_UV_NUMBER, 0),
+            // SAFETY: Caller guarantees `renderer` and `texture` are live on this thread with EGL context current.
+            unsafe {
+                let properties = SDL_GetTextureProperties(texture);
+                let mut names = [
+                    SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_NUMBER, 0),
+                    SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_UV_NUMBER, 0),
                 ];
-            }
-            if names.contains(&0) {
-                return Err("the video texture has no GL textures for its planes".into());
-            }
-            // SDL's queued drawing still samples the planes as they are; it goes to GL first,
-            // before a pool change destroys the images it may sample.
-            SDL_FlushRenderer(renderer);
-            let (images, cached) = self.images_of(export, width, height)?;
-            let mut bound = 0;
-            (self.get_integer)(GL_TEXTURE_BINDING_2D, &mut bound);
-            while (self.get_error)() != 0 {}
-            for (name, image) in names.iter().zip(&images) {
-                (self.bind)(GL_TEXTURE_2D, *name as c_uint);
-                (self.target)(GL_TEXTURE_2D, *image);
-            }
-            let error = (self.get_error)();
-            (self.bind)(GL_TEXTURE_2D, bound as c_uint);
-            if !self.caching {
-                // The textures hold the new images now; the previous ones can go.
-                for image in std::mem::replace(&mut self.images, images.to_vec()) {
-                    (self.destroy)(self.display, image);
+                if names[0] != 0 {
+                    let target = SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGL_TEXTURE_TARGET_NUMBER, 0);
+                    if target != i64::from(GL_TEXTURE_2D) {
+                        return Err(format!("SDL's texture target is {target:#x}, not GL_TEXTURE_2D"));
+                    }
+                } else {
+                    names = [
+                        SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_NUMBER, 0),
+                        SDL_GetNumberProperty(properties, SDL_PROP_TEXTURE_OPENGLES2_TEXTURE_UV_NUMBER, 0),
+                    ];
                 }
+                if names.contains(&0) {
+                    return Err("the video texture has no GL textures for its planes".into());
+                }
+                // SDL's queued drawing still samples the planes as they are; it goes to GL first,
+                // before a pool change destroys the images it may sample.
+                SDL_FlushRenderer(renderer);
+                let (images, cached) = self.images_of(export, width, height)?;
+                let mut bound = 0;
+                (self.get_integer)(GL_TEXTURE_BINDING_2D, &mut bound);
+                while (self.get_error)() != 0 {}
+                for (name, image) in names.iter().zip(&images) {
+                    (self.bind)(GL_TEXTURE_2D, *name as c_uint);
+                    (self.target)(GL_TEXTURE_2D, *image);
+                }
+                let error = (self.get_error)();
+                (self.bind)(GL_TEXTURE_2D, bound as c_uint);
+                if !self.caching {
+                    // The textures hold the new images now; the previous ones can go.
+                    for image in std::mem::replace(&mut self.images, images.to_vec()) {
+                        (self.destroy)(self.display, image);
+                    }
+                }
+                if error != 0 {
+                    return Err(format!("glEGLImageTargetTexture2DOES failed ({error:#x})"));
+                }
+                self.imports.0 += 1;
+                self.imports.1 += u64::from(cached);
+                Ok(())
             }
-            if error != 0 {
-                return Err(format!("glEGLImageTargetTexture2DOES failed ({error:#x})"));
-            }
-            self.imports.0 += 1;
-            self.imports.1 += u64::from(cached);
-            Ok(())
         }
     }
 

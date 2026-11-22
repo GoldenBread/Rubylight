@@ -455,7 +455,7 @@ impl Predictor {
         let mut newest: Option<Tag> = None;
         for tag in &tags.tags {
             self.tags[tag.frame as usize % TAG_SLOTS] = Some(*tag);
-            if newest.map_or(true, |n| after(tag.frame, n.frame)) {
+            if newest.is_none_or(|n| after(tag.frame, n.frame)) {
                 newest = Some(*tag);
             }
         }
@@ -465,7 +465,7 @@ impl Predictor {
         }
         self.newest = Some(tag.frame);
         let idle = |last: Option<u64>| {
-            last.map_or(true, |at| now_us.saturating_sub(at) >= REBASE_IDLE.as_micros() as u64)
+            last.is_none_or(|at| now_us.saturating_sub(at) >= REBASE_IDLE.as_micros() as u64)
         };
         if idle(self.last_mouse_us) {
             self.mouse_offset = (

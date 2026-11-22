@@ -1,4 +1,4 @@
-//! The host's ENet after an outage (rust/vendor/rusty_enet), on a simulated network in
+//! The host's ENet after an outage (client/protocol/vendor/rusty_enet), on a simulated network in
 //! virtual time: a host peer as the control stream sets it up and a client that, like
 //! Moonlight, sends an unreliable heartbeat every 100 ms. Each case runs with the resend
 //! after a silence and without it, which is stock ENet.

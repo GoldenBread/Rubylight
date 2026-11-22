@@ -713,8 +713,8 @@ impl VideoTexture {
 
     pub fn draw(&mut self, renderer: *mut SDL_Renderer, destination: &SDL_FRect) -> bool {
         #[cfg(windows)]
-        if self.texture.is_null() {
-            if let Some(packed) = &mut self.packed {
+        if self.texture.is_null()
+            && let Some(packed) = &mut self.packed {
                 return packed.present_warped(
                     renderer,
                     self.packed_format.as_ref().unwrap(),
@@ -722,7 +722,6 @@ impl VideoTexture {
                     &self.warp,
                 );
             }
-        }
         if !self.texture.is_null() {
             let source = self.source_rect(self.texture);
             // SAFETY: The renderer and its video texture are live on this thread.

@@ -358,7 +358,8 @@ unsafe fn pack_half_row(row: &mut [[u16; 4]], planes: [&[f32]; 3]) {
     use std::arch::x86_64::*;
     for (x, pixel) in row.iter_mut().enumerate() {
         let values = _mm_set_ps(1.0, planes[2][x], planes[1][x], planes[0][x]);
-        _mm_storel_epi64(pixel.as_mut_ptr().cast(), _mm_cvtps_ph::<0>(values));
+        // SAFETY: caller guarantees F16C is supported and `pixel` is an 8-byte buffer.
+        unsafe { _mm_storel_epi64(pixel.as_mut_ptr().cast(), _mm_cvtps_ph::<0>(values)) };
     }
 }
 
@@ -1159,12 +1160,11 @@ impl GpuStream {
     pub fn frame(&mut self, data: &[u8], evict: &mut dyn FnMut() -> bool) -> Result<Output, Failure> {
         let early = std::mem::replace(&mut self.early, Early::Off);
         let missed_start = std::mem::take(&mut self.missed_start);
-        if let Some(race) = &mut self.race {
-            if let Some(failure) = race.failure.take() {
+        if let Some(race) = &mut self.race
+            && let Some(failure) = race.failure.take() {
                 race.lease = None;
                 return Err(Failure::Device(failure));
             }
-        }
         if early == Early::Off { self.stages.reset(); }
         let records_envelope = data.starts_with(&[0, 0, 0, 0]);
         let sliced = self.race.as_ref().is_some_and(|race| race.lease.is_some());

@@ -348,7 +348,7 @@ mod cpu {
     #[cfg(windows)]
     fn cycles() -> u64 {
         #[link(name = "kernel32")]
-        extern "system" {
+        unsafe extern "system" {
             fn GetCurrentThread() -> isize;
             fn QueryThreadCycleTime(thread: isize, cycles: *mut u64) -> i32;
         }

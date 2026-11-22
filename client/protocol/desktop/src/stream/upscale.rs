@@ -20,37 +20,43 @@ impl Pass {
             native: None,
             device: ptr::null_mut(), shader: ptr::null_mut(), state: ptr::null_mut(),
         };
-        #[cfg(windows)]
-        {
-            let input = SDL_GetPointerProperty(SDL_GetTextureProperties(_input), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, ptr::null_mut());
-            let output = SDL_GetPointerProperty(SDL_GetTextureProperties(_output), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, ptr::null_mut());
-            if !input.is_null() && !output.is_null() {
-                pass.native = super::d3d11::Filter::new(input, output, shader.filter_hlsl()).map_err(|e| eprintln!("nightjar: GPU filter: {e}")).ok();
-                return pass.native.is_some().then_some(pass);
+        // SAFETY: caller guarantees `renderer`, `_input`, and `_output` are live on this thread.
+        unsafe {
+            #[cfg(windows)]
+            {
+                let input = SDL_GetPointerProperty(SDL_GetTextureProperties(_input), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, ptr::null_mut());
+                let output = SDL_GetPointerProperty(SDL_GetTextureProperties(_output), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, ptr::null_mut());
+                if !input.is_null() && !output.is_null() {
+                    pass.native = super::d3d11::Filter::new(input, output, shader.filter_hlsl()).map_err(|e| eprintln!("nightjar: GPU filter: {e}")).ok();
+                    return pass.native.is_some().then_some(pass);
+                }
             }
+            pass.device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER).cast();
+            if pass.device.is_null() { return None; }
+            pass.shader = SDL_CreateGPUShader(pass.device, &shader.info());
+            if pass.shader.is_null() { return None; }
+            pass.state = SDL_CreateGPURenderState(renderer, &SDL_GPURenderStateCreateInfo { fragment_shader: pass.shader, ..Default::default() });
+            (!pass.state.is_null()).then_some(pass)
         }
-        pass.device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER).cast();
-        if pass.device.is_null() { return None; }
-        pass.shader = SDL_CreateGPUShader(pass.device, &shader.info());
-        if pass.shader.is_null() { return None; }
-        pass.state = SDL_CreateGPURenderState(renderer, &SDL_GPURenderStateCreateInfo { fragment_shader: pass.shader, ..Default::default() });
-        (!pass.state.is_null()).then_some(pass)
     }
 
     pub(super) unsafe fn draw(&self, renderer: *mut SDL_Renderer, input: *mut SDL_Texture, output: *mut SDL_Texture, parameters: &[u32; 8], area: Option<(u32, u32)>) -> bool {
-        if !SDL_FlushRenderer(renderer) { return false; }
-        #[cfg(windows)]
-        if let Some(native) = &self.native { return native.draw(parameters, area); }
-        let previous = SDL_GetRenderTarget(renderer);
-        if !SDL_SetRenderTarget(renderer, output) { return false; }
-        let area = area.map(|(width, height)| SDL_FRect { x: 0.0, y: 0.0, w: width as f32, h: height as f32 });
-        let area = area.as_ref().map_or(ptr::null(), |area| area as *const _);
-        let ok = SDL_SetGPURenderStateFragmentUniforms(self.state, 0, parameters.as_ptr().cast(), 32)
-            && SDL_SetGPURenderState(renderer, self.state)
-            && SDL_RenderTexture(renderer, input, ptr::null(), area) && SDL_FlushRenderer(renderer);
-        SDL_SetGPURenderState(renderer, ptr::null_mut());
-        SDL_SetRenderTarget(renderer, previous);
-        ok
+        // SAFETY: caller guarantees `renderer`, `input`, and `output` are live on this thread.
+        unsafe {
+            if !SDL_FlushRenderer(renderer) { return false; }
+            #[cfg(windows)]
+            if let Some(native) = &self.native { return native.draw(parameters, area); }
+            let previous = SDL_GetRenderTarget(renderer);
+            if !SDL_SetRenderTarget(renderer, output) { return false; }
+            let area = area.map(|(width, height)| SDL_FRect { x: 0.0, y: 0.0, w: width as f32, h: height as f32 });
+            let area = area.as_ref().map_or(ptr::null(), |area| area as *const _);
+            let ok = SDL_SetGPURenderStateFragmentUniforms(self.state, 0, parameters.as_ptr().cast(), 32)
+                && SDL_SetGPURenderState(renderer, self.state)
+                && SDL_RenderTexture(renderer, input, ptr::null(), area) && SDL_FlushRenderer(renderer);
+            SDL_SetGPURenderState(renderer, ptr::null_mut());
+            SDL_SetRenderTarget(renderer, previous);
+            ok
+        }
     }
 }
 

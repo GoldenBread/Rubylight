@@ -81,11 +81,10 @@ impl Connection {
         if finite(self.jitter_ms).is_some_and(|j| j > JITTER_STUTTERS) {
             return Verdict { title: stutters, step: Some(en("The delay keeps changing. Connect by cable, or pause other downloads on this network.")) };
         }
-        if let Some(Speed::Measured { mbps, .. }) = self.speed {
-            if mbps * 1000.0 < f64::from(bitrate_kbps) * SPEED_HEADROOM {
+        if let Some(Speed::Measured { mbps, .. }) = self.speed
+            && mbps * 1000.0 < f64::from(bitrate_kbps) * SPEED_HEADROOM {
                 return Verdict { title: stutters, step: Some(en("The connection is slower than the stream needs. Lower the bitrate in Settings.")) };
             }
-        }
         Verdict { title: en("Good for streaming"), step: None }
     }
 }

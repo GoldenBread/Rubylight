@@ -12,3 +12,6 @@ crate-type = ["staticlib"]
 
 [dependencies]
 rubylight-protocol = { path = "../core" }
+
+[lints]
+workspace = true

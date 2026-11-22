@@ -328,10 +328,11 @@ impl AdaptiveQualityController {
             self.suspend();
             return None;
         }
-        if let Some(level) = self.resume_level.take() {
-            if level > self.level && level < self.levels.len() {
-                return Some(self.levels[level]);
-            }
+        if let Some(level) = self.resume_level.take()
+            && level > self.level
+            && level < self.levels.len()
+        {
+            return Some(self.levels[level]);
         }
         let fps = self.current().fps;
         let frame_ms = 1000.0f32 / fps as f32;
@@ -385,7 +386,7 @@ impl AdaptiveQualityController {
             && decode_ms.is_some_and(|decode| f64::from(decode) < budget_ms * 0.75)
             && jitter_ms.is_some_and(|jitter| jitter < 5f32.max(frame_ms * 0.25))
             && s.queue_ms
-                .map_or(true, |queue| queue < 4f32.max(frame_ms / 2.0));
+                .is_none_or(|queue| queue < 4f32.max(frame_ms / 2.0));
         match self.healthy_since_ms {
             _ if !healthy => self.healthy_since_ms = None,
             None => self.healthy_since_ms = Some(s.now_ms),

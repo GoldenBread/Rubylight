@@ -136,17 +136,20 @@ pub unsafe fn of_window(cocoa_window: *mut std::ffi::c_void) -> Option<DisplayTi
     use objc2::{msg_send, sel};
     let window = cocoa_window.cast::<AnyObject>();
     if window.is_null() { return None; }
-    let screen: *mut AnyObject = msg_send![window, screen];
-    if screen.is_null() { return None; }
-    // The four properties came with macOS 12.
-    let known: bool = msg_send![screen, respondsToSelector: sel!(minimumRefreshInterval)];
-    if !known { return None; }
-    let maximum_frames_per_second: isize = msg_send![screen, maximumFramesPerSecond];
-    let timing = DisplayTiming {
-        maximum_frames_per_second: maximum_frames_per_second as i64,
-        minimum_refresh_interval: msg_send![screen, minimumRefreshInterval],
-        maximum_refresh_interval: msg_send![screen, maximumRefreshInterval],
-        display_update_granularity: msg_send![screen, displayUpdateGranularity],
+    // SAFETY: Caller guarantees `cocoa_window` is a live `NSWindow` on the main thread.
+    let timing = unsafe {
+        let screen: *mut AnyObject = msg_send![window, screen];
+        if screen.is_null() { return None; }
+        // The four properties came with macOS 12.
+        let known: bool = msg_send![screen, respondsToSelector: sel!(minimumRefreshInterval)];
+        if !known { return None; }
+        let maximum_frames_per_second: isize = msg_send![screen, maximumFramesPerSecond];
+        DisplayTiming {
+            maximum_frames_per_second: maximum_frames_per_second as i64,
+            minimum_refresh_interval: msg_send![screen, minimumRefreshInterval],
+            maximum_refresh_interval: msg_send![screen, maximumRefreshInterval],
+            display_update_granularity: msg_send![screen, displayUpdateGranularity],
+        }
     };
     timing.valid().then_some(timing)
 }

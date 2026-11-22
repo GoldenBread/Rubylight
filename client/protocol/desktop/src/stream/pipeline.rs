@@ -1143,9 +1143,8 @@ impl VideoDecoder for Decoder {
             };
             return match created {
                 Ok((mut decoder, name)) => {
-                    if self.slices > 0 {
-                        if let Err(error) = decoder.set_beam_race(self.slices) { eprintln!("nightjar: beam race: {error}"); }
-                    }
+                    if self.slices > 0
+                        && let Err(error) = decoder.set_beam_race(self.slices) { eprintln!("nightjar: beam race: {error}"); }
                     self.pyrowave = Some(decoder);
                     if !reused && name == MAC_CPU_INSTEAD {
                         self.shared.notify(Notice::DecoderFallback(crate::strings::tr("PyroWave GPU decoding did not start on this Mac, so the processor decodes this stream.").to_owned()));
@@ -1294,8 +1293,8 @@ impl VideoDecoder for Decoder {
                     super::decoder_cache::park_media(key, decoder, self.generation);
                 }
             }
-            if !self.pyrowave_failed {
-                if let Some(decoder) = self.pyrowave.take().filter(super::pyrowave::Pyrowave::reusable) {
+            if !self.pyrowave_failed
+                && let Some(decoder) = self.pyrowave.take().filter(super::pyrowave::Pyrowave::reusable) {
                     let key = super::decoder_cache::PyroWaveKey {
                         width: setup.width as usize,
                         height: setup.height as usize,
@@ -1314,7 +1313,6 @@ impl VideoDecoder for Decoder {
                     eprintln!("nightjar: keeping the PyroWave decoder for the stream that follows");
                     super::decoder_cache::park_pyrowave(key, decoder, name, self.generation);
                 }
-            }
         }
         self.decoder = None;
         self.pyrowave = None;

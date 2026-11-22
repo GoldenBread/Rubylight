@@ -84,15 +84,18 @@ pub fn renderer_gpu(device: *mut c_void) -> Option<String> {
 /// Whether `adapter`'s video decoder has `profile` and decodes it into `format`.
 unsafe fn decodes(adapter: &IDXGIAdapter1, (profile, format): (GUID, DXGI_FORMAT)) -> bool {
     let mut device = None;
-    if D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, HMODULE::default(), D3D11_CREATE_DEVICE_VIDEO_SUPPORT, None,
-        D3D11_SDK_VERSION, Some(&mut device), None, None).is_err() {
-        return false;
+    // SAFETY: caller guarantees `adapter` is a valid DXGI adapter.
+    unsafe {
+        if D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, HMODULE::default(), D3D11_CREATE_DEVICE_VIDEO_SUPPORT, None,
+            D3D11_SDK_VERSION, Some(&mut device), None, None).is_err() {
+            return false;
+        }
+        let Some(video) = device.and_then(|device| device.cast::<ID3D11VideoDevice>().ok()) else { return false };
+        (0..video.GetVideoDecoderProfileCount()).any(|index| {
+            video.GetVideoDecoderProfile(index).is_ok_and(|found| found == profile)
+                && video.CheckVideoDecoderFormat(&profile, format).is_ok_and(|ok| ok.as_bool())
+        })
     }
-    let Some(video) = device.and_then(|device| device.cast::<ID3D11VideoDevice>().ok()) else { return false };
-    (0..video.GetVideoDecoderProfileCount()).any(|index| {
-        video.GetVideoDecoderProfile(index).is_ok_and(|found| found == profile)
-            && video.CheckVideoDecoderFormat(&profile, format).is_ok_and(|ok| ok.as_bool())
-    })
 }
 
 /// Where HEVC 4:4:4 decodes, by the GPUs' DXVA profiles.

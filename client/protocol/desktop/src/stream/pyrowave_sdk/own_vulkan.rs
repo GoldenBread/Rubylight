@@ -48,7 +48,8 @@ pub fn prepare_environment() {
         return;
     }
     if let Ok((_, icd)) = bundled() {
-        std::env::set_var("VK_DRIVER_FILES", icd);
+        // SAFETY: called from `main` while the process is single-threaded before Vulkan loads.
+        unsafe { std::env::set_var("VK_DRIVER_FILES", icd) };
     }
 }
 

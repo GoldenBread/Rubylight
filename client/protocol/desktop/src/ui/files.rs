@@ -285,7 +285,7 @@ impl Page {
         }
     }
 
-    fn progress(&self, id: u64) -> impl FnMut(u64, u64) + Send + 'static {
+    fn progress(&self, id: u64) -> impl FnMut(u64, u64) + Send + 'static + use<> {
         let (sender, waker) = (self.sender.clone(), self.waker.clone());
         move |done, total| {
             let _ = sender.send(Event::Progress { id, done, total });
@@ -293,7 +293,7 @@ impl Page {
         }
     }
 
-    fn uploader(&self, start: Start, source: Option<PathBuf>) -> impl FnOnce() -> Event + Send + 'static {
+    fn uploader(&self, start: Start, source: Option<PathBuf>) -> impl FnOnce() -> Event + Send + 'static + use<> {
         let (api, mut progress) = (self.api.clone(), self.progress(start.id));
         move || {
             let result = source
@@ -304,7 +304,7 @@ impl Page {
         }
     }
 
-    fn downloader(&self, start: Start, dest: PathBuf) -> impl FnOnce() -> Event + Send + 'static {
+    fn downloader(&self, start: Start, dest: PathBuf) -> impl FnOnce() -> Event + Send + 'static + use<> {
         let (api, mut progress) = (self.api.clone(), self.progress(start.id));
         move || {
             // Its name was free when it was queued; a file that took it since is not replaced.

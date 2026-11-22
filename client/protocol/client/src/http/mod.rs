@@ -894,10 +894,10 @@ impl pairing::PairingTransport for PairingClient<'_> {
     }
 
     fn pin_server_certificate(&mut self, der: &[u8]) -> Result<(), Error> {
-        if let Some(expected) = self.fingerprint {
-            if crypto::sha256(der) != expected {
-                return Err(Error::CertificateMismatch);
-            }
+        if let Some(expected) = self.fingerprint
+            && crypto::sha256(der) != expected
+        {
+            return Err(Error::CertificateMismatch);
         }
         self.client.pin(Some(der.to_vec()));
         Ok(())

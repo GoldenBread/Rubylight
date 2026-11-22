@@ -189,7 +189,7 @@ pub fn cbc_encrypt(
     let encryptor = cbc::Encryptor::<Aes128>::new(key.into(), iv.into());
     match padding {
         CbcPadding::None => {
-            if data.len() % BLOCK_BYTES != 0 {
+            if !data.len().is_multiple_of(BLOCK_BYTES) {
                 return Err(CryptoError);
             }
             Ok(encryptor.encrypt_padded_vec_mut::<NoPadding>(data))
@@ -212,7 +212,7 @@ pub fn cbc_decrypt(
     data: &[u8],
     pkcs7: bool,
 ) -> Result<Vec<u8>, CryptoError> {
-    if data.is_empty() || data.len() % BLOCK_BYTES != 0 {
+    if data.is_empty() || !data.len().is_multiple_of(BLOCK_BYTES) {
         return Err(CryptoError);
     }
     let decryptor = cbc::Decryptor::<Aes128>::new(key.into(), iv.into());

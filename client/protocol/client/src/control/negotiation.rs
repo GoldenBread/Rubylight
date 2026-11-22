@@ -115,10 +115,11 @@ pub fn parse_control_messages(sdp: &str) -> Vec<u16> {
             continue;
         };
         for item in list.split(',') {
-            if let Some(id) = parse_control_id(item) {
-                if !ids.contains(&id) && ids.len() < MAX_CONTROL_MESSAGES {
-                    ids.push(id);
-                }
+            if let Some(id) = parse_control_id(item)
+                && !ids.contains(&id)
+                && ids.len() < MAX_CONTROL_MESSAGES
+            {
+                ids.push(id);
             }
         }
     }

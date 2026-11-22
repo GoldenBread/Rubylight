@@ -338,7 +338,8 @@ impl Kernel for FakeKernel {
 
     unsafe fn submit(&self, urb: *mut Urb) -> Result<(), Errno> {
         let mut machine = self.machine();
-        let (kind, address) = ((*urb).kind, (*urb).endpoint);
+        // SAFETY: caller guarantees `urb` points to a valid `Urb`.
+        let (kind, address) = unsafe { ((*urb).kind, (*urb).endpoint) };
         Self::note(&mut machine, format!("submit {kind} {address:#04x}"));
         if machine.closed {
             return Err(EBADF);

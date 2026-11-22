@@ -35,7 +35,7 @@ mod ffi {
     pub const OPUS_RESET_STATE: c_int = 4028;
     pub const OPUS_SIGNAL_VOICE: i32 = 3001;
 
-    extern "C" {
+    unsafe extern "C" {
         pub fn opus_multistream_decoder_create(
             fs: i32,
             channels: c_int,

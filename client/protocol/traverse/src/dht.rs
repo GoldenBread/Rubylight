@@ -191,7 +191,7 @@ pub fn parse(datagram: &[u8]) -> Option<Message> {
             let fixed = |key: &[u8]| r.get(key).and_then(Value::as_bytes);
             let mut nodes = Vec::new();
             if let Some(compact) = fixed(b"nodes") {
-                nodes.extend(compact.chunks_exact(26).map(|chunk| Node {
+                nodes.extend(compact.as_chunks::<26>().0.iter().map(|chunk| Node {
                     id: chunk[..20].try_into().unwrap(),
                     address: SocketAddr::new(
                         IpAddr::V4(Ipv4Addr::new(chunk[20], chunk[21], chunk[22], chunk[23])),
@@ -200,7 +200,7 @@ pub fn parse(datagram: &[u8]) -> Option<Message> {
                 }));
             }
             if let Some(compact) = fixed(b"nodes6") {
-                nodes.extend(compact.chunks_exact(38).map(|chunk| Node {
+                nodes.extend(compact.as_chunks::<38>().0.iter().map(|chunk| Node {
                     id: chunk[..20].try_into().unwrap(),
                     address: SocketAddr::new(
                         IpAddr::V6(Ipv6Addr::from(
@@ -312,10 +312,10 @@ impl Lookup {
     /// The queries to send now: (address, transaction id). Queries past [`QUERY_TIMEOUT`] fail.
     pub fn poll(&mut self, now: Millis) -> Vec<(SocketAddr, Tid)> {
         for candidate in &mut self.candidates {
-            if let State::Asked { at, .. } = candidate.state {
-                if now.saturating_sub(at) >= QUERY_TIMEOUT {
-                    candidate.state = State::Failed;
-                }
+            if let State::Asked { at, .. } = candidate.state
+                && now.saturating_sub(at) >= QUERY_TIMEOUT
+            {
+                candidate.state = State::Failed;
             }
         }
         self.sort();
@@ -455,14 +455,13 @@ impl Newest {
         if reply.key.as_ref() != Some(key) {
             return;
         }
-        if let Some(item) = reply.item(salt) {
-            if self
+        if let Some(item) = reply.item(salt)
+            && self
                 .item
                 .as_ref()
-                .map_or(true, |known| item.seq > known.seq)
-            {
-                self.item = Some(item);
-            }
+                .is_none_or(|known| item.seq > known.seq)
+        {
+            self.item = Some(item);
         }
     }
 }

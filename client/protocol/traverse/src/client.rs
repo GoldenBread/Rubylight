@@ -206,15 +206,14 @@ impl ClientTunnel {
 
     pub fn status(&self) -> Status {
         let status = self.shared.status.lock().unwrap().clone();
-        if let Status::Connected { .. } = status {
+        if let Status::Connected { .. } = status
             // A path that ended since is reported as such.
-            if let Some(tunnel) = self.shared.tunnel.lock().unwrap().as_ref() {
-                if let State::Closed(reason) = tunnel.state() {
-                    return Status::Failed(format!(
-                        "the connection over the internet ended: {reason}"
-                    ));
-                }
-            }
+            && let Some(tunnel) = self.shared.tunnel.lock().unwrap().as_ref()
+            && let State::Closed(reason) = tunnel.state()
+        {
+            return Status::Failed(format!(
+                "the connection over the internet ended: {reason}"
+            ));
         }
         status
     }

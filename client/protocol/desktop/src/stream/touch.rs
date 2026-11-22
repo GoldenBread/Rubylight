@@ -60,13 +60,12 @@ impl Touch {
             let _ = queue.send_touch(touch_event::CANCEL_ALL, 0, 0.0, 0.0, 0.0, 0.0, 0.0, u16::MAX);
             self.contacts.clear();
         }
-        if let Some(mut pen) = self.pen.take() {
-            if pen.sent {
+        if let Some(mut pen) = self.pen.take()
+            && pen.sent {
                 pen.state = SDL_PenInputFlags(0);
                 pen.send(touch_event::CANCEL, queue);
                 pen.send(touch_event::HOVER_LEAVE, queue);
             }
-        }
     }
 
     pub fn handle(&mut self, event: &SDL_Event, rect: SDL_FRect, area: (i32, i32), density: f32, queue: &mut InputQueue) {
@@ -99,15 +98,14 @@ impl Touch {
                 return;
             }
             if kind == SDL_EVENT_PEN_PROXIMITY_OUT {
-                if self.pen.as_ref().is_some_and(|p| p.id == event.pproximity.which) {
-                    if let Some(mut pen) = self.pen.take() {
+                if self.pen.as_ref().is_some_and(|p| p.id == event.pproximity.which)
+                    && let Some(mut pen) = self.pen.take() {
                         pen.state = SDL_PenInputFlags(0);
                         if pen.sent {
                             if pen.down { pen.send(touch_event::CANCEL, queue); }
                             pen.send(touch_event::HOVER_LEAVE, queue);
                         }
                     }
-                }
                 return;
             }
             let (id, state, x, y) = match kind {

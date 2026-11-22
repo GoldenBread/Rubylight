@@ -680,7 +680,8 @@ fn one_player_sends_every_controller_as_player_one() {
     static FIRST: AtomicU32 = AtomicU32::new(0);
     static SECOND: AtomicU32 = AtomicU32::new(0);
     unsafe extern "C" fn rumble_into(userdata: *mut std::ffi::c_void, low: u16, high: u16) -> bool {
-        (*userdata.cast::<AtomicU32>()).store((u32::from(low) << 16) | u32::from(high), Ordering::SeqCst);
+        // SAFETY: `userdata` points to one of the `'static AtomicU32`s in this test.
+        unsafe { (*userdata.cast::<AtomicU32>()).store((u32::from(low) << 16) | u32::from(high), Ordering::SeqCst) };
         true
     }
     let _sdl = crate::sdl::TEST_LOCK.lock().unwrap();

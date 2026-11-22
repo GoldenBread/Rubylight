@@ -101,7 +101,8 @@ fn downmix(frame: &[f32]) -> [i16; 2] {
 }
 
 unsafe extern "C" fn play(userdata: *mut c_void, stream: *mut SDL_AudioStream, additional: i32, _: i32) {
-    let state = &*userdata.cast::<Mutex<Playback>>();
+    // SAFETY: `userdata` points to the live `Mutex<Playback>` passed to `SDL_OpenAudioDeviceStream`.
+    let state = unsafe { &*userdata.cast::<Mutex<Playback>>() };
     // SDL calls only when it needs samples. Supply at most 20 ms, never an unbounded backlog.
     let frames = (additional.max(0) as usize / 8).min(960);
     if frames == 0 { return; }
@@ -112,7 +113,8 @@ unsafe extern "C" fn play(userdata: *mut c_void, stream: *mut SDL_AudioStream, a
     state.speaker.render(output, 0, now);
     state.headphones.render(output, 0, now);
     state.haptics.render(output, 2, now);
-    SDL_PutAudioStreamData(stream, output.as_ptr().cast(), std::mem::size_of_val(output) as i32);
+    // SAFETY: `stream` is the live SDL audio stream passed to this callback.
+    unsafe { SDL_PutAudioStreamData(stream, output.as_ptr().cast(), std::mem::size_of_val(output) as i32) };
 }
 
 pub fn outputs() -> Vec<(SDL_AudioDeviceID, String)> {
@@ -313,12 +315,14 @@ struct Capture {
 }
 
 unsafe extern "C" fn record(userdata: *mut c_void, stream: *mut SDL_AudioStream, _: i32, _: i32) {
-    let capture = &mut *userdata.cast::<Capture>();
+    // SAFETY: `userdata` points to the live `Capture` passed to `SDL_OpenAudioDeviceStream`.
+    let capture = unsafe { &mut *userdata.cast::<Capture>() };
     if capture.failed { return; }
     let mut samples = [0i16; 480];
     let bytes = std::mem::size_of_val(&samples) as i32;
-    while SDL_GetAudioStreamAvailable(stream) >= bytes {
-        if SDL_GetAudioStreamData(stream, samples.as_mut_ptr().cast(), bytes) != bytes {
+    // SAFETY: `stream` is the live SDL audio stream passed to this callback.
+    while unsafe { SDL_GetAudioStreamAvailable(stream) } >= bytes {
+        if unsafe { SDL_GetAudioStreamData(stream, samples.as_mut_ptr().cast(), bytes) } != bytes {
             capture.failed = true;
             capture.shared.notify(Notice::MicrophoneFailed(format!("Controller microphone failed: {}", crate::sdl::error())));
             break;

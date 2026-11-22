@@ -103,7 +103,7 @@ fn an_undocumented_answer_is_a_loud_host_error() {
     // A known code under another status, a code from elsewhere in the API, and no JSON.
     let answers = [
         (error(403, "not_found"), Some(ErrorCode::NotFound)),
-        (error(400, "too_large"), Some(ErrorCode::Unknown)),
+        (error(400, "too_large"), Some(ErrorCode::TooLarge)),
         (error(409, "session_busy"), Some(ErrorCode::SessionBusy)),
         (error(500, "internal"), Some(ErrorCode::Internal)),
         (error(418, "teapot"), Some(ErrorCode::Unknown)),

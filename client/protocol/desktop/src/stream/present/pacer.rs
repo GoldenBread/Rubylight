@@ -563,24 +563,27 @@ pub enum NoWait {
 pub unsafe fn present_without_waiting(renderer: *mut SDL_Renderer, hold: std::time::Duration) -> NoWait {
     use windows::core::Interface;
     use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_ERROR_WAS_STILL_DRAWING, DXGI_PRESENT_DO_NOT_WAIT};
-    let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
-    let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return NoWait::Failed };
-    if !SDL_FlushRenderer(renderer) { return NoWait::Failed; }
-    let begun = std::time::Instant::now();
-    let result = loop {
-        let result = chain.Present(1, DXGI_PRESENT_DO_NOT_WAIT);
-        if result != DXGI_ERROR_WAS_STILL_DRAWING || begun.elapsed() >= hold { break result; }
-        // It waits for a refresh anyway, and has until the next deadline: a sleep costs nothing.
-        SDL_DelayNS(500_000);
-    };
-    // A present unbinds the back buffer's view: this makes SDL's next draw bind it again.
-    SDL_FlushRenderer(renderer);
-    if result == DXGI_ERROR_WAS_STILL_DRAWING {
-        NoWait::Refused
-    } else if result.is_ok() {
-        NoWait::Shown
-    } else {
-        NoWait::Failed
+    // SAFETY: caller guarantees `renderer` is the live D3D11 renderer of this thread.
+    unsafe {
+        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return NoWait::Failed };
+        if !SDL_FlushRenderer(renderer) { return NoWait::Failed; }
+        let begun = std::time::Instant::now();
+        let result = loop {
+            let result = chain.Present(1, DXGI_PRESENT_DO_NOT_WAIT);
+            if result != DXGI_ERROR_WAS_STILL_DRAWING || begun.elapsed() >= hold { break result; }
+            // It waits for a refresh anyway, and has until the next deadline: a sleep costs nothing.
+            SDL_DelayNS(500_000);
+        };
+        // A present unbinds the back buffer's view: this makes SDL's next draw bind it again.
+        SDL_FlushRenderer(renderer);
+        if result == DXGI_ERROR_WAS_STILL_DRAWING {
+            NoWait::Refused
+        } else if result.is_ok() {
+            NoWait::Shown
+        } else {
+            NoWait::Failed
+        }
     }
 }
 
@@ -600,13 +603,16 @@ pub unsafe fn present_without_waiting(_renderer: *mut SDL_Renderer, _hold: std::
 pub unsafe fn present_adaptive(renderer: *mut SDL_Renderer, latched: bool) -> bool {
     use windows::core::Interface;
     use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_PRESENT, DXGI_PRESENT_ALLOW_TEARING};
-    let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
-    let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return false };
-    if !SDL_FlushRenderer(renderer) { return false; }
-    let result = if latched { chain.Present(1, DXGI_PRESENT(0)) } else { chain.Present(0, DXGI_PRESENT_ALLOW_TEARING) };
-    // A present unbinds the back buffer's view: this makes SDL's next draw bind it again.
-    SDL_FlushRenderer(renderer);
-    result.is_ok()
+    // SAFETY: caller guarantees `renderer` is the live D3D11 renderer of this thread.
+    unsafe {
+        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return false };
+        if !SDL_FlushRenderer(renderer) { return false; }
+        let result = if latched { chain.Present(1, DXGI_PRESENT(0)) } else { chain.Present(0, DXGI_PRESENT_ALLOW_TEARING) };
+        // A present unbinds the back buffer's view: this makes SDL's next draw bind it again.
+        SDL_FlushRenderer(renderer);
+        result.is_ok()
+    }
 }
 
 /// Only Windows has this present.
@@ -626,15 +632,18 @@ pub unsafe fn present_adaptive(_renderer: *mut SDL_Renderer, _latched: bool) -> 
 pub unsafe fn flip_statistics(renderer: *mut SDL_Renderer) -> (bool, bool, bool) {
     use windows::core::Interface;
     use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_FRAME_STATISTICS};
-    let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
-    let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return (false, false, false) };
-    let last = chain.GetLastPresentCount();
-    let mut stats = DXGI_FRAME_STATISTICS::default();
-    let frames = chain.GetFrameStatistics(&mut stats);
-    match (last, frames) {
-        (Ok(last), Ok(())) => (true, stats.PresentCount <= last, stats.PresentCount < last),
-        (Ok(_), Err(_)) => (true, false, false),
-        (Err(_), _) => (false, false, false),
+    // SAFETY: caller guarantees `renderer` is the live D3D11 renderer of this thread.
+    unsafe {
+        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return (false, false, false) };
+        let last = chain.GetLastPresentCount();
+        let mut stats = DXGI_FRAME_STATISTICS::default();
+        let frames = chain.GetFrameStatistics(&mut stats);
+        match (last, frames) {
+            (Ok(last), Ok(())) => (true, stats.PresentCount <= last, stats.PresentCount < last),
+            (Ok(_), Err(_)) => (true, false, false),
+            (Err(_), _) => (false, false, false),
+        }
     }
 }
 

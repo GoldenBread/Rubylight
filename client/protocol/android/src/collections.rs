@@ -14,7 +14,7 @@ pub fn call(request: Option<&str>) -> String {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_console_CollectionGroups_call(mut env: JNIEnv, _: JClass, request: JString) -> jstring {
     let request = native_api::string(&mut env, &request);
     match env.new_string(call(request.as_deref())) {

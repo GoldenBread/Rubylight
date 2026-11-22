@@ -2195,11 +2195,10 @@ impl Store {
             Err(error) => error,
         };
         eprintln!("nightjar: {} can't be read whole: {error}", path.display());
-        if !self.read_only {
-            if let Err(e) = back_up(&path, "bad") {
+        if !self.read_only
+            && let Err(e) = back_up(&path, "bad") {
                 eprintln!("nightjar: could not keep a copy of {}: {e}", path.display());
             }
-        }
         let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&text) else {
             return T::default();
         };
@@ -2326,11 +2325,10 @@ impl Store {
         match serde_json::from_str(&text) {
             Ok(identity) => Ok(Some(identity)),
             Err(e) => {
-                if !self.read_only {
-                    if let Err(copy) = back_up(&path, "bad") {
+                if !self.read_only
+                    && let Err(copy) = back_up(&path, "bad") {
                         eprintln!("nightjar: could not keep a copy of {}: {copy}", path.display());
                     }
-                }
                 self.leave_as_it_is(&path);
                 Err(format!("{} cannot be read: {e}", path.display()))
             }
@@ -2490,17 +2488,15 @@ impl Store {
             }
         }
         let kept: Vec<Recent> = recents.iter().filter(|r| r.host != host).cloned().collect();
-        if kept.len() != recents.len() {
-            if let Err(e) = self.save_recents(&kept) {
+        if kept.len() != recents.len()
+            && let Err(e) = self.save_recents(&kept) {
                 eprintln!("nightjar: saving recent games failed: {e}");
             }
-        }
         let stars: Vec<Favourite> = favourites.iter().filter(|f| f.host != host).cloned().collect();
-        if stars.len() != favourites.len() {
-            if let Err(e) = self.save_favourites(&stars) {
+        if stars.len() != favourites.len()
+            && let Err(e) = self.save_favourites(&stars) {
                 eprintln!("nightjar: saving favourites failed: {e}");
             }
-        }
         (kept, stars)
     }
 

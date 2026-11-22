@@ -118,30 +118,33 @@ struct Queue<'a> {
 impl Queue<'_> {
     unsafe fn submit(&self, commands: vk::CommandBuffer, barriers: &[vk::ImageMemoryBarrier2], waits: &[vk::SemaphoreSubmitInfo], signals: &[vk::SemaphoreSubmitInfo], fence: vk::Fence) -> Result<(), String> {
         let device = self.device;
-        device.reset_command_buffer(commands, vk::CommandBufferResetFlags::empty()).map_err(|e| format!("a barrier's command buffer cannot be reset ({e})"))?;
-        device
-            .begin_command_buffer(commands, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))
-            .map_err(|e| format!("a barrier cannot be recorded ({e})"))?;
-        device.cmd_pipeline_barrier2(commands, &vk::DependencyInfo::default().image_memory_barriers(barriers));
-        device.end_command_buffer(commands).map_err(|e| format!("a barrier cannot be recorded ({e})"))?;
-        let buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(commands)];
-        let submit = vk::SubmitInfo2::default().wait_semaphore_infos(waits).command_buffer_infos(&buffers).signal_semaphore_infos(signals);
-        if fence != vk::Fence::null() {
-            device.reset_fences(&[fence]).map_err(|e| format!("a fence cannot be reset ({e})"))?;
-        }
-        SDL_LockMutex(self.lock);
-        let submitted = device.queue_submit2(self.queue, &[submit], fence);
-        SDL_UnlockMutex(self.lock);
-        if let Err(e) = submitted {
+        // SAFETY: Caller guarantees `commands`, `barriers`, `waits`, `signals`, and `fence` belong to `self.device`.
+        unsafe {
+            device.reset_command_buffer(commands, vk::CommandBufferResetFlags::empty()).map_err(|e| format!("a barrier's command buffer cannot be reset ({e})"))?;
+            device
+                .begin_command_buffer(commands, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))
+                .map_err(|e| format!("a barrier cannot be recorded ({e})"))?;
+            device.cmd_pipeline_barrier2(commands, &vk::DependencyInfo::default().image_memory_barriers(barriers));
+            device.end_command_buffer(commands).map_err(|e| format!("a barrier cannot be recorded ({e})"))?;
+            let buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(commands)];
+            let submit = vk::SubmitInfo2::default().wait_semaphore_infos(waits).command_buffer_infos(&buffers).signal_semaphore_infos(signals);
             if fence != vk::Fence::null() {
-                // Never submitted: the fence would stay unsignalled and its slot's wait time out.
-                SDL_LockMutex(self.lock);
-                let _ = device.queue_submit2(self.queue, &[], fence);
-                SDL_UnlockMutex(self.lock);
+                device.reset_fences(&[fence]).map_err(|e| format!("a fence cannot be reset ({e})"))?;
             }
-            return Err(format!("a barrier cannot be submitted ({e})"));
+            SDL_LockMutex(self.lock);
+            let submitted = device.queue_submit2(self.queue, &[submit], fence);
+            SDL_UnlockMutex(self.lock);
+            if let Err(e) = submitted {
+                if fence != vk::Fence::null() {
+                    // Never submitted: the fence would stay unsignalled and its slot's wait time out.
+                    SDL_LockMutex(self.lock);
+                    let _ = device.queue_submit2(self.queue, &[], fence);
+                    SDL_UnlockMutex(self.lock);
+                }
+                return Err(format!("a barrier cannot be submitted ({e})"));
+            }
+            Ok(())
         }
-        Ok(())
     }
 }
 
@@ -224,107 +227,113 @@ impl Planes {
     /// `frame` must be a live Vulkan AVFrame made with `device_context` on this device, and
     /// `renderer` the live renderer of the planes' device, on its thread.
     pub unsafe fn sample(&mut self, renderer: *mut SDL_Renderer, frame: *const AVFrame) -> Result<Option<[*mut SDL_GPUTexture; 2]>, String> {
-        if self.interleaved || self.chroma444 {
-            return Ok(None);
-        }
-        let sampling = self.sampling.get_or_insert_with(Sampling::new);
-        if sampling.off {
-            return Ok(None);
-        }
-        let frames_ref = (*frame).hw_frames_ctx;
-        let source = (*frame).data[0].cast::<VkFrame>();
-        if frames_ref.is_null() || source.is_null() {
-            return Ok(None);
-        }
-        let frames = (*frames_ref).data.cast::<AVHWFramesContext>();
-        let import = if mapped_frames(&*frames) { import_of(frame) } else { None };
-        let eligibility = Eligibility {
-            switched_on: sampling.switched_on,
-            sampleable: import.as_ref().is_some_and(ImportRef::sampled),
-            spare_surface: true,
-            stable_copy: false,
-        };
-        let why = match route(eligibility) {
-            Route::Copy(_) if import.is_none() && sampling.switched_on => Route::Copy("the picture is not a kept VA-API import"),
-            route => route,
-        };
-        let (Route::Sample, Some(import)) = (why, import) else {
-            if !sampling.said_copy {
-                sampling.said_copy = true;
-                note(&describe_route(why));
+        // SAFETY: Caller guarantees `frame` is a live Vulkan AVFrame and `renderer` is the live renderer on its thread.
+        unsafe {
+            if self.interleaved || self.chroma444 {
+                return Ok(None);
             }
-            return Ok(None);
-        };
-        if import.size() != (self.width, self.height) || sw_format(frame) != picture_sw_format(self.ten_bit, false) {
-            return Ok(None);
-        }
-        let vulkan_frames = &*(*frames).hwctx.cast::<FramesContext>();
-        let (Some(lock_frame), Some(unlock_frame)) = (vulkan_frames.lock_frame, vulkan_frames.unlock_frame) else {
-            return Ok(None);
-        };
-        let Some(textures) = self.wrap(&import) else {
-            return Ok(None);
-        };
-        let held = av_frame_clone(frame);
-        if held.is_null() {
-            return Ok(None);
-        }
-        let held = HeldFrame(held);
-        let Planes { device, queue, family, lock, sampling, pool, .. } = self;
-        let sampling = sampling.as_mut().expect("made above");
-        if sampling.slots.is_empty() {
-            if let Err(error) = Self::make_slots(device, *pool, &mut sampling.slots) {
+            let sampling = self.sampling.get_or_insert_with(Sampling::new);
+            if sampling.off {
+                return Ok(None);
+            }
+            let frames_ref = (*frame).hw_frames_ctx;
+            let source = (*frame).data[0].cast::<VkFrame>();
+            if frames_ref.is_null() || source.is_null() {
+                return Ok(None);
+            }
+            let frames = (*frames_ref).data.cast::<AVHWFramesContext>();
+            let import = if mapped_frames(&*frames) { import_of(frame) } else { None };
+            let eligibility = Eligibility {
+                switched_on: sampling.switched_on,
+                sampleable: import.as_ref().is_some_and(ImportRef::sampled),
+                spare_surface: true,
+                stable_copy: false,
+            };
+            let why = match route(eligibility) {
+                Route::Copy(_) if import.is_none() && sampling.switched_on => Route::Copy("the picture is not a kept VA-API import"),
+                route => route,
+            };
+            let (Route::Sample, Some(import)) = (why, import) else {
+                if !sampling.said_copy {
+                    sampling.said_copy = true;
+                    note(&describe_route(why));
+                }
+                return Ok(None);
+            };
+            if import.size() != (self.width, self.height) || sw_format(frame) != picture_sw_format(self.ten_bit, false) {
+                return Ok(None);
+            }
+            let vulkan_frames = &*(*frames).hwctx.cast::<FramesContext>();
+            let (Some(lock_frame), Some(unlock_frame)) = (vulkan_frames.lock_frame, vulkan_frames.unlock_frame) else {
+                return Ok(None);
+            };
+            let Some(textures) = self.wrap(&import) else {
+                return Ok(None);
+            };
+            let held = av_frame_clone(frame);
+            if held.is_null() {
+                return Ok(None);
+            }
+            let held = HeldFrame(held);
+            let Planes { device, queue, family, lock, sampling, pool, .. } = self;
+            let sampling = sampling.as_mut().expect("made above");
+            if sampling.slots.is_empty()
+                && let Err(error) = Self::make_slots(device, *pool, &mut sampling.slots)
+            {
                 note(&format!("VA-API pictures are copied: {error}"));
                 sampling.off = true;
                 return Ok(None);
             }
-        }
-        sampling.renderer = renderer;
-        sampling.locks = Some((frames, lock_frame, unlock_frame));
-        let mut gpu = Queue {
-            device,
-            queue: *queue,
-            family: *family,
-            lock: *lock,
-            renderer,
-            slots: &mut sampling.slots,
-            incoming: source,
-            frames,
-            lock_frame,
-            unlock_frame,
-        };
-        match sampling.state.show(&mut gpu, held) {
-            Ok(done) => {
-                drop(done);
-                if !sampling.said_sample {
-                    sampling.said_sample = true;
-                    note(&describe_route(Route::Sample));
+            sampling.renderer = renderer;
+            sampling.locks = Some((frames, lock_frame, unlock_frame));
+            let mut gpu = Queue {
+                device,
+                queue: *queue,
+                family: *family,
+                lock: *lock,
+                renderer,
+                slots: &mut sampling.slots,
+                incoming: source,
+                frames,
+                lock_frame,
+                unlock_frame,
+            };
+            match sampling.state.show(&mut gpu, held) {
+                Ok(done) => {
+                    drop(done);
+                    if !sampling.said_sample {
+                        sampling.said_sample = true;
+                        note(&describe_route(Route::Sample));
+                    }
+                    Ok(Some(textures))
                 }
-                Ok(Some(textures))
-            }
-            Err((_, error)) => {
-                // The picture is not shown: it is copied instead. A device that fails here is not
-                // sampled on again.
-                note(&format!("VA-API pictures are copied from now on: sampling failed ({error})"));
-                sampling.off = true;
-                Ok(None)
+                Err((_, error)) => {
+                    // The picture is not shown: it is copied instead. A device that fails here is not
+                    // sampled on again.
+                    note(&format!("VA-API pictures are copied from now on: sampling failed ({error})"));
+                    sampling.off = true;
+                    Ok(None)
+                }
             }
         }
     }
 
     unsafe fn make_slots(device: &ash::Device, pool: vk::CommandPool, slots: &mut Vec<Slot>) -> Result<(), String> {
-        let buffers = device
-            .allocate_command_buffers(
-                &vk::CommandBufferAllocateInfo::default().command_pool(pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(2 * SLOTS as u32),
-            )
-            .map_err(|e| format!("command buffers cannot be allocated ({e})"))?;
-        for pair in buffers.chunks(2) {
-            let fence = device
-                .create_fence(&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED), None)
-                .map_err(|e| format!("a fence cannot be created ({e})"))?;
-            slots.push(Slot { acquire: pair[0], release: pair[1], fence, frame: ptr::null_mut() });
+        // SAFETY: Caller guarantees `device` and `pool` are live Vulkan handles.
+        unsafe {
+            let buffers = device
+                .allocate_command_buffers(
+                    &vk::CommandBufferAllocateInfo::default().command_pool(pool).level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(2 * SLOTS as u32),
+                )
+                .map_err(|e| format!("command buffers cannot be allocated ({e})"))?;
+            for pair in buffers.chunks(2) {
+                let fence = device
+                    .create_fence(&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED), None)
+                    .map_err(|e| format!("a fence cannot be created ({e})"))?;
+                slots.push(Slot { acquire: pair[0], release: pair[1], fence, frame: ptr::null_mut() });
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// The textures wrapping `import`'s images, made on first use; none (with the reason logged
@@ -344,37 +353,40 @@ impl Planes {
         }
         let mut textures = [ptr::null_mut(); 2];
         let images = import.images();
-        for (plane, texture) in textures.iter_mut().enumerate() {
-            let (width, height) = layer_extent(plane, import.size().0, import.size().1);
-            let props = SDL_CreateProperties();
-            SDL_SetNumberProperty(props, TEXTURE_IMAGE_PROPERTY.as_ptr(), images[plane].as_raw() as i64);
-            *texture = SDL_CreateGPUTexture(
-                self.gpu,
-                &SDL_GPUTextureCreateInfo {
-                    r#type: SDL_GPU_TEXTURETYPE_2D,
-                    format: self.sdl_format(plane),
-                    usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                    width,
-                    height,
-                    layer_count_or_depth: 1,
-                    num_levels: 1,
-                    sample_count: SDL_GPU_SAMPLECOUNT_1,
-                    props,
-                },
-            );
-            SDL_DestroyProperties(props);
-        }
-        if textures.iter().any(|texture| texture.is_null()) {
-            let error = crate::sdl::error();
-            for texture in textures.into_iter().filter(|texture| !texture.is_null()) {
-                SDL_ReleaseGPUTexture(self.gpu, texture);
+        // SAFETY: Caller guarantees `self.gpu` is live and `import`'s images belong to `self.gpu`'s Vulkan device.
+        unsafe {
+            for (plane, texture) in textures.iter_mut().enumerate() {
+                let (width, height) = layer_extent(plane, import.size().0, import.size().1);
+                let props = SDL_CreateProperties();
+                SDL_SetNumberProperty(props, TEXTURE_IMAGE_PROPERTY.as_ptr(), images[plane].as_raw() as i64);
+                *texture = SDL_CreateGPUTexture(
+                    self.gpu,
+                    &SDL_GPUTextureCreateInfo {
+                        r#type: SDL_GPU_TEXTURETYPE_2D,
+                        format: self.sdl_format(plane),
+                        usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                        width,
+                        height,
+                        layer_count_or_depth: 1,
+                        num_levels: 1,
+                        sample_count: SDL_GPU_SAMPLECOUNT_1,
+                        props,
+                    },
+                );
+                SDL_DestroyProperties(props);
             }
-            let sampling = self.sampling.as_mut()?;
-            if !sampling.said_copy {
-                sampling.said_copy = true;
-                note(&format!("VA-API pictures are copied into the presenter's planes: a decoder surface cannot be wrapped as textures: {error}"));
+            if textures.iter().any(|texture| texture.is_null()) {
+                let error = crate::sdl::error();
+                for texture in textures.into_iter().filter(|texture| !texture.is_null()) {
+                    SDL_ReleaseGPUTexture(self.gpu, texture);
+                }
+                let sampling = self.sampling.as_mut()?;
+                if !sampling.said_copy {
+                    sampling.said_copy = true;
+                    note(&format!("VA-API pictures are copied into the presenter's planes: a decoder surface cannot be wrapped as textures: {error}"));
+                }
+                return None;
             }
-            return None;
         }
         self.sampling.as_mut()?.wrapped.insert(key, Wrapped { _import: import.clone(), textures });
         Some(textures)
@@ -421,11 +433,14 @@ impl Planes {
     /// What `Drop` does for sampling before it waits for the device: gives the pictures back and
     /// releases the wrapped textures (SDL destroys their views once its last command is done).
     pub(super) unsafe fn release_wrapped(&mut self) {
-        self.end_sampling();
-        if let Some(sampling) = &self.sampling {
-            for wrapped in sampling.wrapped.values() {
-                for texture in wrapped.textures {
-                    SDL_ReleaseGPUTexture(self.gpu, texture);
+        // SAFETY: Caller guarantees `self.gpu` and `self.device` are live and on the presenting thread.
+        unsafe {
+            self.end_sampling();
+            if let Some(sampling) = &self.sampling {
+                for wrapped in sampling.wrapped.values() {
+                    for texture in wrapped.textures {
+                        SDL_ReleaseGPUTexture(self.gpu, texture);
+                    }
                 }
             }
         }
@@ -444,7 +459,8 @@ impl Planes {
         }
         let waits: Vec<vk::Fence> = slots.iter().map(|slot| slot.fence).collect();
         for fence in waits {
-            self.device.destroy_fence(fence, None);
+            // SAFETY: Caller guarantees `self.device` is idle and owns these fences.
+            unsafe { self.device.destroy_fence(fence, None) };
         }
         drop(wrapped);
     }

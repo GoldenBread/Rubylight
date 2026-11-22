@@ -32,51 +32,60 @@ struct Binding {
 
 impl Filter {
     pub unsafe fn new(input: *mut c_void, target: *mut c_void, source: &[u8]) -> windows::core::Result<Self> {
-        let mut filter = Self::compiled(target, source)?;
-        filter.bind(&[input], target)?;
-        Ok(filter)
+        // SAFETY: caller guarantees `input` and `target` are live `ID3D11Texture2D` pointers on the same device.
+        unsafe {
+            let mut filter = Self::compiled(target, source)?;
+            filter.bind(&[input], target)?;
+            Ok(filter)
+        }
     }
 
     /// The filter's shaders on the device of `texture`, without textures yet (`bind`).
     pub unsafe fn compiled(texture: *mut c_void, source: &[u8]) -> windows::core::Result<Self> {
-        let texture = ID3D11Texture2D::from_raw_borrowed(&texture).unwrap();
-        let device = texture.GetDevice()?;
-        let context = device.GetImmediateContext()?;
-        let mut deferred = None;
-        device.CreateDeferredContext(0, Some(&mut deferred))?;
-        let code = compile(source, s!("vertex"), s!("vs_5_0"))?;
-        let mut vertex = None;
-        device.CreateVertexShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut vertex))?;
-        let code = compile(source, s!("fragment"), s!("ps_5_0"))?;
-        let mut fragment = None;
-        device.CreatePixelShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut fragment))?;
-        let mut constants = None;
-        device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: 32, Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants))?;
-        let mut sampler = None;
-        device.CreateSamplerState(&D3D11_SAMPLER_DESC { Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-            AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, MaxLOD: f32::MAX, ..Default::default() }, Some(&mut sampler))?;
-        Ok(Self { device, context, deferred: deferred.unwrap(), vertex: vertex.unwrap(), fragment: fragment.unwrap(),
-            constants: [constants], sampler: [sampler], bindings: Vec::new() })
+        // SAFETY: caller guarantees `texture` is a live `ID3D11Texture2D` pointer.
+        unsafe {
+            let texture = ID3D11Texture2D::from_raw_borrowed(&texture).unwrap();
+            let device = texture.GetDevice()?;
+            let context = device.GetImmediateContext()?;
+            let mut deferred = None;
+            device.CreateDeferredContext(0, Some(&mut deferred))?;
+            let code = compile(source, s!("vertex"), s!("vs_5_0"))?;
+            let mut vertex = None;
+            device.CreateVertexShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut vertex))?;
+            let code = compile(source, s!("fragment"), s!("ps_5_0"))?;
+            let mut fragment = None;
+            device.CreatePixelShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut fragment))?;
+            let mut constants = None;
+            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: 32, Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants))?;
+            let mut sampler = None;
+            device.CreateSamplerState(&D3D11_SAMPLER_DESC { Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+                AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, MaxLOD: f32::MAX, ..Default::default() }, Some(&mut sampler))?;
+            Ok(Self { device, context, deferred: deferred.unwrap(), vertex: vertex.unwrap(), fragment: fragment.unwrap(),
+                constants: [constants], sampler: [sampler], bindings: Vec::new() })
+        }
     }
 
     /// Adds a draw reading `inputs` in slots t0 and on into `target` (textures on the filter's
     /// device), drawn by its index in the order bound (`draw_binding`).
     pub unsafe fn bind(&mut self, inputs: &[*mut c_void], target: *mut c_void) -> windows::core::Result<()> {
-        let target = ID3D11Texture2D::from_raw_borrowed(&target).unwrap();
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        target.GetDesc(&mut desc);
-        let mut views = Vec::with_capacity(inputs.len());
-        for input in inputs {
-            let mut view = None;
-            self.device.CreateShaderResourceView(ID3D11Texture2D::from_raw_borrowed(input).unwrap(), None, Some(&mut view))?;
-            views.push(view);
+        // SAFETY: caller guarantees `inputs` and `target` are live `ID3D11Texture2D` pointers on `self.device`.
+        unsafe {
+            let target = ID3D11Texture2D::from_raw_borrowed(&target).unwrap();
+            let mut desc = D3D11_TEXTURE2D_DESC::default();
+            target.GetDesc(&mut desc);
+            let mut views = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                let mut view = None;
+                self.device.CreateShaderResourceView(ID3D11Texture2D::from_raw_borrowed(input).unwrap(), None, Some(&mut view))?;
+                views.push(view);
+            }
+            let mut target_view = None;
+            self.device.CreateRenderTargetView(target, None, Some(&mut target_view))?;
+            self.bindings.push(Binding { inputs: views, target: [target_view], size: (desc.Width, desc.Height) });
+            Ok(())
         }
-        let mut target_view = None;
-        self.device.CreateRenderTargetView(target, None, Some(&mut target_view))?;
-        self.bindings.push(Binding { inputs: views, target: [target_view], size: (desc.Width, desc.Height) });
-        Ok(())
     }
 
     pub fn draw(&self, parameters: &[u32; 8], area: Option<(u32, u32)>) -> bool {
@@ -208,12 +217,15 @@ impl BackBuffer {
     /// `swap_chain` is the live `IDXGISwapChain` of the renderer.
     pub unsafe fn view(&mut self, swap_chain: *mut c_void, size: (i32, i32)) -> Result<ID3D11RenderTargetView, String> {
         if self.view.is_none() {
-            let chain = IDXGISwapChain::from_raw_borrowed(&swap_chain).ok_or("the renderer has no swap chain")?;
-            let buffer = chain.GetBuffer::<ID3D11Texture2D>(0).map_err(|e| format!("the back buffer: {e}"))?;
-            let device = buffer.GetDevice().map_err(|e| format!("the back buffer's device: {e}"))?;
-            let mut target = None;
-            device.CreateRenderTargetView(&buffer, None, Some(&mut target)).map_err(|e| format!("the back buffer's view: {e}"))?;
-            self.view = Some((swap_chain as usize, size, target.ok_or("no back buffer view")?));
+            // SAFETY: caller guarantees `swap_chain` is the live `IDXGISwapChain` of the renderer.
+            unsafe {
+                let chain = IDXGISwapChain::from_raw_borrowed(&swap_chain).ok_or("the renderer has no swap chain")?;
+                let buffer = chain.GetBuffer::<ID3D11Texture2D>(0).map_err(|e| format!("the back buffer: {e}"))?;
+                let device = buffer.GetDevice().map_err(|e| format!("the back buffer's device: {e}"))?;
+                let mut target = None;
+                device.CreateRenderTargetView(&buffer, None, Some(&mut target)).map_err(|e| format!("the back buffer's view: {e}"))?;
+                self.view = Some((swap_chain as usize, size, target.ok_or("no back buffer view")?));
+            }
         }
         Ok(self.view.as_ref().expect("made above").2.clone())
     }
@@ -285,38 +297,41 @@ struct SurfaceCopy {
 impl PlanesPass {
     /// `target` is the `ID3D11Texture2D` of the renderer's RGBA64F picture texture.
     pub unsafe fn new(target: *mut c_void) -> windows::core::Result<Self> {
-        let target = ID3D11Texture2D::from_raw_borrowed(&target).ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_POINTER))?;
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        target.GetDesc(&mut desc);
-        let device = target.GetDevice()?;
-        let context = device.GetImmediateContext()?;
-        let queue = context.cast::<ID3D11DeviceContext4>()?;
-        let mut deferred = None;
-        device.CreateDeferredContext(0, Some(&mut deferred))?;
-        let mut target_view = None;
-        device.CreateRenderTargetView(target, None, Some(&mut target_view))?;
-        let source = include_bytes!("../pyrowave.hlsl");
-        let code = compile(source, s!("vertex"), s!("vs_5_0"))?;
-        let mut vertex = None;
-        device.CreateVertexShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut vertex))?;
-        let code = compile(source, s!("planes"), s!("ps_5_0"))?;
-        let mut fragment = None;
-        device.CreatePixelShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut fragment))?;
-        let mut constants = None;
-        device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: 32, Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants))?;
-        let mut sampler = None;
-        device.CreateSamplerState(&D3D11_SAMPLER_DESC { Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-            AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, MaxLOD: f32::MAX, ..Default::default() }, Some(&mut sampler))?;
-        let mut raster = None;
-        device.CreateRasterizerState(&D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE,
-            DepthClipEnable: true.into(), ScissorEnable: true.into(), ..Default::default() }, Some(&mut raster))?;
-        Ok(Self { context, queue, deferred: deferred.unwrap(), device, target: [target_view],
-            vertex: vertex.unwrap(), fragment: fragment.unwrap(), constants: [constants], sampler: [sampler],
-            raster: raster.unwrap(), size: (desc.Width, desc.Height), views: Default::default(), owner: None, frame: None,
-            surface: None, surface_fragment: None, direct: None, back_buffer: BackBuffer::default(), bound: None, surface_views: None, surface_facts: None, #[cfg(test)] surface_queries: 0,
-            mask: Default::default(), mask_view: None })
+        // SAFETY: caller guarantees `target` is a live `ID3D11Texture2D` on the renderer's device.
+        unsafe {
+            let target = ID3D11Texture2D::from_raw_borrowed(&target).ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_POINTER))?;
+            let mut desc = D3D11_TEXTURE2D_DESC::default();
+            target.GetDesc(&mut desc);
+            let device = target.GetDevice()?;
+            let context = device.GetImmediateContext()?;
+            let queue = context.cast::<ID3D11DeviceContext4>()?;
+            let mut deferred = None;
+            device.CreateDeferredContext(0, Some(&mut deferred))?;
+            let mut target_view = None;
+            device.CreateRenderTargetView(target, None, Some(&mut target_view))?;
+            let source = include_bytes!("../pyrowave.hlsl");
+            let code = compile(source, s!("vertex"), s!("vs_5_0"))?;
+            let mut vertex = None;
+            device.CreateVertexShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut vertex))?;
+            let code = compile(source, s!("planes"), s!("ps_5_0"))?;
+            let mut fragment = None;
+            device.CreatePixelShader(std::slice::from_raw_parts(code.GetBufferPointer().cast(), code.GetBufferSize()), None, Some(&mut fragment))?;
+            let mut constants = None;
+            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: 32, Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants))?;
+            let mut sampler = None;
+            device.CreateSamplerState(&D3D11_SAMPLER_DESC { Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+                AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, MaxLOD: f32::MAX, ..Default::default() }, Some(&mut sampler))?;
+            let mut raster = None;
+            device.CreateRasterizerState(&D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE,
+                DepthClipEnable: true.into(), ScissorEnable: true.into(), ..Default::default() }, Some(&mut raster))?;
+            Ok(Self { context, queue, deferred: deferred.unwrap(), device, target: [target_view],
+                vertex: vertex.unwrap(), fragment: fragment.unwrap(), constants: [constants], sampler: [sampler],
+                raster: raster.unwrap(), size: (desc.Width, desc.Height), views: Default::default(), owner: None, frame: None,
+                surface: None, surface_fragment: None, direct: None, back_buffer: BackBuffer::default(), bound: None, surface_views: None, surface_facts: None, #[cfg(test)] surface_queries: 0,
+                mask: Default::default(), mask_view: None })
+        }
     }
 
     /// Frame Warp's row of `direct_planes::Constants` for a `draw_direct` shifted by `warp`, with
@@ -390,7 +405,8 @@ impl PlanesPass {
     /// # Safety
     /// `swap_chain` is the live swap chain of the renderer this pass's device belongs to.
     pub unsafe fn back_buffer(&mut self, swap_chain: *mut c_void, size: (i32, i32)) -> Result<ID3D11RenderTargetView, String> {
-        self.back_buffer.view(swap_chain, size)
+        // SAFETY: caller guarantees `swap_chain` is the live swap chain of the renderer.
+        unsafe { self.back_buffer.view(swap_chain, size) }
     }
 
     /// Call before SDL runs its queue: a view for another swap chain or size goes.
@@ -815,15 +831,18 @@ impl FramePlanes {
         let format = if layout.ten_bit { DXGI_FORMAT_R16_UNORM } else { DXGI_FORMAT_R8_UNORM };
         let mut textures = Vec::with_capacity(3);
         let mut views = [None, None, None];
-        for (plane, view) in views.iter_mut().enumerate() {
-            let (width, height) = layout.plane_size(plane);
-            let mut texture = None;
-            device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: width, Height: height, MipLevels: 1, ArraySize: 1, Format: format,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, None, Some(&mut texture))?;
-            let texture = texture.unwrap();
-            device.CreateShaderResourceView(&texture, None, Some(view))?;
-            textures.push(texture);
+        // SAFETY: caller guarantees `device` is live on this thread.
+        unsafe {
+            for (plane, view) in views.iter_mut().enumerate() {
+                let (width, height) = layout.plane_size(plane);
+                let mut texture = None;
+                device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: width, Height: height, MipLevels: 1, ArraySize: 1, Format: format,
+                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, None, Some(&mut texture))?;
+                let texture = texture.unwrap();
+                device.CreateShaderResourceView(&texture, None, Some(view))?;
+                textures.push(texture);
+            }
         }
         let textures: [ID3D11Texture2D; 3] = textures.try_into().unwrap_or_else(|_| unreachable!());
         Ok(Self { layout, textures, views })
@@ -832,15 +851,18 @@ impl FramePlanes {
 
 impl SurfaceCopy {
     unsafe fn new(device: &ID3D11Device, format: DXGI_FORMAT, view_format: DXGI_FORMAT, size: (u32, u32)) -> windows::core::Result<Self> {
-        let mut texture = None;
-        device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: size.0, Height: size.1, MipLevels: 1, ArraySize: 1, Format: format,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, None, Some(&mut texture))?;
-        let texture = texture.unwrap();
-        let mut view = None;
-        device.CreateShaderResourceView(&texture, Some(&D3D11_SHADER_RESOURCE_VIEW_DESC { Format: view_format, ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D,
-            Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 { Texture2D: D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 } } }), Some(&mut view))?;
-        Ok(Self { format, size, texture, view: [view] })
+        // SAFETY: caller guarantees `device` is live on this thread.
+        unsafe {
+            let mut texture = None;
+            device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: size.0, Height: size.1, MipLevels: 1, ArraySize: 1, Format: format,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, None, Some(&mut texture))?;
+            let texture = texture.unwrap();
+            let mut view = None;
+            device.CreateShaderResourceView(&texture, Some(&D3D11_SHADER_RESOURCE_VIEW_DESC { Format: view_format, ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D,
+                Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 { Texture2D: D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 } } }), Some(&mut view))?;
+            Ok(Self { format, size, texture, view: [view] })
+        }
     }
 }
 
@@ -889,26 +911,29 @@ pub(crate) unsafe fn compile(source: &[u8], entry: PCSTR, profile: PCSTR) -> win
     let source = super::frame_warp::hlsl(source);
     let mut code = None;
     let mut errors: Option<ID3DBlob> = None;
-    let result = D3DCompile(
-        source.as_ptr().cast(),
-        source.len(),
-        PCSTR::null(),
-        None,
-        None,
-        entry,
-        profile,
-        D3DCOMPILE_OPTIMIZATION_LEVEL3,
-        0,
-        &mut code,
-        Some(&mut errors),
-    );
-    if result.is_err() {
-        if let Some(errors) = errors {
+    // SAFETY: `source` is in memory; `entry` and `profile` are valid NUL-terminated `PCSTR`s.
+    unsafe {
+        let result = D3DCompile(
+            source.as_ptr().cast(),
+            source.len(),
+            PCSTR::null(),
+            None,
+            None,
+            entry,
+            profile,
+            D3DCOMPILE_OPTIMIZATION_LEVEL3,
+            0,
+            &mut code,
+            Some(&mut errors),
+        );
+        if result.is_err()
+            && let Some(errors) = errors
+        {
             eprintln!("nightjar shader: {}", String::from_utf8_lossy(std::slice::from_raw_parts(errors.GetBufferPointer().cast(), errors.GetBufferSize())));
         }
+        result?;
+        Ok(code.unwrap())
     }
-    result?;
-    Ok(code.unwrap())
 }
 
 impl Packed {
@@ -920,122 +945,125 @@ impl Packed {
         ten_bit: bool,
         hdr: bool,
     ) -> windows::core::Result<Self> {
-        let target = ID3D11Texture2D::from_raw_borrowed(&target);
-        let device = ID3D11Device::from_raw_borrowed(&device).unwrap();
-        let context = device.GetImmediateContext()?;
-        let mut deferred = None;
-        device.CreateDeferredContext(0, Some(&mut deferred))?;
-        let mut input = None;
-        device.CreateTexture2D(
-            &D3D11_TEXTURE2D_DESC {
-                Width: width as u32,
-                Height: height as u32,
-                MipLevels: 1,
-                ArraySize: 1,
-                Format: if ten_bit {
-                    DXGI_FORMAT_P010
-                } else {
-                    DXGI_FORMAT_NV12
-                },
-                SampleDesc: DXGI_SAMPLE_DESC {
-                    Count: 1,
-                    Quality: 0,
-                },
-                Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                ..Default::default()
-            },
-            None,
-            Some(&mut input),
-        )?;
-        let input = input.unwrap();
-        let formats = if ten_bit {
-            [DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16_UNORM]
-        } else {
-            [DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8G8_UNORM]
-        };
-        let mut planes = [None, None];
-        for (i, format) in formats.into_iter().enumerate() {
-            device.CreateShaderResourceView(
-                &input,
-                Some(&D3D11_SHADER_RESOURCE_VIEW_DESC {
-                    Format: format,
-                    ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D,
-                    Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
-                        Texture2D: D3D11_TEX2D_SRV {
-                            MostDetailedMip: 0,
-                            MipLevels: 1,
-                        },
+        // SAFETY: caller guarantees `device` and non-null `target` are live D3D11 objects.
+        unsafe {
+            let target = ID3D11Texture2D::from_raw_borrowed(&target);
+            let device = ID3D11Device::from_raw_borrowed(&device).unwrap();
+            let context = device.GetImmediateContext()?;
+            let mut deferred = None;
+            device.CreateDeferredContext(0, Some(&mut deferred))?;
+            let mut input = None;
+            device.CreateTexture2D(
+                &D3D11_TEXTURE2D_DESC {
+                    Width: width as u32,
+                    Height: height as u32,
+                    MipLevels: 1,
+                    ArraySize: 1,
+                    Format: if ten_bit {
+                        DXGI_FORMAT_P010
+                    } else {
+                        DXGI_FORMAT_NV12
                     },
-                }),
-                Some(&mut planes[i]),
+                    SampleDesc: DXGI_SAMPLE_DESC {
+                        Count: 1,
+                        Quality: 0,
+                    },
+                    Usage: D3D11_USAGE_DEFAULT,
+                    BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    ..Default::default()
+                },
+                None,
+                Some(&mut input),
             )?;
+            let input = input.unwrap();
+            let formats = if ten_bit {
+                [DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16_UNORM]
+            } else {
+                [DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8G8_UNORM]
+            };
+            let mut planes = [None, None];
+            for (i, format) in formats.into_iter().enumerate() {
+                device.CreateShaderResourceView(
+                    &input,
+                    Some(&D3D11_SHADER_RESOURCE_VIEW_DESC {
+                        Format: format,
+                        ViewDimension: D3D_SRV_DIMENSION_TEXTURE2D,
+                        Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
+                            Texture2D: D3D11_TEX2D_SRV {
+                                MostDetailedMip: 0,
+                                MipLevels: 1,
+                            },
+                        },
+                    }),
+                    Some(&mut planes[i]),
+                )?;
+            }
+            let mut render_target = None;
+            if let Some(target) = target {
+                device.CreateRenderTargetView(target, None, Some(&mut render_target))?;
+            }
+            let vertex_code = compile(include_bytes!("../packed444.hlsl"), s!("vertex"), s!("vs_5_0"))?;
+            let mut vertex = None;
+            device.CreateVertexShader(
+                std::slice::from_raw_parts(
+                    vertex_code.GetBufferPointer().cast(),
+                    vertex_code.GetBufferSize(),
+                ),
+                None,
+                Some(&mut vertex),
+            )?;
+            let fragment_code = if target.is_some() {
+                compile(include_bytes!("../packed444.hlsl"), s!("fragment"), s!("ps_5_0"))?
+            } else if hdr {
+                compile(include_bytes!("../packed444.hlsl"), s!("present"), s!("ps_5_0"))?
+            } else {
+                let source = [b"#define SDR_PRESENT 1\n".as_slice(), include_bytes!("../packed444.hlsl")].concat();
+                compile(&source, s!("present"), s!("ps_5_0"))?
+            };
+            let mut fragment = None;
+            device.CreatePixelShader(
+                std::slice::from_raw_parts(
+                    fragment_code.GetBufferPointer().cast(),
+                    fragment_code.GetBufferSize(),
+                ),
+                None,
+                Some(&mut fragment),
+            )?;
+            let mut constants = None;
+            device.CreateBuffer(
+                &D3D11_BUFFER_DESC {
+                    ByteWidth: 48,
+                    Usage: D3D11_USAGE_DEFAULT,
+                    BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+                    ..Default::default()
+                },
+                None,
+                Some(&mut constants),
+            )?;
+            let mut presentation = None;
+            if target.is_none() {
+                device.CreateBuffer(&D3D11_BUFFER_DESC {
+                    ByteWidth: PRESENTATION_BYTES, Usage: D3D11_USAGE_DEFAULT,
+                    BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default()
+                }, None, Some(&mut presentation))?;
+            }
+            Ok(Self {
+                context,
+                deferred: deferred.unwrap(),
+                input,
+                planes,
+                target: [render_target],
+                vertex: vertex.unwrap(),
+                fragment: fragment.unwrap(),
+                constants: [constants],
+                presentation: [presentation],
+                width,
+                height,
+                back_buffer: Default::default(),
+                device: device.clone(),
+                mask: Default::default(),
+            })
         }
-        let mut render_target = None;
-        if let Some(target) = target {
-            device.CreateRenderTargetView(target, None, Some(&mut render_target))?;
-        }
-        let vertex_code = compile(include_bytes!("../packed444.hlsl"), s!("vertex"), s!("vs_5_0"))?;
-        let mut vertex = None;
-        device.CreateVertexShader(
-            std::slice::from_raw_parts(
-                vertex_code.GetBufferPointer().cast(),
-                vertex_code.GetBufferSize(),
-            ),
-            None,
-            Some(&mut vertex),
-        )?;
-        let fragment_code = if target.is_some() {
-            compile(include_bytes!("../packed444.hlsl"), s!("fragment"), s!("ps_5_0"))?
-        } else if hdr {
-            compile(include_bytes!("../packed444.hlsl"), s!("present"), s!("ps_5_0"))?
-        } else {
-            let source = [b"#define SDR_PRESENT 1\n".as_slice(), include_bytes!("../packed444.hlsl")].concat();
-            compile(&source, s!("present"), s!("ps_5_0"))?
-        };
-        let mut fragment = None;
-        device.CreatePixelShader(
-            std::slice::from_raw_parts(
-                fragment_code.GetBufferPointer().cast(),
-                fragment_code.GetBufferSize(),
-            ),
-            None,
-            Some(&mut fragment),
-        )?;
-        let mut constants = None;
-        device.CreateBuffer(
-            &D3D11_BUFFER_DESC {
-                ByteWidth: 48,
-                Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
-                ..Default::default()
-            },
-            None,
-            Some(&mut constants),
-        )?;
-        let mut presentation = None;
-        if target.is_none() {
-            device.CreateBuffer(&D3D11_BUFFER_DESC {
-                ByteWidth: PRESENTATION_BYTES, Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default()
-            }, None, Some(&mut presentation))?;
-        }
-        Ok(Self {
-            context,
-            deferred: deferred.unwrap(),
-            input,
-            planes,
-            target: [render_target],
-            vertex: vertex.unwrap(),
-            fragment: fragment.unwrap(),
-            constants: [constants],
-            presentation: [presentation],
-            width,
-            height,
-            back_buffer: Default::default(),
-            device: device.clone(),
-            mask: Default::default(),
-        })
     }
 
     /// Call before SDL runs its queue: a back buffer view for another swap chain or output size goes.
@@ -1064,8 +1092,10 @@ impl Packed {
     #[allow(clippy::too_many_arguments)] // the presentation's own values, passed as they are
     pub unsafe fn present(&self, swapchain: *mut c_void, output: (i32, i32), parameters: &[u32; 12], destination: &[f32; 4], linear: bool, scale: f32,
         warp: &super::frame_warp::WarpDraw) -> bool {
-        let Ok(target) = self.back_buffer.borrow_mut().view(swapchain, output) else { return false; };
-        let mask = self.mask.borrow_mut().view(&self.device, warp);
+        // SAFETY: caller guarantees `swapchain` is the live swap chain on this thread.
+        let Ok(target) = (unsafe { self.back_buffer.borrow_mut().view(swapchain, output) }) else { return false; };
+        // SAFETY: `self.device` is live on this thread.
+        let mask = unsafe { self.mask.borrow_mut().view(&self.device, warp) };
         let (row, lens) = (warp.row(mask.is_some()), warp.lens_row());
         let presentation = [destination[0], destination[1], destination[2], destination[3], u32::from(linear) as f32, scale, 0.0, 0.0,
             row[0], row[1], row[2], row[3], lens[0], lens[1], lens[2], lens[3]];

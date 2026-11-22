@@ -1037,11 +1037,10 @@ impl Streaming {
             let _ = session.send(ClientMessage::PipelineRatesRequest(PipelineRatesRequest { enabled: true, interval_ms: 1000 }));
         }
         // Without the request the PC sends no notices, so the keyboard stays as the user leaves it.
-        if facts.text_input && connecting.settings.keyboard_follows_text_fields {
-            if let Err(error) = session.send(ClientMessage::TextInputRequest(text_field::request())) {
+        if facts.text_input && connecting.settings.keyboard_follows_text_fields
+            && let Err(error) = session.send(ClientMessage::TextInputRequest(text_field::request())) {
                 eprintln!("nightjar: text field: could not ask for notices: {error}");
             }
-        }
         let settings = connecting.settings.clone();
         let mic_refused = connecting.plan.mic_only && !session.microphone_available();
         let facts_host = facts.host_name.clone();
@@ -1377,11 +1376,10 @@ impl Streaming {
     }
 
     fn clipboard_sync_step(&mut self, step: clipboard_sync::Step) {
-        if let Some(message) = step.send {
-            if let Err(error) = self.session.send(message) {
+        if let Some(message) = step.send
+            && let Err(error) = self.session.send(message) {
                 eprintln!("nightjar: clipboard sync: could not send a copy: {error}");
             }
-        }
         if let Some(toast) = step.toast {
             self.show_toast(toast);
         }

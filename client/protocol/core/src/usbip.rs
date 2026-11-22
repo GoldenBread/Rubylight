@@ -339,11 +339,8 @@ impl IsoPacket {
 /// isochronous" marker. None when the payload is too short to hold them.
 pub fn iso_descriptors(payload: &[u8], packets: u32) -> Option<impl Iterator<Item = IsoPacket> + '_> {
     let start = payload.len().checked_sub(iso_packets(packets) as usize * ISO_PACKET_BYTES)?;
-    Some(payload[start..].chunks_exact(ISO_PACKET_BYTES).map(|chunk| {
-        let mut raw = [0; ISO_PACKET_BYTES];
-        raw.copy_from_slice(chunk);
-        IsoPacket::decode(&raw)
-    }))
+    let (chunks, _) = payload[start..].as_chunks::<ISO_PACKET_BYTES>();
+    Some(chunks.iter().map(IsoPacket::decode))
 }
 
 /// Whether a `RET_SUBMIT`'s packets fit the submit's: as many, the same offsets and lengths, no

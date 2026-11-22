@@ -362,34 +362,37 @@ mod queries {
     /// `display` must be an initialized VADisplay.
     unsafe fn query(display: *mut c_void, node: Option<u32>) -> Result<VaapiIdentity, String> {
         let va = libva()?;
-        let vendor = (va.vendor)(display);
-        let vendor = if vendor.is_null() { "unknown".to_owned() } else { CStr::from_ptr(vendor).to_string_lossy().into_owned() };
-        let mut listed = vec![0; (va.max_profiles)(display).max(0) as usize];
-        let mut count = 0;
-        if listed.is_empty() || (va.profiles)(display, listed.as_mut_ptr(), &mut count) != VA_STATUS_SUCCESS {
-            count = 0;
-        }
-        listed.truncate(count.max(0) as usize);
-        let mut entrypoints = vec![0; (va.max_entrypoints)(display).max(0) as usize];
-        let mut profiles = Vec::new();
-        for profile in listed {
-            let mut found = 0;
-            if entrypoints.is_empty()
-                || (va.entrypoints)(display, profile, entrypoints.as_mut_ptr(), &mut found) != VA_STATUS_SUCCESS
-                || !entrypoints[..(found.max(0) as usize).min(entrypoints.len())].contains(&VA_ENTRYPOINT_VLD)
-            {
-                continue;
+        // SAFETY: Caller guarantees `display` is an initialized `VADisplay`.
+        unsafe {
+            let vendor = (va.vendor)(display);
+            let vendor = if vendor.is_null() { "unknown".to_owned() } else { CStr::from_ptr(vendor).to_string_lossy().into_owned() };
+            let mut listed = vec![0; (va.max_profiles)(display).max(0) as usize];
+            let mut count = 0;
+            if listed.is_empty() || (va.profiles)(display, listed.as_mut_ptr(), &mut count) != VA_STATUS_SUCCESS {
+                count = 0;
             }
-            let mut attributes = [VA_CONFIG_ATTRIB_RT_FORMAT, VA_CONFIG_ATTRIB_MAX_PICTURE_WIDTH, VA_CONFIG_ATTRIB_MAX_PICTURE_HEIGHT]
-                .map(|kind| ConfigAttrib { kind, value: VA_ATTRIB_NOT_SUPPORTED });
-            if (va.attributes)(display, profile, VA_ENTRYPOINT_VLD, attributes.as_mut_ptr(), attributes.len() as c_int) != VA_STATUS_SUCCESS {
-                attributes.iter_mut().for_each(|attribute| attribute.value = VA_ATTRIB_NOT_SUPPORTED);
+            listed.truncate(count.max(0) as usize);
+            let mut entrypoints = vec![0; (va.max_entrypoints)(display).max(0) as usize];
+            let mut profiles = Vec::new();
+            for profile in listed {
+                let mut found = 0;
+                if entrypoints.is_empty()
+                    || (va.entrypoints)(display, profile, entrypoints.as_mut_ptr(), &mut found) != VA_STATUS_SUCCESS
+                    || !entrypoints[..(found.max(0) as usize).min(entrypoints.len())].contains(&VA_ENTRYPOINT_VLD)
+                {
+                    continue;
+                }
+                let mut attributes = [VA_CONFIG_ATTRIB_RT_FORMAT, VA_CONFIG_ATTRIB_MAX_PICTURE_WIDTH, VA_CONFIG_ATTRIB_MAX_PICTURE_HEIGHT]
+                    .map(|kind| ConfigAttrib { kind, value: VA_ATTRIB_NOT_SUPPORTED });
+                if (va.attributes)(display, profile, VA_ENTRYPOINT_VLD, attributes.as_mut_ptr(), attributes.len() as c_int) != VA_STATUS_SUCCESS {
+                    attributes.iter_mut().for_each(|attribute| attribute.value = VA_ATTRIB_NOT_SUPPORTED);
+                }
+                let known = |attribute: ConfigAttrib| (attribute.value != VA_ATTRIB_NOT_SUPPORTED).then_some(attribute.value);
+                let max = known(attributes[1]).zip(known(attributes[2]));
+                profiles.push(VaDecodeProfile { profile, rt_format: known(attributes[0]).unwrap_or(0), max });
             }
-            let known = |attribute: ConfigAttrib| (attribute.value != VA_ATTRIB_NOT_SUPPORTED).then_some(attribute.value);
-            let max = known(attributes[1]).zip(known(attributes[2]));
-            profiles.push(VaDecodeProfile { profile, rt_format: known(attributes[0]).unwrap_or(0), max });
+            Ok(VaapiIdentity { node, vendor, profiles })
         }
-        Ok(VaapiIdentity { node, vendor, profiles })
     }
 
     /// The renderer's Vulkan device: its name, driver and the codecs Vulkan video decodes on it.
@@ -397,24 +400,27 @@ mod queries {
     /// # Safety
     /// `gpu` must be null or a live SDL GPU device.
     pub unsafe fn vulkan_identity(gpu: *mut SDL_GPUDevice) -> Result<VulkanIdentity, String> {
-        let sdl = SdlVulkan::of_device(gpu)?;
-        let get_instance_proc_addr = zero_copy::get_instance_proc_addr()?;
-        let instance = ash::Instance::load(&ash::StaticFn { get_instance_proc_addr }, sdl.instance);
-        let mut driver = vk::PhysicalDeviceDriverProperties::default();
-        let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
-        instance.get_physical_device_properties2(sdl.physical_device, &mut properties);
-        let device = text(properties.properties.device_name_as_c_str());
-        let (driver_name, info) = (text(driver.driver_name_as_c_str()), text(driver.driver_info_as_c_str()));
-        let gpu_has = crate::vulkan_video::extensions_of(&instance, sdl.physical_device);
-        let made_with = Extensions(SDL_GetNumberProperty(SDL_GetGPUDeviceProperties(gpu), EXTENSIONS_PROPERTY.as_ptr(), 0) as u32);
-        let mut decode = Vec::new();
-        for codec in [Codec::H264, Codec::Hevc, Codec::Av1] {
-            if gpu_has.decodes(codec) {
-                decode.push((codec, max_coded_extent(get_instance_proc_addr, sdl.instance, sdl.physical_device, codec)));
+        // SAFETY: Caller guarantees `gpu` is null or a live SDL GPU device.
+        unsafe {
+            let sdl = SdlVulkan::of_device(gpu)?;
+            let get_instance_proc_addr = zero_copy::get_instance_proc_addr()?;
+            let instance = ash::Instance::load(&ash::StaticFn { get_instance_proc_addr }, sdl.instance);
+            let mut driver = vk::PhysicalDeviceDriverProperties::default();
+            let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
+            instance.get_physical_device_properties2(sdl.physical_device, &mut properties);
+            let device = text(properties.properties.device_name_as_c_str());
+            let (driver_name, info) = (text(driver.driver_name_as_c_str()), text(driver.driver_info_as_c_str()));
+            let gpu_has = crate::vulkan_video::extensions_of(&instance, sdl.physical_device);
+            let made_with = Extensions(SDL_GetNumberProperty(SDL_GetGPUDeviceProperties(gpu), EXTENSIONS_PROPERTY.as_ptr(), 0) as u32);
+            let mut decode = Vec::new();
+            for codec in [Codec::H264, Codec::Hevc, Codec::Av1] {
+                if gpu_has.decodes(codec) {
+                    decode.push((codec, max_coded_extent(get_instance_proc_addr, sdl.instance, sdl.physical_device, codec)));
+                }
             }
+            let enabled = decode.iter().any(|&(codec, _)| made_with.decodes(codec));
+            Ok(VulkanIdentity { device, driver: driver_name, info, decode, enabled })
         }
-        let enabled = decode.iter().any(|&(codec, _)| made_with.decodes(codec));
-        Ok(VulkanIdentity { device, driver: driver_name, info, decode, enabled })
     }
 
     fn text(name: Result<&CStr, std::ffi::FromBytesUntilNulError>) -> String {
@@ -433,33 +439,36 @@ mod queries {
         codec: Codec,
     ) -> Option<(u32, u32)> {
         use vk::native::*;
-        let fns = ash::khr::video_queue::InstanceFn::load(|name| std::mem::transmute(get_instance_proc_addr(instance, name.as_ptr())));
-        let mut h264 = vk::VideoDecodeH264ProfileInfoKHR::default()
-            .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_HIGH)
-            .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
-        let mut h265 = vk::VideoDecodeH265ProfileInfoKHR::default().std_profile_idc(StdVideoH265ProfileIdc_STD_VIDEO_H265_PROFILE_IDC_MAIN);
-        let mut av1 = vk::VideoDecodeAV1ProfileInfoKHR::default().std_profile(StdVideoAV1Profile_STD_VIDEO_AV1_PROFILE_MAIN);
-        let profile = vk::VideoProfileInfoKHR::default()
-            .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
-            .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
-            .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
-        let profile = match codec {
-            Codec::H264 => profile.video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H264).push_next(&mut h264),
-            Codec::Hevc => profile.video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H265).push_next(&mut h265),
-            Codec::Av1 => profile.video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_AV1).push_next(&mut av1),
-        };
-        let mut h264_caps = vk::VideoDecodeH264CapabilitiesKHR::default();
-        let mut h265_caps = vk::VideoDecodeH265CapabilitiesKHR::default();
-        let mut av1_caps = vk::VideoDecodeAV1CapabilitiesKHR::default();
-        let mut decode_caps = vk::VideoDecodeCapabilitiesKHR::default();
-        let caps = vk::VideoCapabilitiesKHR::default().push_next(&mut decode_caps);
-        let mut caps = match codec {
-            Codec::H264 => caps.push_next(&mut h264_caps),
-            Codec::Hevc => caps.push_next(&mut h265_caps),
-            Codec::Av1 => caps.push_next(&mut av1_caps),
-        };
-        let result = (fns.get_physical_device_video_capabilities_khr)(physical_device, &profile, &mut caps);
-        (result == vk::Result::SUCCESS).then_some((caps.max_coded_extent.width, caps.max_coded_extent.height))
+        // SAFETY: Caller guarantees `physical_device` belongs to `instance`, made with `get_instance_proc_addr`.
+        unsafe {
+            let fns = ash::khr::video_queue::InstanceFn::load(|name| std::mem::transmute(get_instance_proc_addr(instance, name.as_ptr())));
+            let mut h264 = vk::VideoDecodeH264ProfileInfoKHR::default()
+                .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_HIGH)
+                .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
+            let mut h265 = vk::VideoDecodeH265ProfileInfoKHR::default().std_profile_idc(StdVideoH265ProfileIdc_STD_VIDEO_H265_PROFILE_IDC_MAIN);
+            let mut av1 = vk::VideoDecodeAV1ProfileInfoKHR::default().std_profile(StdVideoAV1Profile_STD_VIDEO_AV1_PROFILE_MAIN);
+            let profile = vk::VideoProfileInfoKHR::default()
+                .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
+                .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
+                .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
+            let profile = match codec {
+                Codec::H264 => profile.video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H264).push_next(&mut h264),
+                Codec::Hevc => profile.video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H265).push_next(&mut h265),
+                Codec::Av1 => profile.video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_AV1).push_next(&mut av1),
+            };
+            let mut h264_caps = vk::VideoDecodeH264CapabilitiesKHR::default();
+            let mut h265_caps = vk::VideoDecodeH265CapabilitiesKHR::default();
+            let mut av1_caps = vk::VideoDecodeAV1CapabilitiesKHR::default();
+            let mut decode_caps = vk::VideoDecodeCapabilitiesKHR::default();
+            let caps = vk::VideoCapabilitiesKHR::default().push_next(&mut decode_caps);
+            let mut caps = match codec {
+                Codec::H264 => caps.push_next(&mut h264_caps),
+                Codec::Hevc => caps.push_next(&mut h265_caps),
+                Codec::Av1 => caps.push_next(&mut av1_caps),
+            };
+            let result = (fns.get_physical_device_video_capabilities_khr)(physical_device, &profile, &mut caps);
+            (result == vk::Result::SUCCESS).then_some((caps.max_coded_extent.width, caps.max_coded_extent.height))
+        }
     }
 }
 

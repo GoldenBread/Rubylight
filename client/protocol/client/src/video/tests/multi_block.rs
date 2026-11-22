@@ -29,7 +29,7 @@ impl Blocks {
         let slice = PACKET_SIZE - 16;
         let mut data = vec![1, 0, 0, kind];
         let total = payload.len() + 8;
-        let last = if total % slice == 0 {
+        let last = if total.is_multiple_of(slice) {
             slice
         } else {
             total % slice

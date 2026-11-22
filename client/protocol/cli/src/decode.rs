@@ -27,7 +27,7 @@ pub struct OpenInfo {
 mod ffi {
     use std::ffi::{c_char, c_int, c_uint, c_void};
 
-    extern "C" {
+    unsafe extern "C" {
         #[allow(clippy::too_many_arguments)]
         pub fn nj_decoder_open(
             codec: c_int,

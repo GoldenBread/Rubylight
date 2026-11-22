@@ -255,7 +255,7 @@ impl<T, F: FnMut()> Trip<T, F> {
 
     fn count(&mut self, n: usize) {
         self.after = self.after.saturating_sub(n);
-        if self.after == 0 { if let Some(mut trip) = self.trip.take() { trip(); } }
+        if self.after == 0 && let Some(mut trip) = self.trip.take() { trip(); }
     }
 }
 

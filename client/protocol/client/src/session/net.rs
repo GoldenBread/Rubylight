@@ -545,10 +545,10 @@ impl BatchReceiver {
     /// port-unreachable reports are skipped as in [`receive`].
     pub fn receive(&mut self, socket: &UdpSocket) -> io::Result<usize> {
         #[cfg(windows)]
-        if self.coalesce.is_some() || self.pending.left() > 0 {
-            if let Some(count) = self.receive_coalesced(socket)? {
-                return Ok(count);
-            }
+        if (self.coalesce.is_some() || self.pending.left() > 0)
+            && let Some(count) = self.receive_coalesced(socket)?
+        {
+            return Ok(count);
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {

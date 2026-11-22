@@ -88,7 +88,7 @@ fn atof(text: &str) -> f64 {
 #[cfg(windows)]
 mod clock {
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn QueryPerformanceCounter(count: *mut i64) -> i32;
         fn QueryPerformanceFrequency(frequency: *mut i64) -> i32;
     }
@@ -196,7 +196,7 @@ struct State {
 /// The barcode's age in milliseconds, comparable only on the same Windows machine (both
 /// processes read the performance counter): None elsewhere.
 fn picture_age(host: Option<&str>, ticks: u64) -> Option<f64> {
-    let local = host.map_or(true, |h| h.starts_with("127.") || h == "::1");
+    let local = host.is_none_or(|h| h.starts_with("127.") || h == "::1");
     #[cfg(windows)]
     if local {
         return Some(clock::ms() - ticks as f64 * 1000.0 / clock::frequency());
@@ -489,15 +489,15 @@ impl Decoder {
                 d.transfer()
             );
         }
-        if let Some(path) = &o.frame_dump {
-            if decoded == o.frame_dump_at {
-                d.dump(path);
-                println!(
-                    "FRAME_DUMP frame={} format={}",
-                    o.frame_dump_at,
-                    d.format_name()
-                );
-            }
+        if let Some(path) = &o.frame_dump
+            && decoded == o.frame_dump_at
+        {
+            d.dump(path);
+            println!(
+                "FRAME_DUMP frame={} format={}",
+                o.frame_dump_at,
+                d.format_name()
+            );
         }
         let Some((sequence, ticks)) = self.picture_timestamp(d) else {
             return (0, 0, -1.0);
@@ -538,13 +538,13 @@ impl VideoDecoder for Decoder {
             o.hardware.as_deref(),
             o.hardware_device.as_deref(),
         );
-        if let Some(hardware) = &o.hardware {
-            if !info.hardware_format.is_empty() {
-                println!(
-                    "HARDWARE_DECODER type={hardware} format={}",
-                    info.hardware_format
-                );
-            }
+        if let Some(hardware) = &o.hardware
+            && !info.hardware_format.is_empty()
+        {
+            println!(
+                "HARDWARE_DECODER type={hardware} format={}",
+                info.hardware_format
+            );
         }
         if !info.name.is_empty() {
             println!(
@@ -580,18 +580,18 @@ impl VideoDecoder for Decoder {
             c.fail();
             return DecodeStatus::Ok;
         }
-        if let Some(path) = &o.first_frame_dump {
-            if c.frames.load(Ordering::SeqCst) == 0 {
-                let written = File::create(path).and_then(|mut f| f.write_all(data));
-                if written.is_err() {
-                    c.fail();
-                }
+        if let Some(path) = &o.first_frame_dump
+            && c.frames.load(Ordering::SeqCst) == 0
+        {
+            let written = File::create(path).and_then(|mut f| f.write_all(data));
+            if written.is_err() {
+                c.fail();
             }
         }
-        if self.bitstream.is_none() {
-            if let Some(path) = &o.bitstream {
-                self.bitstream = File::create(path).ok();
-            }
+        if self.bitstream.is_none()
+            && let Some(path) = &o.bitstream
+        {
+            self.bitstream = File::create(path).ok();
         }
         if let Some(file) = &mut self.bitstream {
             let _ = file.write_all(data).and_then(|_| file.flush());
@@ -696,10 +696,10 @@ impl VideoDecoder for Decoder {
             }
             let _ = csv.flush();
         }
-        if let Some(log) = &mut self.frame_warp {
-            if log.csv.flush().is_err() {
-                self.state.counters.fail();
-            }
+        if let Some(log) = &mut self.frame_warp
+            && log.csv.flush().is_err()
+        {
+            self.state.counters.fail();
         }
     }
 }
@@ -1679,7 +1679,7 @@ mod tests {
             sums.1 += i64::from(dy);
             assert_eq!(sums, pattern.sent);
             assert!(sums.1.abs() <= 250, "y {} at {at}", sums.1);
-            if segments.last().map_or(true, |s| s.0 != pattern.segments) {
+            if segments.last().is_none_or(|s| s.0 != pattern.segments) {
                 segments.push((
                     pattern.segments,
                     pattern.start_us,

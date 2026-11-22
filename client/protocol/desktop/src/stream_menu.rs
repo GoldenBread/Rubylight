@@ -559,14 +559,13 @@ pub fn editor(ui: &mut Ui, draft: &mut Draft, saved: &mut Shortcuts, focus_first
         if menu_style::button(ui, tr("Cancel")).clicked() {
             edited = Edited::Cancel;
         }
-        if let Some(id) = draft.id.clone() {
-            if menu_style::button(ui, tr("Delete")).clicked() {
+        if let Some(id) = draft.id.clone()
+            && menu_style::button(ui, tr("Delete")).clicked() {
                 match saved.remove(&id) {
                     Ok(()) => edited = Edited::Changed,
                     Err(error) => draft.error = Some(crate::shortcuts::error_text(&error)),
                 }
             }
-        }
     });
     edited
 }

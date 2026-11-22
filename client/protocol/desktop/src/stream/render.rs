@@ -485,9 +485,8 @@ impl Streaming {
                 eprintln!("nightjar: pacing: {}, the display refreshes on present again (display check: {line})", self.pacer.mode.label());
             }
         }
-        if self.vrr.recheck_due(now) {
-            if let Some(probe) = self.race_probe.as_mut() { probe.recheck(); }
-        }
+        if self.vrr.recheck_due(now)
+            && let Some(probe) = self.race_probe.as_mut() { probe.recheck(); }
         if let Some(interval) = interval {
             // SAFETY: the live renderer belongs to the presenting thread.
             let set = unsafe { SDL_SetRenderVSync(renderer, interval) };
@@ -510,9 +509,8 @@ impl Streaming {
         // it forgets a display an earlier stream found not refreshing on present: Automatic starts
         // afresh there. (A wait that would cost the next picture its turn still presents with sync
         // interval 1, `scan_sync::scan_wait`; that is the wait's own budget, not this verdict.)
-        if wait == crate::config::VrrWait::Scan {
-            if let Some(display) = display { scan_sync::clear_untrusted(display); }
-        }
+        if wait == crate::config::VrrWait::Scan
+            && let Some(display) = display { scan_sync::clear_untrusted(display); }
         let scan = vrr.sync == present::VrrSync::Scan;
         if !scan || vrr.sync_forced { return; }
         let check = probe.restart_check();
@@ -573,13 +571,12 @@ impl Streaming {
         // starts a scan a landing after the last one ends (`scan_sync::scan_wait`). Sync interval
         // 1 shows this picture whole at the next refresh instead, and the present returns there,
         // without a landing after it.
-        if syncs {
-            if let (Some(left), Some(due)) = (beam.scan_left_ns(&sample), due_us) {
+        if syncs
+            && let (Some(left), Some(due)) = (beam.scan_left_ns(&sample), due_us) {
                 let budget_ns = scan_sync::wait_budget_ns(due, self.pacer.frame_us(), session::now_us());
                 let landing_ns = self.scan_tally.landing.median_ns().unwrap_or(scan_sync::TEAR_LANDING_NS);
                 if scan_sync::scan_wait(left, budget_ns, landing_ns) == scan_sync::ScanWait::Latch { return true; }
             }
-        }
         // Until the beam leaves the last row, reading it again after each sleep: at most one scan
         // plus `SCAN_WAIT_SLACK_NS`, since a reading can be wrong (`scan_sync::wait_out`).
         let begun = Instant::now();
@@ -965,8 +962,11 @@ impl Streaming {
 
     #[cfg(not(target_os = "linux"))]
     unsafe fn clear_window(&mut self, renderer: *mut SDL_Renderer, _unscaled: bool) {
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
+        // SAFETY: caller guarantees `renderer` is live on the calling thread.
+        unsafe {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+        }
     }
 
     /// The render state `draw_overlay` in app/overlay.rs hands egui's painter for this frame: null unless

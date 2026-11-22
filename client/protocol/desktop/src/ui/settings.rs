@@ -564,11 +564,10 @@ impl Launcher {
         let bottom = column.min_rect().bottom().max(side_bottom);
         ui.advance_cursor_after_rect(Rect::from_min_max(page.min, Pos2::new(page.right(), bottom)));
         if self.screen == screen {
-            if std::mem::take(&mut self.settings_view.focus_rows) {
-                if let Some(&(_, entry)) = entries.iter().find(|&&(name, _)| name == self.settings_view.section) {
+            if std::mem::take(&mut self.settings_view.focus_rows)
+                && let Some(&(_, entry)) = entries.iter().find(|&&(name, _)| name == self.settings_view.section) {
                     ui.memory_mut(|m| m.request_focus(entry));
                 }
-            }
             self.left_to_sections(ui, rows_rect, &entries);
         }
     }
@@ -1846,9 +1845,8 @@ impl Launcher {
                 setting_row(ui, s, &mut rows, &[], "PIN lock", "Asks for a PIN to open Nightjar or to start a stream.", |ui, _| {
                     let set = self.pin.as_ref().is_some_and(|p| p.store.has_pin());
                     let button = quiet_button(ui, if set { en("Change PIN lock") } else { en("Set up") });
-                    if button.clicked() {
-                        if let Some(pin) = self.pin.as_mut() { pin.open_settings(); }
-                    }
+                    if button.clicked()
+                        && let Some(pin) = self.pin.as_mut() { pin.open_settings(); }
                     button
                 });
                 rows.action("help");

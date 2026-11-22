@@ -457,11 +457,10 @@ impl Drop for Poller {
         let (state, wake) = &*self.state;
         lock(state).quit = true;
         wake.notify_one();
-        if let Some(thread) = self.thread.take() {
-            if thread.join().is_err() {
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err() {
                 eprintln!("nightjar: the controller thread panicked");
             }
-        }
     }
 }
 

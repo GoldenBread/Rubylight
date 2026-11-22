@@ -131,7 +131,7 @@ impl LateFrames {
             waiting.first_sent_us = Some(first_sent_us);
         } else if self
             .last
-            .map_or(true, |last| frame.wrapping_sub(last.frame) as i32 > 0)
+            .is_none_or(|last| frame.wrapping_sub(last.frame) as i32 > 0)
         {
             if self.early.len() == MAX_EARLY {
                 self.early.pop_front();

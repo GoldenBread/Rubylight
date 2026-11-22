@@ -163,11 +163,10 @@ impl Secrets {
         if let std::borrow::Cow::Owned(replaced) = PIN.replace_all(&text, "${1}${2}[omitted]") {
             text = replaced;
         }
-        if text.to_lowercase().contains("pair") {
-            if let std::borrow::Cow::Owned(replaced) = SHORT_NUMBER.replace_all(&text, "[omitted]")
-            {
-                text = replaced;
-            }
+        if text.to_lowercase().contains("pair")
+            && let std::borrow::Cow::Owned(replaced) = SHORT_NUMBER.replace_all(&text, "[omitted]")
+        {
+            text = replaced;
         }
         text
     }

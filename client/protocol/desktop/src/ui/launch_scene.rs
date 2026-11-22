@@ -117,11 +117,10 @@ impl Launcher {
 
     /// Runs the card's network test; `waker` wakes the app once it is done.
     pub fn test_connection(&mut self, waker: crate::hosts::Waker) {
-        if let Dialog::ConnectFailed { test, .. } = &mut self.dialog {
-            if !matches!(test, CardTest::Running(_)) {
+        if let Dialog::ConnectFailed { test, .. } = &mut self.dialog
+            && !matches!(test, CardTest::Running(_)) {
                 *test = CardTest::Running(conn_test::start(waker));
             }
-        }
     }
 
     /// Whether the launch scene covers the launcher: a start under way, or the card of one that failed.
@@ -134,15 +133,14 @@ impl Launcher {
         let ctx = ui.ctx().clone();
         let screen = ctx.content_rect();
         // The test's answer, once it is in.
-        if let Dialog::ConnectFailed { test, .. } = &mut self.dialog {
-            if let CardTest::Running(answer) = test {
+        if let Dialog::ConnectFailed { test, .. } = &mut self.dialog
+            && let CardTest::Running(answer) = test {
                 match answer.try_recv() {
                     Ok(outcome) => *test = CardTest::Done(outcome),
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => *test = CardTest::Done(conn_test::Outcome::Unknown),
                     Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 }
             }
-        }
         // A start under way is shown over the card of one that failed before it.
         let failed = match (&view.connecting, &self.dialog) {
             (None, Dialog::ConnectFailed { launch, body, settings, test }) => Some((launch.clone(), body.clone(), settings.clone(), match test {

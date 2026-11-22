@@ -22,7 +22,7 @@ The Windows host, the Moonlight protocol implementation, native helpers, the ser
 | [Display driver](../rust/drivers/rubylight-vdisplay) | Rubylight's IddCx virtual-display driver. A workspace of its own, built with the MSVC toolchain and the Windows Driver Kit; [its ring protocol](../rust/drivers/rubylight-vdisplay-proto) is shared with the host. |
 | [Virtual gamepad driver](../rust/drivers/rubylight-vgamepad) | Rubylight's UMDF2 VHF virtual gamepad driver. A workspace of its own, built with the MSVC toolchain and the Windows Driver Kit; [its protocol and profiles](../rust/drivers/rubylight-vgamepad-proto) are shared with the host. |
 | [NGX adapter](../rust/truehdr-runtime) | Part of the NVIDIA component, an unsigned archive the console downloads at the user's request: an MSVC DLL that calls NVIDIA's NGX for RTX HDR and RTX Video enhancement, which the host loads at run time from the component's folder after checking every file there. A workspace of its own ([NVENC](nvenc.md#rtx-hdr-and-rtx-video-enhancement)). |
-| [Native API types](../rust/core/native-api) | The wire types of the [native API](native-api.md), versioned on their own and shared with Nightjar. |
+| [Native API types](../client/protocol/native-api) | The wire types of the [native API](native-api.md), versioned on their own and shared with Nightjar. |
 | [Web console](../rust/web) | Devices, games, settings, stream statistics, logs and maintenance. |
 | [Vulkan layer](../rust/vulkan-layer) | Native HDR integration for Vulkan games. |
 | [Probes](../rust/probes) | The diagnostic probes the package ships: encoder throughput, error correction and video packetization. |

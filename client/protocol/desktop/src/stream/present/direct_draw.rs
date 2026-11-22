@@ -67,7 +67,8 @@ impl VideoTexture {
     #[cfg(target_os = "linux")]
     pub unsafe fn ui_draws_pq(&mut self, renderer: *mut SDL_Renderer) -> bool {
         if self.ui_pq.is_none() && !self.ui_pq_failed {
-            match super::super::ui_pq::UiPq::new(renderer) {
+            // SAFETY: Caller guarantees `renderer` is the live renderer of the presenting thread.
+            match unsafe { super::super::ui_pq::UiPq::new(renderer) } {
                 Ok(ui) => self.ui_pq = Some(ui),
                 Err(error) => {
                     self.ui_pq_failed = true;
@@ -86,7 +87,8 @@ impl VideoTexture {
     #[cfg(target_os = "linux")]
     pub unsafe fn ui_pq_state(&mut self, renderer: *mut SDL_Renderer) -> *mut SDL_GPURenderState {
         match self.ui_pq.as_mut().filter(|_| self.pq_target) {
-            Some(ui) => ui.state(renderer),
+            // SAFETY: Caller guarantees `renderer` is the live renderer of the presenting thread.
+            Some(ui) => unsafe { ui.state(renderer) },
             None => std::ptr::null_mut(),
         }
     }
@@ -165,11 +167,10 @@ impl VideoTexture {
     #[cfg(windows)]
     pub(super) fn finish_direct(&mut self) {
         let Some(DirectPlanes { source: PlanesHold::Lease { lease, .. }, .. }) = self.direct_planes.take() else { return };
-        if let Some(pass) = &self.planes {
-            if let Err(error) = pass.give_back(&lease) {
+        if let Some(pass) = &self.planes
+            && let Err(error) = pass.give_back(&lease) {
                 eprintln!("nightjar: {error}");
             }
-        }
     }
 
     /// Draws the current picture's waiting planes into the video texture, once, for what reads
@@ -271,12 +272,11 @@ impl VideoTexture {
         match drawn {
             Ok(()) => {
                 self.say_planes_path(true, what);
-                if let Some(picture) = self.direct_planes.as_mut() {
-                    if matches!(picture.source, PlanesHold::Lease { .. }) && !std::mem::replace(&mut picture.timed, true) {
+                if let Some(picture) = self.direct_planes.as_mut()
+                    && matches!(picture.source, PlanesHold::Lease { .. }) && !std::mem::replace(&mut picture.timed, true) {
                         self.pyrowave_stages.add(super::super::pyrowave_gpu::PASSES, step);
                         self.pyrowave_stages.commit();
                     }
-                }
                 true
             }
             Err(error) => {

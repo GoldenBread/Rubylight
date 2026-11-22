@@ -103,48 +103,51 @@ impl Spatial {
         info: &FrameInfo,
     ) -> Option<*mut SDL_Texture> {
         let parameters = conversion(info);
-        let output = nj_metalfx_draw(self.context, buffer, parameters.as_ptr(), &mut self.gpu_ms);
-        if output.is_null() {
-            return None;
+        // SAFETY: Caller keeps the decoded picture `buffer` alive until this synchronous GPU submission completes.
+        unsafe {
+            let output = nj_metalfx_draw(self.context, buffer, parameters.as_ptr(), &mut self.gpu_ms);
+            if output.is_null() {
+                return None;
+            }
+            let props = SDL_CreateProperties();
+            SDL_SetNumberProperty(
+                props,
+                SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
+                SDL_PIXELFORMAT_BGRA32.0.into(),
+            );
+            SDL_SetNumberProperty(
+                props,
+                SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER,
+                self.output.0.into(),
+            );
+            SDL_SetNumberProperty(
+                props,
+                SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER,
+                self.output.1.into(),
+            );
+            SDL_SetNumberProperty(
+                props,
+                SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER,
+                SDL_COLORSPACE_SRGB.0.into(),
+            );
+            SDL_SetPointerProperty(
+                props,
+                SDL_PROP_TEXTURE_CREATE_METAL_PIXELBUFFER_POINTER,
+                output,
+            );
+            let texture = SDL_CreateTextureWithProperties(renderer, props);
+            SDL_DestroyProperties(props);
+            if texture.is_null() {
+                nj_metalfx_buffer_free(output);
+                return None;
+            }
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+            SDL_DestroyTexture(self.texture);
+            nj_metalfx_buffer_free(self.buffer);
+            self.texture = texture;
+            self.buffer = output;
+            Some(texture)
         }
-        let props = SDL_CreateProperties();
-        SDL_SetNumberProperty(
-            props,
-            SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
-            SDL_PIXELFORMAT_BGRA32.0.into(),
-        );
-        SDL_SetNumberProperty(
-            props,
-            SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER,
-            self.output.0.into(),
-        );
-        SDL_SetNumberProperty(
-            props,
-            SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER,
-            self.output.1.into(),
-        );
-        SDL_SetNumberProperty(
-            props,
-            SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER,
-            SDL_COLORSPACE_SRGB.0.into(),
-        );
-        SDL_SetPointerProperty(
-            props,
-            SDL_PROP_TEXTURE_CREATE_METAL_PIXELBUFFER_POINTER,
-            output,
-        );
-        let texture = SDL_CreateTextureWithProperties(renderer, props);
-        SDL_DestroyProperties(props);
-        if texture.is_null() {
-            nj_metalfx_buffer_free(output);
-            return None;
-        }
-        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
-        SDL_DestroyTexture(self.texture);
-        nj_metalfx_buffer_free(self.buffer);
-        self.texture = texture;
-        self.buffer = output;
-        Some(texture)
     }
 }
 

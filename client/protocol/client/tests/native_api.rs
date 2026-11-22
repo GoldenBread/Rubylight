@@ -26,8 +26,8 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex, OnceLock};
 
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/native-api");
-const NAMES: [&str; 10] = [
+const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../native-api/tests/fixtures");
+const NAMES: [&str; 17] = [
     "capabilities",
     "library",
     "session",
@@ -38,6 +38,13 @@ const NAMES: [&str; 10] = [
     "wake",
     "audio",
     "audio_write",
+    "files",
+    "folder_entries",
+    "folders",
+    "neural",
+    "pairing_requests",
+    "power",
+    "update",
 ];
 
 fn fixture(name: &str) -> String {
@@ -88,7 +95,7 @@ fn the_hosts_fixtures_parse_and_write_back() {
     let error: ErrorBody = round_trip("error");
     assert_eq!(error.error.code, ErrorCode::HostControlRequired);
     let wake: Wake = round_trip("wake");
-    assert_eq!(wake.primary.as_deref(), Some("02:7c:16:b4:13:4f"));
+    assert_eq!(wake.primary.as_deref(), Some("02:7C:16:B4:13:4F"));
     assert_eq!(
         (wake.targets[0].kind, wake.targets[0].state),
         (AdapterKind::Ethernet, TargetState::Ready)
@@ -456,7 +463,9 @@ fn every_call_reaches_its_path_with_the_certificate_and_the_content_type() {
             "session",
             "session.close_game",
             "radeon.read",
-            "radeon.write"
+            "radeon.write",
+            "files.upload",
+            "files.download"
         ]
     );
     assert_eq!(client.library().unwrap().library.games[0].title, "Dota 2");
@@ -559,7 +568,7 @@ fn the_couch_menu_posts_open_and_wake_reads_the_targets() {
             .iter()
             .map(|target| target.mac.as_str())
             .collect::<Vec<_>>(),
-        ["02:7c:16:b4:13:4f", "02:e0:4c:68:00:01"]
+        ["02:7C:16:B4:13:4F", "02:E0:4C:68:00:01"]
     );
 
     let seen = host.seen.lock().unwrap();

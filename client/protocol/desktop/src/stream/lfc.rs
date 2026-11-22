@@ -352,8 +352,8 @@ impl Keeper {
         if due > shown + expected.unwrap_or(0) + 2 * floor {
             return None;
         }
-        if let Some(next) = next_picture_us {
-            if next <= due + clear {
+        if let Some(next) = next_picture_us
+            && next <= due + clear {
                 // The repeat would still be scanned when the picture is due.
                 if next + GUARD_US <= last + floor {
                     // The picture comes before the panel's own refresh: nothing to do.
@@ -363,7 +363,6 @@ impl Keeper {
                 // then. A panel with room for a repeat has it after the last scan as well.
                 due = next.saturating_sub(clear);
             }
-        }
         Some(due.max(last + clear))
     }
 

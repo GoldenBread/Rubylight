@@ -1240,28 +1240,52 @@ unsafe fn enet_protocol_handle_acknowledge<S: Socket>(
     };
     if (*peer).last_receive_time > 0_i32 as u32 {
         enet_peer_throttle(peer, round_trip_time);
-        // Nightjar: rounded up like moonlight-common-c's ENet fork, so the smoothed round trip
-        // time converges on the samples. Upstream's truncating division stops moving once a
-        // sample is within 7 ms of the mean, which left a stream at 7 to 8 ms on a 2 ms link.
-        (*peer).round_trip_time_variance = (*peer).round_trip_time_variance.wrapping_sub(
-            ((*peer).round_trip_time_variance.wrapping_add(3_i32 as u32)).wrapping_div(4_i32 as u32),
-        );
-        if round_trip_time >= (*peer).round_trip_time {
-            let diff: u32 = round_trip_time.wrapping_sub((*peer).round_trip_time);
-            (*peer).round_trip_time_variance = (*peer)
-                .round_trip_time_variance
-                .wrapping_add(diff.wrapping_add(3_i32 as u32).wrapping_div(4_i32 as u32));
-            (*peer).round_trip_time = (*peer)
-                .round_trip_time
-                .wrapping_add(diff.wrapping_add(7_i32 as u32).wrapping_div(8_i32 as u32));
+        if (*host).round_up_srtt {
+            // Nightjar: rounded up like moonlight-common-c's ENet fork, so the smoothed round trip
+            // time converges on the samples. Upstream's truncating division stops moving once a
+            // sample is within 7 ms of the mean, which left a stream at 7 to 8 ms on a 2 ms link.
+            (*peer).round_trip_time_variance = (*peer).round_trip_time_variance.wrapping_sub(
+                ((*peer).round_trip_time_variance.wrapping_add(3_i32 as u32))
+                    .wrapping_div(4_i32 as u32),
+            );
+            if round_trip_time >= (*peer).round_trip_time {
+                let diff: u32 = round_trip_time.wrapping_sub((*peer).round_trip_time);
+                (*peer).round_trip_time_variance = (*peer)
+                    .round_trip_time_variance
+                    .wrapping_add(diff.wrapping_add(3_i32 as u32).wrapping_div(4_i32 as u32));
+                (*peer).round_trip_time = (*peer)
+                    .round_trip_time
+                    .wrapping_add(diff.wrapping_add(7_i32 as u32).wrapping_div(8_i32 as u32));
+            } else {
+                let diff_0: u32 = ((*peer).round_trip_time).wrapping_sub(round_trip_time);
+                (*peer).round_trip_time_variance = (*peer)
+                    .round_trip_time_variance
+                    .wrapping_add(diff_0.wrapping_add(3_i32 as u32).wrapping_div(4_i32 as u32));
+                (*peer).round_trip_time = (*peer)
+                    .round_trip_time
+                    .wrapping_sub(diff_0.wrapping_add(7_i32 as u32).wrapping_div(8_i32 as u32));
+            }
         } else {
-            let diff_0: u32 = ((*peer).round_trip_time).wrapping_sub(round_trip_time);
             (*peer).round_trip_time_variance = (*peer)
                 .round_trip_time_variance
-                .wrapping_add(diff_0.wrapping_add(3_i32 as u32).wrapping_div(4_i32 as u32));
-            (*peer).round_trip_time = (*peer)
-                .round_trip_time
-                .wrapping_sub(diff_0.wrapping_add(7_i32 as u32).wrapping_div(8_i32 as u32));
+                .wrapping_sub(((*peer).round_trip_time_variance).wrapping_div(4_i32 as u32));
+            if round_trip_time >= (*peer).round_trip_time {
+                let diff: u32 = round_trip_time.wrapping_sub((*peer).round_trip_time);
+                (*peer).round_trip_time_variance = (*peer)
+                    .round_trip_time_variance
+                    .wrapping_add(diff.wrapping_div(4_i32 as u32));
+                (*peer).round_trip_time = (*peer)
+                    .round_trip_time
+                    .wrapping_add(diff.wrapping_div(8_i32 as u32));
+            } else {
+                let diff_0: u32 = ((*peer).round_trip_time).wrapping_sub(round_trip_time);
+                (*peer).round_trip_time_variance = (*peer)
+                    .round_trip_time_variance
+                    .wrapping_add(diff_0.wrapping_div(4_i32 as u32));
+                (*peer).round_trip_time = (*peer)
+                    .round_trip_time
+                    .wrapping_sub(diff_0.wrapping_div(8_i32 as u32));
+            }
         }
     } else {
         (*peer).round_trip_time = round_trip_time;
@@ -1301,6 +1325,8 @@ unsafe fn enet_protocol_handle_acknowledge<S: Socket>(
         1_i32 as u32
     };
     (*peer).earliest_timeout = 0_i32 as u32;
+    // Rubylight: see enet_protocol_resend_after_silence.
+    (*peer).resent_since_acknowledge = false;
     let received_reliable_sequence_number =
         u16::from_be((*command).acknowledge.received_reliable_sequence_number) as u32;
     let command_number = enet_protocol_remove_sent_reliable_command(
@@ -1387,6 +1413,83 @@ unsafe fn enet_protocol_handle_verify_connect<S: Socket>(
     enet_protocol_notify_connect(host, peer, event);
     0_i32
 }
+// Rubylight: a peer heard from again after a silence of two ping intervals or more, such as a
+// network outage, gets its outstanding reliable commands resent right away. Their timeouts
+// doubled while it was silent and would otherwise hold them back for about as long as the
+// silence lasted (RFC 6069 reverts TCP's backoff after a connectivity disruption the same
+// way). Each backed-off command restarts from the base timeout, round trip time plus four
+// variances (from before the silence, so a slower path after it can cost a resend or two more);
+// its send attempts and the peer's earliest timeout stay, so ENet disconnects the peer when it
+// would have anyway. The timeouts restart once until the peer acknowledges something: a path
+// to the peer that stays dead while the peer's datagrams come and go gets one restart of the
+// doubling, not one per silence. A connected peer is heard from at least every ping interval,
+// so normal loss doesn't make a silence this long and resends exactly as stock ENet.
+unsafe fn enet_protocol_resend_after_silence<S: Socket>(
+    host: *mut ENetHost<S>,
+    peer: *mut ENetPeer<S>,
+) {
+    let now = (*host).service_time;
+    let last = (*peer).last_datagram_time;
+    (*peer).last_datagram_time = if now > 1 { now } else { 1 };
+    if !(*peer).resend_after_silence
+        || (*peer).resent_since_acknowledge
+        || last == 0
+        || enet_time_difference(now, last) < (*peer).ping_interval.saturating_mul(2)
+    {
+        return;
+    }
+    let base = ((*peer).round_trip_time)
+        .wrapping_add(4_u32.wrapping_mul((*peer).round_trip_time_variance));
+    let mut rearmed = false;
+    for list in [
+        core::ptr::addr_of_mut!((*peer).sent_reliable_commands),
+        core::ptr::addr_of_mut!((*peer).outgoing_send_reliable_commands),
+        core::ptr::addr_of_mut!((*peer).outgoing_commands),
+    ] {
+        let sentinel = core::ptr::addr_of_mut!((*list).sentinel);
+        let mut current = (*sentinel).next;
+        while current != sentinel {
+            let command: *mut ENetOutgoingCommand = current.cast();
+            current = (*current).next;
+            if (*command).round_trip_timeout > base {
+                (*command).round_trip_timeout = base;
+                rearmed = true;
+            }
+        }
+    }
+    if !rearmed {
+        return;
+    }
+    (*peer).resent_since_acknowledge = true;
+    // The sent list is in send order, not timeout order: the next check is due when the first
+    // of its commands is.
+    let sentinel = core::ptr::addr_of_mut!((*peer).sent_reliable_commands.sentinel);
+    let mut current = (*sentinel).next;
+    let mut next_timeout = None;
+    while current != sentinel {
+        let command: *mut ENetOutgoingCommand = current.cast();
+        current = (*current).next;
+        let due = ((*command).sent_time).wrapping_add((*command).round_trip_timeout);
+        next_timeout = match next_timeout {
+            Some(next) if !enet_time_less(due, next) => Some(next),
+            _ => Some(due),
+        };
+    }
+    if let Some(next_timeout) = next_timeout {
+        (*peer).next_timeout = next_timeout;
+    }
+}
+// Rubylight: ENET_TIME_LESS and ENET_TIME_DIFFERENCE.
+fn enet_time_less(a: u32, b: u32) -> bool {
+    a.wrapping_sub(b) >= 86400000
+}
+fn enet_time_difference(a: u32, b: u32) -> u32 {
+    if enet_time_less(a, b) {
+        b.wrapping_sub(a)
+    } else {
+        a.wrapping_sub(b)
+    }
+}
 unsafe fn enet_protocol_handle_incoming_commands<S: Socket>(
     host: *mut ENetHost<S>,
     event: *mut ENetEvent<S>,
@@ -1422,11 +1525,25 @@ unsafe fn enet_protocol_handle_incoming_commands<S: Socket>(
         return false;
     } else {
         peer = ((*host).peers).offset(peer_id as isize);
-        // Nightjar: no check that the datagram comes from the peer's address, as in
-        // moonlight-common-c's ENet fork (cf38f85, "Be more lenient with the expected peer
-        // address for multi-homed hosts"). The peer follows the source below.
+        // Nightjar: when `lenient_peer_address` is set, skip the check that the datagram comes
+        // from the peer's address, as in moonlight-common-c's ENet fork (cf38f85, "Be more
+        // lenient with the expected peer address for multi-homed hosts"); the peer follows the
+        // source below. Otherwise preserve stock ENet strict address matching (Issue #54).
         if (*peer).state == ENET_PEER_STATE_DISCONNECTED as i32 as u32
             || (*peer).state == ENET_PEER_STATE_ZOMBIE as i32 as u32
+            || (!(*host).lenient_peer_address
+                && !(*host)
+                    .received_address
+                    .assume_init_ref()
+                    .as_ref()
+                    .unwrap()
+                    .same((*peer).address.assume_init_ref().as_ref().unwrap())
+                && !(*peer)
+                    .address
+                    .assume_init_ref()
+                    .as_ref()
+                    .unwrap()
+                    .is_broadcast())
             || ((*peer).outgoing_peer_id as i32) < PROTOCOL_MAXIMUM_PEER_ID as i32
                 && session_id as i32 != (*peer).incoming_session_id as i32
         {
@@ -1506,6 +1623,7 @@ unsafe fn enet_protocol_handle_incoming_commands<S: Socket>(
         (*peer).incoming_data_total = ((*peer).incoming_data_total as usize)
             .wrapping_add((*host).received_data_length)
             as u32;
+        enet_protocol_resend_after_silence(host, peer);
     }
     current_data = ((*host).received_data).add(header_size);
     while current_data < ((*host).received_data).add((*host).received_data_length) {
@@ -1781,7 +1899,11 @@ unsafe fn enet_protocol_check_timeouts<S: Socket>(
             } else {
                 ((*host).service_time).wrapping_sub((*peer).earliest_timeout)
             }) >= (*peer).timeout_maximum
-                || (1_i32 << ((*outgoing_command).send_attempts as i32 - 1_i32)) as u32
+                // Rubylight: saturates, resends after a silence can take a command past 32
+                // attempts.
+                || 1_u32
+                    .checked_shl(((*outgoing_command).send_attempts as u32).wrapping_sub(1))
+                    .unwrap_or(u32::MAX)
                     >= (*peer).timeout_limit
                     && (if ((*host).service_time).wrapping_sub((*peer).earliest_timeout)
                         >= 86400000_i32 as u32

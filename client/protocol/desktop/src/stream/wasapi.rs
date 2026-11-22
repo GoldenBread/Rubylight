@@ -141,11 +141,10 @@ pub struct Queue {
 pub(super) fn fill(queue: &mut Queue, out: &mut [f32]) {
     let needed = out.len() / CHANNELS;
     let queued = queue.pcm.len() / CHANNELS;
-    if queued < needed {
-        if let Some(playout) = queue.playout.clone() {
+    if queued < needed
+        && let Some(playout) = queue.playout.clone() {
             queue.pcm.extend(lock(&playout).starve(needed - queued));
         }
-    }
     let n = out.len().min(queue.pcm.len());
     for (sample, queued) in out.iter_mut().zip(queue.pcm.drain(..n)) {
         *sample = queued;

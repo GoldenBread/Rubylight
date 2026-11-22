@@ -1,8 +1,8 @@
 //! Wire types of the Rubylight native API v1.
 //!
 //! The host serves them under [`PREFIX`] and Nightjar's `nightjar-core` reads
-//! them, so this crate depends on `serde` only and builds under edition 2021
-//! and Rust 1.80. The contract is `docs/native-api.md`.
+//! them, so this crate depends on `serde` only. The contract is
+//! `docs/native-api.md`.
 //!
 //! Changes within v1 are additive: response types ignore unknown fields,
 //! enums decode values they don't know as `Unknown`, and request types reject

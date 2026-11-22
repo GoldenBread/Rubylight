@@ -605,11 +605,10 @@ fn hotkey_action(scancode: SDL_Scancode, mods: SDL_Keymod) -> Option<Action> {
 
 /// What a key press does in `scope`, by its physical key and the modifiers held.
 pub fn key_action(scope: Scope, scancode: SDL_Scancode, mods: SDL_Keymod) -> Option<Action> {
-    if scope == Scope::Stream {
-        if let Some(action) = hotkey_action(scancode, mods) {
+    if scope == Scope::Stream
+        && let Some(action) = hotkey_action(scancode, mods) {
             return Some(action);
         }
-    }
     KEYS.iter().filter(|b| b.scope.covers(scope))
         .find(|b| b.chords.iter().any(|c| c.key.scancode() == Some(scancode) && c.held(mods))).map(|b| b.action)
 }

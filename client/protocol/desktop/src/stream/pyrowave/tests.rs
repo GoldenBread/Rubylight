@@ -382,11 +382,10 @@ fn race_frame(race: &mut Race, order: &[u32], chunks: bool) -> (RaceReport, Vec<
     for packet in order.chunks(40) {
         race.plan.packet();
         for &index in packet { race.plan.record(index); }
-        if race.slicing {
-            if let Some(due) = race.plan.due() {
+        if race.slicing
+            && let Some(due) = race.plan.due() {
                 race.bands.push(BandReady { slice: due.slice as u8, first_row: due.first_row, end_row: due.end_row, fence_value: 1, ready_us: 10 });
             }
-        }
     }
     race.plan.finish();
     race.finish(2, 20, chunks)

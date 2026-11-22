@@ -1,16 +1,28 @@
-# rusty_enet 0.4.0 (MIT, https://github.com/jabuwu/rusty_enet), changed in these ways only. Used
-# by path from protocol/client/Cargo.toml.
+# rusty_enet 0.4.0 (MIT, https://github.com/jabuwu/rusty_enet), changed in these ways only. Shared
+# by the Rubylight host (through `[patch.crates-io]` in the root Cargo.toml) and Nightjar (by path
+# from protocol/client/Cargo.toml).
 # - src/c/protocol.rs, the round trip smoothing in the acknowledgement handler (marked
-#   "Nightjar"): five divisions round up like moonlight-common-c's ENet fork, so the smoothed
-#   round trip time converges on the samples. Variance decay: (v + 3) / 4 instead of v / 4.
-#   Variance step, both directions: (diff + 3) / 4 instead of diff / 4. Mean step, both
-#   directions: (diff + 7) / 8 instead of diff / 8.
-# - src/c/protocol.rs, enet_protocol_handle_incoming_commands (marked "Nightjar"): no check that
-#   a datagram comes from the peer's address, as in moonlight-common-c's ENet fork (cf38f85,
-#   "Be more lenient with the expected peer address for multi-homed hosts"); the peer follows
-#   the source. A multi-homed host may answer from another address than the one connected to.
-# - src/peer.rs: `Peer::has_unsent_reliable` added (marked "Nightjar addition"), so the driver can
-#   keep input merging in its own queue while the reliable window is full (nightjar#97).
+#   "Nightjar", gated by `HostSettings::round_up_srtt`, off by default): five divisions round up
+#   like moonlight-common-c's ENet fork, so the smoothed round trip time converges on the samples.
+#   Variance decay: (v + 3) / 4 instead of v / 4. Variance step, both directions: (diff + 3) / 4
+#   instead of diff / 4. Mean step, both directions: (diff + 7) / 8 instead of diff / 8.
+# - src/c/protocol.rs, enet_protocol_handle_incoming_commands (marked "Nightjar", gated by
+#   `HostSettings::lenient_peer_address`, off by default): skips the check that a datagram comes
+#   from the peer's address, as in moonlight-common-c's ENet fork (cf38f85, "Be more lenient with
+#   the expected peer address for multi-homed hosts"); the peer follows the source.
+# - src/host.rs & src/peer.rs: `Host::next_service_in` / `Peer::next_service_time` and
+#   `Peer::has_unsent_reliable` added (marked "Nightjar addition"), so the driver can keep input
+#   merging in its own queue while the reliable window is full (nightjar#97).
+# - Resend after a silence (marked "Rubylight", off unless `Peer::set_resend_after_silence` turns
+#   it on): when a peer is heard from again after two ping intervals or more without a datagram,
+#   src/c/protocol.rs (enet_protocol_resend_after_silence, called from
+#   enet_protocol_handle_incoming_commands) lowers the backed-off retransmission timeouts of its
+#   outstanding reliable commands to round trip time plus four variances, so they go out with the
+#   next send instead of up to an outage later; once until the peer acknowledges something
+#   (enet_protocol_handle_acknowledge). src/c/peer.rs adds the three peer fields, cleared on
+#   reset; src/peer.rs the setter. The wire protocol is unchanged.
+# - src/c/protocol.rs, enet_protocol_check_timeouts: the `1 << (send_attempts - 1)` disconnect
+#   test saturates instead of overflowing past 32 attempts, which the resends can reach.
 # - src/time.rs `monotonic_time` and src/host.rs: `HostSettings::default().time` is the monotonic
 #   clock (Instant since the first call) instead of the wall clock, which an NTP adjustment or a
 #   clock step moves backward and makes every reliable command look overdue.

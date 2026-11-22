@@ -1,9 +1,9 @@
 [workspace]
-members = ["core", "client", "ffi", "cli", "android", "desktop", "policy", "traverse"]
+members = ["core", "native-api", "client", "ffi", "cli", "android", "desktop", "policy", "traverse"]
 # The desktop client needs SDL3 and FFmpeg; plain `cargo test` here stays the engine's.
-default-members = ["core", "client", "ffi", "cli", "android", "policy", "traverse"]
+default-members = ["core", "native-api", "client", "ffi", "cli", "android", "policy", "traverse"]
 exclude = ["vendor/sdl3-src"]
-resolver = "2"
+resolver = "3"
 
 # SDL 3.4.20 with the Vulkan interop patch PyroWave GPU decoding shares the renderer's device
 # through (vendor/sdl3-src/README.md). Only the Linux desktop client builds SDL from source.
@@ -12,9 +12,19 @@ sdl3-src = { path = "vendor/sdl3-src" }
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "GPL-3.0-only"
-rust-version = "1.80"
+rust-version = "1.91"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+# Set in protocol/.cargo/config.toml for aarch64 and checked in client/src/crypto.rs.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(aes_armv8)', 'cfg(polyval_armv8)'] }
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
 
 # The Android library has no unwinder; a panic aborts like a C assert would.
 [profile.release]

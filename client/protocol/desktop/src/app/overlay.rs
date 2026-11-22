@@ -278,9 +278,8 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                 // Disabled until the PC said what it counts the stream's bitrate as.
                                 let locked = rates.bitrate_locked();
                                 let mut apply = stream::menu_extras::bitrate_slider(ui, &mut rates.menu_kbps, !busy && !locked);
-                                if let Some(mut keep) = kept {
-                                    if menu_style::switch(ui, Icon::Gauge, tr("Keep my bitrate"), &mut keep).changed() { keep_to = Some(keep); }
-                                }
+                                if let Some(mut keep) = kept
+                                    && menu_style::switch(ui, Icon::Gauge, tr("Keep my bitrate"), &mut keep).changed() { keep_to = Some(keep); }
                                 menu_style::fold(ui, "rate-change", Icon::Gauge, tr("Change bitrate / frame rate"), |ui| {
                                     let busy = rates.menu_busy();
                                     ui.add_enabled_ui(!busy, |ui| {
@@ -303,9 +302,8 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                     menu_style::text_block(ui, &text);
                                     ui.add_space(theme::space::S);
                                     ui.horizontal(|ui| {
-                                        if let Some(label) = stream::doctor::offer_label(offer) {
-                                            if ui.add_enabled_ui(!s.bitrate_busy, |ui| menu_style::button(ui, label)).inner.clicked() { s.health_trial(offer); }
-                                        }
+                                        if let Some(label) = stream::doctor::offer_label(offer)
+                                            && ui.add_enabled_ui(!s.bitrate_busy, |ui| menu_style::button(ui, label)).inner.clicked() { s.health_trial(offer); }
                                         if menu_style::button(ui, tr("Copy report")).clicked() { s.copy_health(); }
                                     });
                                 });

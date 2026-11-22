@@ -189,7 +189,7 @@ pub fn current_layout() -> Option<KeyboardLayout> {
 
 #[cfg(windows)]
 #[link(name = "user32")]
-extern "system" {
+unsafe extern "system" {
     fn GetKeyboardLayoutNameW(name: *mut u16) -> i32;
 }
 

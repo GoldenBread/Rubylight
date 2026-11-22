@@ -13,9 +13,8 @@ impl App {
             },
             Command::PinCancelled => {
                 eprintln!("nightjar: stream start cancelled at the PIN");
-                if let Some(PinPending::Launch { from: LaunchFrom::CommandLine, .. }) = self.pin_pending.take() {
-                    if let Some(cli) = self.cli.as_mut() { cli.cancel(); }
-                }
+                if let Some(PinPending::Launch { from: LaunchFrom::CommandLine, .. }) = self.pin_pending.take()
+                    && let Some(cli) = self.cli.as_mut() { cli.cancel(); }
             }
             Command::Quit => self.running = false,
             Command::OpenOnStart(game) => self.open_play_choose(game),
@@ -56,11 +55,10 @@ impl App {
                 }
             }
             Command::SetHidden { games, hidden } => {
-                if config::set_hidden(&mut self.launcher.hidden_games, games, hidden) {
-                    if let Err(e) = self.store.save_hidden_games(&self.launcher.hidden_games) {
+                if config::set_hidden(&mut self.launcher.hidden_games, games, hidden)
+                    && let Err(e) = self.store.save_hidden_games(&self.launcher.hidden_games) {
                         eprintln!("nightjar: could not save hidden games: {e}");
                     }
-                }
             }
             Command::QuitApp(host) => self.hosts.quit_app(host),
             Command::SetQuitOnLeave { host, uuid, id, enabled } => {
@@ -227,11 +225,10 @@ impl App {
             Command::ControllerSettings => {
                 self.command(Command::SaveSettings);
                 self.launcher.open(Screen::Controllers);
-                if self.launcher.controller_key.is_empty() {
-                    if let Some(pad) = self.pads.pads.first() {
+                if self.launcher.controller_key.is_empty()
+                    && let Some(pad) = self.pads.pads.first() {
                         self.command(Command::EditController { key: pad.key.clone(), name: pad.name.clone() });
                     }
-                }
             }
             Command::EditController { key, name } => {
                 self.command(Command::SaveControllerMapping);

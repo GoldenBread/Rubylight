@@ -69,7 +69,7 @@ pub fn push_container(data: &[u8], mut push: impl FnMut(&[u8]) -> bool) -> bool 
         }
         let size = le32(data, offset) as usize;
         offset += 4;
-        if size < 8 || size % 4 != 0 || size > data.len() - offset {
+        if size < 8 || !size.is_multiple_of(4) || size > data.len() - offset {
             return false;
         }
         // Reject short blocks before the decoder, including duplicated zero-length blocks.

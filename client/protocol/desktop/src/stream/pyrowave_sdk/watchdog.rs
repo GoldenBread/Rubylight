@@ -69,9 +69,8 @@ impl Drop for Watchdog {
     fn drop(&mut self) {
         self.jobs = None;
         // A stalled thread is stuck in the call: leave it behind rather than block on it.
-        if let Some(thread) = self.thread.take() {
-            if !self.stalled { let _ = thread.join(); }
-        }
+        if let Some(thread) = self.thread.take()
+            && !self.stalled { let _ = thread.join(); }
     }
 }
 

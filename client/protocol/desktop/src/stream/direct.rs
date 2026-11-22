@@ -253,9 +253,8 @@ impl KeptDesc {
     /// `texture`'s description, from what is kept when it is the texture kept.
     pub(super) fn of(&mut self, texture: &ID3D11Texture2D) -> D3D11_TEXTURE2D_DESC {
         let key = texture.as_raw() as usize;
-        if let Some((kept, _, desc)) = &self.kept {
-            if *kept == key { return *desc; }
-        }
+        if let Some((kept, _, desc)) = &self.kept
+            && *kept == key { return *desc; }
         #[cfg(test)]
         {
             self.queries += 1;
@@ -306,61 +305,64 @@ impl Direct {
     pub unsafe fn new(device: &ID3D11Device) -> Result<Self, String> {
         fn fail(what: &'static str) -> impl Fn(windows::core::Error) -> String { move |e| format!("{what}: {e}") }
         let source = include_bytes!("../direct.hlsl");
-        let blob = |code: &windows::Win32::Graphics::Direct3D::ID3DBlob| std::slice::from_raw_parts(code.GetBufferPointer().cast::<u8>(), code.GetBufferSize()).to_vec();
-        let vertex_code = blob(&compile(source, s!("vertex"), s!("vs_5_0")).map_err(fail("the vertex shader does not compile"))?);
-        let pixel_code = blob(&compile(source, s!("draw"), s!("ps_5_0")).map_err(fail("the pixel shader does not compile"))?);
-        let compute_code = blob(&compile(source, s!("peak"), s!("cs_5_0")).map_err(fail("the peak shader does not compile"))?);
-        let (mut vertex, mut pixel, mut compute) = (None, None, None);
-        device.CreateVertexShader(&vertex_code, None, Some(&mut vertex)).map_err(fail("CreateVertexShader"))?;
-        device.CreatePixelShader(&pixel_code, None, Some(&mut pixel)).map_err(fail("CreatePixelShader"))?;
-        device.CreateComputeShader(&compute_code, None, Some(&mut compute)).map_err(fail("CreateComputeShader"))?;
-        let mut sampler = None;
-        device.CreateSamplerState(&D3D11_SAMPLER_DESC {
-            Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-            AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP, AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
-            ComparisonFunc: D3D11_COMPARISON_NEVER, MaxLOD: f32::MAX, ..Default::default()
-        }, Some(&mut sampler)).map_err(fail("CreateSamplerState"))?;
-        let mut constants = None;
-        device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: std::mem::size_of::<Constants>() as u32, Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants)).map_err(fail("the constant buffer"))?;
-        let bytes = (BINS * 4) as u32;
-        let mut histogram = None;
-        device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: bytes, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_UNORDERED_ACCESS.0 as u32,
-            MiscFlags: D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS.0 as u32, ..Default::default() }, None, Some(&mut histogram)).map_err(fail("the histogram"))?;
-        let histogram = histogram.unwrap();
-        let mut histogram_view = None;
-        device.CreateUnorderedAccessView(&histogram, Some(&D3D11_UNORDERED_ACCESS_VIEW_DESC {
-            Format: DXGI_FORMAT_R32_TYPELESS, ViewDimension: D3D11_UAV_DIMENSION_BUFFER,
-            Anonymous: D3D11_UNORDERED_ACCESS_VIEW_DESC_0 { Buffer: D3D11_BUFFER_UAV { FirstElement: 0, NumElements: BINS as u32, Flags: D3D11_BUFFER_UAV_FLAG_RAW.0 as u32 } },
-        }), Some(&mut histogram_view)).map_err(fail("the histogram view"))?;
-        let staging = |_| {
-            let mut buffer = None;
-            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: bytes, Usage: D3D11_USAGE_STAGING, CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32, ..Default::default() },
-                None, Some(&mut buffer)).map(|_| buffer.unwrap()).map_err(fail("the histogram read-back"))
-        };
-        let staging = [staging(0)?, staging(1)?, staging(2)?];
-        let mut deferred = None;
-        device.CreateDeferredContext(0, Some(&mut deferred)).map_err(fail("CreateDeferredContext"))?;
-        Ok(Self {
-            device: device.clone(),
-            context: device.GetImmediateContext().map_err(fail("GetImmediateContext"))?,
-            deferred: deferred.unwrap(),
-            vertex: vertex.unwrap(),
-            pixel: pixel.unwrap(),
-            compute: compute.unwrap(),
-            sampler: [sampler],
-            constants: [constants],
-            histogram,
-            histogram_view: histogram_view.unwrap(),
-            staging,
-            pending: Default::default(),
-            views: None,
-            facts: KeptDesc::default(),
-            tracker: PeakTracker::default(),
-            source: None,
-            back_buffer: None,
-            mask: Default::default(),
-        })
+        // SAFETY: caller guarantees `device` is the renderer's live device on this thread.
+        unsafe {
+            let blob = |code: &windows::Win32::Graphics::Direct3D::ID3DBlob| std::slice::from_raw_parts(code.GetBufferPointer().cast::<u8>(), code.GetBufferSize()).to_vec();
+            let vertex_code = blob(&compile(source, s!("vertex"), s!("vs_5_0")).map_err(fail("the vertex shader does not compile"))?);
+            let pixel_code = blob(&compile(source, s!("draw"), s!("ps_5_0")).map_err(fail("the pixel shader does not compile"))?);
+            let compute_code = blob(&compile(source, s!("peak"), s!("cs_5_0")).map_err(fail("the peak shader does not compile"))?);
+            let (mut vertex, mut pixel, mut compute) = (None, None, None);
+            device.CreateVertexShader(&vertex_code, None, Some(&mut vertex)).map_err(fail("CreateVertexShader"))?;
+            device.CreatePixelShader(&pixel_code, None, Some(&mut pixel)).map_err(fail("CreatePixelShader"))?;
+            device.CreateComputeShader(&compute_code, None, Some(&mut compute)).map_err(fail("CreateComputeShader"))?;
+            let mut sampler = None;
+            device.CreateSamplerState(&D3D11_SAMPLER_DESC {
+                Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP, AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+                ComparisonFunc: D3D11_COMPARISON_NEVER, MaxLOD: f32::MAX, ..Default::default()
+            }, Some(&mut sampler)).map_err(fail("CreateSamplerState"))?;
+            let mut constants = None;
+            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: std::mem::size_of::<Constants>() as u32, Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32, ..Default::default() }, None, Some(&mut constants)).map_err(fail("the constant buffer"))?;
+            let bytes = (BINS * 4) as u32;
+            let mut histogram = None;
+            device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: bytes, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_UNORDERED_ACCESS.0 as u32,
+                MiscFlags: D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS.0 as u32, ..Default::default() }, None, Some(&mut histogram)).map_err(fail("the histogram"))?;
+            let histogram = histogram.unwrap();
+            let mut histogram_view = None;
+            device.CreateUnorderedAccessView(&histogram, Some(&D3D11_UNORDERED_ACCESS_VIEW_DESC {
+                Format: DXGI_FORMAT_R32_TYPELESS, ViewDimension: D3D11_UAV_DIMENSION_BUFFER,
+                Anonymous: D3D11_UNORDERED_ACCESS_VIEW_DESC_0 { Buffer: D3D11_BUFFER_UAV { FirstElement: 0, NumElements: BINS as u32, Flags: D3D11_BUFFER_UAV_FLAG_RAW.0 as u32 } },
+            }), Some(&mut histogram_view)).map_err(fail("the histogram view"))?;
+            let staging = |_| {
+                let mut buffer = None;
+                device.CreateBuffer(&D3D11_BUFFER_DESC { ByteWidth: bytes, Usage: D3D11_USAGE_STAGING, CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32, ..Default::default() },
+                    None, Some(&mut buffer)).map(|_| buffer.unwrap()).map_err(fail("the histogram read-back"))
+            };
+            let staging = [staging(0)?, staging(1)?, staging(2)?];
+            let mut deferred = None;
+            device.CreateDeferredContext(0, Some(&mut deferred)).map_err(fail("CreateDeferredContext"))?;
+            Ok(Self {
+                device: device.clone(),
+                context: device.GetImmediateContext().map_err(fail("GetImmediateContext"))?,
+                deferred: deferred.unwrap(),
+                vertex: vertex.unwrap(),
+                pixel: pixel.unwrap(),
+                compute: compute.unwrap(),
+                sampler: [sampler],
+                constants: [constants],
+                histogram,
+                histogram_view: histogram_view.unwrap(),
+                staging,
+                pending: Default::default(),
+                views: None,
+                facts: KeptDesc::default(),
+                tracker: PeakTracker::default(),
+                source: None,
+                back_buffer: None,
+                mask: Default::default(),
+            })
+        }
     }
 
     /// Forgets the stream's measured peak and views (a new picture stream follows).
@@ -389,7 +391,8 @@ impl Direct {
         let hlg = picture.transfer == Transfer::Hlg;
         let output = Output { linear: hlg, color_scale: 1.0, headroom: if hlg { headroom } else { 1.0 } };
         let tone = Tone { white_nits, ..Tone::default() };
-        self.draw(target, [0.0, 0.0, size.0 as f32, size.1 as f32], picture, output, tone, lock)
+        // SAFETY: caller upholds `draw` contract.
+        unsafe { self.draw(target, [0.0, 0.0, size.0 as f32, size.1 as f32], picture, output, tone, lock) }
     }
 
     /// The smoothed measured peak in nits, once one is in.
@@ -405,12 +408,14 @@ impl Direct {
         }
         let (_, _, views) = self.views.as_mut().unwrap();
         if let Some(found) = views.get(&picture.slice) { return Ok(found.clone()); }
-        let texture = ID3D11Texture2D::from_raw_borrowed(&picture.texture).ok_or("no picture texture")?;
+        // SAFETY: caller guarantees `picture.texture` is a live `ID3D11Texture2D` on `self.device`.
+        let texture = unsafe { ID3D11Texture2D::from_raw_borrowed(&picture.texture) }.ok_or("no picture texture")?;
         let (device, slice, ten_bit) = (&self.device, picture.slice, picture.ten_bit);
         let mut made: Result<Planes, String> = Err("the picture's views were not made".into());
         // A view of the decoder's texture made beside its own use of the device removed Intel's
         // device (Nightjar #112): it is made under the lock FFmpeg holds while it decodes.
-        lock(&mut || made = create_views(device, texture, slice, ten_bit));
+        // SAFETY: runs under caller's decoder context lock on this thread.
+        lock(&mut || made = unsafe { create_views(device, texture, slice, ten_bit) });
         let made = made?;
         views.insert(picture.slice, made.clone());
         Ok(made)
@@ -420,19 +425,22 @@ impl Direct {
     unsafe fn collect(&mut self) {
         while let Some(&slot) = self.pending.front() {
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            match self.context.Map(&self.staging[slot], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32, Some(&mut mapped)) {
-                Ok(()) => {
-                    // Read once, into the stack: no allocation per picture.
-                    let mut counts = [0u32; BINS];
-                    counts.copy_from_slice(std::slice::from_raw_parts(mapped.pData.cast::<u32>(), BINS));
-                    self.context.Unmap(&self.staging[slot], 0);
-                    self.pending.pop_front();
-                    if let Some(peak) = histogram_peak(&counts) { self.tracker.update(peak); }
-                }
-                Err(e) if e.code() == DXGI_ERROR_WAS_STILL_DRAWING => break,
-                Err(e) => {
-                    eprintln!("nightjar: reading the HDR peak histogram failed: {e}");
-                    self.pending.pop_front();
+            // SAFETY: `self.staging[slot]` is a valid staging buffer on `self.context`.
+            unsafe {
+                match self.context.Map(&self.staging[slot], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32, Some(&mut mapped)) {
+                    Ok(()) => {
+                        // Read once, into the stack: no allocation per picture.
+                        let mut counts = [0u32; BINS];
+                        counts.copy_from_slice(std::slice::from_raw_parts(mapped.pData.cast::<u32>(), BINS));
+                        self.context.Unmap(&self.staging[slot], 0);
+                        self.pending.pop_front();
+                        if let Some(peak) = histogram_peak(&counts) { self.tracker.update(peak); }
+                    }
+                    Err(e) if e.code() == DXGI_ERROR_WAS_STILL_DRAWING => break,
+                    Err(e) => {
+                        eprintln!("nightjar: reading the HDR peak histogram failed: {e}");
+                        self.pending.pop_front();
+                    }
                 }
             }
         }
@@ -446,7 +454,8 @@ impl Direct {
     /// The picture texture and the target must belong to this pass's device, on this thread.
     pub unsafe fn draw(&mut self, target: &ID3D11RenderTargetView, viewport: [f32; 4], picture: &Picture,
         output: Output, tone: Tone, lock: impl FnMut(&mut dyn FnMut())) -> Result<(), String> {
-        self.draw_warped(target, viewport, picture, output, tone, &super::frame_warp::WarpDraw::default(), lock)
+        // SAFETY: caller upholds `draw_warped` contract.
+        unsafe { self.draw_warped(target, viewport, picture, output, tone, &super::frame_warp::WarpDraw::default(), lock) }
     }
 
     /// `draw` with the picture shifted by Frame Warp's `warp`.
@@ -456,75 +465,78 @@ impl Direct {
     #[allow(clippy::too_many_arguments)] // `draw`'s arguments plus the warp
     unsafe fn draw_warped(&mut self, target: &ID3D11RenderTargetView, viewport: [f32; 4], picture: &Picture,
         output: Output, tone: Tone, warp: &super::frame_warp::WarpDraw, mut lock: impl FnMut(&mut dyn FnMut())) -> Result<(), String> {
-        let planes = self.views(picture, &mut lock)?;
-        let desc = self.facts.of(ID3D11Texture2D::from_raw_borrowed(&picture.texture).ok_or("no picture texture")?);
-        let texture_size = (desc.Width, desc.Height);
-        self.collect();
-        let pq = picture.transfer == Transfer::Pq;
-        let measure = pq && tone.dolby_vision.is_none() && tone.hdr10_plus.is_none();
-        let hlg = hlg_display(output.headroom, tone.white_nits);
-        let (peak, white, source) = match picture.transfer {
-            Transfer::Pq => {
-                let (peak, source) = content_peak(tone.dolby_vision, tone.hdr10_plus, self.tracker.value(), tone.static_peak);
-                (peak, tone.white_nits, source)
+        // SAFETY: caller guarantees `target` and `picture.texture` belong to `self.device` on this thread.
+        unsafe {
+            let planes = self.views(picture, &mut lock)?;
+            let desc = self.facts.of(ID3D11Texture2D::from_raw_borrowed(&picture.texture).ok_or("no picture texture")?);
+            let texture_size = (desc.Width, desc.Height);
+            self.collect();
+            let pq = picture.transfer == Transfer::Pq;
+            let measure = pq && tone.dolby_vision.is_none() && tone.hdr10_plus.is_none();
+            let hlg = hlg_display(output.headroom, tone.white_nits);
+            let (peak, white, source) = match picture.transfer {
+                Transfer::Pq => {
+                    let (peak, source) = content_peak(tone.dolby_vision, tone.hdr10_plus, self.tracker.value(), tone.static_peak);
+                    (peak, tone.white_nits, source)
+                }
+                Transfer::Hlg => (Some(hlg.peak), hlg.white, PeakSource::Hlg),
+                Transfer::Sdr => (None, tone.white_nits, PeakSource::None),
+            };
+            if picture.transfer != Transfer::Sdr && self.source != Some(source) {
+                let peak = peak.map_or(String::new(), |peak| format!(", peak {peak:.0} nits"));
+                eprintln!("nightjar: HDR tone mapping follows {}{peak}", source.describe());
+                self.source = Some(source);
             }
-            Transfer::Hlg => (Some(hlg.peak), hlg.white, PeakSource::Hlg),
-            Transfer::Sdr => (None, tone.white_nits, PeakSource::None),
-        };
-        if picture.transfer != Transfer::Sdr && self.source != Some(source) {
-            let peak = peak.map_or(String::new(), |peak| format!(", peak {peak:.0} nits"));
-            eprintln!("nightjar: HDR tone mapping follows {}{peak}", source.describe());
-            self.source = Some(source);
+            let factors = peak.and_then(|peak| tonemap_factors(peak, white, output.headroom));
+            let mask = self.mask.view(&self.device, warp);
+            let constants = Constants {
+                picture: [picture.size.0 as f32, picture.size.1 as f32],
+                texture: [texture_size.0 as f32, texture_size.1 as f32],
+                slice: picture.slice as f32,
+                flags: flags(picture, &output, factors.is_some()),
+                sdr_white: white.max(1e-3),
+                color_scale: output.color_scale,
+                tonemap: factors.map_or([0.0; 2], |(a, b)| [a, b]),
+                hlg: [hlg.peak, hlg.gamma],
+                warp: warp.row(mask.is_some()),
+                warp_lens: warp.lens_row(),
+            };
+            let c = &self.deferred;
+            c.ClearState();
+            c.UpdateSubresource(self.constants[0].as_ref().unwrap(), 0, None, std::ptr::from_ref(&constants).cast(), 0, 0);
+            let free = (0..self.staging.len()).find(|slot| !self.pending.contains(slot));
+            if let (true, Some(slot)) = (measure, free) {
+                c.ClearUnorderedAccessViewUint(&self.histogram_view, &[0; 4]);
+                c.CSSetShader(&self.compute, None);
+                c.CSSetShaderResources(0, Some(&planes));
+                c.CSSetConstantBuffers(0, Some(&self.constants));
+                let bound = [Some(self.histogram_view.clone())];
+                c.CSSetUnorderedAccessViews(0, 1, Some(bound.as_ptr()), None);
+                c.Dispatch(picture.size.0.div_ceil(32), picture.size.1.div_ceil(32), 1);
+                let unbound: [Option<ID3D11UnorderedAccessView>; 1] = [None];
+                c.CSSetUnorderedAccessViews(0, 1, Some(unbound.as_ptr()), None);
+                c.CSSetShaderResources(0, Some(&[None, None]));
+                c.CopyResource(&self.staging[slot], &self.histogram);
+                self.pending.push_back(slot);
+            }
+            c.OMSetRenderTargets(Some(&[Some(target.clone())]), None);
+            c.RSSetViewports(Some(&[D3D11_VIEWPORT { TopLeftX: viewport[0], TopLeftY: viewport[1], Width: viewport[2], Height: viewport[3], MinDepth: 0.0, MaxDepth: 1.0 }]));
+            c.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            c.VSSetShader(&self.vertex, None);
+            c.VSSetConstantBuffers(0, Some(&self.constants));
+            c.PSSetShader(&self.pixel, None);
+            c.PSSetShaderResources(0, Some(&planes));
+            if mask.is_some() { c.PSSetShaderResources(2, Some(&[mask])); }
+            c.PSSetSamplers(0, Some(&self.sampler));
+            c.PSSetConstantBuffers(0, Some(&self.constants));
+            c.Draw(3, 0);
+            let mut commands = None;
+            c.FinishCommandList(false, Some(&mut commands)).map_err(|e| format!("FinishCommandList: {e}"))?;
+            let commands = commands.ok_or("no command list")?;
+            let context = &self.context;
+            lock(&mut || context.ExecuteCommandList(&commands, true));
+            Ok(())
         }
-        let factors = peak.and_then(|peak| tonemap_factors(peak, white, output.headroom));
-        let mask = self.mask.view(&self.device, warp);
-        let constants = Constants {
-            picture: [picture.size.0 as f32, picture.size.1 as f32],
-            texture: [texture_size.0 as f32, texture_size.1 as f32],
-            slice: picture.slice as f32,
-            flags: flags(picture, &output, factors.is_some()),
-            sdr_white: white.max(1e-3),
-            color_scale: output.color_scale,
-            tonemap: factors.map_or([0.0; 2], |(a, b)| [a, b]),
-            hlg: [hlg.peak, hlg.gamma],
-            warp: warp.row(mask.is_some()),
-            warp_lens: warp.lens_row(),
-        };
-        let c = &self.deferred;
-        c.ClearState();
-        c.UpdateSubresource(self.constants[0].as_ref().unwrap(), 0, None, std::ptr::from_ref(&constants).cast(), 0, 0);
-        let free = (0..self.staging.len()).find(|slot| !self.pending.contains(slot));
-        if let (true, Some(slot)) = (measure, free) {
-            c.ClearUnorderedAccessViewUint(&self.histogram_view, &[0; 4]);
-            c.CSSetShader(&self.compute, None);
-            c.CSSetShaderResources(0, Some(&planes));
-            c.CSSetConstantBuffers(0, Some(&self.constants));
-            let bound = [Some(self.histogram_view.clone())];
-            c.CSSetUnorderedAccessViews(0, 1, Some(bound.as_ptr()), None);
-            c.Dispatch(picture.size.0.div_ceil(32), picture.size.1.div_ceil(32), 1);
-            let unbound: [Option<ID3D11UnorderedAccessView>; 1] = [None];
-            c.CSSetUnorderedAccessViews(0, 1, Some(unbound.as_ptr()), None);
-            c.CSSetShaderResources(0, Some(&[None, None]));
-            c.CopyResource(&self.staging[slot], &self.histogram);
-            self.pending.push_back(slot);
-        }
-        c.OMSetRenderTargets(Some(&[Some(target.clone())]), None);
-        c.RSSetViewports(Some(&[D3D11_VIEWPORT { TopLeftX: viewport[0], TopLeftY: viewport[1], Width: viewport[2], Height: viewport[3], MinDepth: 0.0, MaxDepth: 1.0 }]));
-        c.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        c.VSSetShader(&self.vertex, None);
-        c.VSSetConstantBuffers(0, Some(&self.constants));
-        c.PSSetShader(&self.pixel, None);
-        c.PSSetShaderResources(0, Some(&planes));
-        if mask.is_some() { c.PSSetShaderResources(2, Some(&[mask])); }
-        c.PSSetSamplers(0, Some(&self.sampler));
-        c.PSSetConstantBuffers(0, Some(&self.constants));
-        c.Draw(3, 0);
-        let mut commands = None;
-        c.FinishCommandList(false, Some(&mut commands)).map_err(|e| format!("FinishCommandList: {e}"))?;
-        let commands = commands.ok_or("no command list")?;
-        let context = &self.context;
-        lock(&mut || context.ExecuteCommandList(&commands, true));
-        Ok(())
     }
 
     /// Draws `picture` into SDL's back buffer at `destination` (pixels). Call after SDL's clear
@@ -535,33 +547,36 @@ impl Direct {
     pub unsafe fn present(&mut self, renderer: *mut sdl3_sys::everything::SDL_Renderer, destination: &sdl3_sys::everything::SDL_FRect,
         picture: &Picture, tone: Tone, warp: &super::frame_warp::WarpDraw, lock: impl FnMut(&mut dyn FnMut())) -> Result<(), String> {
         use sdl3_sys::everything::*;
-        let properties = SDL_GetRendererProperties(renderer);
-        let swapchain_raw = SDL_GetPointerProperty(properties, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER, std::ptr::null_mut());
-        let mut size = (0, 0);
-        SDL_GetCurrentRenderOutputSize(renderer, &mut size.0, &mut size.1);
-        // A new size is resized by SDL's next command run, the flush below: let go first.
-        if !self.back_buffer.as_ref().is_some_and(|(swapchain, at, _)| *swapchain == swapchain_raw as usize && *at == size) {
-            self.back_buffer = None;
+        // SAFETY: caller guarantees `renderer` is the live D3D11 renderer on this thread.
+        unsafe {
+            let properties = SDL_GetRendererProperties(renderer);
+            let swapchain_raw = SDL_GetPointerProperty(properties, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER, std::ptr::null_mut());
+            let mut size = (0, 0);
+            SDL_GetCurrentRenderOutputSize(renderer, &mut size.0, &mut size.1);
+            // A new size is resized by SDL's next command run, the flush below: let go first.
+            if !self.back_buffer.as_ref().is_some_and(|(swapchain, at, _)| *swapchain == swapchain_raw as usize && *at == size) {
+                self.back_buffer = None;
+            }
+            // SDL's clear has to land before the picture (it runs SDL's queue; no GPU flush).
+            if !SDL_FlushRenderer(renderer) { return Err(format!("SDL_FlushRenderer: {}", crate::sdl::error())); }
+            if self.back_buffer.is_none() {
+                let swapchain = windows::Win32::Graphics::Dxgi::IDXGISwapChain::from_raw_borrowed(&swapchain_raw).ok_or("the renderer has no swap chain")?;
+                let buffer = swapchain.GetBuffer::<ID3D11Texture2D>(0).map_err(|e| format!("the back buffer: {e}"))?;
+                let mut target = None;
+                self.device.CreateRenderTargetView(&buffer, None, Some(&mut target)).map_err(|e| format!("the back buffer's view: {e}"))?;
+                self.back_buffer = Some((swapchain_raw as usize, size, target.ok_or("no back buffer view")?));
+            }
+            let target = self.back_buffer.as_ref().unwrap().2.clone();
+            let mut scale = 1.0;
+            SDL_GetRenderColorScale(renderer, &mut scale);
+            let output = Output {
+                linear: SDL_GetNumberProperty(properties, SDL_PROP_RENDERER_OUTPUT_COLORSPACE_NUMBER, i64::from(SDL_COLORSPACE_SRGB.0)) == i64::from(SDL_COLORSPACE_SRGB_LINEAR.0),
+                color_scale: scale * SDL_GetFloatProperty(properties, SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, 1.0),
+                headroom: SDL_GetFloatProperty(properties, SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT, 1.0),
+            };
+            let viewport = [destination.x, destination.y, destination.w, destination.h];
+            self.draw_warped(&target, viewport, picture, output, tone, warp, lock)
         }
-        // SDL's clear has to land before the picture (it runs SDL's queue; no GPU flush).
-        if !SDL_FlushRenderer(renderer) { return Err(format!("SDL_FlushRenderer: {}", crate::sdl::error())); }
-        if self.back_buffer.is_none() {
-            let swapchain = windows::Win32::Graphics::Dxgi::IDXGISwapChain::from_raw_borrowed(&swapchain_raw).ok_or("the renderer has no swap chain")?;
-            let buffer = swapchain.GetBuffer::<ID3D11Texture2D>(0).map_err(|e| format!("the back buffer: {e}"))?;
-            let mut target = None;
-            self.device.CreateRenderTargetView(&buffer, None, Some(&mut target)).map_err(|e| format!("the back buffer's view: {e}"))?;
-            self.back_buffer = Some((swapchain_raw as usize, size, target.ok_or("no back buffer view")?));
-        }
-        let target = self.back_buffer.as_ref().unwrap().2.clone();
-        let mut scale = 1.0;
-        SDL_GetRenderColorScale(renderer, &mut scale);
-        let output = Output {
-            linear: SDL_GetNumberProperty(properties, SDL_PROP_RENDERER_OUTPUT_COLORSPACE_NUMBER, i64::from(SDL_COLORSPACE_SRGB.0)) == i64::from(SDL_COLORSPACE_SRGB_LINEAR.0),
-            color_scale: scale * SDL_GetFloatProperty(properties, SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, 1.0),
-            headroom: SDL_GetFloatProperty(properties, SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT, 1.0),
-        };
-        let viewport = [destination.x, destination.y, destination.w, destination.h];
-        self.draw_warped(&target, viewport, picture, output, tone, warp, lock)
     }
 }
 

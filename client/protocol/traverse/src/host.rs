@@ -348,11 +348,12 @@ impl HostService {
     ) -> Option<Tunnel> {
         {
             let tunnels = self.shared.tunnels.read().unwrap();
-            if let Some((session, tunnel)) = tunnels.get(&peer.tag) {
-                if *session == client && !tunnel.is_closed() {
-                    tunnel.add_candidates(&candidates);
-                    return Some(tunnel.clone());
-                }
+            if let Some((session, tunnel)) = tunnels.get(&peer.tag)
+                && *session == client
+                && !tunnel.is_closed()
+            {
+                tunnel.add_candidates(&candidates);
+                return Some(tunnel.clone());
             }
             if self.busy(&tunnels, &peer.tag) {
                 drop(tunnels);
@@ -387,14 +388,15 @@ impl HostService {
         tunnel.set_epoch(epoch);
         let mut tunnels = self.shared.tunnels.write().unwrap();
         // Meanwhile a path for this session, or another device's path, may have started.
-        if let Some((session, existing)) = tunnels.get(&peer.tag) {
-            if *session == client && !existing.is_closed() {
-                let existing = existing.clone();
-                drop(tunnels);
-                tunnel.close("the path started twice");
-                existing.add_candidates(&candidates);
-                return Some(existing);
-            }
+        if let Some((session, existing)) = tunnels.get(&peer.tag)
+            && *session == client
+            && !existing.is_closed()
+        {
+            let existing = existing.clone();
+            drop(tunnels);
+            tunnel.close("the path started twice");
+            existing.add_candidates(&candidates);
+            return Some(existing);
         }
         if self.busy(&tunnels, &peer.tag) {
             drop(tunnels);
@@ -430,7 +432,7 @@ impl HostService {
             .get(&tag)
             .map(|(session, tunnel)| (*session, tunnel.clone()));
         if let Some((session, tunnel)) = &existing {
-            if !tunnel.is_closed() && punch_session.map_or(true, |punched| punched == *session) {
+            if !tunnel.is_closed() && punch_session.is_none_or(|punched| punched == *session) {
                 tunnel.receive(datagram, from);
                 return;
             }
@@ -631,7 +633,7 @@ impl HostService {
                     && poll_interval(state, &open, &healthy, now).is_some_and(|every| {
                         state
                             .last_poll
-                            .map_or(true, |at| now.saturating_sub(at) >= every)
+                            .is_none_or(|at| now.saturating_sub(at) >= every)
                     })
             })
             .collect();
@@ -704,10 +706,10 @@ impl HostService {
                     .node
                     .put(&record.item(&keys, window, crate::crypto::random()));
             let mut devices = self.shared.devices.lock().unwrap();
-            if let Some(state) = devices.iter_mut().find(|state| state.device.id == id) {
-                if confirmed > 0 {
-                    state.published = Some((window, now, public.clone()));
-                }
+            if let Some(state) = devices.iter_mut().find(|state| state.device.id == id)
+                && confirmed > 0
+            {
+                state.published = Some((window, now, public.clone()));
             }
             drop(devices);
             self.shared.status.lock().unwrap().dht_error = (confirmed == 0).then(|| {

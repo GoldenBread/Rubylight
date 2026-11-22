@@ -102,11 +102,10 @@ impl Launcher {
                             let key = format!("app:{}", app.id);
                             self.focus_card(&response, &key, &key, first);
                             let dots = cover_dots(ui, &response, response.rect, if is_running { Badge::Running } else { Badge::None });
-                            if response.clicked() {
-                                if let Some(ask) = self.start_app(host, app, commands) {
+                            if response.clicked()
+                                && let Some(ask) = self.start_app(host, app, commands) {
                                     self.ask(ask);
                                 }
-                            }
                             if let Some(anchor) = menu_request(ui, &response, dots.as_ref()) {
                                 self.open_menu(Dialog::GameMenu { host: id, game: GameTarget::Classic { app: app.id } }, anchor, key);
                             }

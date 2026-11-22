@@ -20,16 +20,19 @@ unsafe impl GlobalAlloc for CountAllocations {
         if COUNTING.load(Ordering::Relaxed) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
-        System.alloc(layout)
+        // SAFETY: forwards to the system allocator with the caller's layout invariants.
+        unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout);
+        // SAFETY: `ptr` was allocated via `System` with `layout`.
+        unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         if COUNTING.load(Ordering::Relaxed) {
             REALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
-        System.realloc(ptr, layout, size)
+        // SAFETY: `ptr` was allocated via `System` with `layout`.
+        unsafe { System.realloc(ptr, layout, size) }
     }
 }
 

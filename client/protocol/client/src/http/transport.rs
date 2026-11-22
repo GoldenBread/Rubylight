@@ -229,7 +229,7 @@ impl Abort {
 #[cfg(windows)]
 fn abort_blocked_io(socket: &TcpStream) {
     use std::os::windows::io::AsRawSocket;
-    extern "system" {
+    unsafe extern "system" {
         fn CancelIoEx(file: *mut std::ffi::c_void, overlapped: *mut std::ffi::c_void) -> i32;
     }
     // SAFETY: `socket` keeps the handle open; a null OVERLAPPED cancels all of its I/O.
@@ -701,10 +701,11 @@ impl DeadlineSocket {
     /// that wait then takes the next writes at once: counting the short write would let them
     /// restart the timeout, again and again, for a host that reads nothing.
     fn moved(&mut self, result: std::io::Result<usize>, whole: usize) -> std::io::Result<usize> {
-        if let (Ok(moved), Some(idle)) = (&result, self.idle) {
-            if *moved > 0 && *moved >= whole {
-                self.deadline = Some(std::time::Instant::now() + idle);
-            }
+        if let (Ok(moved), Some(idle)) = (&result, self.idle)
+            && *moved > 0
+            && *moved >= whole
+        {
+            self.deadline = Some(std::time::Instant::now() + idle);
         }
         result
     }
@@ -719,7 +720,7 @@ impl Read for DeadlineSocket {
             return Err(continue_elapsed());
         }
         let limit = [self.read_timeout, left].into_iter().flatten().min();
-        let capped = wait.filter(|wait| limit.map_or(true, |limit| *wait < limit));
+        let capped = wait.filter(|wait| limit.is_none_or(|limit| *wait < limit));
         if left.is_some() || capped.is_some() || self.capped {
             self.socket.set_read_timeout(capped.or(limit))?;
             self.capped = capped.is_some();

@@ -329,8 +329,8 @@ impl Streaming {
         if let Some(keeper) = self.keeper.as_ref().filter(|keeper| keeper.repeats > 0 || self.scan_waits.0 > 0) {
             pacing.push_str(&format!(", {} repeats, {} waited for a scan", keeper.repeats, self.scan_waits.0));
         }
-        if self.pacer.mode == PacingMode::HostTimes || self.pacer.host_grid() {
-            if let Some(delay) = self.pacer.clock.delay_us() {
+        if (self.pacer.mode == PacingMode::HostTimes || self.pacer.host_grid())
+            && let Some(delay) = self.pacer.clock.delay_us() {
                 pacing.push_str(&format!(
                     ", hold {:.1} ms, {} late",
                     avg(w.hold_us as f64, w.shown) / 1000.0,
@@ -338,7 +338,6 @@ impl Streaming {
                 ));
                 let _ = delay;
             }
-        }
         if w.dropped_pacing > 0 {
             pacing.push_str(&format!(", {} replaced", w.dropped_pacing));
         }
@@ -504,8 +503,8 @@ impl Streaming {
             } else { false };
             if !applied { self.quality_policy = None; self.quality_mode = QualityMode::Off; }
         }
-        if !self.bitrate_busy {
-            if let Some(policy) = &mut self.bitrate_policy {
+        if !self.bitrate_busy
+            && let Some(policy) = &mut self.bitrate_policy {
                 if self.menu_visible || !self.focused {
                     policy.suspend();
                 } else {
@@ -525,7 +524,6 @@ impl Streaming {
                     }
                 }
             }
-        }
         if let Some(request) = self.rate_change.as_mut().and_then(|rates| rates.query_again(self.started.elapsed().as_millis() as u64)) {
             self.send_rate_query(request);
         }
@@ -538,8 +536,8 @@ impl Streaming {
                 self.send_rate_change(request);
             }
         }
-        if !self.menu_visible && self.focused {
-            if let Some(rates) = &mut self.rate_change {
+        if !self.menu_visible && self.focused
+            && let Some(rates) = &mut self.rate_change {
                 // PyroWave also loses records within frames, as for the PC's adaptive bitrate.
                 let record_loss = (self.facts.format & VIDEO_FORMAT_MASK_PYROWAVE != 0 && timing.record_samples > 0)
                     .then(|| (timing.record_loss_milli as f64 / f64::from(timing.record_samples) / 1000.0) as f32);
@@ -554,7 +552,6 @@ impl Streaming {
                 });
                 if let Some(request) = request { self.send_rate_change(request); }
             }
-        }
         self.window.started = Some(Instant::now());
         true
     }

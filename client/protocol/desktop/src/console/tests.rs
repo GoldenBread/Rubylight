@@ -1,9 +1,9 @@
 use super::*;
 use nightjar_core::http::native_api::capabilities::Capabilities;
 
-const LIBRARY: &str = include_str!("../../../client/tests/fixtures/native-api/library.json");
-const SESSION: &str = include_str!("../../../client/tests/fixtures/native-api/session.json");
-const CAPABILITIES: &str = include_str!("../../../client/tests/fixtures/native-api/capabilities.json");
+const LIBRARY: &str = include_str!("../../../native-api/tests/fixtures/library.json");
+const SESSION: &str = include_str!("../../../native-api/tests/fixtures/session.json");
+const CAPABILITIES: &str = include_str!("../../../native-api/tests/fixtures/capabilities.json");
 
 fn library() -> Library {
     serde_json::from_str(LIBRARY).unwrap()

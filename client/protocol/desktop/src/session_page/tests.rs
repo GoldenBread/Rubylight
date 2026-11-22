@@ -14,6 +14,11 @@ fn session(state: SessionState, actions: &[(ActionId, bool, Option<ErrorCode>)])
         suspended_until_unix_ms: None,
         launcher: None,
         radeon_profile: None,
+        microphone_busy: false,
+        playing_on: None,
+        moved_to: None,
+        owns_game: false,
+        press_failed: false,
         actions: actions.iter().map(|&(id, allowed, reason)| Action { id, allowed, reason }).collect(),
     }
 }

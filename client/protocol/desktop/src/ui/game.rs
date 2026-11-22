@@ -633,11 +633,10 @@ impl Launcher {
             "favourite",
             !any_first && state.detail.end == EndAction::None,
         );
-        if r.clicked() {
-            if let Some(star) = star {
+        if r.clicked()
+            && let Some(star) = star {
                 commands.push(Command::ToggleFavourite(star));
             }
-        }
         if state.detail.end != EndAction::None {
             let closing = host.native.acting;
             let words = tr("Quit game");
@@ -745,8 +744,8 @@ impl Launcher {
                 act: RowAct::Profile { decided },
             });
         }
-        if let Some(app) = classic {
-            if launch::offers_quit_on_leave(
+        if let Some(app) = classic
+            && launch::offers_quit_on_leave(
                 host.paired(),
                 policy_control(app.control),
                 policy_role(app.role(false)),
@@ -773,7 +772,6 @@ impl Launcher {
                     },
                 });
             }
-        }
         if !host.record.unique_id.is_empty() {
             let on = console::is_hidden(source, &game.install_id, game.app_id, &self.hidden_games);
             let target = GameTarget::Library {
@@ -793,8 +791,8 @@ impl Launcher {
                 },
             });
         }
-        if let Some(app) = classic {
-            if let Some(blocker) =
+        if let Some(app) = classic
+            && let Some(blocker) =
                 small_stream_offer(host, app, state.resumes, self.settings.input_only_any_host)
             {
                 let (note, ink) = match blocker {
@@ -822,7 +820,6 @@ impl Launcher {
                     },
                 });
             }
-        }
         if offers_neural(host) {
             rows.push(self.neural_row(host, game.app_id));
         }
@@ -1104,12 +1101,11 @@ impl Launcher {
                         }
                     }
                 });
-                if let Some(id) = picked {
-                    if id != active {
+                if let Some(id) = picked
+                    && id != active {
                         self.profiles.active = id;
                         commands.push(Command::SaveProfiles);
                     }
-                }
             }
             y += h;
         }

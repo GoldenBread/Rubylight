@@ -749,11 +749,10 @@ impl Launcher {
                 "hero-star".into(),
             );
         }
-        if r.clicked() {
-            if let Some(star) = star {
+        if r.clicked()
+            && let Some(star) = star {
                 commands.push(Command::ToggleFavourite(star));
             }
-        }
         if state.detail.end != EndAction::None {
             let closing = host.native.acting;
             let label = tr("Quit game");
@@ -986,11 +985,10 @@ impl Launcher {
             return false;
         }
         // HDR Auto depends on the screen: read it as the Recommended section does, once.
-        if !std::mem::replace(&mut self.setup_card_probed, true) {
-            if let Some(probe) = self.hdr_display_probe {
+        if !std::mem::replace(&mut self.setup_card_probed, true)
+            && let Some(probe) = self.hdr_display_probe {
                 self.hdr_display = probe();
             }
-        }
         let Some((title, line)) = self.setup_card_words(view) else {
             return false;
         };

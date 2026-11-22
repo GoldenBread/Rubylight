@@ -196,8 +196,17 @@ impl<'de> Deserialize<'de> for NativeCapabilities {
         struct Files {
             permissions: FilePermissions,
         }
-        let value = serde_json::Value::deserialize(deserializer)?;
+        let mut value = serde_json::Value::deserialize(deserializer)?;
         let files = Files::deserialize(&value).map_err(D::Error::custom)?;
+        // Capabilities deserializes the 3.0 permissions strictly as bools; strip non-bools here so
+        // malformed 3.0 fields read as refused (`false`) without rejecting older fields beside them.
+        if let Some(perms) = value.get_mut("permissions").and_then(serde_json::Value::as_object_mut) {
+            for key in ["usb", "shared_folders", "coop_join", "restart_shutdown", "pairing_approve"] {
+                if perms.get(key).is_some_and(|v| !v.is_boolean()) {
+                    perms.remove(key);
+                }
+            }
+        }
         Ok(Self {
             capabilities: Capabilities::deserialize(value).map_err(D::Error::custom)?,
             files: files.permissions,
@@ -225,31 +234,64 @@ pub struct NativeLibrary {
 
 impl From<Library> for NativeLibrary {
     fn from(library: Library) -> Self {
-        Self { library, last_played: BTreeMap::new(), playtime_minutes: BTreeMap::new(), collections: BTreeMap::new() }
+        let mut last_played = BTreeMap::new();
+        let mut playtime_minutes = BTreeMap::new();
+        let mut collections = BTreeMap::new();
+        for game in &library.games {
+            if let Some(at) = game.last_played {
+                last_played.insert(game.install_id.clone(), at);
+            }
+            if let Some(minutes) = game.playtime_minutes {
+                playtime_minutes.insert(game.install_id.clone(), minutes);
+            }
+            if !game.collections.is_empty() {
+                collections.insert(game.install_id.clone(), game.collections.clone());
+            }
+        }
+        Self { library, last_played, playtime_minutes, collections }
     }
 }
 
 impl<'de> Deserialize<'de> for NativeLibrary {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
+        let mut value = serde_json::Value::deserialize(deserializer)?;
         let mut last_played = BTreeMap::new();
         let mut playtime_minutes = BTreeMap::new();
         let mut collections = BTreeMap::new();
-        for game in value["games"].as_array().into_iter().flatten() {
-            let Some(id) = game["install_id"].as_str() else { continue };
+        for game in value.get_mut("games").and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
+            let Some(id) = game.get("install_id").and_then(serde_json::Value::as_str).map(str::to_owned) else { continue };
             // Anything but a whole number of seconds reads as unknown.
-            if let Some(at) = game["last_played"].as_u64() {
-                last_played.insert(id.to_owned(), at);
+            if let Some(at) = game.get("last_played").and_then(serde_json::Value::as_u64) {
+                last_played.insert(id.clone(), at);
             }
             // Anything but a whole number of minutes reads as unknown.
-            if let Some(minutes) = game["playtime_minutes"].as_u64() {
-                playtime_minutes.insert(id.to_owned(), minutes);
+            if let Some(minutes) = game.get("playtime_minutes").and_then(serde_json::Value::as_u64) {
+                playtime_minutes.insert(id.clone(), minutes);
             }
             // Anything but names reads as none.
-            let names: Vec<String> =
-                game["collections"].as_array().into_iter().flatten().filter_map(|name| name.as_str().map(str::to_owned)).collect();
+            let names: Vec<String> = game
+                .get("collections")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|name| name.as_str().map(str::to_owned))
+                .collect();
             if !names.is_empty() {
-                collections.insert(id.to_owned(), names);
+                collections.insert(id, names);
+            }
+            if let Some(fields) = game.as_object_mut() {
+                if fields.get("last_played").is_some_and(|v| !v.is_u64()) {
+                    fields.remove("last_played");
+                }
+                if fields.get("playtime_minutes").is_some_and(|v| !v.is_u64()) {
+                    fields.remove("playtime_minutes");
+                }
+                if fields
+                    .get("collections")
+                    .is_some_and(|v| !v.as_array().is_some_and(|a| a.iter().all(serde_json::Value::is_string)))
+                {
+                    fields.remove("collections");
+                }
             }
         }
         Ok(Self {
@@ -764,8 +806,9 @@ mod tests {
                 pairing_approve: false,
             }
         );
+        let body_with_3_0 = body(r#","usb":true,"shared_folders":true,"restart_shutdown":true"#);
         let read = decode::<NativeCapabilities>(
-            response(200, &body(r#","usb":true,"shared_folders":true,"restart_shutdown":true"#)),
+            response(200, &body_with_3_0),
             path,
         )
         .unwrap();
@@ -774,7 +817,7 @@ mod tests {
         assert_eq!(read.capabilities.features, ["library", "files.upload"]);
         assert_eq!(
             read.capabilities,
-            decode::<Capabilities>(response(200, &body("")), path).unwrap()
+            decode::<Capabilities>(response(200, &body_with_3_0), path).unwrap()
         );
         // An older host has neither.
         let read = decode::<NativeCapabilities>(response(200, &body("")), path).unwrap();

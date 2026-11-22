@@ -407,7 +407,8 @@ pub unsafe extern "C" fn conceal(pcm: *mut i16, frames: i32) -> i32 {
     if pcm.is_null() || frames <= 0 {
         return 0;
     }
-    let pcm = std::slice::from_raw_parts_mut(pcm, frames as usize * 2);
+    // SAFETY: caller guarantees `pcm` holds `frames * 2` writable samples.
+    let pcm = unsafe { std::slice::from_raw_parts_mut(pcm, frames as usize * 2) };
     decoder.decode(None, pcm, frames as usize).max(0)
 }
 
@@ -462,8 +463,8 @@ pub fn pcm_s16le(packet: Option<&[u8]>, pcm: &mut [i16]) -> usize {
     match packet {
         Some(bytes) => {
             let samples = (bytes.len() / 2).min(pcm.len());
-            for (out, pair) in pcm.iter_mut().zip(bytes.chunks_exact(2)) {
-                *out = i16::from_le_bytes([pair[0], pair[1]]);
+            for (out, pair) in pcm.iter_mut().zip(bytes.as_chunks::<2>().0) {
+                *out = i16::from_le_bytes(*pair);
             }
             samples
         }

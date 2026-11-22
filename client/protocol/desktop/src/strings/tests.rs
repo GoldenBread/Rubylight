@@ -365,11 +365,10 @@ fn marked() -> Vec<Marked> {
                     continue;
                 }
                 let tail = code[from..].trim_start();
-                if tail.starts_with('"') {
-                    if let Some((text, _)) = literal(tail) {
+                if tail.starts_with('"')
+                    && let Some((text, _)) = literal(tail) {
                         found.push(Marked { file, text, line: line_of(code, start), at: offset_in(code, tail) });
                     }
-                }
             }
         }
         for (prefix, count) in HELPERS {
@@ -382,11 +381,10 @@ fn marked() -> Vec<Marked> {
                 }
                 for arg in helper_args(code, prefix, start).into_iter().take(count) {
                     let arg = arg.trim();
-                    if arg.starts_with('"') {
-                        if let Some((text, _)) = literal(arg) {
+                    if arg.starts_with('"')
+                        && let Some((text, _)) = literal(arg) {
                             found.push(Marked { file, text, line: line_of(code, start), at: offset_in(code, arg) });
                         }
-                    }
                 }
             }
         }

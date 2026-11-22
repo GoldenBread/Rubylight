@@ -43,7 +43,7 @@ impl Packetizer {
         let slice = PACKET_SIZE - 16;
         let mut data = vec![1, 0, 0, kind];
         let total = payload.len() + 8;
-        let last = if total % slice == 0 {
+        let last = if total.is_multiple_of(slice) {
             slice
         } else {
             total % slice
@@ -478,23 +478,23 @@ fn start_host_with(packed_format: Option<u32>, roaming: bool) -> FakeHost {
                     }
                 }
             }
-            if let Some(id) = peer {
-                if terminating.swap(false, Ordering::SeqCst) {
-                    sequence += 1;
-                    // 0x0109 with a four-byte reason: 0x80030023 ends gracefully.
-                    let datagram = encrypted_control(
-                        &KEY,
-                        sequence,
-                        0x0109,
-                        &0x8003_0023u32.to_be_bytes(),
-                        true,
-                    )
+            if let Some(id) = peer
+                && terminating.swap(false, Ordering::SeqCst)
+            {
+                sequence += 1;
+                // 0x0109 with a four-byte reason: 0x80030023 ends gracefully.
+                let datagram = encrypted_control(
+                    &KEY,
+                    sequence,
+                    0x0109,
+                    &0x8003_0023u32.to_be_bytes(),
+                    true,
+                )
+                .unwrap();
+                host.peer_mut(id)
+                    .send(0, &Packet::reliable(datagram))
                     .unwrap();
-                    host.peer_mut(id)
-                        .send(0, &Packet::reliable(datagram))
-                        .unwrap();
-                    host.flush();
-                }
+                host.flush();
             }
             // A CHALLENGE for each PROBE, the same one for a repeat of a burst; a CONFIRM of
             // the challenge pending for its address moves the session, then MIGRATED. Anything

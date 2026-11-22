@@ -1,0 +1,19 @@
+[package]
+name = "rubylight-native-api"
+# Versioned on its own, not with the host or client: the wire format changes when the API
+# does. rust/release/bump.py leaves it alone.
+version = "1.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository = "https://github.com/RamazanKara/Rubylight"
+description = "Wire types of the Rubylight native API v1 (host and Nightjar)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

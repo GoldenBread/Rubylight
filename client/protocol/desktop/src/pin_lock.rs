@@ -715,11 +715,10 @@ fn file_thread(path: &Path, cache: &Mutex<Cache>, queue: &Receiver<Job>) {
                     // Never write the closed state over the user's file.
                     memory.problem.is_none().then(|| memory.saved.clone())
                 };
-                if let Some(saved) = saved {
-                    if let Err(e) = write_file(path, &saved) {
+                if let Some(saved) = saved
+                    && let Err(e) = write_file(path, &saved) {
                         eprintln!("nightjar: saving the PIN lock failed: {e}");
                     }
-                }
             }
         }
         for done in flushes {

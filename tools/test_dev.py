@@ -28,8 +28,8 @@ class Plan(unittest.TestCase):
         self.assertEqual(planned['host'].items, ['butterpollo'])
 
     def test_nested_member_maps_to_itself(self):
-        planned, _ = checks('rust/core/native-api/src/lib.rs')
-        self.assertIn('rubylight-native-api', planned['host'].items)
+        planned, _ = checks('client/protocol/native-api/src/lib.rs')
+        self.assertIn('rubylight-native-api', planned['client-protocol'].items)
         self.assertIn('butterpollo-core', planned['host'].items)
 
     def test_workspace_files_check_every_host_crate(self):
@@ -76,19 +76,20 @@ class Plan(unittest.TestCase):
         self.assertTrue(spec.startswith('path+file:///'), spec)
         self.assertTrue(spec.endswith('/client/protocol/core#rubylight-protocol'), spec)
 
-    def test_desktop_client_gets_clippy_as_ci_runs_it(self):
+    def test_client_crates_get_clippy_as_ci_runs_it(self):
         test, clippy = dev.client_commands(ROOT, ['nightjar-desktop', 'nightjar-policy'])
         self.assertEqual(test[:2], ['cargo', 'test'])
         self.assertEqual(clippy[:2], ['cargo', 'clippy'])
         self.assertEqual(clippy[-3:], ['--', '-D', 'warnings'])
         self.assertIn('--all-targets', clippy)
         linted = [clippy[i + 1] for i, a in enumerate(clippy) if a == '-p']
-        self.assertEqual(len(linted), 1)
+        self.assertEqual(len(linted), 2)
         self.assertTrue(linted[0].endswith('#nightjar-desktop'), linted)
+        self.assertTrue(linted[1].endswith('#nightjar-policy'), linted)
 
-    def test_client_crates_ci_does_not_lint_get_tests_only(self):
+    def test_all_client_crates_run_tests_and_clippy(self):
         commands = dev.client_commands(ROOT, ['rubylight-protocol'])
-        self.assertEqual([c[1] for c in commands], ['test'])
+        self.assertEqual([c[1] for c in commands], ['test', 'clippy'])
 
     def test_app_sources_map_to_their_unit_tests(self):
         test = 'client/app/src/test/java/com/limelight/AppViewLifecycleTest.java'

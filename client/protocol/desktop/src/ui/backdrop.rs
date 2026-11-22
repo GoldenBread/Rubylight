@@ -1049,13 +1049,12 @@ fn sky_through_veil(
     tinted: &[Rect],
 ) {
     for star in clear_of_tints(stars(screen, along), tinted) {
-        if let Shape::Circle(mut circle) = star {
-            if circle.center.y < foot {
+        if let Shape::Circle(mut circle) = star
+            && circle.center.y < foot {
                 let over = alpha(circle.center);
                 circle.fill = circle.fill.gamma_multiply(over);
                 out.push(Shape::Circle(circle));
             }
-        }
     }
     let Some((center, r)) = disc else {
         return;

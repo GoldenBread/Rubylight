@@ -1,17 +1,17 @@
 [workspace]
-members = ["rust/core", "rust/core/native-api", "rust/windows", "rust/host", "rust/vulkan-layer", "rust/setup", "rust/drivers/rubylight-vdisplay-proto", "rust/drivers/rubylight-vgamepad-proto", "rust/probes"]
+members = ["rust/core", "rust/windows", "rust/host", "rust/vulkan-layer", "rust/setup", "rust/drivers/rubylight-vdisplay-proto", "rust/drivers/rubylight-vgamepad-proto", "rust/probes"]
 # The virtual display and gamepad drivers build alone under the WDK toolchain: see
 # rust/drivers/rubylight-vdisplay and rust/drivers/rubylight-vgamepad.
 # The Windows service is a workspace of its own, so that its executable stays the same across
 # releases: see rust/service.
-# Nightjar keeps its own workspace in client/protocol; the host uses its protocol crate by path.
-# rust/vendor holds patched third-party crates, used through [patch.crates-io] below.
-exclude = ["rust/truehdr-runtime", "rust/drivers/rubylight-vdisplay", "rust/drivers/rubylight-vgamepad", "rust/service", "client", "rust/vendor"]
+# Nightjar keeps its own workspace in client/protocol; the host uses its protocol crate and
+# patched rusty_enet by path.
+exclude = ["rust/truehdr-runtime", "rust/drivers/rubylight-vdisplay", "rust/drivers/rubylight-vgamepad", "rust/service", "client"]
 resolver = "3"
 
-# The host's ENet, changed as its Cargo.toml lists.
+# The host and Nightjar share rusty_enet, changed as its Cargo.toml lists.
 [patch.crates-io]
-rusty_enet = { path = "rust/vendor/rusty_enet" }
+rusty_enet = { path = "client/protocol/vendor/rusty_enet" }
 
 [workspace.package]
 version = "6.3.0"
@@ -25,11 +25,6 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1"
-
-# Nightjar pins the native API types by git rev for its own builds; the host's interop tests build
-# it against this repository's copy, so both sides speak the same version.
-[patch."https://github.com/RamazanKara/Rubylight"]
-rubylight-native-api = { path = "rust/core/native-api" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

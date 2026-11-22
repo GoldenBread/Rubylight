@@ -410,7 +410,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "rustls-webpki",
- "rusty_enet 0.4.0+rubylight-host",
+ "rusty_enet",
  "serde",
  "serde_json",
  "sha2",
@@ -1941,7 +1941,7 @@ dependencies = [
  "rubylight-protocol",
  "rubylight-traverse",
  "rustls",
- "rusty_enet 0.4.0",
+ "rusty_enet",
  "serde",
  "serde_json",
  "socket2 0.5.10",
@@ -2683,7 +2683,6 @@ name = "rubylight-native-api"
 version = "1.1.0"
 dependencies = [
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2796,13 +2795,6 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 [[package]]
 name = "rusty_enet"
 version = "0.4.0"
-dependencies = [
- "js-sys",
-]
-
-[[package]]
-name = "rusty_enet"
-version = "0.4.0+rubylight-host"
 dependencies = [
  "js-sys",
 ]

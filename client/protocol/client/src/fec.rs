@@ -213,66 +213,78 @@ mod x86 {
 
     #[target_feature(enable = "ssse3")]
     pub unsafe fn axpy_ssse3(a: &mut [u8], b: &[u8], t: &[[u8; 16]; 2]) -> usize {
-        let lo = _mm_loadu_si128(t[0].as_ptr().cast());
-        let hi = _mm_loadu_si128(t[1].as_ptr().cast());
-        let end = a.len() & !15;
-        let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
-        let mut i = 0;
-        while i < end {
-            let x = _mm_loadu_si128(pb.add(i).cast());
-            let y = _mm_loadu_si128(pa.add(i).cast());
-            _mm_storeu_si128(pa.add(i).cast(), _mm_xor_si128(y, mul128(x, lo, hi)));
-            i += 16;
+        // SAFETY: caller guarantees SSSE3 is supported and `a.len() == b.len()`.
+        unsafe {
+            let lo = _mm_loadu_si128(t[0].as_ptr().cast());
+            let hi = _mm_loadu_si128(t[1].as_ptr().cast());
+            let end = a.len() & !15;
+            let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
+            let mut i = 0;
+            while i < end {
+                let x = _mm_loadu_si128(pb.add(i).cast());
+                let y = _mm_loadu_si128(pa.add(i).cast());
+                _mm_storeu_si128(pa.add(i).cast(), _mm_xor_si128(y, mul128(x, lo, hi)));
+                i += 16;
+            }
+            end
         }
-        end
     }
 
     #[target_feature(enable = "ssse3")]
     pub unsafe fn scal_ssse3(a: &mut [u8], t: &[[u8; 16]; 2]) -> usize {
-        let lo = _mm_loadu_si128(t[0].as_ptr().cast());
-        let hi = _mm_loadu_si128(t[1].as_ptr().cast());
-        let end = a.len() & !15;
-        let pa = a.as_mut_ptr();
-        let mut i = 0;
-        while i < end {
-            let x = _mm_loadu_si128(pa.add(i).cast());
-            _mm_storeu_si128(pa.add(i).cast(), mul128(x, lo, hi));
-            i += 16;
+        // SAFETY: caller guarantees SSSE3 is supported and `t` is valid.
+        unsafe {
+            let lo = _mm_loadu_si128(t[0].as_ptr().cast());
+            let hi = _mm_loadu_si128(t[1].as_ptr().cast());
+            let end = a.len() & !15;
+            let pa = a.as_mut_ptr();
+            let mut i = 0;
+            while i < end {
+                let x = _mm_loadu_si128(pa.add(i).cast());
+                _mm_storeu_si128(pa.add(i).cast(), mul128(x, lo, hi));
+                i += 16;
+            }
+            end
         }
-        end
     }
 
     /// 32-byte blocks, then one 16-byte block.
     #[target_feature(enable = "avx2")]
     pub unsafe fn axpy_avx2(a: &mut [u8], b: &[u8], t: &[[u8; 16]; 2]) -> usize {
-        let lo = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[0].as_ptr().cast()));
-        let hi = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[1].as_ptr().cast()));
-        let end = a.len() & !31;
-        let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
-        let mut i = 0;
-        while i < end {
-            let x = _mm256_loadu_si256(pb.add(i).cast());
-            let y = _mm256_loadu_si256(pa.add(i).cast());
-            _mm256_storeu_si256(pa.add(i).cast(), _mm256_xor_si256(y, mul256(x, lo, hi)));
-            i += 32;
+        // SAFETY: caller guarantees AVX2 is supported and `a.len() == b.len()`.
+        unsafe {
+            let lo = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[0].as_ptr().cast()));
+            let hi = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[1].as_ptr().cast()));
+            let end = a.len() & !31;
+            let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
+            let mut i = 0;
+            while i < end {
+                let x = _mm256_loadu_si256(pb.add(i).cast());
+                let y = _mm256_loadu_si256(pa.add(i).cast());
+                _mm256_storeu_si256(pa.add(i).cast(), _mm256_xor_si256(y, mul256(x, lo, hi)));
+                i += 32;
+            }
+            end + axpy_ssse3(&mut a[end..], &b[end..], t)
         }
-        end + axpy_ssse3(&mut a[end..], &b[end..], t)
     }
 
     /// 32-byte blocks, then one 16-byte block.
     #[target_feature(enable = "avx2")]
     pub unsafe fn scal_avx2(a: &mut [u8], t: &[[u8; 16]; 2]) -> usize {
-        let lo = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[0].as_ptr().cast()));
-        let hi = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[1].as_ptr().cast()));
-        let end = a.len() & !31;
-        let pa = a.as_mut_ptr();
-        let mut i = 0;
-        while i < end {
-            let x = _mm256_loadu_si256(pa.add(i).cast());
-            _mm256_storeu_si256(pa.add(i).cast(), mul256(x, lo, hi));
-            i += 32;
+        // SAFETY: caller guarantees AVX2 is supported.
+        unsafe {
+            let lo = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[0].as_ptr().cast()));
+            let hi = _mm256_broadcastsi128_si256(_mm_loadu_si128(t[1].as_ptr().cast()));
+            let end = a.len() & !31;
+            let pa = a.as_mut_ptr();
+            let mut i = 0;
+            while i < end {
+                let x = _mm256_loadu_si256(pa.add(i).cast());
+                _mm256_storeu_si256(pa.add(i).cast(), mul256(x, lo, hi));
+                i += 32;
+            }
+            end + scal_ssse3(&mut a[end..], t)
         }
-        end + scal_ssse3(&mut a[end..], t)
     }
 }
 
@@ -283,38 +295,47 @@ mod neon {
 
     #[inline]
     unsafe fn mul(x: uint8x16_t, lo: uint8x16_t, hi: uint8x16_t) -> uint8x16_t {
-        let l = vandq_u8(x, vdupq_n_u8(0x0f));
-        let h = vshrq_n_u8::<4>(x);
-        veorq_u8(vqtbl1q_u8(lo, l), vqtbl1q_u8(hi, h))
+        // SAFETY: caller guarantees NEON is available on aarch64.
+        unsafe {
+            let l = vandq_u8(x, vdupq_n_u8(0x0f));
+            let h = vshrq_n_u8::<4>(x);
+            veorq_u8(vqtbl1q_u8(lo, l), vqtbl1q_u8(hi, h))
+        }
     }
 
     pub unsafe fn axpy(a: &mut [u8], b: &[u8], t: &[[u8; 16]; 2]) -> usize {
-        let lo = vld1q_u8(t[0].as_ptr());
-        let hi = vld1q_u8(t[1].as_ptr());
-        let end = a.len() & !15;
-        let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
-        let mut i = 0;
-        while i < end {
-            let x = vld1q_u8(pb.add(i));
-            let y = vld1q_u8(pa.add(i));
-            vst1q_u8(pa.add(i), veorq_u8(y, mul(x, lo, hi)));
-            i += 16;
+        // SAFETY: caller guarantees NEON is available and `a.len() == b.len()`.
+        unsafe {
+            let lo = vld1q_u8(t[0].as_ptr());
+            let hi = vld1q_u8(t[1].as_ptr());
+            let end = a.len() & !15;
+            let (pa, pb) = (a.as_mut_ptr(), b.as_ptr());
+            let mut i = 0;
+            while i < end {
+                let x = vld1q_u8(pb.add(i));
+                let y = vld1q_u8(pa.add(i));
+                vst1q_u8(pa.add(i), veorq_u8(y, mul(x, lo, hi)));
+                i += 16;
+            }
+            end
         }
-        end
     }
 
     pub unsafe fn scal(a: &mut [u8], t: &[[u8; 16]; 2]) -> usize {
-        let lo = vld1q_u8(t[0].as_ptr());
-        let hi = vld1q_u8(t[1].as_ptr());
-        let end = a.len() & !15;
-        let pa = a.as_mut_ptr();
-        let mut i = 0;
-        while i < end {
-            let x = vld1q_u8(pa.add(i));
-            vst1q_u8(pa.add(i), mul(x, lo, hi));
-            i += 16;
+        // SAFETY: caller guarantees NEON is available.
+        unsafe {
+            let lo = vld1q_u8(t[0].as_ptr());
+            let hi = vld1q_u8(t[1].as_ptr());
+            let end = a.len() & !15;
+            let pa = a.as_mut_ptr();
+            let mut i = 0;
+            while i < end {
+                let x = vld1q_u8(pa.add(i));
+                vst1q_u8(pa.add(i), mul(x, lo, hi));
+                i += 16;
+            }
+            end
         }
-        end
     }
 }
 
@@ -456,7 +477,7 @@ impl ReedSolomon {
         let mut colperm = [0u8; MAX_SHARDS];
         let mut rowperm = [0u8; MAX_SHARDS];
         let mut gaps = 0;
-        for (i, _) in missing[..ds].iter().enumerate().filter(|(_, &m)| m) {
+        for (i, _) in missing[..ds].iter().enumerate().filter(|(_, m)| **m) {
             erasures[gaps] = i as u8;
             gaps += 1;
         }

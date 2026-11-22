@@ -10,7 +10,7 @@ checks (see plan()):
 - host workspace crates, and the crates that depend on them, to
   cargo fmt, clippy and nextest (or cargo test fallback) in a warm target slot;
 - client/protocol crates, and their dependants, to `cargo nextest` / `cargo test`
-  in Nightjar's workspace, plus `cargo clippy -D warnings` for CLIENT_CLIPPY,
+  and `cargo clippy --all-targets -D warnings` in Nightjar's workspace,
   plus the interop tests once tests/interop exists;
 - client/app sources to the Gradle unit tests of the touched classes;
 - rust/service, the Windows service's own workspace, to its fmt, clippy and
@@ -60,8 +60,6 @@ GRADLE_WIDE = ('client/build.gradle', 'client/settings.gradle', 'client/gradle.p
                'client/app/src/main/AndroidManifest.xml')
 # Client workspace files outside its members that change every member's build.
 CLIENT_WIDE = ('client/protocol/Cargo.toml', 'client/protocol/Cargo.lock', 'client/protocol/vendor/')
-# Client crates that nightjar-android.yml lints with `clippy --all-targets -D warnings`.
-CLIENT_CLIPPY = ('nightjar-desktop',)
 GRADLE_TASK = ':app:testNonRootDebugUnitTest'
 GRADLE_LINT_TASK = ':app:lintNonRootDebug'
 
@@ -877,7 +875,7 @@ def client_specs(root, names):
 
 
 def client_commands(root, crates, use_nextest=False):
-    """cargo nextest/test for the client crates, then clippy as CI runs it for those of them it lints."""
+    """cargo nextest/test and clippy for the changed client crates."""
     args = [a for spec in client_specs(root, crates) for a in ('-p', spec)]
     if use_nextest:
         commands = [['cargo', 'nextest', 'run', *nextest_args(root), '-j', '4', '--locked', *args]]
@@ -887,11 +885,8 @@ def client_commands(root, crates, use_nextest=False):
             commands.append(['cargo', 'test', '--doc', '-j', '4', '--locked', *doc_args])
     else:
         commands = [['cargo', 'test', '-j', '4', '--locked', *args]]
-    linted = [c for c in crates if c in CLIENT_CLIPPY]
-    if linted:
-        lint_args = [a for spec in client_specs(root, linted) for a in ('-p', spec)]
-        commands.append(['cargo', 'clippy', '-j', '4', '--all-targets', '--locked',
-                         '--message-format=json', *lint_args, '--', '-D', 'warnings'])
+    commands.append(['cargo', 'clippy', '-j', '4', '--all-targets', '--locked',
+                     '--message-format=json', *args, '--', '-D', 'warnings'])
     return commands
 
 

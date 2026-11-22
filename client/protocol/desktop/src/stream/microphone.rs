@@ -11,7 +11,7 @@ use super::pipeline::{Notice, Shared};
 use crate::config::MicEcho;
 use crate::strings::tr;
 
-extern "C" {
+unsafe extern "C" {
     fn opus_encoder_create(
         rate: i32,
         channels: i32,
@@ -130,15 +130,16 @@ fn clean(samples: &mut [f32], dsp: Option<&mut MicDsp>, gain: u32) -> Result<(),
 }
 
 unsafe extern "C" fn record(userdata: *mut c_void, stream: *mut SDL_AudioStream, _: i32, _: i32) {
-    // SDL serializes callbacks and DestroyAudioStream waits for the current one.
-    let capture = &mut *userdata.cast::<Capture>();
+    // SAFETY: SDL serializes callbacks and DestroyAudioStream waits for the current one.
+    let capture = unsafe { &mut *userdata.cast::<Capture>() };
     if capture.failed {
         return;
     }
     let mut samples = [0f32; 480];
     let bytes = std::mem::size_of_val(&samples) as i32;
-    while SDL_GetAudioStreamAvailable(stream) >= bytes {
-        let result = if SDL_GetAudioStreamData(stream, samples.as_mut_ptr().cast(), bytes) != bytes
+    // SAFETY: `stream` is the live SDL audio stream passed to this callback.
+    while unsafe { SDL_GetAudioStreamAvailable(stream) } >= bytes {
+        let result = if unsafe { SDL_GetAudioStreamData(stream, samples.as_mut_ptr().cast(), bytes) } != bytes
         {
             Err(format!(
                 "Microphone capture failed: {}",
@@ -343,8 +344,8 @@ impl Microphone {
             }
         }
         #[cfg(windows)]
-        if let Voice::Running { failed, .. } = &self.voice {
-            if let Ok(error) = failed.try_recv() {
+        if let Voice::Running { failed, .. } = &self.voice
+            && let Ok(error) = failed.try_recv() {
                 // Windows' canceller can fail long after it opened (0x87CC000A): the plain
                 // microphone goes on, and the toast says the echo cancellation is gone.
                 eprintln!("nightjar: Windows' echo cancellation stopped ({error}); the microphone is sent without it");
@@ -352,7 +353,6 @@ impl Microphone {
                 self.shared.notify(Notice::EchoCancelOff(crate::strings::trf("Echo cancellation stopped: {}. The microphone is sent without it.", &[&error])));
                 self.start_sdl(SDL_AUDIO_DEVICE_DEFAULT_RECORDING)?;
             }
-        }
         Ok(())
     }
 
@@ -557,7 +557,7 @@ mod tests {
         assert_eq!(samples, [0.1; 480], "nothing scaled");
     }
 
-    extern "C" {
+    unsafe extern "C" {
         fn opus_packet_get_bandwidth(data: *const u8) -> i32;
     }
 

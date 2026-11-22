@@ -4,7 +4,8 @@ use super::*;
 use crate::wake::fake::Fake;
 use butterpollo_core::native_api::wake::{TargetState, Wake};
 
-const FIXTURE: &str = include_str!("../../../../core/native-api/tests/fixtures/wake.json");
+const FIXTURE: &str =
+    include_str!("../../../../../client/protocol/native-api/tests/fixtures/wake.json");
 
 /// The request reached the fixture's PC on its Ethernet address.
 fn lan(s: &Setup) -> Connection {

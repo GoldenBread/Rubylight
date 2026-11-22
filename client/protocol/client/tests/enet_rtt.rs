@@ -21,6 +21,7 @@ fn host(clock: &Clock) -> Host<Wire> {
         peer_limit: 1,
         channel_limit: 1,
         time: Box::new(move || Duration::from_millis(clock.get())),
+        round_up_srtt: true,
         ..Default::default()
     }).unwrap()
 }

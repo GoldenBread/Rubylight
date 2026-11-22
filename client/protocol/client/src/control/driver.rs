@@ -564,7 +564,7 @@ fn poll_readable(socket: &UdpSocket, timeout: Duration) -> io::Result<()> {
         revents: i16,
     }
     #[link(name = "ws2_32")]
-    extern "system" {
+    unsafe extern "system" {
         fn WSAPoll(fds: *mut WsaPollFd, count: u32, timeout: i32) -> i32;
     }
     const POLLRDNORM: i16 = 0x0100;
@@ -675,11 +675,11 @@ impl rusty_enet::Socket for ControlSocket {
                 marking.unanswered += 1;
             }
         }
-        if let Some(flow) = &mut self.flow {
-            if let Err(e) = flow.add(&self.socket, address) {
-                self.warn
-                    .say(&format!("Could not mark the control socket for QoS: {e}"));
-            }
+        if let Some(flow) = &mut self.flow
+            && let Err(e) = flow.add(&self.socket, address)
+        {
+            self.warn
+                .say(&format!("Could not mark the control socket for QoS: {e}"));
         }
         let result = rusty_enet::Socket::send(&mut self.socket, address, buffer);
         #[cfg(test)]
@@ -737,12 +737,13 @@ impl rusty_enet::Socket for ControlSocket {
             // The host answered: the marking works, so stop watching it.
             self.marking = None;
             let disconnect = enet_disconnect(&buffer[..length]);
-            if self.intercept && self.held_disconnect.is_none() {
-                if let Some(unsequenced) = disconnect {
-                    self.held_disconnect = Some((address, buffer[..length].to_vec()));
-                    self.held_unsequenced = unsequenced;
-                    continue;
-                }
+            if self.intercept
+                && self.held_disconnect.is_none()
+                && let Some(unsequenced) = disconnect
+            {
+                self.held_disconnect = Some((address, buffer[..length].to_vec()));
+                self.held_unsequenced = unsequenced;
+                continue;
             }
             if disconnect.is_some() {
                 self.disconnect_handed = Some(Instant::now());
@@ -885,6 +886,8 @@ pub fn connect(
     let settings = HostSettings {
         peer_limit: 1,
         channel_limit: channel::COUNT,
+        round_up_srtt: true,
+        lenient_peer_address: true,
         ..Default::default()
     };
     let mut host = Host::new(control_socket, settings).map_err(|error| match error {
@@ -1182,13 +1185,13 @@ impl ControlClient {
                 self.disconnect_held_since = None;
                 self.disconnect_released_at = Some(now);
             }
-        } else if let Some(at) = self.disconnect_released_at {
-            if now.duration_since(at) >= DISCONNECT_PROCESS_WAIT {
-                // ENet ignored it (another session's disconnect); the peer lives on.
-                self.disconnect_released_at = None;
-                socket.intercept = true;
-                socket.disconnect_handed = None;
-            }
+        } else if let Some(at) = self.disconnect_released_at
+            && now.duration_since(at) >= DISCONNECT_PROCESS_WAIT
+        {
+            // ENet ignored it (another session's disconnect); the peer lives on.
+            self.disconnect_released_at = None;
+            socket.intercept = true;
+            socket.disconnect_handed = None;
         }
     }
 

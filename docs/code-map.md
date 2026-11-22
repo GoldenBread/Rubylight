@@ -22,7 +22,7 @@ Each Rust module opens with a `//!` header saying what it owns. The index is bui
 | Crate | Folder | Holds |
 | --- | --- | --- |
 | `rubylight-protocol` | `client/protocol/core/` | Wire formats shared with Nightjar, `no_std`: each extension message in a module of its own, and every message id in [`ids.rs`](../client/protocol/core/src/ids.rs). |
-| `rubylight-native-api` | `rust/core/native-api/` | The [native API](native-api.md)'s wire types, versioned on their own. |
+| `rubylight-native-api` | `client/protocol/native-api/` | The [native API](native-api.md)'s wire types, versioned on their own. |
 | `rubylight-traverse` | `client/protocol/traverse/` | Internet play shared with Nightjar: reaching a paired host from outside its network without forwarded ports (DHT records, STUN, PCP and NAT-PMP, hole punching, the tunnel). The host uses it from `rust/host/src/internet_play.rs`. |
 | `butterpollo-core` | `rust/core/` | Protocol, state and policy without a Windows call. Decisions are plain functions over plain values, tested on any OS. |
 | `butterpollo-windows` | `rust/windows/` | Everything that calls Windows, a GPU or a driver. |
@@ -107,11 +107,11 @@ Saving goes through [`save_setting`](../rust/host/src/web/config.rs), which vali
 
 ### A capability a client can see
 
-The host says what it offers in three places: serverinfo fields ([`serverinfo_fields`](../rust/core/src/extensions.rs)), DESCRIBE lines and the native API's capabilities (`rust/core/native-api/src/capabilities.rs`). Nightjar reads them into [`Feature`, `HostCapabilities`](../client/protocol/client/src/http/capabilities.rs) and gates on that, never on a host's name. `client/protocol/client/tests/capabilities_contract.rs` checks the reading against recorded serverinfo replies.
+The host says what it offers in three places: serverinfo fields ([`serverinfo_fields`](../rust/core/src/extensions.rs)), DESCRIBE lines and the native API's capabilities (`client/protocol/native-api/src/capabilities.rs`). Nightjar reads them into [`Feature`, `HostCapabilities`](../client/protocol/client/src/http/capabilities.rs) and gates on that, never on a host's name. `client/protocol/client/tests/capabilities_contract.rs` checks the reading against recorded serverinfo replies.
 
 ### A native API endpoint
 
-1. Types in `rust/core/native-api/src/`. Within v1, changes only add: a response may gain fields, a request refuses unknown ones.
+1. Types in `client/protocol/native-api/src/`. Within v1, changes only add: a response may gain fields, a request refuses unknown ones.
 2. The route in [`router`](../rust/host/src/native_api.rs), the handler in `rust/host/src/native_api/`, what it reads from host state in `rust/core/src/native/`. The caller is the paired device of the TLS certificate; its permissions are read on every request.
 3. Tests in `rust/host/src/nvhttp/native_tests/`; the contract in `docs/native-api.md`.
 4. Nightjar: `client/protocol/client/src/http/native.rs`, then both apps.

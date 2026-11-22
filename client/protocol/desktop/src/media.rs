@@ -156,7 +156,7 @@ impl PlanarLayout {
     }
 }
 
-extern "C" {
+unsafe extern "C" {
     fn opus_multistream_decoder_create(
         rate: c_int,
         channels: c_int,
@@ -594,44 +594,46 @@ unsafe extern "C" fn select_format(
     context: *mut AVCodecContext,
     formats: *const AVPixelFormat,
 ) -> AVPixelFormat {
-    let wanted = &*((*context).opaque.cast::<Format>());
-    let mut next = formats;
-    while *next != AV_PIX_FMT_NONE {
-        if *next == wanted.hardware {
-            #[cfg(windows)]
-            if wanted.bind_textures && *next == AV_PIX_FMT_D3D11 {
-                if let Err(reason) = bind_frames(context, *next) {
-                    eprintln!("nightjar: the decoder's textures cannot be made readable ({reason}); its pictures are copied instead");
-                }
-            }
-            #[cfg(unix)]
-            if let Some(pictures) = wanted.vulkan {
-                if let Err(reason) = crate::vulkan_video::frames_context(context, pictures) {
-                    // The decoder then says it was refused, and the stream opens the next backend.
-                    eprintln!("nightjar: Vulkan video cannot decode into the presenter's format: {reason}");
-                    break;
-                }
-            }
-            return *next;
-        }
-        next = next.add(1);
-    }
-    if !wanted.required {
-        next = formats;
+    // SAFETY: FFmpeg passes valid `context` (with our `Format` in `opaque`) and `AV_PIX_FMT_NONE`-terminated `formats`.
+    unsafe {
+        let wanted = &*((*context).opaque.cast::<Format>());
+        let mut next = formats;
         while *next != AV_PIX_FMT_NONE {
-            let descriptor = av_pix_fmt_desc_get(*next);
-            if !descriptor.is_null()
-                && (*descriptor).flags & u64::from(AV_PIX_FMT_FLAG_HWACCEL) == 0
-            {
-                // Decoded in software, or (AV1, which has no software path in this decoder) not
-                // at all: never silently under the hardware decoder's name.
-                wanted.software.set(true);
+            if *next == wanted.hardware {
+                #[cfg(windows)]
+                if wanted.bind_textures && *next == AV_PIX_FMT_D3D11
+                    && let Err(reason) = bind_frames(context, *next) {
+                        eprintln!("nightjar: the decoder's textures cannot be made readable ({reason}); its pictures are copied instead");
+                    }
+                #[cfg(unix)]
+                if let Some(pictures) = wanted.vulkan {
+                    if let Err(reason) = crate::vulkan_video::frames_context(context, pictures) {
+                        // The decoder then says it was refused, and the stream opens the next backend.
+                        eprintln!("nightjar: Vulkan video cannot decode into the presenter's format: {reason}");
+                        break;
+                    }
+                }
                 return *next;
             }
             next = next.add(1);
         }
+        if !wanted.required {
+            next = formats;
+            while *next != AV_PIX_FMT_NONE {
+                let descriptor = av_pix_fmt_desc_get(*next);
+                if !descriptor.is_null()
+                    && (*descriptor).flags & u64::from(AV_PIX_FMT_FLAG_HWACCEL) == 0
+                {
+                    // Decoded in software, or (AV1, which has no software path in this decoder) not
+                    // at all: never silently under the hardware decoder's name.
+                    wanted.software.set(true);
+                    return *next;
+                }
+                next = next.add(1);
+            }
+        }
+        AV_PIX_FMT_NONE
     }
-    AV_PIX_FMT_NONE
 }
 
 /// Makes the decoder's frames context with shader-readable textures, as Moonlight V+ PC does
@@ -642,25 +644,28 @@ unsafe fn bind_frames(context: *mut AVCodecContext, format: AVPixelFormat) -> Re
     unsafe extern "C" {
         fn av_hwframe_ctx_init(reference: *mut AVBufferRef) -> c_int;
     }
-    let context = &mut *context;
-    av_buffer_unref(&mut context.hw_frames_ctx);
-    let status = avcodec_get_hw_frames_parameters(context, context.hw_device_ctx, format, &mut context.hw_frames_ctx);
-    if status < 0 {
-        return Err(format!("frames parameters: {}", error(status)));
-    }
-    let frames = &mut *(*context.hw_frames_ctx).data.cast::<AVHWFramesContext>();
-    let d3d = &mut *frames.hwctx.cast::<AVD3D11VAFramesContext>();
-    d3d.BindFlags |= windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32;
-    // ff_decode_get_hw_frames_ctx adds these 3 to the minimum FFmpeg asks for.
-    if frames.initial_pool_size != 0 {
-        frames.initial_pool_size += 3;
-    }
-    let status = av_hwframe_ctx_init(context.hw_frames_ctx);
-    if status < 0 {
+    // SAFETY: caller guarantees `context` is an active FFmpeg codec context.
+    unsafe {
+        let context = &mut *context;
         av_buffer_unref(&mut context.hw_frames_ctx);
-        return Err(format!("frames context: {}", error(status)));
+        let status = avcodec_get_hw_frames_parameters(context, context.hw_device_ctx, format, &mut context.hw_frames_ctx);
+        if status < 0 {
+            return Err(format!("frames parameters: {}", error(status)));
+        }
+        let frames = &mut *(*context.hw_frames_ctx).data.cast::<AVHWFramesContext>();
+        let d3d = &mut *frames.hwctx.cast::<AVD3D11VAFramesContext>();
+        d3d.BindFlags |= windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32;
+        // ff_decode_get_hw_frames_ctx adds these 3 to the minimum FFmpeg asks for.
+        if frames.initial_pool_size != 0 {
+            frames.initial_pool_size += 3;
+        }
+        let status = av_hwframe_ctx_init(context.hw_frames_ctx);
+        if status < 0 {
+            av_buffer_unref(&mut context.hw_frames_ctx);
+            return Err(format!("frames context: {}", error(status)));
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 pub(crate) fn error(code: i32) -> String {

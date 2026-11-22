@@ -177,10 +177,10 @@ impl App {
     /// With a frame drawn, before it is presented.
     pub(super) fn demo_drew(&mut self) {
         self.demo.presents += 1;
-        if let Some(path) = self.demo.capture.take() {
-            if let Err(why) = sdl::screenshot(self.renderer, &path) {
-                eprintln!("nightjar: demo driver: {}: {why}", path.display());
-            }
+        if let Some(path) = self.demo.capture.take()
+            && let Err(why) = sdl::screenshot(self.renderer, &path)
+        {
+            eprintln!("nightjar: demo driver: {}: {why}", path.display());
         }
     }
 }

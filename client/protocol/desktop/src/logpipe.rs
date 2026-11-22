@@ -438,7 +438,7 @@ mod sys {
 
     // The C runtime's own stderr (fd 2), which SDL, FFmpeg and other native code write through.
     // `_dup2` onto fd 0-2 also updates the process's standard handle.
-    extern "C" {
+    unsafe extern "C" {
         fn _open_osfhandle(handle: isize, flags: i32) -> i32;
         fn _dup2(from: i32, to: i32) -> i32;
         fn _close(fd: i32) -> i32;

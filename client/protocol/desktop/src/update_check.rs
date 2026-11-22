@@ -164,9 +164,8 @@ impl Updates {
     fn skip(&mut self) {
         let Some(release) = self.found.take() else { return };
         self.failure = None;
-        if let Some(file) = &self.skip_file {
-            if let Err(e) = std::fs::write(file, &release.version) { eprintln!("nightjar: update: {}: {e}", file.display()); }
-        }
+        if let Some(file) = &self.skip_file
+            && let Err(e) = std::fs::write(file, &release.version) { eprintln!("nightjar: update: {}: {e}", file.display()); }
         eprintln!("nightjar: update: Nightjar {} skipped", release.version);
         self.skipped = Some(release.version);
     }
@@ -295,9 +294,8 @@ impl Updates {
         let Some(job) = self.job.take() else { return };
         job.progress.cancel.store(true, Ordering::SeqCst);
         // The download may have finished just before: its file has no other owner now.
-        if let Ok(Ok(part)) = job.done.try_recv() {
-            if let Err(e) = std::fs::remove_file(&part) { eprintln!("nightjar: update: leftover {}: {e}", part.display()); }
-        }
+        if let Ok(Ok(part)) = job.done.try_recv()
+            && let Err(e) = std::fs::remove_file(&part) { eprintln!("nightjar: update: leftover {}: {e}", part.display()); }
     }
 
     /// Takes in what the threads finished, once per pass of the main loop. A verified download that
@@ -392,9 +390,8 @@ impl Updates {
             if let Err(e) = self_update::write_attempt(marker, &attempt) { eprintln!("nightjar: update: {}: {e}", marker.display()); }
         }
         let result = (steps.apply)(part, asset);
-        if result.is_err() {
-            if let Some(marker) = marker { let _ = std::fs::remove_file(marker); }
-        }
+        if result.is_err()
+            && let Some(marker) = marker { let _ = std::fs::remove_file(marker); }
         result
     }
 

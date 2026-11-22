@@ -55,31 +55,34 @@ impl UiPq {
     /// # Safety
     /// `renderer` must be the live SDL "gpu" renderer of the calling thread, and outlive this.
     pub unsafe fn new(renderer: *mut SDL_Renderer) -> Result<Self, String> {
-        let device: *mut SDL_GPUDevice = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER).cast();
-        if device.is_null() {
-            return Err("the renderer has no GPU device".into());
+        // SAFETY: caller guarantees `renderer` is a live SDL GPU renderer on the calling thread.
+        unsafe {
+            let device: *mut SDL_GPUDevice = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER).cast();
+            if device.is_null() {
+                return Err("the renderer has no GPU device".into());
+            }
+            let shader = SDL_CreateGPUShader(device, &SDL_GPUShaderCreateInfo {
+                code: FRAGMENT_SPIRV.as_ptr(),
+                code_size: FRAGMENT_SPIRV.len(),
+                entrypoint: c"fragment".as_ptr(),
+                format: SDL_GPU_SHADERFORMAT_SPIRV,
+                stage: SDL_GPU_SHADERSTAGE_FRAGMENT,
+                // The mesh's own texture, which SDL binds in the first slot of a textured draw.
+                num_samplers: 1,
+                num_uniform_buffers: 1,
+                ..Default::default()
+            });
+            if shader.is_null() {
+                return Err(format!("the overlay's PQ shader cannot be created: {}", crate::sdl::error()));
+            }
+            let state = SDL_CreateGPURenderState(renderer, &SDL_GPURenderStateCreateInfo { fragment_shader: shader, ..Default::default() });
+            if state.is_null() {
+                let error = format!("the overlay's PQ render state cannot be created: {}", crate::sdl::error());
+                SDL_ReleaseGPUShader(device, shader);
+                return Err(error);
+            }
+            Ok(Self { renderer, device, shader, state, look: None })
         }
-        let shader = SDL_CreateGPUShader(device, &SDL_GPUShaderCreateInfo {
-            code: FRAGMENT_SPIRV.as_ptr(),
-            code_size: FRAGMENT_SPIRV.len(),
-            entrypoint: c"fragment".as_ptr(),
-            format: SDL_GPU_SHADERFORMAT_SPIRV,
-            stage: SDL_GPU_SHADERSTAGE_FRAGMENT,
-            // The mesh's own texture, which SDL binds in the first slot of a textured draw.
-            num_samplers: 1,
-            num_uniform_buffers: 1,
-            ..Default::default()
-        });
-        if shader.is_null() {
-            return Err(format!("the overlay's PQ shader cannot be created: {}", crate::sdl::error()));
-        }
-        let state = SDL_CreateGPURenderState(renderer, &SDL_GPURenderStateCreateInfo { fragment_shader: shader, ..Default::default() });
-        if state.is_null() {
-            let error = format!("the overlay's PQ render state cannot be created: {}", crate::sdl::error());
-            SDL_ReleaseGPUShader(device, shader);
-            return Err(error);
-        }
-        Ok(Self { renderer, device, shader, state, look: None })
     }
 
     /// The state for this frame's meshes, with the renderer's constants as they are now; null if
@@ -91,17 +94,20 @@ impl UiPq {
         if renderer != self.renderer {
             return std::ptr::null_mut();
         }
-        let mut color_scale = 1.0;
-        SDL_GetRenderColorScale(renderer, &mut color_scale);
-        let sdr_white = SDL_GetFloatProperty(SDL_GetRendererProperties(renderer), SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, 1.0);
-        let now = look(sdr_white, color_scale, crate::sdl::present_encoding(renderer));
-        if self.look != Some(now) {
-            // SDL flushes what was queued with the old constants before it takes the new ones.
-            if !SDL_SetGPURenderStateFragmentUniforms(self.state, 0, (&now as *const Look).cast(), std::mem::size_of::<Look>() as u32) {
-                self.look = None;
-                return std::ptr::null_mut();
+        // SAFETY: caller guarantees `renderer` is live on this thread.
+        unsafe {
+            let mut color_scale = 1.0;
+            SDL_GetRenderColorScale(renderer, &mut color_scale);
+            let sdr_white = SDL_GetFloatProperty(SDL_GetRendererProperties(renderer), SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, 1.0);
+            let now = look(sdr_white, color_scale, crate::sdl::present_encoding(renderer));
+            if self.look != Some(now) {
+                // SDL flushes what was queued with the old constants before it takes the new ones.
+                if !SDL_SetGPURenderStateFragmentUniforms(self.state, 0, (&now as *const Look).cast(), std::mem::size_of::<Look>() as u32) {
+                    self.look = None;
+                    return std::ptr::null_mut();
+                }
+                self.look = Some(now);
             }
-            self.look = Some(now);
         }
         self.state
     }

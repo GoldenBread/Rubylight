@@ -182,11 +182,10 @@ impl App {
         let mode = mode.or_else(|| {
             let host = host?;
             let mut settings = host.record.settings(&self.launcher.profiles.settings(&self.launcher.settings, self.launcher.network.kind(&self.launcher.profiles.home_wifi)));
-            if let Apps::Loaded(apps) = &host.apps {
-                if let Some(overrides) = apps.iter().find(|a| a.id == app_id).and_then(|app| host.record.app_settings(&app.uuid, app.id)) {
+            if let Apps::Loaded(apps) = &host.apps
+                && let Some(overrides) = apps.iter().find(|a| a.id == app_id).and_then(|app| host.record.app_settings(&app.uuid, app.id)) {
                     settings = overrides.apply(&settings);
                 }
-            }
             if let Some(cli) = self.cli.as_ref().filter(|cli| cli.host == host_id) { cli.launch.options.apply(&mut settings); }
             Some(stream::stream_mode(&settings, display_of(self.window)))
         });
@@ -205,9 +204,8 @@ impl App {
     /// remembered as refusing it, and the same start is made once more without it, resuming that
     /// app. That start does not ask for it, so it cannot be refused again.
     pub(crate) fn restart_without_full_chroma(&mut self, plan: &LaunchPlan) {
-        if let Some(host) = self.hosts.get_mut(plan.host_id) {
-            if full_chroma::refused(&mut host.record) { self.save_hosts(); }
-        }
+        if let Some(host) = self.hosts.get_mut(plan.host_id)
+            && full_chroma::refused(&mut host.record) { self.save_hosts(); }
         let kind = LaunchKind::of_plan(plan.join, plan.small_stream_input_only, plan.mic_only);
         eprintln!("nightjar: the PC refused full chroma after the launch; starting again without it{}", kind.log_suffix());
         self.full_chroma_off = Some(plan.host_id);
@@ -234,11 +232,10 @@ impl App {
         let Some((host, app)) = self.launcher.moved_prompt() else {
             return;
         };
-        if let Some(token) = self.move_watch.next() {
-            if !self.hosts.watch_stream_move(host, app, token) {
+        if let Some(token) = self.move_watch.next()
+            && !self.hosts.watch_stream_move(host, app, token) {
                 self.move_watch.not_started();
             }
-        }
     }
 
     /// Whether the PIN lock holds a stream start on `host` back; it then asks for the PIN and

@@ -2,7 +2,7 @@
 *.sh text eol=lf
 *.patch text eol=lf
 # The native API fixtures are byte-compared, so they stay LF on Windows runners.
-rust/core/native-api/tests/fixtures/** text eol=lf
+client/protocol/native-api/tests/fixtures/** text eol=lf
 # The timing-report tests edit these byte by byte and check they stay LF.
 rust/release/fixtures/timing/** text eol=lf
 

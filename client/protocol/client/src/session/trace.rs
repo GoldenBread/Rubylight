@@ -135,7 +135,7 @@ impl PacketTrace {
             self.dropped += 1;
             return;
         }
-        if self.chunks.last().map_or(true, |chunk| chunk.len() == self.chunk) {
+        if self.chunks.last().is_none_or(|chunk| chunk.len() == self.chunk) {
             self.chunks.push(Vec::with_capacity(self.chunk));
         }
         if let Some(chunk) = self.chunks.last_mut() {

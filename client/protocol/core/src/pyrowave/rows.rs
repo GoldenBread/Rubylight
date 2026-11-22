@@ -132,7 +132,7 @@ impl RowTracker {
     /// The packet that was fed last is over: its lowest step moves the cursor.
     fn close_packet(&mut self) {
         let Some(step) = self.lowest_here.take() else { return };
-        if self.highest.map_or(true, |highest| step > highest) {
+        if self.highest.is_none_or(|highest| step > highest) {
             let from = self.highest.map_or(0, usize::from);
             for s in from..usize::from(step) {
                 if self.crossed_in[s] == u32::MAX {

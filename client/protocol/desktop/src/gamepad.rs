@@ -1080,15 +1080,12 @@ impl Gamepads {
         let outputs = crate::controller_audio::outputs();
         let pads: Vec<_> = self.pads.iter().filter(|p| p.supports_audio()).map(|p| p.index).collect();
         if let ([index], [(device, _)]) = (pads.as_slice(), outputs.as_slice()) {
-            if self.pads.iter().any(|p| p.index == *index && p.audio.is_none()) {
-                if let Err(error) = self.set_audio(*index, Some(*device)) { eprintln!("nightjar: controller audio: {error}"); }
-            }
+            if self.pads.iter().any(|p| p.index == *index && p.audio.is_none())
+                && let Err(error) = self.set_audio(*index, Some(*device)) { eprintln!("nightjar: controller audio: {error}"); }
             let inputs = crate::controller_audio::inputs();
-            if let [(input, _)] = inputs.as_slice() {
-                if let Some(audio) = self.pads.iter_mut().find(|p| p.index == *index).and_then(|p| p.audio.as_mut()) {
-                    if audio.input.is_none() { audio.set_input(Some(*input)); }
-                }
-            }
+            if let [(input, _)] = inputs.as_slice()
+                && let Some(audio) = self.pads.iter_mut().find(|p| p.index == *index).and_then(|p| p.audio.as_mut())
+                    && audio.input.is_none() { audio.set_input(Some(*input)); }
         }
     }
 
@@ -1139,17 +1136,15 @@ impl Gamepads {
     /// Haptics or speaker audio for gamepad `pcm.controller`: the controller sent as it that plays it.
     pub fn pcm(&mut self, pcm: nightjar_core::control::haptics::Pcm, speaker: bool) {
         if !speaker && self.disable_rumble { return; }
-        if let Some(pad) = self.pads.iter_mut().find(|p| u16::from(p.sent_as) == pcm.controller && p.audio.is_some()) {
-            if let Some(audio) = &mut pad.audio { audio.offer(pcm, speaker); audio.update(pad.handle); }
-        }
+        if let Some(pad) = self.pads.iter_mut().find(|p| u16::from(p.sent_as) == pcm.controller && p.audio.is_some())
+            && let Some(audio) = &mut pad.audio { audio.offer(pcm, speaker); audio.update(pad.handle); }
     }
 
     pub fn audio_control(&mut self, payload: &[u8]) {
         if !crate::controller_audio::valid_control(payload) { return; }
         let index = u16::from_le_bytes([payload[2], payload[3]]);
-        if let Some(pad) = self.pads.iter_mut().find(|p| u16::from(p.sent_as) == index && p.audio.is_some()) {
-            if let Some(audio) = &mut pad.audio { audio.control(payload, pad.handle); }
-        }
+        if let Some(pad) = self.pads.iter_mut().find(|p| u16::from(p.sent_as) == index && p.audio.is_some())
+            && let Some(audio) = &mut pad.audio { audio.control(payload, pad.handle); }
     }
 
     /// Holding Guide, on the stream loop's tick: true when a Guide held for the setting's time opens

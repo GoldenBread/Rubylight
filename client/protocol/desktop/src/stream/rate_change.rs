@@ -423,12 +423,11 @@ impl RateChange {
                     eprintln!("nightjar: rate change: the PC counts this stream's bitrate as {} kbps; keep my bitrate and the client-hint controller start from it", result.bitrate_kbps);
                     self.configured_kbps = result.bitrate_kbps;
                     // Unless a change by hand was answered first: the controller follows that one.
-                    if answer.bitrate_kbps.is_some() {
-                        if let Some(hint) = &mut self.hint {
+                    if answer.bitrate_kbps.is_some()
+                        && let Some(hint) = &mut self.hint {
                             *hint = client_hint::Bitrate::new(result.bitrate_kbps, self.limit_kbps, now_ms);
                             if let Some(kbps) = self.resume_kbps { hint.resume_from(kbps); }
                         }
-                    }
                 } else {
                     eprintln!("nightjar: rate change: the PC's answer to the bitrate query named no bitrate; the stream goes on from {} kbps", self.configured_kbps);
                 }

@@ -517,18 +517,16 @@ impl InputQueue {
             }
             _ => false,
         };
-        if let Some(id) = self.controller_batch[usize::from(number)] {
-            if let Some(Entry::Controller { state, .. }) = self
+        if let Some(id) = self.controller_batch[usize::from(number)]
+            && let Some(Entry::Controller { state, .. }) = self
                 .entries
                 .iter_mut()
                 .rev()
                 .find(|e| matches!(e, Entry::Controller { id: queued, .. } if *queued == id))
-            {
-                if same_buttons(&state.event) {
-                    state.event = event;
-                    return Ok(());
-                }
-            }
+            && same_buttons(&state.event)
+        {
+            state.event = event;
+            return Ok(());
         }
         let id = self.next_id;
         self.next_id += 1;
@@ -997,23 +995,23 @@ impl InputQueue {
                     }
                     _ => None,
                 };
-                if let Some(at) = wait_until {
-                    if now < at {
-                        wake = Some(wake.map_or(at, |w| w.min(at)));
-                        break;
-                    }
+                if let Some(at) = wait_until
+                    && now < at
+                {
+                    wake = Some(wake.map_or(at, |w| w.min(at)));
+                    break;
                 }
             }
             let entry = self.entries.remove(index).expect("entry at index exists");
             match entry {
                 Entry::Event(pending) => {
-                    if let InputEvent::Pen { event, buttons, .. } = pending.event {
-                        if touch_event::is_batchable(event) {
-                            let latest = self.collapse_pen(index, pending, event, buttons);
-                            self.last_pen = Some(now);
-                            self.emit(latest, contact_lost, out);
-                            continue;
-                        }
+                    if let InputEvent::Pen { event, buttons, .. } = pending.event
+                        && touch_event::is_batchable(event)
+                    {
+                        let latest = self.collapse_pen(index, pending, event, buttons);
+                        self.last_pen = Some(now);
+                        self.emit(latest, contact_lost, out);
+                        continue;
                     }
                     self.emit(pending, contact_lost, out);
                 }
@@ -1203,10 +1201,10 @@ impl InputQueue {
                 motion_type,
                 ..
             } => {
-                if (1..=MAX_MOTION_TYPES as u8).contains(&motion_type) {
-                    if let Some(slots) = held.motion.get_mut(usize::from(number)) {
-                        slots[usize::from(motion_type - 1)] = Some(pending);
-                    }
+                if (1..=MAX_MOTION_TYPES as u8).contains(&motion_type)
+                    && let Some(slots) = held.motion.get_mut(usize::from(number))
+                {
+                    slots[usize::from(motion_type - 1)] = Some(pending);
                 }
             }
             InputEvent::ControllerBattery { number, .. } => {

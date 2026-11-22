@@ -128,7 +128,7 @@ pub fn best<S: AsRef<str>>(query: &str, candidates: &[S]) -> Option<usize> {
     let mut found: Option<(usize, f32)> = None;
     for (at, name) in candidates.iter().enumerate() {
         let score = likeness(query, name.as_ref());
-        if score >= MATCH_AT && found.map_or(true, |(_, best)| score > best) {
+        if score >= MATCH_AT && found.is_none_or(|(_, best)| score > best) {
             found = Some((at, score));
         }
     }

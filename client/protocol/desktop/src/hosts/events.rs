@@ -157,11 +157,10 @@ impl Hosts {
                     // for, and none means the cover shows all of its file already. An older read
                     // landing late (behind a newer scale's, or after the cover was loaded again)
                     // would make it blurrier and stay so.
-                    if let Some(sized) = sized {
-                        if host.art_sized.get(&app).is_none_or(|&asked| sized < asked) {
+                    if let Some(sized) = sized
+                        && host.art_sized.get(&app).is_none_or(|&asked| sized < asked) {
                             continue;
                         }
-                    }
                     // Still the cover it was loaded again for: one given up or replaced since is not.
                     let Some(Art::Ready(texture)) = host.art.get_mut(&app) else { continue };
                     *texture = ctx.load_texture(format!("art-{id}-{app}"), image, egui::TextureOptions::LINEAR);
@@ -233,13 +232,12 @@ impl Hosts {
                                     }
                                     host.native.capabilities = Some(capabilities);
                                 }
-                                if let Some((macs, broadcasts)) = read.wake {
-                                    if host.record.wake_macs != macs || host.record.wake_broadcasts != broadcasts {
+                                if let Some((macs, broadcasts)) = read.wake
+                                    && (host.record.wake_macs != macs || host.record.wake_broadcasts != broadcasts) {
                                         host.record.wake_macs = macs;
                                         host.record.wake_broadcasts = broadcasts;
                                         changed = true;
                                     }
-                                }
                                 if let Some(NativeLibrary { library, last_played, playtime_minutes, collections }) = read.library {
                                     // The classic list a launch goes through follows the library.
                                     reload_apps = !host.native.library_live
@@ -440,14 +438,13 @@ impl Hosts {
         };
         // A newly found address may belong to a host already listed under another one.
         if let Ok(info) = &result {
-            if let Some(certificate) = self.link_claims.get(&id) {
-                if !info.unique_id.is_empty()
+            if let Some(certificate) = self.link_claims.get(&id)
+                && !info.unique_id.is_empty()
                     && self.list.iter().any(|h| h.id != id && h.record.unique_id == info.unique_id && pins_another(&h.record, certificate))
                 {
                     self.drop_link_claiming_known_pc(id);
                     return true;
                 }
-            }
             if let Some(other) = self
                 .list
                 .iter()
@@ -570,12 +567,11 @@ impl Hosts {
                     changed = true;
                 }
                 // The PC's own ExternalIP replaces a STUN answer (Moonlight V+ PC's NvComputer).
-                if let Some(external) = info.external_ip.as_deref().and_then(public_ipv4) {
-                    if host.record.remote_address.as_deref() != Some(external.as_str()) {
+                if let Some(external) = info.external_ip.as_deref().and_then(public_ipv4)
+                    && host.record.remote_address.as_deref() != Some(external.as_str()) {
                         host.record.remote_address = Some(external);
                         changed = true;
                     }
-                }
                 // The host forgot this client: drop the pin so the user can pair again. Only the
                 // pinned host's own word counts (its HTTPS answer, or its refusal of this client).
                 if !info.paired && host.record.server_certificate.is_some() && path != InfoPath::Plain {
@@ -626,12 +622,11 @@ impl Hosts {
             // Seen on this network: its own address reaches it again, not the router's.
             host.via_remote = None;
             let record = &mut host.record;
-            if record.pinned_address.is_none() && record.remote_address.as_ref() == Some(&record.address) {
-                if let Some(at) = record.other_addresses.iter().position(|a| texts.contains(a)) {
+            if record.pinned_address.is_none() && record.remote_address.as_ref() == Some(&record.address)
+                && let Some(at) = record.other_addresses.iter().position(|a| texts.contains(a)) {
                     record.address = record.other_addresses.remove(at);
                     return true;
                 }
-            }
             return false;
         }
         let id = self.insert(HostRecord {

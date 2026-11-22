@@ -3,11 +3,8 @@
 //! asks for sleep through the real HTTP, HTTPS, RTSP, ENet and session workers on loopback.
 //! Only the reconnect fixture's capture, encoder and native input are fake.
 //!
-//! Nightjar builds with its own ENet fork (`client/protocol/vendor/rusty_enet`) beside the
-//! host's rusty_enet, as it ships. Its native API types are this repository's
-//! (`rust/core/native-api`, patched in the workspace's Cargo.toml), not the rev Nightjar pins
-//! (17fc45bb, v1.1.0 without the file transfer error codes): built against that rev, Nightjar
-//! reads `too_large` and the other file refusals as an unknown error.
+//! Both sides share the vendored ENet (`client/protocol/vendor/rusty_enet`) and the native API
+//! types (`client/protocol/native-api`).
 //!
 //! Nightjar's calls block. The test body runs on the runtime's own thread, not on a worker, so
 //! they don't hold up the host's tasks. Waits are long ([`LOADED`]): these tests run beside the

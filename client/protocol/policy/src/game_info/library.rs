@@ -63,7 +63,7 @@ pub fn hours(seconds: Option<u64>) -> Option<String> {
         return Some("0.5".into());
     }
     if halves < 20 {
-        return Some(if halves % 2 == 0 { format!("{}", halves / 2) } else { format!("{}.5", halves / 2) });
+        return Some(if halves.is_multiple_of(2) { format!("{}", halves / 2) } else { format!("{}.5", halves / 2) });
     }
     Some(format!("{}", (seconds + HOUR / 2) / HOUR))
 }
@@ -115,7 +115,7 @@ pub fn shows(facts: Option<&Facts>, genre: Option<&str>, length: Option<Length>)
         return true;
     }
     let Some(facts) = facts else { return false };
-    let genre_ok = genre.map_or(true, |g| facts.genres.iter().any(|have| have.to_lowercase() == g.to_lowercase()));
-    let length_ok = length.map_or(true, |l| Length::of(facts) == Some(l));
+    let genre_ok = genre.is_none_or(|g| facts.genres.iter().any(|have| have.to_lowercase() == g.to_lowercase()));
+    let length_ok = length.is_none_or(|l| Length::of(facts) == Some(l));
     genre_ok && length_ok
 }

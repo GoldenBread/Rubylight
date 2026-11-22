@@ -213,10 +213,9 @@ impl Tags {
         if count == 0 || count > MAX_TAGS || data.len() < TAGS_HEADER_BYTES + count * TAG_BYTES {
             return None;
         }
-        let tags = data[TAGS_HEADER_BYTES..TAGS_HEADER_BYTES + count * TAG_BYTES]
-            .chunks_exact(TAG_BYTES)
-            .map(Tag::read)
-            .collect();
+        let (chunks, _) = data[TAGS_HEADER_BYTES..TAGS_HEADER_BYTES + count * TAG_BYTES]
+            .as_chunks::<TAG_BYTES>();
+        let tags = chunks.iter().map(|chunk| Tag::read(chunk)).collect();
         Some(Self {
             model_generation: u16::from_le_bytes([data[2], data[3]]),
             tags,

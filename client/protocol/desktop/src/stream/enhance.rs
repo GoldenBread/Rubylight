@@ -121,14 +121,16 @@ mod windows_impl {
     /// Turns NVIDIA's super resolution on or off (`NvidiaStreamExt` v1, method 2).
     unsafe fn nvidia_super_resolution(context: &ID3D11VideoContext, processor: &ID3D11VideoProcessor, enable: bool) -> Result<(), String> {
         let data: [u32; 3] = [1, 2, u32::from(enable)];
-        let hr = context.VideoProcessorSetStreamExtension(processor, 0, &NVIDIA_PPE, 12, data.as_ptr().cast());
+        // SAFETY: caller guarantees `context` and `processor` are live D3D11 video objects.
+        let hr = unsafe { context.VideoProcessorSetStreamExtension(processor, 0, &NVIDIA_PPE, 12, data.as_ptr().cast()) };
         if hr < 0 { Err(format!("NVIDIA RTX Video Super Resolution failed: {hr:#x}")) } else { Ok(()) }
     }
 
     /// Turns RTX Video HDR on or off (`NvidiaStreamExt` v4, method 3, the enable bit).
     unsafe fn nvidia_hdr(context: &ID3D11VideoContext, processor: &ID3D11VideoProcessor, enable: bool) -> Result<(), String> {
         let data: [u32; 3] = [4, 3, u32::from(enable)];
-        let hr = context.VideoProcessorSetStreamExtension(processor, 0, &NVIDIA_TRUE_HDR, 12, data.as_ptr().cast());
+        // SAFETY: caller guarantees `context` and `processor` are live D3D11 video objects.
+        let hr = unsafe { context.VideoProcessorSetStreamExtension(processor, 0, &NVIDIA_TRUE_HDR, 12, data.as_ptr().cast()) };
         if hr < 0 { Err(format!("NVIDIA RTX Video HDR failed: {hr:#x}")) } else { Ok(()) }
     }
 
@@ -138,41 +140,50 @@ mod windows_impl {
         #[repr(C)]
         struct Ext { function: u32, param: *mut u32 }
         let size = std::mem::size_of::<Ext>() as u32;
-        let call = |function: u32, mut param: u32, stream: bool| {
-            let ext = Ext { function, param: &mut param };
-            if stream {
-                context.VideoProcessorSetStreamExtension(processor, 0, &INTEL_VPE, size, (&raw const ext).cast())
-            } else {
-                context.VideoProcessorSetOutputExtension(processor, &INTEL_VPE, size, (&raw const ext).cast())
-            }
-        };
-        let hr = call(0x01, 3, false);
-        if hr < 0 { return Err(format!("Intel VPE version failed: {hr:#x}")); }
-        let hr = call(0x20, u32::from(enable), false);
-        if hr < 0 { return Err(format!("Intel VPE mode failed: {hr:#x}")); }
-        let hr = call(0x37, if enable { 2 } else { 0 }, true);
-        if hr < 0 { return Err(format!("Intel Video Super Resolution failed: {hr:#x}")); }
-        Ok(())
+        // SAFETY: caller guarantees `context` and `processor` are live D3D11 video objects.
+        unsafe {
+            let call = |function: u32, mut param: u32, stream: bool| {
+                let ext = Ext { function, param: &mut param };
+                if stream {
+                    context.VideoProcessorSetStreamExtension(processor, 0, &INTEL_VPE, size, (&raw const ext).cast())
+                } else {
+                    context.VideoProcessorSetOutputExtension(processor, &INTEL_VPE, size, (&raw const ext).cast())
+                }
+            };
+            let hr = call(0x01, 3, false);
+            if hr < 0 { return Err(format!("Intel VPE version failed: {hr:#x}")); }
+            let hr = call(0x20, u32::from(enable), false);
+            if hr < 0 { return Err(format!("Intel VPE mode failed: {hr:#x}")); }
+            let hr = call(0x37, if enable { 2 } else { 0 }, true);
+            if hr < 0 { return Err(format!("Intel Video Super Resolution failed: {hr:#x}")); }
+            Ok(())
+        }
     }
 
     /// The adapter of the renderer's device, its vendor and name.
     unsafe fn adapter(device: &ID3D11Device) -> windows::core::Result<(IDXGIAdapter, u32, String)> {
-        let adapter = device.cast::<IDXGIDevice>()?.GetAdapter()?;
-        let desc = adapter.GetDesc()?;
-        let name = String::from_utf16_lossy(&desc.Description[..desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len())]);
-        Ok((adapter, desc.VendorId, name))
+        // SAFETY: caller guarantees `device` is a live D3D11 device.
+        unsafe {
+            let adapter = device.cast::<IDXGIDevice>()?.GetAdapter()?;
+            let desc = adapter.GetDesc()?;
+            let name = String::from_utf16_lossy(&desc.Description[..desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len())]);
+            Ok((adapter, desc.VendorId, name))
+        }
     }
 
     unsafe fn processor(device: &ID3D11Device, input: (u32, u32), output: (u32, u32), frame_rate: u32)
         -> windows::core::Result<(ID3D11VideoDevice, ID3D11VideoContext1, ID3D11VideoProcessorEnumerator, ID3D11VideoProcessor)> {
-        let video = device.cast::<ID3D11VideoDevice>()?;
-        let context = device.GetImmediateContext()?.cast::<ID3D11VideoContext1>()?;
-        let rate = DXGI_RATIONAL { Numerator: frame_rate.max(1), Denominator: 1 };
-        let enumerator = video.CreateVideoProcessorEnumerator(&D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
-            InputFrameFormat: D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, InputFrameRate: rate, InputWidth: input.0, InputHeight: input.1,
-            OutputFrameRate: rate, OutputWidth: output.0, OutputHeight: output.1, Usage: D3D11_VIDEO_USAGE_PLAYBACK_NORMAL })?;
-        let processor = video.CreateVideoProcessor(&enumerator, 0)?;
-        Ok((video, context, enumerator, processor))
+        // SAFETY: caller guarantees `device` is a live D3D11 device.
+        unsafe {
+            let video = device.cast::<ID3D11VideoDevice>()?;
+            let context = device.GetImmediateContext()?.cast::<ID3D11VideoContext1>()?;
+            let rate = DXGI_RATIONAL { Numerator: frame_rate.max(1), Denominator: 1 };
+            let enumerator = video.CreateVideoProcessorEnumerator(&D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
+                InputFrameFormat: D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, InputFrameRate: rate, InputWidth: input.0, InputHeight: input.1,
+                OutputFrameRate: rate, OutputWidth: output.0, OutputHeight: output.1, Usage: D3D11_VIDEO_USAGE_PLAYBACK_NORMAL })?;
+            let processor = video.CreateVideoProcessor(&enumerator, 0)?;
+            Ok((video, context, enumerator, processor))
+        }
     }
 
     /// The probe on a device of its own on the renderer's adapter, as V+ probes on a temporary one.
@@ -332,65 +343,71 @@ mod windows_impl {
         /// engine and what it runs for this picture.
         pub unsafe fn new(device: &ID3D11Device, input: &ID3D11Texture2D, picture: (u32, u32), output: &ID3D11Texture2D,
             frame_rate: u32, space: (DXGI_COLOR_SPACE_TYPE, DXGI_COLOR_SPACE_TYPE), engine: Option<(Engine, Plan)>) -> Result<Self, String> {
-            let mut out_desc = D3D11_TEXTURE2D_DESC::default();
-            output.GetDesc(&mut out_desc);
-            let size = (out_desc.Width, out_desc.Height);
-            let (video, context, enumerator, processor) = processor(device, picture, size, frame_rate).map_err(|e| format!("cannot make the video processor: {e}"))?;
-            let mut in_desc = D3D11_TEXTURE2D_DESC::default();
-            input.GetDesc(&mut in_desc);
-            let mut copy = None;
-            device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
-                Usage: D3D11_USAGE_DEFAULT, CPUAccessFlags: 0, MiscFlags: 0, ..in_desc }, None, Some(&mut copy))
-                .map_err(|e| format!("cannot make the video processor's input texture: {e}"))?;
-            let copy = copy.unwrap();
-            let mut input_view = None;
-            video.CreateVideoProcessorInputView(&copy, &enumerator, &D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC { FourCC: 0, ViewDimension: D3D11_VPIV_DIMENSION_TEXTURE2D,
-                Anonymous: D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0 { Texture2D: D3D11_TEX2D_VPIV { MipSlice: 0, ArraySlice: 0 } } }, Some(&mut input_view))
-                .map_err(|e| format!("the video processor cannot read the picture: {e}"))?;
-            let mut output_view = None;
-            video.CreateVideoProcessorOutputView(output, &enumerator, &D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC { ViewDimension: D3D11_VPOV_DIMENSION_TEXTURE2D,
-                Anonymous: D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0 { Texture2D: D3D11_TEX2D_VPOV { MipSlice: 0 } } }, Some(&mut output_view))
-                .map_err(|e| format!("the video processor cannot write the enhanced picture: {e}"))?;
-            let p = &processor;
-            context.VideoProcessorSetStreamSourceRect(p, 0, true, Some(&RECT { left: 0, top: 0, right: picture.0 as i32, bottom: picture.1 as i32 }));
-            context.VideoProcessorSetStreamDestRect(p, 0, true, Some(&RECT { left: 0, top: 0, right: size.0 as i32, bottom: size.1 as i32 }));
-            context.VideoProcessorSetStreamFrameFormat(p, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
-            context.VideoProcessorSetStreamColorSpace1(p, 0, space.0);
-            context.VideoProcessorSetOutputTargetRect(p, true, Some(&RECT { left: 0, top: 0, right: size.0 as i32, bottom: size.1 as i32 }));
-            context.VideoProcessorSetStreamOutputRate(p, 0, D3D11_VIDEO_PROCESSOR_OUTPUT_RATE_NORMAL, false, None);
-            context.VideoProcessorSetOutputBackgroundColor(p, false, &D3D11_VIDEO_COLOR { Anonymous: D3D11_VIDEO_COLOR_0 { RGBA: D3D11_VIDEO_COLOR_RGBA { R: 0.0, G: 0.0, B: 0.0, A: 1.0 } } });
-            context.VideoProcessorSetOutputColorSpace1(p, space.1);
-            if let Some((engine, plan)) = engine {
-                // V+'s filters for both vendors with a video processor path, where the driver has them.
-                let mut caps = D3D11_VIDEO_PROCESSOR_CAPS::default();
-                if enumerator.GetVideoProcessorCaps(&mut caps).is_ok() {
-                    if caps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_NOISE_REDUCTION.0 as u32 != 0 {
-                        context.VideoProcessorSetStreamFilter(p, 0, D3D11_VIDEO_PROCESSOR_FILTER_NOISE_REDUCTION, true, 30);
+            // SAFETY: caller guarantees `device`, `input`, and `output` are live D3D11 objects on this thread.
+            unsafe {
+                let mut out_desc = D3D11_TEXTURE2D_DESC::default();
+                output.GetDesc(&mut out_desc);
+                let size = (out_desc.Width, out_desc.Height);
+                let (video, context, enumerator, processor) = processor(device, picture, size, frame_rate).map_err(|e| format!("cannot make the video processor: {e}"))?;
+                let mut in_desc = D3D11_TEXTURE2D_DESC::default();
+                input.GetDesc(&mut in_desc);
+                let mut copy = None;
+                device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+                    Usage: D3D11_USAGE_DEFAULT, CPUAccessFlags: 0, MiscFlags: 0, ..in_desc }, None, Some(&mut copy))
+                    .map_err(|e| format!("cannot make the video processor's input texture: {e}"))?;
+                let copy = copy.unwrap();
+                let mut input_view = None;
+                video.CreateVideoProcessorInputView(&copy, &enumerator, &D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC { FourCC: 0, ViewDimension: D3D11_VPIV_DIMENSION_TEXTURE2D,
+                    Anonymous: D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0 { Texture2D: D3D11_TEX2D_VPIV { MipSlice: 0, ArraySlice: 0 } } }, Some(&mut input_view))
+                    .map_err(|e| format!("the video processor cannot read the picture: {e}"))?;
+                let mut output_view = None;
+                video.CreateVideoProcessorOutputView(output, &enumerator, &D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC { ViewDimension: D3D11_VPOV_DIMENSION_TEXTURE2D,
+                    Anonymous: D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0 { Texture2D: D3D11_TEX2D_VPOV { MipSlice: 0 } } }, Some(&mut output_view))
+                    .map_err(|e| format!("the video processor cannot write the enhanced picture: {e}"))?;
+                let p = &processor;
+                context.VideoProcessorSetStreamSourceRect(p, 0, true, Some(&RECT { left: 0, top: 0, right: picture.0 as i32, bottom: picture.1 as i32 }));
+                context.VideoProcessorSetStreamDestRect(p, 0, true, Some(&RECT { left: 0, top: 0, right: size.0 as i32, bottom: size.1 as i32 }));
+                context.VideoProcessorSetStreamFrameFormat(p, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
+                context.VideoProcessorSetStreamColorSpace1(p, 0, space.0);
+                context.VideoProcessorSetOutputTargetRect(p, true, Some(&RECT { left: 0, top: 0, right: size.0 as i32, bottom: size.1 as i32 }));
+                context.VideoProcessorSetStreamOutputRate(p, 0, D3D11_VIDEO_PROCESSOR_OUTPUT_RATE_NORMAL, false, None);
+                context.VideoProcessorSetOutputBackgroundColor(p, false, &D3D11_VIDEO_COLOR { Anonymous: D3D11_VIDEO_COLOR_0 { RGBA: D3D11_VIDEO_COLOR_RGBA { R: 0.0, G: 0.0, B: 0.0, A: 1.0 } } });
+                context.VideoProcessorSetOutputColorSpace1(p, space.1);
+                if let Some((engine, plan)) = engine {
+                    // V+'s filters for both vendors with a video processor path, where the driver has them.
+                    let mut caps = D3D11_VIDEO_PROCESSOR_CAPS::default();
+                    if enumerator.GetVideoProcessorCaps(&mut caps).is_ok() {
+                        if caps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_NOISE_REDUCTION.0 as u32 != 0 {
+                            context.VideoProcessorSetStreamFilter(p, 0, D3D11_VIDEO_PROCESSOR_FILTER_NOISE_REDUCTION, true, 30);
+                        }
+                        if caps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_EDGE_ENHANCEMENT.0 as u32 != 0 {
+                            context.VideoProcessorSetStreamFilter(p, 0, D3D11_VIDEO_PROCESSOR_FILTER_EDGE_ENHANCEMENT, true, 20);
+                        }
                     }
-                    if caps.FilterCaps & D3D11_VIDEO_PROCESSOR_FILTER_CAPS_EDGE_ENHANCEMENT.0 as u32 != 0 {
-                        context.VideoProcessorSetStreamFilter(p, 0, D3D11_VIDEO_PROCESSOR_FILTER_EDGE_ENHANCEMENT, true, 20);
+                    match engine {
+                        Engine::NvidiaRtx => {
+                            nvidia_super_resolution(&context, p, plan.super_resolution)?;
+                            if plan.sdr_to_hdr { nvidia_hdr(&context, p, true)?; }
+                        }
+                        Engine::IntelVpe => intel_super_resolution(&context, p, plan.super_resolution)?,
+                        Engine::AmdAmf => return Err("AMD's super resolution runs in AMF, not the video processor".into()),
                     }
                 }
-                match engine {
-                    Engine::NvidiaRtx => {
-                        nvidia_super_resolution(&context, p, plan.super_resolution)?;
-                        if plan.sdr_to_hdr { nvidia_hdr(&context, p, true)?; }
-                    }
-                    Engine::IntelVpe => intel_super_resolution(&context, p, plan.super_resolution)?,
-                    Engine::AmdAmf => return Err("AMD's super resolution runs in AMF, not the video processor".into()),
-                }
+                let immediate = device.GetImmediateContext().map_err(|e| e.to_string())?;
+                Ok(Self { immediate, copy, source: input.clone(), context, processor, input: input_view.unwrap(), output: output_view.unwrap() })
             }
-            let immediate = device.GetImmediateContext().map_err(|e| e.to_string())?;
-            Ok(Self { immediate, copy, source: input.clone(), context, processor, input: input_view.unwrap(), output: output_view.unwrap() })
         }
 
         pub unsafe fn blt(&self) -> Result<(), String> {
-            self.immediate.CopyResource(&self.copy, &self.source);
-            let stream = D3D11_VIDEO_PROCESSOR_STREAM { Enable: true.into(), pInputSurface: std::mem::ManuallyDrop::new(Some(self.input.clone())), ..Default::default() };
-            let mut streams = [stream];
-            let result = self.context.VideoProcessorBlt(&self.processor, &self.output, 0, &streams);
-            std::mem::ManuallyDrop::drop(&mut streams[0].pInputSurface);
-            result.map_err(|e| format!("the video processor failed: {e}"))
+            // SAFETY: caller guarantees `self.copy`, `self.source`, and `self.processor` are live on this thread.
+            unsafe {
+                self.immediate.CopyResource(&self.copy, &self.source);
+                let stream = D3D11_VIDEO_PROCESSOR_STREAM { Enable: true.into(), pInputSurface: std::mem::ManuallyDrop::new(Some(self.input.clone())), ..Default::default() };
+                let mut streams = [stream];
+                let result = self.context.VideoProcessorBlt(&self.processor, &self.output, 0, &streams);
+                std::mem::ManuallyDrop::drop(&mut streams[0].pInputSurface);
+                result.map_err(|e| format!("the video processor failed: {e}"))
+            }
         }
     }
 
@@ -424,30 +441,36 @@ mod windows_impl {
 
     /// Copies the SDR white point and HDR headroom of `from` into texture creation `props`.
     unsafe fn copy_hdr_properties(from: *mut SDL_Texture, props: SDL_PropertiesID) {
-        let source = SDL_GetTextureProperties(from);
-        let white = SDL_GetFloatProperty(source, SDL_PROP_TEXTURE_SDR_WHITE_POINT_FLOAT, 0.0);
-        if white > 0.0 { SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_SDR_WHITE_POINT_FLOAT, white); }
-        let headroom = SDL_GetFloatProperty(source, SDL_PROP_TEXTURE_HDR_HEADROOM_FLOAT, 0.0);
-        if headroom > 0.0 { SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_HDR_HEADROOM_FLOAT, headroom); }
+        // SAFETY: caller guarantees `from` and `props` are live SDL handles on this thread.
+        unsafe {
+            let source = SDL_GetTextureProperties(from);
+            let white = SDL_GetFloatProperty(source, SDL_PROP_TEXTURE_SDR_WHITE_POINT_FLOAT, 0.0);
+            if white > 0.0 { SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_SDR_WHITE_POINT_FLOAT, white); }
+            let headroom = SDL_GetFloatProperty(source, SDL_PROP_TEXTURE_HDR_HEADROOM_FLOAT, 0.0);
+            if headroom > 0.0 { SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_HDR_HEADROOM_FLOAT, headroom); }
+        }
     }
 
     unsafe fn create_texture(renderer: *mut SDL_Renderer, format: SDL_PixelFormat, access: SDL_TextureAccess, size: (i32, i32), space: SDL_Colorspace, hdr_from: Option<*mut SDL_Texture>) -> Result<(*mut SDL_Texture, ID3D11Texture2D), String> {
-        let props = SDL_CreateProperties();
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, i64::from(format.0));
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, i64::from(access.0));
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, i64::from(size.0));
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, i64::from(size.1));
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, i64::from(space.0));
-        if let Some(from) = hdr_from { copy_hdr_properties(from, props); }
-        let texture = SDL_CreateTextureWithProperties(renderer, props);
-        SDL_DestroyProperties(props);
-        if texture.is_null() { return Err(format!("SDL could not make the {}x{} enhanced picture texture: {}", size.0, size.1, crate::sdl::error())); }
-        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
-        SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
-        let raw = SDL_GetPointerProperty(SDL_GetTextureProperties(texture), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, ptr::null_mut());
-        match ID3D11Texture2D::from_raw_borrowed(&raw) {
-            Some(d3d11) => Ok((texture, d3d11.clone())),
-            None => { SDL_DestroyTexture(texture); Err("the enhanced picture texture is not a Direct3D 11 texture".into()) }
+        // SAFETY: caller guarantees `renderer` and `hdr_from` are live SDL handles on this thread.
+        unsafe {
+            let props = SDL_CreateProperties();
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, i64::from(format.0));
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, i64::from(access.0));
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, i64::from(size.0));
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, i64::from(size.1));
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, i64::from(space.0));
+            if let Some(from) = hdr_from { copy_hdr_properties(from, props); }
+            let texture = SDL_CreateTextureWithProperties(renderer, props);
+            SDL_DestroyProperties(props);
+            if texture.is_null() { return Err(format!("SDL could not make the {}x{} enhanced picture texture: {}", size.0, size.1, crate::sdl::error())); }
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+            SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+            let raw = SDL_GetPointerProperty(SDL_GetTextureProperties(texture), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, ptr::null_mut());
+            match ID3D11Texture2D::from_raw_borrowed(&raw) {
+                Some(d3d11) => Ok((texture, d3d11.clone())),
+                None => { SDL_DestroyTexture(texture); Err("the enhanced picture texture is not a Direct3D 11 texture".into()) }
+            }
         }
     }
 

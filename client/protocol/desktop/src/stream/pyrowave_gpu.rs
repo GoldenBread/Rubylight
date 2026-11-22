@@ -188,20 +188,23 @@ mod tests {
 
     /// Reads a render target back as tightly packed RGBA32F bytes.
     unsafe fn read_back(renderer: *mut SDL_Renderer, texture: *mut SDL_Texture) -> Vec<u8> {
-        assert!(SDL_SetRenderTarget(renderer, texture));
-        let readback = SDL_RenderReadPixels(renderer, ptr::null());
-        assert!(!readback.is_null(), "{}", crate::sdl::error());
-        let pixels = SDL_ConvertSurface(readback, SDL_PIXELFORMAT_RGBA128_FLOAT);
-        SDL_DestroySurface(readback);
-        assert!(!pixels.is_null());
-        let row = (*pixels).w as usize * 16;
-        let mut bytes = Vec::new();
-        for y in 0..(*pixels).h as usize {
-            bytes.extend_from_slice(std::slice::from_raw_parts(((*pixels).pixels as *const u8).add(y * (*pixels).pitch as usize), row));
+        // SAFETY: caller guarantees `renderer` and `texture` are live on this thread.
+        unsafe {
+            assert!(SDL_SetRenderTarget(renderer, texture));
+            let readback = SDL_RenderReadPixels(renderer, ptr::null());
+            assert!(!readback.is_null(), "{}", crate::sdl::error());
+            let pixels = SDL_ConvertSurface(readback, SDL_PIXELFORMAT_RGBA128_FLOAT);
+            SDL_DestroySurface(readback);
+            assert!(!pixels.is_null());
+            let row = (*pixels).w as usize * 16;
+            let mut bytes = Vec::new();
+            for y in 0..(*pixels).h as usize {
+                bytes.extend_from_slice(std::slice::from_raw_parts(((*pixels).pixels as *const u8).add(y * (*pixels).pitch as usize), row));
+            }
+            SDL_DestroySurface(pixels);
+            SDL_SetRenderTarget(renderer, ptr::null_mut());
+            bytes
         }
-        SDL_DestroySurface(pixels);
-        SDL_SetRenderTarget(renderer, ptr::null_mut());
-        bytes
     }
 
     #[test]

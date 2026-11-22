@@ -504,10 +504,10 @@ impl Shared {
             &mut *self.start_gate.lock().unwrap_or_else(|p| p.into_inner()),
             StartGate::Started,
         );
-        if let StartGate::Starting(Some(code)) = gate {
-            if !self.stopping.load(Ordering::SeqCst) {
-                self.report_terminated(code);
-            }
+        if let StartGate::Starting(Some(code)) = gate
+            && !self.stopping.load(Ordering::SeqCst)
+        {
+            self.report_terminated(code);
         }
     }
 
@@ -627,19 +627,19 @@ impl Parts {
             let _ = thread.join();
         }
         *self.microphone.lock().unwrap_or_else(|p| p.into_inner()) = None;
-        if let Some(stream) = self.audio.take() {
-            if let Some(renderer) = stream.stop() {
-                self.audio_renderer = Some(renderer);
-            }
+        if let Some(stream) = self.audio.take()
+            && let Some(renderer) = stream.stop()
+        {
+            self.audio_renderer = Some(renderer);
         }
         if let Some(mut renderer) = self.audio_renderer.take() {
             renderer.stop();
             renderer.cleanup();
         }
-        if let Some(stream) = self.video.take() {
-            if let Some(decoder) = stream.stop() {
-                self.video_decoder = Some(decoder);
-            }
+        if let Some(stream) = self.video.take()
+            && let Some(decoder) = stream.stop()
+        {
+            self.video_decoder = Some(decoder);
         }
         if let Some(mut pinger) = self.video_pinger.take() {
             pinger.stop();
@@ -1149,24 +1149,24 @@ fn start(
         )
         .map_err(rtsp_fail)?;
         handshake.handle_response(&response).map_err(rtsp_fail)?;
-        if parts.audio_socket.is_none() {
-            if let Some(port) = handshake.audio_port() {
-                // notifyAudioPortNegotiationComplete: ping before PLAY.
-                let socket = net::bind_udp(local, 0, Qos::Audio, config.network_priority, |m| {
-                    listener.warn(m)
-                })
-                .map_err(|e| fail(Stage::RtspHandshake, io_code(&e), e.to_string()))?;
-                parts.audio_pinger = Some(
-                    net::Pinger::start(
-                        "AudioPing",
-                        &socket,
-                        net::with_port(remote, port),
-                        handshake.audio_ping_payload(),
-                    )
-                    .map_err(|e| fail(Stage::RtspHandshake, io_code(&e), e.to_string()))?,
-                );
-                parts.audio_socket = Some(socket);
-            }
+        if parts.audio_socket.is_none()
+            && let Some(port) = handshake.audio_port()
+        {
+            // notifyAudioPortNegotiationComplete: ping before PLAY.
+            let socket = net::bind_udp(local, 0, Qos::Audio, config.network_priority, |m| {
+                listener.warn(m)
+            })
+            .map_err(|e| fail(Stage::RtspHandshake, io_code(&e), e.to_string()))?;
+            parts.audio_pinger = Some(
+                net::Pinger::start(
+                    "AudioPing",
+                    &socket,
+                    net::with_port(remote, port),
+                    handshake.audio_ping_payload(),
+                )
+                .map_err(|e| fail(Stage::RtspHandshake, io_code(&e), e.to_string()))?,
+            );
+            parts.audio_socket = Some(socket);
         }
     }
     let outcome = handshake.finish().map_err(rtsp_fail)?;
@@ -1295,10 +1295,10 @@ fn start(
                                 .unwrap_or_else(|p| p.into_inner())
                                 .set_hdr_active(enabled);
                         }
-                        if let ControlEvent::Roam(RoamEvent::Roamed { .. }) = event {
-                            if let Some(roamer) = roamed.get() {
-                                roamer.roamed();
-                            }
+                        if let ControlEvent::Roam(RoamEvent::Roamed { .. }) = event
+                            && let Some(roamer) = roamed.get()
+                        {
+                            roamer.roamed();
                         }
                         events.listener.control_event(event);
                     }

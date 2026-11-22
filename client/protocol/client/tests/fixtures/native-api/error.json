@@ -1,3 +1,0 @@
-{ "error": { "code": "host_control_required",
-             "message": "Turn on Host control for this device in the Rubylight console.",
-             "setting": null, "retry_after_ms": null } }

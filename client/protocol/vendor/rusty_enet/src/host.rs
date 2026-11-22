@@ -43,6 +43,14 @@ pub struct HostSettings {
     pub time: Box<dyn Fn() -> Duration>,
     /// Seed the host with a specific random seed, or set to [`None`] to use a random seed.
     pub seed: Option<u32>,
+    /// Nightjar: round up smoothed RTT and variance divisions like `moonlight-common-c`'s ENet
+    /// fork so low-latency links converge instead of stalling on integer truncation. Off by
+    /// default (stock ENet).
+    pub round_up_srtt: bool,
+    /// Nightjar: skip the check that incoming datagrams come from the peer's expected address,
+    /// allowing multi-homed hosts to answer from another address (off by default, preserving
+    /// stock ENet strict peer-address matching).
+    pub lenient_peer_address: bool,
 }
 
 impl Default for HostSettings {
@@ -56,6 +64,8 @@ impl Default for HostSettings {
             checksum: None,
             time: Box::new(monotonic_time),
             seed: None,
+            round_up_srtt: false,
+            lenient_peer_address: false,
         }
     }
 }
@@ -121,6 +131,8 @@ impl<S: Socket> Host<S> {
                 settings.outgoing_bandwidth_limit.unwrap_or(0),
                 settings.time,
                 settings.seed,
+                settings.round_up_srtt,
+                settings.lenient_peer_address,
             )
             .map_err(|err| HostNewError::FailedToInitializeSocket(err))?;
             let mut peers = Vec::new();
