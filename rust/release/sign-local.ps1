@@ -7,7 +7,7 @@
 #
 # With the repository variable LOCAL_SIGNING = true, rust-windows.yml publishes a
 # release as a draft; this script finishes it. Run it after the whole release run
-# has finished (nvidia-assets copies the installer). It signs in the order the
+# has finished. It signs in the order the
 # SignPath steps of rust-windows.yml use, through the same sign-artifacts.ps1
 # phases: Rubylight's own binaries, then the display driver's catalog made from
 # the signed driver DLL, then the installer that package.ps1 builds again from
@@ -30,7 +30,6 @@ $ErrorActionPreference = 'Stop'
 $Version = $Tag -replace '^v', ''
 $zipName = "rubylight-$Version-windows-x64.zip"
 $setupName = "rubylight-setup-$Version.exe"
-$migrateName = "rubylight-nvidia-setup-$Version.exe"
 $signArtifacts = Join-Path $PSScriptRoot 'sign-artifacts.ps1'
 
 function Get-KitTool([string]$Name, [string]$Architecture) {
@@ -107,15 +106,13 @@ $target = Join-Path $WorkDirectory 'target'
 $out = Join-Path $WorkDirectory 'out'
 New-Item -ItemType Directory -Path $download, $target, $out -Force | Out-Null
 
-$assets = @()
 if ($From -and !$NoUpload) { throw '-From signs local files for a dry run only; add -NoUpload' }
 if ($From) {
     foreach ($name in $zipName, $setupName) { Copy-Item -LiteralPath (Join-Path $From $name) -Destination $download }
 } else {
-    $release = gh release view $Tag -R $Repository --json isDraft,assets,targetCommitish | ConvertFrom-Json
+    $release = gh release view $Tag -R $Repository --json isDraft,targetCommitish | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw "No release $Tag in $Repository" }
     if (!$release.isDraft -and !$NoUpload) { throw "$Tag is published already; this script only finishes draft releases (-NoUpload for a dry run)" }
-    $assets = @($release.assets.name)
     # The release run is the tag's, or main's Run workflow; both built the draft's commit.
     $running = gh run list -R $Repository --workflow rust-windows.yml --commit $release.targetCommitish --json status,url | ConvertFrom-Json |
         Where-Object { $_.status -ne 'completed' }
@@ -174,10 +171,6 @@ $sums = foreach ($name in $zipName, $setupName) {
     "$((Get-FileHash -LiteralPath (Join-Path $out $name) -Algorithm SHA256).Hash.ToLowerInvariant())  $name"
 }
 [IO.File]::WriteAllText((Join-Path $out 'SHA256SUMS'), (($sums -join "`n") + "`n"))
-# nvidia-assets attached the unsigned installer under this name for hosts of the former NVIDIA build;
-# read the assets again in case it did so while this script ran.
-if (!$NoUpload) { $assets = @((gh release view $Tag -R $Repository --json assets | ConvertFrom-Json).assets.name) }
-if ($assets -contains $migrateName) { Copy-Item -LiteralPath $signedSetup -Destination (Join-Path $out $migrateName) }
 
 Get-ChildItem -LiteralPath $out | ForEach-Object { Write-Host "Signed: $($_.FullName)" }
 if ($NoUpload) { return }

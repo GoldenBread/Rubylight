@@ -546,8 +546,8 @@ fn release() -> Value {
 }
 #[test]
 fn the_installer_under_the_old_nvidia_name_is_never_taken() {
-    // Releases carry the signed installer under the former NVIDIA build's name too, so that
-    // hosts of that build update to it; this host takes only its own names.
+    // Former releases carried the signed installer under the old NVIDIA build's name too;
+    // this host takes only its own names.
     let url = |name: &str| {
         format!("https://github.com/RamazanKara/Rubylight/releases/download/2.0.0-rc.7/{name}")
     };

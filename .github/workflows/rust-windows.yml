@@ -729,7 +729,7 @@ jobs:
   # delays them, and running this job again attaches them.
   nvidia-assets:
     needs: [tag, nvidia, publish]
-    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    if: ${{ !cancelled() && needs.publish.result == 'success' && vars.PUBLISH_NVIDIA_BUILD == 'true' && (needs.nvidia.result == 'success' || needs.tag.outputs.run) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -757,17 +757,6 @@ jobs:
           done
           echo "::error::no release $TAG to attach the NVIDIA files to"
           exit 1
-      # Hosts of the former NVIDIA build (4.3.2 to 4.4.0) update only from an
-      # installer named rubylight-nvidia-setup: the signed installer under that
-      # name moves them to the signed host, whose setup removes the old build's
-      # NVIDIA files. Kept for a few releases, until those hosts have updated.
-      - name: Attach the signed installer for hosts of the former NVIDIA build
-        env:
-          RELEASE: ${{ steps.release.outputs.name }}
-        run: |
-          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p "rubylight-setup-$VERSION.exe" -D migrate
-          mv "migrate/rubylight-setup-$VERSION.exe" "migrate/rubylight-nvidia-setup-$VERSION.exe"
-          gh release upload "$RELEASE" -R "$GITHUB_REPOSITORY" --clobber "migrate/rubylight-nvidia-setup-$VERSION.exe"
       # Nothing of NVIDIA's is published unless the repository variable
       # PUBLISH_NVIDIA_BUILD is 'true'; the nvidia job's artifact is kept either way.
       - name: Attach the NVIDIA component

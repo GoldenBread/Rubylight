@@ -704,17 +704,12 @@ class Signing(unittest.TestCase):
         for word in ('SignPath', 'sign-artifacts', 'SIGNPATH', 'gh release create'):
             self.assertNotIn(word, assets)
 
-    def test_hosts_of_the_former_nvidia_build_get_the_signed_installer(self):
-        # 4.3.2 to 4.4.0's NVIDIA build updates only from rubylight-nvidia-setup:
-        # the signed installer is attached under that name too, whatever the
-        # nvidia job did and whatever the variable says.
-        assets = re.search(r'(?ms)^  nvidia-assets:\n(.*?)(?=^  \S)', self.workflow)[1]
-        step = re.search(r'(?ms)- name: Attach the signed installer for hosts of the former NVIDIA build\n(.*?)(?=^      - )', assets)[1]
-        self.assertNotIn('if:', step)
-        self.assertIn('-p "rubylight-setup-$VERSION.exe"', step)
-        self.assertIn('"migrate/rubylight-nvidia-setup-$VERSION.exe"', step)
-        self.assertNotIn("needs.nvidia.result", assets.split('steps:')[0])
-        # The host's own updater never takes that name.
+    def test_the_former_nvidia_installer_alias_is_gone(self):
+        # The legacy rubylight-nvidia-setup alias for 4.3.2-4.4.0 hosts is no
+        # longer built or uploaded, and the updater still accepts only current names.
+        self.assertNotIn('rubylight-nvidia-setup', self.workflow)
+        script = (ROOT / 'rust/release/sign-local.ps1').read_text(encoding='utf-8')
+        self.assertNotIn('rubylight-nvidia-setup', script)
         updater = (ROOT / 'rust/host/src/updater.rs').read_text(encoding='utf-8')
         self.assertIn('const INSTALLERS: &[&str] = &["rubylight-setup", "butterpollo-setup"];', updater)
 
@@ -732,7 +727,6 @@ class Signing(unittest.TestCase):
         positions = [script.index(step) for step in order]
         self.assertEqual(positions, sorted(positions))
         self.assertIn('if (!$release.isDraft -and !$NoUpload)', script)
-        self.assertIn('$migrateName = "rubylight-nvidia-setup-$Version.exe"', script)
 
     def test_certum_signing_fails_closed_and_keeps_the_secrets_in_one_job(self):
         # CI signs with the Certum certificate in the certum job only; with

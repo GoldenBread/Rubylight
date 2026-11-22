@@ -41,8 +41,6 @@ RTX HDR and RTX Video enhancement call NVIDIA's proprietary NGX library and need
 
 The signed installer and its files contain no NVIDIA code. `rust/release/test_release.py` checks that the NVIDIA component never reaches signing.
 
-Until hosts of the former, unsigned NVIDIA build (4.3.2 to 4.4.0) have updated, each release also carries the signed installer under the name those hosts update from, `rubylight-nvidia-setup-<version>.exe`: the same signed file under a second name.
-
 Libraries whose projects publish no signed builds ship unsigned: the Opus DLL and the GCC and winpthreads runtimes from MSYS2, and FFmpeg's `avcodec` and `avutil` and the PyroWave library, each built from pinned source. [Third-party components](../rust/THIRD_PARTY.md) lists them all with their licences.
 
 ## Certificates the installer trusts
