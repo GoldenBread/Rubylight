@@ -350,11 +350,11 @@ class EnvironmentAndNextest(unittest.TestCase):
                 if os.name == 'nt':
                     self.assertEqual(env['RUSTUP_TOOLCHAIN'], dev.HOST_TOOLCHAIN)
                     self.assertIn('-Clink-arg=-fuse-ld=lld', env['CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS'])
-                # Python 3.13 (sys.executable parent) and cargo_bin must precede ucrt64\bin on PATH.
-                parts = [os.path.normcase(os.path.normpath(p)) for p in env['PATH'].split(os.pathsep)]
-                sys_dir = os.path.normcase(os.path.normpath(str(pathlib.Path(sys.executable).resolve().parent)))
-                ucrt_dir = os.path.normcase(os.path.normpath(str(msys_root / 'ucrt64/bin')))
-                cargo_dir = os.path.normcase(os.path.normpath(str(cargo_home / 'bin')))
+                # Python 3.13 (preferred_python parent) and cargo_bin must precede ucrt64\bin on PATH.
+                parts = [dev.path_key(p) for p in env['PATH'].split(os.pathsep)]
+                sys_dir = dev.path_key(pathlib.Path(dev.preferred_python()).parent)
+                ucrt_dir = dev.path_key(msys_root / 'ucrt64/bin')
+                cargo_dir = dev.path_key(cargo_home / 'bin')
                 self.assertLess(parts.index(sys_dir), parts.index(ucrt_dir))
                 self.assertLess(parts.index(cargo_dir), parts.index(ucrt_dir))
 
@@ -448,9 +448,10 @@ class EnvironmentAndNextest(unittest.TestCase):
                     mock.patch.dict(os.environ, {'LOCALAPPDATA': str(local), 'PATH': f'{msys_bin};{alt_dir}'}):
                 self.assertEqual(dev.preferred_python(), str(win_py))
                 env = dev.tool_env()
-                parts = [os.path.normcase(os.path.normpath(p)) for p in env['PATH'].split(os.pathsep)]
-                self.assertLess(parts.index(os.path.normcase(os.path.normpath(str(win_py.parent)))),
-                                parts.index(os.path.normcase(os.path.normpath(str(msys_bin)))))
+                parts = [dev.path_key(p) for p in env['PATH'].split(os.pathsep)]
+                self.assertLess(parts.index(dev.path_key(win_py.parent)),
+                                parts.index(dev.path_key(msys_bin)))
+                self.assertEqual(parts[0], dev.path_key(win_py.resolve().parent))
                 with mock.patch.object(dev, 'run', return_value=0) as run_mock:
                     self.assertTrue(dev.execute(dev.Check('code-map', 'code_map', ['docs/code-map.md']),
                                                 ROOT, base / 'cm.log', None))
@@ -460,6 +461,46 @@ class EnvironmentAndNextest(unittest.TestCase):
             with mock.patch.object(dev.sys, 'executable', str(msys_py)), \
                     mock.patch.dict(os.environ, {'LOCALAPPDATA': str(base / 'empty'), 'PATH': f'{msys_bin};{alt_dir}'}):
                 self.assertEqual(os.path.normcase(dev.preferred_python()), os.path.normcase(str(alt_py)))
+
+    def test_windows_short_8_3_and_long_paths_normalize_consistently(self):
+        if os.name != 'nt':
+            self.skipTest('Windows 8.3 short path normalization only')
+        import ctypes
+        with tempfile.TemporaryDirectory() as directory:
+            long_base = (pathlib.Path(directory) / 'RunnerAdminLongProfile').resolve()
+            long_base.mkdir(parents=True)
+            buf = ctypes.create_unicode_buffer(32768)
+            n = ctypes.windll.kernel32.GetShortPathNameW(str(long_base), buf, len(buf))
+            if not (0 < n < len(buf)) or '~' not in buf.value:
+                self.skipTest('8.3 short names are disabled on this volume')
+            short_base = pathlib.Path(buf.value)
+            self.assertTrue(dev.same_path(short_base, long_base))
+            self.assertTrue(dev.same_path(short_base / 'missing-leaf', long_base / 'missing-leaf'))
+
+            msys_bin = short_base / 'msys64' / 'ucrt64' / 'bin'
+            msys_bin.mkdir(parents=True)
+            msys_py = msys_bin / 'python.exe'
+            msys_py.write_text('')
+            local_short = short_base / 'local'
+            win_py_short = local_short / 'Programs' / 'Python' / 'Python313' / 'python.exe'
+            win_py_short.parent.mkdir(parents=True)
+            win_py_short.write_text('')
+            win_py_long_dir = win_py_short.parent.resolve()
+            self.assertNotEqual(str(win_py_short.parent).lower(), str(win_py_long_dir).lower())
+
+            with mock.patch.object(dev.sys, 'executable', str(msys_py)), \
+                    mock.patch.dict(os.environ, {
+                        'LOCALAPPDATA': str(local_short),
+                        'PATH': f'{msys_bin};{win_py_long_dir}',
+                    }):
+                env = dev.tool_env()
+                raw_parts = env['PATH'].split(os.pathsep)
+                norm_parts = [dev.path_key(p) for p in raw_parts]
+                self.assertEqual(norm_parts[0], dev.path_key(win_py_short.parent))
+                self.assertEqual(norm_parts[0], dev.path_key(win_py_long_dir))
+                self.assertEqual(norm_parts.count(norm_parts[0]), 1)
+                self.assertLess(norm_parts.index(dev.path_key(win_py_short.parent)),
+                                norm_parts.index(dev.path_key(msys_bin)))
 
     def test_programs_come_from_the_env_path_and_a_missing_one_fails_in_its_log(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -544,6 +585,16 @@ class EnvironmentAndNextest(unittest.TestCase):
                 ['cargo', 'test'],
                 ['cargo', 'test'],
             ])
+
+    def test_nextest_config_profiles_keep_strict_default_and_ci_headroom(self):
+        cfg = dev.tomllib.loads((ROOT / dev.NEXTEST_CONFIG).read_text(encoding='utf-8'))
+        default_profile = cfg['profile']['default']
+        ci_profile = cfg['profile']['ci']
+        self.assertEqual(default_profile['slow-timeout'], {'period': '15s', 'terminate-after': 4})
+        self.assertFalse(ci_profile['fail-fast'])
+        ci_timeout = ci_profile['slow-timeout']
+        period_s = int(ci_timeout['period'].rstrip('s'))
+        self.assertGreaterEqual(period_s * ci_timeout['terminate-after'], 180)
 
 
 class Execution(unittest.TestCase):

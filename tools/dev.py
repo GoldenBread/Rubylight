@@ -304,8 +304,38 @@ def worktree_name(root=ROOT):
 STAMP = '.rubylight-checkout'
 
 
+def _expand_short_path(text):
+    if os.name != 'nt' or not text or '~' not in text:
+        return text
+    import ctypes
+    buf = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetLongPathNameW(text, buf, len(buf))
+    if 0 < n < len(buf):
+        return buf.value
+    # Expand the deepest existing 8.3 ancestor when a leaf does not exist yet.
+    p = pathlib.Path(text)
+    tail = []
+    for _ in range(len(p.parts)):
+        parent = p.parent
+        if parent == p:
+            break
+        tail.append(p.name)
+        p = parent
+        if p.exists():
+            n = ctypes.windll.kernel32.GetLongPathNameW(str(p), buf, len(buf))
+            if 0 < n < len(buf):
+                return str(pathlib.Path(buf.value, *reversed(tail)))
+            break
+    return text
+
+
+def path_key(path):
+    text = _expand_short_path(str(path).strip())
+    return os.path.normcase(os.path.normpath(text))
+
+
 def same_path(a, b):
-    return os.path.normcase(os.path.normpath(str(a).strip())) == os.path.normcase(os.path.normpath(str(b).strip()))
+    return path_key(a) == path_key(b)
 
 
 def local_packages(root=ROOT):
@@ -464,7 +494,7 @@ def prepend_path(existing, dirs):
         if not entry:
             continue
         text = str(entry)
-        key = os.path.normcase(os.path.normpath(text))
+        key = path_key(text)
         if key not in seen:
             seen.add(key)
             ordered.append(text)
@@ -512,10 +542,13 @@ def preferred_python(env=None):
     return exe
 
 
+def _python_dir(env):
+    return str(pathlib.Path(preferred_python(env)).parent)
+
+
 def tool_env(fast=False, lock_directory=None):
     env = build_lock.environ_copy()
-    sys_exe_dir = str(pathlib.Path(preferred_python(env)).resolve().parent)
-    env['PATH'] = prepend_path(env.get('PATH', ''), [sys_exe_dir])
+    env['PATH'] = prepend_path(env.get('PATH', ''), [_python_dir(env)])
     if fast:
         env['NIGHTJAR_ALLOW_UNTRANSLATED'] = '1'
     else:
@@ -569,7 +602,7 @@ def _pyrowave_dir(env):
 
 def host_env(target, lock_directory=None, fast=False):
     env = tool_env(fast=fast, lock_directory=lock_directory)
-    sys_exe_dir = str(pathlib.Path(preferred_python(env)).resolve().parent)
+    sys_exe_dir = _python_dir(env)
     cargo_bin = _cargo_bin_dir(env)
     msys = _msys_ucrt_dir(env)
     pyrowave = _pyrowave_dir(env)
@@ -596,7 +629,7 @@ def host_env(target, lock_directory=None, fast=False):
 
 def client_env(target, fast=False, lock_directory=None):
     env = tool_env(fast=fast, lock_directory=lock_directory)
-    sys_exe_dir = str(pathlib.Path(preferred_python(env)).resolve().parent)
+    sys_exe_dir = _python_dir(env)
     cargo_bin = _cargo_bin_dir(env)
     msys_bin = _msys_ucrt_dir(env) / 'bin'
     env['PATH'] = prepend_path(env.get('PATH', ''), [sys_exe_dir, str(cargo_bin), str(msys_bin)])
@@ -614,8 +647,7 @@ def interop_env(target, fast=False, lock_directory=None):
             env.setdefault('BUTTERPOLLO_VULKAN_INCLUDE', str(msys / 'include'))
         if (pyrowave / 'bin').is_dir():
             env.setdefault('BUTTERPOLLO_PYROWAVE_ROOT', str(pyrowave))
-            sys_exe_dir = str(pathlib.Path(preferred_python(env)).resolve().parent)
-            env['PATH'] = prepend_path(env.get('PATH', ''), [sys_exe_dir, str(_cargo_bin_dir(env)), str(msys / 'bin'), str(pyrowave / 'bin')])
+            env['PATH'] = prepend_path(env.get('PATH', ''), [_python_dir(env), str(_cargo_bin_dir(env)), str(msys / 'bin'), str(pyrowave / 'bin')])
     return env
 
 

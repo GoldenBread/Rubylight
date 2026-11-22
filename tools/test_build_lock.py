@@ -334,7 +334,7 @@ class Lanes(unittest.TestCase):
             with self.lease('gradle'):
                 pass
         kill_tree(manual)
-        (lane / 'BUILD-LOCK').unlink()  # what a person does after checking the killed owner
+        (lane / 'BUILD-LOCK').unlink(missing_ok=True)  # what a person does after checking the killed owner
         with self.lease('gradle'):
             self.assertIn('test', (lane / 'BUILD-LOCK').read_text())
 
