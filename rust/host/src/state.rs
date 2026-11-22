@@ -313,8 +313,8 @@ pub fn take_retained<L: Clone>(
     }
 }
 pub struct Host {
-    #[cfg(test)]
-    pub reconnect_fixture: Option<Arc<crate::stream::reconnect_tests::Fixture>>,
+    #[cfg(any(test, feature = "test-harness"))]
+    pub reconnect_fixture: Option<Arc<crate::stream::reconnect_harness::Fixture>>,
     pub directory: PathBuf,
     pub config_path: PathBuf,
     pub paired_path: PathBuf,
@@ -969,7 +969,7 @@ impl Host {
             move || wake.notify_one()
         });
         Ok(Arc::new(Self {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             reconnect_fixture: None,
             directory,
             config_path,

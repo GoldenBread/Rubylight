@@ -22,11 +22,12 @@ Each Rust module opens with a `//!` header saying what it owns. The index is bui
 | Crate | Folder | Holds |
 | --- | --- | --- |
 | `rubylight-protocol` | `client/protocol/core/` | Wire formats shared with Nightjar, `no_std`: each extension message in a module of its own, and every message id in [`ids.rs`](../client/protocol/core/src/ids.rs). |
+| `rubylight-wire` | `client/protocol/wire/` | Shared `std` wire codecs, packet crypto, RTSP framing, and input decoding for Rubylight and Nightjar. |
 | `rubylight-native-api` | `client/protocol/native-api/` | The [native API](native-api.md)'s wire types, versioned on their own. |
 | `rubylight-traverse` | `client/protocol/traverse/` | Internet play shared with Nightjar: reaching a paired host from outside its network without forwarded ports (DHT records, STUN, PCP and NAT-PMP, hole punching, the tunnel). The host uses it from `rust/host/src/internet_play.rs`. |
 | `butterpollo-core` | `rust/core/` | Protocol, state and policy without a Windows call. Decisions are plain functions over plain values, tested on any OS. |
 | `butterpollo-windows` | `rust/windows/` | Everything that calls Windows, a GPU or a driver. |
-| `butterpollo` | `rust/host/` | Servers, sessions and threads: it asks core what to do and windows to do it. `nightjar-core` is a test dependency, for [the interop tests](../rust/host/src/stream/reconnect_tests/interop_tests.rs). |
+| `butterpollo` | `rust/host/` | Servers, sessions and threads: it asks core what to do and windows to do it. [The interop tests](../tests/interop/tests/stream_control.rs) live in `tests/interop/` (`rubylight-interop`) and enable `test-harness` as a dev-dependency. |
 | console | `rust/web/` | The Svelte console, built with Vite and served by the host from files. |
 | service, setup, drivers | `rust/service/`, `rust/setup/`, `rust/drivers/` | The Windows service and the display and virtual gamepad drivers are workspaces of their own. |
 | NVIDIA NGX adapter | `rust/truehdr-runtime/` | An MSVC DLL between NVIDIA's NGX and the host, shipped in the NVIDIA component's archive (`build.ps1 -Nvidia`); outside the workspace. |
@@ -129,7 +130,7 @@ The host says what it offers in three places: serverinfo fields ([`serverinfo_fi
 | --- | --- |
 | A decision in core | The module's own tests: `cargo test -p butterpollo-core --locked <module>`. No GPU, any OS. |
 | Launch, resume, reconnect, control messages, roaming, session end | `rust/host/src/stream/reconnect_tests.rs` and the files under `rust/host/src/stream/reconnect_tests/`: the real HTTP, RTSP, ENet and session workers on loopback with a fake capture, encoder and input. Start here for a session bug: it needs no GPU, driver or service. |
-| Anything Nightjar and the host must agree on | `rust/host/src/stream/reconnect_tests/interop_tests.rs` runs Nightjar's engine against this host in one process. |
+| Anything Nightjar and the host must agree on | `tests/interop/` (`cargo test -p rubylight-interop --locked`) runs Nightjar's engine against this host in one process. |
 | Moonlight HTTP replies | `rust/host/src/nvhttp/parity_tests.rs`, `rust/host/src/nvhttp/native_tests/` |
 | Bytes from the network | The property tests in `rust/core/src/fuzz.rs` and `client/protocol/core/src/fuzz.rs`: no input panics, and what decodes encodes back. `PROPTEST_CASES` raises the count. |
 | Capture, conversion, encoders, displays, input devices | Tests marked `#[ignore]` in `rust/windows/src/`, each with the reason it needs hardware; the [developer guide](../rust/README.md#running-the-native-checks) has the command. They read `BUTTERPOLLO_TEST_*` variables for decoders and report files. |

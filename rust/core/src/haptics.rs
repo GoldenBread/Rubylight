@@ -1,42 +1,10 @@
 //! Nonary's Moonlight PCM haptics extension (ControllerHaptics.h).
 //! Only actuator channels are transported: 48 kHz, stereo signed 16-bit LE.
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
+use std::{collections::VecDeque, time::Instant};
+
+pub use rubylight_wire::haptics::{
+    CAPABILITY, CHANNEL, FEATURE, FRAMES, Frame, MAX_AGE, PACKET_TYPE,
 };
-
-pub const FEATURE: u32 = 0x04;
-pub const CAPABILITY: u16 = 0x8000;
-pub const PACKET_TYPE: u16 = 0x5601;
-pub const CHANNEL: u8 = 8;
-pub const FRAMES: usize = 240;
-pub const MAX_AGE: Duration = Duration::from_millis(20);
-
-#[derive(Debug, PartialEq)]
-pub struct Frame {
-    pub id: u16,
-    pub sequence: u32,
-    pub created: Instant,
-    pub samples: Vec<u8>,
-}
-impl Frame {
-    pub fn payload(&self) -> Option<Vec<u8>> {
-        if self.id >= 16
-            || self.samples.is_empty()
-            || self.samples.len() > FRAMES * 4
-            || !self.samples.len().is_multiple_of(4)
-        {
-            return None;
-        }
-        let mut bytes = vec![1, 1];
-        bytes.extend_from_slice(&self.id.to_le_bytes());
-        bytes.extend_from_slice(&self.sequence.to_le_bytes());
-        bytes.extend_from_slice(&((self.samples.len() / 4) as u16).to_le_bytes());
-        bytes.extend_from_slice(&[0, 0]);
-        bytes.extend_from_slice(&self.samples);
-        Some(bytes)
-    }
-}
 
 /// Separate from reliable controller feedback. A stalled consumer retains
 /// at most 20 ms per controller and never replays old audio after resuming.
@@ -100,6 +68,7 @@ impl Packetizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     #[test]
     fn packets_match_the_client_contract_and_partial_audio_expires() {
         let now = Instant::now();

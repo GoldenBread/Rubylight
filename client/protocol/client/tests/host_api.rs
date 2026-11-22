@@ -4,10 +4,9 @@
 //! covered in `http/hardware_metrics.rs`, `http/network_path.rs`, `http/power.rs` and
 //! `http/remote_check.rs`.
 
-use butterpollo_core::crypto;
 use nightjar_core::http::{
-    ClientIdentity, Error, HostApiError, HostClient, NetworkPath, PowerError, Refusal,
-    RemoteOutcome, ServerInfo, MAX_HARDWARE_METRICS_BYTES, MAX_NETWORK_PATH_BYTES,
+    ClientIdentity, Error, HostApiError, HostClient, MAX_HARDWARE_METRICS_BYTES,
+    MAX_NETWORK_PATH_BYTES, NetworkPath, PowerError, Refusal, RemoteOutcome, ServerInfo,
 };
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -24,9 +23,9 @@ fn client_identity() -> Arc<ClientIdentity> {
         .clone()
 }
 
-fn host_identity() -> &'static crypto::Identity {
-    static ID: OnceLock<crypto::Identity> = OnceLock::new();
-    ID.get_or_init(|| crypto::Identity::generate().unwrap())
+fn host_identity() -> &'static ClientIdentity {
+    static ID: OnceLock<ClientIdentity> = OnceLock::new();
+    ID.get_or_init(|| ClientIdentity::generate().unwrap())
 }
 
 /// A paired Rubylight serverinfo that offers both APIs.
@@ -131,7 +130,7 @@ struct MockHost {
 /// Serves `handler(path)` over TLS with the certificate of `identity`, asking for a client
 /// certificate. Write errors are ignored: the client may hang up after the headers.
 fn serve_as(
-    identity: &crypto::Identity,
+    identity: &ClientIdentity,
     handler: impl Fn(&str) -> Reply + Send + 'static,
 ) -> MockHost {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -143,8 +142,10 @@ fn serve_as(
             .unwrap()
             .with_client_cert_verifier(Arc::new(ClientCertificate(provider)))
             .with_single_cert(
-                vec![CertificateDer::from_pem_slice(identity.certificate.as_bytes()).unwrap()],
-                PrivateKeyDer::from_pem_slice(identity.private_pem.as_bytes()).unwrap(),
+                vec![
+                    CertificateDer::from_pem_slice(identity.certificate_pem().as_bytes()).unwrap(),
+                ],
+                PrivateKeyDer::from_pem_slice(identity.private_key_pem().as_bytes()).unwrap(),
             )
             .unwrap(),
     );
@@ -187,7 +188,7 @@ fn paired_client(host: &MockHost) -> HostClient {
     HostClient::new("127.0.0.1", 1, client_identity())
         .unwrap()
         .with_https_port(host.port)
-        .with_server_certificate_pem(&host_identity().certificate)
+        .with_server_certificate_pem(host_identity().certificate_pem())
         .unwrap()
 }
 
@@ -255,7 +256,7 @@ fn the_network_path_is_read_over_pinned_https() {
     );
 }
 
-fn remote_host(identity: &crypto::Identity, unique_id: &'static str) -> MockHost {
+fn remote_host(identity: &ClientIdentity, unique_id: &'static str) -> MockHost {
     serve_as(identity, move |path| match path {
         "/serverinfo" => reply(200, "application/xml", server_info_xml(unique_id)),
         "/api/network-path" => reply(200, "application/json", r#"{"version":1,"kind":"direct"}"#),
@@ -280,9 +281,11 @@ fn the_remote_check_verifies_the_paired_host_and_reads_the_path() {
     assert!(check.stats.latency_ms().is_some() && check.stats.jitter_ms().is_some());
     let seen = host.seen.lock().unwrap();
     assert_eq!(seen.len(), 6);
-    assert!(seen[..5]
-        .iter()
-        .all(|(path, cert)| path == "/serverinfo" && *cert));
+    assert!(
+        seen[..5]
+            .iter()
+            .all(|(path, cert)| path == "/serverinfo" && *cert)
+    );
 }
 
 #[test]
@@ -300,7 +303,7 @@ fn another_pc_at_the_address_is_the_wrong_host() {
 
 #[test]
 fn another_certificate_is_unreachable_not_verified() {
-    let other = crypto::Identity::generate().unwrap();
+    let other = ClientIdentity::generate().unwrap();
     let host = remote_host(&other, HOST_ID);
     let check = paired_client(&host).remote_check(HOST_ID).unwrap();
     assert!(
@@ -338,7 +341,11 @@ fn sleep_spends_the_offered_token_in_an_empty_post() {
         "/power-actions/v1/sleep" => reply(
             202,
             "application/xml",
-            power_document(202, "Sleep request accepted; native completion is not confirmed", ""),
+            power_document(
+                202,
+                "Sleep request accepted; native completion is not confirmed",
+                "",
+            ),
         ),
         _ => reply(404, "text/plain", "not found"),
     });
@@ -357,9 +364,21 @@ fn sleep_spends_the_offered_token_in_an_empty_post() {
             format!("POST /power-actions/v1/sleep?token={SLEEP_TOKEN} HTTP/1.1"),
         ]
     );
-    assert!(heads[1].contains("\r\nContent-Length: 0\r\n"), "{}", heads[1]);
-    assert!(!heads[1].to_ascii_lowercase().contains("content-type"), "{}", heads[1]);
-    assert!(!heads[1].to_ascii_lowercase().contains("origin"), "{}", heads[1]);
+    assert!(
+        heads[1].contains("\r\nContent-Length: 0\r\n"),
+        "{}",
+        heads[1]
+    );
+    assert!(
+        !heads[1].to_ascii_lowercase().contains("content-type"),
+        "{}",
+        heads[1]
+    );
+    assert!(
+        !heads[1].to_ascii_lowercase().contains("origin"),
+        "{}",
+        heads[1]
+    );
     assert!(host.seen.lock().unwrap().iter().all(|(_, cert)| *cert));
 }
 
@@ -368,8 +387,14 @@ fn a_refused_sleep_keeps_the_hosts_reason() {
     let message = "End all applications and sessions before requesting sleep";
     let host = serve(move |_| reply(409, "application/xml", power_document(409, message, "")));
     match paired_client(&host).sleep(SLEEP_TOKEN) {
-        Err(PowerError::Refused { refusal: Refusal::Conflict, reply }) => {
-            assert_eq!((reply.status, reply.message.as_str(), reply.accepted), (409, message, false));
+        Err(PowerError::Refused {
+            refusal: Refusal::Conflict,
+            reply,
+        }) => {
+            assert_eq!(
+                (reply.status, reply.message.as_str(), reply.accepted),
+                (409, message, false)
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -391,7 +416,10 @@ fn a_failed_certificate_check_under_http_200_is_the_hosts_401() {
     for result in [client.power_capabilities(), client.sleep(SLEEP_TOKEN)] {
         match result {
             Err(PowerError::Host(Error::Status { code: 401, message })) => {
-                assert_eq!(message, "The client is not authorized. Certificate verification failed.");
+                assert_eq!(
+                    message,
+                    "The client is not authorized. Certificate verification failed."
+                );
             }
             other => panic!("{other:?}"),
         }

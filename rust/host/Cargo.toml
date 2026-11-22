@@ -58,13 +58,12 @@ rubylight-traverse = { path = "../../client/protocol/traverse" }
 embed-resource = "3.0.12"
 
 [features]
+test-harness = ["butterpollo-windows/test-folder", "butterpollo-windows/test-route"]
 
 [dev-dependencies]
 # File transfer tests open their folder as the developer; session tests hold
 # an audio route that owns no device.
 butterpollo-windows = { path = "../windows", features = ["test-folder", "test-route"] }
-# Nightjar's client engine, for the interop tests against this host (stream/reconnect_tests/interop_tests.rs).
-nightjar-core = { path = "../../client/protocol/client" }
 # Property tests over the query fields and bodies peers send.
 proptest = { version = "1", default-features = false, features = ["std"] }
 # The Nucleus Co-op hardware case reads its processes' token elevation and integrity level.

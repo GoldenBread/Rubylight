@@ -266,10 +266,11 @@ pub fn prepare(h: &Shared, launch: &Launch, value: &str) -> Result<()> {
     if events.is_empty() {
         return Ok(());
     }
-    if events
-        .iter()
-        .any(|e| !launch.client.allows(e.required_permission()))
-    {
+    if events.iter().any(|e| {
+        !launch
+            .client
+            .allows(butterpollo_core::input::required_permission(e))
+    }) {
         bail!("controller permission is required");
     }
     let config = crate::stream::effective_config(h, launch)?;

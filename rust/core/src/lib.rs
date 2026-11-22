@@ -62,7 +62,7 @@ pub mod encoder_backlog;
 pub mod encoder_focus;
 pub mod encoder_policy;
 pub mod extensions;
-pub mod fec_status;
+pub use rubylight_wire::fec_status;
 pub mod file_transfer;
 pub mod frame_warp;
 pub mod framegen;

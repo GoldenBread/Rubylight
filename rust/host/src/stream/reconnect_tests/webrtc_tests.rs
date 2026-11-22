@@ -6,7 +6,7 @@ use crate::webrtc::{
     sdp::{AudioMode, OfferSpec, VideoCodec, testing as peer_sdp},
     server::{self, tests::Ws},
 };
-use butterpollo_core::{audio::OpusLayout, webrtc::auth::proof_hex};
+use butterpollo_core::webrtc::auth::proof_hex;
 use serde_json::{Value, json};
 use str0m::{
     Event, Input, Output,
@@ -18,77 +18,13 @@ use str0m::{
 const VIEW: u32 = 1 << 25;
 const LIST: u32 = 1 << 24;
 
-fn nal(header: &[u8], seed: u8, len: usize) -> Vec<u8> {
-    // Odd bytes only: no start code can appear inside.
-    let body = (0..len).map(|i| (i as u8 % 200).wrapping_add(seed).max(1) | 1);
-    [&[0, 0, 0, 1][..], header]
-        .into_iter()
-        .flatten()
-        .copied()
-        .chain(body)
-        .collect()
-}
-
-/// One AV1 OBU with a size field.
-fn obu(kind: u8, seed: u8, len: usize) -> Vec<u8> {
-    let mut out = vec![kind << 3 | 0b10];
-    let mut size = len;
-    loop {
-        let byte = (size & 0x7f) as u8;
-        size >>= 7;
-        if size == 0 {
-            out.push(byte);
-            break;
-        }
-        out.push(byte | 0x80);
-    }
-    out.extend((0..len).map(|i| (i as u8).wrapping_add(seed)));
-    out
-}
-
-/// The access unit the encoder hands over (`codec` is the negotiated 0 H.264, 1 HEVC, 2 AV1):
-/// Annex B of a few RTP packets, parameter sets and an IDR slice or a delta slice; for AV1 the
-/// low-overhead OBUs, a temporal delimiter first, a sequence header on a keyframe.
-pub(super) fn access_unit(codec: u8, idr: bool) -> Vec<u8> {
-    match (codec, idr) {
-        (0, true) => [
-            nal(&[0x67], 3, 20),
-            nal(&[0x68], 5, 6),
-            nal(&[0x65], 7, 3000),
-        ]
-        .concat(),
-        (0, false) => nal(&[0x41], 9, 1500),
-        (1, true) => [
-            nal(&[0x40, 0x01], 3, 20),
-            nal(&[0x42, 0x01], 4, 30),
-            nal(&[0x44, 0x01], 5, 6),
-            nal(&[0x26, 0x01], 7, 3000),
-        ]
-        .concat(),
-        (1, false) => nal(&[0x02, 0x01], 9, 1500),
-        (_, true) => [vec![0x12, 0], obu(1, 3, 12), obu(6, 9, 3000)].concat(),
-        (_, false) => [vec![0x12, 0], obu(6, 9, 1500)].concat(),
-    }
-}
+pub(super) use super::super::reconnect_harness::{access_unit, reserved};
 
 /// What the receiver gets for [`access_unit`]: the same, but AV1 travels without its temporal
 /// delimiter.
 fn received(codec: u8, idr: bool) -> Vec<u8> {
     let unit = access_unit(codec, idr);
     if codec == 2 { unit[2..].to_vec() } else { unit }
-}
-
-/// The audio packet the fixture's encoder stands in with: it names the layout it was built with,
-/// so the receiver can tell which one the session encoded. The fixture's worker sends two per tick.
-pub(super) fn audio_payload(layout: &OpusLayout) -> Vec<u8> {
-    let mut payload = vec![
-        layout.channels as u8,
-        layout.streams as u8,
-        layout.coupled as u8,
-    ];
-    payload.extend_from_slice(&layout.mapping);
-    payload.extend_from_slice(&((layout.bitrate / 1000) as u16).to_be_bytes());
-    payload
 }
 
 /// What the client asks for and what its answer agrees to.

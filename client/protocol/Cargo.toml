@@ -1,7 +1,7 @@
 [workspace]
-members = ["core", "native-api", "client", "ffi", "cli", "android", "desktop", "policy", "traverse"]
+members = ["core", "wire", "native-api", "client", "ffi", "cli", "android", "desktop", "policy", "traverse"]
 # The desktop client needs SDL3 and FFmpeg; plain `cargo test` here stays the engine's.
-default-members = ["core", "native-api", "client", "ffi", "cli", "android", "policy", "traverse"]
+default-members = ["core", "wire", "native-api", "client", "ffi", "cli", "android", "policy", "traverse"]
 exclude = ["vendor/sdl3-src"]
 resolver = "3"
 

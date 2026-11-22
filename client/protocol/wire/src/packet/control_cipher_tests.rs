@@ -1,3 +1,4 @@
+//! Unit tests for ControlCipher and ControlCiphers.
 use super::*;
 
 /// The control stream's cipher as each message made it: the key expanded for that

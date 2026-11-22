@@ -1,0 +1,19 @@
+[package]
+name = "rubylight-wire"
+description = "Shared std wire codecs and packet crypto for Rubylight and Nightjar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+aes = "0.8"
+aes-gcm = "0.10"
+cbc = { version = "0.1", features = ["alloc"] }
+rubylight-protocol = { path = "../core" }
+subtle = "2.6"
+
+[lints]
+workspace = true

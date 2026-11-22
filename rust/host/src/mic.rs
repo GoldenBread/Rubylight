@@ -128,9 +128,9 @@ struct Receiver {
 }
 impl Receiver {
     fn new(h: Shared, counters: Arc<Counters>, directory: PathBuf) -> Self {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-harness"))]
         let native = h.reconnect_fixture.is_none();
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-harness")))]
         let native = true;
         Self {
             h,

@@ -764,8 +764,9 @@ mod tests {
         assert!(!guests.take_release(&guest));
 
         // Owner takes KBM back by sending input: guest must release held keys.
-        let kbm_perm =
-            butterpollo_core::input::Input::Relative { x: 1, y: 1 }.required_permission();
+        let kbm_perm = butterpollo_core::input::required_permission(
+            &butterpollo_core::input::Input::Relative { x: 1, y: 1 },
+        );
         assert!(guests.admits(&owner, kbm_perm));
         assert!(guests.take_release(&guest));
         assert!(!guests.take_release(&owner));

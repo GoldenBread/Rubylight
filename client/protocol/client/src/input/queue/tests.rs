@@ -1,6 +1,6 @@
 use super::*;
 use crate::control::negotiation::encryption;
-use butterpollo_core::input::{decode, Input};
+use rubylight_wire::input::{decode, Input};
 
 fn sunshine() -> HostCapabilities {
     HostCapabilities {

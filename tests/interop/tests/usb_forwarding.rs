@@ -1,12 +1,17 @@
-//! USB forwarding between Nightjar and this host: Nightjar's forwarder serves its fake device
-//! over the native API's TLS tunnel, the host relays it to a fake usbip-win2 driver, and the
-//! test drives the driver's end as the kernel would. Attach requests, tokens, statuses and
-//! detaches go over the stream's encrypted control channel.
-use super::*;
-use crate::usb_forward::tests::FakeVhci;
+//! USB forwarding between Nightjar and the Rubylight host over TLS and encrypted ENet control.
+mod common;
+
+use anyhow::{Context, Result};
+use butterpollo::{
+    stream::reconnect_harness::{Harness, until},
+    usb_forward::test_support::FakeVhci,
+};
 use butterpollo_core::usbip_wire::{self as wire, Base, Header};
+use common::{LOADED, Recorder, device, stream};
 use nightjar_core::{
-    control::{ClientMessage, SendError},
+    control::{ClientMessage, ControlEvent, SendError, ptype},
+    http::HostClient,
+    session::Session as Stream,
     usb::{
         Blocking, Forwarder, Phase, UsbMessage, UsbState,
         fake::{self, FakeDevice},
@@ -15,7 +20,7 @@ use nightjar_core::{
 use std::{
     io::{Read, Write},
     net::TcpStream,
-    sync::mpsc,
+    sync::{Arc, Mutex, mpsc},
 };
 
 /// The driver's end of the relay once it imported the device.

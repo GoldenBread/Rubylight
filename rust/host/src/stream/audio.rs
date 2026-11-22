@@ -1,4 +1,5 @@
 //! The audio thread: capture, route upkeep, encode and send.
+use super::audio_encoder::AudioEncoder;
 use super::*;
 
 /// The Opus layout a stream encodes: the one a WebRTC answer agreed to, or for GameStream the one

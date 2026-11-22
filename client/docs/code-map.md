@@ -13,6 +13,7 @@ All Rust is one Cargo workspace in `protocol/`.
 | Crate | Folder | Holds |
 | --- | --- | --- |
 | `rubylight-protocol` | `protocol/core/` | Wire formats shared with the host, `no_std`: each extension message in a module of its own, every message id in [`ids.rs`](../protocol/core/src/ids.rs). |
+| `rubylight-wire` | `protocol/wire/` | Wire codecs and control crypto shared with the host (`crypto`, `packet`, `haptics`, `controller_audio`, `fec_status`, `mic`, `input`, `rtsp`). |
 | `rubylight-native-api` | `protocol/native-api/` | Wire types of the Rubylight native API v1, versioned on their own and shared with the host. |
 | `rubylight-traverse` | `protocol/traverse/` | Internet play, shared with the host: DHT records, STUN, PCP and NAT-PMP, hole punching and the tunnel that reach a paired PC from outside its network. |
 | `nightjar-core` | `protocol/client/` | The streaming engine: pairing and HTTPS, RTSP, control, video and audio receive, input, USB forwarding. |
@@ -110,7 +111,7 @@ Add it to [`Feature`](../protocol/client/src/http/capabilities.rs) with the evid
 
 | Change | Test |
 | --- | --- |
-| Engine | `cargo test -p nightjar-core` in `protocol/`. `protocol/client/tests/` runs whole sessions on loopback (`session_loopback.rs`, `control_loopback.rs`, `host_interop.rs`) and holds the contracts. |
+| Engine | `cargo test -p nightjar-core` in `protocol/`. `protocol/client/tests/` runs standalone loopback and native API tests (`session_loopback.rs`, `control_loopback.rs`, `native_api.rs`), while host interop tests run from `tests/interop/` in the root workspace. |
 | Bytes from the network | The property tests `protocol/core/src/fuzz.rs`, `protocol/client/src/fuzz_tests.rs` and the `fuzz_tests.rs` under `http/` and `rtsp/`. `PROPTEST_CASES` raises the count. |
 | Same bytes as the classic C engine for audio, video and FEC | `cargo test -p nightjar-core --test golden_audio --test golden_video --test golden_fec` (digests recorded from it in `protocol/client/tests/golden/golden.txt`) |
 | A policy | Its module tests, and recorded traces under `protocol/policy/tests/traces/` replayed by `protocol/policy/tests/traces.rs` |

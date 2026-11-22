@@ -1,5 +1,5 @@
 use super::*;
-use butterpollo_core::input::{decode, Input};
+use rubylight_wire::input::{Input, decode};
 
 fn host(event: &InputEvent) -> Input {
     decode(&event.encode(true)).unwrap_or_else(|e| panic!("{event:?}: {e}"))
@@ -22,7 +22,10 @@ fn a_controller_identity_is_the_shared_packet_and_decodes_on_the_host() {
     assert_eq!(event.channel(), channel::GAMEPAD_BASE + 2);
     // The host decodes 0x55000080 with this same shared decoder (core/src/input.rs); the
     // host core these tests pin predates the packet, so it is checked here directly.
-    assert_eq!(ControllerIdentity::decode(&event.encode(true)), Ok(identity));
+    assert_eq!(
+        ControllerIdentity::decode(&event.encode(true)),
+        Ok(identity)
+    );
 }
 
 #[test]
@@ -189,7 +192,8 @@ fn packets_decode_on_the_host() {
             y: 0.2,
             pressure: 0.3,
             rotation: 45,
-            tilt: 30
+            tilt: 30,
+            roll: rubylight_protocol::pen::ROLL_UNKNOWN,
         }
     );
     assert_eq!(
@@ -357,17 +361,37 @@ fn touchpad_packets_match_v_plus_input_h() {
         contact_minor: 0.0,
     }
     .encode(true);
-    let mut expected = vec![0, 0, 0, 36, 0x09, 0, 0, 0x55, 3, 1, 0xFF, 0xFF, 4, 3, 2, 1, 105, 0, 70, 0];
+    let mut expected = vec![
+        0, 0, 0, 36, 0x09, 0, 0, 0x55, 3, 1, 0xFF, 0xFF, 4, 3, 2, 1, 105, 0, 70, 0,
+    ];
     for v in [0.25f32, 0.5, 1.0, 0.0, 0.0] {
         expected.extend_from_slice(&v.to_le_bytes());
     }
     assert_eq!(single, expected);
 
     let mut contacts = [TouchpadContact::default(); touchpad::MAX_FRAME_CONTACTS];
-    contacts[0] = TouchpadContact { event: touch_event::DOWN, pointer_id: 7, x: 0.0, y: 1.0, pressure: 0.5 };
-    contacts[1] = TouchpadContact { event: touch_event::UP, pointer_id: 9, x: 2.0, y: -1.0, pressure: 0.0 };
+    contacts[0] = TouchpadContact {
+        event: touch_event::DOWN,
+        pointer_id: 7,
+        x: 0.0,
+        y: 1.0,
+        pressure: 0.5,
+    };
+    contacts[1] = TouchpadContact {
+        event: touch_event::UP,
+        pointer_id: 9,
+        x: 2.0,
+        y: -1.0,
+        pressure: 0.0,
+    };
     // A contact past `count` goes as zeros whatever it holds.
-    contacts[2] = TouchpadContact { event: touch_event::MOVE, pointer_id: 11, x: 0.5, y: 0.5, pressure: 0.5 };
+    contacts[2] = TouchpadContact {
+        event: touch_event::MOVE,
+        pointer_id: 11,
+        x: 0.5,
+        y: 0.5,
+        pressure: 0.5,
+    };
     let frame = InputEvent::TouchpadFrame {
         count: 2,
         buttons: 0,
@@ -377,7 +401,9 @@ fn touchpad_packets_match_v_plus_input_h() {
         contacts,
     }
     .encode(true);
-    let mut expected = vec![0, 0, 0, 72, 0x0A, 0, 0, 0x55, 2, 0, 0xFF, 0xFF, 105, 0, 70, 0];
+    let mut expected = vec![
+        0, 0, 0, 72, 0x0A, 0, 0, 0x55, 2, 0, 0xFF, 0xFF, 105, 0, 70, 0,
+    ];
     expected.extend_from_slice(&[1, 0, 0x00, 0x80, 7, 0, 0, 0, 0, 0, 0xFF, 0xFF]);
     expected.extend_from_slice(&[2, 0, 0, 0, 9, 0, 0, 0, 0xFF, 0xFF, 0, 0]);
     expected.extend_from_slice(&[0; 36]);

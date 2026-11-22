@@ -165,7 +165,7 @@ fn active_surround_is_logged_and_the_opus_layout_stays_stereo() {
         "{log}"
     );
     // The wire stays stereo Opus.
-    let layout = crate::stream::audio_layout(&s, None).unwrap();
+    let layout = crate::stream::audio::audio_layout(&s, None).unwrap();
     assert_eq!(
         (
             layout.channels,

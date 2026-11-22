@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use butterpollo_core::mic as host_mic;
-use butterpollo_core::packet::{decrypt_control, encrypted_control};
-use butterpollo_core::rtsp as host_rtsp;
+use rubylight_wire::mic as host_mic;
+use rubylight_wire::packet::{decrypt_control, encrypted_control};
+use rubylight_wire::rtsp as host_rtsp;
 use nightjar_core::control::{ptype, ControlEvent};
 use nightjar_core::fec::{ReedSolomon, AUDIO_PARITY_MATRIX};
 use nightjar_core::roaming::RoamEvent;
@@ -368,13 +368,7 @@ fn start_host_with(packed_format: Option<u32>, roaming: bool) -> FakeHost {
                 "DESCRIBE" => {
                     // Control encryption v2 only: plain audio and video.
                     let mut describe = host_rtsp::describe(
-                        0,
-                        1,
-                        0,
-                        false,
-                        packed_format.is_some(),
-                        false,
-                        roaming,
+                        0, 1, 0, false, packed_format.is_some(), false, roaming, false,
                     );
                     if packed_format.is_some() {
                         describe.push_str(
@@ -867,7 +861,7 @@ fn run_session(direct_submit: bool, packed_format: Option<u32>) {
     // clock sync for the timing CSV only for a host that announced it, and decides in `start`).
     assert_eq!(
         r.startup.first().map(String::as_str),
-        Some("control messages [5530, 5531, 5532, 5533, 5534, 5535, 5536, 5537]"),
+        Some("control messages [5530, 5531, 5532, 5533, 5534, 5535, 5536, 5537, 5538]"),
         "{:?}",
         r.startup
     );

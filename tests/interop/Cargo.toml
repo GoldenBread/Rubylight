@@ -1,0 +1,27 @@
+[package]
+name = "rubylight-interop"
+description = "Cross-crate interop tests between the Rubylight host and Nightjar client"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+anyhow.workspace = true
+butterpollo = { path = "../../rust/host", features = ["test-harness"] }
+butterpollo-core = { path = "../../rust/core" }
+butterpollo-windows = { path = "../../rust/windows", features = ["test-folder", "test-route"] }
+nightjar-core = { path = "../../client/protocol/client" }
+rubylight-native-api = { path = "../../client/protocol/native-api" }
+rubylight-protocol = { path = "../../client/protocol/core" }
+rubylight-wire = { path = "../../client/protocol/wire" }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1.48", features = ["full"] }
+uuid = { version = "1.18", features = ["v4"] }
+xmltree = "=0.10.3"
+
+[lints]
+workspace = true

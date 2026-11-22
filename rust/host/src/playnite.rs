@@ -552,6 +552,7 @@ pub fn games() -> Result<Value> {
 /// When Playnite says each game it last reported was played, `0` for never, for the
 /// native library's `last_played` (`native::Scan::playing`). Nothing before the plugin's
 /// first snapshot, nor for a time that didn't parse.
+#[cfg_attr(feature = "test-harness", allow(dead_code))]
 pub fn last_played() -> Vec<(String, u64)> {
     let catalog = CATALOG.lock().unwrap();
     catalog
@@ -559,9 +560,7 @@ pub fn last_played() -> Vec<(String, u64)> {
         .iter()
         .filter(|game| !game.last_played_unknown)
         .map(|game| {
-            let at = game
-                .last_played
-                .map_or(0, |at| u64::try_from(at).unwrap_or(0));
+            let at = u64::try_from(game.last_played.unwrap_or(0)).unwrap_or(0);
             (butterpollo_core::native::playnite_key(&game.id), at)
         })
         .collect()
@@ -569,6 +568,7 @@ pub fn last_played() -> Vec<(String, u64)> {
 /// How long Playnite says each game it last reported was played, in minutes, for the native
 /// library's `playtime_minutes` (`native::Scan::played_for`). Nothing before the plugin's first
 /// snapshot, nor for a game whose time the plugin didn't send.
+#[cfg_attr(feature = "test-harness", allow(dead_code))]
 pub fn playtime() -> Vec<(String, u64)> {
     let catalog = CATALOG.lock().unwrap();
     catalog
@@ -581,7 +581,7 @@ pub fn playtime() -> Vec<(String, u64)> {
         .collect()
 }
 /// The categories of the games the plugin last reported, by [`butterpollo_core::native::playnite_key`].
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 pub fn collections() -> Vec<(String, Vec<String>)> {
     let catalog = CATALOG.lock().unwrap();
     catalog

@@ -10,7 +10,7 @@ use rubylight_protocol::pipeline_rates::PipelineRatesRequest;
 use rubylight_protocol::rate_change::RateChangeRequest;
 use rubylight_protocol::usb::UsbMessage;
 
-use super::wire::{channel, ptype, Delivery};
+use super::wire::{Delivery, channel, ptype};
 use crate::control::haptics;
 
 /// Largest edge of a cursor image the client accepts (docs/protocol/cursor-shape.md).
@@ -306,7 +306,7 @@ impl ClientMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::{controller_audio, fec_status};
+    use rubylight_wire::{controller_audio, fec_status};
 
     #[test]
     fn fixed_payloads_match_the_c() {
@@ -325,7 +325,9 @@ mod tests {
         };
         assert_eq!(
             rfi.payload(),
-            [2, 1, 0, 0, 0, 0, 0, 0, 4, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            [
+                2, 1, 0, 0, 0, 0, 0, 0, 4, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            ]
         );
         assert_eq!(rfi.channel(), channel::URGENT);
         assert_eq!(
@@ -390,16 +392,20 @@ mod tests {
         assert!(status.is_valid());
         assert_eq!(controller_audio::status(&status.payload()), Some((3, 5)));
         assert_eq!(status.delivery(), Delivery::Reliable);
-        assert!(!ClientMessage::ControllerAudioStatus {
-            controller: 16,
-            flags: 0
-        }
-        .is_valid());
-        assert!(!ClientMessage::ControllerAudioStatus {
-            controller: 1,
-            flags: 16
-        }
-        .is_valid());
+        assert!(
+            !ClientMessage::ControllerAudioStatus {
+                controller: 16,
+                flags: 0
+            }
+            .is_valid()
+        );
+        assert!(
+            !ClientMessage::ControllerAudioStatus {
+                controller: 1,
+                flags: 16
+            }
+            .is_valid()
+        );
 
         let pcm = haptics::encode(2, 77, &[1, 0, 2, 0, 3, 0, 4, 0]).unwrap();
         let mic = ClientMessage::ControllerMicrophone(pcm.clone());
@@ -432,17 +438,21 @@ mod tests {
         assert_eq!(UsbMessage::decode(&message.payload()), Some(attach));
         assert!(ClientMessage::Usb(UsbMessage::Detach { request_id: 7 }).is_valid());
         // The host's kinds, and what does not encode, never go out.
-        assert!(!ClientMessage::Usb(UsbMessage::TunnelReady {
-            request_id: 7,
-            token: [1; 16]
-        })
-        .is_valid());
-        assert!(!ClientMessage::Usb(UsbMessage::Status {
-            request_id: 7,
-            state: UsbState::Attached,
-            reason: UsbReason::None
-        })
-        .is_valid());
+        assert!(
+            !ClientMessage::Usb(UsbMessage::TunnelReady {
+                request_id: 7,
+                token: [1; 16]
+            })
+            .is_valid()
+        );
+        assert!(
+            !ClientMessage::Usb(UsbMessage::Status {
+                request_id: 7,
+                state: UsbState::Attached,
+                reason: UsbReason::None
+            })
+            .is_valid()
+        );
         assert!(!ClientMessage::Usb(UsbMessage::Detach { request_id: 0 }).is_valid());
     }
 }

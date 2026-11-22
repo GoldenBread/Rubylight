@@ -7,8 +7,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use butterpollo_core::input::{decode, Input};
-use butterpollo_core::packet::{decrypt_control, encrypted_control};
+use rubylight_wire::input::{decode, Input};
+use rubylight_wire::packet::{decrypt_control, encrypted_control};
 use nightjar_core::control::driver::{connect, ConnectError, DriverConfig, Outcome, Warn};
 use nightjar_core::control::negotiation::encryption;
 use nightjar_core::control::{ClientMessage, ControlEvent, HostCapabilities, SessionOptions};

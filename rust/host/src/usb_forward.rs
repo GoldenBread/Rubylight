@@ -16,9 +16,7 @@ use butterpollo_core::{
     usb_forward::{TOKEN_BYTES, UsbMessage, UsbReason, UsbState},
     usbip_wire::{self as wire, Header},
 };
-use serde::Serialize;
 use std::{
-    collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
@@ -128,7 +126,7 @@ struct Registry {
     next: u64,
     attachments: Vec<Attachment>,
     /// Messages for each session's client, which its control loop sends.
-    outbox: HashMap<String, Vec<UsbMessage>>,
+    outbox: std::collections::HashMap<String, Vec<UsbMessage>>,
 }
 impl Registry {
     fn queue(&mut self, session: &str, messages: impl IntoIterator<Item = UsbMessage>) {
@@ -217,7 +215,7 @@ enum Stage {
 }
 
 /// An attachment as the console lists it.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
 pub struct Listed {
     pub id: u64,
     pub client: String,
@@ -289,7 +287,7 @@ impl UsbForwarding {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn set_vhci(&self, vhci: Arc<dyn Vhci>) {
         *self.vhci.lock().unwrap() = vhci;
         *self.checked.lock().unwrap() = None;
@@ -986,9 +984,9 @@ struct Submitted {
 /// The driver's transfers the client has yet to answer.
 #[derive(Default)]
 struct InFlight {
-    submits: HashMap<u32, Submitted>,
+    submits: std::collections::HashMap<u32, Submitted>,
     /// Unlink seqnum to the submit it cancels.
-    unlinks: HashMap<u32, u32>,
+    unlinks: std::collections::HashMap<u32, u32>,
 }
 
 /// Passes USB/IP both ways until an end closes or `stop` is notified. The driver's connection
@@ -1179,5 +1177,7 @@ where
     }
 }
 
+#[cfg(any(test, feature = "test-harness"))]
+pub mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;

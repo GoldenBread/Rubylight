@@ -1,5 +1,5 @@
 [workspace]
-members = ["rust/core", "rust/windows", "rust/host", "rust/vulkan-layer", "rust/setup", "rust/drivers/rubylight-vdisplay-proto", "rust/drivers/rubylight-vgamepad-proto", "rust/probes"]
+members = ["rust/core", "rust/windows", "rust/host", "rust/vulkan-layer", "rust/setup", "rust/drivers/rubylight-vdisplay-proto", "rust/drivers/rubylight-vgamepad-proto", "rust/probes", "tests/interop"]
 # The virtual display and gamepad drivers build alone under the WDK toolchain: see
 # rust/drivers/rubylight-vdisplay and rust/drivers/rubylight-vgamepad.
 # The Windows service is a workspace of its own, so that its executable stays the same across

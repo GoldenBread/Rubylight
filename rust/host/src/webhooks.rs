@@ -168,7 +168,7 @@ pub struct Webhooks {
     status: Arc<Mutex<HashMap<String, Status>>>,
     /// Unit tests bind local receivers on 127.0.0.1; production always blocks loopback and
     /// link-local targets, and SSRF tests opt in here.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     block_local: Arc<AtomicBool>,
 }
 
@@ -188,12 +188,13 @@ impl Webhooks {
             runtime: tokio::runtime::Handle::try_current().ok(),
             queues: Mutex::default(),
             status: Arc::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             block_local: Arc::new(AtomicBool::new(false)),
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn block_local(&self) {
         self.block_local.store(true, Ordering::Release);
     }
@@ -272,13 +273,13 @@ impl Webhooks {
         let status = self.status.clone();
         let forgotten = Arc::new(AtomicBool::new(false));
         let dropped = forgotten.clone();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-harness"))]
         let block_local = self.block_local.clone();
         runtime.spawn(async move {
             while let Some(job) = receiver.recv().await {
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "test-harness")))]
                 let block = true;
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-harness"))]
                 let block = block_local.load(Ordering::Acquire);
                 let Some(result) = deliver(&client, policy, &job, &dropped, block).await else {
                     // Ending drops the rest of the queue too.
@@ -307,9 +308,9 @@ impl Webhooks {
             ..self.policy
         };
         let kept = AtomicBool::new(false);
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-harness")))]
         let block = true;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-harness"))]
         let block = self.block_local.load(Ordering::Acquire);
         let result = deliver(&self.client, once, &job, &kept, block)
             .await
@@ -599,5 +600,7 @@ impl Host {
     }
 }
 
+#[cfg(any(test, feature = "test-harness"))]
+pub mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;

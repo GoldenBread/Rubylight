@@ -32,7 +32,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use butterpollo_core::{
-    input::Input,
+    input::{Input, required_permission},
     session::EVENT_PERIOD,
     webrtc::{
         gamepad::{self, Action, Control, GamepadMessage, Gamepads, MAX_GAMEPADS, Outcome},
@@ -962,13 +962,13 @@ impl Core {
     /// Whether the device may send `event`; says once per kind in the stream's warnings when not.
     fn allowed(&mut self, event: &Input) -> bool {
         let client = &self.session.launch.client;
-        let permission = event.required_permission();
+        let permission = required_permission(event);
         if client.allows(permission) {
             return true;
         }
         if self.denied & permission == 0 {
             self.denied |= permission;
-            let (code, message) = event.denied_warning(&client.name);
+            let (code, message) = butterpollo_core::input::denied_warning(event, &client.name);
             self.session.launch.warnings.set(&code, message);
         }
         false
@@ -1323,7 +1323,7 @@ impl Core {
         };
         let mut allowed = Vec::with_capacity(events.len());
         for event in events {
-            if event.required_permission() & mask == 0 || !self.allowed(&event) {
+            if required_permission(&event) & mask == 0 || !self.allowed(&event) {
                 self.summary.dropped += 1;
                 continue;
             }
@@ -1438,7 +1438,7 @@ pub fn spawn(h: Shared) -> Result<InputHandle> {
         if session.launch.nucleus.is_some() {
             return CoopSink::create(&h, session);
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-harness"))]
         if let Some(fixture) = &h.reconnect_fixture {
             return fixture.webrtc_input.make();
         }
@@ -1449,7 +1449,7 @@ pub fn spawn(h: Shared) -> Result<InputHandle> {
         .spawn(move || {
             // The control thread's priority: it injects every input. Test
             // workers must not boost their priority or register a Windows task.
-            #[cfg(not(test))]
+            #[cfg(not(any(test, feature = "test-harness")))]
             let _priority = butterpollo_windows::capture::Priority::input();
             run(queues, make)
         })
@@ -1560,10 +1560,10 @@ fn serve(core: &mut Core, queues: &Queues, mut early: VecDeque<Message>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 pub(crate) use recording::Recorder;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 mod recording {
     use super::*;
     use std::sync::Mutex;

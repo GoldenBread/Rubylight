@@ -524,14 +524,17 @@ fn the_audio_thread_encodes_the_negotiated_layout_and_else_the_launch_one() {
     let s = session();
     let negotiated = five_one([0, 4, 1, 2, 3, 5]);
     assert_eq!(
-        super::super::audio_layout(&s, Some(&negotiated)).unwrap(),
+        super::super::audio::audio_layout(&s, Some(&negotiated)).unwrap(),
         negotiated
     );
     // Not the launch's own 2-channel default, and not core's Moonlight mapping.
     let other = five_one([0, 1, 4, 5, 2, 3]);
-    assert_eq!(super::super::audio_layout(&s, Some(&other)).unwrap(), other);
     assert_eq!(
-        super::super::audio_layout(&s, None).unwrap(),
+        super::super::audio::audio_layout(&s, Some(&other)).unwrap(),
+        other
+    );
+    assert_eq!(
+        super::super::audio::audio_layout(&s, None).unwrap(),
         OpusLayout::select(
             s.config.audio_channels as usize,
             s.config.audio_quality,
@@ -551,7 +554,8 @@ fn a_negotiated_mapping_reaches_the_opus_encoder() {
     );
     let s = session();
     let encode = |layout: &OpusLayout| -> Vec<Vec<u8>> {
-        let (mut opus, used) = super::super::open_audio_encoder(&root, &s, Some(layout)).unwrap();
+        let (mut opus, used) =
+            super::super::audio::open_audio_encoder(&root, &s, Some(layout)).unwrap();
         assert_eq!(&used, layout);
         let frames = 48 * usize::from(s.config.audio_packet_ms);
         (0..20)

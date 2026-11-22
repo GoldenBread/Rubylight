@@ -56,7 +56,10 @@ pub fn decode(payload: &[u8]) -> Option<Pcm> {
 /// `None` for a controller over 15 or samples that are not 1 to 240 whole frames.
 pub fn encode(controller: u16, sequence: u32, samples: &[u8]) -> Option<Vec<u8>> {
     let frames = samples.len() / FRAME_BYTES;
-    if controller >= 16 || !samples.len().is_multiple_of(FRAME_BYTES) || !(1..=MAX_FRAMES).contains(&frames) {
+    if controller >= 16
+        || !samples.len().is_multiple_of(FRAME_BYTES)
+        || !(1..=MAX_FRAMES).contains(&frames)
+    {
         return None;
     }
     let mut out = Vec::with_capacity(HEADER_BYTES + samples.len());
@@ -75,7 +78,7 @@ mod tests {
 
     #[test]
     fn host_frames_decode() {
-        let frame = butterpollo_core::haptics::Frame {
+        let frame = rubylight_wire::haptics::Frame {
             id: 4,
             sequence: 1234,
             created: std::time::Instant::now(),

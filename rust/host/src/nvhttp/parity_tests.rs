@@ -8,9 +8,7 @@ use butterpollo_core::power_action::SleepStates;
 use std::sync::atomic::Ordering;
 use tower::ServiceExt;
 
-thread_local! {
-    static SESSION_ERROR: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
-}
+use super::test_support::SESSION_ERROR;
 
 #[test]
 fn background_game_can_only_resume_on_its_owner_in_the_same_mode() {
@@ -99,47 +97,6 @@ fn a_background_stream_never_plays_its_game_on_the_pc() {
     // So the session's routes move the instance, as the launch reads it.
     let config = butterpollo_core::config::Config::default();
     assert!(!crate::stream::plays_on_pc(&config, launch.host_audio));
-}
-
-pub(super) fn ensure_streaming_session() -> Result<()> {
-    match SESSION_ERROR.get() {
-        Some(message) => bail!(message),
-        None => Ok(()),
-    }
-}
-
-/// The clipboard `/actions/clipboard` reaches in tests: in memory, with the
-/// real one's checks and conversions. Only
-/// `clipboard_images_travel_as_png_within_the_limit` and Nightjar's interop
-/// test put an image there, each holding [`TURN`] while it does.
-pub(crate) mod clipboard {
-    use anyhow::Result;
-    use butterpollo_core::clipboard_image::{self, ImageError};
-    use std::sync::Mutex;
-    pub(crate) static PNG: Mutex<Option<Vec<u8>>> = Mutex::new(None);
-    /// One test at a time on the clipboard.
-    pub(crate) static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    pub fn read() -> Result<String> {
-        Ok(String::new())
-    }
-    pub fn write(_text: &str) -> Result<()> {
-        Ok(())
-    }
-    pub fn read_png(max_bytes: usize) -> Result<Option<Vec<u8>>> {
-        match PNG.lock().unwrap().clone() {
-            Some(png) if png.len() > max_bytes => Err(ImageError::TooManyBytes {
-                bytes: png.len(),
-                max: max_bytes,
-            }
-            .into()),
-            png => Ok(png),
-        }
-    }
-    pub fn write_png(png: &[u8]) -> Result<()> {
-        let image = clipboard_image::decode_png(png)?;
-        *PNG.lock().unwrap() = Some(clipboard_image::encode_png(&image)?);
-        Ok(())
-    }
 }
 
 #[test]

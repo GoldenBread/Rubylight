@@ -1,6 +1,6 @@
 use super::*;
 use crate::control::negotiation::encryption;
-use butterpollo_core::packet;
+use rubylight_wire::packet;
 use rubylight_protocol::control::{
     ClockSyncReply, DisplayCaps, HostTiming, HostTimingExtra, LinkNotice, LinkNoticeRequest,
     LinkReason, LinkState, HOST_TIMING_EXTENDED_MAX_RECORDS,

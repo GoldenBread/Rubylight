@@ -336,7 +336,7 @@ impl Media {
             let mut peers_went = false;
             // Whether a peer came, so the unattended sweep runs at once.
             let mut peers_came = false;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             if let Some(fixture) = &h.reconnect_fixture {
                 fixture.hold_control();
                 fixture.reset_peer(&mut host, &peers);
@@ -400,7 +400,7 @@ impl Media {
                             peers.insert(
                                 peer.id(),
                                 ControlPeer {
-                                    #[cfg(test)]
+                                    #[cfg(any(test, feature = "test-harness"))]
                                     _fixture_input: h.reconnect_fixture.as_ref().map(|f| f.input()),
                                     id: l.id.clone(),
                                     injector: None,
@@ -453,7 +453,7 @@ impl Media {
                             peer.disconnect_now(0);
                             socket.forget(address);
                         }
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-harness"))]
                         if let Some(fixture) = &h.reconnect_fixture
                             && let Some(connected) = peers.get(&peer.id())
                         {
@@ -600,7 +600,7 @@ impl Media {
             }
             let mut remove = vec![];
             for (peer_id, p) in &mut peers {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-harness"))]
                 if h.reconnect_fixture.is_some() {
                     p.injector_tried = true;
                 }
@@ -660,7 +660,7 @@ impl Media {
                         p.roaming = true;
                     }
                     if !p.input_released && p.seen.elapsed() >= Duration::from_secs(1) {
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-harness"))]
                         if let Some(fixture) = &h.reconnect_fixture {
                             fixture.input_releases.fetch_add(1, Ordering::Release);
                         }
@@ -1515,7 +1515,7 @@ fn handle_control_packet(
                         "text input"
                     );
                     // The fixture's tests note the focus themselves.
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-harness"))]
                     if let Some(fixture) = &h.reconnect_fixture {
                         fixture.text_watches.lock().unwrap().push(watch);
                         return;
@@ -1787,17 +1787,17 @@ fn handle_control_packet(
                 // Say once per kind that the device may not
                 // send it: dropped silently, a phone's
                 // controller looked undetected.
-                Ok(event) if !s.launch.client.allows(event.required_permission()) => {
-                    let permission = event.required_permission();
+                Ok(event) if !s.launch.client.allows(required_permission(&event)) => {
+                    let permission = required_permission(&event);
                     if p.denied & permission == 0 {
                         p.denied |= permission;
-                        let (code, message) = event.denied_warning(&s.launch.client.name);
+                        let (code, message) = input::denied_warning(&event, &s.launch.client.name);
                         s.launch.warnings.set(&code, message);
                     }
                 }
                 // A guest's input needs its guest permission, and keys and
                 // the mouse go only to their one holder (`multiclient`).
-                Ok(event) if !h.device_guests.admits(s, event.required_permission()) => {}
+                Ok(event) if !h.device_guests.admits(s, required_permission(&event)) => {}
                 Ok(mut event) => {
                     p.audio_haptics.input(
                         &mut event,
@@ -2059,8 +2059,8 @@ fn follow_roam(
 }
 
 pub(super) struct ControlPeer {
-    #[cfg(test)]
-    _fixture_input: Option<reconnect_tests::Slot>,
+    #[cfg(any(test, feature = "test-harness"))]
+    _fixture_input: Option<super::reconnect_harness::Slot>,
     pub(super) id: String,
     injector: Option<Injector>,
     /// Whether making the injector was tried.

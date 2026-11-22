@@ -392,7 +392,7 @@ fn guest_permissions_gate_input_kinds() {
         minor: 0.0,
         rotation: 0,
     };
-    let allows = |p: Permission, e: &Input| guest_allows(p, e.required_permission());
+    let allows = |p: Permission, e: &Input| guest_allows(p, crate::input::required_permission(e));
     for event in [&pad, &key, &mouse, &touch] {
         assert!(!allows(Permission::View, event));
     }
@@ -403,9 +403,9 @@ fn guest_permissions_gate_input_kinds() {
     assert!(allows(Permission::ControllerKeyboardMouse, &mouse));
     // Touch and pen move the PC's pointer: never a guest's.
     assert!(!allows(Permission::ControllerKeyboardMouse, &touch));
-    assert!(is_keyboard_mouse(key.required_permission()));
-    assert!(is_keyboard_mouse(mouse.required_permission()));
-    assert!(!is_keyboard_mouse(pad.required_permission()));
+    assert!(is_keyboard_mouse(crate::input::required_permission(&key)));
+    assert!(is_keyboard_mouse(crate::input::required_permission(&mouse)));
+    assert!(!is_keyboard_mouse(crate::input::required_permission(&pad)));
 }
 
 #[test]

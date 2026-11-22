@@ -868,20 +868,14 @@ def end_user_idle(root, env, mark):
         pass
 
 
-def client_specs(root, names):
-    """Package ID specs: `-p rubylight-protocol` is ambiguous, the client workspace also has it from git."""
-    by_name = {package: rel for rel, (package, _) in workspace(root, CLIENT_WORKSPACE)[0].items()}
-    return [f'path+file:///{posix((root / by_name[name]).resolve())}#{name}' for name in names]
-
-
 def client_commands(root, crates, use_nextest=False):
     """cargo nextest/test and clippy for the changed client crates."""
-    args = [a for spec in client_specs(root, crates) for a in ('-p', spec)]
+    args = [a for crate in crates for a in ('-p', crate)]
     if use_nextest:
         commands = [['cargo', 'nextest', 'run', *nextest_args(root), '-j', '4', '--locked', *args]]
         doc_crates = doctest_crates(root, CLIENT_WORKSPACE, crates)
         if doc_crates:
-            doc_args = [a for spec in client_specs(root, doc_crates) for a in ('-p', spec)]
+            doc_args = [a for crate in doc_crates for a in ('-p', crate)]
             commands.append(['cargo', 'test', '--doc', '-j', '4', '--locked', *doc_args])
     else:
         commands = [['cargo', 'test', '-j', '4', '--locked', *args]]
@@ -969,7 +963,7 @@ def execute(check, root, log, target, fresh_dependencies=False, fast=False, lock
     if check.kind == 'client':
         env = client_env(target, fast=fast, lock_directory=lock_directory)
         if fast:
-            args = [a for spec in client_specs(root, check.items) for a in ('-p', spec)]
+            args = [a for crate in check.items for a in ('-p', crate)]
             cmd = ['cargo', 'check', '-j', '4', '--tests', '--locked', '--message-format=json', *args]
             return run(cmd, log, root / CLIENT_WORKSPACE, env, json_messages=True) == 0
         for command in client_commands(root, check.items, use_nextest=has_nextest(env)):

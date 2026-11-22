@@ -8,19 +8,19 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use butterpollo_core::packet;
 use proptest::collection::vec;
 use proptest::prelude::*;
-use proptest::sample::{select, Index};
+use proptest::sample::{Index, select};
 use rubylight_protocol::usbip::{self as wire, Base, Header, IsoPacket};
+use rubylight_wire::packet;
 
 use crate::control::events::{self, CursorShape};
 use crate::control::haptics;
-use crate::control::negotiation::{encryption, HostCapabilities};
+use crate::control::negotiation::{HostCapabilities, encryption};
 use crate::control::session::{ControlSession, SessionOptions};
-use crate::control::wire::{ptype, OpenError, Opener, Sealer};
+use crate::control::wire::{OpenError, Opener, Sealer, ptype};
 use crate::crypto::Key;
-use crate::usb::{serve, Completion, Direction, Reply, Transfer, Tunnel, UsbDevice};
+use crate::usb::{Completion, Direction, Reply, Transfer, Tunnel, UsbDevice, serve};
 
 const KEY: Key = *b"0011223344556677";
 

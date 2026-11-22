@@ -80,7 +80,7 @@ pub fn default_permission(config: &Config) -> Permission {
 }
 
 /// Whether a guest with `permission` may send an input event that needs `required`
-/// ([`crate::input::Input::required_permission`]). The device's own permissions apply as well.
+/// ([`crate::input::required_permission`]). The device's own permissions apply as well.
 pub fn guest_allows(permission: Permission, required: u32) -> bool {
     permission.input_mask() & required == required && required != 0
 }

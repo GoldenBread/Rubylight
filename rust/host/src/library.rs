@@ -43,7 +43,7 @@ fn lock_caches() -> MutexGuard<'static, HashMap<PathBuf, Cache>> {
 fn settings(h: &Shared) -> library::Settings {
     library::Settings::from_config(&h.config.read().unwrap())
 }
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 fn scan_installed(settings: library::Settings) -> Scan {
     // Only the files are read in background mode, which must hold no lock: what the scan keeps and
     // Playnite's catalog are locked after it.
@@ -124,17 +124,17 @@ pub fn tell_collections_cut(apps: &[butterpollo_core::state::App], scan: &Scan) 
     }
 }
 /// Tests never read the registry and the launchers' folders.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 fn scan_installed(_: library::Settings) -> Scan {
     Scan::default()
 }
 
 /// The last collections Steam's file gave, kept through a read that fails.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 static LAST_COLLECTIONS: LazyLock<Mutex<butterpollo_core::steam::LastCollections>> =
     LazyLock::new(Default::default);
 /// The last problem told about Steam's collections: a scan every few minutes says it once.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 static TOLD_PROBLEM: Mutex<Option<String>> = Mutex::new(None);
 /// The same for how many collection names the library cuts.
 static TOLD_CUT: Mutex<Option<String>> = Mutex::new(None);
@@ -522,12 +522,12 @@ fn steam_moved(directory: &Path, stamp: u64) -> bool {
         .insert(directory.to_owned(), stamp)
         .is_some_and(|last| last != stamp)
 }
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 fn steam_stamp(roots: &crate::steam::Roots) -> u64 {
     butterpollo_windows::library::in_background(|| butterpollo_core::steam::library_stamp(roots))
 }
 /// Tests never read the registry and the launchers' folders.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 fn steam_stamp(_: &crate::steam::Roots) -> u64 {
     0
 }

@@ -82,13 +82,13 @@ mod tests {
         // came before it.
         let supervisor = include_str!("../../service/src/supervisor.rs");
         assert!(supervisor.contains("due.launched();"));
-        let main = include_str!("main.rs");
+        let main = include_str!("server.rs");
         assert!(main.contains("service_tasks::restore_nucleus_at_start("));
     }
 
     #[test]
     fn the_service_tasks_parse_as_the_service_starts_them() {
-        let parse = |args: &[&str]| crate::Args::try_parse_from(args);
+        let parse = |args: &[&str]| crate::cli::Args::try_parse_from(args);
         let args = parse(&[
             "butterpollo",
             "--restore-nucleus-at-console",

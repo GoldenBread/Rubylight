@@ -36,7 +36,7 @@ pub enum Permission {
     ControllerKeyboardMouse,
 }
 
-/// The permission bits of controller and mouse input (`Input::required_permission`).
+/// The permission bits of controller and mouse input (`crate::input::required_permission`).
 const CONTROLLER: u32 = 1 << 8;
 const MOUSE: u32 = 1 << 11;
 
@@ -49,7 +49,7 @@ impl Permission {
         matches!(self, Self::ControllerKeyboardMouse)
     }
 
-    /// The [`Input::required_permission`](crate::input::Input::required_permission) bits a
+    /// The [`required_permission`](crate::input::required_permission) bits a
     /// guest's input may carry, on top of what the owner's device allows: controllers, and the
     /// keyboard and mouse only with that permission. Never touch, pen or anything else.
     pub fn input_mask(self) -> u32 {
@@ -520,8 +520,9 @@ mod tests {
             down: true,
         };
         let mouse = Input::Relative { x: 1, y: 1 };
-        let allows =
-            |p: Permission, event: &Input| p.input_mask() & event.required_permission() != 0;
+        let allows = |p: Permission, event: &Input| {
+            p.input_mask() & crate::input::required_permission(event) != 0
+        };
         for event in [&pad, &key, &mouse] {
             assert!(!allows(Permission::View, event));
             assert!(allows(Permission::ControllerKeyboardMouse, event));

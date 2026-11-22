@@ -22,7 +22,7 @@ impl SessionThread<'_> {
             webrtc_sender,
             keyframe_loss_memory,
             timing_record,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             fixture_preparation,
             coop_watch: _coop_watch,
         } = workers;
@@ -97,7 +97,7 @@ impl SessionThread<'_> {
         drop(latest);
         drop(app_window);
         drop(stream_preparation);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-harness"))]
         drop(fixture_preparation);
         drop(com);
         // The encoders' reused frame buffers go with the last stream that used them; this

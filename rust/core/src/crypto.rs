@@ -5,10 +5,6 @@ use aes::{
     Aes128,
     cipher::{Block, BlockDecrypt, BlockEncrypt, KeyInit},
 };
-use aes_gcm::{
-    Aes128Gcm, AesGcm, Nonce,
-    aead::{AeadInPlace, consts::U16},
-};
 use anyhow::{Context, Result, bail};
 use rand::{RngCore, rngs::OsRng};
 use rsa::{
@@ -20,7 +16,10 @@ use rsa::{
 };
 use sha2::{Digest, Sha256};
 use std::path::Path;
-use subtle::ConstantTimeEq;
+
+pub use rubylight_wire::crypto::{
+    GcmKey, cbc_open, cbc_seal, cbc_seal_into, equal, gcm_open, gcm_seal, gcm_seal_in_place,
+};
 
 pub fn random<const N: usize>() -> [u8; N] {
     let mut b = [0; N];
@@ -45,9 +44,6 @@ pub fn matches_hash(input: &[u8], stored: &str) -> bool {
     let stored = stored.to_ascii_lowercase();
     equal(stored.as_bytes(), forward.as_bytes()) | equal(stored.as_bytes(), legacy.as_bytes())
 }
-pub fn equal(a: &[u8], b: &[u8]) -> bool {
-    bool::from(a.ct_eq(b))
-}
 pub fn pin_key(salt: &[u8; 16], pin: &str) -> [u8; 16] {
     let mut b = salt.to_vec();
     b.extend_from_slice(pin.as_bytes());
@@ -69,69 +65,6 @@ pub fn ecb(key: &[u8; 16], data: &[u8], encrypt: bool) -> Result<Vec<u8>> {
     }
     Ok(b)
 }
-pub fn gcm_seal(key: &[u8; 16], nonce: &[u8], data: &[u8]) -> Result<([u8; 16], Vec<u8>)> {
-    let mut b = data.to_vec();
-    let tag = gcm_seal_in_place(key, nonce, &mut b)?;
-    Ok((tag, b))
-}
-/// [`gcm_seal`] without the plaintext copy: `data` is encrypted in place.
-pub(crate) fn gcm_seal_in_place(key: &[u8; 16], nonce: &[u8], data: &mut [u8]) -> Result<[u8; 16]> {
-    GcmKey::new(key, nonce.len())?.seal_in_place(nonce, data)
-}
-/// An AES-128-GCM key for one nonce size, expanded once for every message
-/// sealed or opened with it.
-pub(crate) enum GcmKey {
-    Nonce12(Aes128Gcm),
-    Nonce16(AesGcm<Aes128, U16>),
-}
-impl GcmKey {
-    pub(crate) fn new(key: &[u8; 16], nonce_len: usize) -> Result<Self> {
-        Ok(match nonce_len {
-            12 => Self::sized(key, false),
-            16 => Self::sized(key, true),
-            _ => bail!("unsupported AES-GCM nonce size"),
-        })
-    }
-    /// For 16-byte nonces when `long`, else for 12-byte ones.
-    pub(crate) fn sized(key: &[u8; 16], long: bool) -> Self {
-        if long {
-            Self::Nonce16(AesGcm::new(key.into()))
-        } else {
-            Self::Nonce12(Aes128Gcm::new(key.into()))
-        }
-    }
-    pub(crate) fn seal_in_place(&self, nonce: &[u8], data: &mut [u8]) -> Result<[u8; 16]> {
-        let tag = match (self, nonce.len()) {
-            (Self::Nonce12(gcm), 12) => {
-                gcm.encrypt_in_place_detached(Nonce::from_slice(nonce), &[], data)
-            }
-            (Self::Nonce16(gcm), 16) => {
-                gcm.encrypt_in_place_detached(Nonce::<U16>::from_slice(nonce), &[], data)
-            }
-            _ => bail!("unsupported AES-GCM nonce size"),
-        }
-        .map_err(|_| anyhow::anyhow!("AES-GCM encryption failed"))?;
-        Ok(tag.into())
-    }
-    pub(crate) fn open(&self, nonce: &[u8], tag: &[u8], data: &[u8]) -> Result<Vec<u8>> {
-        if tag.len() != 16 {
-            bail!("invalid authentication tag");
-        }
-        let mut b = data.to_vec();
-        let tag = aes_gcm::Tag::from_slice(tag);
-        match (self, nonce.len()) {
-            (Self::Nonce12(gcm), 12) => {
-                gcm.decrypt_in_place_detached(Nonce::from_slice(nonce), &[], &mut b, tag)
-            }
-            (Self::Nonce16(gcm), 16) => {
-                gcm.decrypt_in_place_detached(Nonce::<U16>::from_slice(nonce), &[], &mut b, tag)
-            }
-            _ => bail!("unsupported AES-GCM nonce size"),
-        }
-        .map_err(|_| anyhow::anyhow!("authentication failed"))?;
-        Ok(b)
-    }
-}
 /// Video packets share a key but always have independent 96-bit nonces.
 pub(crate) struct PacketSealer(ring::aead::LessSafeKey);
 impl PacketSealer {
@@ -152,36 +85,6 @@ impl PacketSealer {
             .map(|tag| tag.as_ref().try_into().unwrap())
             .map_err(|_| anyhow::anyhow!("AES-GCM encryption failed"))
     }
-}
-pub fn gcm_open(key: &[u8; 16], nonce: &[u8], tag: &[u8], data: &[u8]) -> Result<Vec<u8>> {
-    if tag.len() != 16 {
-        bail!("invalid authentication tag");
-    }
-    GcmKey::new(key, nonce.len())?.open(nonce, tag, data)
-}
-pub fn cbc_seal(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    cbc_seal_into(key, iv, data, &mut out);
-    out
-}
-/// [`cbc_seal`] into `out`, overwritten, whose room the caller keeps between packets.
-pub fn cbc_seal_into(key: &[u8; 16], iv: &[u8; 16], data: &[u8], out: &mut Vec<u8>) {
-    use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
-    // Whole 16-byte blocks, one more for a length that is already a multiple:
-    // the size encrypt_padded_vec_mut allocates for the same bytes.
-    out.clear();
-    out.resize((data.len() | 15) + 1, 0);
-    let written = cbc::Encryptor::<Aes128>::new(key.into(), iv.into())
-        .encrypt_padded_b2b_mut::<Pkcs7>(data, out)
-        .expect("the buffer holds the padded data");
-    let len = written.len();
-    out.truncate(len);
-}
-pub fn cbc_open(key: &[u8; 16], iv: &[u8; 16], data: &[u8]) -> Result<Vec<u8>> {
-    use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
-    cbc::Decryptor::<Aes128>::new(key.into(), iv.into())
-        .decrypt_padded_vec_mut::<Pkcs7>(data)
-        .map_err(|_| anyhow::anyhow!("invalid CBC payload"))
 }
 #[derive(Clone)]
 pub struct Identity {
@@ -398,12 +301,6 @@ pub fn verify(pem_text: &str, data: &[u8], signature: &[u8]) -> Result<bool> {
 mod tests {
     use super::*;
     #[test]
-    fn nist_aes_gcm_vector() {
-        let (tag, b) = gcm_seal(&[0; 16], &[0; 12], &[0; 16]).unwrap();
-        assert_eq!(hex::encode(b), "0388dace60b6a392f328c2b971b2fe78");
-        assert_eq!(hex::encode(tag), "ab6e47d42cec13bdf53a67b21257bddf");
-    }
-    #[test]
     fn packet_sealer_matches_rustcrypto_for_video_payloads() {
         let key = std::array::from_fn(|i| (i * 17) as u8);
         let sealer = PacketSealer::new(&key);
@@ -421,12 +318,6 @@ mod tests {
                 assert_eq!(gcm_open(&key, &nonce, &tag, &encrypted).unwrap(), plain);
             }
         }
-    }
-    #[test]
-    fn reject_forged_tag_before_parsing() {
-        let (mut t, b) = gcm_seal(&[3; 16], &[4; 12], b"authenticated input").unwrap();
-        t[0] ^= 1;
-        assert!(gcm_open(&[3; 16], &[4; 12], &t, &b).is_err());
     }
     #[test]
     fn moonlight_tv_v2_certificate_has_a_readable_key() {
@@ -502,13 +393,5 @@ mod tests {
         let kept = ConsoleCertificate::load(directory.path()).unwrap();
         assert_eq!(made.chain_pem, kept.chain_pem);
         assert_eq!(made.root_pem, kept.root_pem);
-    }
-    #[test]
-    fn legacy_nonce_and_audio_round_trip() {
-        let k = [4; 16];
-        let (t, b) = gcm_seal(&k, &[6; 16], b"old client").unwrap();
-        assert_eq!(gcm_open(&k, &[6; 16], &t, &b).unwrap(), b"old client");
-        let b = cbc_seal(&k, &[1; 16], b"opus");
-        assert_eq!(cbc_open(&k, &[1; 16], &b).unwrap(), b"opus");
     }
 }

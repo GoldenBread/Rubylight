@@ -264,7 +264,7 @@ async fn a_host_shutdown_detaches_usb_before_it_tells_the_client() -> Result<()>
     let h = Harness::new(10_000, 1).await?;
     let (session, client) = streaming(&h).await?;
     // A forwarded device still waiting for its tunnel: ending it needs no USB/IP driver.
-    let (vhci, _connections) = crate::usb_forward::tests::FakeVhci::new(true);
+    let (vhci, _connections) = crate::usb_forward::test_support::FakeVhci::new(true);
     h.h.usb.set_vhci(vhci);
     let mut paired = h.h.paired.read().unwrap().clients[0].clone();
     paired

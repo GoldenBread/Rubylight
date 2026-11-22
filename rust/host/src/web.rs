@@ -5,8 +5,8 @@ mod clients;
 mod coop;
 #[cfg(test)]
 pub(crate) use clients::handle as update_clients;
-#[cfg(test)]
-pub(crate) use clients::pairing_qr;
+#[cfg(any(test, feature = "test-harness"))]
+pub use clients::pairing_qr;
 mod config;
 mod displays;
 mod guests;

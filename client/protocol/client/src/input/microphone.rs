@@ -9,7 +9,7 @@
 //! under the launch's `rikey` with [`crate::crypto::rikey_iv`] and the reference's double
 //! padding ([`CbcPadding::BlockThenPkcs7`]).
 
-use crate::crypto::{cbc_encrypt, rikey_iv, CbcPadding, Key};
+use crate::crypto::{CbcPadding, Key, cbc_encrypt, rikey_iv};
 
 pub const PACKET_TYPE_OPUS: u8 = 0x61;
 pub const MAGIC: u32 = 0x1234_5678;
@@ -48,7 +48,7 @@ pub fn build_packet(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::mic;
+    use rubylight_wire::mic;
 
     const KEY: Key = *b"mic-key-16-bytes";
 

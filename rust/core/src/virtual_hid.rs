@@ -550,8 +550,7 @@ pub const PTP_CERTIFICATION_BLOB: [u8; 256] = [
     0xcf, 0x17, 0xb7, 0xb8, 0xf4, 0xe1, 0x33, 0x08, 0x24, 0x8b, 0xc4, 0x43, 0xa5, 0xe5, 0x24, 0xc2,
 ];
 
-/// Fingers the touchpad reports at once, as Moonlight V+'s frame packet carries.
-pub const MAX_CONTACTS: usize = 5;
+pub use rubylight_wire::input::{Contact, MAX_CONTACTS};
 /// The size a client that reports none gets: a typical tablet keyboard cover's touchpad.
 pub const DEFAULT_SIZE_MM: (u16, u16) = (105, 70);
 const INPUT_MODE_ID: u8 = 3;
@@ -770,17 +769,6 @@ fn touchpad_extent(width_mm: u16, height_mm: u16) -> (u16, u16) {
         width_mm.clamp(10, 3000) * 10,
         height_mm.clamp(10, 3000) * 10,
     )
-}
-
-/// One finger of a touchpad packet, as `butterpollo_core::input` decodes it: a Moonlight touch
-/// event (0 hover, 1 down, 2 up, 3 move, 4 cancel, 5 button only, 6 hover leave, 7 cancel
-/// all), the client's pointer id and its place on the surface (0-1).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Contact {
-    pub event: u8,
-    pub id: u32,
-    pub x: f32,
-    pub y: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

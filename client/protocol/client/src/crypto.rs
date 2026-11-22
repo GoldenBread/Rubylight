@@ -107,12 +107,14 @@ impl Gcm {
         buffer.extend_from_slice(ciphertext);
         let tag = GenericArray::from_slice(tag);
         match iv.len() {
-            12 => self
-                .iv12
-                .decrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer, tag),
-            16 => self
-                .iv16
-                .decrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer, tag),
+            12 => {
+                self.iv12
+                    .decrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer, tag)
+            }
+            16 => {
+                self.iv16
+                    .decrypt_in_place_detached(GenericArray::from_slice(iv), b"", buffer, tag)
+            }
             _ => return Err(CryptoError),
         }
         .map_err(|_| CryptoError)?;
@@ -265,10 +267,9 @@ mod tests {
     fn gcm_matches_the_hosts_implementation() {
         let iv = control_iv(9, true, Origin::Client);
         let (tag, sealed) = Gcm::new(&KEY).seal(iv.as_slice(), b"interop").unwrap();
-        let opened =
-            butterpollo_core::crypto::gcm_open(&KEY, iv.as_slice(), &tag, &sealed).unwrap();
+        let opened = rubylight_wire::crypto::gcm_open(&KEY, iv.as_slice(), &tag, &sealed).unwrap();
         assert_eq!(opened, b"interop");
-        let (tag, sealed) = butterpollo_core::crypto::gcm_seal(&KEY, &[3; 16], b"legacy").unwrap();
+        let (tag, sealed) = rubylight_wire::crypto::gcm_seal(&KEY, &[3; 16], b"legacy").unwrap();
         assert_eq!(
             Gcm::new(&KEY).open(&[3; 16], &tag, &sealed).unwrap(),
             b"legacy"
@@ -285,7 +286,7 @@ mod tests {
         assert_eq!(sealed.len(), 32);
         assert_eq!(cbc_decrypt(&KEY, &iv, &sealed, true).unwrap(), [1; 16]);
         assert_eq!(
-            butterpollo_core::crypto::cbc_open(&KEY, &iv, &sealed).unwrap(),
+            rubylight_wire::crypto::cbc_open(&KEY, &iv, &sealed).unwrap(),
             [1; 16]
         );
 

@@ -11,7 +11,7 @@ thread_local! {
 #[test]
 fn the_uninstallers_restore_flag_is_the_hosts() {
     use clap::Parser;
-    let args = crate::Args::try_parse_from(["butterpollo.exe", logic::RESTORE_FLAG]).unwrap();
+    let args = crate::cli::Args::try_parse_from(["butterpollo.exe", logic::RESTORE_FLAG]).unwrap();
     assert!(args.child_session_restore);
 }
 

@@ -351,7 +351,7 @@ const QR_REUSE_LEFT: Duration = Duration::from_secs(60);
 /// else a new one. `permission` is the access the device gets, also for a
 /// code shown again. Refused while `qr_pairing` is off; `address` puts that
 /// address first.
-pub(crate) fn pairing_qr(
+pub fn pairing_qr(
     h: &Shared,
     address: &str,
     permission: Option<u32>,

@@ -1,12 +1,7 @@
-//! The Rubylight native API v1 against the host's own code: the JSON fixtures of the pinned
-//! `rubylight-native-api` crate, the host's real serialised output (`butterpollo_core::native`),
-//! and `HostClient` talking to a mock HTTPS host that checks the pinned certificate, the client
+//! The Rubylight native API v1 against `rubylight-native-api`'s JSON fixtures and
+//! `HostClient` talking to a mock HTTPS host that checks the pinned certificate, the client
 //! certificate, the paths and the POST content type. Hosts without the field are covered at the
 //! parse layer in `http/serverinfo.rs`.
-
-use butterpollo_core::native::{self, SessionSnapshot};
-use butterpollo_core::state::{App, Client};
-use butterpollo_core::{crypto, native_api as host_api};
 use nightjar_core::http::native_api::audio::{Audio, AudioWrite};
 use nightjar_core::http::native_api::capabilities::Capabilities;
 use nightjar_core::http::native_api::error::{ApiError, ErrorBody, ErrorCode};
@@ -19,9 +14,9 @@ use nightjar_core::http::native_api::wake::{AdapterKind, TargetState, Wake};
 use nightjar_core::http::{ClientIdentity, Error, HostClient, LaunchRequest, ServerInfo};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -57,9 +52,9 @@ fn client_identity() -> Arc<ClientIdentity> {
         .clone()
 }
 
-fn host_identity() -> &'static crypto::Identity {
-    static ID: OnceLock<crypto::Identity> = OnceLock::new();
-    ID.get_or_init(|| crypto::Identity::generate().unwrap())
+fn host_identity() -> &'static ClientIdentity {
+    static ID: OnceLock<ClientIdentity> = OnceLock::new();
+    ID.get_or_init(|| ClientIdentity::generate().unwrap())
 }
 
 /// Parses a fixture and writes it back: a field the types drop or rename fails here.
@@ -107,7 +102,7 @@ fn the_hosts_fixtures_parse_and_write_back() {
 
 /// The vendored fixtures are copies of the pinned crate's, byte for byte, so a pin bump that
 /// changes one fails here. The crate is located through `cargo metadata`, as the one
-/// nightjar-core resolves (the butterpollo-core dev-dependency may pull in an older one); a
+/// nightjar-core resolves; a
 /// failure to find it fails the test.
 #[test]
 fn the_vendored_fixtures_match_the_pinned_crate() {
@@ -172,80 +167,6 @@ fn the_vendored_fixtures_match_the_pinned_crate() {
         NAMES.len(),
         "{} has fixtures that are not vendored",
         dir.display()
-    );
-}
-
-// ---------------------------------------------------------------------------------------
-// The host's real output.
-
-fn client(extra: Value) -> Client {
-    let mut value = json!({"name": "Phone", "cert": "", "uuid": "me", "perm": (1u32 << 24) | (1 << 25) | (1 << 26)});
-    value
-        .as_object_mut()
-        .unwrap()
-        .extend(extra.as_object().unwrap().clone());
-    serde_json::from_value(value).unwrap()
-}
-
-fn dota() -> App {
-    serde_json::from_value(json!({
-        "name": "Dota 2", "uuid": "c6f1a9a4-4b51-5f43-9d0b-7a2b1c2d3e4f",
-        "launcher-source": "steam", "launcher-id": "570", "image-path": "dota.png"
-    }))
-    .unwrap()
-}
-
-fn suspended_snapshot() -> SessionSnapshot {
-    SessionSnapshot {
-        revision: 42,
-        state: host_api::session::State::Suspended,
-        game_running: true,
-        owner: Some("me".into()),
-        app: Some(host_api::session::SessionApp {
-            install_id: "c6f1a9a4-4b51-5f43-9d0b-7a2b1c2d3e4f".into(),
-            app_id: 1093052211,
-            title: "Dota 2".into(),
-        }),
-        since_unix_ms: Some(1792303200000),
-        suspended_until_unix_ms: Some(1792310400000),
-        ..Default::default()
-    }
-}
-
-#[test]
-fn the_hosts_session_view_is_the_session_fixture() {
-    let view = native::session_view(&suspended_snapshot(), &client(json!({})));
-    assert_eq!(
-        serde_json::to_value(&view).unwrap(),
-        serde_json::from_str::<Value>(&fixture("session")).unwrap()
-    );
-}
-
-#[test]
-fn the_hosts_library_reads_back() {
-    let apps = [dota()];
-    let host = native::library(
-        &apps,
-        Some(&native::Scan::new(["steam:570".into()])),
-        Some(apps[0].id()),
-    );
-    let text = serde_json::to_string(&host).unwrap();
-    let library: Library = serde_json::from_str(&text).unwrap();
-    assert_eq!(library.revision, host.revision);
-    let game = &library.games[0];
-    assert_eq!(
-        (
-            game.title.as_str(),
-            game.game_id.as_deref(),
-            game.installed,
-            game.running
-        ),
-        ("Dota 2", Some("steam:570"), Some(true), true)
-    );
-    assert_eq!(game.store.as_ref().map(|s| s.name.as_str()), Some("Steam"));
-    assert_eq!(
-        game.artwork.cover.as_deref(),
-        Some(format!("/appasset?appid={}&AssetType=2&AssetIdx=0", apps[0].id()).as_str())
     );
 }
 
@@ -347,7 +268,7 @@ fn serve(handler: impl Fn(&str, &str, &[u8]) -> (u16, String) + Send + 'static) 
 
 /// [`serve`] with the TLS certificate of `identity`.
 fn serve_as(
-    identity: &crypto::Identity,
+    identity: &ClientIdentity,
     handler: impl Fn(&str, &str, &[u8]) -> (u16, String) + Send + 'static,
 ) -> MockHost {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -359,8 +280,10 @@ fn serve_as(
             .unwrap()
             .with_client_cert_verifier(Arc::new(AnyClientCertificate(provider)))
             .with_single_cert(
-                vec![CertificateDer::from_pem_slice(identity.certificate.as_bytes()).unwrap()],
-                PrivateKeyDer::from_pem_slice(identity.private_pem.as_bytes()).unwrap(),
+                vec![
+                    CertificateDer::from_pem_slice(identity.certificate_pem().as_bytes()).unwrap(),
+                ],
+                PrivateKeyDer::from_pem_slice(identity.private_key_pem().as_bytes()).unwrap(),
             )
             .unwrap(),
     );
@@ -406,7 +329,7 @@ fn paired_client(host: &MockHost) -> HostClient {
     HostClient::new("127.0.0.1", 1, client_identity())
         .unwrap()
         .with_https_port(host.port)
-        .with_server_certificate_pem(&host_identity().certificate)
+        .with_server_certificate_pem(host_identity().certificate_pem())
         .unwrap()
 }
 
@@ -424,29 +347,25 @@ fn error_body(code: ErrorCode, message: &str) -> String {
 
 #[test]
 fn every_call_reaches_its_path_with_the_certificate_and_the_content_type() {
-    let apps = [dota()];
-    let library = serde_json::to_string(&native::library(&apps, None, None)).unwrap();
-    let view = |snapshot: &SessionSnapshot| {
-        serde_json::to_string(&native::session_view(
-            snapshot,
-            &client(json!({"host_control": true})),
-        ))
-        .unwrap()
-    };
-    let (suspended, ended) = (
-        view(&suspended_snapshot()),
-        view(&SessionSnapshot::default()),
-    );
+    let idle_session = json!({
+        "revision": 43,
+        "state": "idle",
+        "owner": "none",
+        "app": null,
+        "game_running": false,
+        "actions": []
+    })
+    .to_string();
     let host = serve(move |method, path, _| match (method, path) {
         ("GET", "/api/native/v1/capabilities") => (200, fixture("capabilities")),
-        ("GET", "/api/native/v1/library") => (200, library.clone()),
-        ("GET", "/api/native/v1/session") => (200, suspended.clone()),
+        ("GET", "/api/native/v1/library") => (200, fixture("library")),
+        ("GET", "/api/native/v1/session") => (200, fixture("session")),
         (
             "POST",
             "/api/native/v1/session/disconnect"
             | "/api/native/v1/session/end"
             | "/api/native/v1/session/close-game",
-        ) => (200, ended.clone()),
+        ) => (200, idle_session.clone()),
         ("GET", "/api/native/v1/radeon")
         | ("POST", "/api/native/v1/radeon/settings" | "/api/native/v1/radeon/restore") => {
             (200, fixture("radeon"))
@@ -535,8 +454,8 @@ fn every_call_reaches_its_path_with_the_certificate_and_the_content_type() {
         serde_json::from_slice::<Value>(&seen[7].body).unwrap(),
         serde_json::from_str::<Value>(&fixture("settings_write")).unwrap()
     );
-    // The host's request type accepts exactly what the client sent.
-    assert!(serde_json::from_slice::<host_api::radeon::SettingsWrite>(&seen[7].body).is_ok());
+    // The shared native-api request type accepts exactly what the client sent.
+    assert!(serde_json::from_slice::<SettingsWrite>(&seen[7].body).is_ok());
 }
 
 #[test]
@@ -591,7 +510,7 @@ fn audio_reads_the_switches_and_writes_the_contracts_request() {
         ("GET", "/api/native/v1/audio") => (200, fixture("audio")),
         ("POST", "/api/native/v1/audio/settings") => {
             // The contract's request type, which the host parses and which refuses unknown fields,
-            // takes the body. (The pinned butterpollo-core predates /audio.)
+            // takes the body.
             let write: AudioWrite = serde_json::from_slice(body).unwrap();
             assert_eq!(write.changes.len(), 2);
             (200, fixture("audio"))
@@ -720,10 +639,12 @@ fn a_resume_after_a_settings_change_asks_for_the_new_mode() {
     // Nightjar issue #85: the game started at 1080p60 keeps running, the settings change to
     // 1600p144, and the rejoin must ask a Sunshine-family host for the new mode as Moonlight's
     // /resume does; the host applies it there.
-    let host = serve(|_, path, _| match path {
+    let host = serve(|_, path, _| {
+        match path {
         "/launch" => (200, "<root status_code=\"200\"><gamesession>1</gamesession><sessionUrl0>rtsp://127.0.0.1:48010</sessionUrl0></root>".into()),
         "/resume" => (200, "<root status_code=\"200\"><resume>1</resume><sessionUrl0>rtsp://127.0.0.1:48010</sessionUrl0></root>".into()),
         other => (404, other.to_owned()),
+    }
     });
     let client = paired_client(&host);
     let info = ServerInfo::parse(
@@ -751,9 +672,17 @@ fn a_resume_after_a_settings_change_asks_for_the_new_mode() {
     let seen = host.seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].path, "/launch");
-    assert!(seen[0].query.contains("&mode=1920x1080x60&"), "{}", seen[0].query);
+    assert!(
+        seen[0].query.contains("&mode=1920x1080x60&"),
+        "{}",
+        seen[0].query
+    );
     assert_eq!(seen[1].path, "/resume");
-    assert!(seen[1].query.contains("&mode=2560x1600x144&"), "{}", seen[1].query);
+    assert!(
+        seen[1].query.contains("&mode=2560x1600x144&"),
+        "{}",
+        seen[1].query
+    );
     assert!(!seen[1].query.contains("1920x1080"), "{}", seen[1].query);
 }
 
@@ -773,8 +702,8 @@ fn an_unpaired_client_does_not_connect() {
 fn another_host_certificate_is_refused_for_every_native_call() {
     // The client pinned host_identity() at pairing; a host showing another certificate gets
     // no request through, whatever it would answer.
-    let other = crypto::Identity::generate().unwrap();
-    assert_ne!(other.certificate, host_identity().certificate);
+    let other = ClientIdentity::generate().unwrap();
+    assert_ne!(other.certificate_pem(), host_identity().certificate_pem());
     let host = serve_as(&other, |_, _, _| (200, fixture("session")));
     let client = paired_client(&host);
     assert!(matches!(client.session(), Err(Error::CertificateMismatch)));

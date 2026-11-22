@@ -1,6 +1,6 @@
 //! Control stream framing: message types, ENet channels and the encrypted envelope.
 
-use crate::crypto::{control_iv, Gcm, Key, Origin, TAG_BYTES};
+use crate::crypto::{Gcm, Key, Origin, TAG_BYTES, control_iv};
 
 /// Control message types of the encrypted (Gen 7, 7.1.431+) control stream.
 pub mod ptype {
@@ -49,14 +49,12 @@ pub mod ptype {
     pub const TRANSPORT_FEEDBACK: u16 =
         rubylight_protocol::transport_feedback::TRANSPORT_FEEDBACK_MESSAGE_TYPE;
     pub const TEXT_INPUT: u16 = rubylight_protocol::text_input::TEXT_INPUT_MESSAGE_TYPE;
-    pub const PIPELINE_RATES: u16 =
-        rubylight_protocol::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE;
+    pub const PIPELINE_RATES: u16 = rubylight_protocol::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE;
     pub const KEYBOARD_LAYOUT: u16 =
         rubylight_protocol::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE;
     pub const RATE_CHANGE: u16 = rubylight_protocol::rate_change::RATE_CHANGE_MESSAGE_TYPE;
     /// Moonlight V+'s clipboard sync (both ways), offered to a launch that asked.
-    pub const CLIPBOARD_SYNC: u16 =
-        rubylight_protocol::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE;
+    pub const CLIPBOARD_SYNC: u16 = rubylight_protocol::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE;
     pub const CURSOR_SHAPE_REQUEST: u16 = 0x5540;
     pub const CURSOR_SHAPE: u16 = 0x5541;
     /// Rubylight's Frame Warp: the client's request, then the host's model, tags and mask.
@@ -288,7 +286,7 @@ impl ReplayWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use butterpollo_core::packet;
+    use rubylight_wire::packet;
 
     const KEY: Key = *b"fedcba9876543210";
 

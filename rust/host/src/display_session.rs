@@ -1704,13 +1704,13 @@ fn frame_policy(
 }
 
 /// Whether the GPU this host streams with is NVIDIA's, for RTSS's Reflex mode.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 fn streams_on_nvidia(config: &Config) -> bool {
     butterpollo_windows::capture::stream_gpu_vendor(config)
         .is_some_and(butterpollo_core::encoder_gpu::is_nvidia)
 }
 /// Tests stream on no NVIDIA GPU.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 fn streams_on_nvidia(_: &Config) -> bool {
     false
 }

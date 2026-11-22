@@ -1,4 +1,14 @@
 use super::*;
+use rubylight_protocol::controller_identity::ControllerIdentity;
+use rubylight_protocol::steam_controller::{STEAM_ATTRIBUTES_MAGIC, SteamAttributes, SteamError};
+fn unused_contact() -> Contact {
+    Contact {
+        event: 0,
+        id: 0,
+        x: 0.,
+        y: 0.,
+    }
+}
 #[test]
 fn denied_input_names_the_device_permission_to_turn_on() {
     let pad = Input::Controller {
@@ -9,7 +19,7 @@ fn denied_input_names_the_device_permission_to_turn_on() {
         right_trigger: 0,
         sticks: [0; 4],
     };
-    let (code, message) = pad.denied_warning("Pixel 8");
+    let (code, message) = denied_warning(&pad, "Pixel 8");
     assert_eq!(code, "input_permission_controller");
     assert!(message.starts_with("Pixel 8 sends controller input"));
     assert!(message.contains("Turn on Controllers"));
@@ -23,16 +33,16 @@ fn denied_input_names_the_device_permission_to_turn_on() {
         },
         Input::Haptics(true),
     ] {
-        assert_eq!(event.required_permission(), 1 << 8);
+        assert_eq!(required_permission(&event), 1 << 8);
         assert_eq!(
-            event.denied_warning("Pixel 8"),
+            denied_warning(&event, "Pixel 8"),
             (code.clone(), message.clone())
         );
     }
-    let (code, message) = Input::Text("a".into()).denied_warning("Tablet");
+    let (code, message) = denied_warning(&Input::Text("a".into()), "Tablet");
     assert_eq!(code, "input_permission_keyboard");
     assert!(message.contains("sends keyboard input") && message.contains("Turn on Keyboard"));
-    let (code, message) = Input::Relative { x: 1, y: 1 }.denied_warning("Tablet");
+    let (code, message) = denied_warning(&Input::Relative { x: 1, y: 1 }, "Tablet");
     assert_eq!(code, "input_permission_mouse");
     assert!(message.contains("Turn on Mouse"));
 }
@@ -112,7 +122,7 @@ fn touchpad_packets_decode_as_v_plus_sends_them() {
             contacts_len: 1,
         }
     );
-    assert_eq!(decode(&single).unwrap().required_permission(), 1 << 11);
+    assert_eq!(required_permission(&decode(&single).unwrap()), 1 << 11);
     single[20..24].copy_from_slice(&f32::NAN.to_le_bytes());
     assert!(decode(&single).is_err());
 }
@@ -381,7 +391,7 @@ fn a_controller_identity_decodes_and_a_bad_one_is_refused() {
         Input::ControllerIdentity(identity)
     );
     assert_eq!(
-        Input::ControllerIdentity(identity).required_permission(),
+        required_permission(&Input::ControllerIdentity(identity)),
         1 << 8
     );
     let mut bad = identity.encode();
@@ -425,7 +435,7 @@ fn steam_attributes_decode_the_codecs_golden_packet() {
     );
     // Shares the controller permission; never coalesced with anything.
     let event = Input::SteamAttributes(attributes);
-    assert_eq!(event.required_permission(), 1 << 8);
+    assert_eq!(required_permission(&event), 1 << 8);
     assert_eq!(event.clone().merge(&event), Batch::Stop);
 }
 

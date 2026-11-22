@@ -94,7 +94,7 @@ The virtual mouse with its choice of Automatic, Virtual mouse and Injection
 rust/windows/src/input/virtual_hid.rs) follows Foundation Sunshine's virtual mouse,
 which is a driver of its own; Rubylight's is a USB device on its USB/IP server. The
 touchpad input packets 0x55000009 and 0x5500000A and their feature flags
-(rust/core/src/input.rs) are Foundation Sunshine's, as Moonlight V+ sends them.
+(client/protocol/wire/src/input.rs) are Foundation Sunshine's, as Moonlight V+ sends them.
 
 The per-application design of the NVIDIA image enhancements, the single pre-encode
 slot that RTX HDR takes first, and the HDR proxy through which RTX Video enhancement

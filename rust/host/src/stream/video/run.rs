@@ -209,7 +209,7 @@ impl SessionThread<'_> {
         // The first pacing decision for the newest fresh frame, kept
         // for the per-claim trace.
         let mut first_seen: Option<(usize, Instant, Option<Duration>, Option<Instant>)> = None;
-        let mut video_qos = Tagged::default();
+        let mut video_qos = crate::stream::qos::Tagged::default();
         let mut batch = butterpollo_windows::net::Batch::default();
         batch.dont_fragment = crate::stream::video_refuses_fragmentation();
         let mut packets = Vec::new();

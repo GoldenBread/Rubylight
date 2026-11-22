@@ -147,12 +147,12 @@ fn open_root(folder: &SharedFolderConfig) -> Result<Root, UserFolderError> {
         }
     })
 }
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 fn open_as(path: &std::path::Path) -> Result<Root, UserFolderError> {
     Root::open(path)
 }
 /// Tests open their folders as the developer, as file transfer's do.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 fn open_as(path: &std::path::Path) -> Result<Root, UserFolderError> {
     Root::unimpersonated(path)
 }

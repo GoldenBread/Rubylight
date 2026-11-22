@@ -253,7 +253,7 @@ async fn a_broken_saved_list_is_reported_and_never_overwritten() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn send_test_reaches_the_receiver_and_shows_as_the_last_status() {
-    let (url, mut received) = crate::webhooks::tests::receiver(vec![200]).await;
+    let (url, mut received) = crate::webhooks::test_support::receiver(vec![200]).await;
     let f = Fixture::new();
     // The receiver is on this PC, which the console refuses: saved as the config file would.
     let secret = "receiver secret";

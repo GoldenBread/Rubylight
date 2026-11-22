@@ -613,7 +613,7 @@ struct Leases {
 struct Workers {
     // A co-op player's stream ends with its Nucleus Co-op session.
     coop_watch: Option<crate::nucleus::Watch>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     fixture_preparation: Option<
         Box<dyn butterpollo_core::session::Preparation<crate::display_session::StreamPreparation>>,
     >,
@@ -631,7 +631,7 @@ impl Workers {
     fn new(s: &Arc<Session>) -> Self {
         Workers {
             coop_watch: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             fixture_preparation: None,
             timing_record: crate::timing_record::Detach(s.clone()),
             keyframe_loss_memory: None,
@@ -674,7 +674,7 @@ impl Media {
                 // `h.sessions` with the control and audio threads still running.
                 let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
                     workers.coop_watch = crate::nucleus::Watch::start(&h, &s)?;
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-harness"))]
                     if let Some(fixture) = &h.reconnect_fixture {
                         workers.fixture_preparation = s.launch.preparation.lock().unwrap().take();
                         return fixture.stream(&m, &h, &s);

@@ -3,14 +3,14 @@ use crate::{
     tls::Connection,
 };
 use anyhow::{Context, Result, bail, ensure};
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 use butterpollo_windows::{
     display::virtual_display_available,
     process::ensure_streaming_session as ensure_windows_streaming_session,
 };
-#[cfg(test)]
-use parity_tests::ensure_streaming_session as ensure_windows_streaming_session;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
+use test_support::ensure_streaming_session as ensure_windows_streaming_session;
+#[cfg(any(test, feature = "test-harness"))]
 fn virtual_display_available() -> bool {
     false
 }
@@ -32,10 +32,8 @@ use butterpollo_core::{
     session::{Role, Transport},
     state::{App, Client, device_uuid},
 };
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 use butterpollo_windows::clipboard;
-#[cfg(test)]
-use parity_tests::clipboard;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -43,6 +41,8 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
+#[cfg(any(test, feature = "test-harness"))]
+pub use test_support::clipboard;
 
 mod clipboard_route;
 mod launch;
@@ -72,6 +72,8 @@ mod bandwidth_probe_tests;
 mod native_tests;
 #[cfg(test)]
 pub(crate) mod parity_tests;
+#[cfg(any(test, feature = "test-harness"))]
+pub mod test_support;
 #[derive(Debug)]
 struct LaunchFailure(u16, &'static str);
 impl std::fmt::Display for LaunchFailure {

@@ -16,7 +16,7 @@ use std::sync::Once;
 use tracing::{
     Event, Metadata,
     span::{Attributes, Id, Record},
-    subscriber::{DefaultGuard, Interest, Subscriber},
+    subscriber::{Interest, Subscriber},
 };
 
 /// `S`, except that every call site is cached as "sometimes", so that a thread's
@@ -77,12 +77,16 @@ pub(crate) fn install() {
 }
 
 /// `subscriber` is this thread's until the guard drops.
-pub(crate) fn capture(subscriber: impl Subscriber + Send + Sync + 'static) -> DefaultGuard {
+#[cfg(test)]
+pub(crate) fn capture(
+    subscriber: impl Subscriber + Send + Sync + 'static,
+) -> tracing::subscriber::DefaultGuard {
     install();
     tracing::subscriber::set_default(subscriber)
 }
 
 /// Runs `run` with `subscriber` as this thread's.
+#[cfg(test)]
 pub(crate) fn capture_during<T>(
     subscriber: impl Subscriber + Send + Sync + 'static,
     run: impl FnOnce() -> T,

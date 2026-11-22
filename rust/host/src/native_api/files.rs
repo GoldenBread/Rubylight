@@ -37,10 +37,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-use tokio::{
-    io::ReadBuf,
-    sync::{mpsc, oneshot},
-};
+use tokio::sync::{mpsc, oneshot};
 
 /// Bytes read from disk per download chunk.
 const CHUNK: usize = 64 * 1024;
@@ -96,13 +93,13 @@ pub struct Transfers {
     downloads: Mutex<HashMap<String, usize>>,
     pacing: Mutex<Pacing>,
     /// Shorter limits for a test.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     limits: Mutex<Limits>,
     /// Free and total bytes of the volume, in place of the disk's.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     space: Mutex<Option<(u64, u64)>>,
     /// How long a refused upload's writer lingers after its answer.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     refusal_hold: Mutex<Duration>,
 }
 impl Default for Transfers {
@@ -114,11 +111,11 @@ impl Default for Transfers {
                 pacer: Pacer::new(None, PACE_BURST, Instant::now()),
                 checked: None,
             }),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             limits: Mutex::new(LIMITS),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             space: Mutex::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             refusal_hold: Mutex::default(),
         }
     }
@@ -158,21 +155,21 @@ impl Transfers {
         pacing.pacer.take(bytes, now)
     }
 
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-harness")))]
     fn limits(&self) -> Limits {
         LIMITS
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     fn limits(&self) -> Limits {
         *self.limits.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The free and total bytes of the folder's volume.
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-harness")))]
     fn space(&self, folder: &UserFolder) -> Result<(u64, u64), UserFolderError> {
         folder.volume_bytes()
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     fn space(&self, folder: &UserFolder) -> Result<(u64, u64), UserFolderError> {
         match *self.space.lock().unwrap_or_else(PoisonError::into_inner) {
             Some(space) => Ok(space),
@@ -188,14 +185,15 @@ impl Transfers {
         Ok(room(&uploads, free, total))
     }
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
+#[cfg_attr(not(test), allow(dead_code))]
 impl Transfers {
     /// Shortens the limits for a test.
     pub(crate) fn limit(&self, change: impl FnOnce(&mut Limits)) {
         change(&mut self.limits.lock().unwrap());
     }
     /// Reports `free` of `total` bytes on the transfer folder's volume.
-    pub(crate) fn fake_space(&self, free: u64, total: u64) {
+    pub fn fake_space(&self, free: u64, total: u64) {
         *self.space.lock().unwrap() = Some((free, total));
     }
     /// Keeps a refused upload's writer running `hold` after its answer.
@@ -418,13 +416,13 @@ fn transfer_dir(h: &Shared) -> Option<PathBuf> {
         .file_transfer_dir()
 }
 /// The transfer folder, as the signed-in user.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 fn open_folder(dir: Option<&Path>) -> Result<UserFolder, UserFolderError> {
     UserFolder::open(dir)
 }
 /// Tests open their folder as the developer: an elevated test runner
 /// without a desktop shell has no user to act as.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 fn open_folder(dir: Option<&Path>) -> Result<UserFolder, UserFolderError> {
     UserFolder::unimpersonated(dir.expect("a test names its transfer folder"))
 }
@@ -716,7 +714,7 @@ impl tokio::io::AsyncRead for Chunks {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         while this.current.is_empty() {
@@ -1030,7 +1028,7 @@ fn write_part(
     let mut part = match create(&slot, length) {
         Ok(part) => part,
         Err(error) => {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             let hold = *slot
                 .host
                 .file_transfers
@@ -1041,7 +1039,7 @@ fn write_part(
             // its next upload must not find the slot still taken.
             drop(slot);
             let _ = ready.send(Err(error));
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             std::thread::sleep(hold);
             return Ok(None);
         }

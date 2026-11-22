@@ -12,9 +12,9 @@ on:
     # Changes to docs and Markdown alone don't run CI; a release of such a
     # commit builds it in the windows job. The host builds Nightjar's protocol
     # crate from client/protocol by path.
-    paths: ['rust/**', '!rust/**/*.md', 'client/protocol/**', '!client/protocol/**/*.md', 'Cargo.*', 'rust-toolchain.toml', '.cargo/**', 'clippy.toml', 'third-party/**', '.github/workflows/rust-windows.yml']
+    paths: ['rust/**', '!rust/**/*.md', 'client/protocol/**', '!client/protocol/**/*.md', 'tests/**', '!tests/**/*.md', 'Cargo.*', 'rust-toolchain.toml', '.cargo/**', 'clippy.toml', 'third-party/**', '.github/workflows/rust-windows.yml']
   pull_request:
-    paths: ['rust/**', '!rust/**/*.md', 'client/protocol/**', '!client/protocol/**/*.md', 'Cargo.*', 'rust-toolchain.toml', '.cargo/**', 'clippy.toml', 'third-party/**', '.github/workflows/rust-windows.yml']
+    paths: ['rust/**', '!rust/**/*.md', 'client/protocol/**', '!client/protocol/**/*.md', 'tests/**', '!tests/**/*.md', 'Cargo.*', 'rust-toolchain.toml', '.cargo/**', 'clippy.toml', 'third-party/**', '.github/workflows/rust-windows.yml']
   workflow_dispatch:
     inputs:
       publish:
@@ -602,7 +602,7 @@ jobs:
         if: steps.newest.outputs.skip != 'true'
         env:
           TAG: ${{ steps.plan.outputs.tag }}
-          RC_PATHSPEC: rust client/protocol Cargo.toml Cargo.lock rust-toolchain.toml .cargo clippy.toml third-party
+          RC_PATHSPEC: rust client/protocol tests Cargo.toml Cargo.lock rust-toolchain.toml .cargo clippy.toml third-party
           RC_INTRO: >-
             Release candidate: a build of main for testing, not a full release. Its Windows
             files are unsigned and report version ${{ steps.plan.outputs.built }}. In-app

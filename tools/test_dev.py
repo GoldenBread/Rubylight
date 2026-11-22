@@ -23,9 +23,12 @@ class Plan(unittest.TestCase):
 
     def test_host_crate_change_skips_the_crates_below_it(self):
         planned, _ = checks('rust/windows/src/lib.rs')
-        self.assertEqual(planned['host'].items, ['butterpollo', 'butterpollo-probes', 'butterpollo-windows'])
+        self.assertEqual(
+            planned['host'].items,
+            ['butterpollo', 'butterpollo-probes', 'butterpollo-windows', 'rubylight-interop'],
+        )
         planned, _ = checks('rust/host/src/main.rs')
-        self.assertEqual(planned['host'].items, ['butterpollo'])
+        self.assertEqual(planned['host'].items, ['butterpollo', 'rubylight-interop'])
 
     def test_nested_member_maps_to_itself(self):
         planned, _ = checks('client/protocol/native-api/src/lib.rs')
@@ -44,7 +47,7 @@ class Plan(unittest.TestCase):
         self.assertIn('butterpollo-core', planned['host'].items)
         client = set(planned['client-protocol'].items)
         self.assertTrue({'rubylight-protocol', 'nightjar-core', 'nightjar-desktop'} <= client, client)
-        self.assertIn('interop', planned)
+        self.assertIn('rubylight-interop', planned['host'].items)
 
     def test_leaf_client_crate_checks_only_itself_and_its_users(self):
         # nightjar-android and nightjar-desktop take nightjar-policy by path, so they are checked too.
@@ -66,15 +69,12 @@ class Plan(unittest.TestCase):
         self.assertIn('rubylight-protocol', client)
         self.assertIn('nightjar-desktop', client)
 
-    def test_interop_skips_until_it_exists(self):
+    def test_interop_checks_run_on_client_protocol_changes(self):
         planned, _ = checks('client/protocol/client/src/lib.rs')
         if not (ROOT / 'tests/interop').exists():
             self.assertTrue(planned['interop'].skip)
-
-    def test_client_specs_name_the_path_package(self):
-        spec, = dev.client_specs(ROOT, ['rubylight-protocol'])
-        self.assertTrue(spec.startswith('path+file:///'), spec)
-        self.assertTrue(spec.endswith('/client/protocol/core#rubylight-protocol'), spec)
+        else:
+            self.assertIn('rubylight-interop', planned['host'].items)
 
     def test_client_crates_get_clippy_as_ci_runs_it(self):
         test, clippy = dev.client_commands(ROOT, ['nightjar-desktop', 'nightjar-policy'])
@@ -83,9 +83,7 @@ class Plan(unittest.TestCase):
         self.assertEqual(clippy[-3:], ['--', '-D', 'warnings'])
         self.assertIn('--all-targets', clippy)
         linted = [clippy[i + 1] for i, a in enumerate(clippy) if a == '-p']
-        self.assertEqual(len(linted), 2)
-        self.assertTrue(linted[0].endswith('#nightjar-desktop'), linted)
-        self.assertTrue(linted[1].endswith('#nightjar-policy'), linted)
+        self.assertEqual(linted, ['nightjar-desktop', 'nightjar-policy'])
 
     def test_all_client_crates_run_tests_and_clippy(self):
         commands = dev.client_commands(ROOT, ['rubylight-protocol'])

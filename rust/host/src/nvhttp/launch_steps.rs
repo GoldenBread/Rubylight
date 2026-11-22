@@ -573,7 +573,7 @@ pub(super) fn prepare_launch_app(
     if resume && launch.role == Role::Stream && h.current_app.lock().unwrap().is_none() {
         bail!(NOTHING_TO_RESUME);
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     if let Some(fixture) = &h.reconnect_fixture {
         return fixture.prepare_app(h, app, launch);
     }
@@ -651,7 +651,7 @@ pub(super) fn retain_launch_app(
             drop(running);
         }
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     if let Some(fixture) = &h.reconnect_fixture {
         fixture.retain_resources();
         return;

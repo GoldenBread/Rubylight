@@ -217,16 +217,15 @@ async fn allow_lets_in_at_once_and_guest_input_follows_the_permission() {
     assert_eq!(permission, Permission::Controller);
     let stream = guest_stream(&s, phone, id);
     let guests = &s.host().device_guests;
-    let pad = Input::Controller {
+    let pad = butterpollo_core::input::required_permission(&Input::Controller {
         id: 0,
         active: 1,
         buttons: 0,
         left_trigger: 0,
         right_trigger: 0,
         sticks: [0; 4],
-    }
-    .required_permission();
-    let mouse = Input::Relative { x: 1, y: 1 }.required_permission();
+    });
+    let mouse = butterpollo_core::input::required_permission(&Input::Relative { x: 1, y: 1 });
     assert!(guests.admits(&stream, pad));
     assert!(!guests.admits(&stream, mouse));
     assert!(!guests.full_access(&stream));

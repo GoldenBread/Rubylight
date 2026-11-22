@@ -118,7 +118,7 @@ async fn connection(
     if launches.is_empty() {
         bail!("no authorized RTSP launch");
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     if let Some(fixture) = &h.reconnect_fixture {
         fixture.before_rtsp_cleanup().await;
     }
@@ -169,13 +169,13 @@ async fn connection(
             let announced = (req.method == "ANNOUNCE")
                 .then(|| Negotiated::from_sdp(&req.body).ok())
                 .flatten();
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-harness"))]
             let panics = h
                 .reconnect_fixture
                 .as_ref()
                 .is_some_and(|fixture| fixture.ffmpeg_probe_panics());
             let probe = tokio::task::spawn_blocking(move || -> Result<_> {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-harness"))]
                 if panics {
                     panic!("the test's FFmpeg probe panics");
                 }
@@ -604,7 +604,7 @@ async fn connection(
 }
 /// [`HANDSHAKE_DEADLINE`], or the reconnect matrix's shorter one.
 fn handshake_deadline(h: &Shared) -> Duration {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     if let Some(deadline) = h.reconnect_fixture.as_ref().and_then(|f| f.rtsp_deadline()) {
         return deadline;
     }
@@ -613,7 +613,7 @@ fn handshake_deadline(h: &Shared) -> Duration {
 }
 /// The folder FFmpeg's libraries load from, or the reconnect matrix's failure to find it.
 fn ffmpeg_directory(h: &Shared) -> Result<std::path::PathBuf> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     if h.reconnect_fixture
         .as_ref()
         .is_some_and(|f| f.ffmpeg_directory_unknown())

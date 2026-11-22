@@ -1,7 +1,6 @@
 use crate::state::{Launch, Session, Shared};
-use butterpollo_core::{controller_audio, haptics};
 mod app_window;
-mod audio;
+pub(crate) mod audio;
 pub(crate) mod audio_encoder;
 mod audio_haptics;
 mod audio_sink;
@@ -22,9 +21,6 @@ mod qos;
 mod roaming;
 pub(crate) mod slices;
 mod video;
-#[cfg(test)]
-pub(crate) use audio::{audio_layout, open_audio_encoder};
-use audio_encoder::AudioEncoder;
 use audio_sink::{AudioPace, AudioSink, GameStreamAudio, WebRtcAudio};
 use butterpollo_core::audio_passthrough::Codec;
 #[cfg(test)]
@@ -35,7 +31,7 @@ pub(crate) use config::{
 };
 #[cfg(test)]
 use control::{
-    CONTROL_EVENT_LIMIT, ControlPeer, ControlSocket, FEEDBACK_CHANNEL, INPUT_OVERFLOW, INPUT_QUEUE,
+    CONTROL_EVENT_LIMIT, ControlSocket, FEEDBACK_CHANNEL, INPUT_OVERFLOW, INPUT_QUEUE,
     MOTION_EVENT_REQUEST, PadSends, PeerConfig, RUMBLE_MARKER, RumbleForwarded,
     SWALLOWED_PER_RECEIVE, ScaleLookup, UNATTENDED_SWEEP, UnattendedSweep, control_wait_timeout,
     drop_uninjectable_input, end_unattended_sessions, expects_enet_control, expire_controllers,
@@ -47,21 +43,23 @@ pub(crate) use control::{
     feedback_packets,
 };
 pub(crate) use instance_audio::{InstanceRoutes, instance_routes, plays_on_pc, put_back};
-use qos::Tagged;
 #[cfg(test)]
 use video::{
     COMPUTE_FAILURE_WINDOW, COMPUTE_RETRY_QUIET, ComputeDemotion, ENCODER_RECOVERY, EncoderOutput,
     EncoderRecovery, OUTPUT_POLL, QueryTrace, encoder_progress, next_output_poll,
     observe_foreground_game, poll_fits, wait_for_output,
 };
+#[cfg(any(test, feature = "test-harness"))]
+pub mod reconnect_harness;
 #[cfg(test)]
 pub(crate) mod reconnect_tests;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use butterpollo_core::{
     config::Config,
-    crypto,
+    controller_audio, crypto,
     encoder_backlog::{self, Backpressure},
-    input,
+    haptics,
+    input::{self, required_permission},
     packet::{AudioPacketizer, VideoPacketizer},
     session::Role,
     text_input::Watch as TextWatch,
@@ -83,16 +81,16 @@ pub(crate) fn require_hdr_source(
     }
     match display_in_hdr() {
         Some(true) => Ok(()),
-        Some(false) if running => anyhow::bail!(
+        Some(false) if running => bail!(
             "the display left HDR during the stream; the HDR stream ended instead of showing SDR as HDR. Keep Windows HDR on for this display, or start an SDR stream"
         ),
-        Some(false) => anyhow::bail!(
+        Some(false) => bail!(
             "HDR was requested but the display is not in HDR; turn on HDR for this display in Windows settings (or set the HDR policy to auto in the host's display settings), or start an SDR stream"
         ),
         // A reading that fails mid-stream is the capture's to report (it ends on a colour space
         // error itself); only a display seen leaving HDR ends the stream here.
         None if running => Ok(()),
-        None => anyhow::bail!(
+        None => bail!(
             "HDR was requested but Windows did not report the display's colour space, so the stream cannot tell HDR from SDR; start an SDR stream"
         ),
     }
@@ -337,9 +335,13 @@ impl std::ops::Deref for Source {
 /// Each session's video and audio addresses from its pings, by launch ID. The stream and
 /// audio threads look theirs up for every frame and packet, so a lookup copies no key.
 #[derive(Default)]
-pub(crate) struct Peers(HashMap<String, [Option<SocketAddr>; 2]>);
+pub struct Peers(HashMap<String, [Option<SocketAddr>; 2]>);
 impl Peers {
-    pub(crate) fn get(&self, id: &str, audio: bool) -> Option<SocketAddr> {
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn get(&self, id: &str, audio: bool) -> Option<SocketAddr> {
         self.0.get(id).and_then(|pair| pair[usize::from(audio)])
     }
     /// The address it replaced, if any.
@@ -363,10 +365,6 @@ impl Peers {
     /// Whether any session's video or audio comes from `peer`.
     fn contains(&self, peer: SocketAddr) -> bool {
         self.0.values().flatten().any(|known| *known == Some(peer))
-    }
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 }
 /// The active session a media ping from `peer` is for, and how often it had roamed
@@ -462,7 +460,7 @@ pub struct Media {
     control_wake_receiver: UdpSocket,
     /// The microphone receiver's counts; None when its port could not be bound.
     pub(crate) mic: Option<Arc<crate::mic::Counters>>,
-    peers: Mutex<Peers>,
+    pub peers: Mutex<Peers>,
     captures: Mutex<HashMap<CaptureKey, Weak<Source>>>,
     control_port: u16,
     bind: IpAddr,
@@ -853,7 +851,7 @@ impl Media {
                         while !worker.consumers_released() {
                             worker.check()?;
                             if worker_stop.load(Ordering::Acquire) {
-                                anyhow::bail!("capture stopped while releasing resources");
+                                bail!("capture stopped while releasing resources");
                             }
                             anyhow::ensure!(Instant::now() < deadline, "streams did not release the lost capture device");
                             timer.until(Instant::now() + Duration::from_millis(2));
@@ -864,7 +862,7 @@ impl Media {
                             worker.check()?;
                             anyhow::ensure!(Instant::now() < deadline, "capture did not recover within 30 seconds");
                             if worker_stop.load(Ordering::Acquire) {
-                                anyhow::bail!("capture stopped while recovering");
+                                bail!("capture stopped while recovering");
                             }
                             let next = prepared.capture_target();
                             // A UAC prompt or the lock screen switches the input

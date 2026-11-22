@@ -26,12 +26,12 @@ pub(super) async fn blocking(work: impl FnOnce() -> Response + Send + 'static) -
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 pub(crate) fn check_streaming_session(h: &Shared, phase: &'static str) -> Result<()> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     let result = match &h.reconnect_fixture {
         Some(fixture) => fixture.check_streaming_session(),
         None => ensure_windows_streaming_session(),
     };
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-harness")))]
     let result = {
         let _ = h;
         ensure_windows_streaming_session()
@@ -420,7 +420,7 @@ fn launch_back_half(
     let canceled = h.sessions.lock().unwrap().queue(launch.clone())?;
     drop(canceled);
     if role != Role::InputOnly {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-harness"))]
         if let Some(fixture) = &h.reconnect_fixture {
             fixture.prepare(&launch);
         }

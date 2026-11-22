@@ -47,9 +47,9 @@ pub trait Backend: Send + Sync {
         false
     }
 }
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 struct Native;
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 impl Backend for Native {
     fn states(&self) -> Result<SleepStates> {
         butterpollo_windows::power::sleep_states()
@@ -66,9 +66,9 @@ impl Backend for Native {
 }
 /// Tests never put the PC running them to sleep: without a fake backend
 /// the host reports no sleep support.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 struct Native;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 impl Backend for Native {
     fn states(&self) -> Result<SleepStates> {
         Ok(SleepStates::default())
@@ -173,7 +173,7 @@ impl PowerActions {
             None => refusals.remove(uuid),
         };
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn set_backend(&self, backend: Arc<dyn Backend>) {
         *self.backend.write().unwrap() = backend;
     }
