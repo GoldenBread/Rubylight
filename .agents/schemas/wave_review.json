@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Carbon Wave and Release Review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approved",
+    "wave",
+    "summary",
+    "blocking_findings",
+    "non_blocking"
+  ],
+  "properties": {
+    "approved": {
+      "type": "boolean",
+      "description": "True only when zero blocking findings remain."
+    },
+    "wave": {
+      "type": "string",
+      "description": "Wave or review identifier (e.g. 'prep', 'wave-0'..'wave-5', 'release-7.0.0')."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Concise executive summary of what was audited and the verdict."
+    },
+    "blocking_findings": {
+      "type": "array",
+      "description": "Issues that MUST be fixed before advancing the wave or tagging release 7.0.0.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_id",
+          "severity",
+          "file",
+          "issue",
+          "required_fix"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "Roadmap item id (e.g. '03', 'orchestrator', 'hooks', 'protocol', 'release-7.0.0')."
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium"
+            ]
+          },
+          "file": {
+            "type": "string",
+            "description": "Repository-relative path to the affected file."
+          },
+          "issue": {
+            "type": "string",
+            "description": "Concrete defect, rule violation, or missing edge case."
+          },
+          "required_fix": {
+            "type": "string",
+            "description": "Specific, verifiable fix required to clear the finding."
+          }
+        }
+      }
+    },
+    "non_blocking": {
+      "type": "array",
+      "description": "Optional suggestions or polish notes that do not block advancement.",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

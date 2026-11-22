@@ -1,0 +1,526 @@
+{
+  "schema_version": 1,
+  "release_target": "7.0.0",
+  "integration_branch": "roadmap/redesign-and-waves-1-5",
+  "updated_at": "2026-11-22T02:16:30Z",
+  "waves": {
+    "0": {
+      "status": "pending",
+      "base_sha": null,
+      "head_sha": null,
+      "carbon_review": {
+        "approved": false,
+        "review_file": "docs/reviews/wave-0-carbon.md",
+        "attempts": 0,
+        "blocking_count": 0,
+        "summary": ""
+      }
+    },
+    "1": {
+      "status": "pending",
+      "base_sha": null,
+      "head_sha": null,
+      "carbon_review": {
+        "approved": false,
+        "review_file": "docs/reviews/wave-1-carbon.md",
+        "attempts": 0,
+        "blocking_count": 0,
+        "summary": ""
+      }
+    },
+    "2": {
+      "status": "pending",
+      "base_sha": null,
+      "head_sha": null,
+      "carbon_review": {
+        "approved": false,
+        "review_file": "docs/reviews/wave-2-carbon.md",
+        "attempts": 0,
+        "blocking_count": 0,
+        "summary": ""
+      }
+    },
+    "3": {
+      "status": "pending",
+      "base_sha": null,
+      "head_sha": null,
+      "carbon_review": {
+        "approved": false,
+        "review_file": "docs/reviews/wave-3-carbon.md",
+        "attempts": 0,
+        "blocking_count": 0,
+        "summary": ""
+      }
+    },
+    "4": {
+      "status": "pending",
+      "base_sha": null,
+      "head_sha": null,
+      "carbon_review": {
+        "approved": false,
+        "review_file": "docs/reviews/wave-4-carbon.md",
+        "attempts": 0,
+        "blocking_count": 0,
+        "summary": ""
+      }
+    },
+    "5": {
+      "status": "pending",
+      "base_sha": null,
+      "head_sha": null,
+      "carbon_review": {
+        "approved": false,
+        "review_file": "docs/reviews/wave-5-carbon.md",
+        "attempts": 0,
+        "blocking_count": 0,
+        "summary": ""
+      }
+    },
+    "6": {
+      "status": "pending",
+      "base_sha": null,
+      "head_sha": null,
+      "carbon_review": {
+        "approved": false,
+        "review_file": "docs/reviews/release-7.0.0-carbon.md",
+        "attempts": 0,
+        "blocking_count": 0,
+        "summary": ""
+      }
+    }
+  },
+  "items": [
+    {
+      "id": "01",
+      "slug": "ui-rubylight-studio",
+      "wave": 0,
+      "title": "Rubylight 7.0 Ground-Up Console-Quality Redesign (Console, /play, /guest, Couch Menu, Setup & Tray)",
+      "design_doc": "docs/designs/01-ui-rubylight-studio.md",
+      "depends_on": [],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/01-ui-rubylight-studio",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "02",
+      "slug": "ui-nightjar-glass",
+      "wave": 0,
+      "title": "Nightjar 7.0 Ground-Up Console-Quality Redesign (Phone, Handheld, TV & Desktop)",
+      "design_doc": "docs/designs/02-ui-nightjar-glass.md",
+      "depends_on": [],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/02-ui-nightjar-glass",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "03",
+      "slug": "launch-curtain",
+      "wave": 1,
+      "title": "Launch Curtain & Smart Focus",
+      "design_doc": "docs/designs/03-launch-curtain.md",
+      "depends_on": [
+        "01",
+        "02"
+      ],
+      "hw_required": true,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/03-launch-curtain",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "04",
+      "slug": "frame-warp-2",
+      "wave": 1,
+      "title": "Frame Warp 2.0",
+      "design_doc": "docs/designs/04-frame-warp-2.md",
+      "depends_on": [],
+      "hw_required": true,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/04-frame-warp-2",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "05",
+      "slug": "stream-dvr",
+      "wave": 1,
+      "title": "Host-Side Stream DVR & Instant Replay",
+      "design_doc": "docs/designs/05-stream-dvr.md",
+      "depends_on": [
+        "01",
+        "02"
+      ],
+      "hw_required": true,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/05-stream-dvr",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "06",
+      "slug": "hdr-sdr-tonemap",
+      "wave": 1,
+      "title": "Real-Time HDR-to-SDR Tone Mapping",
+      "design_doc": "docs/designs/06-hdr-sdr-tonemap.md",
+      "depends_on": [],
+      "hw_required": true,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/06-hdr-sdr-tonemap",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "21",
+      "slug": "desktop-perf-and-nvenc",
+      "wave": 1,
+      "title": "Desktop Client Performance Overhaul (macOS, Linux, Windows) & Host NVIDIA NVENC Low-Latency Overhaul",
+      "design_doc": "docs/designs/21-desktop-perf-and-nvenc.md",
+      "depends_on": [
+        "04",
+        "06"
+      ],
+      "hw_required": true,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/21-desktop-perf-and-nvenc",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "07",
+      "slug": "hw-verify",
+      "wave": 1,
+      "title": "Wave 1 Serialized Hardware Verification & Measurement",
+      "design_doc": "docs/designs/07-hw-verify.md",
+      "depends_on": [
+        "03",
+        "04",
+        "05",
+        "06",
+        "21"
+      ],
+      "hw_required": true,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/07-hw-verify",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "08",
+      "slug": "quick-suspend",
+      "wave": 2,
+      "title": "Quick Suspend & Resume",
+      "design_doc": "docs/designs/08-quick-suspend.md",
+      "depends_on": [
+        "03"
+      ],
+      "hw_required": true,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/08-quick-suspend",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "09",
+      "slug": "host-hub-sync",
+      "wave": 2,
+      "title": "Host Hub Sync (Profiles, Covers & Capabilities)",
+      "design_doc": "docs/designs/09-host-hub-sync.md",
+      "depends_on": [
+        "01",
+        "02"
+      ],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/09-host-hub-sync",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "10",
+      "slug": "couch-party-audio",
+      "wave": 2,
+      "title": "Couch Party Audio Routing & Spatial Mix",
+      "design_doc": "docs/designs/10-couch-party-audio.md",
+      "depends_on": [
+        "02"
+      ],
+      "hw_required": true,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/10-couch-party-audio",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "11",
+      "slug": "stream-doctor",
+      "wave": 2,
+      "title": "Stream Doctor 2.0 & Upscaler Guidance",
+      "design_doc": "docs/designs/11-stream-doctor.md",
+      "depends_on": [
+        "02"
+      ],
+      "hw_required": true,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/11-stream-doctor",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "12",
+      "slug": "phone-safe-area",
+      "wave": 2,
+      "title": "Phone Safe Area & Reverse Landscape (#152)",
+      "design_doc": "docs/designs/12-phone-safe-area.md",
+      "depends_on": [
+        "02"
+      ],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/12-phone-safe-area",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "13",
+      "slug": "client-input-deck",
+      "wave": 3,
+      "title": "Visual Console-Grade Controller Editor & Client Input Deck on First-Party Virtual Gamepad",
+      "design_doc": "docs/designs/13-client-input-deck.md",
+      "depends_on": [
+        "09"
+      ],
+      "hw_required": true,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/13-client-input-deck",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "14",
+      "slug": "coherence-workstation",
+      "wave": 3,
+      "title": "Coherence Workstation Multi-Window Streaming",
+      "design_doc": "docs/designs/14-coherence-workstation.md",
+      "depends_on": [
+        "03",
+        "09"
+      ],
+      "hw_required": true,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/14-coherence-workstation",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "15",
+      "slug": "away-wake-relay",
+      "wave": 3,
+      "title": "Away Wake Relay over Traverse Peer Mesh",
+      "design_doc": "docs/designs/15-away-wake-relay.md",
+      "depends_on": [
+        "09"
+      ],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/15-away-wake-relay",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "16",
+      "slug": "ui-final-polish",
+      "wave": 4,
+      "title": "UI Final Polish Pass (Console + Nightjar)",
+      "design_doc": "docs/designs/16-ui-final-polish.md",
+      "depends_on": [
+        "01",
+        "02",
+        "03",
+        "05",
+        "08",
+        "09",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15"
+      ],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/16-ui-final-polish",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "17",
+      "slug": "ux-craft-and-resilience",
+      "wave": 4,
+      "title": "UX Craft, Cold-Start, Installer, Errors & Crash-Restore Soak (#129)",
+      "design_doc": "docs/designs/17-ux-craft-and-resilience.md",
+      "depends_on": [
+        "03",
+        "07",
+        "08",
+        "12",
+        "13"
+      ],
+      "hw_required": true,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/17-ux-craft-and-resilience",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "18",
+      "slug": "showcase-demos-and-videos",
+      "wave": 5,
+      "title": "Showcase Demos, Tours & Videos (Console + Nightjar)",
+      "design_doc": "docs/designs/18-showcase-demos-and-videos.md",
+      "depends_on": [
+        "16",
+        "17"
+      ],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/18-showcase-demos-and-videos",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "19",
+      "slug": "websites-10-of-10",
+      "wave": 5,
+      "title": "Rubylight & Nightjar Websites 10/10",
+      "design_doc": "docs/designs/19-websites-10-of-10.md",
+      "depends_on": [
+        "16",
+        "18"
+      ],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/19-websites-10-of-10",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "20",
+      "slug": "readmes-and-docs-10-of-10",
+      "wave": 5,
+      "title": "READMEs & Documentation 10/10",
+      "design_doc": "docs/designs/20-readmes-and-docs-10-of-10.md",
+      "depends_on": [
+        "16",
+        "17",
+        "18",
+        "19"
+      ],
+      "hw_required": false,
+      "visual_review": true,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/20-readmes-and-docs-10-of-10",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    }
+  ],
+  "release": {
+    "version": "7.0.0",
+    "rubylight_tag_pushed": false,
+    "rubylight_hw_check_passed": false,
+    "nightjar_mirrored": false,
+    "nightjar_dry_run_passed": false,
+    "nightjar_defender_clean": false,
+    "nightjar_tag_pushed": false,
+    "sites_published": false,
+    "whole_release_carbon_approved": false,
+    "maintainer_authorized": false
+  }
+}
