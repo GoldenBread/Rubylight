@@ -89,7 +89,6 @@ jobs:
           cd protocol
           cargo clippy -p nightjar-desktop --all-targets --locked -- -D warnings
           cargo nextest run --config-file ../../.config/nextest.toml --profile ci -p nightjar-desktop --locked
-          cargo test --doc -p nightjar-desktop --locked
       # The PQ pass: its SPIR-V against glslang 15 (a missing or other glslang fails here), and the
       # ignored GPU test on Mesa's software Vulkan (lavapipe, the runner has no GPU).
       - name: Test the PQ present pass

@@ -1,5 +1,7 @@
-import contextlib, io, json, pathlib, sys, unittest
+import contextlib, io, json, pathlib, shlex, sys, tomllib, unittest
 from unittest import mock
+
+import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import ci  # noqa: E402
@@ -101,6 +103,227 @@ class Watch(unittest.TestCase):
             self.assertEqual(ci.main(['wip/none']), 2)
         gh.assert_not_called()
         self.assertIn('push it first', out.getvalue())
+
+
+def _split_shell_clauses(script):
+    text = script.replace('\r\n', '\n').replace('\\\n', ' ')
+    clauses, buf = [], []
+    quote, escape, i, n = None, False, 0, len(text)
+    while i < n:
+        ch = text[i]
+        if escape:
+            buf.append(ch)
+            escape = False
+            i += 1
+            continue
+        if quote:
+            if ch == '\\' and quote == '"':
+                escape = True
+            elif ch == quote:
+                quote = None
+            buf.append(ch)
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+        elif ch == '\\':
+            escape = True
+            buf.append(ch)
+            i += 1
+        elif ch == '#' and (not buf or buf[-1].isspace()):
+            while i < n and text[i] != '\n':
+                i += 1
+        elif ch in ('\n', ';'):
+            clauses.append(''.join(buf))
+            buf.clear()
+            i += 1
+        elif text[i:i + 2] in ('&&', '||'):
+            clauses.append(''.join(buf))
+            buf.clear()
+            i += 2
+        else:
+            buf.append(ch)
+            i += 1
+    if buf:
+        clauses.append(''.join(buf))
+    return clauses
+
+
+def _has_doctestable_lib(pkg_dir, pkg_toml):
+    lib = pkg_toml.get('lib') or {}
+    if lib.get('doctest') is False:
+        return False
+    crate_types = lib.get('crate-type') or []
+    if crate_types and all(ct in ('cdylib', 'staticlib') for ct in crate_types):
+        return False
+    lib_path = pkg_dir / (lib.get('path') or 'src/lib.rs')
+    return lib_path.is_file()
+
+
+def _cargo_manifest_packages(manifest_path):
+    manifest = tomllib.loads(manifest_path.read_text(encoding='utf-8'))
+    base = manifest_path.parent
+    ws = manifest.get('workspace')
+    if ws is None:
+        pkg = manifest.get('package', {})
+        name = pkg.get('name')
+        return ({name: _has_doctestable_lib(base, manifest)} if name else {}), ([name] if name else [])
+    members = ws.get('members') or []
+    member_dirs = []
+    for pattern in members:
+        if any(ch in pattern for ch in ('*', '?', '[')):
+            member_dirs.extend(sorted(p for p in base.glob(pattern) if (p / 'Cargo.toml').is_file()))
+        else:
+            member_dirs.append(base / pattern)
+    packages = {}
+    dir_to_name = {}
+    for directory in member_dirs:
+        cargo_toml = directory / 'Cargo.toml'
+        if not cargo_toml.is_file():
+            continue
+        pkg = tomllib.loads(cargo_toml.read_text(encoding='utf-8'))
+        name = pkg.get('package', {}).get('name')
+        if name:
+            packages[name] = _has_doctestable_lib(directory, pkg)
+            dir_to_name[directory.resolve()] = name
+    default_members = ws.get('default-members')
+    if default_members is not None:
+        defaults = [dir_to_name[(base / m).resolve()] for m in default_members if (base / m).resolve() in dir_to_name]
+    else:
+        defaults = list(packages)
+    return packages, defaults
+
+
+def _find_manifest(cwd, manifest_arg):
+    if manifest_arg:
+        return (cwd / manifest_arg).resolve()
+    current = cwd.resolve()
+    while True:
+        candidate = current / 'Cargo.toml'
+        if candidate.is_file():
+            return candidate
+        if current.parent == current:
+            raise FileNotFoundError(f'No Cargo.toml found from {cwd}')
+        current = current.parent
+
+
+def _workflow_doctest_violations(workflow_data, workflow_name, root):
+    violations = []
+    wf_cwd = (workflow_data.get('defaults') or {}).get('run', {}).get('working-directory', '')
+    for job_name, job in (workflow_data.get('jobs') or {}).items():
+        if not isinstance(job, dict):
+            continue
+        job_cwd = (job.get('defaults') or {}).get('run', {}).get('working-directory', wf_cwd)
+        for idx, step in enumerate(job.get('steps') or [], start=1):
+            if not isinstance(step, dict) or not isinstance(step.get('run'), str):
+                continue
+            step_cwd = step.get('working-directory', job_cwd)
+            cwd = (root / step_cwd).resolve() if step_cwd else root.resolve()
+            step_label = step.get('name') or f'step #{idx}'
+            for clause in _split_shell_clauses(step['run']):
+                stripped = clause.strip().lstrip('(').strip()
+                if not stripped:
+                    continue
+                try:
+                    tokens = shlex.split(stripped)
+                except ValueError:
+                    tokens = stripped.split()
+                if not tokens:
+                    continue
+                if tokens[0] == 'cd' and len(tokens) >= 2 and not tokens[1].startswith('-'):
+                    target = tokens[1]
+                    if not target.startswith(('$', '~')):
+                        cwd = (cwd / target).resolve()
+                    continue
+                if tokens[0] != 'cargo':
+                    continue
+                sub_idx = 2 if len(tokens) > 1 and tokens[1].startswith('+') else 1
+                if len(tokens) <= sub_idx + 1 or tokens[sub_idx] != 'test' or '--doc' not in tokens[sub_idx + 1:]:
+                    continue
+                manifest_arg, pkg_args, exclude_args, workspace_flag = None, [], [], False
+                i = sub_idx + 1
+                while i < len(tokens):
+                    tok = tokens[i]
+                    if tok == '--':
+                        break
+                    if tok == '--manifest-path' and i + 1 < len(tokens):
+                        manifest_arg = tokens[i + 1]
+                        i += 2
+                        continue
+                    if tok.startswith('--manifest-path='):
+                        manifest_arg = tok.split('=', 1)[1]
+                    elif tok in ('-p', '--package') and i + 1 < len(tokens):
+                        pkg_args.append(tokens[i + 1])
+                        i += 2
+                        continue
+                    elif tok.startswith(('--package=', '-p=')):
+                        pkg_args.append(tok.split('=', 1)[1])
+                    elif tok == '--exclude' and i + 1 < len(tokens):
+                        exclude_args.append(tokens[i + 1])
+                        i += 2
+                        continue
+                    elif tok.startswith('--exclude='):
+                        exclude_args.append(tok.split('=', 1)[1])
+                    elif tok in ('--workspace', '--all'):
+                        workspace_flag = True
+                    i += 1
+                manifest_path = _find_manifest(cwd, manifest_arg)
+                packages, defaults = _cargo_manifest_packages(manifest_path)
+                if pkg_args:
+                    targets = pkg_args
+                elif workspace_flag:
+                    targets = [p for p in packages if p not in exclude_args]
+                else:
+                    targets = [p for p in defaults if p not in exclude_args]
+                if targets and not any(packages.get(t, False) for t in targets):
+                    violations.append(
+                        f'{workflow_name} job={job_name} step="{step_label}": '
+                        f'cargo test --doc targets bin-only/non-doctest crate(s) {targets} ({stripped})'
+                    )
+    return violations
+
+
+class WorkflowDoctests(unittest.TestCase):
+    def test_no_workflow_runs_cargo_doc_on_bin_only_crates(self):
+        workflows_dir = ci.ROOT / '.github' / 'workflows'
+        violations = []
+        for path in sorted(workflows_dir.glob('*.yml')):
+            data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+            violations.extend(_workflow_doctest_violations(data, path.name, ci.ROOT))
+        self.assertEqual(violations, [], '\n'.join(violations))
+
+    def test_bin_only_doctest_detector_catches_desktop_only_and_allows_mixed_lib_targets(self):
+        bad_wf = yaml.safe_load("""
+defaults:
+  run:
+    working-directory: client
+jobs:
+  desktop:
+    steps:
+      - name: Test and lint the desktop client
+        run: |
+          cd protocol
+          cargo test --doc -p nightjar-desktop --locked
+""")
+        bad = _workflow_doctest_violations(bad_wf, 'synthetic.yml', ci.ROOT)
+        self.assertEqual(len(bad), 1, bad)
+        self.assertIn('nightjar-desktop', bad[0])
+
+        ok_wf = yaml.safe_load("""
+jobs:
+  desktop:
+    defaults:
+      run:
+        working-directory: client/protocol
+    steps:
+      - name: Mixed lib and bin targets plus lib manifest
+        run: |
+          cargo test --doc --locked -p nightjar-desktop -p nightjar-core -p nightjar-policy
+          cargo test --doc --locked --manifest-path core/Cargo.toml
+""")
+        self.assertEqual(_workflow_doctest_violations(ok_wf, 'synthetic-ok.yml', ci.ROOT), [])
 
 
 if __name__ == '__main__':
