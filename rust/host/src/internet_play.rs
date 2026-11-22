@@ -762,7 +762,17 @@ pub(crate) fn ensure(h: &Shared) {
             reported_paths = status.path_errors;
         }
     });
-    *REFRESH.lock().unwrap() = Some(refresh);
+    {
+        let running = SERVICE.lock().unwrap();
+        let mut slot = REFRESH.lock().unwrap();
+        if running.is_some() {
+            if let Some(previous) = slot.replace(refresh) {
+                previous.abort();
+            }
+        } else {
+            refresh.abort();
+        }
+    }
 }
 
 #[cfg(test)]

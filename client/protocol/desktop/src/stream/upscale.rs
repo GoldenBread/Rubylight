@@ -127,7 +127,11 @@ impl Upscaler {
     pub fn draw_warped(&mut self, renderer: *mut SDL_Renderer, source: *mut SDL_Texture, sharpness: u32, warp: &super::frame_warp::WarpDraw,
         mesh: &mut super::frame_warp::Mesh, history: History) -> Result<*mut SDL_Texture, String> {
         let failed = |what: &str| format!("{what}: {}", crate::sdl::error());
-        if self.temporal.as_ref().is_some_and(|t| !history.advance && t.has_output()) { return Ok(self.textures[1]); }
+        if let Some(t) = &self.temporal {
+            if !history.advance {
+                return Ok(if t.has_output() { self.textures[1] } else { source });
+            }
+        }
         unsafe {
             let previous = SDL_GetRenderTarget(renderer);
             if !SDL_SetRenderTarget(renderer, self.textures[0]) { return Err(failed("the picture cannot be copied in")); }
@@ -141,7 +145,7 @@ impl Upscaler {
             SDL_SetRenderTarget(renderer, previous);
             if !ok { return Err(failed("the picture cannot be copied in")); }
             if let Some(temporal) = &mut self.temporal {
-                if history.advance && history.reset { temporal.reset(); }
+                if history.reset { temporal.reset(); }
                 temporal.draw(renderer, sharpness)?;
                 return Ok(self.textures[1]);
             }
@@ -216,6 +220,15 @@ pub(super) fn check_scalers() {
                 // Temporal upscaling draws a few frames, so the history and not only the first
                 // frame's reset is read.
                 let mut upscaler = Upscaler::new(renderer, (32, 32), (128, 128), mode).unwrap_or_else(|e| panic!("{mode:?} GPU scaler: {e}"));
+                let warp = super::frame_warp::WarpDraw::default();
+                if let Some(temporal) = &upscaler.temporal {
+                    // A non-advancing draw before any whole picture leaves history unseeded and
+                    // returns the source texture as-is.
+                    let parity = temporal.parity();
+                    let early = upscaler.draw_warped(renderer, input, 50, &warp, &mut super::frame_warp::Mesh::default(), History::default());
+                    assert_eq!(early, Ok(input));
+                    assert_eq!(upscaler.temporal.as_ref().map(|t| (t.has_output(), t.parity())), Some((false, parity)));
+                }
                 let mut output = ptr::null_mut();
                 for _ in 0..if mode == Upscaling::Sgsr2 { 4 } else { 1 } {
                     output = upscaler.draw(renderer, input, 50).unwrap_or_else(|e| panic!("{mode:?} GPU draw: {e}"));
@@ -223,10 +236,12 @@ pub(super) fn check_scalers() {
                 if let Some(temporal) = &upscaler.temporal {
                     // A repeat of the same picture shows the last output and leaves the history.
                     let parity = temporal.parity();
-                    let warp = super::frame_warp::WarpDraw::default();
                     let repeated = upscaler.draw_warped(renderer, input, 50, &warp, &mut super::frame_warp::Mesh::default(), History::default());
                     assert_eq!(repeated, Ok(output));
                     assert_eq!(upscaler.temporal.as_ref().map(|t| t.parity()), Some(parity), "a repeat advanced the history");
+                    // A mid-stream reset redraws cleanly without running motion search.
+                    output = upscaler.draw_warped(renderer, input, 50, &warp, &mut super::frame_warp::Mesh::default(),
+                        History { advance: true, reset: true }).unwrap_or_else(|e| panic!("{mode:?} reset draw: {e}"));
                 }
                 assert!(SDL_GetRenderTarget(renderer).is_null());
                 assert!(SDL_SetRenderTarget(renderer, output));

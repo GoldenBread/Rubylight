@@ -1196,6 +1196,32 @@ fn pacing_off_hands_everything_over_at_once() {
     assert!(queue.is_empty());
 }
 
+#[test]
+fn idle_gap_advances_due_so_the_next_frame_stays_paced() {
+    let now = Instant::now();
+    // 12 Mbps: one 1100-byte datagram (~0.78 ms) per group.
+    let mut queue = SendQueue::new(capped(12_000), 1_000, PERIOD, false, now);
+    queue.push(rtp_packet(1100));
+    let first = queue.next_batch(now);
+    assert_eq!(first.paced_packets, 1);
+    queue.sent(now, &first);
+    assert!(queue.is_empty());
+    // After a 500 ms idle gap, the next frame must still pace one group at a time
+    // instead of bursting CATCH_UP_CREDIT worth of groups at once.
+    let later = now + Duration::from_millis(500);
+    for _ in 0..10 {
+        queue.push(rtp_packet(1100));
+    }
+    let second = queue.next_batch(later);
+    assert_eq!(second.paced_packets, 1);
+    queue.sent(later, &second);
+    assert_eq!(
+        queue.next_batch(later).paced_packets,
+        0,
+        "stale due must not burst after an idle gap"
+    );
+}
+
 fn detached(
     options: TransportOptions,
 ) -> (

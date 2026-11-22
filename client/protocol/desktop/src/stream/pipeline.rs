@@ -892,7 +892,7 @@ impl Decoder {
     }
 
     /// Opens the stream's decoder context again on the device it has; false when it cannot (the
-    /// caller then tries a new decoder or lets the stream end).
+    /// caller then tries a new decoder or lets the stream end). Drops any half-open context on Err.
     fn reopen_on_device(&mut self, now_us: u64) -> bool {
         let reopened = self.decoder.as_mut().map_or_else(|| Err("no decoder to open again".to_owned()), media::VideoDecoder::reopen);
         match reopened {
@@ -904,6 +904,7 @@ impl Decoder {
             }
             Err(error) => {
                 eprintln!("nightjar: the decoder could not be opened again on its device ({error})");
+                self.decoder = None;
                 false
             }
         }
@@ -927,7 +928,11 @@ impl Decoder {
                 // one frame is too much to wait, so the context is opened again at once.
                 self.reused = false;
                 eprintln!("nightjar: the first picture on the decoder of the last stream failed; opening its context again on the same device");
-                if self.reopen_on_device(now_us) { return; }
+                if !self.reopen_on_device(now_us) {
+                    let setup = self.setup.expect("decoder setup precedes frames");
+                    self.rebuild(&setup);
+                }
+                return;
             }
             self.frame_failed(now_us);
         }

@@ -142,6 +142,9 @@ struct OverlayPlane {
     shown: bool,
     /// What the next commit does to it: Some(true) shows the other buffer, Some(false) hides it.
     change: Option<bool>,
+    /// Last pixels copied into the overlay dumb buffer, so unchanged frames skip the WC memcpy
+    /// and leave `only_fb = true` for async flips.
+    last_canvas: Vec<u8>,
 }
 
 /// The card's state the stream started from: its planes, connector and CRTC with their values.
@@ -390,7 +393,7 @@ impl Scanout {
             rect,
             shown_rect: None,
             on_screen: None,
-            overlay: OverlayPlane { plane: 0, buffers: overlay_buffers, front: 0, shown: false, change: None },
+            overlay: OverlayPlane { plane: 0, buffers: overlay_buffers, front: 0, shown: false, change: None, last_canvas: Vec::new() },
             background: None,
             hdr,
             color,
@@ -399,10 +402,10 @@ impl Scanout {
             props_dirty: true,
             vrr_on,
         };
-        // The display mode for the stream's rate, of the size in use.
+        // The display mode for the stream's rate (or top refresh when VRR is engaged), of the size in use.
         let plan_modes: Vec<plan::Mode> = engaged.snapshot.modes.iter().map(ModeInfo::plan).collect();
         let current = engaged.snapshot.modes.iter().position(|m| *m == engaged.snapshot.mode);
-        let wanted = plan::pick_mode(&plan_modes, current, self.wishes.fps).map(|i| engaged.snapshot.modes[i]);
+        let wanted = plan::pick_mode(&plan_modes, current, self.wishes.fps, engaged.vrr_on).map(|i| engaged.snapshot.modes[i]);
         let original_mode = engaged.snapshot.mode;
         let mode_blob = match wanted.filter(|m| *m != engaged.snapshot.mode) {
             Some(m) => match card.mode_blob(&m) {
@@ -635,7 +638,8 @@ impl Scanout {
     }
 
     /// The overlay drawn on the canvas: it goes into the buffer not on the screen, which the next
-    /// commit shows. The canvas is premultiplied, as the plane's default blending takes it.
+    /// commit shows, unless the plane is already shown with identical pixels. The canvas is
+    /// premultiplied, as the plane's default blending takes it.
     pub fn overlay_drawn(&mut self) {
         if self.off.is_some() {
             return;
@@ -645,17 +649,24 @@ impl Scanout {
         let buffer = &engaged.overlay.buffers[back];
         // SAFETY: our renderer and canvas; the buffer's mapping is `pitch` x `height` bytes and the
         // canvas `pitch` x `h`; each row copies the narrower width of the two.
-        unsafe {
+        let changed = unsafe {
             SDL_FlushRenderer(self.overlay_renderer);
             let canvas = &*self.canvas;
             let rows = (canvas.h.max(0) as u32).min(buffer.height) as usize;
             let bytes = ((canvas.w.max(0) as u32).min(buffer.width) * 4) as usize;
             let (from, from_pitch) = (canvas.pixels.cast::<u8>(), canvas.pitch.max(0) as usize);
-            for row in 0..rows {
-                std::ptr::copy_nonoverlapping(from.add(row * from_pitch), buffer.map.add(row * buffer.pitch as usize), bytes);
-            }
-        }
-        engaged.overlay.change = Some(true);
+            sync_overlay_bytes(
+                from,
+                from_pitch,
+                buffer.map,
+                buffer.pitch as usize,
+                rows,
+                bytes,
+                engaged.overlay.shown,
+                &mut engaged.overlay.last_canvas,
+            )
+        };
+        engaged.overlay.change = changed.then_some(true);
     }
 
     /// Nothing to draw over the picture this frame: the overlay plane goes down if it was up.
@@ -663,6 +674,27 @@ impl Scanout {
         if let Some(engaged) = self.engaged.as_mut() {
             engaged.overlay.change = engaged.overlay.shown.then_some(false);
         }
+    }
+
+    /// Whether the upcoming [`Self::commit`] can block on a refresh (i.e. has changes to commit
+    /// that will not go out as an async page flip).
+    pub fn may_block(&self) -> bool {
+        if self.off.is_some() {
+            return false;
+        }
+        let Some(engaged) = self.engaged.as_ref() else {
+            return false;
+        };
+        let rect_changed = engaged.shown_rect != Some(engaged.rect);
+        let fb_changed = engaged.next_fb != engaged.shown_fb;
+        let overlay_changed = engaged.overlay.change.is_some();
+        if !engaged.props_dirty && !rect_changed && !fb_changed && !overlay_changed {
+            return false;
+        }
+        let only_fb = !engaged.props_dirty && !rect_changed && !overlay_changed;
+        let may_tear = plan::may_tear(self.wishes.tearing, engaged.vrr_on, self.wishes.tear_free);
+        let video_on_primary = engaged.layout.video_on_primary(engaged.snapshot.planes.iter().map(|(p, _)| p));
+        !plan::async_flip(may_tear, self.async_cap && !self.async_failed, video_on_primary, only_fb)
     }
 
     /// Shows what `prepare` and the overlay readied, in one atomic commit; blocking, as a V-Sync
@@ -804,6 +836,45 @@ impl Drop for Scanout {
     }
 }
 
+/// Copies `rows` x `row_bytes` from `src` (stride `src_pitch`) to `dst` (stride `dst_pitch`) and
+/// updates `cache` only when `!already_shown` or the pixels differ from `cache`.
+///
+/// # Safety
+/// `src` must be valid for `rows` rows of `row_bytes` at stride `src_pitch`, and `dst` must be
+/// valid for `rows` rows of `row_bytes` at stride `dst_pitch`.
+unsafe fn sync_overlay_bytes(
+    src: *const u8,
+    src_pitch: usize,
+    dst: *mut u8,
+    dst_pitch: usize,
+    rows: usize,
+    row_bytes: usize,
+    already_shown: bool,
+    cache: &mut Vec<u8>,
+) -> bool {
+    let total = rows * row_bytes;
+    // SAFETY: caller guarantees `src` covers `rows` rows of `row_bytes` bytes at `src_pitch`.
+    let unchanged = already_shown
+        && cache.len() == total
+        && (0..rows).all(|row| {
+            let line = unsafe { std::slice::from_raw_parts(src.add(row * src_pitch), row_bytes) };
+            line == &cache[row * row_bytes..(row + 1) * row_bytes]
+        });
+    if unchanged {
+        return false;
+    }
+    cache.resize(total, 0);
+    for row in 0..rows {
+        // SAFETY: caller guarantees `src` and `dst` cover `row_bytes` at their respective pitches.
+        unsafe {
+            let line = std::slice::from_raw_parts(src.add(row * src_pitch), row_bytes);
+            cache[row * row_bytes..(row + 1) * row_bytes].copy_from_slice(line);
+            std::ptr::copy_nonoverlapping(line.as_ptr(), dst.add(row * dst_pitch), row_bytes);
+        }
+    }
+    true
+}
+
 /// Where a picture of `visible` size goes on the CRTC of `mode` (`viewport` is the stream's
 /// scaling), from a framebuffer of `layout`.
 fn picture_rect(mode: &ModeInfo, layout: &plan::FbLayout, visible: (i32, i32), viewport: &Viewport<'_>) -> plan::PlaneRect {
@@ -833,5 +904,34 @@ mod tests {
         // The tests never draw through KMS.
         assert!(possible(true, "opengl").unwrap_err().contains("not drawing straight to the display"));
         assert!(planned(&Settings::default(), "opengl").is_err());
+    }
+
+    #[test]
+    fn unchanged_overlay_skips_buffer_copy_until_hidden_or_modified() {
+        let mut src = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+        let mut dst = vec![0u8; 8];
+        let mut cache = Vec::new();
+        // First draw (not yet shown): copies into dst and caches.
+        let changed = unsafe { sync_overlay_bytes(src.as_ptr(), 4, dst.as_mut_ptr(), 4, 2, 4, false, &mut cache) };
+        assert!(changed);
+        assert_eq!(dst, src);
+
+        // Identical pixels while already shown: skips dst copy (clear dst to prove it isn't touched).
+        dst.fill(0xAA);
+        let changed = unsafe { sync_overlay_bytes(src.as_ptr(), 4, dst.as_mut_ptr(), 4, 2, 4, true, &mut cache) };
+        assert!(!changed);
+        assert_eq!(dst, vec![0xAA; 8], "write-combined buffer must not be written when unchanged");
+
+        // Changing a single pixel copies again.
+        src[5] = 99;
+        let changed = unsafe { sync_overlay_bytes(src.as_ptr(), 4, dst.as_mut_ptr(), 4, 2, 4, true, &mut cache) };
+        assert!(changed);
+        assert_eq!(dst, src);
+
+        // Re-showing after the plane was hidden still copies even if pixels match cache.
+        dst.fill(0x55);
+        let changed = unsafe { sync_overlay_bytes(src.as_ptr(), 4, dst.as_mut_ptr(), 4, 2, 4, false, &mut cache) };
+        assert!(changed);
+        assert_eq!(dst, src);
     }
 }

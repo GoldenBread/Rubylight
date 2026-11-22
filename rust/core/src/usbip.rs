@@ -212,8 +212,6 @@ struct Transfer {
 }
 #[derive(Default)]
 struct Link {
-    /// The connected client, for replies.
-    stream: Option<TcpStream>,
     /// Whether the client imported the device and URBs flow.
     imported: bool,
     /// When the client first asked for an IN transfer on a non-control endpoint since it
@@ -240,27 +238,44 @@ impl Link {
         self.changed = true;
         self.idle = false;
     }
-    /// Sends a reply; a client that cannot take it is disconnected.
-    fn send(&mut self, b: &[u8]) {
-        if let Some(stream) = &mut self.stream
-            && stream.write_all(b).is_err()
-        {
-            let _ = stream.shutdown(Shutdown::Both);
-            self.stream = None;
-            self.imported = false;
-            self.polled = None;
-        }
-    }
 }
 struct Shared<D> {
     device: Mutex<D>,
     link: Mutex<Link>,
+    /// The connected client's write socket, locked only for socket I/O after `device`
+    /// and `link` are dropped so a 1 s blocking TCP write never stalls device mutations.
+    writer: Mutex<Option<TcpStream>>,
     wake: Condvar,
     stop: AtomicBool,
     period: Duration,
     epoch: Instant,
     /// How late an OUT transfer may complete and still play its audio.
     late: Duration,
+}
+impl<D> Shared<D> {
+    fn send(&self, b: &[u8]) {
+        self.send_batch(std::slice::from_ref(&b));
+    }
+    fn send_batch<B: AsRef<[u8]>>(&self, replies: &[B]) {
+        if replies.is_empty() {
+            return;
+        }
+        let mut writer = self.writer.lock().unwrap();
+        let Some(stream) = writer.as_mut() else {
+            return;
+        };
+        for b in replies {
+            if stream.write_all(b.as_ref()).is_err() {
+                let _ = stream.shutdown(Shutdown::Both);
+                *writer = None;
+                drop(writer);
+                let mut link = self.link.lock().unwrap();
+                link.imported = false;
+                link.polled = None;
+                return;
+            }
+        }
+    }
 }
 
 /// Runs first on each of an [`Export`]'s threads; what it returns lives as
@@ -301,6 +316,7 @@ impl<D: Device> Export<D> {
         let shared = Arc::new(Shared {
             device: Mutex::new(device),
             link: Mutex::default(),
+            writer: Mutex::new(None),
             wake: Condvar::new(),
             stop: AtomicBool::new(false),
             period,
@@ -397,11 +413,11 @@ impl<D: Device> Drop for Export<D> {
         self.shared.stop.store(true, Ordering::Release);
         {
             let mut link = self.shared.link.lock().unwrap();
-            if let Some(stream) = link.stream.take() {
-                let _ = stream.shutdown(Shutdown::Both);
-            }
             link.imported = false;
             link.polled = None;
+        }
+        if let Some(stream) = self.shared.writer.lock().unwrap().take() {
+            let _ = stream.shutdown(Shutdown::Both);
         }
         self.shared.wake.notify_all();
         // Shutdown must not depend on another loopback connection succeeding.
@@ -436,14 +452,15 @@ fn accept_clients<D: Device>(shared: &Shared<D>, listener: &TcpListener) {
         if let Err(error) = serve(shared, stream) {
             tracing::debug!(%error, "USB/IP client disconnected");
         }
+        *shared.writer.lock().unwrap() = None;
         let mut link = shared.link.lock().unwrap();
-        link.stream = None;
         link.imported = false;
         link.polled = None;
         link.pending.clear();
         link.held.clear();
         link.iso.clear();
         link.iso_next = [None; 16];
+        drop(link);
         shared.device.lock().unwrap().iso_discontinuity();
     }
 }
@@ -516,11 +533,11 @@ fn serve<D: Device>(shared: &Shared<D>, stream: TcpStream) -> io::Result<()> {
     stream.set_write_timeout(Some(WRITE_WAIT))?;
     stream.set_read_timeout(Some(READ_SLICE))?;
     {
-        let mut link = shared.link.lock().unwrap();
+        let mut writer = shared.writer.lock().unwrap();
         if shared.stop.load(Ordering::Acquire) {
             return Ok(());
         }
-        link.stream = Some(stream.try_clone()?);
+        *writer = Some(stream.try_clone()?);
     }
     let deadline = Some(Instant::now() + IMPORT_WAIT);
     let read =
@@ -633,10 +650,12 @@ fn serve<D: Device>(shared: &Shared<D>, stream: TcpStream) -> io::Result<()> {
                         start_frame: due.duration_since(shared.epoch).as_millis() as u32,
                     };
                     if !valid || link.iso.len() >= 64 {
-                        link.send(&transfer.reply(if valid { -12 } else { EPIPE }, &[], &[]));
+                        drop(link);
+                        shared.send(&transfer.reply(if valid { -12 } else { EPIPE }, &[], &[]));
                     } else {
                         link.iso_next[endpoint as usize] = Some(due);
                         link.iso.push_back(transfer);
+                        drop(link);
                         shared.wake.notify_all();
                     }
                     continue;
@@ -660,20 +679,25 @@ fn serve<D: Device>(shared: &Shared<D>, stream: TcpStream) -> io::Result<()> {
                             && setup.value == 0
                             && matches!(setup.index, 1 | 2);
                         if reset || stop_audio {
-                            let mut link = shared.link.lock().unwrap();
-                            cancel_iso(&mut link, |t| {
-                                reset || u16::from(t.endpoint) == setup.index
-                            });
-                            if reset {
-                                let mut pending: Vec<_> = link.pending.drain(..).collect();
-                                pending.append(&mut link.held);
-                                for t in pending {
-                                    link.send(&ret(RET_SUBMIT, t.seqnum, ECONNRESET, None, 0));
+                            let cancelled = {
+                                let mut link = shared.link.lock().unwrap();
+                                let mut cancelled = cancel_iso(&mut link, |t| {
+                                    reset || u16::from(t.endpoint) == setup.index
+                                });
+                                if reset {
+                                    let mut pending: Vec<_> = link.pending.drain(..).collect();
+                                    pending.append(&mut link.held);
+                                    for t in pending {
+                                        cancelled
+                                            .push(ret(RET_SUBMIT, t.seqnum, ECONNRESET, None, 0));
+                                    }
+                                    link.iso_next = [None; 16];
+                                } else {
+                                    link.iso_next[setup.index as usize] = None;
                                 }
-                                link.iso_next = [None; 16];
-                            } else {
-                                link.iso_next[setup.index as usize] = None;
-                            }
+                                cancelled
+                            };
+                            shared.send_batch(&cancelled);
                         }
                     }
                     match answer {
@@ -687,7 +711,8 @@ fn serve<D: Device>(shared: &Shared<D>, stream: TcpStream) -> io::Result<()> {
                 } else if direction == 1 {
                     let mut link = shared.link.lock().unwrap();
                     if link.pending.len() + link.held.len() >= 64 {
-                        link.send(&ret(RET_SUBMIT, seqnum, -12, None, 0));
+                        drop(link);
+                        shared.send(&ret(RET_SUBMIT, seqnum, -12, None, 0));
                         continue;
                     }
                     link.pending.push_back(Transfer {
@@ -715,36 +740,39 @@ fn serve<D: Device>(shared: &Shared<D>, stream: TcpStream) -> io::Result<()> {
                     );
                     // The OUT transfer completes before the IN transfer that
                     // carries its answer, as on the wire.
-                    let mut link = shared.link.lock().unwrap();
-                    link.send(&reply);
+                    shared.send(&reply);
                     if retry {
+                        let mut link = shared.link.lock().unwrap();
                         link.retry_held();
                         drop(link);
                         shared.wake.notify_all();
                     }
                     continue;
                 };
-                shared.link.lock().unwrap().send(&reply);
+                shared.send(&reply);
             }
             CMD_UNLINK => {
                 let victim = be32(&h, 20);
-                let mut link = shared.link.lock().unwrap();
-                let before = link.pending.len() + link.held.len() + link.iso.len();
-                link.pending.retain(|t| t.seqnum != victim);
-                link.held.retain(|t| t.seqnum != victim);
-                link.iso.retain(|t| t.seqnum != victim);
-                for endpoint in 0..16 {
-                    link.iso_next[endpoint] = link
-                        .iso
-                        .iter()
-                        .rev()
-                        .find(|t| usize::from(t.endpoint) == endpoint)
-                        .map(|t| t.due);
-                }
-                // A transfer already completed is not cancelled: status 0.
-                let found = link.pending.len() + link.held.len() + link.iso.len() != before;
-                let status = if found { ECONNRESET } else { 0 };
-                link.send(&ret(RET_UNLINK, seqnum, status, None, 0));
+                let reply = {
+                    let mut link = shared.link.lock().unwrap();
+                    let before = link.pending.len() + link.held.len() + link.iso.len();
+                    link.pending.retain(|t| t.seqnum != victim);
+                    link.held.retain(|t| t.seqnum != victim);
+                    link.iso.retain(|t| t.seqnum != victim);
+                    for endpoint in 0..16 {
+                        link.iso_next[endpoint] = link
+                            .iso
+                            .iter()
+                            .rev()
+                            .find(|t| usize::from(t.endpoint) == endpoint)
+                            .map(|t| t.due);
+                    }
+                    // A transfer already completed is not cancelled: status 0.
+                    let found = link.pending.len() + link.held.len() + link.iso.len() != before;
+                    let status = if found { ECONNRESET } else { 0 };
+                    ret(RET_UNLINK, seqnum, status, None, 0)
+                };
+                shared.send(&reply);
             }
             _ => {
                 return Err(io::Error::other(format!(
@@ -755,16 +783,18 @@ fn serve<D: Device>(shared: &Shared<D>, stream: TcpStream) -> io::Result<()> {
     }
 }
 
-fn cancel_iso(link: &mut Link, matches: impl Fn(&IsoTransfer) -> bool) {
+fn cancel_iso(link: &mut Link, matches: impl Fn(&IsoTransfer) -> bool) -> Vec<Vec<u8>> {
+    let mut replies = Vec::new();
     let mut i = 0;
     while i < link.iso.len() {
         if matches(&link.iso[i]) {
             let transfer = link.iso.remove(i).unwrap();
-            link.send(&transfer.reply(ECONNRESET, &[], &[]));
+            replies.push(transfer.reply(ECONNRESET, &[], &[]));
         } else {
             i += 1;
         }
     }
+    replies
 }
 
 /// Completes interrupt transfers: one per endpoint each period, and at once
@@ -794,6 +824,7 @@ fn report<D: Device>(shared: &Shared<D>) {
             link = shared.wake.wait_timeout(link, due - now).unwrap().0;
             continue;
         }
+        let mut replies = Vec::new();
         let mut device = shared.device.lock().unwrap();
         let mut iso_index = 0;
         while iso_index < link.iso.len() {
@@ -806,7 +837,7 @@ fn report<D: Device>(shared: &Shared<D>) {
             // their audio at the current time or join it to a fresh PCM block.
             if !transfer.input && now.saturating_duration_since(transfer.due) > shared.late {
                 device.iso_discontinuity();
-                link.send(&transfer.reply(0, &[], &[]));
+                replies.push(transfer.reply(0, &[], &[]));
                 continue;
             }
             let mut data = vec![];
@@ -830,7 +861,7 @@ fn report<D: Device>(shared: &Shared<D>) {
                     }
                 }
             }
-            link.send(&transfer.reply(status, &data, &lengths));
+            replies.push(transfer.reply(status, &data, &lengths));
         }
         let mut served = 0u32;
         let mut sent = false;
@@ -854,20 +885,31 @@ fn report<D: Device>(shared: &Shared<D>) {
             match device.transfer_in(transfer.endpoint, transfer.length) {
                 Some(mut data) => {
                     data.truncate(transfer.length);
-                    let reply = ret(RET_SUBMIT, transfer.seqnum, 0, Some(&data), data.len());
-                    link.send(&reply);
+                    replies.push(ret(RET_SUBMIT, transfer.seqnum, 0, Some(&data), data.len()));
                     sent = true;
                 }
                 None => link.held.push(transfer),
             }
         }
+        // Drain back-to-back queued HID reports onto subsequent waiting URBs immediately
+        // instead of sleeping for `shared.period` between reports.
+        let more_ready = sent
+            && link
+                .pending
+                .iter()
+                .any(|t| device.interrupt_ready(t.endpoint));
         drop(device);
         if sent {
-            link.changed = false;
+            link.changed = more_ready;
             next = now + shared.period;
         } else if naked {
             link.changed = false;
             link.idle = true;
+        }
+        if !replies.is_empty() {
+            drop(link);
+            shared.send_batch(&replies);
+            link = shared.link.lock().unwrap();
         }
     }
 }

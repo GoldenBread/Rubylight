@@ -37,29 +37,29 @@ fn a_rate_is_a_multiple_within_half_a_hertz() {
 #[test]
 fn the_mode_in_use_stays_when_it_fits_the_stream() {
     let modes = [mode(1920, 1080, 60.0), mode(1920, 1080, 120.0), mode(1280, 720, 60.0)];
-    assert_eq!(pick_mode(&modes, Some(0), 60), Some(0));
+    assert_eq!(pick_mode(&modes, Some(0), 60, false), Some(0));
     // 120 Hz shows 60 fps twice per picture, as well as 60 Hz does once: no modeset for it.
-    assert_eq!(pick_mode(&modes, Some(1), 120), Some(1));
+    assert_eq!(pick_mode(&modes, Some(1), 120, false), Some(1));
 }
 
 #[test]
 fn a_stream_rate_the_mode_in_use_misses_takes_a_mode_of_that_rate_at_the_same_size() {
     let modes = [mode(3840, 2160, 60.0), mode(3840, 2160, 50.0), mode(1920, 1080, 120.0), mode(3840, 2160, 120.0)];
-    assert_eq!(pick_mode(&modes, Some(0), 50), Some(1), "50 fps on a 60 Hz desktop goes to 50 Hz");
-    assert_eq!(pick_mode(&modes, Some(0), 120), Some(3), "never another size");
-    assert_eq!(pick_mode(&modes, Some(1), 60), Some(0));
+    assert_eq!(pick_mode(&modes, Some(0), 50, false), Some(1), "50 fps on a 60 Hz desktop goes to 50 Hz");
+    assert_eq!(pick_mode(&modes, Some(0), 120, false), Some(3), "never another size");
+    assert_eq!(pick_mode(&modes, Some(1), 60, false), Some(0));
 }
 
 #[test]
 fn the_smallest_multiple_wins_over_a_larger_one() {
     let modes = [mode(1920, 1080, 144.0), mode(1920, 1080, 120.0), mode(1920, 1080, 60.0)];
-    assert_eq!(pick_mode(&modes, Some(0), 60), Some(2));
+    assert_eq!(pick_mode(&modes, Some(0), 60, false), Some(2));
 }
 
 #[test]
 fn no_fitting_rate_keeps_the_mode_in_use() {
     let modes = [mode(1920, 1080, 144.0), mode(1920, 1080, 165.0)];
-    assert_eq!(pick_mode(&modes, Some(1), 60), Some(1));
+    assert_eq!(pick_mode(&modes, Some(1), 60, false), Some(1));
 }
 
 #[test]
@@ -67,10 +67,26 @@ fn without_a_mode_in_use_the_preferred_one_is_the_base_and_interlaced_ones_are_n
     let mut modes = vec![mode(3840, 2160, 30.0), mode(1920, 1080, 60.0), mode(1920, 1080, 50.0)];
     modes[1].preferred = true;
     modes[2].interlaced = true;
-    assert_eq!(pick_mode(&modes, None, 50), Some(1), "the interlaced 50 Hz mode is not taken");
+    assert_eq!(pick_mode(&modes, None, 50, false), Some(1), "the interlaced 50 Hz mode is not taken");
     modes[1].preferred = false;
-    assert_eq!(pick_mode(&modes, None, 30), Some(0), "else the largest");
-    assert_eq!(pick_mode(&[], None, 60), None);
+    assert_eq!(pick_mode(&modes, None, 30, false), Some(0), "else the largest");
+    assert_eq!(pick_mode(&[], None, 60, false), None);
+}
+
+#[test]
+fn vrr_picks_the_highest_refresh_rate_at_the_current_resolution() {
+    let mut interlaced = mode(1920, 1080, 300.0);
+    interlaced.interlaced = true;
+    let modes = [
+        mode(1920, 1080, 60.0),
+        mode(1920, 1080, 120.0),
+        mode(1920, 1080, 240.0),
+        mode(1280, 720, 360.0),
+        interlaced,
+    ];
+    assert_eq!(pick_mode(&modes, Some(0), 60, true), Some(2), "60 fps VRR picks 240 Hz, never capped to 60 Hz");
+    assert_eq!(pick_mode(&modes, Some(2), 60, true), Some(2), "already at top refresh: no modeset");
+    assert_eq!(pick_mode(&modes, Some(1), 60, true), Some(2), "never changes resolution or picks interlaced");
 }
 
 fn output(connector_id: u32, name: &str, width: u32, height: u32) -> Output {

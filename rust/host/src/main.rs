@@ -488,14 +488,16 @@ async fn run(args: Args, assets: PathBuf) -> Result<()> {
         &h.directory,
         butterpollo_windows::service::restore_nucleus_layers,
     );
-    // The service's keys: SYSTEM and Administrators only, also after a
+    // The service's keys and backups: SYSTEM and Administrators only, also after a
     // profile was copied in or restored from a backup.
-    let credentials = h.directory.join("credentials");
-    if butterpollo_windows::process::is_system()
-        && credentials.is_dir()
-        && let Err(error) = butterpollo_windows::process::restrict_to_administrators(&credentials)
-    {
-        tracing::warn!(%error, "the credentials folder permissions could not be repaired");
+    for folder in ["credentials", butterpollo_core::settings_backup::BACKUPS] {
+        let path = h.directory.join(folder);
+        if butterpollo_windows::process::is_system()
+            && path.is_dir()
+            && let Err(error) = butterpollo_windows::process::restrict_to_administrators(&path)
+        {
+            tracing::warn!(%error, folder, "the folder permissions could not be repaired");
+        }
     }
     // A SteamGridDB key typed into sunshine.conf, which every local user reads, moves there too.
     steamgriddb::migrate_key(&h);

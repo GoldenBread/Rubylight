@@ -954,34 +954,62 @@ impl InputQueue {
             self.release_held(out);
         }
         let motion_interval = self.motion_interval();
-        while let Some(entry) = self.entries.front() {
-            let wait_until = match entry {
-                Entry::RelativeMouse => {
-                    self.last_mouse.map(|t| t + motion_interval.max(self.relative_floor))
+        let mut wake: Option<Instant> = None;
+        let mut index = 0;
+        while index < self.entries.len() {
+            if !force {
+                let entry = &self.entries[index];
+                if matches!(entry, Entry::Text(_)) && !contact_lost {
+                    let at = *self.text_ready_at.get_or_insert(now + TEXT_SETTLE);
+                    if now < at {
+                        wake = Some(wake.map_or(at, |w| w.min(at)));
+                        index += 1;
+                        continue;
+                    }
                 }
-                Entry::AbsoluteMouse => self.last_mouse.map(|t| t + motion_interval),
-                Entry::Event(Pending {
-                    event: InputEvent::Pen { event, .. },
-                    ..
-                }) if touch_event::is_batchable(*event) => {
-                    self.last_pen.map(|t| t + motion_interval)
+                // Keep text-before-keyboard ordering and never jump a later event past a waiting
+                // key (e.g. a modifier before a click).
+                if index > 0
+                    && matches!(
+                        entry,
+                        Entry::Event(Pending {
+                            event: InputEvent::Keyboard { .. },
+                            ..
+                        })
+                    )
+                {
+                    break;
                 }
-                Entry::Text(_) if !contact_lost => {
-                    Some(*self.text_ready_at.get_or_insert(now + TEXT_SETTLE))
-                }
-                _ => None,
-            };
-            if let Some(at) = wait_until {
-                if now < at && !force {
-                    return Some(at);
+                let wait_until = match entry {
+                    Entry::RelativeMouse if self.entries.len() == index + 1 => {
+                        self.last_mouse.map(|t| t + motion_interval.max(self.relative_floor))
+                    }
+                    Entry::AbsoluteMouse if self.entries.len() == index + 1 => {
+                        self.last_mouse.map(|t| t + motion_interval)
+                    }
+                    Entry::Event(Pending {
+                        event: InputEvent::Pen { event, buttons, .. },
+                        ..
+                    }) if touch_event::is_batchable(*event)
+                        && !self.has_non_collapsible_pen_after(index, *event, *buttons) =>
+                    {
+                        self.last_pen.map(|t| t + motion_interval)
+                    }
+                    _ => None,
+                };
+                if let Some(at) = wait_until {
+                    if now < at {
+                        wake = Some(wake.map_or(at, |w| w.min(at)));
+                        break;
+                    }
                 }
             }
-            let entry = self.entries.pop_front().expect("front exists");
+            let entry = self.entries.remove(index).expect("entry at index exists");
             match entry {
                 Entry::Event(pending) => {
                     if let InputEvent::Pen { event, buttons, .. } = pending.event {
                         if touch_event::is_batchable(event) {
-                            let latest = self.collapse_pen(pending, event, buttons);
+                            let latest = self.collapse_pen(index, pending, event, buttons);
                             self.last_pen = Some(now);
                             self.emit(latest, contact_lost, out);
                             continue;
@@ -1074,12 +1102,30 @@ impl InputQueue {
                 }
             }
         }
-        None
+        wake
+    }
+
+    fn has_non_collapsible_pen_after(&self, index: usize, event: u8, buttons: u8) -> bool {
+        self.entries.iter().skip(index + 1).any(|next| {
+            !matches!(
+                next,
+                Entry::Event(Pending {
+                    event: InputEvent::Pen { event: next_event, buttons: next_buttons, .. },
+                    ..
+                }) if *next_event == event && *next_buttons == buttons
+            )
+        })
     }
 
     /// Replaces a pen move or hover with the newest one queued right behind it with the same
     /// event and buttons.
-    fn collapse_pen(&mut self, mut pending: Pending, event: u8, buttons: u8) -> Pending {
+    fn collapse_pen(
+        &mut self,
+        index: usize,
+        mut pending: Pending,
+        event: u8,
+        buttons: u8,
+    ) -> Pending {
         while let Some(Entry::Event(Pending {
             event:
                 InputEvent::Pen {
@@ -1088,13 +1134,13 @@ impl InputQueue {
                     ..
                 },
             ..
-        })) = self.entries.front()
+        })) = self.entries.get(index)
         {
             if *next_event != event || *next_buttons != buttons {
                 break;
             }
-            let Some(Entry::Event(next)) = self.entries.pop_front() else {
-                unreachable!("front was a pen event");
+            let Some(Entry::Event(next)) = self.entries.remove(index) else {
+                unreachable!("entry at index was a pen event");
             };
             // A button change travels reliably; the newer move that carries the same
             // buttons takes that over with its place.

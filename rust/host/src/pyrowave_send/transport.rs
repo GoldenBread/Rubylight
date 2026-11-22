@@ -108,20 +108,24 @@ pub(super) fn run(
                 }
                 let count = Batch::count(remaining, batch_limit(bps, remaining[0].len(), ipv6));
                 let dropped = batch.dropped;
+                let send_at = Instant::now();
                 let bytes = batch.send(&socket, &remaining[..count], frame.peer)?;
-                if bytes > 0 {
-                    current
-                        .record_transport_sent(&remaining[..count], network_pacing::overhead(ipv6));
+                let left = batch.sent_packets();
+                if left > 0 {
+                    current.transport_sent.record(
+                        &remaining[..left],
+                        network_pacing::overhead(ipv6),
+                        send_at,
+                    );
                 }
                 first_sent.get_or_insert_with(Instant::now);
                 sent += bytes;
-                let left = if bytes > 0 { count } else { 0 };
                 sent_packets += left;
                 pacer.sent(Instant::now(), bytes, left, ipv6, bps);
                 current
                     .stats
                     .packets
-                    .fetch_add(count as u64, Ordering::Relaxed);
+                    .fetch_add(left as u64, Ordering::Relaxed);
                 current
                     .stats
                     .bytes
@@ -129,7 +133,7 @@ pub(super) fn run(
                 remaining = &remaining[count..];
                 // The socket stayed full for this whole frame's wait: give up
                 // the rest of this picture, not the later ones.
-                if bytes == 0 && batch.dropped > dropped && batch.frame_wait_spent() {
+                if batch.dropped > dropped && batch.frame_wait_spent() {
                     stalled = true;
                     break;
                 }

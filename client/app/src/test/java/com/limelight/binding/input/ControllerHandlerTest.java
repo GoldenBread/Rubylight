@@ -158,6 +158,8 @@ public class ControllerHandlerTest {
     // for a game polling the pad to see it, as for other instant presses.
     @Test
     public void handheldSystemBackHoldsGuideForTheMinimumPress() {
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication()).declareComponentUnbindable(
+                new android.content.ComponentName("com.nvidia.blakepairing", "com.nvidia.blakepairing.AccessoryService"));
         ControllerInputReleaseTest.MenuGame activity = Robolectric.buildActivity(ControllerInputReleaseTest.MenuGame.class).get();
         RecordingConnection connection = new RecordingConnection();
         PreferenceConfiguration prefs = new PreferenceConfiguration();
@@ -174,12 +176,57 @@ public class ControllerHandlerTest {
             assertTrue(handler.handleHandheldBackAsGuide(new KeyEvent(1000, 1000, KeyEvent.ACTION_DOWN,
                     KeyEvent.KEYCODE_BACK, 0, 0, -1, 0, 0, keyboard)));
             assertEquals(ControllerPacket.SPECIAL_BUTTON_FLAG, (int) connection.buttons.get(connection.buttons.size() - 1));
-            long start = System.nanoTime();
             assertTrue(handler.handleHandheldBackAsGuide(new KeyEvent(1000, 1000, KeyEvent.ACTION_UP,
                     KeyEvent.KEYCODE_BACK, 0, 0, -1, 0, 0, keyboard)));
-            long heldMs = (System.nanoTime() - start) / 1_000_000;
-            assertTrue("Guide released after " + heldMs + " ms", heldMs >= 20);
+            assertEquals("Guide stays held before the minimum press elapses",
+                    ControllerPacket.SPECIAL_BUTTON_FLAG, (int) connection.buttons.get(connection.buttons.size() - 1));
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(24, java.util.concurrent.TimeUnit.MILLISECONDS);
+            assertEquals(ControllerPacket.SPECIAL_BUTTON_FLAG, (int) connection.buttons.get(connection.buttons.size() - 1));
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(1, java.util.concurrent.TimeUnit.MILLISECONDS);
             assertEquals(0, (int) connection.buttons.get(connection.buttons.size() - 1));
+        } finally {
+            handler.destroy();
+        }
+    }
+
+    @Test
+    public void instantButtonPressDefersReleaseWithoutBlockingUiThreadAndHandlesRepressAndStop() {
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication()).declareComponentUnbindable(
+                new android.content.ComponentName("com.nvidia.blakepairing", "com.nvidia.blakepairing.AccessoryService"));
+        ControllerInputReleaseTest.MenuGame activity = Robolectric.buildActivity(ControllerInputReleaseTest.MenuGame.class).get();
+        RecordingConnection connection = new RecordingConnection();
+        ControllerHandler handler = new ControllerHandler(activity, connection, null, new PreferenceConfiguration());
+        ControllerHandler.InputDeviceContext context = ReflectionHelpers.getField(handler, "defaultContext");
+        context.assignedControllerNumber = true;
+        try {
+            // Instant press (eventTime == downTime): held for 25 ms via Handler, not Thread.sleep.
+            assertTrue(handler.handleButtonDown(new KeyEvent(1000, 1000, KeyEvent.ACTION_DOWN,
+                    KeyEvent.KEYCODE_BUTTON_A, 0, 0, 0, 0)));
+            assertTrue(handler.handleButtonUp(new KeyEvent(1000, 1000, KeyEvent.ACTION_UP,
+                    KeyEvent.KEYCODE_BUTTON_A, 0, 0, 0, 0)));
+            assertEquals(ControllerPacket.A_FLAG, (int) connection.buttons.get(connection.buttons.size() - 1));
+
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(10, java.util.concurrent.TimeUnit.MILLISECONDS);
+            assertEquals(ControllerPacket.A_FLAG, (int) connection.buttons.get(connection.buttons.size() - 1));
+
+            // Re-pressed before the 25 ms timer fires: old release goes out first, then new press stays held.
+            assertTrue(handler.handleButtonDown(new KeyEvent(1010, 1010, KeyEvent.ACTION_DOWN,
+                    KeyEvent.KEYCODE_BUTTON_A, 0, 0, 0, 0)));
+            int size = connection.buttons.size();
+            assertEquals(0, (int) connection.buttons.get(size - 2));
+            assertEquals(ControllerPacket.A_FLAG, (int) connection.buttons.get(size - 1));
+
+            // Advancing past the original 25 ms must not clear the newly held press.
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(30, java.util.concurrent.TimeUnit.MILLISECONDS);
+            assertEquals(ControllerPacket.A_FLAG, (int) connection.buttons.get(connection.buttons.size() - 1));
+
+            // Another instant release, cancelled cleanly by stop().
+            assertTrue(handler.handleButtonUp(new KeyEvent(1040, 1040, KeyEvent.ACTION_UP,
+                    KeyEvent.KEYCODE_BUTTON_A, 0, 0, 0, 0)));
+            int countBeforeStop = connection.buttons.size();
+            handler.stop();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(50, java.util.concurrent.TimeUnit.MILLISECONDS);
+            assertEquals("No delayed release sent after stop()", countBeforeStop, connection.buttons.size());
         } finally {
             handler.destroy();
         }

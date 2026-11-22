@@ -130,6 +130,15 @@ impl References {
                 .map_or(self.skipped_base.1, |&(_, skipped)| skipped),
         )
     }
+    fn next_slot(&self, slot: usize) -> usize {
+        if self.slots.len() <= 1 {
+            0
+        } else if slot + 1 >= self.slots.len() {
+            1
+        } else {
+            slot + 1
+        }
+    }
     pub fn plan(&self, frame: u64, idr: bool) -> Plan {
         let mut plan = Plan {
             mark: None,
@@ -150,15 +159,12 @@ impl References {
             plan.after_invalidation = true;
             plan.skipped = skipped + frame.saturating_sub(first);
             plan.reset = true;
+            if self.slots.len() > 1 && plan.next == reference {
+                plan.next = self.next_slot(reference);
+            }
         } else if frame.is_multiple_of(4) {
             plan.mark = Some(self.next);
-            plan.next = if self.slots.len() == 1 {
-                0
-            } else if self.next + 1 >= self.slots.len() {
-                1
-            } else {
-                self.next + 1
-            };
+            plan.next = self.next_slot(self.next);
         }
         plan
     }

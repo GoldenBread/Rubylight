@@ -335,3 +335,21 @@ fn a_repair_that_would_outweigh_a_keyframe_is_a_keyframe() {
     }
     assert!(references.invalidate(2, 400));
 }
+#[test]
+fn repair_advances_next_past_sole_surviving_anchor() {
+    let mut references = submitted(Counter::Explicit, 20);
+    // After frame 20, slots are [Some(1), Some(16), Some(20), Some(12)] and next == 3.
+    assert_eq!(references.slots, [Some(1), Some(16), Some(20), Some(12)]);
+    // Losing 16..=20 leaves slot 3 (frame 12) as the sole surviving anchor, matching next.
+    assert!(references.invalidate(16, 20));
+    let repair = references.plan(21, false);
+    assert_eq!(repair.reference, Some(3));
+    references.accepted(21, &repair);
+    assert_eq!(references.slots, [None, None, None, Some(12)]);
+    // The next mark (frame 24) must not overwrite slot 3.
+    let next_mark = references.plan(24, false);
+    assert_eq!(next_mark.mark, Some(1));
+    references.accepted(24, &next_mark);
+    assert_eq!(references.slots[3], Some(12));
+    assert_eq!(references.slots[1], Some(24));
+}

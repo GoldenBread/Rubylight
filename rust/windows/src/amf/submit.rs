@@ -22,6 +22,107 @@ pub(super) fn acknowledge_keyframe(
 pub(super) fn frame_cap_target(automatic: bool, bytes: u64) -> Option<u64> {
     (automatic && bytes > 0).then_some(bytes)
 }
+/// `AMFTextureArrayIndexGUID` (AMF samples' DX11 interop): the slice of a
+/// texture array an AMF surface lives in.
+const ARRAY_INDEX: windows::core::GUID = windows::core::GUID::from_values(
+    0x2811_5527,
+    0xe7c3,
+    0x4b66,
+    [0x99, 0xd3, 0x4f, 0x2a, 0xe6, 0xb4, 0x7f, 0xaf],
+);
+
+/// Copy `subresource` of `texture` into an exclusive single-slice D3D11 texture
+/// suitable for wrapping as an AMF input surface.
+fn copy_d3d11_texture(
+    gpu: &Device,
+    texture: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+    subresource: u32,
+) -> Result<std::sync::Arc<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>> {
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
+        D3D11_USAGE_DEFAULT, ID3D11Multithread, ID3D11Texture2D,
+    };
+    // SAFETY: `texture` and `gpu.device` are live on the same D3D11 device;
+    // `desc` is filled by `GetDesc`, and the copy runs under the context's
+    // multithread lock.
+    unsafe {
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        texture.GetDesc(&mut desc);
+        let copy_desc = D3D11_TEXTURE2D_DESC {
+            Width: desc.Width,
+            Height: desc.Height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: desc.Format,
+            SampleDesc: desc.SampleDesc,
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        let mut copy: Option<ID3D11Texture2D> = None;
+        gpu.device
+            .CreateTexture2D(&copy_desc, None, Some(&mut copy))
+            .context("allocate D3D11 texture copy for AMF re-encode")?;
+        let copy = copy.context("D3D11 returned no texture copy")?;
+        let lock: ID3D11Multithread = gpu.context.cast()?;
+        lock.Enter();
+        gpu.context
+            .CopySubresourceRegion(&copy, 0, 0, 0, 0, texture, subresource, None);
+        lock.Leave();
+        Ok(std::sync::Arc::new(copy))
+    }
+}
+
+/// Extract the VPE-converted NV12 or P010 D3D11 texture from `surface` so an
+/// oversize scene cut can be re-encoded as an IDR. Array-backed AMF surfaces
+/// are copied to a single-slice texture because `gpu::wrap` wraps slice 0.
+fn vpe_kept_texture(
+    gpu: &Device,
+    surface: &gpu::Surface,
+) -> Result<Option<std::sync::Arc<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>>> {
+    use windows::Win32::Graphics::{
+        Direct3D11::{D3D11_TEXTURE2D_DESC, ID3D11Texture2D},
+        Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_FORMAT_P010},
+    };
+    // SAFETY: `surface.0` is a live `AMFSurface` returned by `Vpe::convert`;
+    // plane 0's native pointer is a live `ID3D11Texture2D` kept alive by the
+    // surface, cloned (`AddRef`) or copied before returning.
+    unsafe {
+        let v = &*(*surface.0).pVtbl;
+        if (v.GetMemoryType.unwrap())(surface.0) != AMF_MEMORY_TYPE_AMF_MEMORY_DX11 {
+            return Ok(None);
+        }
+        let plane = (v.GetPlaneAt.unwrap())(surface.0, 0);
+        if plane.is_null() {
+            return Ok(None);
+        }
+        let raw = ((*(*plane).pVtbl).GetNative.unwrap())(plane);
+        let Some(texture) = ID3D11Texture2D::from_raw_borrowed(&raw) else {
+            return Ok(None);
+        };
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        texture.GetDesc(&mut desc);
+        if desc.Format != DXGI_FORMAT_NV12 && desc.Format != DXGI_FORMAT_P010 {
+            return Ok(None);
+        }
+        if desc.ArraySize > 1 {
+            let mut index = 0u32;
+            let mut size = std::mem::size_of::<u32>() as u32;
+            let _ = texture.GetPrivateData(
+                &ARRAY_INDEX,
+                &mut size,
+                Some(ptr::addr_of_mut!(index).cast()),
+            );
+            if index >= desc.ArraySize {
+                index = 0;
+            }
+            return copy_d3d11_texture(gpu, texture, index).map(Some);
+        }
+        Ok(Some(std::sync::Arc::new(texture.clone())))
+    }
+}
+
 impl Encoder {
     pub(super) fn prepare_surface(
         &mut self,
@@ -268,13 +369,28 @@ impl Encoder {
     /// names only the keyframe. SubmitInput is the last step that can fail:
     /// before it, nothing has changed.
     pub(super) fn reencode_as_idr(&mut self, cut: &Submission) -> Result<()> {
-        let surface = match (&cut._converted, &cut._converted12, self.compute.as_ref()) {
-            (Some(texture), _, _) => gpu::wrap(self.context, texture, &mut self.ownership)?.0,
-            (None, Some(texture), Some(input)) => {
-                input.context.wrap(texture, &mut self.ownership)?
-            }
-            _ => bail!("the frame's converted input was not kept"),
-        };
+        let (surface, reencoded_converted) =
+            match (&cut._converted, &cut._converted12, self.compute.as_ref()) {
+                (Some(texture), _, _) => {
+                    // VPE's output surface may live in AMFVideoConverter's internal pool,
+                    // which the next frame can reuse once the encoder outputs this one.
+                    // Copy to an exclusive texture when VPE is active so the IDR reads
+                    // intact pixels.
+                    let texture = if self.vpe.is_some() {
+                        copy_d3d11_texture(&self._device, texture, 0)?
+                    } else {
+                        texture.clone()
+                    };
+                    (
+                        gpu::wrap(self.context, &texture, &mut self.ownership)?.0,
+                        Some(texture),
+                    )
+                }
+                (None, Some(texture), Some(input)) => {
+                    (input.context.wrap(texture, &mut self.ownership)?, None)
+                }
+                _ => bail!("the frame's converted input was not kept"),
+            };
         let frame = cut.pts as u64 + 1;
         // SAFETY: As in `encode_gpu`: the fresh surface wraps the converted
         // texture the submission kept, which no later conversion has reused.
@@ -320,7 +436,7 @@ impl Encoder {
                 cut_limit: cut.cut_limit,
                 reencoded: true,
                 _capture: cut._capture.clone(),
-                _converted: cut._converted.clone(),
+                _converted: reencoded_converted,
                 _converted12: None,
             });
             if let Some(thread) = &self.output_thread {
@@ -424,7 +540,15 @@ impl Encoder {
             (surface, (None, kept), Some(converted.conversion))
         } else if let Some(converted) = self.convert_vpe(image, source)? {
             vpe_used = Some(true);
-            (converted.surface, (converted.held, None), None)
+            // HLG's `held` prepass texture is RGB/FP16 input to VPE (already
+            // held by `self.ownership`), not the NV12/P010 output for re-encoding.
+            let _ = converted.held;
+            let kept = if self.cut_limit.is_some() {
+                vpe_kept_texture(&self._device, &converted.surface)?
+            } else {
+                None
+            };
+            (converted.surface, (kept, None), None)
         } else {
             if self.vpe.is_some() {
                 vpe_used = Some(false);

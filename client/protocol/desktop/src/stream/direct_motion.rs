@@ -37,9 +37,12 @@ use crate::gamepad::{Action, Gamepads};
 
 /// Marks a click or wheel event that motion waits behind until the main loop has sent it.
 const ORDERED: u32 = 0x4E4A_4D4F;
-/// Marks a key or controller event the main loop handles itself: keys, clicks and controller
-/// events after it wait for it too (motion does not).
+/// Marks a key, click or controller event the main loop handles itself: keys, clicks and
+/// controller events after it wait for it too (motion does not).
 const QUEUED: u32 = 0x4E4A_5155;
+/// Marks a window focus/visibility barrier (focus lost, minimized, hidden): holds both motion
+/// (`ordered`) and keys/clicks/controllers (`queued`) until the main loop processes it.
+const BARRIER: u32 = 0x4E4A_4252;
 /// Marks a key, click or wheel turn the filter sent: the main loop keeps its state, sends nothing.
 const SENT: u32 = 0x4E4A_534E;
 /// Marks a controller event the filter applied that asks the main loop to act, plus the action's
@@ -197,6 +200,12 @@ fn direct_pad(rules: Option<Rules>, held: (u32, u32)) -> bool {
     rules.is_some_and(|r| r.pads) && held == (0, 0)
 }
 
+/// Window events that act as a barrier: no direct motion, key, click or controller event after
+/// them may pass until the main loop has drained the event and updated focus/capture state.
+fn is_barrier(kind: SDL_EventType) -> bool {
+    matches!(kind, SDL_EVENT_WINDOW_FOCUS_LOST | SDL_EVENT_WINDOW_MINIMIZED | SDL_EVENT_WINDOW_HIDDEN)
+}
+
 /// Controller events `Gamepads::handle` turns into what the PC gets.
 fn applies_to_pads(kind: SDL_EventType) -> bool {
     matches!(
@@ -298,6 +307,7 @@ unsafe fn route(shared: &Shared, event: &mut SDL_Event) -> bool {
             }
             // A controller's later events wait until the main loop has opened or closed it.
             SDL_EVENT_GAMEPAD_ADDED | SDL_EVENT_GAMEPAD_REMOVED => mark(event, QUEUED, Some(&shared.queued)),
+            kind if is_barrier(kind) => mark_barrier(event, &shared.ordered, &shared.queued),
             _ => mark(event, 0, None),
         }
         true
@@ -322,21 +332,34 @@ fn mark(event: &mut SDL_Event, mark: u32, waits: Option<&AtomicU32>) {
     event.common.reserved = mark;
 }
 
-/// The main loop is done with `event`: a marked one no longer holds others back.
-fn release(ordered: &AtomicU32, queued: &AtomicU32, event: &SDL_Event) {
-    // SAFETY: every event starts with the common header.
-    let count = match unsafe { event.common.reserved } {
-        ORDERED => ordered,
-        QUEUED => queued,
-        mark if action_of(mark).is_some() => queued,
-        _ => return,
-    };
+fn mark_barrier(event: &mut SDL_Event, ordered: &AtomicU32, queued: &AtomicU32) {
+    ordered.fetch_add(1, Ordering::AcqRel);
+    queued.fetch_add(1, Ordering::AcqRel);
+    event.common.reserved = BARRIER;
+}
+
+fn release_one(count: &AtomicU32) {
     let mut n = count.load(Ordering::Acquire);
     while n > 0 {
         match count.compare_exchange_weak(n, n - 1, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => break,
             Err(now) => n = now,
         }
+    }
+}
+
+/// The main loop is done with `event`: a marked one no longer holds others back.
+fn release(ordered: &AtomicU32, queued: &AtomicU32, event: &SDL_Event) {
+    // SAFETY: every event starts with the common header.
+    match unsafe { event.common.reserved } {
+        ORDERED => release_one(ordered),
+        QUEUED => release_one(queued),
+        BARRIER => {
+            release_one(ordered);
+            release_one(queued);
+        }
+        mark if action_of(mark).is_some() => release_one(queued),
+        _ => {}
     }
 }
 
@@ -852,5 +875,29 @@ mod tests {
         assert_eq!(lock(&frozen).rules, None);
         assert!(loan.take_back().swap_face_buttons);
         assert!(lock(&frozen).pads.is_none());
+    }
+
+    #[test]
+    fn focus_lost_barrier_blocks_direct_input_until_dispatched() {
+        for kind in [SDL_EVENT_WINDOW_FOCUS_LOST, SDL_EVENT_WINDOW_MINIMIZED, SDL_EVENT_WINDOW_HIDDEN] {
+            assert!(is_barrier(kind), "{:#x}", kind.0);
+        }
+        assert!(!is_barrier(SDL_EVENT_WINDOW_FOCUS_GAINED));
+        let (ordered, queued) = (AtomicU32::new(0), AtomicU32::new(0));
+        let mut focus_lost = event(SDL_EVENT_WINDOW_FOCUS_LOST);
+        mark_barrier(&mut focus_lost, &ordered, &queued);
+        let held = (ordered.load(Ordering::Acquire), queued.load(Ordering::Acquire));
+        assert_eq!(held, (1, 1));
+        assert_eq!(verdict(SDL_EVENT_MOUSE_MOTION, SDL_MouseID(7), true, held.0, false, false), Verdict::Pass);
+        assert_eq!(direct_key(Some(PRESENTING), held, SDL_SCANCODE_A, SDL_KMOD_NONE, true), None);
+        assert_eq!(direct_click(Some(PRESENTING), held, true), None);
+        assert!(!direct_pad(Some(PRESENTING), held));
+        release(&ordered, &queued, &focus_lost);
+        let held = (ordered.load(Ordering::Acquire), queued.load(Ordering::Acquire));
+        assert_eq!(held, (0, 0));
+        assert_eq!(verdict(SDL_EVENT_MOUSE_MOTION, SDL_MouseID(7), true, held.0, false, false), Verdict::Sent);
+        assert!(direct_key(Some(PRESENTING), held, SDL_SCANCODE_A, SDL_KMOD_NONE, true).is_some());
+        assert!(direct_click(Some(PRESENTING), held, true).is_some());
+        assert!(direct_pad(Some(PRESENTING), held));
     }
 }

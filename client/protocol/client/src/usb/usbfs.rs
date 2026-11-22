@@ -471,6 +471,8 @@ impl Flight {
 
 struct State {
     flights: HashMap<usize, Flight>,
+    /// URBs and DMA buffers orphaned on unplug; kept alive until [`UsbfsDevice::close`] closes the fd.
+    orphaned: Vec<(UrbBox, Vec<u8>)>,
     seqnums: HashMap<u32, usize>,
     next: usize,
     device: wire::Device,
@@ -513,6 +515,7 @@ impl<K: Kernel> UsbfsDevice<K> {
                     descriptors,
                     state: Mutex::new(State {
                         flights: HashMap::new(),
+                        orphaned: Vec::new(),
                         seqnums: HashMap::new(),
                         next: 1,
                         device,
@@ -841,17 +844,22 @@ fn complete<K: Kernel>(inner: &Inner<K>, urb: *mut Urb) {
 }
 
 /// The device was unplugged: nothing reaps any more, so what the kernel still has fails here.
+/// Keep the URBs and their DMA buffers alive until [`UsbfsDevice::close`] closes the descriptor.
 fn unplugged<K: Kernel>(inner: &Inner<K>) {
-    let left: Vec<Flight> = {
+    let dones: Vec<Completion> = {
         let mut state = inner.state();
         state.gone = true;
         state.seqnums.clear();
-        state.flights.drain().map(|(_, f)| f).collect()
+        let flights: Vec<Flight> = state.flights.drain().map(|(_, f)| f).collect();
+        let mut dones = Vec::with_capacity(flights.len());
+        for flight in flights {
+            state.orphaned.push((flight.urb, flight.buffer));
+            dones.push(flight.done);
+        }
+        dones
     };
-    for flight in left {
-        flight.done.complete(Reply::failed(wire::ENODEV));
-        // Its memory goes with it: no reap will hand the URB back.
-        drop(flight.urb);
+    for done in dones {
+        done.complete(Reply::failed(wire::ENODEV));
     }
 }
 
@@ -895,6 +903,14 @@ impl<K: Kernel> UsbDevice for UsbfsDevice<K> {
             Err(status) => return done.complete(Reply::failed(status)),
         };
         let mut state = self.inner.state();
+        if state.closed {
+            drop(state);
+            return done.complete(Reply::failed(wire::ESHUTDOWN));
+        }
+        if state.gone {
+            drop(state);
+            return done.complete(Reply::failed(wire::ENODEV));
+        }
         let id = state.next;
         state.next = state.next.wrapping_add(1).max(1);
         let mut flight = Flight {
@@ -946,16 +962,17 @@ impl<K: Kernel> UsbDevice for UsbfsDevice<K> {
     }
 
     fn close(&self) {
-        let urbs: Vec<*mut Urb> = {
+        {
             let mut state = self.inner.state();
             if state.closed {
                 return;
             }
             state.closed = true;
-            state.flights.values().map(|f| f.urb.as_ptr()).collect()
-        };
-        for urb in urbs {
-            let _ = self.inner.kernel.discard(urb);
+            // Keep `state` held while calling discard() so reap_loop cannot concurrently reap
+            // and free an URB out from under the raw pointer.
+            for flight in state.flights.values() {
+                let _ = self.inner.kernel.discard(flight.urb.as_ptr());
+            }
         }
         let reaper = self
             .inner
@@ -975,12 +992,15 @@ impl<K: Kernel> UsbDevice for UsbfsDevice<K> {
         }
         self.inner.kernel.close();
         // Whatever the kernel never gave back goes now that it can't write to it.
-        let left: Vec<Flight> = {
+        let (left, orphaned): (Vec<Flight>, Vec<(UrbBox, Vec<u8>)>) = {
             let mut state = self.inner.state();
             state.seqnums.clear();
-            state.flights.drain().map(|(_, f)| f).collect()
+            (
+                state.flights.drain().map(|(_, f)| f).collect(),
+                std::mem::take(&mut state.orphaned),
+            )
         };
-        drop(left);
+        drop((left, orphaned));
     }
 }
 

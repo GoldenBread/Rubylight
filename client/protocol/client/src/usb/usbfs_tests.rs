@@ -887,3 +887,60 @@ fn closing_discards_what_runs_before_the_descriptor_closes() {
     );
     assert!(kernel.machine().parked.is_empty());
 }
+
+#[test]
+fn unplugged_before_close_keeps_orphaned_urbs_until_close() {
+    let kernel = FakeKernel::new();
+    let device = Arc::new(UsbfsDevice::open(kernel.clone(), PATH).unwrap());
+    let (tunnel, mut driver) = pipe();
+    let serving = device.clone();
+    let served = std::thread::spawn(move || serve(tunnel, serving));
+    driver.import("1-5").unwrap();
+
+    let waiting = driver.submit(1, wire::DIR_IN, 64, [0; 8], &[], &[]);
+    kernel.wait_parked(1);
+    {
+        kernel.machine().gone = true;
+        kernel.changed.notify_all();
+    }
+    let (seqnum, status) = status_of(&driver.reply(true).0);
+    assert_eq!((seqnum, status), (waiting, wire::ENODEV));
+    assert_eq!(device.inner.state().orphaned.len(), 1);
+    assert!(!kernel.machine().closed);
+
+    drop(driver);
+    served.join().unwrap().unwrap();
+    assert!(kernel.machine().closed);
+    assert!(device.inner.state().orphaned.is_empty());
+}
+
+#[test]
+fn concurrent_submit_and_close_never_submits_after_close() {
+    for _ in 0..20 {
+        let kernel = FakeKernel::new();
+        let device = Arc::new(UsbfsDevice::open(kernel.clone(), PATH).unwrap());
+        let (tunnel, mut driver) = pipe();
+        let serving = device.clone();
+        let served = std::thread::spawn(move || serve(tunnel, serving));
+        driver.import("1-5").unwrap();
+
+        let closing = device.clone();
+        let closer = std::thread::spawn(move || closing.close());
+        for _ in 0..16 {
+            driver.submit(1, wire::DIR_OUT, 5, [0; 8], b"hello", &[]);
+        }
+        drop(driver);
+        closer.join().unwrap();
+        let _ = served.join().unwrap();
+
+        let log = kernel.log();
+        let close = log.iter().position(|e| e == "close").unwrap();
+        assert!(
+            !log[close + 1..].iter().any(|e| e.starts_with("submit ")),
+            "kernel submit ran after close: {log:?}"
+        );
+        let state = device.inner.state();
+        assert!(state.flights.is_empty());
+        assert!(state.orphaned.is_empty());
+    }
+}

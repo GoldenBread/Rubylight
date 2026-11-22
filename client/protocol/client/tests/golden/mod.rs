@@ -1,8 +1,10 @@
 //! Golden tests: packet sequences go through `nightjar-core`, and a digest of everything it
 //! outputs (frames with their buffers, control-stream signals, decode queue flushes, audio
-//! samples, statistics) must equal the one `golden.txt` recorded from Nightjar's patched
-//! moonlight-common-c, the classic engine this receive path was ported from and checked
-//! against until its removal. The fixture is keyed by a digest of each run's inputs.
+//! samples, statistics) must equal the one in `golden.txt` (originally recorded from Nightjar's
+//! patched moonlight-common-c, and updated where `nightjar-core` intentionally fixes classic
+//! engine bugs: draining contiguous reordered audio packets, omitting stale FEC status on
+//! multi-block block-0 loss, and using 32-bit frame order before 16-bit sequence checks).
+//! The fixture is keyed by a digest of each run's inputs.
 //!
 //! The test hosts follow the Rubylight host's packetizers (`rust/core/src/packet.rs`).
 #![allow(dead_code)]

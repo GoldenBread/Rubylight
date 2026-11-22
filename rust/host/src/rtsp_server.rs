@@ -206,7 +206,7 @@ async fn connection(
             }
         }
         let host_fault = probe_failed.is_some();
-        let result = (|| -> Result<()> {
+        let result: Result<()> = async {
             if let Some(error) = probe_failed.take() {
                 return Err(error);
             }
@@ -410,8 +410,18 @@ async fn connection(
                             "requested packed codec or bit depth failed the host hardware probe"
                         );
                         // Initialize the requested coded geometry and rate before accepting PLAY.
-                        butterpollo_windows::codec_probe::packed(&config, &negotiated, &|| false)
-                            .with_context(|| {
+                        let probe_config = config.clone();
+                        let probe_negotiated = negotiated.clone();
+                        tokio::task::spawn_blocking(move || {
+                            butterpollo_windows::codec_probe::packed(
+                                &probe_config,
+                                &probe_negotiated,
+                                &|| false,
+                            )
+                        })
+                        .await
+                        .context("packed 4:4:4 probe did not finish")?
+                        .with_context(|| {
                             format!(
                                 "packed 4:4:4 probe failed for {}x{} at {} fps, {}-bit {}",
                                 negotiated.width,
@@ -422,7 +432,7 @@ async fn connection(
                             )
                         })?;
                     }
-                    negotiated.mic = mics.lock().unwrap().remove(&launch.id);
+                    negotiated.mic = mics.lock().unwrap().contains(&launch.id);
                     if negotiated.mic
                         && negotiated.encryption & butterpollo_core::mic::ENCRYPTION == 0
                     {
@@ -494,6 +504,7 @@ async fn connection(
                         note_codec_refusal(&launch.warnings, None);
                         note_pyrowave_minimum(&launch.warnings, &negotiated);
                         h.clear_failure(&launch.client.uuid);
+                        mics.lock().unwrap().remove(&launch.id);
                         configs
                             .lock()
                             .unwrap()
@@ -531,7 +542,8 @@ async fn connection(
                 }
             }
             Ok(())
-        })();
+        }
+        .await;
         tracing::info!(method = %req.method, ok = result.is_ok(), ms = began.elapsed().as_millis() as u64, "RTSP request timing");
         if let Err(error) = result {
             tracing::warn!(client = %launch.client.name, method = %req.method, error = %format!("{error:#}"), "RTSP request rejected");

@@ -144,6 +144,24 @@ public class RefreshSlotsTest {
         assertEquals(0, slots.shared());
     }
 
+    @Test public void panelClockDriftAndChoreographerJitterDoNotRatchetOffTheVsyncGrid() {
+        // Real panel period is 50 us shorter than the nominal 120 Hz interval, with +-400 us
+        // Choreographer jitter on reported vsync timestamps.
+        long actualPeriodNs = INTERVAL_120 - 50_000L;
+        long[] jitterNs = {0L, 400_000L, -350_000L, 250_000L, -400_000L, 150_000L};
+        for (int frame = 0; frame < 600; frame++) {
+            long liveVsyncNs = VSYNC + frame * actualPeriodNs + jitterNs[frame % jitterNs.length];
+            long releaseNs = liveVsyncNs + 1_000_000L;
+            slots.plan(releaseNs, liveVsyncNs, INTERVAL_120, DEADLINE_120, slot);
+            assertFalse("frame " + frame + " should not be forced into sharing", slot.shared);
+            // Every planned slot stays locked onto the live vsyncNs grid (within 0 ns of a multiple).
+            long gridRemainder = Math.floorMod(slot.vsyncNs - liveVsyncNs, INTERVAL_120);
+            assertEquals("frame " + frame + " drifted off grid", 0L, gridRemainder);
+            long earliestNs = RefreshSlots.firstVsyncNs(releaseNs, liveVsyncNs, INTERVAL_120, DEADLINE_120);
+            assertEquals("frame " + frame + " accumulated drift ahead of earliest", earliestNs, slot.vsyncNs);
+        }
+    }
+
     private long plan2(long releaseNs, long intervalNs, long deadlineNs) {
         slots.plan(releaseNs, VSYNC, intervalNs, deadlineNs, slot);
         return slot.vsyncNs;

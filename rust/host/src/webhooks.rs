@@ -166,6 +166,10 @@ pub struct Webhooks {
     /// Each hook's queue, by URL.
     queues: Mutex<HashMap<String, Queue>>,
     status: Arc<Mutex<HashMap<String, Status>>>,
+    /// Unit tests bind local receivers on 127.0.0.1; production always blocks loopback and
+    /// link-local targets, and SSRF tests opt in here.
+    #[cfg(test)]
+    block_local: Arc<AtomicBool>,
 }
 
 impl Webhooks {
@@ -184,7 +188,14 @@ impl Webhooks {
             runtime: tokio::runtime::Handle::try_current().ok(),
             queues: Mutex::default(),
             status: Arc::default(),
+            #[cfg(test)]
+            block_local: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn block_local(&self) {
+        self.block_local.store(true, Ordering::Release);
     }
 
     /// Queues `event` for each of `hooks` that subscribes to it and returns
@@ -261,9 +272,15 @@ impl Webhooks {
         let status = self.status.clone();
         let forgotten = Arc::new(AtomicBool::new(false));
         let dropped = forgotten.clone();
+        #[cfg(test)]
+        let block_local = self.block_local.clone();
         runtime.spawn(async move {
             while let Some(job) = receiver.recv().await {
-                let Some(result) = deliver(&client, policy, &job, &dropped).await else {
+                #[cfg(not(test))]
+                let block = true;
+                #[cfg(test)]
+                let block = block_local.load(Ordering::Acquire);
+                let Some(result) = deliver(&client, policy, &job, &dropped, block).await else {
                     // Ending drops the rest of the queue too.
                     tracing::info!(
                         hook = %origin(&job.hook.url),
@@ -290,7 +307,11 @@ impl Webhooks {
             ..self.policy
         };
         let kept = AtomicBool::new(false);
-        let result = deliver(&self.client, once, &job, &kept)
+        #[cfg(not(test))]
+        let block = true;
+        #[cfg(test)]
+        let block = self.block_local.load(Ordering::Acquire);
+        let result = deliver(&self.client, once, &job, &kept, block)
             .await
             .expect("a test delivery's hook is never forgotten");
         finish(&self.status, &job, result, &kept)
@@ -325,6 +346,31 @@ struct Outcome {
     error: Option<String>,
 }
 
+fn check_delivery_url(url: &str, block_local: bool) -> Result<(), String> {
+    if !block_local {
+        return Ok(());
+    }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return Ok(());
+    };
+    let blocked = match parsed.host() {
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name == "localhost" || name.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => on_this_pc_or_link(ip.into()),
+        Some(url::Host::Ipv6(ip)) => on_this_pc_or_link(ip.into()),
+        None => false,
+    };
+    if blocked {
+        return Err(format!(
+            "{} points to this PC or a link-local address, which webhooks may not reach",
+            origin(url)
+        ));
+    }
+    Ok(())
+}
+
 /// Tries `job` as `policy` says; None when its hook was `forgotten`
 /// ([`Webhooks::forget`]) before a try.
 async fn deliver(
@@ -332,12 +378,17 @@ async fn deliver(
     policy: Policy,
     job: &Job,
     forgotten: &AtomicBool,
+    block_local: bool,
 ) -> Option<Outcome> {
     let mut outcome = Outcome {
         attempts: 0,
         http_status: None,
         error: None,
     };
+    if let Err(error) = check_delivery_url(&job.hook.url, block_local) {
+        outcome.error = Some(error);
+        return Some(outcome);
+    }
     let mut wait = policy.backoff;
     for attempt in 1..=policy.attempts.max(1) {
         if attempt > 1 {

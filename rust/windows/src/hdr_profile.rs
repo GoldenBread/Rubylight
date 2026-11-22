@@ -415,16 +415,25 @@ fn acquire_state<A: Associations>(
     }
     let api = load()?;
     let current = api.get(monitor, system)?;
-    let previous = previous_profile(pending(), current.clone());
+    let pending_entry = pending();
+    let had_pending = pending_entry.is_some();
+    let previous = previous_profile(pending_entry, current.clone());
     if !current
         .as_ref()
         .is_some_and(|name| name.eq_ignore_ascii_case(&applied))
     {
         record(current, &applied)?;
-        // Preserve the recovery entry if a failed call partially changes Windows.
+        // Preserve the recovery entry if a failed call partially changes Windows,
+        // or if a prior crashed stream's entry was already pending.
         if let Err(error) = api.add(monitor, system, &applied) {
-            if restore_with(&api, monitor, previous.as_deref(), &applied, system).is_ok() {
-                let _ = release();
+            if !had_pending {
+                if restore_with(&api, monitor, previous.as_deref(), &applied, system).is_ok() {
+                    let _ = release();
+                }
+            } else if let Ok(Some(left)) = api.get(monitor, system)
+                && !left.eq_ignore_ascii_case(&applied)
+            {
+                let _ = record(previous, &left);
             }
             return Err(error);
         }
@@ -947,5 +956,69 @@ mod tests {
             filename("My HDR Profile.icc").unwrap(),
             "My HDR Profile.icc"
         );
+    }
+    #[test]
+    fn a_refused_acquire_keeps_a_pending_crash_recovery_journal_entry() {
+        let display = monitor("virtual", false);
+        let fake = Refusing(
+            Fake::default().with(&display, true, "crashed-cal.icm"),
+            "new-cal.icm",
+        );
+        let journal = RefCell::new(Some((
+            Some("orig.icm".to_owned()),
+            "crashed-cal.icm".to_owned(),
+        )));
+        let mut held = None;
+        let result = acquire_state(
+            &mut held,
+            &display,
+            "new-cal.icm".into(),
+            true,
+            || Ok(&fake),
+            |before, applied| {
+                let mut entry = journal.borrow_mut();
+                let original = entry.take().map_or(before, |(orig, _)| orig);
+                *entry = Some((original, applied.to_owned()));
+                Ok(())
+            },
+            || journal.borrow().as_ref().map(|(orig, _)| orig.clone()),
+            || {
+                *journal.borrow_mut() = None;
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(held.is_none());
+        assert_eq!(
+            journal.into_inner(),
+            Some((Some("orig.icm".to_owned()), "crashed-cal.icm".to_owned()))
+        );
+        // Without a pending journal entry, a refused acquire clears the entry it wrote.
+        let fake = Refusing(
+            Fake::default().with(&display, true, "orig.icm"),
+            "new-cal.icm",
+        );
+        let journal = RefCell::new(None);
+        let mut held = None;
+        let result = acquire_state(
+            &mut held,
+            &display,
+            "new-cal.icm".into(),
+            true,
+            || Ok(&fake),
+            |before, applied| {
+                let mut entry = journal.borrow_mut();
+                let original = entry.take().map_or(before, |(orig, _)| orig);
+                *entry = Some((original, applied.to_owned()));
+                Ok(())
+            },
+            || journal.borrow().as_ref().map(|(orig, _)| orig.clone()),
+            || {
+                *journal.borrow_mut() = None;
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(journal.into_inner(), None);
     }
 }

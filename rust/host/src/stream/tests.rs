@@ -1810,6 +1810,36 @@ fn a_refused_controller_acquire_keeps_the_state_the_client_sends_once() {
     );
 }
 #[test]
+fn drop_uninjectable_input_deduplicates_setup_events_and_caps_total() {
+    let arrival = |id, kind| input::Input::Arrival {
+        id,
+        kind,
+        capabilities: 0,
+        buttons: 0,
+    };
+    let mut inputs = vec![
+        arrival(0, 1),
+        input::Input::Haptics(false),
+        arrival(0, 2),
+        input::Input::Haptics(true),
+    ];
+    for id in 1..100u8 {
+        inputs.push(arrival(id, 1));
+    }
+    drop_uninjectable_input(&mut inputs);
+    assert_eq!(inputs.len(), 64);
+    assert_eq!(inputs.last(), Some(&arrival(99, 1)));
+    // Only the latest Haptics and latest Arrival per controller survive when under cap.
+    let mut small = vec![
+        arrival(0, 1),
+        input::Input::Haptics(false),
+        arrival(0, 2),
+        input::Input::Haptics(true),
+    ];
+    drop_uninjectable_input(&mut small);
+    assert_eq!(small, vec![arrival(0, 2), input::Input::Haptics(true)]);
+}
+#[test]
 fn keyboard_and_mouse_go_on_while_the_controllers_wait_and_theirs_is_held() {
     let pad = |id, active, buttons| input::Input::Controller {
         id,

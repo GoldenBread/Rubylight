@@ -46,8 +46,8 @@ pub struct DeviceGuests {
     kbm: Mutex<Kbm>,
     /// Whether any guest streams: the input path looks at guests only then.
     streaming: AtomicBool,
-    /// Guests that lost the keyboard and mouse and still hold keys or buttons on the PC.
-    release: Mutex<BTreeSet<u32>>,
+    /// Holders that lost the keyboard and mouse and still hold keys or buttons on the PC.
+    release: Mutex<BTreeSet<Source>>,
     releasing: AtomicBool,
     /// The PC's own keyboard and mouse, watched while a guest may hold them.
     local: Mutex<Option<butterpollo_windows::local_input::Watch>>,
@@ -335,12 +335,48 @@ impl DeviceGuests {
         }
     }
 
-    /// Guest `id`'s launch was queued as `launch`.
-    pub(crate) fn joined(&self, id: u32, launch: &Launch) {
-        locked(&self.pads).insert(id, crate::controller_sessions::key(launch));
+    /// Syncs guest state against the running game and returns whether guest `id` still has a live
+    /// place.
+    pub(crate) fn guest_live(&self, h: &Shared, id: u32) -> bool {
+        let game = running_game(h);
+        let (ended, live) = {
+            let mut state = locked(&self.state);
+            let ended = state.follow_game(
+                game.as_ref()
+                    .map(|(generation, owner)| (generation.as_str(), owner.as_str())),
+            );
+            let live = state.get(id).is_some_and(|g| !g.expired(unix_now()));
+            (ended, live)
+        };
+        for launch in &ended {
+            end_stream(h, launch, Ended::GameEnded);
+        }
+        live
+    }
+
+    /// Removes and unplugs any controller slot recorded for guest `id`.
+    pub(crate) fn unplug_guest_pad(&self, h: &Host, id: u32) {
+        if let Some(key) = locked(&self.pads).remove(&id) {
+            h.controller_sessions.unplug(&key);
+        }
+    }
+
+    /// Guest `id`'s launch was queued as `launch`; returns whether the guest is still valid and
+    /// attached to the active game.
+    pub(crate) fn joined(&self, id: u32, launch: &Launch) -> bool {
+        let now = unix_now();
         let mut state = locked(&self.state);
-        if state.joined(id, &launch.id) {
+        let valid = launch.guest() == Some(id)
+            && state.get(id).is_some_and(|g| !g.expired(now))
+            && state.joined(id, &launch.id);
+        drop(state);
+        if valid {
+            locked(&self.pads).insert(id, crate::controller_sessions::key(launch));
             self.streaming.store(true, Ordering::Release);
+            true
+        } else {
+            locked(&self.pads).remove(&id);
+            false
         }
     }
 
@@ -381,9 +417,7 @@ impl DeviceGuests {
             Verdict::Accept => true,
             Verdict::Took { from } => {
                 tracing::info!(from = ?from, to = ?source, "keyboard and mouse change hands");
-                if let Source::Guest(id) = from {
-                    self.release_later(id);
-                }
+                self.release_later(from);
                 true
             }
             Verdict::Drop => false,
@@ -401,23 +435,24 @@ impl DeviceGuests {
         })
     }
 
-    fn release_later(&self, id: u32) {
-        locked(&self.release).insert(id);
+    fn release_later(&self, source: Source) {
+        locked(&self.release).insert(source);
         self.releasing.store(true, Ordering::Release);
     }
 
-    /// Whether session `s`, a guest's, must let go of the keys and buttons it holds: another holder
-    /// took the keyboard and mouse. Asked once per control pass and peer; without such a guest it
+    /// Whether session `s` must let go of the keys and buttons it holds: another holder took the
+    /// keyboard and mouse. Asked once per control pass and peer; without a pending release it
     /// costs one atomic load.
     pub(crate) fn take_release(&self, s: &Session) -> bool {
         if !self.releasing.load(Ordering::Acquire) {
             return false;
         }
-        let Some(id) = s.launch.guest() else {
-            return false;
+        let source = match s.launch.guest() {
+            Some(id) => Source::Guest(id),
+            None => Source::Owner,
         };
         let mut release = locked(&self.release);
-        let taken = release.remove(&id);
+        let taken = release.remove(&source);
         if release.is_empty() {
             self.releasing.store(false, Ordering::Release);
         }
@@ -435,7 +470,7 @@ impl DeviceGuests {
                 guest = id,
                 "the PC's own keyboard and mouse took them back from a guest"
             );
-            self.release_later(id);
+            self.release_later(Source::Guest(id));
         }
     }
 
@@ -549,7 +584,7 @@ impl DeviceGuests {
         }
         if !permission.keyboard_mouse() {
             locked(&self.kbm).forget(id);
-            self.release_later(id);
+            self.release_later(Source::Guest(id));
         }
         // View only: its controllers leave the PC now; another permission plugs them in again
         // with the guest's next controller input.
@@ -579,7 +614,7 @@ impl DeviceGuests {
             }
             None => Source::Owner,
         };
-        if let Some(Source::Guest(from)) = locked(&self.kbm).give(to, Instant::now()) {
+        if let Some(from) = locked(&self.kbm).give(to, Instant::now()) {
             self.release_later(from);
         }
         tracing::info!(to = ?to, "keyboard and mouse handed over");
@@ -649,4 +684,100 @@ fn policy_text<S: serde::Serializer>(policy: &JoinPolicy, s: S) -> Result<S::Ok,
 
 fn permission_text<S: serde::Serializer>(permission: &Permission, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(permission.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::test_support::Fixture;
+    use butterpollo_core::{multiclient::LAUNCH_OPTION, session::Role};
+
+    #[test]
+    fn joined_rejects_unknown_or_ended_guests_without_recording_pads() {
+        let f = Fixture::new();
+        let mut guest_client = f.client(0);
+        guest_client.uuid = "guest-device".into();
+        let mut launch = f.launch(guest_client, Role::Stream);
+        launch.options.insert(LAUNCH_OPTION.into(), "42".into());
+
+        let guests = &f.host.device_guests;
+        assert!(!guests.joined(42, &launch));
+        assert!(locked(&guests.pads).is_empty());
+        assert!(!guests.streaming.load(Ordering::Acquire));
+
+        // Admit a valid guest, then confirm joined returns true and records its pad.
+        let Admission::Granted { id, .. } = ({
+            let mut state = locked(&guests.state);
+            let _ = state.follow_game(Some(("game-1", "parity-device")));
+            state.admit(
+                "guest-device",
+                "Guest",
+                JoinPolicy::Allow,
+                Permission::ControllerKeyboardMouse,
+                unix_now(),
+                Instant::now(),
+            )
+        }) else {
+            panic!("expected guest to be admitted");
+        };
+        launch.options.insert(LAUNCH_OPTION.into(), id.to_string());
+        assert!(guests.joined(id, &launch));
+        assert!(locked(&guests.pads).contains_key(&id));
+        assert!(guests.streaming.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn kbm_transfer_away_from_owner_records_owner_release() {
+        let f = Fixture::new();
+        let owner_client = f.client(0);
+        let owner = f.session(owner_client, Role::Stream);
+        let mut guest_client = f.client(0);
+        guest_client.uuid = "guest-device".into();
+        let mut guest_launch = f.launch(guest_client, Role::Stream);
+
+        let guests = &f.host.device_guests;
+        let Admission::Granted { id, .. } = ({
+            let mut state = locked(&guests.state);
+            let _ = state.follow_game(Some(("game-1", "parity-device")));
+            state.admit(
+                "guest-device",
+                "Guest",
+                JoinPolicy::Allow,
+                Permission::ControllerKeyboardMouse,
+                unix_now(),
+                Instant::now(),
+            )
+        }) else {
+            panic!("expected guest to be admitted");
+        };
+        guest_launch
+            .options
+            .insert(LAUNCH_OPTION.into(), id.to_string());
+        assert!(guests.joined(id, &guest_launch));
+        let guest = Session::new(guest_launch, Default::default());
+
+        // Owner holds KBM, then gives it to the guest: owner must release held keys.
+        assert_eq!(locked(&guests.kbm).holder(), Source::Owner);
+        guests.give_keyboard_mouse(Some(id)).unwrap();
+        assert!(guests.take_release(&owner));
+        assert!(!guests.take_release(&owner));
+        assert!(!guests.take_release(&guest));
+
+        // Owner takes KBM back by sending input: guest must release held keys.
+        let kbm_perm =
+            butterpollo_core::input::Input::Relative { x: 1, y: 1 }.required_permission();
+        assert!(guests.admits(&owner, kbm_perm));
+        assert!(guests.take_release(&guest));
+        assert!(!guests.take_release(&owner));
+
+        // Guest takes KBM via admits once handoff idle elapses: owner must release held keys.
+        {
+            let mut kbm = locked(&guests.kbm);
+            let past = Instant::now() - policy::HANDOFF_IDLE - Duration::from_secs(1);
+            assert_eq!(kbm.input(Source::Owner, past), Verdict::Accept);
+        }
+        assert!(guests.admits(&guest, kbm_perm));
+        assert!(guests.take_release(&owner));
+        assert!(!guests.take_release(&owner));
+    }
 }

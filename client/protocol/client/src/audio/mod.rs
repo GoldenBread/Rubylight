@@ -136,22 +136,35 @@ impl AudioReceiver {
                 datagram,
                 out,
             ),
-            AddResult::Ready => {
-                while let Some(next) = self.queue.next_packet(&mut self.packet) {
-                    match next {
-                        Queued::Lost => out(AudioOutput::Lost),
-                        Queued::Packet { seq } => Self::play(
-                            &self.decryptor,
-                            &mut self.plain,
-                            &mut self.queue.stats,
-                            seq,
-                            &self.packet,
-                            out,
-                        ),
-                    }
-                }
+            AddResult::HandleNowAndDrain => {
+                Self::play(
+                    &self.decryptor,
+                    &mut self.plain,
+                    &mut self.queue.stats,
+                    header.seq,
+                    datagram,
+                    out,
+                );
+                self.drain_ready(out);
             }
+            AddResult::Ready => self.drain_ready(out),
             AddResult::Queued => {}
+        }
+    }
+
+    fn drain_ready(&mut self, out: &mut impl FnMut(AudioOutput<'_>)) {
+        while let Some(next) = self.queue.next_packet(&mut self.packet) {
+            match next {
+                Queued::Lost => out(AudioOutput::Lost),
+                Queued::Packet { seq } => Self::play(
+                    &self.decryptor,
+                    &mut self.plain,
+                    &mut self.queue.stats,
+                    seq,
+                    &self.packet,
+                    out,
+                ),
+            }
         }
     }
 

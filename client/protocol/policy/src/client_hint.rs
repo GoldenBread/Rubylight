@@ -125,10 +125,10 @@ impl Bitrate {
             self.stable_samples = 0;
             self.loss_streak += 1;
         } else if loss > 2.0 {
+            self.stable_samples = 0;
             self.loss_streak += 1;
             if self.loss_streak >= 2 {
                 target = current * 0.9;
-                self.stable_samples = 0;
             }
         } else if loss > 0.5 {
             self.loss_streak += 1;
@@ -336,5 +336,16 @@ mod tests {
         assert_eq!((c.min_kbps(), c.max_kbps()), (6000, 25_000));
         let c = Bitrate::new(20_000, 1000, 0);
         assert_eq!((c.min_kbps(), c.max_kbps()), (1000, 1000));
+    }
+
+    #[test]
+    fn moderate_loss_streak_resets_stable_samples() {
+        let mut c = Bitrate::new(10_000, 0, 0);
+        for second in 3..7 {
+            assert_eq!(c.sample(&tick(second, 0.0)), None);
+        }
+        // Single > 2% loss sample resets the clean-sample streak even before a cut.
+        assert_eq!(c.sample(&tick(7, 3.0)), None);
+        assert_eq!(c.sample(&tick(8, 0.0)), None);
     }
 }

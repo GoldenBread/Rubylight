@@ -681,18 +681,31 @@ fn send_one(
         Err(error) => Err(error),
     })
 }
-/// One datagram, from the address `peer` reached; `Ok(false)` when a
-/// transient error dropped it.
-pub fn send_datagram(socket: &ReplySocket, packet: &[u8], peer: SocketAddr) -> Result<bool> {
-    let mut budget = WaitBudget::default();
+/// Shared wait budget across a group of datagrams sent via [`send_datagram_with_wait`].
+#[derive(Default)]
+pub struct DatagramWait(WaitBudget);
+/// One datagram, from the address `peer` reached, sharing `wait` so a stalled
+/// socket blocks at most [`WRITABLE_WAIT`] across the whole group; `Ok(false)`
+/// when a transient error dropped it.
+pub fn send_datagram_with_wait(
+    socket: &ReplySocket,
+    packet: &[u8],
+    peer: SocketAddr,
+    wait: &mut DatagramWait,
+) -> Result<bool> {
     let (result, _) = socket.send_pinned(peer, socket.source(peer), |source| {
-        send_one(socket, packet, peer, source, &mut budget, None)
+        send_one(socket, packet, peer, source, &mut wait.0, None)
     })?;
     match result {
         Ok(()) => Ok(true),
         Err(error) if transient(error) => Ok(false),
         Err(error) => Err(std::io::Error::from_raw_os_error(error.0).into()),
     }
+}
+/// One datagram, from the address `peer` reached; `Ok(false)` when a
+/// transient error dropped it.
+pub fn send_datagram(socket: &ReplySocket, packet: &[u8], peer: SocketAddr) -> Result<bool> {
+    send_datagram_with_wait(socket, packet, peer, &mut DatagramWait::default())
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Link {
@@ -1006,6 +1019,8 @@ pub struct Batch {
     pub system_calls: u64,
     /// Datagrams lost to transient send errors.
     pub dropped: u64,
+    /// Packets handed to Winsock in the last [`Batch::send`] call.
+    last_sent: usize,
     /// Datagrams the path refused because they are larger than its MTU with
     /// `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` set; also counted in `dropped`.
     pub oversized: u64,
@@ -1034,6 +1049,7 @@ impl Default for Batch {
             offload: true,
             system_calls: 0,
             dropped: 0,
+            last_sent: 0,
             oversized: 0,
             dont_fragment: false,
             waits: None,
@@ -1128,7 +1144,12 @@ impl Batch {
     /// Count datagrams as refused by a full socket without sending them,
     /// for `BUTTERPOLLO_TEST_SEND_OUTAGE`.
     pub fn refuse(&mut self, count: usize) {
+        self.last_sent = 0;
         self.dropped(count, WSAEWOULDBLOCK);
+    }
+    /// Number of packets sent in the last [`Batch::send`] call.
+    pub fn sent_packets(&self) -> usize {
+        self.last_sent
     }
     /// Count datagrams the path refused for their size with fragmentation
     /// refused: lost like a full buffer's, and reported once every 5 seconds as
@@ -1162,6 +1183,7 @@ impl Batch {
         packets: &[Vec<u8>],
         peer: SocketAddr,
     ) -> Result<usize> {
+        self.last_sent = 0;
         if packets.is_empty() {
             return Ok(0);
         }
@@ -1202,7 +1224,10 @@ impl Batch {
                 self.send_segmented(socket, packets, peer, source, budget)
             })?;
             match result {
-                Ok(sent) => return Ok(sent),
+                Ok(sent) => {
+                    self.last_sent = packets.len();
+                    return Ok(sent);
+                }
                 // WSAEMSGSIZE here can be the offload's own limit, not the
                 // path's MTU: turn segmentation off and send the datagrams one
                 // by one, where an oversized one is counted as such. Dropping
@@ -1224,14 +1249,17 @@ impl Batch {
             }
         }
         let mut sent = 0;
-        for packet in packets {
+        for (index, packet) in packets.iter().enumerate() {
             let result;
             (result, *source) = socket.send_pinned(peer, *source, |source| {
                 self.system_calls += 1;
                 send_one(socket, packet, peer, source, budget, self.waits.as_mut())
             })?;
             match result {
-                Ok(()) => sent += packet.len(),
+                Ok(()) => {
+                    sent += packet.len();
+                    self.last_sent += 1;
+                }
                 // A socket that refuses fragmentation reports a datagram larger than the
                 // path's MTU this way, as the PyroWave probe does on a jumbo path. Drop
                 // it like a path-MTU refusal; ending the probe's or a stream's send is
@@ -1239,7 +1267,10 @@ impl Batch {
                 Err(error) if error == WSAEMSGSIZE => {
                     self.too_large(1, error);
                 }
-                Err(error) if transient(error) => self.dropped(1, error),
+                Err(error) if transient(error) => {
+                    self.dropped(packets.len() - index, error);
+                    break;
+                }
                 Err(error) => return Err(std::io::Error::from_raw_os_error(error.0).into()),
             }
         }

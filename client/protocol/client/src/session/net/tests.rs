@@ -671,6 +671,35 @@ fn a_roams_new_socket_coalesces_too_or_falls_back_once() {
     assert_eq!(batch.take_fallback().unwrap().raw_os_error(), Some(10042));
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn a_roams_new_socket_re_enables_gro() {
+    use std::os::fd::AsRawFd;
+    let first = media_socket();
+    let mut batch = BatchReceiver::new(&first, 1500, true);
+    if !batch.gro() {
+        return; // This kernel refused UDP_GRO.
+    }
+    let second = media_socket();
+    let sent = send_numbered(&second, 3, 1392, 10);
+    assert_eq!(receive_all(&mut batch, &second, sent.len()).0, sent);
+    assert!(batch.gro());
+    let mut on: libc::c_int = 0;
+    let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: `on` is a valid c_int and `len` holds its size.
+    let rc = unsafe {
+        libc::getsockopt(
+            second.as_raw_fd(),
+            gro::SOL_UDP,
+            gro::UDP_GRO,
+            (&mut on as *mut libc::c_int).cast(),
+            &mut len,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(on, 1);
+}
+
 #[test]
 fn with_the_setting_off_nothing_is_coalesced() {
     let socket = media_socket();

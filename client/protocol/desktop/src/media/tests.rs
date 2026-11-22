@@ -50,6 +50,10 @@ fn only_a_v4l2_decoder_is_opened_for_the_streams_size() {
         "a stream whose size is not known yet leaves it to the driver"
     );
     assert_eq!(v4l2_open_size(Hardware::V4l2m2m, Pictures { width: 0, height: 1080, ..stream }), None);
+    assert_eq!(reopen_size(Hardware::V4l2m2m, 1920, 1080, 1920, 1088), Some((1920, 1080, 1920, 1088)));
+    assert_eq!(reopen_size(Hardware::V4l2m2m, 1920, 1080, 0, 0), Some((1920, 1080, 1920, 1080)));
+    assert_eq!(reopen_size(Hardware::V4l2m2m, 0, 1080, 0, 0), None);
+    assert_eq!(reopen_size(Hardware::Vaapi, 1920, 1080, 1920, 1088), None);
 }
 
 /// A decoder that failed is opened again for the same stream: emptying it for a stream that
@@ -69,6 +73,20 @@ fn a_flushed_and_reopened_decoder_decodes_the_next_stream() {
     assert_eq!(decoder.send(fixture, 3), 0, "the reopened context takes the stream's key frame");
     let Received::Frame(frame) = decoder.receive() else { panic!("no picture after reopening") };
     assert_eq!(frame.info().pts, 3);
+
+    // V4L2 M2M keeps its dimensions across reopen so avcodec_open2 sees the stream size.
+    decoder.hardware = Hardware::V4l2m2m;
+    unsafe {
+        (*decoder.context).width = 1920;
+        (*decoder.context).height = 1080;
+        (*decoder.context).coded_width = 1920;
+        (*decoder.context).coded_height = 1088;
+    }
+    decoder.reopen().expect("reopen preserves V4L2 M2M dimensions");
+    unsafe {
+        assert_eq!(((*decoder.context).width, (*decoder.context).height), (1920, 1080));
+        assert_eq!(((*decoder.context).coded_width, (*decoder.context).coded_height), (1920, 1088));
+    }
 }
 
 #[test]

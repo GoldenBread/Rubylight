@@ -81,9 +81,9 @@ public final class ClientHintBitrateController {
             stableSamples = 0;
             lossStreak++;
         } else if (lossPercent > 2) {
+            stableSamples = 0;
             if (++lossStreak >= 2) {
                 target = currentKbps * 0.9;
-                stableSamples = 0;
             }
         } else if (lossPercent > 0.5f) {
             lossStreak++;

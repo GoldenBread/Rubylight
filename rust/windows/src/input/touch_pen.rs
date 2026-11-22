@@ -404,6 +404,7 @@ impl Injector {
                     .context("native pen input unavailable")?
             }),
         };
+        let was_active = self.pen.pointerInfo.pointerFlags != POINTER_FLAG_NONE;
         // SAFETY: The live pen device and the initialized pen frame remain valid throughout injection.
         let result = unsafe {
             inject_pointer(
@@ -414,7 +415,7 @@ impl Injector {
                 }],
             )
         };
-        self.pen = pen_after(frame, event, result.is_err());
+        self.pen = pen_after_with_prior(was_active, frame, event, result.is_err());
         self.pen_refreshed = std::time::Instant::now();
         result
     }
@@ -541,13 +542,22 @@ fn pen_cancel(pen: POINTER_PEN_INFO) -> Option<POINTER_PEN_INFO> {
     )
 }
 /// The pen after a frame: edge flags last one frame. A pen that ended, or
-/// that Windows refused to put down and so never saw, is inactive whether or
-/// not the frame went through; otherwise the refresh would inject the stale
-/// frame again every 250 ms.
-fn pen_after(mut pen: POINTER_PEN_INFO, event: u8, failed: bool) -> POINTER_PEN_INFO {
+/// that Windows refused to put down or bring into range and so never saw, is
+/// inactive whether or not the frame went through; otherwise the refresh would
+/// inject the stale frame again every 250 ms.
+#[cfg_attr(not(test), allow(dead_code))]
+fn pen_after(pen: POINTER_PEN_INFO, event: u8, failed: bool) -> POINTER_PEN_INFO {
+    pen_after_with_prior(true, pen, event, failed)
+}
+fn pen_after_with_prior(
+    was_active: bool,
+    mut pen: POINTER_PEN_INFO,
+    event: u8,
+    failed: bool,
+) -> POINTER_PEN_INFO {
     let flags = pen.pointerInfo.pointerFlags;
     pen.pointerInfo.pointerFlags = if matches!(event, 2 | 4 | 6 | 7)
-        || (failed && flags & POINTER_FLAG_DOWN != POINTER_FLAG_NONE)
+        || (failed && (flags & POINTER_FLAG_DOWN != POINTER_FLAG_NONE || !was_active))
     {
         POINTER_FLAG_NONE
     } else {

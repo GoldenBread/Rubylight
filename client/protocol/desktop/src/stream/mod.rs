@@ -671,6 +671,8 @@ pub struct Streaming {
     /// What those presents met besides the beam (`scan_sync`): how long the drawing and the flip
     /// took, and the presents that found the one before still on its way.
     scan_tally: scan_sync::Tally,
+    /// Cached D3D11 event query for `scan_sync::finish_drawing`, dropped when the stream ends.
+    scan_query: scan_sync::DrawQuery,
     /// A `VrrSync::Scan` present has its drawing finished first and waits for the present before
     /// it to start its scan. `NIGHTJAR_VRR_SETTLE=0` leaves it to the beam's reading alone, as
     /// Nightjar 5.3.0 had it, and only counts (a measurement switch).
@@ -1193,6 +1195,7 @@ impl Streaming {
             phase_steady_windows: std::env::var("NIGHTJAR_PHASE_STEADY_WINDOWS").ok().and_then(|windows| windows.parse().ok()).unwrap_or(phase::STEADY_WINDOWS),
             scan_waits: (0, 0),
             scan_tally: scan_sync::Tally::default(),
+            scan_query: scan_sync::DrawQuery::default(),
             scan_settles: env_flag("NIGHTJAR_VRR_SETTLE") != Some(false),
             keeper: None,
             keeper_on: false,

@@ -827,7 +827,8 @@ fn credentials_are_locked_again_when_resetting_the_profile_fails() -> Result<()>
         restricted,
         [
             (temp.path().join("Butterpollo"), true),
-            (profile.join("credentials"), false)
+            (profile.join("credentials"), false),
+            (profile.join("backups"), false),
         ]
     );
     Ok(())

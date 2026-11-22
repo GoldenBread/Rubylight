@@ -508,3 +508,29 @@ fn controller_pcm_shares_the_budget_and_released_reserves_recover_slowly() {
     assert_eq!(c.reason, "client_controlled");
     assert!(!c.budget_unusable());
 }
+
+#[test]
+fn wire_budget_accounts_for_passthrough_audio_codecs() {
+    use rubylight_protocol::audio_ext::{CODEC_AC3, CODEC_EAC3, CODEC_OPUS, CODEC_PCM};
+    let budget_for = |audio_codec, audio_channels, audio_quality| {
+        WireBudget::of(&Negotiated {
+            audio_codec,
+            audio_channels,
+            audio_quality,
+            ..Default::default()
+        })
+        .audio_bps
+    };
+    // Opus: channels * (256 or 96) kbps * 1500 + 500_000.
+    assert_eq!(budget_for(0, 6, false), 6 * 96 * 1500 + 500_000);
+    assert_eq!(budget_for(CODEC_OPUS, 8, true), 8 * 256 * 1500 + 500_000);
+    // PCM: 48 kHz * 16-bit * channels = 768 kbps/ch.
+    assert_eq!(budget_for(CODEC_PCM, 2, false), 2 * 768 * 1500 + 500_000);
+    assert_eq!(budget_for(CODEC_PCM, 12, false), 12 * 768 * 1500 + 500_000);
+    // AC3: negotiated per-channel bitrate (640 kbps for 5.1, 192 kbps for stereo).
+    assert_eq!(budget_for(CODEC_AC3, 6, false), 640 * 1500 + 500_000);
+    assert_eq!(budget_for(CODEC_AC3, 2, false), 192 * 1500 + 500_000);
+    // E-AC3: negotiated per-channel bitrate (1024 kbps for 7.1) or 1536 kbps fallback.
+    assert_eq!(budget_for(CODEC_EAC3, 8, false), 1024 * 1500 + 500_000);
+    assert_eq!(budget_for(CODEC_EAC3, 12, false), 1536 * 1500 + 500_000);
+}

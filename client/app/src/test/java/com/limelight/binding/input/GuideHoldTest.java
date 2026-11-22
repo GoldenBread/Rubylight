@@ -302,10 +302,26 @@ public class GuideHoldTest {
             usb(handler, GUIDE);
             usb(handler, 0);
             List<Integer> tap = connection.buttons.subList(before, connection.buttons.size());
-            assertEquals("a short press is a Guide tap", GUIDE, (int) tap.get(tap.size() - 2));
+            assertEquals("a short press is a Guide tap", GUIDE, (int) tap.get(tap.size() - 1));
+            idle(24);
+            assertEquals(GUIDE, connection.last());
+            idle(1);
             assertEquals(0, connection.last());
             idle(2000);
             assertEquals(1, activity.menuCount);
+
+            // Pressing Guide again while a USB Guide tap is still held ends the tap first and holds the new press.
+            usb(handler, GUIDE);
+            usb(handler, 0);
+            assertEquals(GUIDE, connection.last());
+            idle(10);
+            int repressStart = connection.buttons.size();
+            usb(handler, GUIDE);
+            assertEquals("tap ended before new press", List.of(0, 0),
+                    connection.buttons.subList(repressStart, connection.buttons.size()));
+            idle(1000);
+            assertEquals("new press opens the menu", 2, activity.menuCount);
+            usb(handler, 0);
         } finally {
             handler.destroy();
         }

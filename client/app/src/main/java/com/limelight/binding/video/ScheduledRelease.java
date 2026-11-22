@@ -61,12 +61,11 @@ final class ScheduledRelease {
     long run(boolean droppedBefore, long contentIntervalNs, boolean capActive) {
         boolean dropped = droppedBefore;
         boolean late;
-        long basisNs;
         for (;;) {
             long readyNs = port.nanoTime();
             port.timing(timing);
             // The clock learns lateness against this time; it must be the same for every frame.
-            basisNs = timing.grid ? readyNs + Math.max(0, timing.deadlineNs) : readyNs;
+            long basisNs = timing.grid ? readyNs + Math.max(0, timing.deadlineNs) : readyNs;
             late = scheduler.isLate(port.heldPtsUs(), basisNs, contentIntervalNs);
             if (PresentScheduler.dropLate(late, true, dropped) && replace("late", basisNs)) {
                 dropped = true;
@@ -95,7 +94,7 @@ final class ScheduledRelease {
             dueNs = plan.vsyncNs;
             holdNs = plan.holdNs;
         } else {
-            releaseNs = dueNs = port.fallbackPresentNs(ptsUs, timing.grid ? basisNs : readyNs);
+            releaseNs = dueNs = port.fallbackPresentNs(ptsUs, readyNs);
             holdNs = releaseNs - readyNs;
         }
         long nowNs = port.nanoTime();

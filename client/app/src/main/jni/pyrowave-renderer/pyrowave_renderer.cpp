@@ -283,7 +283,7 @@ namespace {
                 driver->library = openDriver(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM,
                         nullptr, hooks.c_str(), directory.c_str(), name.c_str(), nullptr, nullptr, &driver->loaded,
                         driver->error, sizeof(driver->error));
-                if (driver->library == nullptr) {
+                if (driver->library == nullptr && driver->error[0] == '\0') {
                     snprintf(driver->error, sizeof(driver->error),
                              "adrenotools could not open the system Vulkan loader with its hooks");
                 }
@@ -962,6 +962,7 @@ namespace {
                 countEarly(records.submitFrame(data, length, [this] { pyrowave_decoder_clear(decoder); },
                                                [this, data, length] { return pushFrame(data, length); },
                                                sdkPush(), pushed));
+                lastRecordLossPercent.store(records.lossPercent, std::memory_order_relaxed);
                 if (!pushed) return SUBMIT_SKIPPED;
                 // Intra-only: a frame missing packets still decodes, with lost detail.
                 if (!pyrowave_decoder_decode_is_ready(decoder, false)) {
@@ -1464,17 +1465,17 @@ namespace {
                 std::vector<VkPresentModeKHR> modes(modeCount);
                 if (!check(vk.GetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &modeCount, modes.data()), "present modes")) return false;
                 modes.resize(modeCount);
+                VkPresentModeKHR selectedMode = VK_PRESENT_MODE_FIFO_KHR;
                 if (fifoLatestReadyFeatures.presentModeFifoLatestReady &&
                     std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_FIFO_LATEST_READY_EXT) != modes.end()) {
-                    presentMode = VK_PRESENT_MODE_FIFO_LATEST_READY_EXT;
+                    selectedMode = VK_PRESENT_MODE_FIFO_LATEST_READY_EXT;
                 } else if (std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != modes.end()) {
                     // The newest frame replaces a queued one instead of waiting behind it. With
                     // FIFO a stream at the display's own rate keeps the queue full, a constant
                     // extra frame or two of delay.
-                    presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
-                } else {
-                    presentMode = VK_PRESENT_MODE_FIFO_KHR;
+                    selectedMode = VK_PRESENT_MODE_MAILBOX_KHR;
                 }
+                presentMode.store(selectedMode, std::memory_order_relaxed);
             }
 
             if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) return false;
@@ -1508,7 +1509,8 @@ namespace {
             info.preTransform = static_cast<VkSurfaceTransformFlagBitsKHR>(transform);
             info.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ?
                 VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
-            info.presentMode = presentMode;
+            const VkPresentModeKHR activePresentMode = presentMode.load(std::memory_order_relaxed);
+            info.presentMode = activePresentMode;
             info.clipped = VK_TRUE;
             info.oldSwapchain = swapchain;
 
@@ -1519,7 +1521,7 @@ namespace {
             }
             if (swapchain == VK_NULL_HANDLE) {
                 LOGI("Present mode: %s (display %.2f Hz, stream %d fps)",
-                     presentModeName(presentMode), displayRefreshRateHz, frameRateHz);
+                     presentModeName(activePresentMode), displayRefreshRateHz, frameRateHz);
             }
             destroySwapchainResources();
             if (swapchain != VK_NULL_HANDLE) {
@@ -1560,7 +1562,7 @@ namespace {
             if (submissionDiagnostics.isEnabled()) {
                 LOGI("PyroWave swapchain profile: min=%u max=%u requested=%u actual=%u mode=%s "
                      "logical=%ux%u buffer=%ux%u transform=%u format=%u",
-                     caps.minImageCount, caps.maxImageCount, imageCount, count, presentModeName(presentMode),
+                     caps.minImageCount, caps.maxImageCount, imageCount, count, presentModeName(activePresentMode),
                      displayExtent.width, displayExtent.height, swapchainExtent.width, swapchainExtent.height,
                      uint32_t(info.preTransform), uint32_t(swapchainFormat));
             }
@@ -2437,7 +2439,7 @@ namespace {
             }
             vk.DestroyFence(device, initializationFence, nullptr);
             LOGI("Present mode %s, asynchronous decode with up to %d frames in flight",
-                 presentModeName(presentMode), PyroWaveSchedule::MAX_IN_FLIGHT);
+                 presentModeName(presentMode.load(std::memory_order_relaxed)), PyroWaveSchedule::MAX_IN_FLIGHT);
             return true;
         }
 
@@ -2458,8 +2460,13 @@ namespace {
 
         bool pushFrame(const uint8_t *data, size_t length) {
             auto push = sdkPush();
-            if (length >= 4 && pyroReadLe32(data) == 0) return records.pushFrame(data, length, push);
+            if (length >= 4 && pyroReadLe32(data) == 0) {
+                const bool ok = records.pushFrame(data, length, push);
+                lastRecordLossPercent.store(records.lossPercent, std::memory_order_relaxed);
+                return ok;
+            }
             records.lossPercent = 0;
+            lastRecordLossPercent.store(0.0f, std::memory_order_relaxed);
             return pushPyroWaveFrame(data, length, push);
         }
 
@@ -2967,7 +2974,7 @@ namespace {
         // picture: without a time to present it at, a FIFO swapchain would show it ahead of a new
         // picture presented for the same vsync, a vsync late (as VulkanRenderer::warpRefresh()).
         bool warpRedraws() const {
-            return displayTimingSupported || presentMode == VK_PRESENT_MODE_MAILBOX_KHR;
+            return displayTimingSupported || presentMode.load(std::memory_order_relaxed) == VK_PRESENT_MODE_MAILBOX_KHR;
         }
 
         // Frame Warp, present thread: whether to wake at the next vsync for a redraw rather than sleep
@@ -3126,7 +3133,7 @@ namespace {
                 if (++nextPresentId == 0) ++nextPresentId;
                 presentTime.presentID = nextPresentId;
                 // A mailbox replaces it anyway
-                presentTime.desiredPresentTime = presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? 0 : uint64_t(nowNs());
+                presentTime.desiredPresentTime = presentMode.load(std::memory_order_relaxed) == VK_PRESENT_MODE_MAILBOX_KHR ? 0 : uint64_t(nowNs());
                 presentTimes.swapchainCount = 1;
                 presentTimes.pTimes = &presentTime;
                 presentInfo.pNext = &presentTimes;
@@ -3733,7 +3740,7 @@ namespace {
         bool hlgReadbackPending = false;
         // What the surface listed when the format was chosen; a transfer change keeps the format.
         std::vector<PyroSurfaceFormat> surfaceFormats;
-        VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        std::atomic<VkPresentModeKHR> presentMode{VK_PRESENT_MODE_FIFO_KHR};
         VkSwapchainKHR swapchain = VK_NULL_HANDLE;
         VkExtent2D swapchainExtent = {};
         PyroWaveExtent displayExtent = {};
@@ -3887,7 +3894,7 @@ namespace {
             warpNumbered = true;
         }
 
-        const char *getPresentModeName() const { return presentModeName(presentMode); }
+        const char *getPresentModeName() const { return presentModeName(presentMode.load(std::memory_order_relaxed)); }
         // Real VRR: frames are shown at the PC's frame times. Set by create(), then constant.
         bool showsHostTimes() const { return framePacingMode == HOST_TIMES_MODE; }
         std::string driverDescription;
@@ -3912,6 +3919,7 @@ namespace {
         // frames whose chunks were not the frame and went whole.
         std::atomic<float> lastEarlyPercent{-1};
         std::atomic<uint32_t> lastEarlyFallbacks{0};
+        std::atomic<float> lastRecordLossPercent{0.0f};
         bool displayTimingSupported = false;
         // Filled by completion/presentation workers, drained by nativePollRenderedFrames.
         std::mutex eventsMutex;
@@ -4495,6 +4503,7 @@ JNIEXPORT jboolean JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativePollRenderedFrames(JNIEnv *env, jclass, jlong handle,
                                                                                  jobject stats) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
+    if (renderer == nullptr) return JNI_FALSE;
     const jboolean timing = renderer->displayTimingSupported ? JNI_TRUE : JNI_FALSE;
     // Output completions precede their releases (including replaced frames), which
     // in turn precede display times. All three queues are drained atomically.
@@ -4542,6 +4551,7 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetLastGpuDecodeU
 JNIEXPORT jfloatArray JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetEarlyRecords(JNIEnv *env, jclass, jlong handle) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
+    if (renderer == nullptr) return nullptr;
     jfloat values[2] = {renderer->lastEarlyPercent, float(renderer->lastEarlyFallbacks.load())};
     jfloatArray result = env->NewFloatArray(2);
     if (result != nullptr) env->SetFloatArrayRegion(result, 0, 2, values);
@@ -4551,6 +4561,7 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetEarlyRecords(J
 JNIEXPORT jfloatArray JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetWaits(JNIEnv *env, jclass, jlong handle) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
+    if (renderer == nullptr) return nullptr;
     jfloat values[4] = {renderer->lastWaitFreeSlotMs, renderer->lastWaitImageMs, renderer->lastReplacedPercent,
                         renderer->lastHostHoldMs};
     jfloatArray result = env->NewFloatArray(4);
@@ -4561,6 +4572,7 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetWaits(JNIEnv *
 JNIEXPORT jstring JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetPresentMode(JNIEnv *env, jclass, jlong handle) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
+    if (renderer == nullptr) return env->NewStringUTF("unavailable");
     std::string mode = renderer->getPresentModeName();
     // Real VRR, in the words the desktop overlay's Pacing line has for it.
     if (renderer->showsHostTimes()) mode += ", PC frame times";
@@ -4593,25 +4605,29 @@ Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSetGpuMaxClocks(J
 JNIEXPORT jfloat JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeGetLastRecordLossPercent(JNIEnv *, jclass, jlong handle) {
     auto *renderer = reinterpret_cast<Renderer *>(handle);
-    return renderer != nullptr ? renderer->records.lossPercent : 0;
+    return renderer != nullptr ? renderer->lastRecordLossPercent.load(std::memory_order_relaxed) : 0;
 }
 
 JNIEXPORT void JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSetHdrMode(JNIEnv *env, jclass, jlong handle,
                                                                        jboolean enabled, jbyteArray metadata) {
+    auto *renderer = reinterpret_cast<Renderer *>(handle);
+    if (renderer == nullptr) return;
     uint8_t bytes[24];
     bool valid = metadata && env->GetArrayLength(metadata) >= 24;
     if (valid) {
         env->GetByteArrayRegion(metadata, 0, 24, reinterpret_cast<jbyte *>(bytes));
         if (env->ExceptionCheck()) return;
     }
-    reinterpret_cast<Renderer *>(handle)->setHdrMode(enabled, valid ? bytes : nullptr);
+    renderer->setHdrMode(enabled, valid ? bytes : nullptr);
 }
 
 JNIEXPORT void JNICALL
 Java_com_limelight_binding_video_PyroWaveDecoderRenderer_nativeSetTransfer(JNIEnv *, jclass, jlong handle,
                                                                        jboolean hlg) {
-    reinterpret_cast<Renderer *>(handle)->setTransfer(hlg);
+    auto *renderer = reinterpret_cast<Renderer *>(handle);
+    if (renderer == nullptr) return;
+    renderer->setTransfer(hlg);
 }
 
 // Frame Warp for this stream (docs/frame-warp.md): `api` is MoonBridge.frameWarpApi(), the table in

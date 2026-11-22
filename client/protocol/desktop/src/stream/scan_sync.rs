@@ -441,6 +441,16 @@ impl Tally {
     }
 }
 
+/// Cached D3D11 event query for [`finish_drawing`], owned by the stream so its COM reference
+/// drops when the stream ends rather than outliving the renderer in thread-local storage.
+#[cfg(windows)]
+#[derive(Default)]
+pub struct DrawQuery(Option<(usize, windows::Win32::Graphics::Direct3D11::ID3D11Query)>);
+
+#[cfg(not(windows))]
+#[derive(Default)]
+pub struct DrawQuery;
+
 /// Waits for the GPU to finish what this thread has drawn (a D3D11 event query behind the draws),
 /// so the present that follows is all that is left before the picture can be shown. Returns how
 /// long that took, None when it could not be asked or took longer than `limit`.
@@ -448,29 +458,51 @@ impl Tally {
 /// # Safety
 /// `renderer` is the live renderer of this thread.
 #[cfg(windows)]
-pub unsafe fn finish_drawing(renderer: *mut sdl3_sys::everything::SDL_Renderer, limit: std::time::Duration) -> Option<std::time::Duration> {
+pub unsafe fn finish_drawing(renderer: *mut sdl3_sys::everything::SDL_Renderer, limit: std::time::Duration, cache: &mut DrawQuery) -> Option<std::time::Duration> {
     use sdl3_sys::everything::{SDL_FlushRenderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER};
     use windows::core::Interface;
-    use windows::Win32::Graphics::Direct3D11::{ID3D11Device, D3D11_QUERY_DESC, D3D11_QUERY_EVENT};
-    let device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
-    let device = ID3D11Device::from_raw_borrowed(&device)?;
+    use windows::Win32::Graphics::Direct3D11::{
+        ID3D11Device, D3D11_ASYNC_GETDATA_DONOTFLUSH, D3D11_QUERY_DESC, D3D11_QUERY_EVENT,
+    };
+    let device_ptr = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
+    let device = ID3D11Device::from_raw_borrowed(&device_ptr)?;
     // SDL's own draws reach the context first.
     if !SDL_FlushRenderer(renderer) { return None; }
-    let mut query = None;
-    device.CreateQuery(&D3D11_QUERY_DESC { Query: D3D11_QUERY_EVENT, MiscFlags: 0 }, Some(&mut query)).ok()?;
-    let query = query?;
+    let key = device_ptr as usize;
+    if !cache.0.as_ref().is_some_and(|(cached_dev, _)| *cached_dev == key) {
+        cache.0 = None;
+        let mut created = None;
+        device.CreateQuery(&D3D11_QUERY_DESC { Query: D3D11_QUERY_EVENT, MiscFlags: 0 }, Some(&mut created)).ok()?;
+        cache.0 = Some((key, created?));
+    }
+    let query = cache.0.as_ref()?.1.clone();
     let context = device.GetImmediateContext().ok()?;
     let begun = std::time::Instant::now();
     context.End(&query);
     context.Flush();
     // An event query's data is a BOOL, true once everything before it is done; until then the
-    // call succeeds (S_FALSE) and leaves it alone.
+    // call succeeds (S_FALSE) and leaves it alone. DONOTFLUSH avoids re-flushing on every poll,
+    // and yielding keeps the shared multithreaded immediate-context lock free for the decode thread.
     let mut done = 0i32;
+    let mut polls = 0u32;
     loop {
-        if context.GetData(&query, Some(std::ptr::from_mut(&mut done).cast()), std::mem::size_of::<i32>() as u32, 0).is_err() { return None; }
+        if context.GetData(
+            &query,
+            Some(std::ptr::from_mut(&mut done).cast()),
+            std::mem::size_of::<i32>() as u32,
+            D3D11_ASYNC_GETDATA_DONOTFLUSH.0 as u32,
+        ).is_err() {
+            cache.0 = None;
+            return None;
+        }
         if done != 0 { return Some(begun.elapsed()); }
         if begun.elapsed() >= limit { return None; }
-        std::hint::spin_loop();
+        polls += 1;
+        if polls < 4 {
+            std::thread::yield_now();
+        } else {
+            std::thread::sleep(std::time::Duration::from_micros(50));
+        }
     }
 }
 
@@ -479,7 +511,7 @@ pub unsafe fn finish_drawing(renderer: *mut sdl3_sys::everything::SDL_Renderer, 
 /// # Safety
 /// Nothing to uphold here; the signature is the Windows one's.
 #[cfg(not(windows))]
-pub unsafe fn finish_drawing(_renderer: *mut sdl3_sys::everything::SDL_Renderer, _limit: std::time::Duration) -> Option<std::time::Duration> { None }
+pub unsafe fn finish_drawing(_renderer: *mut sdl3_sys::everything::SDL_Renderer, _limit: std::time::Duration, _cache: &mut DrawQuery) -> Option<std::time::Duration> { None }
 
 #[cfg(test)]
 mod tests;

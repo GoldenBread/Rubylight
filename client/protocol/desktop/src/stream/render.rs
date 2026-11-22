@@ -557,7 +557,7 @@ impl Streaming {
         // finished first, it reached a 240 Hz display 1.5 ms later at the median on uneven content.
         if syncs && self.scan_settles && (beam.scan_left_ns(&sample).is_some() || self.flip_on_its_way(&beam, &sample).is_some()) {
             // SAFETY: the live renderer of this thread.
-            match unsafe { scan_sync::finish_drawing(renderer, Duration::from_nanos(scan_sync::DRAWING_LIMIT_NS)) } {
+            match unsafe { scan_sync::finish_drawing(renderer, Duration::from_nanos(scan_sync::DRAWING_LIMIT_NS), &mut self.scan_query) } {
                 Some(took) => self.scan_tally.drawing.push(took.as_nanos() as u64),
                 None => self.scan_tally.undrawn += 1,
             }
@@ -1069,7 +1069,13 @@ impl Streaming {
                             let reused = if fresh { None } else { self.metalfx.as_ref().and_then(|pass| pass.output()) };
                             let drawn = match reused {
                                 Some(scaled) => Some(scaled),
-                                None => self.metalfx.as_mut().and_then(|pass| pass.draw(renderer, buffer, &info)),
+                                None => {
+                                    // `pass.draw` waits synchronously on the GPU (`[command waitUntilCompleted]`).
+                                    self.direct_motion.presenting(Some(self.direct_rules(SDL_GetRenderWindow(renderer))));
+                                    let drawn = self.metalfx.as_mut().and_then(|pass| pass.draw(renderer, buffer, &info));
+                                    self.direct_motion.presenting(None);
+                                    drawn
+                                }
                             };
                             match drawn {
                                 Some(scaled) => texture = scaled,
@@ -1156,7 +1162,12 @@ impl Streaming {
         // VRR present with sync interval 1 once Tear-free VRR turned to it, or when the wait would
         // cost the next picture its turn (`scan_sync::ScanWait::Latch`), in the swap chain.
         let mode_tears = self.pacer.mode != PacingMode::Vsync;
-        let holds = !mode_tears || (probe && self.vrr.sync == present::VrrSync::Scan && self.scan_settles) || self.vrr.distrusted;
+        let holds = !mode_tears
+            || self.vrr.distrusted
+            || (cfg!(target_os = "macos") && self.pacer.mode == PacingMode::HostTimes)
+            || self.vrr.sync == present::VrrSync::Present1
+            || (probe && matches!(self.vrr.sync, present::VrrSync::Blank | present::VrrSync::Scan))
+            || (probe && self.pacer.mode == PacingMode::HostTimes && self.keeper_on && self.keeper_repeats);
         if holds {
             // SAFETY: a live renderer.
             self.direct_motion.presenting(Some(self.direct_rules(unsafe { SDL_GetRenderWindow(renderer) })));
@@ -1553,13 +1564,14 @@ impl Streaming {
             }
         }
         // Keys, clicks and controllers leave from their own threads while fractional V-Sync holds the
-        // picture and the commit waits for its refresh, as in the renderer's present (`render_flip`);
+        // picture or the KMS commit can block on a refresh, as in the renderer's present (`render_flip`);
         // the overlay is drawn before. With Frame Warp the hold came before its shift and gave the
         // input back (`hold_for_turn_lending`), so it is lent again only for the commit's wait.
-        let lends = picture && self.vrr.held(self.pacer.mode) > 1;
+        let holds = picture && self.vrr.held(self.pacer.mode) > 1;
+        let lends = holds || self.kms.as_ref().is_some_and(kms_scanout::Scanout::may_block);
         if lends { self.direct_motion.presenting(Some(self.direct_rules(window))); }
         // KMS has no margin to call for a renderer: `held_margin_us` answers before it would.
-        if lends && self.frame_warp.is_none() { self.hold_for_turn(std::ptr::null_mut()); }
+        if holds && self.frame_warp.is_none() { self.hold_for_turn(std::ptr::null_mut()); }
         let issued_us = session::now_us();
         let committed = self.kms.as_mut().map_or(Ok(()), kms_scanout::Scanout::commit);
         let returned_us = session::now_us();

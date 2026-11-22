@@ -173,6 +173,9 @@ pub(super) fn clipboard_client(
     }) {
         bail!("clipboard access is off for background streams");
     }
+    if !sessions.iter().any(|s| h.device_guests.full_access(s)) {
+        bail!("clipboard access requires keyboard and mouse permission");
+    }
     Ok((kind, client.uuid))
 }
 pub(super) async fn clipboard_read(
@@ -325,4 +328,39 @@ fn clipboard_image_failure(doing: &str, error: &anyhow::Error, malformed: Status
     };
     tracing::warn!("Clipboard: {doing} an image failed ({status}): {error:#}");
     status.into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{Session, test_support::Fixture};
+    use butterpollo_core::{multiclient::LAUNCH_OPTION, session::Role};
+
+    #[test]
+    fn clipboard_client_refuses_guest_without_full_access() {
+        let f = Fixture::new();
+        let client = f.client((1 << 17) | (1 << 16) | (1 << 25));
+        let conn = f.connection(true);
+        let mut args = Args::new();
+        args.insert("type".into(), "text".into());
+
+        // Guest session without KBM permission (or no matching guest record): refused.
+        let mut guest_launch = f.launch(client.clone(), Role::Stream);
+        guest_launch
+            .options
+            .insert(LAUNCH_OPTION.into(), "999".into());
+        let guest_session = Session::new(guest_launch, Default::default());
+        f.host
+            .sessions
+            .lock()
+            .unwrap()
+            .active
+            .insert(guest_session.launch.id.clone(), guest_session);
+        assert!(clipboard_client(&f.host, &conn, 1 << 17, &args).is_err());
+
+        // Owner (non-guest) active session: permitted.
+        f.host.sessions.lock().unwrap().active.clear();
+        let _owner = f.session(client, Role::Stream);
+        assert!(clipboard_client(&f.host, &conn, 1 << 17, &args).is_ok());
+    }
 }

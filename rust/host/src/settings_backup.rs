@@ -81,6 +81,24 @@ fn backups(directory: &Path) -> PathBuf {
     directory.join(core::BACKUPS)
 }
 
+fn ensure_backups_dir(directory: &Path) -> Result<PathBuf> {
+    let folder = backups(directory);
+    if butterpollo_windows::process::is_system() {
+        match std::fs::symlink_metadata(&folder) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                butterpollo_windows::process::create_folder_administrators_only(&folder)?;
+            }
+            Err(error) => return Err(error.into()),
+            Ok(_) => {}
+        }
+        butterpollo_windows::process::restrict_to_administrators(&folder)
+            .with_context(|| format!("securing {}", folder.display()))?;
+    } else {
+        std::fs::create_dir_all(&folder)?;
+    }
+    Ok(folder)
+}
+
 /// The pending archive an `inspect` answered with `token`.
 fn pending(directory: &Path, token: &str) -> Result<PathBuf> {
     if token.len() != 32 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -115,7 +133,8 @@ pub fn inspect(directory: &Path, bytes: &[u8]) -> Result<Value> {
     let archive = core::read(std::io::Cursor::new(bytes))?;
     let summary = core::summarize(&archive, directory);
     let token = hex::encode(butterpollo_core::crypto::random::<16>());
-    let path = backups(directory).join(format!("{PENDING_PREFIX}{token}.zip"));
+    let folder = ensure_backups_dir(directory)?;
+    let path = folder.join(format!("{PENDING_PREFIX}{token}.zip"));
     butterpollo_core::state::atomic_write(&path, bytes)?;
     remove_pending(directory, Some(&path));
     Ok(json!({"status": true, "token": token, "summary": summary}))
@@ -132,12 +151,12 @@ pub fn restore(h: &Shared, token: &str) -> Result<Value> {
     // The pending file is checked again: it sat on disk since `inspect`.
     core::read(std::io::BufReader::new(std::fs::File::open(&path)?))
         .context("the uploaded backup can no longer be read")?;
-    let before = backups(directory).join(format!("before-restore-{}.zip", now_unix()));
+    let folder = ensure_backups_dir(directory)?;
+    let before = folder.join(format!("before-restore-{}.zip", now_unix()));
     butterpollo_core::state::atomic_write(&before, &export(directory, true)?)
         .context("the current settings could not be saved first, so nothing was restored")?;
     prune_before_restore(directory);
-    std::fs::rename(&path, backups(directory).join(core::STAGED))
-        .context("the backup could not be staged")?;
+    std::fs::rename(&path, folder.join(core::STAGED)).context("the backup could not be staged")?;
     remove_pending(directory, None);
     tracing::info!(saved = %before.display(), "settings restore staged; restarting");
     h.restart.store(true, std::sync::atomic::Ordering::Release);
@@ -190,7 +209,10 @@ pub fn export_from_tray(h: &Shared) -> Result<PathBuf> {
         .join("Rubylight")
         .join(file_name(false));
     let bytes = export(&h.directory, false)?;
-    butterpollo_core::state::atomic_write(&path, &bytes)?;
+    butterpollo_windows::user_folder::as_user(|| {
+        butterpollo_core::state::atomic_write(&path, &bytes)
+    })
+    .map_err(anyhow::Error::from)??;
     Ok(path)
 }
 

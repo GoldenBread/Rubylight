@@ -657,12 +657,16 @@ pub(super) fn retain_launch_app(
         return;
     }
     if launch.role == Role::Stream {
-        *h.app_audio.lock().unwrap() = launch
-            .audio_preparation
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|route| route.route());
+        if launch.guest().is_none()
+            && let Some(route) = launch
+                .audio_preparation
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|route| route.route())
+        {
+            *h.app_audio.lock().unwrap() = Some(route);
+        }
         if let Some(lease) = launch
             .preparation
             .lock()

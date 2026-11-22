@@ -866,11 +866,18 @@ impl Upgraded {
                 }
             }
             let mut probe = [0];
-            self.socket.peek(&mut probe)?;
+            match self.socket.peek(&mut probe) {
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
             let mut tls = self.tls();
             let UpgradedTls { conn, socket, .. } = &mut *tls;
-            if conn.read_tls(socket)? == 0 {
-                return Ok(0);
+            match conn.read_tls(socket) {
+                Ok(0) => return Ok(0),
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
             }
             conn.process_new_packets().map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
         }

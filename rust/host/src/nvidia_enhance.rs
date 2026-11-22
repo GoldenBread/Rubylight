@@ -260,6 +260,29 @@ impl Enhancer {
         revision: u64,
         image: Arc<GpuImage>,
     ) -> (Arc<GpuImage>, bool) {
+        let wanted = self.resolve_choice(s, config, revision, &image);
+        self.inner.apply(s, config, wanted, image)
+    }
+
+    /// Whether the chosen enhancement differs from the one the encoder was
+    /// built for, checked without running GPU inference on deferred frames.
+    pub(crate) fn will_change(
+        &mut self,
+        s: &Session,
+        config: &Config,
+        revision: u64,
+        image: &GpuImage,
+    ) -> bool {
+        self.resolve_choice(s, config, revision, image) != self.inner.selected
+    }
+
+    fn resolve_choice(
+        &mut self,
+        s: &Session,
+        config: &Config,
+        revision: u64,
+        image: &GpuImage,
+    ) -> Enhancement {
         let device = image.gpu.key();
         if !self
             .inner
@@ -289,7 +312,11 @@ impl Enhancer {
             .parsed
             .as_ref()
             .map_or(Enhancement::None, |parsed| parsed.wanted);
-        self.inner.apply(s, config, wanted, image)
+        if self.inner.device == device && self.inner.failed == Some(wanted) {
+            Enhancement::None
+        } else {
+            wanted
+        }
     }
 
     /// The encoder's SDR white and linear scale while RTX HDR converts the
@@ -336,9 +363,9 @@ mod active {
         rtx_hdr: Option<truehdr::Filter>,
         rtx_video: Option<rtx_video::Filter>,
         /// An enhancement that failed on this capture: not retried each frame.
-        failed: Option<Enhancement>,
+        pub(super) failed: Option<Enhancement>,
         /// The capture device the filters were made on.
-        device: usize,
+        pub(super) device: usize,
         /// The choice and warning parsed for the runtime configuration's
         /// revision, this device and the picture's format: re-parsed only
         /// when one of them changed.

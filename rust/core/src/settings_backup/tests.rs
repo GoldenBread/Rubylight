@@ -371,24 +371,96 @@ fn settings_backup_restore_never_moves_where_this_pc_keeps_its_files() {
 
 #[test]
 fn console_sign_in_sessions_never_leave_in_a_backup_and_a_restore_keeps_the_targets() {
-    let state = br#"{"root":{"session_tokens":[{"hash":"theirs","username":"admin","address":"10.0.0.2","user_agent":"Browser"}],"display_aliases":{"a":"b"}}}"#;
-    let exported: Value = serde_json::from_slice(&without_sessions(state).unwrap()).unwrap();
-    assert!(exported["root"].get(SESSIONS).is_none(), "{exported}");
-    assert_eq!(
-        exported["root"]["display_aliases"]["a"], "b",
-        "the rest is kept"
+    let state = br#"{"root":{"session_tokens":[{"hash":"theirs","username":"admin","address":"10.0.0.2","user_agent":"Browser"}],"api_tokens":[{"hash":"their-api"}],"display_aliases":{"a":"b"}}}"#;
+    let exported_plain: Value =
+        serde_json::from_slice(&without_sessions(state, false).unwrap()).unwrap();
+    assert!(
+        exported_plain["root"].get(SESSIONS).is_none(),
+        "{exported_plain}"
     );
     assert!(
-        without_sessions(b"not json").is_none(),
+        exported_plain["root"].get(API_TOKENS).is_none(),
+        "{exported_plain}"
+    );
+    assert_eq!(
+        exported_plain["root"]["display_aliases"]["a"], "b",
+        "the rest is kept"
+    );
+    let exported_secrets: Value =
+        serde_json::from_slice(&without_sessions(state, true).unwrap()).unwrap();
+    assert!(
+        exported_secrets["root"].get(SESSIONS).is_none(),
+        "{exported_secrets}"
+    );
+    assert_eq!(
+        exported_secrets["root"][API_TOKENS],
+        json!([{"hash": "their-api"}])
+    );
+    assert!(
+        without_sessions(b"not json", false).is_none(),
         "an unreadable file stays out whole"
     );
-    // A restore writes the archive's settings with the target's own sessions.
-    let target = br#"{"root":{"session_tokens":[{"hash":"mine"}]}}"#;
+    // A non-secret restore writes the archive's settings with the target's own sessions and API tokens.
+    let target =
+        br#"{"root":{"session_tokens":[{"hash":"mine"}],"api_tokens":[{"hash":"my-api"}]}}"#;
     let restored: Value =
-        serde_json::from_slice(&keeping_sessions(state, Some(target)).unwrap()).unwrap();
+        serde_json::from_slice(&keeping_sessions(state, Some(target), false).unwrap()).unwrap();
     assert_eq!(restored["root"][SESSIONS], json!([{"hash":"mine"}]));
+    assert_eq!(restored["root"][API_TOKENS], json!([{"hash":"my-api"}]));
     assert_eq!(restored["root"]["display_aliases"]["a"], "b");
-    // A target without sessions gets none from the archive.
-    let fresh: Value = serde_json::from_slice(&keeping_sessions(state, None).unwrap()).unwrap();
+    // A secret restore keeps target sessions but restores archived API tokens.
+    let restored_secrets: Value =
+        serde_json::from_slice(&keeping_sessions(state, Some(target), true).unwrap()).unwrap();
+    assert_eq!(restored_secrets["root"][SESSIONS], json!([{"hash":"mine"}]));
+    assert_eq!(
+        restored_secrets["root"][API_TOKENS],
+        json!([{"hash":"their-api"}])
+    );
+    // A target without sessions or API tokens gets neither from a non-secret archive.
+    let fresh: Value =
+        serde_json::from_slice(&keeping_sessions(state, None, false).unwrap()).unwrap();
     assert!(fresh["root"].get(SESSIONS).is_none(), "{fresh}");
+    assert!(fresh["root"].get(API_TOKENS).is_none(), "{fresh}");
+}
+
+#[test]
+fn non_secret_backup_does_not_leak_or_overwrite_device_grants_or_invites() {
+    let source = profile();
+    write(
+        &source.path().join(PAIRED),
+        r#"{"root":{"named_devices":[{"name":"Phone","cert":"PEM","uuid":"d1","perm":7,"enabled":true,"host_control":true,"pairing_approve":true,"allow_sleep":true,"allow_restart_shutdown":true,"allow_usb":true,"coop_join":true,"shared_folders":["s"],"allow_client_commands":true,"invited":{"until":999},"display_mode":"1920x1080x60"}]}}"#,
+    );
+    let bytes = backup(source.path(), false);
+    let archive = read(Cursor::new(&bytes)).unwrap();
+    let devices = archive.json(DEVICES).unwrap();
+    let settings = &devices["devices"][0]["settings"];
+    assert_eq!(settings["display_mode"], "1920x1080x60");
+    for restricted in [
+        "host_control",
+        "pairing_approve",
+        "allow_sleep",
+        "allow_restart_shutdown",
+        "allow_usb",
+        "coop_join",
+        "shared_folders",
+        "allow_client_commands",
+        "invited",
+    ] {
+        assert!(settings.get(restricted).is_none(), "{restricted}");
+    }
+
+    let target = profile();
+    write(
+        &target.path().join(PAIRED),
+        r#"{"root":{"named_devices":[{"name":"Old","cert":"TARGET","uuid":"d1","perm":3,"enabled":true,"host_control":false,"allow_usb":false,"display_mode":"1280x720x60"}]}}"#,
+    );
+    apply(&archive, target.path(), String::new).unwrap();
+    let paired: Value =
+        serde_json::from_slice(&std::fs::read(target.path().join(PAIRED)).unwrap()).unwrap();
+    let device = &paired["root"]["named_devices"][0];
+    assert_eq!(device["display_mode"], "1920x1080x60");
+    assert_eq!(device["host_control"], false);
+    assert_eq!(device["allow_usb"], false);
+    assert!(device.get("pairing_approve").is_none());
+    assert!(device.get("invited").is_none());
 }

@@ -63,10 +63,16 @@ public class XboxOneController extends AbstractXboxController {
     };
 
     private byte seqNum = 0;
+    // Guards pending rumble state and output thread lifecycle. Separate from `this` so
+    // ackModeReport()'s 3000 ms USB write never blocks rumble() or rumbleTriggers().
+    private final Object outputLock = new Object();
     private short lowFreqMotor = 0;
     private short highFreqMotor = 0;
     private short leftTriggerMotor = 0;
     private short rightTriggerMotor = 0;
+    private boolean rumblePending;
+    private boolean outputStopped;
+    private volatile Thread outputThread;
 
     public XboxOneController(UsbDevice device, UsbDeviceConnection connection, int deviceId, UsbDriverListener listener) {
         super(device, connection, deviceId, listener);
@@ -187,14 +193,83 @@ public class XboxOneController extends AbstractXboxController {
             }
         }
 
+        startOutput();
         return true;
     }
 
-    private void sendRumblePacket() {
-        byte[] data = createRumblePacket(seqNum++, lowFreqMotor, highFreqMotor, leftTriggerMotor, rightTriggerMotor);
+    void startOutput() {
+        synchronized (outputLock) {
+            if (outputStopped || outputThread != null) {
+                return;
+            }
+            outputThread = new Thread(this::runOutput, "Xbox One USB output");
+            outputThread.start();
+        }
+    }
+
+    private void runOutput() {
+        try {
+            while (true) {
+                short low, high, leftTrigger, rightTrigger;
+                byte seq;
+                synchronized (outputLock) {
+                    while (!outputStopped && !rumblePending) {
+                        outputLock.wait();
+                    }
+                    if (outputStopped) {
+                        return;
+                    }
+                    rumblePending = false;
+                    low = lowFreqMotor;
+                    high = highFreqMotor;
+                    leftTrigger = leftTriggerMotor;
+                    rightTrigger = rightTriggerMotor;
+                    seq = seqNum++;
+                }
+                sendRumblePacket(seq, low, high, leftTrigger, rightTrigger);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void sendRumblePacket(byte seq, short low, short high, short leftTrigger, short rightTrigger) {
+        byte[] data = createRumblePacket(seq, low, high, leftTrigger, rightTrigger);
         int res = connection.bulkTransfer(outEndpt, data, data.length, 100);
         if (res != data.length) {
             LimeLog.warning("Rumble transfer failed: "+res);
+        }
+    }
+
+    @Override
+    public void stop() {
+        synchronized (outputLock) {
+            if (!outputStopped) {
+                outputStopped = true;
+                outputLock.notifyAll();
+                runOnUsbWorker(this::stopOutput);
+            }
+        }
+        super.stop();
+    }
+
+    private void stopOutput() {
+        Thread worker = outputThread;
+        if (worker != null) {
+            worker.interrupt();
+            try {
+                worker.join(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            outputThread = null;
+            if (outEndpt != null) {
+                byte seq;
+                synchronized (outputLock) {
+                    seq = seqNum++;
+                }
+                sendRumblePacket(seq, (short) 0, (short) 0, (short) 0, (short) 0);
+            }
         }
     }
 
@@ -212,17 +287,27 @@ public class XboxOneController extends AbstractXboxController {
     }
 
     @Override
-    public synchronized void rumble(short lowFreqMotor, short highFreqMotor) {
-        this.lowFreqMotor = lowFreqMotor;
-        this.highFreqMotor = highFreqMotor;
-        sendRumblePacket();
+    public void rumble(short lowFreqMotor, short highFreqMotor) {
+        synchronized (outputLock) {
+            if (!outputStopped) {
+                this.lowFreqMotor = lowFreqMotor;
+                this.highFreqMotor = highFreqMotor;
+                rumblePending = true;
+                outputLock.notifyAll();
+            }
+        }
     }
 
     @Override
-    public synchronized void rumbleTriggers(short leftTrigger, short rightTrigger) {
-        this.leftTriggerMotor = leftTrigger;
-        this.rightTriggerMotor = rightTrigger;
-        sendRumblePacket();
+    public void rumbleTriggers(short leftTrigger, short rightTrigger) {
+        synchronized (outputLock) {
+            if (!outputStopped) {
+                this.leftTriggerMotor = leftTrigger;
+                this.rightTriggerMotor = rightTrigger;
+                rumblePending = true;
+                outputLock.notifyAll();
+            }
+        }
     }
 
     private static class InitPacket {

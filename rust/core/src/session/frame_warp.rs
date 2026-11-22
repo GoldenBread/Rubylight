@@ -178,7 +178,7 @@ impl FrameWarpState {
     pub fn on_mouse(&self, dx: i16, dy: i16, at: Instant) {
         if self.enabled() && (dx != 0 || dy != 0) {
             let at_us = self.us(at);
-            self.push(Event::Mouse { dx, dy, at_us });
+            self.push_quietly(Event::Mouse { dx, dy, at_us });
         }
     }
 
@@ -186,7 +186,7 @@ impl FrameWarpState {
     pub fn on_controller(&self, number: u16, stick: (i16, i16), at: Instant) {
         if self.enabled() {
             let at_us = self.us(at);
-            self.push(Event::Controller {
+            self.push_quietly(Event::Controller {
                 number,
                 stick,
                 at_us,
@@ -327,6 +327,16 @@ impl FrameWarpState {
         self.queue(event);
         if let Some(host) = self.try_host() {
             self.hold(host, |_| ());
+        }
+    }
+
+    /// Queues `event` and applies it unless someone holds the host, without waking the
+    /// control loop (for input decoded on the control thread itself, which calls
+    /// [`Self::take_outgoing`] later in the same pass).
+    fn push_quietly(&self, event: Event) {
+        self.queue(event);
+        if let Some(host) = self.try_host() {
+            self.hold_quietly(host, |_| ());
         }
     }
 
@@ -633,5 +643,30 @@ mod tests {
         if let Some(before) = epoch.checked_sub(Duration::from_millis(1)) {
             assert_eq!(warp.us(before), 0);
         }
+    }
+
+    #[test]
+    fn mouse_and_controller_input_never_self_wake_the_control_loop() {
+        let (epoch, warp) = state();
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = wakes.clone();
+        warp.set_wake(Arc::new(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }));
+        warp.on_request(&request(true, Some(0), 0));
+        let _ = warp.take_outgoing();
+        let before = wakes.load(Ordering::Relaxed);
+
+        // Even with a queued tag ready to collect into the outbox, control-thread
+        // input applies quietly without sending a wake to itself.
+        warp.queue(Event::Tag {
+            frame: 1,
+            capture_us: 1000,
+        });
+        warp.on_mouse(8, -4, epoch + Duration::from_millis(1));
+        warp.on_controller(0, (1000, -500), epoch + Duration::from_millis(2));
+        assert_eq!(wakes.load(Ordering::Relaxed), before);
+        assert!(lock(&warp.inbox).is_empty());
+        assert!(!warp.take_outgoing().tags.is_empty());
     }
 }

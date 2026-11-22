@@ -113,6 +113,7 @@ fn recovery_remaining(now: Instant, due: Instant, wire_bytes: usize, bps: u64) -
 /// arrives as one part per FEC block and this lives from its first part to
 /// its last; a whole frame is a single part.
 struct Sending {
+    wire_frame: u32,
     dequeued: Instant,
     /// When the first part was ready, which the send queue is counted from.
     prepared: Instant,
@@ -243,6 +244,7 @@ impl Transport<'_> {
             .begin_frame(network_pacing::frame_send_wait(period));
         let waits = self.batch.waits.unwrap();
         Sending {
+            wire_frame: frame.wire_frame,
             dequeued,
             prepared: frame.prepared,
             bps,
@@ -274,15 +276,15 @@ impl Transport<'_> {
     }
 
     /// One batch to the socket, or to the test stall, outage or loss in its
-    /// place. A held batch counts as sent.
-    fn send_batch(&mut self, packets: &[Vec<u8>], peer: SocketAddr) -> Result<usize> {
+    /// place. A held batch counts as sent. Returns `(bytes, sent_packets)`.
+    fn send_batch(&mut self, packets: &[Vec<u8>], peer: SocketAddr) -> Result<(usize, usize)> {
         self.release_held()?;
         let elapsed = Instant::now().saturating_duration_since(self.start);
         if let Some(line) = self.jitter.as_mut()
             && line.holds(elapsed)
         {
             line.hold((peer, packets.to_vec()));
-            return Ok(packets.iter().map(Vec::len).sum());
+            return Ok((packets.iter().map(Vec::len).sum(), packets.len()));
         }
         self.socket_batch(packets, peer)
     }
@@ -320,26 +322,38 @@ impl Transport<'_> {
     }
 
     /// One batch to the socket, or to the test outage or loss in its place.
-    fn socket_batch(&mut self, packets: &[Vec<u8>], peer: SocketAddr) -> Result<usize> {
+    fn socket_batch(&mut self, packets: &[Vec<u8>], peer: SocketAddr) -> Result<(usize, usize)> {
         Ok(
             match self
                 .outage
                 .filter(|outage| outage.active(self.start, Instant::now()))
             {
-                Some(outage) if outage.in_air() => packets.iter().map(Vec::len).sum(),
+                Some(outage) if outage.in_air() => {
+                    (packets.iter().map(Vec::len).sum(), packets.len())
+                }
                 Some(_) => {
                     self.batch.refuse(packets.len());
-                    0
+                    (0, 0)
                 }
                 None => match self.send_drop.as_mut() {
-                    Some(drop) => crate::stream::slices::send_lossy(
-                        &mut self.batch,
-                        &self.socket,
-                        packets,
-                        peer,
-                        drop,
-                    )?,
-                    None => self.batch.send(&self.socket, packets, peer)?,
+                    Some(drop) => {
+                        let dropped = self.batch.dropped;
+                        let bytes = crate::stream::slices::send_lossy(
+                            &mut self.batch,
+                            &self.socket,
+                            packets,
+                            peer,
+                            drop,
+                        )?;
+                        let sent_packets = packets
+                            .len()
+                            .saturating_sub((self.batch.dropped - dropped) as usize);
+                        (bytes, sent_packets)
+                    }
+                    None => {
+                        let bytes = self.batch.send(&self.socket, packets, peer)?;
+                        (bytes, self.batch.sent_packets())
+                    }
                 },
             },
         )
@@ -420,7 +434,7 @@ impl Transport<'_> {
                 let full_until = self.stall.as_mut().and_then(|stall| {
                     stall.full_until(remaining[..count].iter().map(Vec::len).sum(), send_started)
                 });
-                let bytes = match full_until {
+                let (send_at, bytes, sent_packets) = match full_until {
                     // The stalled adapter's socket is full: wait for room as a
                     // refused send does, then send if the stall is over.
                     Some(end) => {
@@ -430,17 +444,27 @@ impl Transport<'_> {
                             waits.elapsed += send_started.elapsed();
                         }
                         if Instant::now() >= end {
-                            self.send_batch(&remaining[..count], peer)?
+                            let send_at = Instant::now();
+                            let (bytes, sent_packets) =
+                                self.send_batch(&remaining[..count], peer)?;
+                            (send_at, bytes, sent_packets)
                         } else {
                             self.batch.refuse(count);
-                            0
+                            (send_started, 0, 0)
                         }
                     }
-                    None => self.send_batch(&remaining[..count], peer)?,
+                    None => {
+                        let (bytes, sent_packets) = self.send_batch(&remaining[..count], peer)?;
+                        (send_started, bytes, sent_packets)
+                    }
                 };
-                if bytes > 0 {
+                if sent_packets > 0 {
                     // Send times for congestion control; nothing while no client reports.
-                    s.record_transport_sent(&remaining[..count], network_pacing::overhead(ipv6));
+                    s.transport_sent.record(
+                        &remaining[..sent_packets],
+                        network_pacing::overhead(ipv6),
+                        send_at,
+                    );
                 }
                 let finished = Instant::now();
                 cur.first_send.get_or_insert(send_started);
@@ -451,13 +475,7 @@ impl Transport<'_> {
                 remaining = &remaining[count..];
                 cur.sent_packets += count;
                 cur.sent_bytes += bytes;
-                self.pacer.sent(
-                    finished,
-                    bytes,
-                    if bytes > 0 { count } else { 0 },
-                    ipv6,
-                    bps,
-                );
+                self.pacer.sent(finished, bytes, sent_packets, ipv6, bps);
                 if frame.idr {
                     cur.remaining_wire_bytes =
                         cur.remaining_wire_bytes.saturating_sub(batch_wire_bytes);
@@ -646,6 +664,10 @@ impl Transport<'_> {
         // A streamed frame the host dropped part way leaves its sender state
         // behind; the next frame's first part starts over.
         if frame.stream.is_none_or(|part| part.first) {
+            if let Some(prev) = sending.take() {
+                self.batch.end_frame();
+                self.s.keyframe_abandoned_as(prev.wire_frame, false);
+            }
             *sending = Some(self.begin(frame));
         }
         let Some(cur) = sending.as_mut() else {

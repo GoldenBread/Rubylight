@@ -1354,12 +1354,14 @@ fn secure_profile_with(
     std::fs::create_dir_all(root)?;
     restrict(root, true)?;
     std::fs::create_dir_all(profile.join("credentials"))?;
-    // The reset reaches the credentials as well. Lock them down again even
+    std::fs::create_dir_all(profile.join("backups"))?;
+    // The reset reaches the credentials and backups as well. Lock them down again even
     // when it fails partway (a file the host renames meanwhile), or the
-    // host's private key stays readable by users until the host restarts.
+    // host's private key or secret backups stay readable by users until the host restarts.
     let reset = inherit(root);
     let credentials = restrict(&profile.join("credentials"), false);
-    reset.and(credentials)
+    let backups = restrict(&profile.join("backups"), false);
+    reset.and(credentials).and(backups)
 }
 /// The name of the root the host makes for the console's certificate
 /// (`butterpollo_core::crypto::CONSOLE_ROOT_NAME`). certutil's `-delstore`

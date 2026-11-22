@@ -407,3 +407,32 @@ async fn host_events_carry_the_documented_data() {
         json!({"uuid": "unknown", "name": ""})
     );
 }
+
+#[tokio::test]
+async fn literal_loopback_and_link_local_urls_are_refused_at_delivery() {
+    let (url, mut received) = receiver(vec![204]).await;
+    let port = url::Url::parse(&url).unwrap().port().unwrap();
+    let webhooks = Webhooks::new(QUICK).unwrap();
+    webhooks.block_local();
+
+    for target in [
+        url.clone(),
+        format!("http://[::1]:{port}/hook"),
+        format!("http://[::ffff:127.0.0.1]:{port}/hook"),
+        "http://169.254.169.254/latest/meta-data".to_owned(),
+        format!("http://0.0.0.0:{port}/hook"),
+    ] {
+        let status = webhooks.test(&hook(&target, &[]), HOST).await;
+        assert!(!status.ok, "{target}: {status:?}");
+        assert_eq!(status.http_status, None);
+        assert_eq!(status.attempts, 0);
+        assert!(status.error.as_deref().unwrap().contains("link-local"));
+    }
+
+    let hooks = [hook(&url, &["app.started"])];
+    assert_eq!(webhooks.emit(&hooks, HOST, "app.started", json!({})), 1);
+    let status = settled(&webhooks, &url).await;
+    assert!(!status.ok);
+    assert_eq!(status.attempts, 0);
+    assert!(received.try_recv().is_err());
+}

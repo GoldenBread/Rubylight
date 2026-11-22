@@ -406,7 +406,7 @@ int main(int argc, char* argv[]) {
 
     // Wait for requests from the client
     for (;;) {
-        unsigned char requestId;
+        unsigned char requestId = 0;
 
         do {
             // Every second we poll again for new devices if
@@ -423,11 +423,15 @@ int main(int argc, char* argv[]) {
         while (pollres == 0);
 
         if (pollres > 0 && (pollinfo.revents & POLLIN)) {
+            ssize_t n;
+
             // We'll have data available now
-            ret = recv(sock, &requestId, sizeof(requestId), 0);
-            if (ret < sizeof(requestId)) {
+            do {
+                n = recv(sock, &requestId, sizeof(requestId), 0);
+            } while (n < 0 && errno == EINTR);
+            if (n <= 0 || (size_t)n < sizeof(requestId)) {
                 __android_log_print(ANDROID_LOG_ERROR, "EvdevReader", "Short read on socket");
-                return errno;
+                return n < 0 ? errno : 0;
             }
 
             if (requestId != UNGRAB_REQ && requestId != REGRAB_REQ) {

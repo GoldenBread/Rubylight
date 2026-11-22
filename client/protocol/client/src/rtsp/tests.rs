@@ -828,3 +828,16 @@ fn configuration_checks() {
         CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC
     );
 }
+
+#[test]
+fn surround_714_handshake_succeeds() {
+    let mut p = params(None);
+    p.config.audio = AudioConfiguration::SURROUND_714;
+    let mut handshake = Handshake::new(p).unwrap();
+    run(&mut handshake, sunshine_host);
+    let outcome = handshake.finish().unwrap();
+    assert_eq!(
+        outcome.opus.normal.channel_count,
+        rubylight_protocol::audio_ext::CHANNELS_714
+    );
+}

@@ -196,6 +196,14 @@ fn array_bytes(buffers: &[FrameBuffer], total: usize, picture_in_place: bool) ->
         .unwrap_or(0)
 }
 
+fn decode_status(status: Option<i32>) -> DecodeStatus {
+    if status == Some(DR_OK) {
+        DecodeStatus::Ok
+    } else {
+        DecodeStatus::NeedIdr
+    }
+}
+
 /// CLOCK_MONOTONIC nanoseconds of a time on the session's microsecond clock.
 fn monotonic_ns_of(session_us: u64) -> i64 {
     let age_us = session::now_us().saturating_sub(session_us) as i64;
@@ -273,7 +281,7 @@ impl VideoDecoder for Video {
             None
         };
         let needed = array_bytes(frame.buffers(), frame.data().len(), picture.is_some());
-        let status = b.with_env(|env| {
+        let status: Option<i32> = b.with_env(|env| {
             if needed > self.capacity || self.buffer.is_none() {
                 let size = grown_capacity(needed, self.capacity);
                 let array = env.new_byte_array(size as i32)?;
@@ -295,7 +303,7 @@ impl VideoDecoder for Video {
                     bridge::long(receive_ns),
                     bridge::long(frame.presentation_time_us as i64),
                 ];
-                b.int(env, b.m.dr_submit, &args).unwrap_or(DR_OK)
+                b.int(env, b.m.dr_submit, &args)
             };
             let mut offset = 0;
             for (kind, bytes) in frame.buffer_slices() {
@@ -308,7 +316,7 @@ impl VideoDecoder for Video {
                     // Parameter sets go to the decoder on their own, from the buffer's start.
                     env.set_byte_array_region(array, 0, bridge::jbytes(bytes))?;
                     let result = submit(env, bytes.len(), kind as i32);
-                    if result != DR_OK {
+                    if result != Some(DR_OK) {
                         return Ok(result);
                     }
                 }
@@ -334,13 +342,9 @@ impl VideoDecoder for Video {
                 bridge::long(receive_ns),
                 bridge::long(frame.presentation_time_us as i64),
             ];
-            Ok(b.int(env, b.m.dr_submit_direct, &args).unwrap_or(DR_OK))
+            Ok(b.int(env, b.m.dr_submit_direct, &args))
         });
-        if status == DR_OK {
-            DecodeStatus::Ok
-        } else {
-            DecodeStatus::NeedIdr
-        }
+        decode_status(status)
     }
 
     fn wants_early_chunks(&self) -> bool {

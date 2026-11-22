@@ -914,16 +914,22 @@ impl Registry {
                 && holder.as_deref() == Some(launch)
             {
                 *holder = None;
-                entry.instance.session(|s| {
-                    let device = s
-                        .slots
+                let device = entry.instance.session(|s| {
+                    s.slots
                         .get(seat.slot)
                         .and_then(|slot| slot.seat.as_ref())
-                        .map(|seat| seat.device.clone());
-                    if let Some(device) = device {
-                        s.leave(&device, Instant::now());
-                    }
+                        .map(|seat| seat.device.clone())
                 });
+                if let Some(device) = device {
+                    // Release held pad inputs before `s.leave` marks the slot away
+                    // (once away, `session.route` drops controller events).
+                    let _ = entry
+                        .instance
+                        .input(&device, super::stream::neutral_controller());
+                    entry.instance.session(|s| {
+                        s.leave(&device, Instant::now());
+                    });
+                }
                 tracing::info!(
                     session = seat.session,
                     slot = seat.slot,
@@ -968,6 +974,17 @@ impl Registry {
     pub fn kick(&self, session: u32, slot: usize) -> Option<String> {
         let mut state = self.lock();
         let entry = state.sessions.get_mut(&session)?;
+        let active_device = entry.instance.session(|s| {
+            s.slots
+                .get(slot)
+                .and_then(|s| s.seat.as_ref())
+                .map(|seat| seat.device.clone())
+        });
+        if let Some(device) = &active_device {
+            let _ = entry
+                .instance
+                .input(device, super::stream::neutral_controller());
+        }
         let device = entry.instance.session(|s| s.kick(slot))?;
         if let Some(holder) = entry.holders.get_mut(slot) {
             *holder = None;
@@ -1075,5 +1092,75 @@ fn log_background_mapping() {
 fn stop(instances: Vec<Arc<dyn Instance>>) {
     for instance in instances {
         instance.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_leave_releases_held_controller_before_marking_away() {
+        let pc = Arc::new(fake::Pc::installed());
+        let registry = Registry::new(pc.clone());
+        let apps = vec![App {
+            name: "Portal 2".into(),
+            cmd: format!("\"{}\" -novid", fake::EXE),
+            working_dir: String::new(),
+            prep: Vec::new(),
+            computed_id: None,
+            aliases: Vec::new(),
+            extra: BTreeMap::new(),
+        }];
+        let coop = registry.entries(&apps, "").remove(0);
+        let client: Client = serde_json::from_value(serde_json::json!({
+            "name": "Device A",
+            "cert": "",
+            "uuid": "A",
+            "perm": butterpollo_core::state::PLAY_DEVICE_PERMISSION,
+        }))
+        .unwrap();
+        let seat = registry
+            .admit(Admission {
+                launch: "a",
+                client: &client,
+                game: Game::Coop(&coop),
+                size: (1920, 1080),
+                config: &Config::default(),
+                warnings: Default::default(),
+                release_parked: &|| Ok(()),
+                instances: None,
+            })
+            .unwrap();
+        let instance = registry.instance(seat.session).unwrap();
+        instance
+            .input(
+                "A",
+                Input::Controller {
+                    id: 0,
+                    active: 1,
+                    buttons: 0x0010,
+                    left_trigger: 128,
+                    right_trigger: 64,
+                    sticks: [1234, -5678, 0, 0],
+                },
+            )
+            .unwrap();
+
+        registry.leave(seat, "a");
+
+        let inputs = pc.last().inputs.lock().unwrap().clone();
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(inputs[1].0, seat.slot);
+        assert!(matches!(
+            inputs[1].1,
+            Input::Controller {
+                buttons: 0,
+                left_trigger: 0,
+                right_trigger: 0,
+                sticks: [0, 0, 0, 0],
+                ..
+            }
+        ));
     }
 }

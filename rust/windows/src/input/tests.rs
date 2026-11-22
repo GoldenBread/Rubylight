@@ -1250,3 +1250,71 @@ fn making_an_injector_starts_no_controller_thread_until_a_controller_needs_one()
     assert!(!injector.has_gamepads());
     assert!(!injector.haptics);
 }
+
+#[test]
+fn display_does_not_block_on_rename_lookup_when_rect_is_known() {
+    let mut injector = recording();
+    let current = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    injector.rect = Some(current);
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    injector.lookup = Some(Lookup {
+        output: r"\\.\DISPLAY98".into(),
+        started: std::time::Instant::now(),
+        thread: Some(std::thread::spawn(move || {
+            let _ = rx.recv_timeout(Duration::from_secs(5));
+            Ok(current)
+        })),
+    });
+    let started = std::time::Instant::now();
+    assert_eq!(injector.display(), Some(current));
+    assert!(started.elapsed() < Duration::from_millis(100));
+    assert!(injector.lookup.as_ref().unwrap().thread.is_some());
+    drop(tx);
+    injector
+        .lookup
+        .take()
+        .unwrap()
+        .thread
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+}
+
+#[test]
+fn mixed_mode_and_virtual_mouse_button_ownership_stay_isolated() {
+    let mut send_input_client = recording();
+    let mut virtual_client = recording();
+    // Simulate a button held via the virtual mouse route alongside a SendInput client
+    // holding the same button: both routes stay independent in HELD and release cleanly.
+    virtual_client.buttons.insert(1);
+    virtual_client.virtual_buttons.insert(1);
+    HELD.lock()
+        .unwrap()
+        .insert((false, 1 | VIRTUAL_BUTTON_FLAG), 1);
+
+    send_input_client.apply(&click(1, true)).unwrap();
+    assert_eq!(calls(), [described(&[Injector::button(1, true)])]);
+    assert_eq!(HELD.lock().unwrap().get(&(false, 1)), Some(&1));
+
+    // Releasing the virtual button does not drop SendInput's held button 1.
+    virtual_client.apply(&click(1, false)).unwrap();
+    assert!(calls().is_empty());
+    assert!(
+        !HELD
+            .lock()
+            .unwrap()
+            .contains_key(&(false, 1 | VIRTUAL_BUTTON_FLAG))
+    );
+    assert_eq!(HELD.lock().unwrap().get(&(false, 1)), Some(&1));
+
+    // Releasing SendInput's button sends the SendInput UP.
+    send_input_client.apply(&click(1, false)).unwrap();
+    assert_eq!(calls(), [described(&[Injector::button(1, false)])]);
+    assert!(!HELD.lock().unwrap().contains_key(&(false, 1)));
+}

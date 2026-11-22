@@ -419,6 +419,8 @@ fn the_ledger_finds_each_packet_by_its_id() {
     ledger.record(&[plain.clone()], 28, started + Duration::from_millis(5));
     assert_eq!(ledger.lookup(0x1234, 6_000), Some((5_000, 128)));
     assert_eq!(ledger.lookup(0x1235, 6_000), None);
+    // A slight clock-read race (stamp within 50 ms after now_us) clamps age to 0.
+    assert_eq!(ledger.lookup(0x1234, 4_000), Some((4_000, 128)));
     // Too old: an id from a wrap ago.
     assert_eq!(ledger.lookup(0x1234, 5_000 + STALE_US + 1), None);
     // Encrypted: the IV counter's low bits.
@@ -550,4 +552,63 @@ fn a_report_is_joined_with_the_ledger() {
     let mut off = Control::default();
     assert!(!off.on_report(&ledger, 20_000, &bytes));
     assert_eq!(off.snapshot(0)["state"], "off");
+}
+
+#[test]
+fn pyrowave_below_floor_lowers_congestion_floor_to_half_ceiling() {
+    let stream = crate::rtsp::Negotiated {
+        codec: 3,
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        bitrate_kbps: 100_000,
+        ..Default::default()
+    };
+    assert!(crate::link_rate::pyrowave_floor_kbps(&stream) >= 100_000);
+    let c = Control::new(&stream, true, 0, false);
+    assert_eq!(c.ceiling_kbps, 100_000);
+    assert_eq!(c.floor_kbps, 50_000);
+}
+
+#[test]
+fn duplicate_and_reordered_reports_are_ignored() {
+    let stream = crate::rtsp::Negotiated::default();
+    let mut c = Control::new(&stream, true, 0, false);
+    let started = Instant::now();
+    let ledger = SendLedger::new(started);
+    ledger.enable(false);
+    let packets: Vec<Vec<u8>> = (0..6u16)
+        .map(|i| {
+            let mut p = vec![0u8; 1000];
+            p[2..4].copy_from_slice(&i.to_be_bytes());
+            p
+        })
+        .collect();
+    ledger.record(&packets, 28, started + Duration::from_millis(1));
+    let report = |seq: u32, base: u16, base_arrival_us: u32| {
+        TransportFeedback {
+            base,
+            stride: 1,
+            seq,
+            base_arrival_us,
+            entries: vec![0, 10],
+            ..Default::default()
+        }
+        .encode()
+        .unwrap()
+    };
+    assert!(c.on_report(&ledger, 20_000, &report(u32::MAX - 1, 0, 5_000)));
+    // Duplicate and older reports do not mutate controller state.
+    assert!(!c.on_report(&ledger, 25_000, &report(u32::MAX - 1, 2, 6_000)));
+    assert!(!c.on_report(&ledger, 26_000, &report(u32::MAX - 2, 2, 7_000)));
+    assert!(!c.on_report(&ledger, 27_000, &report(u32::MAX - 100, 2, 8_000)));
+    assert_eq!(c.snapshot(27_000)["reports"], 1);
+    assert_eq!(c.snapshot(27_000)["packets"], 2);
+    // Newer report is accepted, including across 32-bit sequence wrap.
+    assert!(c.on_report(&ledger, 30_000, &report(u32::MAX, 2, 10_000)));
+    assert!(!c.on_report(&ledger, 31_000, &report(u32::MAX - 1, 2, 11_000)));
+    assert!(c.on_report(&ledger, 35_000, &report(0, 4, 15_000)));
+    assert!(!c.on_report(&ledger, 36_000, &report(u32::MAX, 4, 16_000)));
+    assert_eq!(c.snapshot(36_000)["reports"], 3);
+    assert_eq!(c.snapshot(36_000)["packets"], 6);
 }

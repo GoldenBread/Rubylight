@@ -334,9 +334,13 @@ impl FeedbackTally {
         let Some(last) = self.last_report_us.replace(now_us) else {
             return;
         };
-        let elapsed = now_us.saturating_sub(last).max(1);
+        let elapsed = now_us.saturating_sub(last);
+        // Short gaps with few packets (such as an early flush) do not estimate a rate.
+        if elapsed < INTERVAL_US / 4 && seen < MAX_ENTRIES as u64 {
+            return;
+        }
         // Packets per interval at the measured rate, rounded up.
-        let per_interval = (seen * INTERVAL_US).div_ceil(elapsed);
+        let per_interval = (seen * INTERVAL_US).div_ceil(elapsed.max(1));
         let wanted = per_interval
             .div_ceil(MAX_ENTRIES as u64)
             .clamp(1, u64::from(MAX_STRIDE));
@@ -563,5 +567,21 @@ mod tests {
         let next = tally.flush(20).unwrap();
         assert_eq!(next.base, 30_000);
         assert_eq!(next.flags & FLAG_SKIPPED, FLAG_SKIPPED);
+    }
+
+    #[test]
+    fn a_one_microsecond_gap_flush_does_not_spike_stride() {
+        let mut tally = FeedbackTally::default();
+        tally.packet(0, 10_000);
+        let first = tally.flush(10_000).unwrap();
+        assert_eq!(first.stride, 1);
+
+        // Two packets and a flush 1 us later must not extrapolate 100k+ pkt/s and jump to 64.
+        tally.packet(1, 10_001);
+        tally.packet(2, 10_001);
+        let second = tally.flush(10_001).unwrap();
+        assert_eq!(second.stride, 1);
+        assert_eq!(tally.stride(), 1);
+        assert_ne!(tally.stride(), MAX_STRIDE);
     }
 }

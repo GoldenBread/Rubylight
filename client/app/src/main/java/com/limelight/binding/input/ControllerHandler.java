@@ -740,9 +740,18 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (context.guideHold.cancelPending()) {
             mainThreadHandler.removeCallbacks(context.guideHoldRunnable);
         }
+        if (context.guideTapEnd != null) {
+            mainThreadHandler.removeCallbacks(context.guideTapEnd);
+            context.guideTapEnd = null;
+        }
+        context.guideTapping = false;
         if (context instanceof InputDeviceContext) {
             InputDeviceContext inputContext = (InputDeviceContext) context;
             inputContext.pressedButtons.clear();
+            for (Runnable r : inputContext.pendingButtonReleases.values()) {
+                mainThreadHandler.removeCallbacks(r);
+            }
+            inputContext.pendingButtonReleases.clear();
             inputContext.emulatingButtonFlags = 0;
             inputContext.pendingExit = false;
         }
@@ -1495,7 +1504,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 return true;
             }
             // Firmware injects the press and release together; hold Guide long enough for games to see it
-            holdForMinimumPress(event);
+            long remaining = MINIMUM_BUTTON_DOWN_TIME_MS - (event.getEventTime() - event.getDownTime());
+            if (remaining > 0) {
+                scheduleDefaultGuideRelease(context, remaining);
+                return true;
+            }
             context.inputMap &= ~ControllerPacket.SPECIAL_BUTTON_FLAG;
         }
         sendControllerInputPacket(context);
@@ -3936,8 +3949,78 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             return true;
         }
 
-        holdForMinimumPress(event);
+        int finalKeyCode = keyCode;
+        long eventTime = event.getEventTime();
+        int scanCode = event.getScanCode();
+        Runnable previous = context.pendingButtonReleases.remove(finalKeyCode);
+        if (previous != null) {
+            mainThreadHandler.removeCallbacks(previous);
+        }
+        long remaining = MINIMUM_BUTTON_DOWN_TIME_MS - (eventTime - event.getDownTime());
+        if (remaining > 0 && isHandledButtonUp(context, finalKeyCode, scanCode)) {
+            Runnable release = new Runnable() {
+                @Override
+                public void run() {
+                    if (context.pendingButtonReleases.get(finalKeyCode) == this) {
+                        context.pendingButtonReleases.remove(finalKeyCode);
+                    }
+                    if (context.destroyed || stopped) {
+                        return;
+                    }
+                    finishButtonUp(context, finalKeyCode, eventTime, scanCode);
+                }
+            };
+            context.pendingButtonReleases.put(finalKeyCode, release);
+            mainThreadHandler.postDelayed(release, remaining);
+            return true;
+        }
 
+        return finishButtonUp(context, finalKeyCode, eventTime, scanCode);
+    }
+
+    private static boolean isHandledButtonUp(InputDeviceContext context, int keyCode, int scanCode) {
+        switch (keyCode) {
+        case KeyEvent.KEYCODE_BUTTON_MODE:
+        case KeyEvent.KEYCODE_BUTTON_START:
+        case KeyEvent.KEYCODE_MENU:
+        case KeyEvent.KEYCODE_BACK:
+        case KeyEvent.KEYCODE_BUTTON_SELECT:
+        case KeyEvent.KEYCODE_DPAD_LEFT:
+        case KeyEvent.KEYCODE_DPAD_RIGHT:
+        case KeyEvent.KEYCODE_DPAD_UP:
+        case KeyEvent.KEYCODE_DPAD_DOWN:
+        case KeyEvent.KEYCODE_DPAD_UP_LEFT:
+        case KeyEvent.KEYCODE_DPAD_UP_RIGHT:
+        case KeyEvent.KEYCODE_DPAD_DOWN_LEFT:
+        case KeyEvent.KEYCODE_DPAD_DOWN_RIGHT:
+        case KeyEvent.KEYCODE_BUTTON_B:
+        case KeyEvent.KEYCODE_DPAD_CENTER:
+        case KeyEvent.KEYCODE_BUTTON_A:
+        case KeyEvent.KEYCODE_BUTTON_X:
+        case KeyEvent.KEYCODE_BUTTON_Y:
+        case KeyEvent.KEYCODE_BUTTON_L1:
+        case KeyEvent.KEYCODE_BUTTON_R1:
+        case KeyEvent.KEYCODE_BUTTON_THUMBL:
+        case KeyEvent.KEYCODE_BUTTON_THUMBR:
+        case KeyEvent.KEYCODE_MEDIA_RECORD:
+        case KeyEvent.KEYCODE_BUTTON_1:
+        case KeyEvent.KEYCODE_BUTTON_L2:
+        case KeyEvent.KEYCODE_BUTTON_R2:
+        case ControllerButtonMap.TARGET_TOUCHPAD:
+        case ControllerButtonMap.TARGET_MISC:
+        case ControllerButtonMap.TARGET_PADDLE1:
+        case ControllerButtonMap.TARGET_PADDLE2:
+        case ControllerButtonMap.TARGET_PADDLE3:
+        case ControllerButtonMap.TARGET_PADDLE4:
+            return true;
+        case KeyEvent.KEYCODE_UNKNOWN:
+            return context.hasPaddles && (scanCode == 0x2c4 || scanCode == 0x2c5 || scanCode == 0x2c6 || scanCode == 0x2c7);
+        default:
+            return false;
+        }
+    }
+
+    private boolean finishButtonUp(InputDeviceContext context, int keyCode, long eventTime, int scanCode) {
         switch (keyCode) {
         case KeyEvent.KEYCODE_BUTTON_MODE:
             context.inputMap &= ~ControllerPacket.SPECIAL_BUTTON_FLAG;
@@ -3948,7 +4031,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             // Make sure it's real by checking that the key is actually down before taking
             // any action.
             if ((context.inputMap & ControllerPacket.PLAY_FLAG) != 0 &&
-                    event.getEventTime() - context.startDownTime > ControllerHandler.START_DOWN_TIME_MOUSE_MODE_MS &&
+                    eventTime - context.startDownTime > ControllerHandler.START_DOWN_TIME_MOUSE_MODE_MS &&
                     prefConfig.mouseEmulation) {
                 context.toggleMouseEmulation();
             }
@@ -4029,11 +4112,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             break;
         case KeyEvent.KEYCODE_BUTTON_L1:
             context.inputMap &= ~ControllerPacket.LB_FLAG;
-            context.lastLbUpTime = event.getEventTime();
+            context.lastLbUpTime = eventTime;
             break;
         case KeyEvent.KEYCODE_BUTTON_R1:
             context.inputMap &= ~ControllerPacket.RB_FLAG;
-            context.lastRbUpTime = event.getEventTime();
+            context.lastRbUpTime = eventTime;
             break;
         case KeyEvent.KEYCODE_BUTTON_THUMBL:
             context.inputMap &= ~ControllerPacket.LS_CLK_FLAG;
@@ -4065,7 +4148,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             // Paddles aren't mapped in any of the Android key layout files,
             // so we need to handle the evdev key codes directly.
             if (context.hasPaddles) {
-                switch (event.getScanCode()) {
+                switch (scanCode) {
                     case 0x2c4: // BTN_TRIGGER_HAPPY5
                         context.inputMap &= ~ControllerPacket.PADDLE1_FLAG;
                         break;
@@ -4209,6 +4292,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private void tapDefaultGuide(InputDeviceContext context) {
         context.inputMap |= ControllerPacket.SPECIAL_BUTTON_FLAG;
         sendControllerInputPacket(context);
+        scheduleDefaultGuideRelease(context, MINIMUM_BUTTON_DOWN_TIME_MS);
+    }
+
+    private void scheduleDefaultGuideRelease(InputDeviceContext context, long delayMs) {
         Runnable end = new Runnable() {
             @Override
             public void run() {
@@ -4220,7 +4307,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
         };
         context.guideTapEnd = end;
-        mainThreadHandler.postDelayed(end, MINIMUM_BUTTON_DOWN_TIME_MS);
+        mainThreadHandler.postDelayed(end, delayMs);
     }
 
     // A new Guide press while the last tap is still going out: that tap's release goes first, so the
@@ -4285,28 +4372,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return buttonFlags;
     }
 
-    // If the button hasn't been down long enough, sleep for a bit before sending the up event
-    // This allows "instant" button presses (like OUYA's virtual menu button) to work. This
-    // path should not be triggered during normal usage.
-    private static void holdForMinimumPress(KeyEvent event) {
-        long buttonDownTime = event.getEventTime() - event.getDownTime();
-        if (buttonDownTime < ControllerHandler.MINIMUM_BUTTON_DOWN_TIME_MS)
-        {
-            // Since our sleep time is so short (<= 25 ms), it shouldn't cause a problem doing this
-            // in the UI thread.
-            try {
-                Thread.sleep(ControllerHandler.MINIMUM_BUTTON_DOWN_TIME_MS - buttonDownTime);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-
-                // InterruptedException clears the thread's interrupt status. Since we can't
-                // handle that here, we will re-interrupt the thread to set the interrupt
-                // status back to true.
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
     public boolean handleButtonDown(KeyEvent event) {
         InputDeviceContext context = getContextForEvent(event);
         if (context == null) {
@@ -4348,6 +4413,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
         else if (prefConfig.flipFaceButtons) {
             keyCode = handleFlipFaceButtons(keyCode);
+        }
+
+        Runnable pendingRelease = context.pendingButtonReleases.remove(keyCode);
+        if (pendingRelease != null) {
+            mainThreadHandler.removeCallbacks(pendingRelease);
+            pendingRelease.run();
         }
 
         int physicalKey = event.getScanCode() != 0 ? event.getScanCode() : ~event.getKeyCode();
@@ -4634,24 +4705,60 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                                       float rightStickX, float rightStickY,
                                       float leftTrigger, float rightTrigger) {
         UsbDeviceContext context = usbDeviceContexts.get(controllerId);
-        if (context != null && context.guideDown && (buttonFlags & ControllerPacket.SPECIAL_BUTTON_FLAG) != 0 &&
-                (buttonFlags & ~ControllerPacket.SPECIAL_BUTTON_FLAG) != 0 && context.guideHold.chord()) {
-            // A button joined a waiting Guide (a chord such as Guide+RB): Guide goes out first, with
-            // the buttons held before, then this report.
-            mainThreadHandler.removeCallbacks(context.guideHoldRunnable);
-            reportUsbControllerState(controllerId, context.quitButtons, leftStickX, leftStickY, rightStickX, rightStickY,
-                    leftTrigger, rightTrigger);
+        if (context != null) {
+            synchronized (context) {
+                if (context.guideTapping && (buttonFlags & ControllerPacket.SPECIAL_BUTTON_FLAG) != 0) {
+                    // A new Guide press arrived while the previous tap is still held: end that tap first
+                    // so its delayed release cannot cut the new press short and the host sees a distinct press.
+                    Runnable end = context.guideTapEnd;
+                    context.guideTapEnd = null;
+                    context.guideTapping = false;
+                    if (end != null) {
+                        mainThreadHandler.removeCallbacks(end);
+                    }
+                    reportUsbControllerState(controllerId, buttonFlags & ~ControllerPacket.SPECIAL_BUTTON_FLAG,
+                            leftStickX, leftStickY, rightStickX, rightStickY, leftTrigger, rightTrigger);
+                }
+                if (context.guideDown && (buttonFlags & ControllerPacket.SPECIAL_BUTTON_FLAG) != 0 &&
+                        (buttonFlags & ~ControllerPacket.SPECIAL_BUTTON_FLAG) != 0 && context.guideHold.chord()) {
+                    // A button joined a waiting Guide (a chord such as Guide+RB): Guide goes out first, with
+                    // the buttons held before, then this report.
+                    mainThreadHandler.removeCallbacks(context.guideHoldRunnable);
+                    reportUsbControllerState(controllerId, context.quitButtons, leftStickX, leftStickY,
+                            rightStickX, rightStickY, leftTrigger, rightTrigger);
+                }
+                reportUsbControllerState(controllerId, buttonFlags, leftStickX, leftStickY, rightStickX, rightStickY,
+                        leftTrigger, rightTrigger);
+                if (context.guideTapping && context.guideTapEnd == null && !stopped) {
+                    // A short Guide tap went out with this report: schedule its release after the
+                    // minimum press without blocking the driver's input thread.
+                    Runnable end = new Runnable() {
+                        @Override
+                        public void run() {
+                            synchronized (context) {
+                                if (context.guideTapEnd != this) {
+                                    return;
+                                }
+                                context.guideTapEnd = null;
+                                context.guideTapping = false;
+                                if (stopped || usbDeviceContexts.get(controllerId) != context) {
+                                    return;
+                                }
+                                reportUsbControllerState(controllerId, context.lastRawButtons,
+                                        context.lastRawLeftStickX, context.lastRawLeftStickY,
+                                        context.lastRawRightStickX, context.lastRawRightStickY,
+                                        context.lastRawLeftTrigger, context.lastRawRightTrigger);
+                            }
+                        }
+                    };
+                    context.guideTapEnd = end;
+                    mainThreadHandler.postDelayed(end, MINIMUM_BUTTON_DOWN_TIME_MS);
+                }
+            }
+            return;
         }
         reportUsbControllerState(controllerId, buttonFlags, leftStickX, leftStickY, rightStickX, rightStickY,
                 leftTrigger, rightTrigger);
-        if (context != null && context.guideTapping) {
-            // A short Guide tap went out with this report: its release follows after the minimum press,
-            // on the driver's thread like every report. Only after a Guide let go before the hold time.
-            android.os.SystemClock.sleep(MINIMUM_BUTTON_DOWN_TIME_MS);
-            context.guideTapping = false;
-            reportUsbControllerState(controllerId, buttonFlags, leftStickX, leftStickY, rightStickX, rightStickY,
-                    leftTrigger, rightTrigger);
-        }
     }
 
     private void reportUsbControllerState(int controllerId, int buttonFlags,
@@ -4662,6 +4769,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (stopped || context == null) {
             return;
         }
+        context.lastRawButtons = buttonFlags;
+        context.lastRawLeftStickX = leftStickX;
+        context.lastRawLeftStickY = leftStickY;
+        context.lastRawRightStickX = rightStickX;
+        context.lastRawRightStickY = rightStickY;
+        context.lastRawLeftTrigger = leftTrigger;
+        context.lastRawRightTrigger = rightTrigger;
         // The driver's own flags are the physical buttons, before mapping and face-button flipping;
         // the quit combo arms as it comes together, not again for a chord held from the menu.
         boolean quitChanged = buttonFlags != context.quitButtons;
@@ -5104,6 +5218,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 mainThreadHandler.removeCallbacks(guideTapEnd);
                 guideTapEnd = null;
             }
+            guideTapping = false;
         }
 
         private void releaseMouseButtons() {
@@ -5129,6 +5244,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         /** Whether this external-listed pad is a handheld's own controls; null until first asked. */
         Boolean handheldControls;
         public final Map<Integer, Integer> pressedButtons = new HashMap<>();
+        public final Map<Integer, Runnable> pendingButtonReleases = new HashMap<>();
         public VibratorManager vibratorManager;
         public Vibrator vibrator;
         public boolean quadVibrators;
@@ -5304,6 +5420,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         @Override
         public synchronized void destroy() {
             destroyed = true;
+            for (Runnable r : pendingButtonReleases.values()) {
+                mainThreadHandler.removeCallbacks(r);
+            }
+            pendingButtonReleases.clear();
             super.destroy();
 
             cancelMotors();
@@ -5475,6 +5595,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         public void migrateContext(InputDeviceContext oldContext) {
+            for (Runnable r : new ArrayList<>(oldContext.pendingButtonReleases.values())) {
+                mainThreadHandler.removeCallbacks(r);
+                r.run();
+            }
             reportedType = oldContext.reportedType;
             reportedCapabilities = oldContext.reportedCapabilities;
             supportedButtonFlags = oldContext.supportedButtonFlags;
@@ -5607,6 +5731,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Select+LB held as the touchpad click: those of the two not let go yet, which stay silent until released
         int clickpadSwallowed;
+        // Last raw driver report, used when a deferred Guide tap release fires after MINIMUM_BUTTON_DOWN_TIME_MS.
+        int lastRawButtons;
+        float lastRawLeftStickX, lastRawLeftStickY, lastRawRightStickX, lastRawRightStickY;
+        float lastRawLeftTrigger, lastRawRightTrigger;
 
         // This device's motion sensors, standing in for a pad that has none as player 1
         SensorManager deviceSensors;

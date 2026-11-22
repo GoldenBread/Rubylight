@@ -239,7 +239,23 @@ impl Repeated {
 /// The service reads whether the device is there; the host's
 /// `--virtual-display-installed` task says whether it can use it, asked as
 /// [`DriverWatch`] says.
-fn repair_display_driver(install: &std::path::Path, host: &std::path::Path, stop: Arc<Signal>) {
+fn join_bounded(worker: std::thread::JoinHandle<()>, timeout: Duration, what: &str) {
+    let started = Instant::now();
+    while !worker.is_finished() && started.elapsed() < timeout {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if worker.is_finished() {
+        let _ = worker.join();
+    } else {
+        tracing::warn!("{what} did not end with the service");
+    }
+}
+
+fn repair_display_driver(
+    install: &std::path::Path,
+    host: &std::path::Path,
+    stop: Arc<Signal>,
+) -> Option<std::thread::JoinHandle<()>> {
     use std::os::windows::process::CommandExt;
     let setup = install.join("uninstall.exe");
     if !setup.is_file()
@@ -247,10 +263,10 @@ fn repair_display_driver(install: &std::path::Path, host: &std::path::Path, stop
             .join("drivers\\rubylight-display\\install-local.ps1")
             .is_file()
     {
-        return;
+        return None;
     }
     let host = host.to_owned();
-    std::thread::spawn(move || {
+    Some(std::thread::spawn(move || {
         let mut watch = DriverWatch::default();
         // Why the host refused the device, for the repair's log line.
         let mut refusal = String::new();
@@ -304,6 +320,9 @@ fn repair_display_driver(install: &std::path::Path, host: &std::path::Path, stop
                     continue;
                 }
                 Step::Repair => {
+                    if stopped(Duration::ZERO) {
+                        break;
+                    }
                     let reason = if present { refusal.as_str() } else { "" };
                     tracing::warn!(
                         reason,
@@ -326,7 +345,7 @@ fn repair_display_driver(install: &std::path::Path, host: &std::path::Path, stop
                 break;
             }
         }
-    });
+    }))
 }
 /// Whether a change of `session` may be the user signing in at the console
 /// (session `console`), when what a Nucleus Co-op session left is put back
@@ -443,9 +462,9 @@ fn supervise() -> Result<()> {
             ),
         }
     }
-    if let Some(install) = executable.parent() {
-        repair_display_driver(install, &executable, stopping.clone());
-    }
+    let driver_repair = executable
+        .parent()
+        .and_then(|install| repair_display_driver(install, &executable, stopping.clone()));
     let mut child: Option<Process> = None;
     let mut session = u32::MAX;
     let mut restart = RestartPolicy::default();
@@ -562,15 +581,14 @@ fn supervise() -> Result<()> {
     }
     // The restore's task has ended with its job; its worker reads what is left.
     if let Some(worker) = restorer.take() {
-        let started = Instant::now();
-        while !worker.is_finished() && started.elapsed() < Duration::from_secs(10) {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if worker.is_finished() {
-            let _ = worker.join();
-        } else {
-            tracing::warn!("the Nucleus Co-op restore did not end with the service");
-        }
+        join_bounded(worker, Duration::from_secs(10), "the Nucleus Co-op restore");
+    }
+    if let Some(worker) = driver_repair {
+        join_bounded(
+            worker,
+            Duration::from_secs(10),
+            "the virtual display driver watch",
+        );
     }
     // All process and job handles are released before SCM observes STOPPED.
     reporter.set_service_status(status(ServiceState::Stopped, 0))?;

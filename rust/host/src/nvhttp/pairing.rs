@@ -188,18 +188,31 @@ pub(super) async fn do_pair(
                 },
             );
         }
+        struct PinGuard {
+            h: Shared,
+            id: String,
+            created: Instant,
+        }
+        impl Drop for PinGuard {
+            fn drop(&mut self) {
+                // Only this request's entry: a newer request may have replaced it.
+                let mut pins = self.h.pins.lock().unwrap_or_else(|e| e.into_inner());
+                if pins.get(&self.id).is_none_or(|p| p.created == self.created) {
+                    pins.remove(&self.id);
+                    butterpollo_windows::tray::pairing_request_ended(&self.id);
+                }
+            }
+        }
+        let guard = PinGuard {
+            h: h.clone(),
+            id: id.clone(),
+            created,
+        };
         tracing::info!(client=%name,%peer,"Pairing PIN required in the web interface");
         let (title, text) = crate::state::pairing_notice(&name, peer);
         butterpollo_windows::tray::notify_pairing(&id, &title, &text);
         let response = tokio::time::timeout(Duration::from_secs(300), receiver).await;
-        {
-            // Only this request's entry: a newer request may have replaced it.
-            let mut pins = h.pins.lock().unwrap();
-            if pins.get(&id).is_none_or(|p| p.created == created) {
-                pins.remove(&id);
-                butterpollo_windows::tray::pairing_request_ended(&id);
-            }
-        }
+        drop(guard);
         let (pin, name, permission, approver) = response
             .context("PIN entry timed out")?
             .context("pairing cancelled")?;

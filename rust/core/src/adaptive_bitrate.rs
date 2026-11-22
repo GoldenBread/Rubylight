@@ -27,10 +27,26 @@ pub struct WireBudget {
 
 impl WireBudget {
     pub fn of(stream: &Negotiated) -> Self {
-        // Opus plus 4:2 audio FEC, encryption/framing and control traffic.
+        // Audio plus 4:2 audio FEC, encryption/framing and control traffic.
         // Reserve the negotiated maximum even when audio is muted/quiet.
-        let audio_kbps =
-            u64::from(stream.audio_channels) * if stream.audio_quality { 256 } else { 96 };
+        let audio_kbps = match stream.audio_codec {
+            rubylight_protocol::audio_ext::CODEC_PCM => u64::from(stream.audio_channels) * 768,
+            rubylight_protocol::audio_ext::CODEC_AC3 => {
+                u64::from(
+                    crate::audio_passthrough::Codec::Ac3
+                        .bitrate(stream.audio_channels)
+                        .unwrap_or(640_000),
+                ) / 1000
+            }
+            rubylight_protocol::audio_ext::CODEC_EAC3 => {
+                u64::from(
+                    crate::audio_passthrough::Codec::Eac3
+                        .bitrate(stream.audio_channels)
+                        .unwrap_or(1_536_000),
+                ) / 1000
+            }
+            _ => u64::from(stream.audio_channels) * if stream.audio_quality { 256 } else { 96 },
+        };
         Self {
             packet_size: stream.packet_size,
             min_fec: stream.min_fec,

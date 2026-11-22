@@ -427,6 +427,10 @@ async fn an_internet_link_keeps_the_guest_ports_wanted_while_it_works_or_its_gue
     assert!(guests.revoke(&invite.id));
     assert!(guests.internet_wanted());
     guests.left(admitted.id);
+    assert!(guests.inner.lock().unwrap().internet.is_empty());
+    tokio::time::timeout(Duration::from_secs(1), guests.mapping_changed())
+        .await
+        .unwrap();
     assert!(!guests.internet_wanted());
 
     // Revoking an internet link nobody watches with lets go of the ports at once.

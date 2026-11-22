@@ -403,6 +403,9 @@ pub struct BatchReceiver {
     /// Linux and Android: whether UDP_GRO is on for the socket.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     gro: bool,
+    /// Linux and Android: the socket descriptor UDP_GRO was set on.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    gro_fd: Option<std::os::fd::RawFd>,
     /// Linux and Android: why UDP_GRO was refused, until the caller takes it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     gro_refused: Option<io::Error>,
@@ -451,13 +454,13 @@ impl BatchReceiver {
                 Err(e) => (false, Some(e)),
             };
             // A coalesced message is split only by batches, so UDP_GRO is asked for with them.
-            let (coalescing, refused) = if probed && batches && coalescing {
+            let (coalescing, gro_fd, refused) = if probed && batches && coalescing {
                 match gro::set(socket, true) {
-                    Ok(()) => (true, None),
-                    Err(e) => (false, Some(e)),
+                    Ok(()) => (true, Some(std::os::fd::AsRawFd::as_raw_fd(socket)), None),
+                    Err(e) => (false, None, Some(e)),
                 }
             } else {
-                (false, None)
+                (false, None, None)
             };
             let slot = if coalescing {
                 gro::SLOT
@@ -478,6 +481,7 @@ impl BatchReceiver {
                     slot
                 },
                 gro: coalescing,
+                gro_fd,
                 gro_refused: refused,
                 batch: (probed && batches).then_some(batch),
                 fallback,
@@ -553,6 +557,19 @@ impl BatchReceiver {
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         while let Some(batch) = self.batch.as_mut() {
+            if self.gro {
+                let fd = std::os::fd::AsRawFd::as_raw_fd(socket);
+                if self.gro_fd != Some(fd) {
+                    match gro::set(socket, true) {
+                        Ok(()) => self.gro_fd = Some(fd),
+                        Err(e) => {
+                            self.gro = false;
+                            self.gro_fd = None;
+                            self.gro_refused = Some(e);
+                        }
+                    }
+                }
+            }
             match batch.receive(socket) {
                 Ok(count) => {
                     self.spans.clear();
@@ -592,6 +609,7 @@ impl BatchReceiver {
                         // One-datagram reads cannot split a coalesced read, so UDP_GRO goes off.
                         let _ = gro::set(socket, false);
                         self.gro = false;
+                        self.gro_fd = None;
                         self.cut = self.slot;
                     }
                 }

@@ -850,6 +850,23 @@ fn v4l2_open_size(hardware: Hardware, pictures: Pictures) -> Option<(c_int, c_in
         .then_some((pictures.width as c_int, pictures.height as c_int))
 }
 
+/// Dimensions preserved across `VideoDecoder::reopen` for V4L2 M2M so `avcodec_open2` receives
+/// the same preset size it opened with.
+fn reopen_size(
+    hardware: Hardware,
+    width: c_int,
+    height: c_int,
+    coded_width: c_int,
+    coded_height: c_int,
+) -> Option<(c_int, c_int, c_int, c_int)> {
+    (hardware == Hardware::V4l2m2m && width > 0 && height > 0).then_some((
+        width,
+        height,
+        if coded_width > 0 { coded_width } else { width },
+        if coded_height > 0 { coded_height } else { height },
+    ))
+}
+
 /// What FFmpeg's V4L2 M2M decoder makes of a packet's `pts` by the time it is a picture's, for a
 /// decoder opened with `timebase` (`packet_timebase`; none leaves `time_base` at 0/1):
 /// `v4l2_set_pts` rescales it to microseconds, `v4l2_get_pts` back (`av_rescale_q`, which
@@ -1162,6 +1179,7 @@ impl VideoDecoder {
             let before = &mut *previous;
             let device = std::mem::replace(&mut before.hw_device_ctx, ptr::null_mut());
             let (threads, timebase) = (before.thread_count, before.pkt_timebase);
+            let dimensions = reopen_size(self.hardware, before.width, before.height, before.coded_width, before.coded_height);
             let fresh = avcodec_alloc_context3(self.found);
             if fresh.is_null() {
                 before.hw_device_ctx = device;
@@ -1186,6 +1204,12 @@ impl VideoDecoder {
             context.pkt_timebase = timebase;
             context.flags |= AV_CODEC_FLAG_LOW_DELAY as i32;
             context.flags2 |= AV_CODEC_FLAG2_FAST as i32;
+            if let Some((width, height, coded_width, coded_height)) = dimensions {
+                context.width = width;
+                context.height = height;
+                context.coded_width = coded_width;
+                context.coded_height = coded_height;
+            }
             let mut options = ptr::null_mut();
             if self.name == "libdav1d" {
                 av_dict_set(&mut options, c"max_frame_delay".as_ptr(), c"1".as_ptr(), 0);

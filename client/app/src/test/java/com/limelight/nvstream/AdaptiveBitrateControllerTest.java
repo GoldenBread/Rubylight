@@ -643,4 +643,40 @@ public class AdaptiveBitrateControllerTest {
         assertTrue("lowest " + run.lowest, run.lowest < 3000);
         assertEquals(AdaptiveBitrateController.DEFAULT_FLOOR_KBPS, run.lowest);
     }
+
+    @Test
+    public void failedStepBackKeepsRetryCooldownPastStableWindow() {
+        AdaptiveBitrateController controller = new AdaptiveBitrateController(40000, 40000, 60, 0);
+        // Establish 40 Mbps as stable.
+        for (long now = 1000; now <= 12000; now += 1000) {
+            assertEquals(0, controller.sample(now, true, false, 0, 2, 1, 0));
+        }
+        // Cut to 32 Mbps on loss.
+        assertEquals(0, controller.sample(13000, true, false, 10, 2, 1, 0));
+        int cut = controller.sample(14000, true, false, 10, 2, 1, 0);
+        assertEquals(32000, cut);
+        controller.applied(cut, cut, 14000);
+
+        // After 5 s healthy (15000..20000), step back toward 40 Mbps -> 36 Mbps.
+        for (long now = 15000; now <= 19000; now += 1000) {
+            assertEquals(0, controller.sample(now, true, false, 0, 2, 1, 0));
+        }
+        int stepBack = controller.sample(20000, true, false, 0, 2, 1, 0);
+        assertEquals(36000, stepBack);
+        controller.applied(stepBack, stepBack, 20000);
+
+        // Step back fails immediately -> retreats back to 32 Mbps once 3 s cooldown elapses (23000),
+        // incrementing stepBackFailures.
+        assertEquals(0, controller.sample(21000, true, false, 10, 2, 1, 0));
+        assertEquals(0, controller.sample(22000, true, false, 10, 2, 1, 0));
+        assertEquals(cut, controller.sample(23000, true, false, 10, 2, 1, 0));
+        controller.applied(cut, cut, 23000);
+
+        // Healthy for 14 s (24000..38000): STABLE_MS (10 s) elapses at 34000, which must NOT wipe
+        // stepBackFailures and cause an early retry before STEP_BACK_RETRY_HEALTHY_MS (15 s).
+        for (long now = 24000; now <= 38000; now += 1000) {
+            assertEquals("retried early at " + now, 0, controller.sample(now, true, false, 0, 2, 1, 0));
+        }
+        assertEquals(33000, controller.sample(39000, true, false, 0, 2, 1, 0));
+    }
 }

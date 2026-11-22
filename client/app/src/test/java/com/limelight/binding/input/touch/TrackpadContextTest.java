@@ -38,6 +38,81 @@ public class TrackpadContextTest {
     }
 
     @Test
+    public void cancellingDuringADoubleTapDragReleasesButtonAndResetsDragState() {
+        Recorder connection = new Recorder();
+        TrackpadContext context = new TrackpadContext(connection, 0, false, 100, 100, 100, null);
+        context.setPointerCount(1);
+        context.touchDownEvent(500, 500, 1000, true);
+        context.touchUpEvent(500, 500, 1050);
+        // Second tap within CLICK_RELEASE_DELAY starts a drag.
+        context.touchDownEvent(500, 500, 1100, true);
+        context.touchMoveEvent(560, 500, 1120);
+        assertEquals(Collections.singletonList("down 1"), connection.buttons);
+
+        context.cancelTouch();
+        context.setPointerCount(0);
+        assertEquals(Arrays.asList("down 1", "up 1"), connection.buttons);
+        // Repeated cancel does not send duplicate button up.
+        context.cancelTouch();
+        assertEquals(Arrays.asList("down 1", "up 1"), connection.buttons);
+
+        // Next gesture is a normal move, not stuck in drag.
+        context.setPointerCount(1);
+        context.touchDownEvent(500, 500, 2000, true);
+        context.touchMoveEvent(560, 500, 2020);
+        context.touchUpEvent(560, 500, 2040);
+        assertEquals(Arrays.asList("down 1", "up 1"), connection.buttons);
+    }
+
+    @Test
+    public void cancellingWhileTapReleaseIsPendingReleasesClickedButtonImmediately() {
+        Recorder connection = new Recorder();
+        // actionIndex 1 with pointerCount 2 triggers a 2-finger right-click tap (button 3).
+        TrackpadContext context = new TrackpadContext(connection, 1, false, 100, 100, 100, null);
+        context.setPointerCount(2);
+        context.touchDownEvent(500, 500, 1000, true);
+        context.touchUpEvent(500, 500, 1050);
+        assertEquals(Collections.singletonList("down 3"), connection.buttons);
+
+        // Pointer count drops before cancelTouch(), as on focus loss or gesture cancel.
+        context.setPointerCount(0);
+        context.cancelTouch();
+        assertEquals(Arrays.asList("down 3", "up 3"), connection.buttons);
+
+        // Advancing past CLICK_RELEASE_DELAY must not send a second button up.
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(400, TimeUnit.MILLISECONDS);
+        assertEquals(Arrays.asList("down 3", "up 3"), connection.buttons);
+
+        // Starting a new 1-finger tap on actionIndex 0 before the old timer would have fired does not enter drag.
+        TrackpadContext single = new TrackpadContext(connection, 0, false, 100, 100, 100, null);
+        single.setPointerCount(1);
+        single.touchDownEvent(500, 500, 1100, true);
+        single.touchUpEvent(500, 500, 1140);
+        assertEquals(Arrays.asList("down 3", "up 3", "down 1"), connection.buttons);
+        single.cancelTouch();
+        assertEquals(Arrays.asList("down 3", "up 3", "down 1", "up 1"), connection.buttons);
+        single.setPointerCount(1);
+        single.touchDownEvent(500, 500, 1200, true);
+        single.touchMoveEvent(560, 500, 1220);
+        single.touchUpEvent(560, 500, 1240);
+        assertEquals(Arrays.asList("down 3", "up 3", "down 1", "up 1"), connection.buttons);
+    }
+
+    @Test
+    public void doubleTapDragHoldsAndReleasesNormally() {
+        Recorder connection = new Recorder();
+        TrackpadContext context = new TrackpadContext(connection, 0, false, 100, 100, 100, null);
+        context.setPointerCount(1);
+        context.touchDownEvent(500, 500, 1000, true);
+        context.touchUpEvent(500, 500, 1050);
+        context.touchDownEvent(500, 500, 1100, true);
+        context.touchMoveEvent(560, 500, 1120);
+        assertEquals(Collections.singletonList("down 1"), connection.buttons);
+        context.touchUpEvent(560, 500, 1200);
+        assertEquals(Arrays.asList("down 1", "up 1"), connection.buttons);
+    }
+
+    @Test
     public void aNegativeSensitivityFlipsThatAxisOnly() {
         int[] normal = drag(false, 100, 100, 100);
         int[] flipped = drag(false, -100, 100, 100);

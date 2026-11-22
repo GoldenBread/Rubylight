@@ -54,6 +54,9 @@ pub use usbip_pad::UsbipDriver;
 
 static HELD: std::sync::Mutex<BTreeMap<(bool, u32), usize>> =
     std::sync::Mutex::new(BTreeMap::new());
+/// Separates virtual-mouse button identities from SendInput button identities in [`HELD`]
+/// so mixed-mode multi-client streams never suppress or misroute each other's presses.
+const VIRTUAL_BUTTON_FLAG: u32 = 1 << 16;
 /// Keeps sends in the order of their HELD updates without holding HELD through
 /// SendInput, which another injector's thread waited behind: a delayed send holds it
 /// from its update to its send, and a pass's send waits for it. Taken before HELD.
@@ -102,6 +105,10 @@ pub struct Injector {
     keys: BTreeSet<u32>,
     key_sources: BTreeMap<u32, u32>,
     buttons: BTreeSet<u8>,
+    /// Subset of `buttons` pressed via the virtual mouse, so releases always return
+    /// to the exact route that pressed them even if readiness changes or another client
+    /// uses SendInput.
+    virtual_buttons: BTreeSet<u8>,
     touches: BTreeMap<u32, POINTER_TOUCH_INFO>,
     /// The pass's touch moves not yet injected, by client id: they go out in one frame.
     touch_moves: BTreeMap<u32, POINTER_TOUCH_INFO>,
@@ -147,6 +154,8 @@ pub struct Injector {
     /// left-button release held back meanwhile.
     absolute: bool,
     left_release: Option<std::time::Instant>,
+    left_release_virtual: std::cell::Cell<bool>,
+    forced_route: std::cell::Cell<Option<MouseRoute>>,
     pending: Pending,
     /// SendInput, or a stand-in in tests.
     inject: fn(&[INPUT]) -> usize,
@@ -165,16 +174,46 @@ pub struct Injector {
     /// The code of the warning last set for the touchpad, so each packet need not look it up.
     touchpad_warned: Option<&'static str>,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MouseRoute {
+    /// Moves, scrolls, and unowned pairs: virtual mouse when ready, otherwise SendInput.
+    #[default]
+    Auto,
+    /// Pressed via SendInput; must release via SendInput.
+    Injection,
+    /// Pressed via the virtual mouse; must release via the virtual mouse.
+    Virtual,
+}
+
 /// Keyboard and mouse input of one pass of the control loop, sent in one
 /// SendInput call: a call cost 31-36 us whether it carried one input or
 /// eight.
 #[derive(Default)]
 struct Pending {
     inputs: Vec<INPUT>,
+    /// Parallel to `inputs`: the delivery route each input requires.
+    routes: Vec<MouseRoute>,
     /// Each event's end in `inputs`, and its press if it is one.
     events: Vec<(usize, Option<Press>)>,
     /// Why events of the pass failed.
     errors: Vec<anyhow::Error>,
+}
+impl Pending {
+    fn sync_routes(&mut self) {
+        if self.inputs.is_empty() {
+            self.routes.clear();
+        }
+    }
+    fn push_auto(&mut self, input: INPUT) {
+        self.sync_routes();
+        self.inputs.push(input);
+        self.routes.push(MouseRoute::Auto);
+    }
+    fn push_routed(&mut self, input: INPUT, route: MouseRoute) {
+        self.sync_routes();
+        self.inputs.push(input);
+        self.routes.push(route);
+    }
 }
 /// A display looked up on its own thread.
 struct Lookup {
@@ -324,6 +363,7 @@ impl Injector {
             keys: BTreeSet::new(),
             key_sources: BTreeMap::new(),
             buttons: BTreeSet::new(),
+            virtual_buttons: BTreeSet::new(),
             touches: BTreeMap::new(),
             touch_moves: BTreeMap::new(),
             touch_profile: Default::default(),
@@ -350,6 +390,8 @@ impl Injector {
             display_warned: None,
             absolute: false,
             left_release: None,
+            left_release_virtual: std::cell::Cell::new(false),
+            forced_route: std::cell::Cell::new(None),
             pending: Pending::default(),
             inject,
             inject_touch: inject_pointer,
@@ -420,7 +462,8 @@ impl Injector {
         }
     }
     /// Sends inputs as SendInput would, putting mouse input on the virtual mouse while this
-    /// stream uses it and it is plugged in. Returns how many of the first inputs went out.
+    /// stream uses it and it is plugged in, while keeping each mouse button press and release
+    /// on the exact route that pressed it. Returns how many of the first inputs went out.
     fn deliver(&self, inputs: &[INPUT]) -> usize {
         let routed = self.virtual_mouse && virtual_hid::MOUSE.ready();
         if self.virtual_mouse
@@ -435,7 +478,34 @@ impl Injector {
                 tracing::warn!("mouse input is injected: the virtual mouse is gone");
             }
         }
-        if !routed {
+        let forced = self.forced_route.get();
+        let from_pending = forced.is_none()
+            && !self.pending.inputs.is_empty()
+            && std::ptr::eq(inputs.as_ptr(), self.pending.inputs.as_ptr())
+            && self.pending.routes.len() == inputs.len();
+        let due_virtual =
+            forced.is_none() && !from_pending && self.left_release_virtual.replace(false);
+        let route_of = |i: usize| -> MouseRoute {
+            if let Some(route) = forced {
+                route
+            } else if from_pending {
+                self.pending.routes[i]
+            } else if due_virtual {
+                MouseRoute::Virtual
+            } else {
+                MouseRoute::Auto
+            }
+        };
+        let any_virtual = match forced {
+            Some(MouseRoute::Virtual) => true,
+            Some(MouseRoute::Injection) => false,
+            Some(MouseRoute::Auto) | None => {
+                routed
+                    || due_virtual
+                    || (from_pending && self.pending.routes.contains(&MouseRoute::Virtual))
+            }
+        };
+        if !any_virtual {
             let sent = (self.inject)(inputs);
             tracing::trace!(
                 target: "input_timing",
@@ -455,12 +525,16 @@ impl Injector {
             if input.r#type != INPUT_MOUSE {
                 continue;
             }
+            let route = route_of(i);
+            if route == MouseRoute::Injection || (route == MouseRoute::Auto && !routed) {
+                continue;
+            }
             // SAFETY: a mouse INPUT holds its MOUSEINPUT in the union.
             let mi = unsafe { input.Anonymous.mi };
             let Some(len) = virtual_hid::hid_ops(&mi, single_display, &mut ops) else {
                 continue;
             };
-            // Keys before it go first, in order.
+            // Keys and SendInput-routed mouse inputs before it go first, in order.
             if start < i {
                 let n = (self.inject)(&inputs[start..i]);
                 sent += n;
@@ -468,7 +542,15 @@ impl Injector {
                     return sent;
                 }
             }
-            if virtual_hid::apply(&ops[..len]) || (self.inject)(std::slice::from_ref(input)) == 1 {
+            let applied = if route == MouseRoute::Virtual {
+                virtual_hid::apply(&ops[..len])
+                    || ops[..len]
+                        .iter()
+                        .all(|op| matches!(op, virtual_hid::Op::Button(_, false)))
+            } else {
+                virtual_hid::apply(&ops[..len]) || (self.inject)(std::slice::from_ref(input)) == 1
+            };
+            if applied {
                 sent += 1;
             } else {
                 return sent;
@@ -716,9 +798,10 @@ impl Injector {
     /// The display's rectangle. Until the display exists, absolute mouse,
     /// touch and pen input is ignored, and that is reported now and then.
     fn display(&mut self) -> Option<RECT> {
-        // Absolute input maps onto the display a running lookup is finding,
-        // as when the lookup ran here; other input never waits for it.
-        self.settle_lookup(true);
+        // Wait only for the initial display lookup; once a display rectangle is
+        // known, rename/refresh lookups settle asynchronously so they never block
+        // the ENet control thread.
+        self.settle_lookup(self.rect.is_none());
         if self.rect.is_none()
             && self
                 .display_warned
@@ -732,6 +815,16 @@ impl Injector {
         }
         self.rect
     }
+    pub fn flush_virtual_left_release(&mut self) -> Result<()> {
+        if self.left_release_virtual.get()
+            && self
+                .left_release
+                .is_some_and(|due| std::time::Instant::now() >= due)
+        {
+            return self.release_deferred_left(false);
+        }
+        Ok(())
+    }
     pub fn refresh(&mut self) -> Result<()> {
         // Every step runs even when an earlier one fails; the first error is
         // reported. A failed step is not retried before its next due time.
@@ -741,6 +834,7 @@ impl Injector {
                 first.get_or_insert(error);
             }
         };
+        keep(self.flush_virtual_left_release());
         keep(self.due());
         let now = std::time::Instant::now();
         // A game can change its display's resolution or position mid-stream,
@@ -774,6 +868,40 @@ impl Injector {
         }
         first.map_or(Ok(()), Err)
     }
+    fn flush_and_sync(&mut self) {
+        self.flush();
+        self.pending.sync_routes();
+        self.virtual_buttons
+            .retain(|button| self.buttons.contains(button));
+    }
+    fn release_button_on_route(&self, button: u8, was_virtual: bool, teardown: bool) -> Result<()> {
+        struct ForcedRouteReset<'a>(&'a std::cell::Cell<Option<MouseRoute>>);
+        impl Drop for ForcedRouteReset<'_> {
+            fn drop(&mut self) {
+                self.0.set(None);
+            }
+        }
+        let held_id = u32::from(button) | if was_virtual { VIRTUAL_BUTTON_FLAG } else { 0 };
+        let route = if was_virtual {
+            MouseRoute::Virtual
+        } else {
+            MouseRoute::Injection
+        };
+        self.forced_route.set(Some(route));
+        let _reset = ForcedRouteReset(&self.forced_route);
+        if teardown {
+            self.release_owned(false, held_id, Self::button(button, false))
+        } else {
+            self.held(false, held_id, false, true, Self::button(button, false))
+        }
+    }
+    fn release_deferred_left(&mut self, teardown: bool) -> Result<()> {
+        if self.left_release.take().is_none() {
+            return Ok(());
+        }
+        let was_virtual = self.left_release_virtual.replace(false);
+        self.release_button_on_route(1, was_virtual, teardown)
+    }
     pub fn apply(&mut self, e: &Event) -> Result<()> {
         let mut errors = self.apply_all(std::slice::from_ref(e));
         errors.pop().map_or(Ok(()), Err)
@@ -802,7 +930,7 @@ impl Injector {
         if let Err(error) = self.flush_touch_moves() {
             self.pending.errors.push(error);
         }
-        self.flush();
+        self.flush_and_sync();
         std::mem::take(&mut self.pending.errors)
     }
     /// Add an event's keyboard and mouse input to the pass, or apply it.
@@ -852,17 +980,17 @@ impl Injector {
         match e {
             // How a key or button is sent depends on the keys or buttons held,
             // including those pressed earlier in the pass.
-            Keyboard { .. } if self.press_pending(true) => self.flush(),
-            MouseButton { .. } if self.press_pending(false) => self.flush(),
+            Keyboard { .. } if self.press_pending(true) => self.flush_and_sync(),
+            MouseButton { .. } if self.press_pending(false) => self.flush_and_sync(),
             // Finish the absolute-mode click before relative input can press again.
-            Relative { .. } if self.left_release.take().is_some() => {
-                self.flush();
-                if let Err(error) = self.held(false, 1, false, true, Self::button(1, false)) {
+            Relative { .. } if self.left_release.is_some() => {
+                self.flush_and_sync();
+                if let Err(error) = self.release_deferred_left(false) {
                     self.pending.errors.push(error);
                 }
             }
             // Touch and pen go through another call: keep them in order.
-            Touch { .. } | Pen { .. } => self.flush(),
+            Touch { .. } | Pen { .. } => self.flush_and_sync(),
             _ => {}
         }
         let start = self.pending.inputs.len();
@@ -881,7 +1009,7 @@ impl Injector {
         match e {
             Relative { x, y } => {
                 self.absolute = false;
-                self.pending.inputs.push(Self::mouse(
+                self.pending.push_auto(Self::mouse(
                     i32::from(*x),
                     i32::from(*y),
                     0,
@@ -931,7 +1059,7 @@ impl Injector {
                         rect.top + (i64::from(*y).clamp(0, height) * span_y / height) as i32,
                     ),
                 };
-                self.pending.inputs.push(Self::mouse(
+                self.pending.push_auto(Self::mouse(
                     ((i64::from(px - left) * 65535) / i64::from((w - 1).max(1))) as i32,
                     ((i64::from(py - top) * 65535) / i64::from((h - 1).max(1))) as i32,
                     0,
@@ -947,6 +1075,8 @@ impl Injector {
                 if *button == 1 && self.absolute && !self.policy.left_release_delay.is_zero() {
                     if !*down && self.buttons.contains(button) {
                         self.buttons.remove(button);
+                        self.left_release_virtual
+                            .set(self.virtual_buttons.remove(button));
                         self.left_release =
                             Some(std::time::Instant::now() + self.policy.left_release_delay);
                         return Ok(None);
@@ -954,32 +1084,60 @@ impl Injector {
                     if *down && self.left_release.take().is_some() {
                         // Still down in Windows: its release never went out.
                         self.buttons.insert(*button);
+                        if self.left_release_virtual.replace(false) {
+                            self.virtual_buttons.insert(*button);
+                        }
                         return Ok(None);
                     }
                 }
                 if *button == 3 && *down && self.left_release.is_some() {
-                    self.pending
-                        .inputs
-                        .extend([Self::button(3, true), Self::button(3, false)]);
+                    let route = if self.virtual_mouse && virtual_hid::MOUSE.ready() {
+                        MouseRoute::Virtual
+                    } else {
+                        MouseRoute::Injection
+                    };
+                    self.pending.push_routed(Self::button(3, true), route);
+                    self.pending.push_routed(Self::button(3, false), route);
                     return Ok(None);
                 }
                 let owned = self.buttons.contains(button);
-                let inputs = &mut self.pending.inputs;
+                let virtual_route = if *down {
+                    !owned && self.virtual_mouse && virtual_hid::MOUSE.ready()
+                } else {
+                    owned && self.virtual_buttons.remove(button)
+                };
+                let held_id = u32::from(*button)
+                    | if virtual_route {
+                        VIRTUAL_BUTTON_FLAG
+                    } else {
+                        0
+                    };
+                let route = if virtual_route {
+                    MouseRoute::Virtual
+                } else {
+                    MouseRoute::Injection
+                };
+                let pending = &mut self.pending;
                 Self::update_held(
                     &mut HELD.lock().unwrap(),
-                    (false, u32::from(*button)),
+                    (false, held_id),
                     *down,
                     owned,
                     Self::button(*button, *down),
                     |input| {
-                        inputs.extend_from_slice(input);
+                        for &item in input {
+                            pending.push_routed(item, route);
+                        }
                         Ok(())
                     },
                 )?;
                 if *down {
+                    if virtual_route {
+                        self.virtual_buttons.insert(*button);
+                    }
                     return Ok(Some(Press {
                         keyboard: false,
-                        id: u32::from(*button),
+                        id: held_id,
                         source: 0,
                         flags: 0,
                         counted: !owned,
@@ -1002,7 +1160,7 @@ impl Injector {
                 if amount == 0 {
                     return Ok(None);
                 }
-                self.pending.inputs.push(Self::mouse(
+                self.pending.push_auto(Self::mouse(
                     0,
                     0,
                     amount as u32,
@@ -1069,10 +1227,12 @@ impl Injector {
                 } else {
                     0
                 };
-                let inputs = &mut self.pending.inputs;
+                let pending = &mut self.pending;
                 if modifiers == 0 {
                     Self::update_held(&mut held, (true, key), *down, owned, input, |input| {
-                        inputs.extend_from_slice(input);
+                        for &item in input {
+                            pending.push_auto(item);
+                        }
                         Ok(())
                     })?;
                 } else {
@@ -1080,11 +1240,9 @@ impl Injector {
                     // key: press it around this key only, as Vibepollo does.
                     let count = held.get(&(true, key)).copied().unwrap_or(0);
                     if count == 0 {
-                        inputs.extend(Self::with_modifiers(
-                            input,
-                            modifiers,
-                            always_send_scancodes,
-                        ));
+                        for item in Self::with_modifiers(input, modifiers, always_send_scancodes) {
+                            pending.push_auto(item);
+                        }
                     }
                     held.insert((true, key), count + 1);
                 }
@@ -1108,9 +1266,8 @@ impl Injector {
             }
             Text(s) => {
                 for v in s.encode_utf16() {
-                    self.pending
-                        .inputs
-                        .extend([Self::key(v, true, true), Self::key(v, false, true)]);
+                    self.pending.push_auto(Self::key(v, true, true));
+                    self.pending.push_auto(Self::key(v, false, true));
                 }
             }
             Touch {
@@ -1258,7 +1415,7 @@ impl Injector {
         }
     }
     fn release_pointers(&mut self) -> Result<()> {
-        self.flush();
+        self.flush_and_sync();
         let mut failures: Vec<_> = std::mem::take(&mut self.pending.errors)
             .into_iter()
             .map(|error| format!("pending input: {error:#}"))
@@ -1272,11 +1429,8 @@ impl Injector {
         self.scroll = [0; 2];
         // The buttons a touch held are released below with the rest.
         self.touch_profile = Default::default();
-        if self.left_release.take().is_some() {
-            keep(
-                "deferred left button",
-                self.release_owned(false, 1, Self::button(1, false)),
-            );
+        if self.left_release.is_some() {
+            keep("deferred left button", self.release_deferred_left(true));
         }
         for key in &self.keys {
             keep(
@@ -1288,10 +1442,11 @@ impl Injector {
                 ),
             );
         }
-        for button in &self.buttons {
+        for &button in &self.buttons {
+            let was_virtual = self.virtual_buttons.contains(&button);
             keep(
                 &format!("mouse button {button}"),
-                self.release_owned(false, u32::from(*button), Self::button(*button, false)),
+                self.release_button_on_route(button, was_virtual, true),
             );
         }
         // Lift contacts that are still down before their devices go away,
@@ -1304,6 +1459,7 @@ impl Injector {
         self.keys.clear();
         self.key_sources.clear();
         self.buttons.clear();
+        self.virtual_buttons.clear();
         self.key_flags.clear();
         if !failures.is_empty() {
             bail!("{}", failures.join("; "));

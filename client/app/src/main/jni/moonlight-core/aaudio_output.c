@@ -222,6 +222,7 @@ static void audioError(AAudioStream* stream, void* data, aaudio_result_t error) 
 }
 
 static void closeAudio(AudioOutput* output) {
+    if (!output) return;
     atomic_store(&output->stopped, true);
     if (output->stream) {
         output->AAudioStream_requestStop(output->stream);
@@ -310,7 +311,7 @@ JNIEXPORT jint JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeWriteAudio(JNIEnv* env, jclass clazz,
         jlong handle, jshortArray samples, jint length) {
     AudioOutput* output = (AudioOutput*)(intptr_t)handle;
-    if (length < 0 || length > (*env)->GetArrayLength(env, samples) || length % 2) return AUDIO_WRITE_STOPPED;
+    if (!output || !samples || length < 0 || length > (*env)->GetArrayLength(env, samples) || length % 2) return AUDIO_WRITE_STOPPED;
     // The samples come over in stack-sized pieces (GetShortArrayRegion): GetShortArrayElements on
     // a movable array has ART allocate a copy and free it again for every packet.
     jshort chunk[AUDIO_WRITE_CHUNK_FRAMES * 2];
@@ -354,6 +355,7 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAbortAudio(JNIEnv* e
 JNIEXPORT jintArray JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioStats(JNIEnv* env, jclass clazz, jlong handle) {
     AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    if (!output || !output->stream) return NULL;
     int xruns = output->AAudioStream_getXRunCount(output->stream);
     int underruns = (int)atomic_load(&output->queue.underruns);
     // The software starvation count is still valid if hardware xruns are unsupported.
@@ -376,6 +378,7 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioStats(JNIEnv* e
 JNIEXPORT jint JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioBuffer(JNIEnv* env, jclass clazz, jlong handle, jint frames) {
     AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    if (!output || !output->stream) return 0;
     int32_t granted = output->AAudioStream_setBufferSizeInFrames(output->stream, frames);
     return granted > 0 ? granted : output->AAudioStream_getBufferSizeInFrames(output->stream);
 }
@@ -384,6 +387,7 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioBuffer(JNIEnv* 
 JNIEXPORT jint JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioReserve(JNIEnv* env, jclass clazz, jlong handle, jint frames) {
     AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    if (!output) return 0;
     if (frames <= 0) return (jint)atomic_load(&output->queue.targetFrames);
     uint32_t target = (uint32_t)frames < output->queue.capacity ? (uint32_t)frames : output->queue.capacity;
     atomic_store(&output->queue.targetFrames, target);
@@ -394,13 +398,16 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioReserve(JNIEnv*
 // still grow to cover it. Until it is set (0) every gap is a stall.
 JNIEXPORT void JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioReserveLimit(JNIEnv* env, jclass clazz, jlong handle, jint frames) {
-    atomic_store(&((AudioOutput*)(intptr_t)handle)->limitFrames, frames > 0 ? (uint32_t)frames : 0);
+    AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    if (!output) return;
+    atomic_store(&output->limitFrames, frames > 0 ? (uint32_t)frames : 0);
 }
 
 // Frames in the ring that the callback has not taken yet; the decode thread's per-packet drop check.
 JNIEXPORT jint JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioQueued(JNIEnv* env, jclass clazz, jlong handle) {
     AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    if (!output) return 0;
     return (jint)(atomic_load(&output->queue.writtenFrames) - atomic_load(&output->queue.readFrames));
 }
 
@@ -409,9 +416,11 @@ Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioQueued(JNIEnv* 
 JNIEXPORT jboolean JNICALL
 Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioSkipLate(JNIEnv* env, jclass clazz, jlong handle,
         jint frames, jint pendingFrames) {
+    AudioOutput* output = (AudioOutput*)(intptr_t)handle;
+    if (!output) return JNI_FALSE;
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    return audioSkipLate((AudioOutput*)(intptr_t)handle, (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec,
+    return audioSkipLate(output, (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec,
                          frames > 0 ? (uint32_t)frames : 0, pendingFrames > 0 ? (uint32_t)pendingFrames : 0)
             ? JNI_TRUE : JNI_FALSE;
 }

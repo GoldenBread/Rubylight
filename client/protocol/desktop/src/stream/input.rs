@@ -76,6 +76,18 @@ pub(super) fn pointer_goes_out(captured: bool, focused: bool) -> bool {
     captured && focused
 }
 
+/// Whether a mouse button event goes to the PC: presses require capture and focus, while
+/// releases also pass if the button is currently held in `mouse_down` so none stays stuck.
+pub(super) fn mouse_button_goes_out(captured: bool, focused: bool, down: bool, was_down: bool) -> bool {
+    if down { pointer_goes_out(captured, focused) } else { pointer_goes_out(captured, focused) || was_down }
+}
+
+/// Whether a key event goes to the PC: presses require capture and focus, while releases also
+/// pass if the key is currently held in `keys_down` so none stays stuck.
+pub(super) fn key_goes_out(captured: bool, focused: bool, down: bool, was_down: bool) -> bool {
+    if down { captured && focused } else { (captured && focused) || was_down }
+}
+
 /// A wheel turn as the PC's high-resolution scroll. SDL gives a trackpad's turn in fractions of a
 /// notch; the queue carries the fraction to the next turn.
 pub(super) fn send_wheel(w: &SDL_MouseWheelEvent, q: &mut nightjar_core::input::InputQueue) {
@@ -190,6 +202,9 @@ impl Streaming {
                         return;
                     }
                     let Some(button) = mouse_button_code(b.button, self.settings.mouse_nav_buttons) else { return };
+                    if !mouse_button_goes_out(self.captured, self.focused, b.down, self.mouse_down.contains(&button)) {
+                        return;
+                    }
                     if b.down {
                         self.mouse_down.insert(button);
                     } else {
@@ -394,14 +409,14 @@ impl Streaming {
                 _ => {}
             }
         }
-        if !self.captured {
-            return;
-        }
         let Some(KeyInput { code, modifiers, flags }) =
             key_input(k.scancode, k.r#mod, self.system_keys(), self.settings.right_alt_as_meta)
         else {
             return;
         };
+        if !key_goes_out(self.captured, self.focused, k.down, self.keys_down.contains(&code)) {
+            return;
+        }
         if k.down {
             self.keys_down.insert(code);
             self.text_field.key_down(text_field::types(k.key, k.r#mod));
@@ -419,7 +434,7 @@ impl Streaming {
     /// Text from SDL text input: only what a touch keyboard typed goes to the PC, as UTF-8.
     pub(super) fn text(&mut self, text: &str) {
         let Some(text) = self.text_field.text(text) else { return; };
-        if !self.captured {
+        if !self.captured || !self.focused {
             return;
         }
         self.session.input(|q| {
@@ -445,5 +460,19 @@ mod mic_only_tests {
         }
         assert!(!mic_only_chord(None), "an ordinary key never goes");
         assert!(mic_only_handles(SDL_EVENT_KEY_DOWN) && !mic_only_handles(SDL_EVENT_MOUSE_MOTION));
+    }
+
+    #[test]
+    fn unfocused_stream_drops_presses_but_still_releases_held_keys_and_buttons() {
+        assert!(key_goes_out(true, true, true, false));
+        assert!(!key_goes_out(true, false, true, false), "unfocused press must not reach host");
+        assert!(!key_goes_out(false, true, true, false), "uncaptured press must not reach host");
+        assert!(key_goes_out(true, false, false, true), "held key release still goes out");
+        assert!(!key_goes_out(true, false, false, false), "unheld key release while unfocused is dropped");
+
+        assert!(mouse_button_goes_out(true, true, true, false));
+        assert!(!mouse_button_goes_out(true, false, true, false), "unfocused click must not reach host");
+        assert!(mouse_button_goes_out(true, false, false, true), "held mouse button release still goes out");
+        assert!(!mouse_button_goes_out(true, false, false, false), "unheld mouse button release while unfocused is dropped");
     }
 }

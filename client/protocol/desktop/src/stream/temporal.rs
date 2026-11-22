@@ -56,6 +56,12 @@ impl Stage {
         matches!(self, Self::Accumulate | Self::Detail)
     }
 
+    /// Whether the pass is skipped on a reset frame: motion cannot compare against a previous
+    /// scene, and `Accumulate` ignores `motion` and `cut` when `reset` is set.
+    pub fn skipped_on_reset(self) -> bool {
+        matches!(self, Self::Motion | Self::Cut)
+    }
+
     #[cfg(not(target_os = "macos"))]
     pub fn spirv(self) -> &'static [u8] {
         match self {
@@ -202,8 +208,27 @@ impl Drop for GpuPass {
 /// The textures the passes render, whichever API owns them.
 enum Owned {
     #[cfg(windows)]
-    Native(#[allow(dead_code)] Vec<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>),
+    Native {
+        textures: Vec<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>,
+        motion_rtvs: [Option<windows::Win32::Graphics::Direct3D11::ID3D11RenderTargetView>; 2],
+    },
     Gpu { device: *mut SDL_GPUDevice, textures: Vec<*mut SDL_Texture>, samplers: [*mut SDL_GPUSampler; 2] },
+}
+
+unsafe fn clear_gpu_texture(renderer: *mut SDL_Renderer, texture: *mut SDL_Texture, flush: bool) -> Result<(), String> {
+    let previous = SDL_GetRenderTarget(renderer);
+    let (mut r, mut g, mut b, mut a) = (0, 0, 0, 0);
+    SDL_GetRenderDrawColor(renderer, &mut r, &mut g, &mut b, &mut a);
+    let cleared = SDL_SetRenderTarget(renderer, texture)
+        && SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0)
+        && SDL_RenderClear(renderer)
+        && (!flush || SDL_FlushRenderer(renderer));
+    SDL_SetRenderDrawColor(renderer, r, g, b, a);
+    SDL_SetRenderTarget(renderer, previous);
+    if !cleared {
+        return Err(format!("a half-float render target cannot be drawn to: {}", crate::sdl::error()));
+    }
+    Ok(())
 }
 
 pub(super) struct Temporal {
@@ -247,7 +272,13 @@ impl Temporal {
         }
         let mut handles: Vec<_> = owned.iter().map(|texture| texture.as_raw()).collect();
         handles.extend([frame, output]);
-        self.owned = Owned::Native(owned);
+        let mut motion_rtvs = [None, None];
+        let device = owned[motion(0)].GetDevice().map_err(|e| format!("the D3D11 device cannot be read: {e}"))?;
+        for (p, rtv) in motion_rtvs.iter_mut().enumerate() {
+            device.CreateRenderTargetView(&owned[motion(p)], None, Some(rtv))
+                .map_err(|e| format!("the motion clear target cannot be created: {e}"))?;
+        }
+        self.owned = Owned::Native { textures: owned, motion_rtvs };
         for stage in Stage::ALL {
             let mut filter = super::d3d11::Filter::compiled(frame, &Shader::temporal_hlsl(stage))
                 .map_err(|e| format!("the {} pass's shader cannot be created: {e}", stage.name()))?;
@@ -270,9 +301,6 @@ impl Temporal {
         let mut textures = Vec::with_capacity(OWNED + 2);
         let mut samplers = [ptr::null_mut(); 2];
         let made = (|| {
-            let previous = SDL_GetRenderTarget(renderer);
-            let (mut r, mut g, mut b, mut a) = (0, 0, 0, 0);
-            SDL_GetRenderDrawColor(renderer, &mut r, &mut g, &mut b, &mut a);
             for (size, _) in targets(self.input, self.output) {
                 let texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA64_FLOAT, SDL_TEXTUREACCESS_TARGET, size.0 as i32, size.1 as i32);
                 if texture.is_null() {
@@ -281,12 +309,7 @@ impl Temporal {
                 textures.push(texture);
                 SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
                 // Last frame's motion is the first frame's predictor: zero, as the history.
-                let cleared = SDL_SetRenderTarget(renderer, texture) && SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0) && SDL_RenderClear(renderer);
-                SDL_SetRenderDrawColor(renderer, r, g, b, a);
-                SDL_SetRenderTarget(renderer, previous);
-                if !cleared {
-                    return Err(format!("a half-float render target cannot be drawn to: {}", crate::sdl::error()));
-                }
+                clear_gpu_texture(renderer, texture, false)?;
             }
             for (i, filter) in [SDL_GPU_FILTER_NEAREST, SDL_GPU_FILTER_LINEAR].into_iter().enumerate() {
                 samplers[i] = SDL_CreateGPUSampler(device, &SDL_GPUSamplerCreateInfo {
@@ -351,13 +374,34 @@ impl Temporal {
         self.parity
     }
 
+    unsafe fn clear_motion(&self, renderer: *mut SDL_Renderer) -> Result<(), String> {
+        match &self.owned {
+            #[cfg(windows)]
+            Owned::Native { textures, motion_rtvs } => {
+                let device = textures[motion(self.parity)].GetDevice()
+                    .map_err(|e| format!("the D3D11 device cannot be read: {e}"))?;
+                let context = device.GetImmediateContext()
+                    .map_err(|e| format!("the D3D11 context cannot be read: {e}"))?;
+                context.ClearRenderTargetView(motion_rtvs[self.parity].as_ref().unwrap(), &[0.0; 4]);
+                Ok(())
+            }
+            Owned::Gpu { textures, .. } => clear_gpu_texture(renderer, textures[motion(self.parity)], true),
+        }
+    }
+
     /// Runs the passes on the picture now in the frame texture, leaving the result in the output
     /// texture, and swaps this frame's state for the next.
     pub unsafe fn draw(&mut self, renderer: *mut SDL_Renderer, sharpness: u32) -> Result<(), String> {
         if !SDL_FlushRenderer(renderer) {
             return Err(format!("the renderer cannot flush: {}", crate::sdl::error()));
         }
+        if self.reset {
+            self.clear_motion(renderer)?;
+        }
         for (stage, pass) in Stage::ALL.into_iter().zip(&self.passes) {
+            if self.reset && stage.skipped_on_reset() {
+                continue;
+            }
             let parameters = uniforms(stage, self.input, self.output, self.reset, sharpness);
             let count = bindings(stage, 0).len();
             for binding in self.parity * count..(self.parity + 1) * count {
@@ -383,7 +427,7 @@ impl Drop for Temporal {
         self.passes.clear();
         match &mut self.owned {
             #[cfg(windows)]
-            Owned::Native(_) => {}
+            Owned::Native { .. } => {}
             // SAFETY: the upscaler's own textures and samplers.
             Owned::Gpu { device, textures, samplers } => unsafe {
                 for texture in textures.drain(..) { SDL_DestroyTexture(texture); }
@@ -461,6 +505,12 @@ mod tests {
         assert!((accumulate[5] - 1.44f32.powi(3)).abs() < 1e-4);
         let detail = floats(uniforms(Stage::Detail, (1280, 720), (2560, 1440), false, 50));
         assert_eq!(detail[2..], [1280.0, 720.0, 2560.0, 1440.0, 1.5, 0.0]);
+    }
+
+    #[test]
+    fn reset_frames_skip_motion_and_cut_only() {
+        let kept: Vec<_> = Stage::ALL.into_iter().filter(|s| !s.skipped_on_reset()).collect();
+        assert_eq!(kept, [Stage::Prep, Stage::Down, Stage::Accumulate, Stage::Detail]);
     }
 
     /// Direct3D 11 compiles the passes when a stream starts; a pass FXC refuses would fall back

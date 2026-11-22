@@ -1321,12 +1321,14 @@ fn run<P: Pads>(
                     pads.audio(input.id, input.kind, &input.payload);
                 }
             }
+            let mut wake_feedback = false;
             let speaker = pads.speaker();
-            if !shared.parked.load(Ordering::Acquire) {
+            if !speaker.is_empty() && !shared.parked.load(Ordering::Acquire) {
                 let mut queue = shared.speaker.lock().unwrap();
                 for frame in speaker {
                     queue.push(frame, now);
                 }
+                wake_feedback = true;
             }
             let pcm = pads.haptics();
             if !pcm.is_empty() && !shared.parked.load(Ordering::Acquire) {
@@ -1334,10 +1336,10 @@ fn run<P: Pads>(
                 for frame in pcm {
                     queue.push(frame, now);
                 }
-                drop(queue);
-                if let Some(waker) = shared.feedback_waker.lock().unwrap().as_ref() {
-                    let _ = waker.send(&[1]);
-                }
+                wake_feedback = true;
+            }
+            if wake_feedback && let Some(waker) = shared.feedback_waker.lock().unwrap().as_ref() {
+                let _ = waker.send(&[1]);
             }
             polling = pads.plugged();
             if !polling {

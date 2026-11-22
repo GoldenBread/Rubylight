@@ -118,7 +118,14 @@ async function send(
     { method, headers, body: body === undefined ? undefined : JSON.stringify(body) },
     timeout,
   );
-  if (retried || path.startsWith('/api/auth/')) return reply;
+  if (
+    retried ||
+    path === '/api/auth/login' ||
+    path === '/api/auth/refresh' ||
+    path === '/api/auth/status'
+  ) {
+    return reply;
+  }
   if (reply.response.status === 401) {
     if (await refreshSession()) return send(method, path, body, timeout, true, background);
     onSignedOut?.();

@@ -125,6 +125,10 @@ impl Player {
             warnings.set(dropped_code(dropped), limit);
         }
     }
+    /// Release any held controller inputs on the player's pad slot.
+    pub fn release_all(&self) {
+        let _ = self.instance.input(&self.device, neutral_controller());
+    }
     /// The slot's rumble and other feedback, for the player's controller 0.
     pub fn feedback(&self, h: &Host) -> Vec<PadReport> {
         h.nucleus.feedback(self.seat)
@@ -133,6 +137,21 @@ impl Player {
     /// the stream's settings forward it.
     pub fn feedback_allowed(&self, kind: u16) -> bool {
         !matches!(kind, 0x010b | 0x5500 | 0x5503 | 0x5601) || self.rumble
+    }
+}
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.release_all();
+    }
+}
+pub(super) fn neutral_controller() -> Input {
+    Input::Controller {
+        id: 0,
+        active: 0,
+        buttons: 0,
+        left_trigger: 0,
+        right_trigger: 0,
+        sticks: [0; 4],
     }
 }
 fn dropped_code(dropped: Dropped) -> &'static str {
@@ -337,6 +356,83 @@ pub(super) fn first_window(
                 .into());
             }
             Err(_) => std::thread::sleep(WATCH),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn player_release_all_and_drop_send_neutral_controller_state() {
+        let pc = Arc::new(fake::Pc::installed());
+        let registry = Registry::new(pc.clone());
+        let apps = vec![App {
+            name: "Portal 2".into(),
+            cmd: format!("\"{}\" -novid", fake::EXE),
+            working_dir: String::new(),
+            prep: Vec::new(),
+            computed_id: None,
+            aliases: Vec::new(),
+            extra: BTreeMap::new(),
+        }];
+        let coop = registry.entries(&apps, "").remove(0);
+        let client: Client = serde_json::from_value(serde_json::json!({
+            "name": "Device A",
+            "cert": "",
+            "uuid": "A",
+            "perm": butterpollo_core::state::PLAY_DEVICE_PERMISSION,
+        }))
+        .unwrap();
+        let seat = registry
+            .admit(Admission {
+                launch: "a",
+                client: &client,
+                game: Game::Coop(&coop),
+                size: (1920, 1080),
+                config: &Config::default(),
+                warnings: Default::default(),
+                release_parked: &|| Ok(()),
+                instances: None,
+            })
+            .unwrap();
+        let mut player = Player {
+            instance: registry.instance(seat.session).unwrap(),
+            seat,
+            device: "A".into(),
+            rumble: true,
+            told: Vec::new(),
+        };
+        let warnings = Warnings::default();
+        player.input(
+            Input::Controller {
+                id: 0,
+                active: 1,
+                buttons: 0x1000,
+                left_trigger: 200,
+                right_trigger: 255,
+                sticks: [10000, -10000, 5000, -5000],
+            },
+            &warnings,
+        );
+        player.release_all();
+        drop(player);
+
+        let inputs = pc.last().inputs.lock().unwrap().clone();
+        assert_eq!(inputs.len(), 3);
+        for &idx in &[1usize, 2usize] {
+            assert_eq!(inputs[idx].0, seat.slot);
+            assert!(matches!(
+                inputs[idx].1,
+                Input::Controller {
+                    buttons: 0,
+                    left_trigger: 0,
+                    right_trigger: 0,
+                    sticks: [0, 0, 0, 0],
+                    ..
+                }
+            ));
         }
     }
 }

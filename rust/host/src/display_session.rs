@@ -2639,13 +2639,7 @@ impl Prepared {
         };
         let arrangement = match parsed {
             Some(parsed) => {
-                let retained: Vec<_> = h
-                    .monitors
-                    .lock()
-                    .unwrap()
-                    .values()
-                    .map(|m| m.current_output())
-                    .collect();
+                let retained = crate::remote_display::outputs(h);
                 match display_arrangement::Lease::acquire(
                     &output,
                     parsed,
@@ -2909,11 +2903,22 @@ pub fn retime(
         );
         return Ok(Err(preparation));
     }
+    let (virtual_mode, joined) = {
+        let prepared = display._state.lock().unwrap();
+        (prepared.virtual_mode, prepared.joined)
+    };
     let app = crate::stream::launch_app(h, launch);
-    let (framegen, device_mode) = frame_policy(app.as_ref(), launch, stream, config, true)?;
+    let (framegen, device_mode) =
+        frame_policy(app.as_ref(), launch, stream, config, virtual_mode || joined)?;
     let raised = butterpollo_windows::input::on_input_desktop(|| -> Result<Raise> {
         let mut prepared = display._state.lock().unwrap();
-        if prepared.display.is_none() && !prepared.joined {
+        if !prepared.joined
+            && (!prepared.virtual_mode
+                || prepared
+                    .display
+                    .as_ref()
+                    .is_none_or(|guard| !guard.is_virtual()))
+        {
             return Ok(Raise::NotOwned);
         }
         let (display_width, display_height) = prepared.recovery_dimensions;
@@ -2922,7 +2927,7 @@ pub fn retime(
             display_height,
             framegen.display_rate,
             stream.hdr,
-            true,
+            prepared.virtual_mode || prepared.joined,
         )?;
         // As for a new display: a device's own mode sets its refresh.
         let rate = if device_mode.is_some() {

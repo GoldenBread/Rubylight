@@ -485,3 +485,18 @@ fn refusals_have_their_client_text_and_status() {
         assert!(ended[i + 1..].iter().all(|b| a != b), "{a}");
     }
 }
+
+#[test]
+fn joined_requires_an_active_game_and_existing_guest() {
+    let start = Instant::now();
+    let mut guests = playing();
+    let id = ask(&mut guests, "phone", start);
+    assert!(guests.approve(id, Permission::Controller, None, NOW));
+    assert!(matches!(
+        guests.outcome(id, start),
+        Admission::Granted { .. }
+    ));
+    assert!(guests.follow_game(None).is_empty());
+    assert!(!guests.joined(id, "launch-after-end"));
+    assert!(!guests.streaming());
+}

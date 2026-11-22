@@ -84,7 +84,7 @@ public class GameSirUsbTest {
             assertTrue(controllers.get(0) instanceof Xbox360Controller);
             controllers.get(0).rumble((short) 0xffff, (short) 0x8000);
             byte[] rumble = {0, 8, 0, (byte) 0xff, (byte) 0x80, 0, 0, 0};
-            assertTrue(UsbPads.Connection.outputs.stream().anyMatch(bytes -> Arrays.equals(rumble, bytes)));
+            UsbPads.await(() -> UsbPads.Connection.outputs.stream().anyMatch(bytes -> Arrays.equals(rumble, bytes)));
         } finally {
             service.destroy();
             UsbPads.await(() -> UsbPads.Connection.closes.get() == 1);

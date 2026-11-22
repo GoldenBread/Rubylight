@@ -270,7 +270,7 @@ pub(super) async fn content(
 ) -> Reply {
     let (client, folder) = granted(&h, &c, &id_of(id)?, false)?;
     let names = names_of(request.uri().query())?;
-    let slot = files::begin_download(&h, &client.uuid)?;
+    let slot = files::begin_download(&h, butterpollo_core::state::device_uuid(&client.uuid))?;
     let (file, length) = in_folder("open the file", &folder, move |root| {
         root.open_file(&refs(&names))
     })
@@ -335,7 +335,7 @@ async fn receive(
     let target = folder.clone();
     let uploaded = files::accept(
         h,
-        &client.uuid,
+        butterpollo_core::state::device_uuid(&client.uuid),
         headers,
         body,
         recheck,

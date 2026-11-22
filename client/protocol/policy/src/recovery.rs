@@ -254,9 +254,10 @@ impl Backoff {
 
     /// Whether [`Backoff::next_delay`] at `now_ms` would allow an attempt, spending none.
     pub fn allows_attempt(&self, now_ms: u64) -> bool {
-        DELAYS_MS
-            .get(self.attempts as usize)
-            .is_some_and(|delay| *delay < self.remaining(now_ms))
+        DELAYS_MS.get(self.attempts as usize).is_some_and(|delay| {
+            let delay = if self.now { 0 } else { *delay };
+            delay < self.remaining(now_ms)
+        })
     }
 
     /// The next attempt starts at once: the network came back without the stream roaming.
@@ -416,5 +417,18 @@ mod network_grace_tests {
         for s in NETWORK_GRACE_CHOICES_S {
             assert_eq!(network_grace_choice_s(s * 1000), s);
         }
+    }
+
+    #[test]
+    fn backoff_allows_attempt_respects_retry_now() {
+        let mut backoff = Backoff::default();
+        backoff.begin(0);
+        // 500 ms left in the 60 s window, below DELAYS_MS[0] (1000 ms).
+        let near_end = WINDOW_MS - 500;
+        assert!(!backoff.allows_attempt(near_end));
+        backoff.retry_now();
+        assert!(backoff.allows_attempt(near_end));
+        assert!(!backoff.allows_attempt(WINDOW_MS));
+        assert_eq!(backoff.next_delay(near_end), Some(0));
     }
 }

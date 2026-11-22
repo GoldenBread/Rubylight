@@ -197,8 +197,10 @@ public final class AdaptiveBitrateController {
             } else if (nowMs - calmSinceMs >= STABLE_MS) {
                 // No poor sample for a while at this rate: remember it, and a step back has worked.
                 stableKbps = Math.max(stableKbps, currentKbps);
-                stepBackFromKbps = -1;
-                stepBackFailures = 0;
+                if (stepBackFromKbps != -1) {
+                    stepBackFromKbps = -1;
+                    stepBackFailures = 0;
+                }
             }
             if (thermalLevel > 0 || !(lossPercent >= 0 && lossPercent < 0.5f) ||
                     !(decodeMs >= 0 && (decodeBitrateInsensitive || decodeMs < frameMs * 0.75f)) ||

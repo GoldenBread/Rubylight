@@ -53,11 +53,12 @@ pub fn rate_multiple(refresh_hz: f64, fps: u32) -> Option<u32> {
 }
 
 /// The mode a stream at `fps` shows in: of the modes at the size of the one in use (`current`,
-/// else the connector's preferred one, else the largest), the one whose refresh is the stream's
-/// rate, else its smallest multiple; the mode in use when none is. The size never changes, so the
-/// desktop's resolution stays, as does the launcher's layout; the plane scales the picture.
-/// Interlaced modes are never chosen.
-pub fn pick_mode(modes: &[Mode], current: Option<usize>, fps: u32) -> Option<usize> {
+/// else the connector's preferred one, else the largest), when `vrr` is on, the fastest refresh
+/// rate at that size (so a lower stream fps never caps the panel's VRR range); otherwise the one
+/// whose refresh is the stream's rate, else its smallest multiple; the mode in use when none is.
+/// The size never changes, so the desktop's resolution stays, as does the launcher's layout; the
+/// plane scales the picture. Interlaced modes are never chosen.
+pub fn pick_mode(modes: &[Mode], current: Option<usize>, fps: u32, vrr: bool) -> Option<usize> {
     let base = current
         .filter(|&i| i < modes.len())
         .or_else(|| modes.iter().position(|m| m.preferred && !m.interlaced))
@@ -65,6 +66,19 @@ pub fn pick_mode(modes: &[Mode], current: Option<usize>, fps: u32) -> Option<usi
             modes.iter().enumerate().filter(|(_, m)| !m.interlaced).max_by_key(|(_, m)| u64::from(m.width) * u64::from(m.height)).map(|(i, _)| i)
         })?;
     let (w, h) = (modes[base].width, modes[base].height);
+    if vrr {
+        let top = modes
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.width == w && m.height == h && !m.interlaced)
+            .max_by(|(_, a), (_, b)| a.refresh_hz.total_cmp(&b.refresh_hz))
+            .map(|(i, _)| i);
+        return match top {
+            Some(best) if !modes[base].interlaced && modes[best].refresh_hz <= modes[base].refresh_hz => Some(base),
+            Some(best) => Some(best),
+            None => Some(base),
+        };
+    }
     let fitting = modes
         .iter()
         .enumerate()

@@ -712,3 +712,91 @@ fn a_release_fits_the_reserve_above_a_full_queue() {
     assert_eq!(out.len(), MAX_QUEUED + 1, "one release above the bound");
     assert!(matches!(decode(&out.last().unwrap().data).unwrap(), Input::Keyboard { key: 0x41, down: false, .. }));
 }
+
+#[test]
+fn discrete_events_flush_preceding_batched_motion_without_waiting() {
+    let mut q = queue(&sunshine());
+    let t0 = Instant::now();
+
+    // Prime last_mouse and last_pen so the batch interval would normally apply.
+    q.send_mouse_move(1, 0).unwrap();
+    q.send_pen(touch_event::MOVE, 1, 0, 0.1, 0.5, 0.5, 0., 0., 0, 0, pen::ROLL_UNKNOWN)
+        .unwrap();
+    assert_eq!(take(&mut q, t0).len(), 2);
+
+    // Relative mouse move followed by a click flushes both immediately in order.
+    q.send_mouse_move(4, 5).unwrap();
+    q.send_mouse_button(1, true).unwrap();
+    let mut out = Vec::new();
+    assert_eq!(q.poll(t0, false, &mut out), None);
+    let sent: Vec<Input> = out.iter().map(|p| decode(&p.data).unwrap()).collect();
+    assert_eq!(
+        sent,
+        [
+            Input::Relative { x: 4, y: 5 },
+            Input::MouseButton {
+                button: 1,
+                down: true
+            }
+        ]
+    );
+
+    // Absolute mouse position followed by a click flushes both immediately.
+    q.send_mouse_position(10, 20, 100, 100).unwrap();
+    q.send_mouse_button(1, false).unwrap();
+    out.clear();
+    assert_eq!(q.poll(t0, false, &mut out), None);
+    assert_eq!(out.len(), 2);
+
+    // Pen move followed by a pen button change flushes the move immediately.
+    q.send_pen(touch_event::MOVE, 1, 0, 0.2, 0.5, 0.5, 0., 0., 0, 0, pen::ROLL_UNKNOWN)
+        .unwrap();
+    q.send_pen(touch_event::UP, 1, 0, 0.2, 0.5, 0.5, 0., 0., 0, 0, pen::ROLL_UNKNOWN)
+        .unwrap();
+    out.clear();
+    assert_eq!(q.poll(t0, false, &mut out), None);
+    assert_eq!(out.len(), 2);
+}
+
+#[test]
+fn pending_text_does_not_block_unrelated_channels_while_preserving_keyboard_order() {
+    let mut q = queue(&sunshine());
+    let t0 = Instant::now();
+    q.send_text("hi").unwrap();
+    q.send_mouse_button(1, true).unwrap();
+    q.send_controller(0, 1, button::A, 0, 0, (0, 0), (0, 0)).unwrap();
+    q.send_keyboard(0x41, true, 0, 0).unwrap();
+    q.send_mouse_button(1, false).unwrap();
+
+    // Mouse press and controller before the keyboard event bypass the waiting text;
+    // the keyboard event and the click queued behind it wait for text to settle.
+    let mut out = Vec::new();
+    assert_eq!(q.poll(t0, false, &mut out), Some(t0 + TEXT_SETTLE));
+    let first: Vec<Input> = out.iter().map(|p| decode(&p.data).unwrap()).collect();
+    assert!(matches!(
+        first.as_slice(),
+        [
+            Input::MouseButton { button: 1, down: true },
+            Input::Controller { buttons: button::A, .. },
+        ]
+    ), "{first:?}");
+
+    let rest = take(&mut q, t0 + TEXT_SETTLE);
+    assert_eq!(
+        rest,
+        [
+            Input::Text("h".into()),
+            Input::Text("i".into()),
+            Input::Keyboard {
+                key: 0x41,
+                modifiers: 0,
+                flags: 0,
+                down: true
+            },
+            Input::MouseButton {
+                button: 1,
+                down: false
+            }
+        ]
+    );
+}

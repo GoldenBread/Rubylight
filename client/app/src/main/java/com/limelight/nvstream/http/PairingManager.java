@@ -334,6 +334,7 @@ public class PairingManager {
             if (!paired) {
                 // Only a completed pairing leaves a certificate for getPairedCert()
                 serverCert = null;
+                http.setServerCert(null);
                 try {
                     http.cancelPairing();
                 } catch (IOException e) {

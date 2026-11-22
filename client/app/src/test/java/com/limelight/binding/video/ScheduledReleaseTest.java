@@ -246,12 +246,25 @@ public class ScheduledReleaseTest {
         assertEquals("the snapshot was read again", port.now, port.timingNow);
     }
 
-    @Test public void theFallbackKeepsTheGridBasisSoEveryFrameIsJudgedTheSameWay() {
+    @Test public void theFallbackUsesTheFreshReadyTimeEvenWithAGrid() {
         port.heldPts = 424242;   // no host time: the clock cannot plan it
         assertEquals(424242, release.run(false, CONTENT_NS, true));
         assertFalse(port.planned);
-        assertEquals(port.now + DEADLINE_NS, port.fallbackBasisNs);
-        assertEquals(DEADLINE_NS + 1000, port.holdNs);
+        assertEquals(port.now, port.fallbackBasisNs);
+        assertEquals(1000, port.holdNs);
+    }
+
+    @Test public void theFallbackUsesPostAttemptReadyTimeAfterReplacementAttempt() {
+        queue(1000, 60_000);
+        port.heldPts = 1000;
+        port.newer.add(424242L);   // replacement has no host time: falls back after attemptCostNs
+        port.attemptCostNs = 5 * MS;
+        long start = port.now;
+        assertEquals(424242, release.run(false, CONTENT_NS, true));
+        assertEquals(1, port.attempts);
+        assertFalse(port.planned);
+        assertEquals(start + 5 * MS, port.fallbackBasisNs);
+        assertEquals(1000, port.holdNs);
     }
 
     @Test public void withoutAGridTheFallbackUsesTheReadyTime() {

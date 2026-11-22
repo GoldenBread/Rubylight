@@ -102,7 +102,7 @@ pub const LOSS_MIN_PACKETS: u64 = 100;
 /// The least time between two loss cuts (plus a round trip).
 pub const LOSS_CUT_GAP_US: u64 = 300_000;
 /// Without feedback for this long the controller lets go: the rate returns to the request.
-pub const STALE_US: u64 = 2_000_000;
+pub const STALE_US: u64 = 500_000;
 /// A group arrives this much slower than it was sent: the bottleneck spread it.
 pub const BOTTLENECK_RATIO: f64 = 0.8;
 pub const PACE_SAMPLES: usize = 8;
@@ -1182,7 +1182,14 @@ impl SendLedger {
             return None;
         }
         let stamp = (word >> 32) as u32;
-        let age = (now_us as u32).wrapping_add(1).wrapping_sub(stamp);
+        let now_stamp = (now_us as u32).wrapping_add(1);
+        let delta = stamp.wrapping_sub(now_stamp);
+        // A send thread can stamp `at` slightly after the feedback thread read `now`.
+        let age = if delta <= 50_000 {
+            0
+        } else {
+            now_stamp.wrapping_sub(stamp)
+        };
         if u64::from(age) > STALE_US {
             return None;
         }
@@ -1255,6 +1262,7 @@ pub struct Control {
     shadow: bool,
     clock: ClientClock,
     continuity: Continuity,
+    last_seq: Option<u32>,
     buffer: Vec<PacketResult>,
     budget: Option<crate::adaptive_bitrate::WireBudget>,
     ceiling_kbps: u32,
@@ -1290,11 +1298,15 @@ impl Control {
             })
             .max(1);
         let floor = if stream.codec == 3 {
-            crate::link_rate::pyrowave_floor_kbps(stream)
+            let lowest = crate::link_rate::pyrowave_floor_kbps(stream);
+            if lowest >= ceiling {
+                (ceiling / 2).max(1)
+            } else {
+                lowest
+            }
         } else {
-            FLOOR_KBPS
-        }
-        .min(ceiling);
+            FLOOR_KBPS.min(ceiling)
+        };
         let budget = crate::adaptive_bitrate::WireBudget::of(stream);
         let period = crate::reconfigure::Mode::of(stream).period();
         let (min, max) = Self::bounds(&budget, floor, ceiling, 20, period);
@@ -1380,6 +1392,13 @@ impl Control {
         let Some(report) = TransportFeedback::decode(payload) else {
             return false;
         };
+        if self
+            .last_seq
+            .is_some_and(|prev| report.seq == prev || report.seq.wrapping_sub(prev) >= 0x8000_0000)
+        {
+            return false;
+        }
+        self.last_seq = Some(report.seq);
         let base = self.clock.unwrap(report.base_arrival_us);
         let skipped = self.continuity.skipped(&report);
         self.buffer.clear();

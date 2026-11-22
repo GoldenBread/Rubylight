@@ -128,16 +128,21 @@ impl<P, A> Sessions<P, A> {
     /// Authentication and negotiation snapshots only. `start` consumes the
     /// stored pending launch, including its platform preparation, at PLAY.
     pub fn rtsp_for_peer(&self, peer: IpAddr) -> Vec<Launch<P, A>> {
+        let canonical = peer.to_canonical();
         self.pending
             .values()
-            .filter(|p| p.claimable().is_ok())
+            .filter(|p| p.claimable().is_ok() && p.peer.to_canonical() == canonical)
             .chain(
                 self.active
                     .values()
-                    .filter(|s| !s.stopping())
+                    .filter(|s| {
+                        !s.stopping()
+                            && (s.client_ip() == canonical
+                                || (s.launch.rtsp_encrypted
+                                    && s.launch.peer.to_canonical() == canonical))
+                    })
                     .map(|s| &s.launch),
             )
-            .filter(|p| p.peer == peer)
             .map(Launch::rtsp_snapshot)
             .collect()
     }
@@ -197,11 +202,13 @@ impl<P, A> Sessions<P, A> {
             .values()
             .any(|p| p.role == Role::Stream && p.live())
     }
-    /// The devices with a running (not stopping) stream session.
+    /// The devices with a running (not stopping) non-guest stream session.
     pub fn streaming_devices(&self) -> std::collections::BTreeSet<String> {
         self.active
             .values()
-            .filter(|s| s.launch.role == Role::Stream && !s.stopping())
+            .filter(|s| {
+                s.launch.role == Role::Stream && !s.stopping() && s.launch.guest().is_none()
+            })
             .map(|s| s.launch.client.uuid.clone())
             .collect()
     }
@@ -299,5 +306,98 @@ impl<P, A> Sessions<P, A> {
             }
         }
         canceled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Client;
+    use std::net::Ipv4Addr;
+
+    fn test_launch(id: &str, uuid: &str, peer: IpAddr) -> Launch<(), ()> {
+        Launch {
+            id: id.into(),
+            client: Client {
+                name: uuid.into(),
+                cert: String::new(),
+                uuid: uuid.into(),
+                perm: 0,
+                enabled: true,
+                extra: Default::default(),
+            },
+            peer,
+            app_id: 1,
+            background: None,
+            key: [0; 16],
+            key_id: 1,
+            ping: String::new(),
+            connect_data: 1,
+            role: Role::Stream,
+            created: Instant::now(),
+            rtsp_encrypted: true,
+            rtsp_counter: Default::default(),
+            rtsp_received: Default::default(),
+            preparation: Default::default(),
+            vrr_requested: false,
+            host_audio: false,
+            requested_rate: 60_000,
+            options: Default::default(),
+            audio_preparation: Default::default(),
+            preparing: Default::default(),
+            transport: Transport::GameStream,
+            roaming_offered: Default::default(),
+            claimed_until: None,
+            nucleus: None,
+            held: None,
+            warnings: Default::default(),
+        }
+    }
+
+    #[test]
+    fn rtsp_for_peer_follows_roamed_client_ip_and_canonical_v4() {
+        let mut sessions = Sessions::default();
+        let initial = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
+        let roamed = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 20));
+        let launch = test_launch("s1", "owner", initial);
+        let canceled = sessions.queue(launch.clone()).unwrap();
+        assert!(canceled.is_empty());
+        let session = sessions.start(launch, Negotiated::default()).unwrap();
+
+        assert_eq!(sessions.rtsp_for_peer(initial).len(), 1);
+        session.roamed(roamed, Instant::now());
+        // Encrypted RTSP still authenticates by key from the original launch peer too.
+        assert_eq!(sessions.rtsp_for_peer(initial).len(), 1);
+        assert_eq!(sessions.rtsp_for_peer(roamed).len(), 1);
+        let mapped = IpAddr::V6(Ipv4Addr::new(10, 0, 0, 20).to_ipv6_mapped());
+        assert_eq!(sessions.rtsp_for_peer(mapped).len(), 1);
+
+        // Legacy unencrypted RTSP only follows the roamed peer address.
+        let mut plain = test_launch("s2", "plain", initial);
+        plain.rtsp_encrypted = false;
+        let _ = sessions.queue(plain.clone()).unwrap();
+        let plain_session = sessions.start(plain, Negotiated::default()).unwrap();
+        plain_session.roamed(roamed, Instant::now());
+        assert!(sessions.rtsp_for_peer(initial).iter().all(|l| l.id != "s2"));
+        assert!(sessions.rtsp_for_peer(roamed).iter().any(|l| l.id == "s2"));
+    }
+
+    #[test]
+    fn streaming_devices_excludes_guest_sessions() {
+        let mut sessions = Sessions::default();
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let owner = test_launch("owner-s", "owner", peer);
+        let mut guest = test_launch("guest-s", "guest", peer);
+        guest
+            .options
+            .insert(crate::multiclient::LAUNCH_OPTION.into(), "1".into());
+        let _ = sessions.queue(owner.clone()).unwrap();
+        let _ = sessions.queue(guest.clone()).unwrap();
+        let _owner_session = sessions.start(owner, Negotiated::default()).unwrap();
+        let _guest_session = sessions.start(guest, Negotiated::default()).unwrap();
+
+        let devices = sessions.streaming_devices();
+        assert!(devices.contains("owner"));
+        assert!(!devices.contains("guest"));
     }
 }

@@ -281,3 +281,10 @@ fn oversized_passthrough_frames_are_dropped_and_logged_once() {
     assert_eq!(playable_frame(Some(&oversized), &mut logged), None);
     assert_eq!(playable_frame(Some(&frame), &mut logged), Some(&frame[..]));
 }
+
+#[test]
+fn jni_submit_errors_and_exceptions_request_idr() {
+    assert_eq!(decode_status(Some(DR_OK)), DecodeStatus::Ok);
+    assert_eq!(decode_status(Some(-1)), DecodeStatus::NeedIdr);
+    assert_eq!(decode_status(None), DecodeStatus::NeedIdr);
+}

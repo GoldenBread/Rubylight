@@ -240,6 +240,7 @@ impl Snapshot {
             failures.push(format!("rotation: {error:#}"));
         }
         let monitors = monitors()?;
+        let mut mode_failures = std::collections::BTreeSet::new();
         for n in &self.nodes {
             if preserve(&n.device_id) {
                 continue;
@@ -252,15 +253,18 @@ impl Snapshot {
             // after its mode, so a log shows whether the scale moved on the way back.
             let saved_scale = self.scale.get(&n.device_id).copied();
             let switched_on = saved_scale.map(|_| dpi_scale(m).ok());
-            let mut step = |what: &str, result: Result<()>| {
+            let mut step = |what: &str, result: Result<()>| -> bool {
                 if let Err(error) = result {
                     failures.push(format!(
                         "{} ({}) {what}: {error:#}",
                         n.label, m.display_name
                     ));
+                    true
+                } else {
+                    false
                 }
             };
-            step(
+            if step(
                 &format!(
                     "mode {}x{}@{:.3}",
                     n.mode.width, n.mode.height, n.mode.refresh_hz
@@ -271,7 +275,9 @@ impl Snapshot {
                     n.mode.height,
                     butterpollo_core::framegen::Rate((n.mode.refresh_hz * 1000.0).round() as u32),
                 ),
-            );
+            ) {
+                mode_failures.insert(n.device_id.clone());
+            }
             if let Some(enabled) = self.hdr.get(&n.device_id) {
                 step(&format!("HDR {enabled}"), set_hdr(m, *enabled));
             }
@@ -322,10 +328,7 @@ impl Snapshot {
             let Some(m) = monitors.iter().find(|m| m.device_id == n.device_id) else {
                 continue;
             };
-            if failures
-                .iter()
-                .any(|f| f.contains(&format!("({})", m.display_name)))
-            {
+            if mode_failures.contains(&n.device_id) {
                 continue;
             }
             if let Err(error) = Topology::set_mode_rate(
@@ -1016,6 +1019,10 @@ impl Guard {
         if let Some(display) = &self.virtual_display {
             display.lock().unwrap().apply_mode(stage);
         }
+    }
+    /// Whether this guard owns a virtual display rather than a physical one.
+    pub fn is_virtual(&self) -> bool {
+        self.virtual_display.is_some()
     }
     /// Raise this guard's own virtual display to at least `rate` without
     /// recreating it, returning the refresh (millihertz) it has now. A shared

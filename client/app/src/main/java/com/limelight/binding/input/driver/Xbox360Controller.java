@@ -57,6 +57,13 @@ public class Xbox360Controller extends AbstractXboxController {
         return false;
     }
 
+    private final Object outputLock = new Object();
+    private short lowFreqMotor = 0;
+    private short highFreqMotor = 0;
+    private boolean rumblePending;
+    private boolean outputStopped;
+    private volatile Thread outputThread;
+
     public Xbox360Controller(UsbDevice device, UsbDeviceConnection connection, int deviceId, UsbDriverListener listener) {
         super(device, connection, deviceId, listener);
     }
@@ -142,20 +149,97 @@ public class Xbox360Controller extends AbstractXboxController {
         // Turn the LED on corresponding to our device ID
         sendLedCommand((byte)(2 + (getControllerId() % 4)));
 
+        startOutput();
+
         // No need to fail init if the LED command fails
         return true;
     }
 
-    @Override
-    public void rumble(short lowFreqMotor, short highFreqMotor) {
-        byte[] data = {
+    void startOutput() {
+        synchronized (outputLock) {
+            if (outputStopped || outputThread != null) {
+                return;
+            }
+            outputThread = new Thread(this::runOutput, "Xbox 360 USB output");
+            outputThread.start();
+        }
+    }
+
+    private void runOutput() {
+        try {
+            while (true) {
+                short low, high;
+                synchronized (outputLock) {
+                    while (!outputStopped && !rumblePending) {
+                        outputLock.wait();
+                    }
+                    if (outputStopped) {
+                        return;
+                    }
+                    rumblePending = false;
+                    low = lowFreqMotor;
+                    high = highFreqMotor;
+                }
+                sendRumblePacket(low, high);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void sendRumblePacket(short lowFreqMotor, short highFreqMotor) {
+        byte[] data = createRumblePacket(lowFreqMotor, highFreqMotor);
+        int res = connection.bulkTransfer(outEndpt, data, data.length, 100);
+        if (res != data.length) {
+            LimeLog.warning("Rumble transfer failed: "+res);
+        }
+    }
+
+    static byte[] createRumblePacket(short lowFreqMotor, short highFreqMotor) {
+        return new byte[] {
                 0x00, 0x08, 0x00,
                 (byte)(lowFreqMotor >> 8), (byte)(highFreqMotor >> 8),
                 0x00, 0x00, 0x00
         };
-        int res = connection.bulkTransfer(outEndpt, data, data.length, 100);
-        if (res != data.length) {
-            LimeLog.warning("Rumble transfer failed: "+res);
+    }
+
+    @Override
+    public void stop() {
+        synchronized (outputLock) {
+            if (!outputStopped) {
+                outputStopped = true;
+                outputLock.notifyAll();
+                runOnUsbWorker(this::stopOutput);
+            }
+        }
+        super.stop();
+    }
+
+    private void stopOutput() {
+        Thread worker = outputThread;
+        if (worker != null) {
+            worker.interrupt();
+            try {
+                worker.join(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            outputThread = null;
+            if (outEndpt != null) {
+                sendRumblePacket((short) 0, (short) 0);
+            }
+        }
+    }
+
+    @Override
+    public void rumble(short lowFreqMotor, short highFreqMotor) {
+        synchronized (outputLock) {
+            if (!outputStopped) {
+                this.lowFreqMotor = lowFreqMotor;
+                this.highFreqMotor = highFreqMotor;
+                rumblePending = true;
+                outputLock.notifyAll();
+            }
         }
     }
 

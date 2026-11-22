@@ -531,7 +531,15 @@ impl Guests {
 
     /// A guest's stream ended, however it did.
     pub fn left(&self, id: u64) {
-        self.inner.lock().unwrap().joined.remove(&id);
+        let mut inner = self.inner.lock().unwrap();
+        if inner.joined.remove(&id).is_some() {
+            let before = inner.internet.len();
+            inner.prune(unix_now());
+            if inner.internet.len() < before {
+                drop(inner);
+                self.mapping_changed.notify_one();
+            }
+        }
     }
 
     /// A guest in a seat, without its media.

@@ -173,6 +173,11 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
         || (control == Some(Control::Monitor) && owner == remote::Owner::Monitor)
         || guest.is_some();
     let result = (|| -> Result<(String, String)> {
+        if let Some(id) = guest
+            && !h.device_guests.guest_live(&h, id)
+        {
+            return Err(LaunchFailure(403, butterpollo_core::multiclient::REVOKED).into());
+        }
         let key: [u8; 16] = hex::decode(args.get("rikey").context("missing stream key")?)?
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid stream key length"))?;
@@ -239,8 +244,16 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
             "rtsp"
         };
         let launch = launch_back_half(&h, &args, launch, app, coop, resume, owner)?;
-        if let Some(id) = guest {
-            h.device_guests.joined(id, &launch);
+        if let Some(id) = guest
+            && (!h.device_guests.guest_live(&h, id) || !h.device_guests.joined(id, &launch))
+        {
+            let canceled = h.sessions.lock().unwrap().pending.remove(&launch.id);
+            drop(canceled);
+            h.app_display.lock().unwrap().remove(&launch.client.uuid);
+            h.device_guests.unplug_guest_pad(&h, id);
+            h.controller_sessions
+                .unplug(&crate::controller_sessions::key(&launch));
+            return Err(LaunchFailure(403, butterpollo_core::multiclient::REVOKED).into());
         }
         let host = match connection.local.ip() {
             std::net::IpAddr::V4(ip) => ip.to_string(),
@@ -342,12 +355,13 @@ fn launch_back_half(
     if h.launch_stopped() {
         return Err(LaunchFailure(503, crate::process::LAUNCH_STOPPED).into());
     }
-    // The state machine follows stream launches; a failure before the
+    // The state machine follows non-guest stream launches; a failure before the
     // reply returns it to what it was.
-    let mut session = (role == Role::Stream && !in_nucleus).then(|| {
-        h.moves.forget(&launch.client.uuid);
-        h.session_begin(&launch.client.uuid, app.as_ref())
-    });
+    let mut session =
+        (role == Role::Stream && !in_nucleus && launch.guest().is_none()).then(|| {
+            h.moves.forget(&launch.client.uuid);
+            h.session_begin(&launch.client.uuid, app.as_ref())
+        });
     let game = match (&coop, launch.background == Some(true)) {
         (Some(coop), _) => Some(crate::nucleus::Game::Coop(coop)),
         // A background stream runs only in Nucleus Co-op: an app it can't
@@ -508,7 +522,7 @@ fn launch_back_half(
     if let Some(session) = &mut session {
         session.succeed();
     }
-    if role == Role::Stream {
+    if role == Role::Stream && launch.guest().is_none() {
         // Off the launch path: the profile's settings are written on a thread of their own.
         crate::radeon_profile::launched(
             h,

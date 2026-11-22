@@ -396,7 +396,9 @@ impl Handshake {
             ));
         }
         let channels = config.audio.channel_count;
-        if !(1..=8).contains(&channels) {
+        if !(1..=8).contains(&channels)
+            && channels != rubylight_protocol::audio_ext::CHANNELS_714
+        {
             return Err(RtspError::InvalidConfig(
                 "invalid audio configuration".into(),
             ));

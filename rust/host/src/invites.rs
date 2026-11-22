@@ -153,7 +153,7 @@ pub(crate) fn create(
                 rubylight_traverse::invite::pairing_pin(&secret),
                 permission,
                 lifetime,
-                creator.map(|c| c.uuid.clone()),
+                creator.map(|c| butterpollo_core::state::device_uuid(&c.uuid).to_owned()),
                 now,
             )
             .map_err(CreateFailure::Policy)?;
@@ -161,6 +161,7 @@ pub(crate) fn create(
     };
     // The rendezvous starts now, so the record the link points at is there when the friend looks.
     crate::internet_play::ensure(h);
+    crate::internet_play::refresh(h);
     let link = link(h, secret, expires, permission).and_then(|link| {
         // Without the rendezvous only the PC's IPv6 address or forwarded ports reach it; with
         // neither, a link would lead nowhere.

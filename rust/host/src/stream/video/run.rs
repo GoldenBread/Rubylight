@@ -350,6 +350,12 @@ impl SessionThread<'_> {
                     // On the sender thread, it sees the new frame begin and drops the old one itself.
                     if result.interrupted && !threaded {
                         // Its index is consumed if no block left, or the client sees no gap.
+                        if let Some(st) = &streaming {
+                            batch.end_frame();
+                            if st.sent.packets > 0 {
+                                s.keyframe_abandoned_as(st.wire_frame, false);
+                            }
+                        }
                         let next = slices::drop_frame(&mut streaming, &mut packetizer, &mut slice_spare);
                         s.launch.warnings.event("network_frame", "A streamed video frame lost its last slice; requesting a recovery frame.", butterpollo_core::session::EVENT_PERIOD);
                         s.request_host_keyframe();
@@ -511,6 +517,9 @@ impl SessionThread<'_> {
                     let Some(st) = streaming.take() else { continue 'frames };
                     batch.end_frame();
                     if st.failed {
+                        if st.sent.packets > 0 {
+                            s.keyframe_abandoned_as(st.wire_frame, false);
+                        }
                         slice_spare = st.frame.into_buffer();
                         continue 'frames;
                     }
@@ -1205,7 +1214,7 @@ impl SessionThread<'_> {
                 let image = AdmissionTrace::measure(&mut admission_trace, AdmissionWait::Capture, || {
                     latest.wait_for_frame(&timer, &capture_wake, Instant::now() + period.min(Duration::from_millis(50)))
                 })?;
-                let Some(mut image) = image else {
+                let Some(mut raw_image) = image else {
                     // The capture is being re-created on a new device.
                     // Release everything on the old one so Windows can
                     // give the new capture a current adapter.
@@ -1234,24 +1243,18 @@ impl SessionThread<'_> {
                 // Whether this capture only extends the focus window's
                 // picture, read before an enhancement replaces the image and
                 // a later capture can take its place (`None` then).
-                let extends_capture = latest.extends_capture(&image);
-                // The picture the encoder receives: enhanced where the
-                // stream runs an enhancement, which then needs an encoder
-                // made for that picture.
-                if let Some(tuned) = enhancer.tune(&h, &image, &base_config) {
-                    runtime_config = tuned;
-                    runtime_revision = runtime_revision.wrapping_add(1);
-                }
-                let (enhanced, enhancement_changed) = enhancer.apply(&s, &runtime_config, runtime_revision, image);
-                image = enhanced;
-                rebuild_encoder |= enhancement_changed;
+                let extends_capture = latest.extends_capture(&raw_image);
                 let checks_started = Instant::now();
-                require_hdr_source(&s, || image.gpu.display_in_hdr(), true)?;
+                require_hdr_source(&s, || raw_image.gpu.display_in_hdr(), true)?;
                 let mut frame_checks = checks_started.elapsed();
+                // Check whether the enhancement choice or device changed before
+                // pacing, repeat deferral and backpressure, without running GPU
+                // inference on frames that will be deferred or dropped.
+                rebuild_encoder |= enhancer.will_change(&s, &runtime_config, runtime_revision, &raw_image);
                 // Resolution changes or DXGI loss can recreate the capture device.
                 rebuild_encoder |= encoder
                     .as_ref()
-                    .is_none_or(|encoder| !encoder.accepts_gpu_device(&image));
+                    .is_none_or(|encoder| !encoder.accepts_gpu_device(&raw_image));
                 if !vpe_gave_way && encoder.as_ref().is_some_and(|encoder| encoder.converter_gave_way()) {
                     vpe_gave_way = true;
                     rebuild_encoder = true;
@@ -1280,13 +1283,13 @@ impl SessionThread<'_> {
                     // frame then waited for the next of them. A capture
                     // replaced before it was read is left out.
                     if extends_capture == Some(false) {
-                        pacer.observe_source(image.captured);
+                        pacer.observe_source(raw_image.captured);
                     }
                     pacer.observe_source_rate(pacing.source_rate);
                     pacer.observe_picture(pacing.picture_start, pacing.late_picture_interval);
                     pacer.observe_extension(pacing.extends_picture);
                 }
-                let fresh = last_image.as_ref().is_none_or(|previous| !std::ptr::eq(previous.as_ptr(), Arc::as_ptr(&image)));
+                let fresh = last_image.as_ref().is_none_or(|previous| !std::ptr::eq(previous.as_ptr(), Arc::as_ptr(&raw_image)));
                 // Read out first: the guard must not live through the wait
                 // below, or it blocks `request_invalidation` on the control
                 // thread.
@@ -1298,10 +1301,10 @@ impl SessionThread<'_> {
                     && invalidation_clear
                     && let interval = pacing.picture_interval
                     && let butterpollo_core::stream_policy::Pace::WaitUntil(deadline) =
-                        pacer.decide(Instant::now(), image.captured, interval)
+                        pacer.decide(Instant::now(), raw_image.captured, interval)
                 {
                     AdmissionTrace::measure(&mut admission_trace, AdmissionWait::FreshRate, || -> Result<()> {
-                    let key = Arc::as_ptr(&image) as usize;
+                    let key = Arc::as_ptr(&raw_image) as usize;
                     if first_seen.is_none_or(|(seen, ..)| seen != key) {
                         first_seen = Some((key, Instant::now(), interval, Some(deadline)));
                     }
@@ -1323,16 +1326,16 @@ impl SessionThread<'_> {
                     // The claim itself is met precisely; a poll for the
                     // encoder's output is not worth spinning for.
                     if until == deadline {
-                        latest.wait_if_current_precise(&timer, &capture_wake, &image, until)?;
+                        latest.wait_if_current_precise(&timer, &capture_wake, &raw_image, until)?;
                     } else {
-                        latest.wait_if_current_or(&timer, &capture_wake, &image, until, encoder.as_ref().and_then(Encoder::output_event))?;
+                        latest.wait_if_current_or(&timer, &capture_wake, &raw_image, until, encoder.as_ref().and_then(Encoder::output_event))?;
                     }
                     Ok(())
                     })?;
                     continue;
                 }
                 let repeat_due = if arrival_pacing {
-                    pacer.repeat_deadline(encoded_at + rates.static_period, image.captured, pacing.source_interval)
+                    pacer.repeat_deadline(encoded_at + rates.static_period, raw_image.captured, pacing.source_interval)
                 } else {
                     encoded_at + rates.static_period
                 };
@@ -1348,7 +1351,7 @@ impl SessionThread<'_> {
                 let reencode_at = if !recovering {
                     if arrival_pacing { pacer.resend_at(repeat_due, Instant::now()) } else { repeat_due }
                 } else if arrival_pacing {
-                    butterpollo_core::stream_policy::reencode_at(true, image.captured, period, pacing.source_interval, repeat_due)
+                    butterpollo_core::stream_policy::reencode_at(true, raw_image.captured, period, pacing.source_interval, repeat_due)
                 } else {
                     Instant::now()
                 };
@@ -1356,7 +1359,7 @@ impl SessionThread<'_> {
                     && (s.config.vrr_low_latency || rates.limit_static_rate || arrival_pacing)
                     && last_image
                         .as_ref()
-                        .is_some_and(|previous| std::ptr::eq(previous.as_ptr(), Arc::as_ptr(&image)))
+                        .is_some_and(|previous| std::ptr::eq(previous.as_ptr(), Arc::as_ptr(&raw_image)))
                     && Instant::now() < reencode_at
                 {
                     AdmissionTrace::measure(&mut admission_trace, AdmissionWait::Repeat, || -> Result<()> {
@@ -1364,7 +1367,7 @@ impl SessionThread<'_> {
                     let pending = encoder.as_ref().is_some_and(|e| recovery.pending(e));
                     let wait = if pending { next_output_poll(encoder.as_ref(), Instant::now()).saturating_duration_since(Instant::now()) } else { period };
                     let output = encoder.as_ref().filter(|_| pending).and_then(Encoder::output_event);
-                    latest.wait_if_current_or(&timer, &capture_wake, &image, Instant::now() + wait.min(reencode_at.saturating_duration_since(Instant::now())), output)?;
+                    latest.wait_if_current_or(&timer, &capture_wake, &raw_image, Instant::now() + wait.min(reencode_at.saturating_duration_since(Instant::now())), output)?;
                     Ok(())
                     })?;
                     continue;
@@ -1400,10 +1403,8 @@ impl SessionThread<'_> {
                             let output = recovery.collect(&mut encoder, &s.launch.warnings, Instant::now)?;
                             let idle = output.is_empty();
                             send_frames(output, peer, Duration::ZERO, latest, capture_tick)?;
-                            // A poll that returned nothing at once would spin here until the
-                            // frame is done; one that waits in the driver has already waited.
-                            if idle && encoder.as_ref().is_some_and(|e| !e.poll_blocks()) {
-                                timer.until(Instant::now() + OUTPUT_POLL);
+                            if idle {
+                                wait_for_output(&timer, &recovery, encoder.as_ref())?;
                             }
                         } else {
                             video_sender.get().unwrap().wait_for_capacity(encoder_backlog::total_limit(encoding_limit), period, recovery_lead)?;
@@ -1435,7 +1436,7 @@ impl SessionThread<'_> {
                     // The scan runs on its own thread; this reads its last result.
                     if let Some((program, pid)) = quit_scan
                         .get_or_insert_with(butterpollo_windows::foreground::Tracker::default)
-                        .poll_process(&[], &image.gpu.display)
+                        .poll_process(&[], &raw_image.gpu.display)
                     {
                         progress.mark(crate::stall_watch::Phase::AppTracking);
                         if !observe_foreground_game(&h, &s.launch.client.uuid, &program, pid) {
@@ -1443,6 +1444,20 @@ impl SessionThread<'_> {
                         }
                         progress.mark(crate::stall_watch::Phase::Picture);
                     }
+                }
+                // The picture the encoder receives: enhanced where the
+                // stream runs an enhancement, deferred past pacing and
+                // backpressure so dropped or deferred frames run no NGX work.
+                if let Some(tuned) = enhancer.tune(&h, &raw_image, &base_config) {
+                    runtime_config = tuned;
+                    runtime_revision = runtime_revision.wrapping_add(1);
+                }
+                let (mut image, enhancement_changed) = enhancer.apply(&s, &runtime_config, runtime_revision, raw_image.clone());
+                if enhancement_changed
+                    || (!rebuild_encoder && encoder.as_ref().is_none_or(|encoder| !encoder.accepts_gpu_device(&image)))
+                {
+                    rebuild_encoder = true;
+                    pacer.reset_source_phase();
                 }
                 let rebuilt = rebuild_encoder;
                 if rebuild_encoder {
@@ -1540,17 +1555,18 @@ impl SessionThread<'_> {
                     }
                     // Encoder creation can outlast several source frames.
                     let Some(current) = latest.current()? else { continue };
+                    raw_image = current;
                     // As in the loop above: read before the enhancement
                     // replaces the image, and a capture that only extends
                     // the focus window's picture teaches no phase.
-                    let extends_capture = latest.extends_capture(&current);
-                    let (current, enhancement_changed) = enhancer.apply(&s, &runtime_config, runtime_revision, current);
+                    let extends_capture = latest.extends_capture(&raw_image);
+                    let (current, enhancement_changed) = enhancer.apply(&s, &runtime_config, runtime_revision, raw_image.clone());
                     if enhancement_changed || !encoder.as_ref().unwrap().accepts_gpu_device(&current) {
                         continue;
                     }
                     image = current;
                     if arrival_pacing && extends_capture == Some(false) {
-                        pacer.observe_source(image.captured);
+                        pacer.observe_source(raw_image.captured);
                     }
                     metadata_due = Instant::now();
                     staging = None;
@@ -1579,16 +1595,16 @@ impl SessionThread<'_> {
                     });
                 }
                 let begin = Instant::now();
-                let fresh = last_image.as_ref().is_none_or(|previous| !std::ptr::eq(previous.as_ptr(), Arc::as_ptr(&image)));
+                let fresh = last_image.as_ref().is_none_or(|previous| !std::ptr::eq(previous.as_ptr(), Arc::as_ptr(&raw_image)));
                 if let Some(admission) = admission_trace.as_mut() {
                     trace_attempt = trace_attempt.wrapping_add(1);
                     let us = |at: Instant| at.saturating_duration_since(start).as_micros() as u64;
-                    let key = Arc::as_ptr(&image) as usize;
+                    let key = Arc::as_ptr(&raw_image) as usize;
                     let (seen, interval, deadline) = match first_seen {
                         Some((k, seen, interval, deadline)) if k == key => (seen, interval, deadline),
                         _ => (begin, pacing.picture_interval, None),
                     };
-                    let (capture_id, selected_is_latest, latest_capture_id) = latest.trace_selection(&image);
+                    let (capture_id, selected_is_latest, latest_capture_id) = latest.trace_selection(&raw_image);
                     let query = recovery.queries.as_ref().map_or_else(QueryTrace::default, |queries| QueryTrace::new(queries, image.published));
                     if let Some(queries) = recovery.queries.as_mut() {
                         queries.clear();
@@ -1608,8 +1624,8 @@ impl SessionThread<'_> {
                         source_id = latest.trace_source_id(),
                         stream_id = %s.launch.id,
                         fresh,
-                        repeat = image.repeat,
-                        choice = if image.repeat { "capture_repeat" } else if fresh { "fresh" } else if recovering { "recovery_repeat" } else { "static_repeat" },
+                        repeat = raw_image.repeat,
+                        choice = if raw_image.repeat { "capture_repeat" } else if fresh { "fresh" } else if recovering { "recovery_repeat" } else { "static_repeat" },
                         selected_is_latest,
                         latest_capture_id,
                         encoder_pending = encoding,
@@ -1631,7 +1647,7 @@ impl SessionThread<'_> {
                     );
                     *admission = AdmissionTrace::default();
                 }
-                if timings_logged && fresh && !image.repeat && claim_ages.len() < 4096 {
+                if timings_logged && fresh && !raw_image.repeat && claim_ages.len() < 4096 {
                     let micros = |d: Duration| d.as_micros().min(u128::from(u64::MAX)) as u64;
                     claim_ages.push((
                         micros(image.acquired.saturating_duration_since(image.captured)),
@@ -1742,7 +1758,7 @@ impl SessionThread<'_> {
                 pointer_left_out = leave_pointer_out;
                 // A repeat with a new panel, or with the pointer put in or left out,
                 // is a new picture.
-                active.set_repeat(!fresh && !menu.dirty && !pointer_toggled);
+                active.set_repeat((!fresh || raw_image.repeat) && !menu.dirty && !pointer_toggled);
                 menu.dirty = false;
                 // A map that failed on a frame turned focus off in
                 // the encoder; keep it off for the stream, loudly.
@@ -1866,8 +1882,8 @@ impl SessionThread<'_> {
                 s.stats.pipeline.captured(pictures, captures);
                 // A constant-rate repeat has no new content, so the pipeline
                 // reads it as the repeat it is (`capture = wgcc`).
-                s.stats.pipeline.submitted(!fresh || image.repeat);
-                if fresh && !image.repeat {
+                s.stats.pipeline.submitted(!fresh || raw_image.repeat);
+                if fresh && !raw_image.repeat {
                     claims.borrow_mut().push(butterpollo_core::performance::Claim {
                         key: presented_image.captured,
                         presented: image.captured,
@@ -1941,14 +1957,14 @@ impl SessionThread<'_> {
                         }
                     }
                 }
-                last_image = Some(Arc::downgrade(&image));
+                last_image = Some(Arc::downgrade(&raw_image));
                 // An allocation can later reuse this image's address;
                 // its trace observation belongs only to this submission.
                 first_seen = None;
                 send_frames(output, peer, call_latency, latest, capture_tick)?;
                 // After the frame went out, off its path: Frame Warp's passes.
                 // A constant-rate repeat carries no new content to warp.
-                frame_warp.frame(h, s, &image, fresh && !image.repeat, (stream.width, stream.height));
+                frame_warp.frame(h, s, &image, fresh && !raw_image.repeat, (stream.width, stream.height));
             }
             Ok(())
         })()

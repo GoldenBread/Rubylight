@@ -147,7 +147,21 @@ fn config_text(config: &Config, secrets: bool) -> String {
 fn device_identity_key(key: &str) -> bool {
     matches!(
         key,
-        "name" | "cert" | "uuid" | "perm" | "enabled" | "webrtc"
+        "name"
+            | "cert"
+            | "uuid"
+            | "perm"
+            | "enabled"
+            | "webrtc"
+            | "host_control"
+            | "pairing_approve"
+            | "allow_sleep"
+            | "allow_restart_shutdown"
+            | "allow_usb"
+            | "coop_join"
+            | "shared_folders"
+            | "allow_client_commands"
+            | "invited"
     ) || key.contains("secret")
         || key.contains("token")
         || key.contains("password")
@@ -212,36 +226,55 @@ fn folder_files(folder: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -
 /// user names, addresses, browsers). No backup holds them, with secrets or without, and a restore
 /// keeps the target's own.
 const SESSIONS: &str = "session_tokens";
+/// API tokens in vibeshine_state.json (`root.api_tokens`). Secrets-free backups strip them on
+/// export and keep the target's own on restore; backups with secrets carry them.
+const API_TOKENS: &str = "api_tokens";
 
-/// vibeshine_state.json without the console's sign-in sessions; None for a file that is not the
-/// JSON object it should be, which then stays out of the backup rather than go out whole.
-fn without_sessions(bytes: &[u8]) -> Option<Vec<u8>> {
+/// vibeshine_state.json without the console's sign-in sessions (and without API tokens when
+/// `secrets` is false); None for a file that is not the JSON object it should be, which then stays
+/// out of the backup rather than go out whole.
+fn without_sessions(bytes: &[u8], secrets: bool) -> Option<Vec<u8>> {
     let mut document: Value = serde_json::from_slice(bytes).ok()?;
     let root = document.as_object_mut()?;
     if let Some(inner) = root.get_mut("root").and_then(Value::as_object_mut) {
         inner.remove(SESSIONS);
+        if !secrets {
+            inner.remove(API_TOKENS);
+        }
     }
     root.remove(SESSIONS);
+    if !secrets {
+        root.remove(API_TOKENS);
+    }
     serde_json::to_vec_pretty(&document).ok()
 }
 
-/// The archive's vibeshine_state.json with the target's console sign-in sessions (`current`, the
-/// target's file) in place of any it carries: a restore never signs the console in or out.
-fn keeping_sessions(archived: &[u8], current: Option<&[u8]>) -> Result<Vec<u8>> {
-    let stripped = without_sessions(archived)
+/// The archive's vibeshine_state.json with the target's console sign-in sessions (and API tokens
+/// when `secrets` is false) from `current` in place of any it carries: a restore never signs the
+/// console in or out, and a non-secret restore never leaks or overwrites API tokens.
+fn keeping_sessions(archived: &[u8], current: Option<&[u8]>, secrets: bool) -> Result<Vec<u8>> {
+    let stripped = without_sessions(archived, secrets)
         .context("the archive's vibeshine_state.json is not a JSON object")?;
     let mut document: Value = serde_json::from_slice(&stripped)?;
-    let sessions = current
+    let current_root = current
         .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
-        .and_then(|current| current.get("root")?.get(SESSIONS).cloned());
-    if let Some(sessions) = sessions {
-        let root = document
-            .as_object_mut()
-            .context("vibeshine_state.json is not a JSON object")?;
-        let inner = root.entry("root").or_insert_with(|| json!({}));
-        if let Some(inner) = inner.as_object_mut() {
-            inner.insert(SESSIONS.into(), sessions);
+        .and_then(|current| current.get("root").cloned());
+    let mut preserve = |key: &str| {
+        if let Some(value) = current_root
+            .as_ref()
+            .and_then(|root| root.get(key))
+            .cloned()
+            && let Some(inner) = document
+                .as_object_mut()
+                .map(|root| root.entry("root").or_insert_with(|| json!({})))
+                .and_then(Value::as_object_mut)
+        {
+            inner.insert(key.into(), value);
         }
+    };
+    preserve(SESSIONS);
+    if !secrets {
+        preserve(API_TOKENS);
     }
     Ok(serde_json::to_vec_pretty(&document)?)
 }
@@ -274,10 +307,10 @@ pub fn export<W: Write + Seek>(
     if let Some(bytes) = read_optional(&files.apps)? {
         contents.push((APPS.into(), bytes));
     }
-    // Never the console's sign-in sessions (`SESSIONS`).
+    // Never the console's sign-in sessions (`SESSIONS`), and without secrets never `API_TOKENS`.
     if let Some(bytes) = read_optional(&files.aliases)?
         .as_deref()
-        .and_then(without_sessions)
+        .and_then(|bytes| without_sessions(bytes, secrets))
     {
         contents.push((ALIASES.into(), bytes));
     }
@@ -408,7 +441,7 @@ pub fn read<R: Read + Seek>(reader: R) -> Result<Archive> {
         if file.size() > MAX_ENTRY {
             bail!("{name} in the archive is too large");
         }
-        let mut bytes = Vec::with_capacity(file.size() as usize);
+        let mut bytes = Vec::with_capacity(file.size().min(1 << 20) as usize);
         (&mut file)
             .take(MAX_ENTRY + 1)
             .read_to_end(&mut bytes)
@@ -821,11 +854,12 @@ pub fn apply(archive: &Archive, directory: &Path, fresh: impl FnMut() -> String)
         atomic_write(&files.apps, bytes)?;
     }
     if let Some(bytes) = archive.files.get(ALIASES) {
-        // The target's console sign-in sessions stay as they are.
+        // The target's console sign-in sessions (and API tokens when restoring without secrets)
+        // stay as they are.
         let current = read_optional(&files.aliases)?;
         atomic_write(
             &files.aliases,
-            &keeping_sessions(bytes, current.as_deref())?,
+            &keeping_sessions(bytes, current.as_deref(), archive.manifest.secrets)?,
         )?;
     }
     for (name, bytes) in archive.under(COVERS).chain(archive.under(GAME_SETTINGS)) {

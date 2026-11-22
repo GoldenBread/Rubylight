@@ -766,6 +766,9 @@ pub struct SendQueue {
     ipv6: bool,
     /// When the next paced group may go.
     due: Instant,
+    /// Whether `paced` was empty before the next group starts, so an idle gap
+    /// does not leave `due` stale in the past.
+    idle: bool,
     /// Wire bytes of the biggest frame noted since the paced queue was last empty.
     frame_bytes: usize,
     immediate: VecDeque<Outgoing>,
@@ -820,6 +823,7 @@ impl SendQueue {
             frame_period,
             ipv6,
             due: now,
+            idle: true,
             frame_bytes: 0,
             immediate: VecDeque::new(),
             paced: VecDeque::new(),
@@ -916,6 +920,7 @@ impl SendQueue {
         self.paced.clear();
         self.paced_wire_bytes = 0;
         self.frame_bytes = 0;
+        self.idle = true;
         dropped
     }
 
@@ -932,30 +937,36 @@ impl SendQueue {
         batch.packets.clear();
         batch.packets.extend(self.immediate.drain(..));
         (batch.paced_bytes, batch.paced_packets, batch.rate_bps) = (0, 0, 0);
-        if now >= self.due && !self.paced.is_empty() {
-            batch.rate_bps = self.rate();
-            let datagram = self.paced.front().map_or(0, |p| p.data.len());
-            let limit = network_pacing::batch_payload_limit(
-                batch.rate_bps,
-                datagram.max(1),
-                self.ipv6,
-                usize::MAX,
-            );
-            while let Some(front) = self.paced.front() {
-                if batch.paced_packets > 0 && batch.paced_bytes + front.data.len() > limit {
-                    break;
-                }
-                let packet = self.paced.pop_front().expect("front exists");
-                self.paced_wire_bytes = self
-                    .paced_wire_bytes
-                    .saturating_sub(packet.data.len() + network_pacing::overhead(self.ipv6));
-                batch.paced_bytes += packet.data.len();
-                batch.paced_packets += 1;
-                batch.packets.push(packet);
+        if !self.paced.is_empty() {
+            if std::mem::take(&mut self.idle) {
+                self.due = self.due.max(now);
             }
-            if self.paced.is_empty() {
-                self.frame_bytes = 0;
-                self.paced_wire_bytes = 0;
+            if now >= self.due {
+                batch.rate_bps = self.rate();
+                let datagram = self.paced.front().map_or(0, |p| p.data.len());
+                let limit = network_pacing::batch_payload_limit(
+                    batch.rate_bps,
+                    datagram.max(1),
+                    self.ipv6,
+                    usize::MAX,
+                );
+                while let Some(front) = self.paced.front() {
+                    if batch.paced_packets > 0 && batch.paced_bytes + front.data.len() > limit {
+                        break;
+                    }
+                    let packet = self.paced.pop_front().expect("front exists");
+                    self.paced_wire_bytes = self
+                        .paced_wire_bytes
+                        .saturating_sub(packet.data.len() + network_pacing::overhead(self.ipv6));
+                    batch.paced_bytes += packet.data.len();
+                    batch.paced_packets += 1;
+                    batch.packets.push(packet);
+                }
+                if self.paced.is_empty() {
+                    self.frame_bytes = 0;
+                    self.paced_wire_bytes = 0;
+                    self.idle = true;
+                }
             }
         }
     }

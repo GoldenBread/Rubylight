@@ -27,6 +27,8 @@ pub(super) enum AddResult {
     Queued,
     /// The packet is the next in sequence: play it now.
     HandleNow,
+    /// Play the packet now, then drain the contiguous packets already buffered behind it.
+    HandleNowAndDrain,
     /// Packets are ready in [`AudioQueue::next_packet`].
     Ready,
 }
@@ -415,12 +417,19 @@ impl AudioQueue {
 
             // The common case: the next packet in order is played right away.
             if header.seq == self.next_rtp_seq {
+                if usize::from(block.data_received) == DATA_SHARDS {
+                    block.fully_reassembled = true;
+                }
                 self.next_rtp_seq = header.seq.wrapping_add(1);
                 block.next_data_index += 1;
                 if self.next_rtp_seq == block.base_seq.wrapping_add(DATA_SHARDS as u16) {
                     self.free_block_head();
                 }
-                return AddResult::HandleNow;
+                return if self.has_packet_ready() {
+                    AddResult::HandleNowAndDrain
+                } else {
+                    AddResult::HandleNow
+                };
             }
         } else {
             let shard = packet[RTP_HEADER] as usize;

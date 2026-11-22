@@ -220,7 +220,8 @@ impl rusty_enet::Socket for ControlSocket {
         for _ in 0..SWALLOWED_PER_RECEIVE {
             let (size, from, local) = match self.socket.receive(buffer) {
                 Ok(received) => received,
-                Err(error) if butterpollo_windows::net::datagram_lost(&error) => return Ok(None),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if butterpollo_windows::net::datagram_lost(&error) => continue,
                 Err(error) => return Err(error),
             };
             if self.roaming.intercepts(&buffer[..size]) {
@@ -341,6 +342,7 @@ impl Media {
                 fixture.reset_peer(&mut host, &peers);
             }
             let mut disconnected = Vec::new();
+            let mut clock_syncs: Vec<(PeerID, u16, Instant, Vec<u8>)> = Vec::new();
             // Acknowledgements and anything else ENet sends wait until this
             // pass's input is applied.
             host.socket_mut().hold();
@@ -437,6 +439,7 @@ impl Media {
                                     clipboard_sync: Default::default(),
                                     config: Default::default(),
                                     cursor_scale: Default::default(),
+                                    pre_active_packets: std::collections::VecDeque::new(),
                                 },
                             );
                             peers_came = true;
@@ -512,670 +515,65 @@ impl Media {
                         let Some(p) = peers.get_mut(&peer.id()) else {
                             continue;
                         };
-                        let s = match p.session.clone().filter(|s| !s.stopping()) {
-                            Some(s) => s,
+                        let s = match &p.session {
+                            Some(s) if s.stopping() => continue,
+                            Some(s) => s.clone(),
                             None => {
-                                let Some(s) = h.sessions.lock().unwrap().active.get(&p.id).cloned()
-                                else {
-                                    continue;
-                                };
-                                p.session = Some(s.clone());
-                                s
-                            }
-                        };
-                        let b = packet.data();
-                        if b.len() < 2 || b.len() > 65536 {
-                            continue;
-                        }
-                        let encrypted = b[..2] == [1, 0];
-                        if s.config.encryption & 1 != 0 && !encrypted {
-                            continue;
-                        }
-                        let parsed = if encrypted {
-                            p.ciphers
-                                .get(&s.launch.key, s.config.encryption & 1 != 0)
-                                .open(b)
-                                .and_then(|(seq, kind, payload)| {
-                                    if !p.received.accept(seq) {
-                                        anyhow::bail!("replayed control message");
-                                    }
-                                    Ok((kind, payload))
-                                })
-                        } else {
-                            butterpollo_core::packet::control_header(b)
-                                .map(|(kind, payload)| (kind, payload.to_vec()))
-                        };
-                        let (kind, payload) = match parsed {
-                            Ok(v) => v,
-                            Err(e) => {
-                                tracing::debug!(error=%e,"invalid control packet");
-                                continue;
-                            }
-                        };
-                        p.seen = Instant::now();
-                        p.input_released = false;
-                        match kind {
-                            0x0200 => s.record_control_ping(Instant::now(), &payload),
-                            controller_audio::CONTROL | controller_audio::MICROPHONE
-                                if encrypted
-                                    && haptics_negotiated(&s.config, peer.channel_count()) =>
-                            {
-                                if !s.launch.client.allows(1 << 8) {
-                                    continue;
-                                }
-                                if kind == controller_audio::CONTROL {
-                                    if let Some((id, flags)) = controller_audio::status(&payload) {
-                                        let Ok(config) = p.config(&h, &s) else {
-                                            continue;
-                                        };
-                                        let policy = controller_audio::status_policy(
-                                            &config,
-                                            s.launch.role,
-                                            s.launch.client.perm & ((1 << 25) | (1 << 26)) != 0,
-                                            flags,
-                                        );
-                                        if flags & controller_audio::PLAYBACK != 0
-                                            && policy.device_flags & controller_audio::PLAYBACK == 0
-                                            && config.get("audio_capture_mode", "system") == "game"
-                                        {
-                                            s.launch.warnings.set("audio_controller_scope", "Game-only audio suppresses dedicated USB controller speaker sound because that endpoint cannot identify its source process. The normal captured game stream still routes to a connected controller headset; haptics and microphone settings remain independent.");
-                                        }
-                                        let mut state = payload.clone();
-                                        state[4] = policy.device_flags;
-                                        if let Some(i) = &p.injector {
-                                            i.controller_audio(id, kind, &state);
-                                        }
-                                        p.controller_audio[id as usize] = policy.device_flags;
-                                        state[1] = 3; // Acknowledge host microphone policy.
-                                        // Auto may have attached a VHF pad without audio.
-                                        // The client's periodic status retries after USB
-                                        // enumeration; retain its desired device policy.
-                                        state[4] = policy.acknowledged_flags(
-                                            p.injector
-                                                .as_ref()
-                                                .is_some_and(|i| i.controller_audio_ready(id)),
-                                        );
-                                        if let Ok(message) = p.encrypt(&s, kind, &state) {
-                                            let _ = peer.send(
-                                                FEEDBACK_CHANNEL,
-                                                &Packet::new(message, PacketKind::Reliable),
-                                            );
-                                        }
-                                    }
-                                } else if let Some((id, _, _)) = controller_audio::pcm(&payload)
-                                    && p.controller_audio[id as usize]
-                                        & (controller_audio::CAPTURE | controller_audio::MUTED)
-                                        == controller_audio::CAPTURE
-                                    && let Some(i) = &p.injector
+                                if let Some(s) =
+                                    h.sessions.lock().unwrap().active.get(&p.id).cloned()
                                 {
-                                    p.controller_pcm.observe(id, kind, Instant::now());
-                                    i.controller_audio(id, kind, &payload);
-                                }
-                            }
-                            0x3000 => {
-                                if let Some(run) = server_command(
-                                    &h,
-                                    &s.launch.client,
-                                    &payload,
-                                    encrypted,
-                                    &mut p.command_at,
-                                ) && let Err(e) = commands.try_send((s.clone(), run))
-                                {
-                                    tracing::warn!(error=%e, "configured server command failed");
-                                }
-                            }
-                            // SS_RFI_REQUEST: first frame, a reserved word, last
-                            // frame, reserved words; older clients sent two
-                            // 64-bit indices, whose low words sit at the same
-                            // offsets. Requiring 8 bytes turned every request
-                            // into a keyframe.
-                            0x0301 if payload.len() >= 12 => {
-                                s.request_invalidation(
-                                    u64::from(u32::from_le_bytes(payload[..4].try_into().unwrap())),
-                                    u64::from(u32::from_le_bytes(
-                                        payload[8..12].try_into().unwrap(),
-                                    )),
-                                );
-                            }
-                            0x0301 => s.request_invalidation(0, 0),
-                            0x0302 => s.request_client_keyframe(),
-                            // This dispatch receives only client-to-host packets;
-                            // 0x5502 in the other direction is controller feedback.
-                            0x5502 => s.record_fec_status(&payload),
-                            // Per-packet arrival feedback, unreliable and dropped when invalid.
-                            butterpollo_core::congestion::TRANSPORT_FEEDBACK_MESSAGE_TYPE => {
-                                if !s.record_transport_feedback(&payload) {
-                                    tracing::trace!(
-                                        bytes = payload.len(),
-                                        "transport feedback ignored"
-                                    );
-                                }
-                            }
-                            butterpollo_core::statistical_fec::FEC_REPORT_MESSAGE_TYPE => {
-                                match s.record_fec_report(&payload) {
-                                    Ok((report, used)) => tracing::debug!(
-                                        seq = report.seq,
-                                        data = report.data_shards,
-                                        parity = report.parity_shards,
-                                        missing = report.missing_shards,
-                                        unrecovered = report.unrecovered_blocks,
-                                        interval_ms = report.interval_ms,
-                                        used,
-                                        "fec report"
-                                    ),
-                                    Err(error) => {
-                                        tracing::debug!(%error, "fec report refused")
-                                    }
-                                }
-                            }
-                            butterpollo_core::phase_sync::REPORT_MESSAGE_TYPE => {
-                                match s
-                                    .phase_sync
-                                    .lock()
-                                    .unwrap()
-                                    .on_payload(Instant::now(), &payload)
-                                {
-                                    Some(report) => tracing::debug!(
-                                        lead_ns = report.lead_ns,
-                                        spread_ns = report.spread_ns,
-                                        period_ns = report.period_ns,
-                                        frames = report.frames,
-                                        "phase lock report"
-                                    ),
-                                    None => tracing::debug!(
-                                        len = payload.len(),
-                                        "invalid phase lock report"
-                                    ),
-                                }
-                            }
-                            // Answered at once, unreliable: a lost exchange is one sample.
-                            butterpollo_core::clock_sync::CLOCK_SYNC_MESSAGE_TYPE => {
-                                let epoch = *s.media_epoch.read().unwrap();
-                                if let Some(reply) =
-                                    butterpollo_core::clock_sync::reply(epoch, p.seen, &payload)
-                                    && let Ok(message) = p.encrypt(&s, kind, &reply)
-                                {
-                                    let _ = peer.send(
-                                        FEEDBACK_CHANNEL,
-                                        &Packet::new(
-                                            message,
-                                            PacketKind::AlwaysUnreliable { sequenced: false },
-                                        ),
-                                    );
-                                }
-                            }
-                            butterpollo_core::host_timing::HOST_TIMING_MESSAGE_TYPE => {
-                                match s.host_timings.on_request(&payload) {
-                                    Some(enabled) => tracing::info!(
-                                        client = %s.launch.client.name,
-                                        enabled,
-                                        "host timing reports"
-                                    ),
-                                    None => tracing::debug!(
-                                        len = payload.len(),
-                                        "invalid host timing request"
-                                    ),
-                                }
-                            }
-                            butterpollo_core::link_notice::LINK_NOTICE_MESSAGE_TYPE => {
-                                match s.link_notices.on_request(&payload) {
-                                    Some(enabled) => tracing::info!(
-                                        client = %s.launch.client.name,
-                                        enabled,
-                                        "link notices"
-                                    ),
-                                    None => tracing::debug!(
-                                        len = payload.len(),
-                                        "invalid link notice request"
-                                    ),
-                                }
-                            }
-                            butterpollo_core::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE => {
-                                let counts = s.pipeline_counts();
-                                match s
-                                    .pipeline_rates
-                                    .on_request(Instant::now(), &payload, counts)
-                                {
-                                    Some(enabled) => tracing::info!(
-                                        client = %s.launch.client.name,
-                                        enabled,
-                                        "pipeline rate reports"
-                                    ),
-                                    None => tracing::debug!(
-                                        len = payload.len(),
-                                        "invalid pipeline rates request"
-                                    ),
-                                }
-                            }
-                            // Keyboard follows focus: only for a device that may type, and
-                            // the text around the cursor only over encrypted control.
-                            butterpollo_core::text_input::TEXT_INPUT_MESSAGE_TYPE => {
-                                let Ok(config) = p.config(&h, &s) else {
-                                    continue;
-                                };
-                                let offered = crate::extensions::offered(&h, &config).text_input
-                                    && s.launch.client.allows(input::KEYBOARD_PERMISSION);
-                                let surrounding = encrypted && config.text_input_surrounding_text();
-                                let watch = s.text_input.on_request(&payload, offered, surrounding);
-                                match watch {
-                                    Some(watch) => {
-                                        tracing::info!(
-                                            client = %s.launch.client.name,
-                                            ?watch,
-                                            offered,
-                                            "text input"
-                                        );
-                                        // The fixture's tests note the focus themselves.
-                                        #[cfg(test)]
-                                        if let Some(fixture) = &h.reconnect_fixture {
-                                            fixture.text_watches.lock().unwrap().push(watch);
-                                            continue;
-                                        }
-                                        p.watch_focus(&s, watch, &self.control_wake);
-                                    }
-                                    None => tracing::debug!(
-                                        len = payload.len(),
-                                        "invalid text input request"
-                                    ),
-                                }
-                            }
-                            // Clipboard sync from a Nightjar that asked or a Moonlight V+
-                            // client, which never asks: its first frame starts the sync.
-                            // Encrypted only, as USB: a plain frame anyone on the network
-                            // could send would set the PC's clipboard and start sending it.
-                            butterpollo_core::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE
-                                if encrypted =>
-                            {
-                                let Ok(config) = p.config(&h, &s) else {
-                                    continue;
-                                };
-                                // A guest's clipboard needs its keyboard-and-mouse permission:
-                                // without it, neither direction.
-                                let allowed = if h.device_guests.full_access(&s) {
-                                    clipboard_sync::allowed(&config, &s.launch.client)
+                                    p.session = Some(s.clone());
+                                    s
                                 } else {
-                                    clipboard_sync::Allowed::default()
-                                };
-                                p.clipboard_sync
-                                    .receive(&s, &payload, allowed, &self.control_wake);
-                            }
-                            // The latest report wins; the injector maps keys with it.
-                            butterpollo_core::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE => {
-                                let Ok(config) = p.config(&h, &s) else {
-                                    continue;
-                                };
-                                if !crate::extensions::offered(&h, &config).keyboard_layout {
-                                    tracing::debug!("keyboard layout report not offered");
-                                    continue;
-                                }
-                                // Only a device that may type picks the layout keys go with.
-                                if !s.launch.client.allows(input::KEYBOARD_PERMISSION) {
-                                    tracing::debug!(
-                                        "keyboard layout report without the keyboard permission"
-                                    );
-                                    continue;
-                                }
-                                match butterpollo_core::keyboard_layout::KeyboardLayout::decode(
-                                    &payload,
-                                ) {
-                                    Some(layout) => {
-                                        // Resolved once here; the layout is read on this
-                                        // loop, never with input.
-                                        let klid = butterpollo_core::keyboard_layout::reported_klid(
-                                            &layout,
-                                        );
-                                        let before = std::mem::replace(
-                                            &mut *s.keyboard_layout.lock().unwrap(),
-                                            klid,
-                                        );
-                                        if before != klid {
-                                            tracing::info!(
-                                                client = %s.launch.client.name,
-                                                source = ?layout.source,
-                                                reported = format_args!("{:08X}", layout.klid),
-                                                tag = %layout.tag,
-                                                klid = ?klid.map(|klid| format!("{klid:08X}")),
-                                                "keyboard layout"
-                                            );
-                                        }
-                                        p.keyboard_layout.report(
-                                            klid,
-                                            &s.launch.warnings,
-                                            Instant::now(),
-                                        );
-                                    }
-                                    None => tracing::debug!(
-                                        len = payload.len(),
-                                        "invalid keyboard layout report"
-                                    ),
-                                }
-                            }
-                            // The device draws the cursor (0x5540): the stream leaves it
-                            // out of the video, and the pass below sends its shapes.
-                            butterpollo_core::client_cursor::CURSOR_SHAPE_REQUEST_MESSAGE_TYPE => {
-                                let Ok(config) = p.config(&h, &s) else {
-                                    continue;
-                                };
-                                let offered = crate::extensions::offered(&h, &config).cursor_shape;
-                                match s
-                                    .client_cursor
-                                    .on_request(&payload, offered, p.cursor_owner)
-                                {
-                                    Some(enabled) => {
-                                        tracing::info!(
-                                            client = %s.launch.client.name,
-                                            enabled,
-                                            "client-drawn cursor"
-                                        );
-                                        let _ = self.control_wake.send(&[1]);
-                                    }
-                                    None => tracing::debug!(
-                                        len = payload.len(),
-                                        offered,
-                                        "invalid or unoffered cursor shape request"
-                                    ),
-                                }
-                            }
-                            // Frame Warp (0x5543): while offered, the host learns the game's
-                            // camera response and tags every frame for a client that asked;
-                            // the pass below sends the model, mask and tags.
-                            butterpollo_core::frame_warp::FRAME_WARP_REQUEST_MESSAGE_TYPE => {
-                                let Ok(config) = p.config(&h, &s) else {
-                                    continue;
-                                };
-                                if !crate::extensions::offered(&h, &config).frame_warp {
-                                    tracing::debug!(
-                                        len = payload.len(),
-                                        "unoffered frame warp request"
-                                    );
-                                    continue;
-                                }
-                                let was = s.frame_warp.enabled();
-                                let wake = self.control_wake.clone();
-                                s.frame_warp.set_wake(Arc::new(move || {
-                                    let _ = wake.send(&[1]);
-                                }));
-                                match s.frame_warp.on_request(&payload) {
-                                    Some(enabled) => {
-                                        if enabled != was {
-                                            tracing::info!(
-                                                client = %s.launch.client.name,
-                                                enabled,
-                                                "frame warp"
-                                            );
-                                        }
-                                        let _ = self.control_wake.send(&[1]);
-                                    }
-                                    None => tracing::debug!(
-                                        len = payload.len(),
-                                        "invalid frame warp request"
-                                    ),
-                                }
-                            }
-                            // The registry checks the setting and the device's permission and
-                            // queues the answer, which the pass below sends.
-                            butterpollo_core::usb_forward::USB_MESSAGE_TYPE if encrypted => {
-                                match butterpollo_core::usb_forward::UsbMessage::decode(&payload) {
-                                    Some(message) => {
-                                        let (enabled, limit) = {
-                                            let config = h.config.read().unwrap();
-                                            // Never a guest's but one with keyboard and mouse.
-                                            (
-                                                config.usb_forwarding()
-                                                    && h.device_guests.full_access(&s),
-                                                config.usb_max_devices(),
-                                            )
-                                        };
-                                        h.usb.on_message(
-                                            &p.id,
-                                            &s.launch.client,
-                                            enabled,
-                                            limit,
-                                            message,
-                                        );
-                                    }
-                                    None => {
-                                        tracing::debug!(len = payload.len(), "invalid USB message")
-                                    }
-                                }
-                            }
-                            butterpollo_core::display_caps::DISPLAY_CAPS_MESSAGE_TYPE => {
-                                match s.record_display_caps(&payload) {
-                                    Some(update) if update.changed => {
-                                        tracing::info!(
-                                            client = %s.launch.client.name,
-                                            hdr = update.caps.hdr,
-                                            peak_nits = update.caps.max_nits().unwrap_or(0),
-                                            average_nits = update.caps.max_average_nits().unwrap_or(0),
-                                            black_decimillinits = update.caps.min_decimillinits,
-                                            applied = "diagnostic and HDR10+ target only; source HDR metadata retained",
-                                            "display caps"
-                                        );
-                                    }
-                                    Some(_) => tracing::debug!("display caps unchanged"),
-                                    None => {
-                                        tracing::debug!(len = payload.len(), "invalid display caps")
-                                    }
-                                }
-                            }
-                            // The session loop applies it once the client stops sending.
-                            butterpollo_core::reconfigure::RECONFIGURE_MESSAGE_TYPE => {
-                                let outcome = {
-                                    let mut reconfigure = s.reconfigure.lock().unwrap();
-                                    let outcome = reconfigure.on_payload(Instant::now(), &payload);
-                                    s.rate_changes.on_reconfigure(outcome);
-                                    outcome
-                                };
-                                tracing::debug!(
-                                    ?outcome,
-                                    len = payload.len(),
-                                    "reconfigure request"
-                                );
-                            }
-                            // A bitrate applies now, without a keyframe; a rate switches
-                            // like a 0x5532 request and is answered once it runs.
-                            butterpollo_core::rate_change::RATE_CHANGE_MESSAGE_TYPE => {
-                                use butterpollo_core::rate_change;
-                                if !matches!(
-                                    rate_change::launch_choice(&s.launch.options),
-                                    Ok(true)
-                                ) {
-                                    tracing::debug!("rate change not offered");
-                                    continue;
-                                }
-                                let Some(request) =
-                                    rate_change::RateChangeRequest::decode(&payload)
-                                else {
-                                    tracing::warn!(
-                                        len = payload.len(),
-                                        "invalid rate change request"
-                                    );
-                                    continue;
-                                };
-                                let config = p.config(&h, &s);
-                                let mut reconfigure = s.reconfigure.lock().unwrap();
-                                let requested = reconfigure.requested();
-                                let current = reconfigure.current().fps_millihz;
-                                // In the client's unit, as its request is: the bitrate its
-                                // user set, where the launch carried one.
-                                let bitrate_kbps = s.rate_changes.client_bitrate_kbps(
-                                    s.bitrate.load(Ordering::Acquire),
-                                    &s.config,
-                                );
-                                let decision = match config {
-                                    Ok(config) => {
-                                        let enabled = config.boolean("stream_reconfigure", true);
-                                        let mb_rate = h
-                                            .encoder_mb_rates
-                                            .get(usize::from(s.config.codec))
-                                            .map_or(0, |rate| rate.load(Ordering::Acquire));
-                                        let stream = rate_change::Stream {
-                                            bitrate_kbps,
-                                            launched: &s.config,
-                                            fps_millihz: current,
-                                            requested,
-                                            fps_ceiling_millihz: rate_change::fps_ceiling_millihz(
-                                                mb_rate,
-                                                requested.width,
-                                                requested.height,
-                                                current,
-                                                s.config.fps_millihz(),
-                                            ),
-                                            fps_refusal: butterpollo_core::reconfigure::refusal(
-                                                &s.config, enabled,
-                                            )
-                                            .map(|_| rate_change::refusal_reason(enabled)),
-                                        };
-                                        rate_change::decide(&request, &stream, &config)
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(error = %format!("{e:#}"), serial = request.serial, "rate change refused: the device's configuration did not load");
-                                        rate_change::refuse(
-                                            &request,
-                                            bitrate_kbps,
-                                            current,
-                                            rate_change::Reason::Other,
-                                        )
-                                    }
-                                };
-                                s.rate_changes
-                                    .record(&decision, &mut reconfigure, Instant::now());
-                                drop(reconfigure);
-                                // Set before the answer goes out, later in this loop.
-                                if let Some(encoder_kbps) = decision.bitrate_kbps {
-                                    // Asked and applied in the client's unit: the encoder's
-                                    // share of it is no cap.
-                                    butterpollo_core::stream_policy::report_bitrate(
-                                        &s.launch.warnings,
-                                        request.bitrate_kbps,
-                                        decision.result.bitrate_kbps,
-                                        "max_bitrate and the 500 Mbps runtime cap",
-                                    );
-                                    s.set_client_bitrate(encoder_kbps);
-                                }
-                                let result = decision.result;
-                                tracing::info!(
-                                    client = %s.launch.client.name,
-                                    serial = request.serial,
-                                    bitrate_kbps = request.bitrate_kbps,
-                                    fps_millihz = request.fps_millihz,
-                                    applied_kbps = result.bitrate_kbps,
-                                    encoder_kbps = ?decision.bitrate_kbps,
-                                    switch_to = ?decision.switch_to.map(|mode| mode.to_string()),
-                                    bitrate = ?result.bitrate,
-                                    fps = ?result.fps,
-                                    "rate change"
-                                );
-                            }
-                            0x0109 => {
-                                if encrypted {
-                                    s.stop();
-                                }
-                            }
-                            0x0206 => {
-                                let raw = if encrypted {
-                                    Ok(payload)
-                                } else {
-                                    p.legacy.open(&s.launch.key, &payload)
-                                };
-                                let event = raw.and_then(|raw| input::decode(&raw));
-                                match event {
-                                    // Say once per kind that the device may not
-                                    // send it: dropped silently, a phone's
-                                    // controller looked undetected.
-                                    Ok(event)
-                                        if !s.launch.client.allows(event.required_permission()) =>
-                                    {
-                                        let permission = event.required_permission();
-                                        if p.denied & permission == 0 {
-                                            p.denied |= permission;
-                                            let (code, message) =
-                                                event.denied_warning(&s.launch.client.name);
-                                            s.launch.warnings.set(&code, message);
+                                    let b = packet.data();
+                                    if (2..=65536).contains(&b.len()) {
+                                        p.seen = Instant::now();
+                                        if p.pre_active_packets.len() < 64 {
+                                            p.pre_active_packets.push_back(b.to_vec());
                                         }
                                     }
-                                    // A guest's input needs its guest permission, and keys and
-                                    // the mouse go only to their one holder (`multiclient`).
-                                    Ok(event)
-                                        if !h
-                                            .device_guests
-                                            .admits(&s, event.required_permission()) => {}
-                                    Ok(mut event) => {
-                                        p.audio_haptics.input(
-                                            &mut event,
-                                            haptics_negotiated(&s.config, peer.channel_count()),
-                                        );
-                                        if let input::Input::Arrival { capabilities, .. } = &event
-                                            && let Some(hint) =
-                                                butterpollo_core::input_policy::steam_input_hint(
-                                                    &s.launch.client.name,
-                                                    *capabilities,
-                                                )
-                                        {
-                                            s.launch.warnings.set("input_steam_input", hint);
-                                        }
-                                        if matches!(
-                                            event,
-                                            input::Input::Relative { .. }
-                                                | input::Input::Absolute { .. }
-                                                | input::Input::Touch { .. }
-                                                | input::Input::Pen { .. }
-                                        ) && let Some(window) =
-                                            p.pointer_gaps.note(Instant::now())
-                                        {
-                                            tracing::info!(
-                                                client = %s.launch.client.name,
-                                                moves = window.arrivals,
-                                                gaps_25_50 = window.gaps_25_50,
-                                                gaps_50_plus = window.gaps_50_plus,
-                                                pauses = window.pauses,
-                                                max_gap_ms = window.max_gap_ms,
-                                                inject_max_ms = std::mem::take(&mut p.inject_max)
-                                                    .as_secs_f32()
-                                                    * 1000.,
-                                                "pointer arrivals"
-                                            );
-                                        }
-                                        // Frame Warp's input history, for a client that asked:
-                                        // a short queue push before the event is injected.
-                                        if s.frame_warp.enabled() {
-                                            match &event {
-                                                input::Input::Relative { x, y } => {
-                                                    s.frame_warp.on_mouse(*x, *y, p.seen)
-                                                }
-                                                input::Input::Controller { id, sticks, .. } => {
-                                                    s.frame_warp.on_controller(
-                                                        *id,
-                                                        (sticks[2], sticks[3]),
-                                                        p.seen,
-                                                    )
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                        // Motion and buttons for emulators (`enable_dsu_server`).
-                                        crate::dsu::observe(&p.id, &event);
-                                        if !queue_input(&mut p.inputs, event) {
-                                            // Warnings::set logs it as well.
-                                            s.launch.warnings.set("input_overflow", INPUT_OVERFLOW);
-                                            s.stop();
-                                        }
-                                    }
-                                    Err(e) => {
-                                        if let Some(error) = first_steam_attributes_refusal(
-                                            &mut p.steam_attributes_refused,
-                                            &e,
-                                        ) {
-                                            tracing::warn!(client=%s.launch.client.name, %error, "ignoring Steam Controller attributes");
-                                        } else {
-                                            tracing::debug!(error=%e,"invalid input packet");
-                                        }
-                                    }
+                                    continue;
                                 }
                             }
-                            _ => {}
+                        };
+                        while let Some(buffered) = p.pre_active_packets.pop_front() {
+                            if s.stopping() {
+                                p.pre_active_packets.clear();
+                                break;
+                            }
+                            handle_control_packet(
+                                &h,
+                                &self.control_wake,
+                                &commands,
+                                peer,
+                                p,
+                                &s,
+                                &buffered,
+                                &mut clock_syncs,
+                            );
+                        }
+                        if !s.stopping() {
+                            handle_control_packet(
+                                &h,
+                                &self.control_wake,
+                                &commands,
+                                peer,
+                                p,
+                                &s,
+                                packet.data(),
+                                &mut clock_syncs,
+                            );
                         }
                     }
+                }
+            }
+            // Any guest that lost keyboard and mouse lets go before the new holder's input lands.
+            for p in peers.values_mut() {
+                let Some(s) = &p.session else { continue };
+                if let Some(i) = &mut p.injector
+                    && h.device_guests.take_release(s)
+                {
+                    i.release_keyboard_mouse();
                 }
             }
             // Input first, for every peer: none waits for another peer's housekeeping
@@ -1221,7 +619,25 @@ impl Media {
                     }
                 };
                 if let Some(s) = s {
-                    p.session = Some(s.clone());
+                    if p.session.is_none() {
+                        p.session = Some(s.clone());
+                        while let Some(buffered) = p.pre_active_packets.pop_front() {
+                            if s.stopping() {
+                                p.pre_active_packets.clear();
+                                break;
+                            }
+                            handle_control_packet(
+                                &h,
+                                &self.control_wake,
+                                &commands,
+                                host.peer_mut(*peer_id),
+                                p,
+                                &s,
+                                &buffered,
+                                &mut clock_syncs,
+                            );
+                        }
+                    }
                     let timed_out = p.seen.elapsed() > ping_timeout;
                     if s.stopping() || timed_out {
                         if timed_out && !s.stopping() {
@@ -1250,6 +666,9 @@ impl Media {
                         }
                         if let Some(injector) = &mut p.injector {
                             injector.release_all();
+                        }
+                        if let Some(player) = &p.coop {
+                            player.release_all();
                         }
                         p.input_released = true;
                     }
@@ -1640,7 +1059,7 @@ impl Media {
                     apply_input(&h, p, &s, &mut menus, received);
                     if !poll_feedback
                         && let Some(i) = &mut p.injector
-                        && let Err(e) = i.due()
+                        && let Err(e) = i.flush_virtual_left_release().and_then(|()| i.due())
                     {
                         s.launch.warnings.event("input_repeat", format!("Input release or repeat failed ({e:#}); held controls may not update. Unlock the desktop or reconnect."), butterpollo_core::session::EVENT_PERIOD);
                     }
@@ -1692,6 +1111,10 @@ impl Media {
                 }
             }
             host.socket_mut().release()?;
+            if !clock_syncs.is_empty() {
+                send_clock_syncs(&mut host, &mut peers, &mut clock_syncs);
+                host.flush();
+            }
             // Release held input now; gamepad workers unplug their pads asynchronously.
             drop(disconnected);
             peers_went |= !remove.is_empty();
@@ -1851,6 +1274,590 @@ impl Media {
         self.shutdown_elapsed_ms
             .store(started.elapsed().as_millis() as u64, Ordering::Release);
         self.shutdown_done.store(true, Ordering::Release);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_control_packet(
+    h: &Shared,
+    control_wake: &Arc<UdpSocket>,
+    commands: &std::sync::mpsc::SyncSender<(Arc<Session>, crate::process::MenuRun)>,
+    peer: &mut rusty_enet::Peer<ControlSocket>,
+    p: &mut ControlPeer,
+    s: &Arc<Session>,
+    b: &[u8],
+    clock_syncs: &mut Vec<(PeerID, u16, Instant, Vec<u8>)>,
+) {
+    if b.len() < 2 || b.len() > 65536 {
+        return;
+    }
+    let encrypted = b[..2] == [1, 0];
+    if s.config.encryption & 1 != 0 && !encrypted {
+        return;
+    }
+    let parsed = if encrypted {
+        p.ciphers
+            .get(&s.launch.key, s.config.encryption & 1 != 0)
+            .open(b)
+            .and_then(|(seq, kind, payload)| {
+                if !p.received.accept(seq) {
+                    anyhow::bail!("replayed control message");
+                }
+                Ok((kind, payload))
+            })
+    } else {
+        butterpollo_core::packet::control_header(b).map(|(kind, payload)| (kind, payload.to_vec()))
+    };
+    let (kind, payload) = match parsed {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!(error=%e,"invalid control packet");
+            return;
+        }
+    };
+    p.seen = Instant::now();
+    p.input_released = false;
+    match kind {
+        0x0200 => s.record_control_ping(Instant::now(), &payload),
+        controller_audio::CONTROL | controller_audio::MICROPHONE
+            if encrypted && haptics_negotiated(&s.config, peer.channel_count()) =>
+        {
+            if !s.launch.client.allows(1 << 8) {
+                return;
+            }
+            if kind == controller_audio::CONTROL {
+                if let Some((id, flags)) = controller_audio::status(&payload) {
+                    let Ok(config) = p.config(h, s) else {
+                        return;
+                    };
+                    let policy = controller_audio::status_policy(
+                        &config,
+                        s.launch.role,
+                        s.launch.client.perm & ((1 << 25) | (1 << 26)) != 0,
+                        flags,
+                    );
+                    if flags & controller_audio::PLAYBACK != 0
+                        && policy.device_flags & controller_audio::PLAYBACK == 0
+                        && config.get("audio_capture_mode", "system") == "game"
+                    {
+                        s.launch.warnings.set("audio_controller_scope", "Game-only audio suppresses dedicated USB controller speaker sound because that endpoint cannot identify its source process. The normal captured game stream still routes to a connected controller headset; haptics and microphone settings remain independent.");
+                    }
+                    let mut state = payload.clone();
+                    state[4] = policy.device_flags;
+                    if let Some(i) = &p.injector {
+                        i.controller_audio(id, kind, &state);
+                    }
+                    p.controller_audio[id as usize] = policy.device_flags;
+                    state[1] = 3; // Acknowledge host microphone policy.
+                    // Auto may have attached a VHF pad without audio.
+                    // The client's periodic status retries after USB
+                    // enumeration; retain its desired device policy.
+                    state[4] = policy.acknowledged_flags(
+                        p.injector
+                            .as_ref()
+                            .is_some_and(|i| i.controller_audio_ready(id)),
+                    );
+                    if let Ok(message) = p.encrypt(s, kind, &state) {
+                        let _ = peer.send(
+                            FEEDBACK_CHANNEL,
+                            &Packet::new(message, PacketKind::Reliable),
+                        );
+                    }
+                }
+            } else if let Some((id, _, _)) = controller_audio::pcm(&payload)
+                && p.controller_audio[id as usize]
+                    & (controller_audio::CAPTURE | controller_audio::MUTED)
+                    == controller_audio::CAPTURE
+                && let Some(i) = &p.injector
+            {
+                p.controller_pcm.observe(id, kind, Instant::now());
+                i.controller_audio(id, kind, &payload);
+            }
+        }
+        0x3000 => {
+            if let Some(run) =
+                server_command(h, &s.launch.client, &payload, encrypted, &mut p.command_at)
+                && let Err(e) = commands.try_send((s.clone(), run))
+            {
+                tracing::warn!(error=%e, "configured server command failed");
+            }
+        }
+        // SS_RFI_REQUEST: first frame, a reserved word, last
+        // frame, reserved words; older clients sent two
+        // 64-bit indices, whose low words sit at the same
+        // offsets. Requiring 8 bytes turned every request
+        // into a keyframe.
+        0x0301 if payload.len() >= 12 => {
+            s.request_invalidation(
+                u64::from(u32::from_le_bytes(payload[..4].try_into().unwrap())),
+                u64::from(u32::from_le_bytes(payload[8..12].try_into().unwrap())),
+            );
+        }
+        0x0301 => s.request_invalidation(0, 0),
+        0x0302 => s.request_client_keyframe(),
+        // This dispatch receives only client-to-host packets;
+        // 0x5502 in the other direction is controller feedback.
+        0x5502 => s.record_fec_status(&payload),
+        // Per-packet arrival feedback, unreliable and dropped when invalid.
+        butterpollo_core::congestion::TRANSPORT_FEEDBACK_MESSAGE_TYPE => {
+            if !s.record_transport_feedback(&payload) {
+                tracing::trace!(bytes = payload.len(), "transport feedback ignored");
+            }
+        }
+        butterpollo_core::statistical_fec::FEC_REPORT_MESSAGE_TYPE => {
+            match s.record_fec_report(&payload) {
+                Ok((report, used)) => tracing::debug!(
+                    seq = report.seq,
+                    data = report.data_shards,
+                    parity = report.parity_shards,
+                    missing = report.missing_shards,
+                    unrecovered = report.unrecovered_blocks,
+                    interval_ms = report.interval_ms,
+                    used,
+                    "fec report"
+                ),
+                Err(error) => {
+                    tracing::debug!(%error, "fec report refused")
+                }
+            }
+        }
+        butterpollo_core::phase_sync::REPORT_MESSAGE_TYPE => {
+            match s
+                .phase_sync
+                .lock()
+                .unwrap()
+                .on_payload(Instant::now(), &payload)
+            {
+                Some(report) => tracing::debug!(
+                    lead_ns = report.lead_ns,
+                    spread_ns = report.spread_ns,
+                    period_ns = report.period_ns,
+                    frames = report.frames,
+                    "phase lock report"
+                ),
+                None => tracing::debug!(len = payload.len(), "invalid phase lock report"),
+            }
+        }
+        // Deferred until the socket is unheld so `host_send_us` matches actual send time.
+        butterpollo_core::clock_sync::CLOCK_SYNC_MESSAGE_TYPE => {
+            clock_syncs.push((peer.id(), kind, p.seen, payload));
+        }
+        butterpollo_core::host_timing::HOST_TIMING_MESSAGE_TYPE => {
+            match s.host_timings.on_request(&payload) {
+                Some(enabled) => tracing::info!(
+                    client = %s.launch.client.name,
+                    enabled,
+                    "host timing reports"
+                ),
+                None => tracing::debug!(len = payload.len(), "invalid host timing request"),
+            }
+        }
+        butterpollo_core::link_notice::LINK_NOTICE_MESSAGE_TYPE => {
+            match s.link_notices.on_request(&payload) {
+                Some(enabled) => tracing::info!(
+                    client = %s.launch.client.name,
+                    enabled,
+                    "link notices"
+                ),
+                None => tracing::debug!(len = payload.len(), "invalid link notice request"),
+            }
+        }
+        butterpollo_core::pipeline_rates::PIPELINE_RATES_MESSAGE_TYPE => {
+            let counts = s.pipeline_counts();
+            match s
+                .pipeline_rates
+                .on_request(Instant::now(), &payload, counts)
+            {
+                Some(enabled) => tracing::info!(
+                    client = %s.launch.client.name,
+                    enabled,
+                    "pipeline rate reports"
+                ),
+                None => tracing::debug!(len = payload.len(), "invalid pipeline rates request"),
+            }
+        }
+        // Keyboard follows focus: only for a device that may type, and
+        // the text around the cursor only over encrypted control.
+        butterpollo_core::text_input::TEXT_INPUT_MESSAGE_TYPE => {
+            let Ok(config) = p.config(h, s) else {
+                return;
+            };
+            let offered = crate::extensions::offered(h, &config).text_input
+                && s.launch.client.allows(input::KEYBOARD_PERMISSION);
+            let surrounding = encrypted && config.text_input_surrounding_text();
+            let watch = s.text_input.on_request(&payload, offered, surrounding);
+            match watch {
+                Some(watch) => {
+                    tracing::info!(
+                        client = %s.launch.client.name,
+                        ?watch,
+                        offered,
+                        "text input"
+                    );
+                    // The fixture's tests note the focus themselves.
+                    #[cfg(test)]
+                    if let Some(fixture) = &h.reconnect_fixture {
+                        fixture.text_watches.lock().unwrap().push(watch);
+                        return;
+                    }
+                    p.watch_focus(s, watch, control_wake);
+                }
+                None => tracing::debug!(len = payload.len(), "invalid text input request"),
+            }
+        }
+        // Clipboard sync from a Nightjar that asked or a Moonlight V+
+        // client, which never asks: its first frame starts the sync.
+        // Encrypted only, as USB: a plain frame anyone on the network
+        // could send would set the PC's clipboard and start sending it.
+        butterpollo_core::clipboard_sync::CLIPBOARD_SYNC_MESSAGE_TYPE if encrypted => {
+            let Ok(config) = p.config(h, s) else {
+                return;
+            };
+            // A guest's clipboard needs its keyboard-and-mouse permission:
+            // without it, neither direction.
+            let allowed = if h.device_guests.full_access(s) {
+                clipboard_sync::allowed(&config, &s.launch.client)
+            } else {
+                clipboard_sync::Allowed::default()
+            };
+            p.clipboard_sync.receive(s, &payload, allowed, control_wake);
+        }
+        // The latest report wins; the injector maps keys with it.
+        butterpollo_core::keyboard_layout::KEYBOARD_LAYOUT_MESSAGE_TYPE => {
+            let Ok(config) = p.config(h, s) else {
+                return;
+            };
+            if !crate::extensions::offered(h, &config).keyboard_layout {
+                tracing::debug!("keyboard layout report not offered");
+                return;
+            }
+            // Only a device that may type picks the layout keys go with.
+            if !s.launch.client.allows(input::KEYBOARD_PERMISSION) {
+                tracing::debug!("keyboard layout report without the keyboard permission");
+                return;
+            }
+            match butterpollo_core::keyboard_layout::KeyboardLayout::decode(&payload) {
+                Some(layout) => {
+                    // Resolved once here; the layout is read on this
+                    // loop, never with input.
+                    let klid = butterpollo_core::keyboard_layout::reported_klid(&layout);
+                    let before = std::mem::replace(&mut *s.keyboard_layout.lock().unwrap(), klid);
+                    if before != klid {
+                        tracing::info!(
+                            client = %s.launch.client.name,
+                            source = ?layout.source,
+                            reported = format_args!("{:08X}", layout.klid),
+                            tag = %layout.tag,
+                            klid = ?klid.map(|klid| format!("{klid:08X}")),
+                            "keyboard layout"
+                        );
+                    }
+                    p.keyboard_layout
+                        .report(klid, &s.launch.warnings, Instant::now());
+                }
+                None => tracing::debug!(len = payload.len(), "invalid keyboard layout report"),
+            }
+        }
+        // The device draws the cursor (0x5540): the stream leaves it
+        // out of the video, and the pass below sends its shapes.
+        butterpollo_core::client_cursor::CURSOR_SHAPE_REQUEST_MESSAGE_TYPE => {
+            let Ok(config) = p.config(h, s) else {
+                return;
+            };
+            let offered = crate::extensions::offered(h, &config).cursor_shape;
+            match s
+                .client_cursor
+                .on_request(&payload, offered, p.cursor_owner)
+            {
+                Some(enabled) => {
+                    tracing::info!(
+                        client = %s.launch.client.name,
+                        enabled,
+                        "client-drawn cursor"
+                    );
+                    let _ = control_wake.send(&[1]);
+                }
+                None => tracing::debug!(
+                    len = payload.len(),
+                    offered,
+                    "invalid or unoffered cursor shape request"
+                ),
+            }
+        }
+        // Frame Warp (0x5543): while offered, the host learns the game's
+        // camera response and tags every frame for a client that asked;
+        // the pass below sends the model, mask and tags.
+        butterpollo_core::frame_warp::FRAME_WARP_REQUEST_MESSAGE_TYPE => {
+            let Ok(config) = p.config(h, s) else {
+                return;
+            };
+            if !crate::extensions::offered(h, &config).frame_warp {
+                tracing::debug!(len = payload.len(), "unoffered frame warp request");
+                return;
+            }
+            let was = s.frame_warp.enabled();
+            let wake = control_wake.clone();
+            s.frame_warp.set_wake(Arc::new(move || {
+                let _ = wake.send(&[1]);
+            }));
+            match s.frame_warp.on_request(&payload) {
+                Some(enabled) => {
+                    if enabled != was {
+                        tracing::info!(
+                            client = %s.launch.client.name,
+                            enabled,
+                            "frame warp"
+                        );
+                    }
+                    let _ = control_wake.send(&[1]);
+                }
+                None => tracing::debug!(len = payload.len(), "invalid frame warp request"),
+            }
+        }
+        // The registry checks the setting and the device's permission and
+        // queues the answer, which the pass below sends.
+        butterpollo_core::usb_forward::USB_MESSAGE_TYPE if encrypted => {
+            match butterpollo_core::usb_forward::UsbMessage::decode(&payload) {
+                Some(message) => {
+                    let (enabled, limit) = {
+                        let config = h.config.read().unwrap();
+                        // Never a guest's but one with keyboard and mouse.
+                        (
+                            config.usb_forwarding() && h.device_guests.full_access(s),
+                            config.usb_max_devices(),
+                        )
+                    };
+                    h.usb
+                        .on_message(&p.id, &s.launch.client, enabled, limit, message);
+                }
+                None => {
+                    tracing::debug!(len = payload.len(), "invalid USB message")
+                }
+            }
+        }
+        butterpollo_core::display_caps::DISPLAY_CAPS_MESSAGE_TYPE => {
+            match s.record_display_caps(&payload) {
+                Some(update) if update.changed => {
+                    tracing::info!(
+                        client = %s.launch.client.name,
+                        hdr = update.caps.hdr,
+                        peak_nits = update.caps.max_nits().unwrap_or(0),
+                        average_nits = update.caps.max_average_nits().unwrap_or(0),
+                        black_decimillinits = update.caps.min_decimillinits,
+                        applied = "diagnostic and HDR10+ target only; source HDR metadata retained",
+                        "display caps"
+                    );
+                }
+                Some(_) => tracing::debug!("display caps unchanged"),
+                None => tracing::debug!(len = payload.len(), "invalid display caps"),
+            }
+        }
+        // The session loop applies it once the client stops sending.
+        butterpollo_core::reconfigure::RECONFIGURE_MESSAGE_TYPE => {
+            let outcome = {
+                let mut reconfigure = s.reconfigure.lock().unwrap();
+                let outcome = reconfigure.on_payload(Instant::now(), &payload);
+                s.rate_changes.on_reconfigure(outcome);
+                outcome
+            };
+            tracing::debug!(?outcome, len = payload.len(), "reconfigure request");
+        }
+        // A bitrate applies now, without a keyframe; a rate switches
+        // like a 0x5532 request and is answered once it runs.
+        butterpollo_core::rate_change::RATE_CHANGE_MESSAGE_TYPE => {
+            use butterpollo_core::rate_change;
+            if !matches!(rate_change::launch_choice(&s.launch.options), Ok(true)) {
+                tracing::debug!("rate change not offered");
+                return;
+            }
+            let Some(request) = rate_change::RateChangeRequest::decode(&payload) else {
+                tracing::warn!(len = payload.len(), "invalid rate change request");
+                return;
+            };
+            let config = p.config(h, s);
+            let mut reconfigure = s.reconfigure.lock().unwrap();
+            let requested = reconfigure.requested();
+            let current = reconfigure.current().fps_millihz;
+            // In the client's unit, as its request is: the bitrate its
+            // user set, where the launch carried one.
+            let bitrate_kbps = s
+                .rate_changes
+                .client_bitrate_kbps(s.bitrate.load(Ordering::Acquire), &s.config);
+            let decision = match config {
+                Ok(config) => {
+                    let enabled = config.boolean("stream_reconfigure", true);
+                    let mb_rate = h
+                        .encoder_mb_rates
+                        .get(usize::from(s.config.codec))
+                        .map_or(0, |rate| rate.load(Ordering::Acquire));
+                    let stream = rate_change::Stream {
+                        bitrate_kbps,
+                        launched: &s.config,
+                        fps_millihz: current,
+                        requested,
+                        fps_ceiling_millihz: rate_change::fps_ceiling_millihz(
+                            mb_rate,
+                            requested.width,
+                            requested.height,
+                            current,
+                            s.config.fps_millihz(),
+                        ),
+                        fps_refusal: butterpollo_core::reconfigure::refusal(&s.config, enabled)
+                            .map(|_| rate_change::refusal_reason(enabled)),
+                    };
+                    rate_change::decide(&request, &stream, &config)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), serial = request.serial, "rate change refused: the device's configuration did not load");
+                    rate_change::refuse(&request, bitrate_kbps, current, rate_change::Reason::Other)
+                }
+            };
+            s.rate_changes
+                .record(&decision, &mut reconfigure, Instant::now());
+            drop(reconfigure);
+            // Set before the answer goes out, later in this loop.
+            if let Some(encoder_kbps) = decision.bitrate_kbps {
+                // Asked and applied in the client's unit: the encoder's
+                // share of it is no cap.
+                butterpollo_core::stream_policy::report_bitrate(
+                    &s.launch.warnings,
+                    request.bitrate_kbps,
+                    decision.result.bitrate_kbps,
+                    "max_bitrate and the 500 Mbps runtime cap",
+                );
+                s.set_client_bitrate(encoder_kbps);
+            }
+            let result = decision.result;
+            tracing::info!(
+                client = %s.launch.client.name,
+                serial = request.serial,
+                bitrate_kbps = request.bitrate_kbps,
+                fps_millihz = request.fps_millihz,
+                applied_kbps = result.bitrate_kbps,
+                encoder_kbps = ?decision.bitrate_kbps,
+                switch_to = ?decision.switch_to.map(|mode| mode.to_string()),
+                bitrate = ?result.bitrate,
+                fps = ?result.fps,
+                "rate change"
+            );
+        }
+        0x0109 => {
+            if encrypted {
+                s.stop();
+            }
+        }
+        0x0206 => {
+            let raw = if encrypted {
+                Ok(payload)
+            } else {
+                p.legacy.open(&s.launch.key, &payload)
+            };
+            let event = raw.and_then(|raw| input::decode(&raw));
+            match event {
+                // Say once per kind that the device may not
+                // send it: dropped silently, a phone's
+                // controller looked undetected.
+                Ok(event) if !s.launch.client.allows(event.required_permission()) => {
+                    let permission = event.required_permission();
+                    if p.denied & permission == 0 {
+                        p.denied |= permission;
+                        let (code, message) = event.denied_warning(&s.launch.client.name);
+                        s.launch.warnings.set(&code, message);
+                    }
+                }
+                // A guest's input needs its guest permission, and keys and
+                // the mouse go only to their one holder (`multiclient`).
+                Ok(event) if !h.device_guests.admits(s, event.required_permission()) => {}
+                Ok(mut event) => {
+                    p.audio_haptics.input(
+                        &mut event,
+                        haptics_negotiated(&s.config, peer.channel_count()),
+                    );
+                    if let input::Input::Arrival { capabilities, .. } = &event
+                        && let Some(hint) = butterpollo_core::input_policy::steam_input_hint(
+                            &s.launch.client.name,
+                            *capabilities,
+                        )
+                    {
+                        s.launch.warnings.set("input_steam_input", hint);
+                    }
+                    if matches!(
+                        event,
+                        input::Input::Relative { .. }
+                            | input::Input::Absolute { .. }
+                            | input::Input::Touch { .. }
+                            | input::Input::Pen { .. }
+                    ) && let Some(window) = p.pointer_gaps.note(Instant::now())
+                    {
+                        tracing::info!(
+                            client = %s.launch.client.name,
+                            moves = window.arrivals,
+                            gaps_25_50 = window.gaps_25_50,
+                            gaps_50_plus = window.gaps_50_plus,
+                            pauses = window.pauses,
+                            max_gap_ms = window.max_gap_ms,
+                            inject_max_ms = std::mem::take(&mut p.inject_max).as_secs_f32()
+                                * 1000.,
+                            "pointer arrivals"
+                        );
+                    }
+                    // Frame Warp's input history, for a client that asked:
+                    // a short queue push before the event is injected.
+                    if s.frame_warp.enabled() {
+                        match &event {
+                            input::Input::Relative { x, y } => {
+                                s.frame_warp.on_mouse(*x, *y, p.seen)
+                            }
+                            input::Input::Controller { id, sticks, .. } => s
+                                .frame_warp
+                                .on_controller(*id, (sticks[2], sticks[3]), p.seen),
+                            _ => {}
+                        }
+                    }
+                    // Motion and buttons for emulators (`enable_dsu_server`).
+                    crate::dsu::observe(&p.id, &event);
+                    if !queue_input(&mut p.inputs, event) {
+                        // Warnings::set logs it as well.
+                        s.launch.warnings.set("input_overflow", INPUT_OVERFLOW);
+                        s.stop();
+                    }
+                }
+                Err(e) => {
+                    if let Some(error) =
+                        first_steam_attributes_refusal(&mut p.steam_attributes_refused, &e)
+                    {
+                        tracing::warn!(client=%s.launch.client.name, %error, "ignoring Steam Controller attributes");
+                    } else {
+                        tracing::debug!(error=%e,"invalid input packet");
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn send_clock_syncs(
+    host: &mut Host<ControlSocket>,
+    peers: &mut HashMap<PeerID, ControlPeer>,
+    clock_syncs: &mut Vec<(PeerID, u16, Instant, Vec<u8>)>,
+) {
+    for (peer_id, kind, received_at, payload) in clock_syncs.drain(..) {
+        let Some(p) = peers.get_mut(&peer_id) else {
+            continue;
+        };
+        let Some(s) = p.session.clone().filter(|s| !s.stopping()) else {
+            continue;
+        };
+        let epoch = *s.media_epoch.read().unwrap();
+        if let Some(reply) = butterpollo_core::clock_sync::reply(epoch, received_at, &payload)
+            && let Ok(message) = p.encrypt(&s, kind, &reply)
+        {
+            let _ = host.peer_mut(peer_id).send(
+                FEEDBACK_CHANNEL,
+                &Packet::new(message, PacketKind::AlwaysUnreliable { sequenced: false }),
+            );
+        }
     }
 }
 
@@ -2078,6 +2085,9 @@ pub(super) struct ControlPeer {
     config: PeerConfig,
     /// The display scale a client-drawn cursor's shapes are sized for, read off this thread.
     cursor_scale: ScaleLookup,
+    /// Raw control packets received while the launch was still pending in `sessions.pending`,
+    /// replayed once `sessions.active` gets this peer's session.
+    pre_active_packets: std::collections::VecDeque<Vec<u8>>,
 }
 
 impl Drop for ControlPeer {
@@ -2444,27 +2454,59 @@ fn waits_for_pads(event: &input::Input) -> bool {
 /// when acquire succeeds. State the client sends once stays: arrivals, so
 /// the pads keep the kind the client announced, the haptics switch, Steam
 /// attributes, and each pad's latest state, whose active mask removes pads.
+const MAX_HELD_PAD_INPUTS: usize = 64;
+
 pub(super) fn drop_uninjectable_input(inputs: &mut Vec<input::Input>) {
-    let mut latest: Vec<(u16, usize)> = Vec::new();
+    let mut seen_pads: Vec<u16> = Vec::new();
+    let mut seen_setup: Vec<(std::mem::Discriminant<input::Input>, u8)> = Vec::new();
+    let mut seen_haptics = false;
+    let mut keep = vec![false; inputs.len()];
+    let mut kept_count = 0usize;
     for (at, event) in inputs.iter().enumerate().rev() {
-        if let input::Input::Controller { id, .. } = event
-            && !latest.iter().any(|(pad, _)| pad == id)
-        {
-            latest.push((*id, at));
+        if kept_count >= MAX_HELD_PAD_INPUTS {
+            break;
+        }
+        let take = match event {
+            input::Input::Arrival { id, .. } => {
+                let key = (std::mem::discriminant(event), *id);
+                !seen_setup.contains(&key) && {
+                    seen_setup.push(key);
+                    true
+                }
+            }
+            input::Input::SteamAttributes(a) => {
+                let key = (std::mem::discriminant(event), a.controller);
+                !seen_setup.contains(&key) && {
+                    seen_setup.push(key);
+                    true
+                }
+            }
+            input::Input::ControllerIdentity(c) => {
+                let key = (std::mem::discriminant(event), c.controller);
+                !seen_setup.contains(&key) && {
+                    seen_setup.push(key);
+                    true
+                }
+            }
+            input::Input::Haptics(_) => !std::mem::replace(&mut seen_haptics, true),
+            input::Input::Controller { id, .. } => {
+                !seen_pads.contains(id) && {
+                    seen_pads.push(*id);
+                    true
+                }
+            }
+            _ => false,
+        };
+        if take {
+            keep[at] = true;
+            kept_count += 1;
         }
     }
     let mut at = 0;
-    inputs.retain(|event| {
-        let keep = match event {
-            input::Input::Arrival { .. }
-            | input::Input::Haptics(_)
-            | input::Input::SteamAttributes(_)
-            | input::Input::ControllerIdentity(_) => true,
-            input::Input::Controller { .. } => latest.iter().any(|(_, kept)| *kept == at),
-            _ => false,
-        };
+    inputs.retain(|_| {
+        let k = keep[at];
         at += 1;
-        keep
+        k
     });
 }
 

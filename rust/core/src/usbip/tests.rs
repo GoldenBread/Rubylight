@@ -488,3 +488,53 @@ fn a_change_reaches_the_report_thread_with_and_without_a_waiting_transfer() {
     submit(&mut client, 2, 1, true, 8, [0; 8], &[]);
     assert_eq!(reply(&mut client), (RET_SUBMIT, 2, 0, vec![9]));
 }
+
+struct Queued(VecDeque<Vec<u8>>);
+impl Device for Queued {
+    fn describe(&self) -> UsbDevice {
+        UsbDevice {
+            speed: 2,
+            vendor: 0x1209,
+            product: 1,
+            release: 1,
+            interfaces: vec![(3, 0, 2)],
+        }
+    }
+    fn control(&mut self, _setup: &Setup, _data: &[u8]) -> Option<Vec<u8>> {
+        Some(vec![])
+    }
+    fn interrupt(&mut self, _endpoint: u8) -> Option<Vec<u8>> {
+        self.0.pop_front()
+    }
+    fn interrupt_ready(&self, _endpoint: u8) -> bool {
+        !self.0.is_empty()
+    }
+}
+
+#[test]
+fn queued_reports_drain_onto_waiting_transfers_without_waiting_a_period() {
+    let export = Export::listen(Queued(VecDeque::new()), Duration::from_secs(10)).unwrap();
+    let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, export.port())).unwrap();
+    let mut request = op_reply(OP_REQ_IMPORT, 0);
+    let mut busid = [0u8; 32];
+    busid[..3].copy_from_slice(b"1-1");
+    request.extend_from_slice(&busid);
+    client.write_all(&request).unwrap();
+    let mut imported = [0u8; 8 + 312];
+    client.read_exact(&mut imported).unwrap();
+    assert_eq!(&imported[..8], &op_reply(0x0003, 0)[..]);
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+
+    submit(&mut client, 1, 1, true, 8, [0; 8], &[]);
+    submit(&mut client, 2, 1, true, 8, [0; 8], &[]);
+    submit(&mut client, 3, 1, true, 8, [0; 8], &[]);
+    export.with_changed(|q| {
+        q.0.extend([vec![1], vec![2], vec![3]]);
+    });
+
+    assert_eq!(reply(&mut client), (RET_SUBMIT, 1, 0, vec![1]));
+    assert_eq!(reply(&mut client), (RET_SUBMIT, 2, 0, vec![2]));
+    assert_eq!(reply(&mut client), (RET_SUBMIT, 3, 0, vec![3]));
+}

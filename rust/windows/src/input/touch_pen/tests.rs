@@ -496,6 +496,20 @@ fn a_pen_frame_windows_refuses_is_not_repeated_as_a_stale_frame() {
         pen_after(moved, 3, true).pointerInfo.pointerFlags,
         in_contact
     );
+    // An initial hover Windows refused leaves the pen inactive so refresh does not retry it.
+    let initial_hover = pen_event(POINTER_PEN_INFO::default(), 0, 0.).unwrap();
+    assert_eq!(
+        pen_after_with_prior(false, initial_hover, 0, true)
+            .pointerInfo
+            .pointerFlags,
+        POINTER_FLAG_NONE
+    );
+    assert_eq!(
+        pen_after_with_prior(true, initial_hover, 0, true)
+            .pointerInfo
+            .pointerFlags,
+        POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE
+    );
 }
 #[test]
 fn an_active_pen_is_lifted_before_its_device_goes_away() {

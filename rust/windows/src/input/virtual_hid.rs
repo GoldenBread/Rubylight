@@ -44,6 +44,7 @@ enum State<D: Device> {
     Unplugged,
     Plugging,
     Plugged(UsbPad<D>),
+    NoDriver { at: Instant },
     Failed { at: Instant, error: String },
 }
 
@@ -83,19 +84,29 @@ impl<D: Device> Slot<D> {
         if inner.users > 0 {
             return;
         }
-        if let State::Plugged(pad) = std::mem::replace(&mut inner.state, State::Unplugged) {
-            drop(inner);
-            let name = self.name;
-            let unplug = move || {
-                drop(pad);
-                tracing::info!(device = name, "unplugged");
-            };
-            if let Err(error) = std::thread::Builder::new()
-                .name("virtual HID unplug".into())
-                .spawn(unplug)
-            {
-                tracing::warn!(device = name, %error, "the unplug thread did not start");
+        match &inner.state {
+            State::Plugged(_) => {
+                let State::Plugged(pad) = std::mem::replace(&mut inner.state, State::Unplugged)
+                else {
+                    unreachable!();
+                };
+                drop(inner);
+                let name = self.name;
+                let unplug = move || {
+                    drop(pad);
+                    tracing::info!(device = name, "unplugged");
+                };
+                if let Err(error) = std::thread::Builder::new()
+                    .name("virtual HID unplug".into())
+                    .spawn(unplug)
+                {
+                    tracing::warn!(device = name, %error, "the unplug thread did not start");
+                }
             }
+            // Keep Plugging intact: when the plug thread finishes and sees users == 0,
+            // it cleans up the pad itself outside the mutex.
+            State::Plugging => {}
+            _ => inner.state = State::Unplugged,
         }
     }
     /// Whether the device is plugged in and Windows reads it: its driver asked for a report
@@ -113,23 +124,27 @@ impl<D: Device> Slot<D> {
         match &inner.state {
             State::Plugged(_) => return Availability::Ready,
             State::Plugging => return Availability::Plugging,
+            State::NoDriver { at } if at.elapsed() < RETRY => return Availability::NoDriver,
             State::Failed { at, error } if at.elapsed() < RETRY => {
                 return Availability::Failed(error.clone());
             }
             _ => {}
         }
-        let Some(exe) = usbip_exe() else {
-            inner.state = State::Unplugged;
-            return Availability::NoDriver;
-        };
         inner.state = State::Plugging;
         drop(inner);
+        let Some(exe) = usbip_exe() else {
+            let mut inner = self.inner.lock().unwrap();
+            if matches!(inner.state, State::Plugging) {
+                inner.state = State::NoDriver { at: Instant::now() };
+            }
+            return Availability::NoDriver;
+        };
         let name = self.name;
         let plug = move || {
             let started = Instant::now();
             let result = UsbPad::plug(&exe, make(), POLL);
             let mut inner = self.inner.lock().unwrap();
-            match result {
+            let prev = match result {
                 Ok(pad) if inner.users > 0 => {
                     tracing::info!(
                         device = name,
@@ -137,33 +152,47 @@ impl<D: Device> Slot<D> {
                         ms = started.elapsed().as_millis() as u64,
                         "plugged in"
                     );
-                    inner.state = State::Plugged(pad);
+                    std::mem::replace(&mut inner.state, State::Plugged(pad))
                 }
                 Ok(pad) => {
                     // The streams that wanted it ended meanwhile.
-                    inner.state = State::Unplugged;
+                    let prev = std::mem::replace(&mut inner.state, State::Unplugged);
                     drop(inner);
+                    drop(prev);
                     drop(pad);
+                    return;
                 }
                 Err(error) => {
                     let error = format!("{error:#}");
                     tracing::warn!(device = name, error, "could not be plugged in");
-                    inner.state = State::Failed {
-                        at: Instant::now(),
-                        error,
-                    };
+                    std::mem::replace(
+                        &mut inner.state,
+                        State::Failed {
+                            at: Instant::now(),
+                            error,
+                        },
+                    )
                 }
-            }
+            };
+            drop(inner);
+            drop(prev);
         };
         if let Err(error) = std::thread::Builder::new()
             .name("virtual HID plug".into())
             .spawn(plug)
         {
             let error = format!("the plug thread did not start: {error}");
-            self.inner.lock().unwrap().state = State::Failed {
-                at: Instant::now(),
-                error: error.clone(),
+            let prev = {
+                let mut inner = self.inner.lock().unwrap();
+                std::mem::replace(
+                    &mut inner.state,
+                    State::Failed {
+                        at: Instant::now(),
+                        error: error.clone(),
+                    },
+                )
             };
+            drop(prev);
             return Availability::Failed(error);
         }
         Availability::Plugging
@@ -448,5 +477,19 @@ mod tests {
         assert!(!settled(Duration::from_millis(112)));
         assert!(settled(SETTLE));
         assert!(settled(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn release_does_not_clobber_plugging_and_no_driver_is_cached() {
+        static SLOT: Slot<HidMouse> = Slot::new("test mouse");
+        SLOT.acquire();
+        SLOT.inner.lock().unwrap().state = State::Plugging;
+        SLOT.release();
+        assert!(matches!(SLOT.inner.lock().unwrap().state, State::Plugging));
+
+        SLOT.inner.lock().unwrap().state = State::NoDriver { at: Instant::now() };
+        assert_eq!(SLOT.plug(|| HidMouse::new("TEST")), Availability::NoDriver);
+        SLOT.release();
+        assert!(matches!(SLOT.inner.lock().unwrap().state, State::Unplugged));
     }
 }

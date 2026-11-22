@@ -471,6 +471,15 @@ pub fn last_present_count(_: *mut SDL_Renderer) -> u32 { 0 }
 #[cfg(not(windows))]
 pub fn held_wait_us(_: *mut SDL_Renderer, _: f32, _: u32, _: u64, _: u64, _: &mut HeldAnchor) -> Option<u64> { Some(0) }
 
+#[cfg(any(windows, test))]
+fn latch_time_us(now_us: u64, counter: u64, latch: u64, freq: u64, period_ns: i64) -> Option<(i64, i64)> {
+    if freq == 0 { return None; }
+    let delta_ticks = counter as i128 - latch as i128;
+    let age_us = delta_ticks as f64 * 1_000_000.0 / freq as f64;
+    if age_us.abs() > 100_000.0 { return None; }
+    Some((now_us as i64 - age_us as i64, period_ns))
+}
+
 #[cfg(windows)]
 pub fn timing(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, anchor: &mut HeldAnchor) -> Option<(i64, i64)> {
     use windows::core::Interface;
@@ -502,10 +511,7 @@ pub fn timing(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, anchor: &
             if (measured - period_ns).abs() > period_ns / 100 { return None; }
             (info.qpcVBlank, measured)
         };
-        let counter = SDL_GetPerformanceCounter();
-        let age_us = counter.checked_sub(latch)? as f64 * 1_000_000.0 / SDL_GetPerformanceFrequency() as f64;
-        if age_us > 100_000.0 { return None; }
-        Some((nightjar_core::session::now_us() as i64 - age_us as i64, period_ns))
+        latch_time_us(nightjar_core::session::now_us(), SDL_GetPerformanceCounter(), latch, SDL_GetPerformanceFrequency(), period_ns)
     }
 }
 
@@ -1113,7 +1119,7 @@ mod tests {
         assert!(back < kms.find("if committed.is_err()").unwrap(), "given back on the failed commit's path too");
         // With Frame Warp too: its hold before the shift gave the input back (never nested), and the
         // commit still waits for the turn's refresh.
-        assert!(kms.contains("let lends = picture && self.vrr.held("), "lent whether or not Frame Warp held before");
+        assert!(kms.contains("let holds = picture && self.vrr.held(") && kms.contains("let lends = holds || "), "lent whether or not Frame Warp held before");
         let lend_line = kms[..lent].rsplit('\n').next().unwrap();
         assert!(lend_line.contains("if lends {"), "{lend_line}");
         let back_line = kms[..back].rsplit('\n').next().unwrap();
@@ -1163,5 +1169,20 @@ mod tests {
         for now in [10_600, 13_000, 20_000] {
             assert_eq!(anchor.hold(now, now - 800, 100, Some(100), 3, 1000, 300, 50, 1_000, 5_000), 1_250);
         }
+    }
+
+    #[test]
+    fn latch_time_accepts_past_and_upcoming_qpc_anchors_within_100ms() {
+        let freq = 10_000_000u64; // 10 MHz QPC = 10 ticks/us
+        let now_us = 5_000_000u64;
+        let period_ns = 8_333_333i64;
+        // Past anchor (4 ms ago)
+        assert_eq!(latch_time_us(now_us, 1_000_000, 960_000, freq, period_ns), Some((4_996_000, period_ns)));
+        // Upcoming DWM qpcVBlank (4 ms in the future: latch > counter)
+        assert_eq!(latch_time_us(now_us, 1_000_000, 1_040_000, freq, period_ns), Some((5_004_000, period_ns)));
+        // More than 100 ms in the past or future is rejected
+        assert_eq!(latch_time_us(now_us, 2_000_000, 999_990, freq, period_ns), None);
+        assert_eq!(latch_time_us(now_us, 1_000_000, 2_000_010, freq, period_ns), None);
+        assert_eq!(latch_time_us(now_us, 1_000_000, 1_000_000, 0, period_ns), None);
     }
 }

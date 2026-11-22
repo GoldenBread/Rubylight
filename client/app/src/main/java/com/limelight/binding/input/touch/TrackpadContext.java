@@ -30,6 +30,7 @@ public class TrackpadContext implements TouchContext {
     private boolean clickedMiddle = false;
     private int maxPointerCountInGesture;
     private boolean isClickPending;
+    private byte pendingClickButton = MouseButtonPacket.BUTTON_LEFT;
     private boolean isDblClickPending;
     private boolean isFlicking;
     private double velocityX = 0.0;
@@ -190,6 +191,17 @@ public class TrackpadContext implements TouchContext {
         }
     };
 
+    private final Runnable clickReleaseRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (isClickPending) {
+                conn.sendMouseButtonUp(pendingClickButton);
+                isClickPending = false;
+            }
+            isDblClickPending = false;
+        }
+    };
+
     private final Runnable momentumRunnable = new Runnable() {
         @Override
         public void run() {
@@ -302,6 +314,10 @@ public class TrackpadContext implements TouchContext {
         if (isFlicking) {
             isFlicking = false;
             handler.removeCallbacksAndMessages(null);
+            if (confirmedDrag) {
+                conn.sendMouseButtonUp(getMouseButtonIndex());
+                confirmedDrag = false;
+            }
         }
 
         originalTouchX = lastTouchX = eventX;
@@ -317,7 +333,10 @@ public class TrackpadContext implements TouchContext {
             isScrollTransitioning = false;
             maxPointerCountInGesture = pointerCount;
             originalTouchTime = eventTime;
-            cancelled = confirmedMove = confirmedScroll = false;
+            if (confirmedDrag) {
+                conn.sendMouseButtonUp(getMouseButtonIndex());
+            }
+            cancelled = confirmedMove = confirmedScroll = confirmedDrag = isDblClickPending = false;
             distanceMoved = 0;
             velocityX = 0;
             velocityY = 0;
@@ -382,6 +401,7 @@ public class TrackpadContext implements TouchContext {
             conn.sendMouseButtonDown(buttonIndex);
             conn.sendMouseButtonUp(buttonIndex);
             isClickPending = false;
+            isDblClickPending = false;
             confirmedDrag = false;
         }
         else if (confirmedDrag) {
@@ -399,15 +419,10 @@ public class TrackpadContext implements TouchContext {
         else if (isTap(eventTime)) {
             conn.sendMouseButtonDown(buttonIndex);
             isClickPending = true;
+            pendingClickButton = buttonIndex;
 
             handler.removeCallbacksAndMessages(null);
-            handler.postDelayed(() -> {
-                if (isClickPending) {
-                    conn.sendMouseButtonUp(buttonIndex);
-                    isClickPending = false;
-                }
-                isDblClickPending = false;
-            }, CLICK_RELEASE_DELAY);
+            handler.postDelayed(clickReleaseRunnable, CLICK_RELEASE_DELAY);
         }
         else if (confirmedMove) {
             // This was a move/scroll that wasn't a drag or tap. Let's see if we should flick.
@@ -557,9 +572,18 @@ public class TrackpadContext implements TouchContext {
             handler.removeCallbacksAndMessages(null);
         }
 
-        if (confirmedDrag) {
-            conn.sendMouseButtonUp(getMouseButtonIndex());
+        if (isClickPending) {
+            handler.removeCallbacks(clickReleaseRunnable);
+            isClickPending = false;
+            conn.sendMouseButtonUp(pendingClickButton);
         }
+
+        if (confirmedDrag) {
+            handler.removeCallbacks(clickReleaseRunnable);
+            conn.sendMouseButtonUp(getMouseButtonIndex());
+            confirmedDrag = false;
+        }
+        isDblClickPending = false;
     }
 
     @Override

@@ -182,3 +182,40 @@ fn recovers_two_lost_packets_per_block() {
     assert_eq!(rx2.stats().packet_count_fec_recovered, 2);
     assert_eq!(played[4].as_deref(), Some(&packets[(8 / 4) * 6][12..]));
 }
+
+#[test]
+fn reordered_packets_drain_buffered_contiguous_packets_immediately() {
+    let packets = stream(16, 40);
+    let data = |seq: u16| {
+        packets
+            .iter()
+            .find(|p| p[1] == 97 && u16::from_be_bytes([p[2], p[3]]) == seq)
+            .unwrap()
+    };
+    let mut rx = AudioReceiver::new(config());
+    rx.packets_to_drop = 0;
+
+    // Synchronize on block 1 (seq 4..=7).
+    let _ = run(&mut rx, &[data(0).clone()]);
+
+    // Within a block: [5, 4] arrives -> 5 queues, then 4 triggers HandleNowAndDrain for [4, 5].
+    assert!(run(&mut rx, &[data(5).clone()]).is_empty());
+    let played = run(&mut rx, &[data(4).clone()]);
+    assert_eq!(
+        played,
+        vec![Some(data(4)[12..].to_vec()), Some(data(5)[12..].to_vec())]
+    );
+
+    // Complete block 1 (4..=7) so the queue leaves synchronization, then mark the link as
+    // reordering with a late packet from block 0 and test cross-block draining [12, 11] after 8..=10.
+    assert_eq!(run(&mut rx, &[data(6).clone()]).len(), 1);
+    assert_eq!(run(&mut rx, &[data(7).clone()]).len(), 1);
+    assert!(run(&mut rx, &[data(3).clone()]).is_empty());
+    assert_eq!(run(&mut rx, &[data(8).clone(), data(9).clone(), data(10).clone()]).len(), 3);
+    assert!(run(&mut rx, &[data(12).clone()]).is_empty());
+    let played = run(&mut rx, &[data(11).clone()]);
+    assert_eq!(
+        played,
+        vec![Some(data(11)[12..].to_vec()), Some(data(12)[12..].to_vec())]
+    );
+}

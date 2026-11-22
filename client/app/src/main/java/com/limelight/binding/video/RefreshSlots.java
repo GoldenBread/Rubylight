@@ -95,7 +95,16 @@ final class RefreshSlots {
             this.intervalNs = intervalNs;
         }
         long earliestNs = firstVsyncNs(releaseNs, vsyncNs, intervalNs, leadNs);
-        long vsync = lastVsyncNs == 0 ? earliestNs : Math.max(earliestNs, lastVsyncNs + intervalNs);
+        long vsync;
+        if (lastVsyncNs == 0) {
+            vsync = earliestNs;
+        } else {
+            long nextNs = lastVsyncNs + intervalNs;
+            // Snap the carried claim back onto the live vsync grid so panel clock drift or
+            // Choreographer jitter cannot ratchet lastVsyncNs off the display's refreshes.
+            nextNs = vsyncNs + Math.floorDiv(nextNs - vsyncNs + intervalNs / 2, intervalNs) * intervalNs;
+            vsync = Math.max(earliestNs, nextNs);
+        }
         if (lastVsyncNs != 0 && vsync - earliestNs >= 2 * intervalNs) {
             // Two refreshes already claimed ahead of this output: stamp it with the refresh already
             // claimed (the previous output's), where the compositor replaces that older buffer with

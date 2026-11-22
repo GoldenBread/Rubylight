@@ -274,10 +274,12 @@ impl AdaptiveBitrateController {
         match self.calm_since_ms {
             None => self.calm_since_ms = Some(now_ms),
             Some(calm) if now_ms.saturating_sub(calm) >= STABLE_MS => {
-                // No poor sample for a while at this rate: remember it, and a step back has worked.
+                // No poor sample for a while at this rate: remember it, and an active step back
+                // has worked.
                 self.stable_kbps = self.stable_kbps.max(self.current_kbps);
-                self.step_back_from_kbps = None;
-                self.step_back_failures = 0;
+                if self.step_back_from_kbps.take().is_some() {
+                    self.step_back_failures = 0;
+                }
             }
             Some(_) => {}
         }
@@ -702,5 +704,71 @@ mod tests {
             Ok(json!(8709))
         );
         assert!(statics.call("suspend", &json!([])).is_err());
+    }
+
+    #[test]
+    fn failed_step_back_waits_retry_window_past_stable_ms() {
+        let stats = |now_ms: u64, loss: f32| Stats {
+            now_ms,
+            recent_video: true,
+            loss_percent: Some(loss),
+            decode_ms: Some(2.0),
+            jitter_ms: Some(1.0),
+            queue_ms: Some(0.0),
+            ..Stats::default()
+        };
+        let mut c = AdaptiveBitrateController::new(40_000, 40_000, 60, 0);
+        // Establish 40 Mbps as stable (10 s of healthy samples).
+        for s in 1..=11 {
+            assert_eq!(c.sample(&stats(s * 1000, 0.0)), None);
+        }
+        // Cut down twice under loss.
+        let mut now = 12_000;
+        for _ in 0..2 {
+            assert_eq!(c.sample(&stats(now, 10.0)), None);
+            now += 1000;
+            let cut = c.sample(&stats(now, 10.0)).expect("cut");
+            c.applied(cut, cut, now);
+            now += 3000;
+        }
+        let retreated_to = c.current_kbps;
+
+        // Wait 5 s healthy -> first step back.
+        let mut step_up = None;
+        for s in 1..=7 {
+            now += 1000;
+            if let Some(target) = c.sample(&stats(now, 0.0)) {
+                step_up = Some(target);
+                c.applied(target, target, now);
+                break;
+            }
+            assert!(s <= 6);
+        }
+        let stepped = step_up.expect("step back");
+        assert!(stepped > retreated_to);
+
+        // Loss within STABLE_MS fails the step back and retreats once the 3 s cooldown elapses.
+        now += 1000;
+        assert_eq!(c.sample(&stats(now, 6.0)), None);
+        now += 1000;
+        assert_eq!(c.sample(&stats(now, 6.0)), None);
+        now += 1000;
+        let back = c.sample(&stats(now, 6.0)).expect("retreat");
+        assert_eq!(back, retreated_to);
+        c.applied(back, back, now);
+        assert_eq!(c.step_back_failures, 1);
+
+        // Sitting at the retreated rate: STABLE_MS (10 s) must NOT clear step_back_failures,
+        // so the retry waits STEP_BACK_RETRY_HEALTHY_MS (15 s).
+        for s in 1..=15 {
+            now += 1000;
+            assert_eq!(
+                c.sample(&stats(now, 0.0)),
+                None,
+                "must hold before 15 s healthy (at {s} s)"
+            );
+        }
+        now += 1000;
+        assert!(c.sample(&stats(now, 0.0)).is_some(), "retries at 15 s healthy");
     }
 }

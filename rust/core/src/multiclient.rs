@@ -493,6 +493,9 @@ impl Guests {
 
     /// Guest `id`'s stream started as launch `launch`.
     pub fn joined(&mut self, id: u32, launch: &str) -> bool {
+        if self.game.is_none() {
+            return false;
+        }
         let Some(guest) = self.guests.iter_mut().find(|g| g.id == id) else {
             return false;
         };
@@ -611,7 +614,7 @@ impl Guests {
 }
 
 /// Who sends an input event, for [`Kbm`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Source {
     /// The owner's stream, any other stream that is no guest's, or the PC's own keyboard and mouse.
     Owner,
@@ -624,7 +627,7 @@ pub enum Verdict {
     /// Its sender holds the keyboard and mouse.
     Accept,
     /// Its sender took the keyboard and mouse over from `from`, whose held keys and buttons the
-    /// caller releases (a guest's; the owner's own are left alone).
+    /// caller releases.
     Took { from: Source },
     /// Someone else holds them.
     Drop,

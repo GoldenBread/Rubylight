@@ -116,6 +116,20 @@ fn a_reused_decoders_first_failed_frame_opens_it_again_at_once() {
     assert!(decoder.decoder.is_some(), "the stream goes on with the same device");
 }
 
+#[test]
+fn a_reused_decoder_whose_fast_reopen_fails_rebuilds_immediately_without_waiting() {
+    let setup = VideoSetup { format: nightjar_core::sdp::VIDEO_FORMAT_H264, width: 192, height: 96, fps: 60, chroma_packing: 0, logical_width: 192, logical_height: 96, color_space: 1, color_range: 0 };
+    let (mut decoder, shared) = decoder();
+    decoder.setup(&setup).unwrap();
+    decoder.decoder = None;
+    decoder.reused = true;
+    decoder.after_frame(false, true, 0);
+    assert!(!decoder.reused);
+    assert_eq!(decoder.failing, Failing::default(), "rebuilt immediately instead of entering Escalation::Wait");
+    assert!(decoder.decoder.is_some(), "rebuilt a fresh decoder immediately");
+    assert!(notices(&shared).is_empty());
+}
+
 /// V4L2 M2M decoders keep the driver's capture and output queues across
 /// `avcodec_flush_buffers`: a reused one could hand the new stream a picture of the last.
 #[test]

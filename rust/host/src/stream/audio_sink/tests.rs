@@ -699,3 +699,22 @@ fn the_wait_runs_to_the_earliest_deadline_and_never_below_one_millisecond() {
     assert_eq!(audio_wait(now, now + ms(3), None, Some(READ_POLL)), ms(3));
     assert_eq!(audio_wait(now, now - ms(4), None, Some(READ_POLL)), ms(1));
 }
+
+#[test]
+fn passthrough_32ms_frames_scale_idle_silence_threshold() {
+    let base = Instant::now();
+    let at = |ms| base + Duration::from_millis(ms);
+    let silence = [0.; 3072];
+    let mut pace = AudioPace::new(base, Duration::from_millis(32), 1536);
+    assert_eq!(pace.stamp(at(0), &mut vec![vec![0.5; 3072]], &silence), [0]);
+    // 2 * 32 ms + 10 ms = 74 ms before silence stands in for an accumulating frame.
+    assert_eq!(pace.due(), at(74));
+    for ms in [32, 50, 64, 73] {
+        let mut packets = Vec::new();
+        assert!(pace.stamp(at(ms), &mut packets, &silence).is_empty());
+        assert!(packets.is_empty(), "{ms} ms");
+    }
+    let mut packets = Vec::new();
+    assert_eq!(pace.stamp(at(74), &mut packets, &silence), [1536 + 74 * 48]);
+    assert_eq!(packets.len(), 1);
+}

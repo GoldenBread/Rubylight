@@ -570,7 +570,7 @@ pub(super) async fn content(
 ) -> Reply {
     let client = allowed(&h, &c, FILE_DOWNLOAD, "Download files")?;
     let name = name_of(request.uri().query())?;
-    let slot = begin_download(&h, &client.uuid)?;
+    let slot = begin_download(&h, butterpollo_core::state::device_uuid(&client.uuid))?;
     let dir = transfer_dir(&h);
     let opened = tokio::task::spawn_blocking(move || open_folder(dir.as_deref())?.open_file(&name))
         .await
@@ -855,7 +855,7 @@ async fn receive(
     let recheck = Recheck::new(h, c, FILE_UPLOAD, "Upload files");
     let uploaded = accept(
         h,
-        &client.uuid,
+        butterpollo_core::state::device_uuid(&client.uuid),
         headers,
         body,
         recheck,

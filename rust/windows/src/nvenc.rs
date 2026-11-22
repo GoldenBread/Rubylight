@@ -2431,6 +2431,13 @@ impl Session {
                 event.reset()?;
                 d3d12.fence.notify(signal, event.raw())?;
                 self.drain_armed = signal;
+            } else if event.is_set() {
+                event.reset()?;
+                // Written meanwhile: its notification may have come before the reset.
+                if d3d12.fence.completed().is_ok_and(|value| value >= signal) {
+                    event.set()?;
+                    return Ok(drain::DrainWait::Ready);
+                }
             }
             // SAFETY: `event` is a live event owned by this session.
             if unsafe { WaitForSingleObject(event.raw(), millis) } == WAIT_FAILED {
@@ -3219,6 +3226,7 @@ impl Encoder {
     }
     pub fn accepts_gpu_device(&self, image: &GpuImage) -> bool {
         self.gpu.device.as_raw() == image.gpu.device.as_raw()
+            && (self.compute.is_none() || crate::compute::shareable(&image.texture))
     }
     /// Whether this encoder's frames are converted on the D3D12 compute queue.
     pub fn converts_on_compute(&self) -> bool {
