@@ -14,7 +14,7 @@ src=$d/src/client rel=$d/rel
 # recipe is built again, its dependencies too: one from before --enable-libdrm made every VAAPI
 # map into Vulkan fail with ENOSYS (-38) in the bundle built here, never in a release.
 recipe() {
-  cat "$1"/protocol/desktop/ffmpeg-decode-only.sh "$1"/protocol/desktop/ffmpeg-deps-linux.sh "$1"/protocol/desktop/ffmpeg-patches/*.patch | sha256sum | cut -d' ' -f1
+  cat "$1"/protocol/desktop-media/ffmpeg-decode-only.sh "$1"/protocol/desktop-media/ffmpeg-deps-linux.sh "$1"/protocol/desktop-media/ffmpeg-patches/*.patch | sha256sum | cut -d' ' -f1
 }
 if [ $what = recipe ]; then recipe "$src"; exit; fi
 # The package step runs as the user with the user's Rust toolchain from $HOME; a work folder
@@ -48,8 +48,8 @@ if [ $what = package ] || [ $what = all ]; then
         cp $rel/ffmpeg-8.1.3.tar.xz ffmpeg.tar.xz
         echo \"7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3  ffmpeg.tar.xz\" | sha256sum -c -
         tar -xf ffmpeg.tar.xz
-        bash $PWD/protocol/desktop/ffmpeg-deps-linux.sh $rel/ffdeps
-        PKG_CONFIG_PATH=$rel/ffdeps/lib/pkgconfig bash $PWD/protocol/desktop/ffmpeg-decode-only.sh $rel/ffbuild/ffmpeg-8.1.3 $rel/ffprefix
+        bash $PWD/protocol/desktop-media/ffmpeg-deps-linux.sh $rel/ffdeps
+        PKG_CONFIG_PATH=$rel/ffdeps/lib/pkgconfig bash $PWD/protocol/desktop-media/ffmpeg-decode-only.sh $rel/ffbuild/ffmpeg-8.1.3 $rel/ffprefix
         echo $recipe >$rel/ffprefix/recipe.sha256
       " >$rel/ffmpeg.log 2>&1 || { tail -30 $rel/ffmpeg.log; echo "ffmpeg FAILED"; exit 1; }
       echo "ffmpeg built"

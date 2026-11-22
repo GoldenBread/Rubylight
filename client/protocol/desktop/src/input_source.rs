@@ -1,63 +1,48 @@
-//! The device in the hand, from the launcher's last SDL event: what the button hints name. A stick
-//! at rest drifts, so it counts only past the point where it moves the focus; a device that SDL calls
-//! a gamepad but has no stick is no pad.
+//! SDL event classification into [`InputSource`], delegating pure button/hint logic to
+//! `nightjar-desktop-ui::input_source`.
 
+use nightjar_desktop_config::pads_view::PadBrand;
+use nightjar_desktop_ui::glyphs::Style;
+pub use nightjar_desktop_ui::input_source::{InputSource, STICK_HELD};
 use sdl3_sys::everything::*;
 
-use crate::glyphs::{self, Piece, Style};
-use crate::shortcuts::{self, Action, Button, Chord, Key};
-
-/// How far a stick goes before it counts as the device in the hand: where it starts to move the focus.
-pub const STICK_HELD: i32 = 24000;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum InputSource {
-    /// A mouse or a finger: no hints.
-    #[default]
-    None,
-    Keyboard,
-    Pad(Style),
-}
-
-impl InputSource {
-    /// The key or button that does what has focus.
-    pub fn go(self, swap_face_buttons: bool) -> Vec<Piece> {
-        self.pieces(Action::Select, Key::Enter, swap_face_buttons)
-    }
-
-    /// The key or button that opens what has focus's options.
-    pub fn more(self, swap_face_buttons: bool) -> Vec<Piece> {
-        self.pieces(Action::Options, Key::F, swap_face_buttons)
-    }
-
-    fn pieces(self, action: Action, key: Key, swap: bool) -> Vec<Piece> {
-        match self {
-            InputSource::None => Vec::new(),
-            InputSource::Keyboard => glyphs::chord(Chord::key(key), false),
-            // North before West: both open the options, and the hint names North.
-            InputSource::Pad(style) => [Button::South, Button::East, Button::North, Button::West]
-                .into_iter()
-                .find(|button| shortcuts::pad_action(*button, swap) == Some(action))
-                .map(|button| vec![style.piece(button)])
-                .unwrap_or_default(),
-        }
+fn brand_of_sdl_type(kind: SDL_GamepadType) -> PadBrand {
+    match kind {
+        SDL_GAMEPAD_TYPE_PS3 | SDL_GAMEPAD_TYPE_PS4 | SDL_GAMEPAD_TYPE_PS5 => PadBrand::PlayStation,
+        SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO
+        | SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT
+        | SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT
+        | SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR => PadBrand::Nintendo,
+        _ => PadBrand::Xbox,
     }
 }
 
-/// What this event says of the device in the hand; `None` when it says nothing. `real_pad` gives the
-/// type of a gamepad that is a real pad, with a stick.
-pub fn of(event: &SDL_Event, real_pad: impl Fn(SDL_JoystickID) -> Option<SDL_GamepadType>) -> Option<InputSource> {
-    let pad = |id| real_pad(id).map(|kind| InputSource::Pad(Style::of_types([kind])));
+/// What this event says of the device in the hand; `None` when it says nothing. `real_pad` gives
+/// the type of a gamepad that is a real pad, with a stick.
+pub fn of(
+    event: &SDL_Event,
+    real_pad: impl Fn(SDL_JoystickID) -> Option<SDL_GamepadType>,
+) -> Option<InputSource> {
+    let pad = |id| real_pad(id).map(|kind| InputSource::Pad(Style::of_brands([brand_of_sdl_type(kind)])));
     // SAFETY: union members read by event type.
     unsafe {
         match SDL_EventType(event.r#type) {
             SDL_EVENT_KEY_DOWN => Some(InputSource::Keyboard),
-            SDL_EVENT_MOUSE_BUTTON_DOWN | SDL_EVENT_MOUSE_WHEEL | SDL_EVENT_FINGER_DOWN => Some(InputSource::None),
-            SDL_EVENT_MOUSE_MOTION if event.motion.xrel != 0.0 || event.motion.yrel != 0.0 => Some(InputSource::None),
+            SDL_EVENT_MOUSE_BUTTON_DOWN | SDL_EVENT_MOUSE_WHEEL | SDL_EVENT_FINGER_DOWN => {
+                Some(InputSource::None)
+            }
+            SDL_EVENT_MOUSE_MOTION if event.motion.xrel != 0.0 || event.motion.yrel != 0.0 => {
+                Some(InputSource::None)
+            }
             SDL_EVENT_GAMEPAD_BUTTON_DOWN => pad(event.gbutton.which),
             SDL_EVENT_GAMEPAD_AXIS_MOTION => {
-                let stick = matches!(SDL_GamepadAxis(i32::from(event.gaxis.axis)), SDL_GAMEPAD_AXIS_LEFTX | SDL_GAMEPAD_AXIS_LEFTY);
-                (stick && i32::from(event.gaxis.value).abs() > STICK_HELD).then(|| pad(event.gaxis.which)).flatten()
+                let stick = matches!(
+                    SDL_GamepadAxis(i32::from(event.gaxis.axis)),
+                    SDL_GAMEPAD_AXIS_LEFTX | SDL_GAMEPAD_AXIS_LEFTY
+                );
+                (stick && i32::from(event.gaxis.value).abs() > STICK_HELD)
+                    .then(|| pad(event.gaxis.which))
+                    .flatten()
             }
             _ => None,
         }
@@ -67,6 +52,7 @@ pub fn of(event: &SDL_Event, real_pad: impl Fn(SDL_JoystickID) -> Option<SDL_Gam
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nightjar_desktop_ui::glyphs::{self, Piece};
 
     fn event(kind: SDL_EventType) -> SDL_Event {
         // SAFETY: SDL_Event is plain data, and all zeroes is a valid one.
@@ -88,8 +74,15 @@ mod tests {
         assert_eq!(of(&event(SDL_EVENT_KEY_DOWN), sony), Some(InputSource::Keyboard));
         assert_eq!(of(&event(SDL_EVENT_MOUSE_BUTTON_DOWN), sony), Some(InputSource::None));
         assert_eq!(of(&event(SDL_EVENT_MOUSE_WHEEL), sony), Some(InputSource::None));
-        assert_eq!(of(&event(SDL_EVENT_GAMEPAD_BUTTON_DOWN), sony), Some(InputSource::Pad(Style::PlayStation)));
-        assert_eq!(of(&event(SDL_EVENT_WINDOW_RESIZED), sony), None, "a window event says nothing");
+        assert_eq!(
+            of(&event(SDL_EVENT_GAMEPAD_BUTTON_DOWN), sony),
+            Some(InputSource::Pad(Style::PlayStation))
+        );
+        assert_eq!(
+            of(&event(SDL_EVENT_WINDOW_RESIZED), sony),
+            None,
+            "a window event says nothing"
+        );
     }
 
     #[test]
@@ -125,7 +118,11 @@ mod tests {
         };
         assert_eq!(word(InputSource::Pad(Style::Xbox).go(false)), "A");
         assert_eq!(word(InputSource::Pad(Style::Xbox).more(false)), "Y");
-        assert_eq!(word(InputSource::Pad(Style::Xbox).go(true)), "B", "the Nintendo layout setting trades them");
+        assert_eq!(
+            word(InputSource::Pad(Style::Xbox).go(true)),
+            "B",
+            "the Nintendo layout setting trades them"
+        );
         assert_eq!(glyphs::spoken(&InputSource::Keyboard.go(false)), "Enter");
         assert_eq!(glyphs::spoken(&InputSource::Keyboard.more(false)), "F");
         assert!(InputSource::None.go(false).is_empty() && InputSource::None.more(false).is_empty());

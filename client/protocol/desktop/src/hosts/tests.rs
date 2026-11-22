@@ -15,10 +15,8 @@ fn the_read_for_a_selected_game_gives_up_at_its_deadline_and_says_why() {
 
 /// The native-api capabilities fixture with these features added, and the folder grant.
 pub(crate) fn native_caps(features: &[&str], shared_folders: bool) -> NativeCapabilities {
-    let mut value: serde_json::Value =
-        serde_json::from_str(include_str!("../../../native-api/tests/fixtures/capabilities.json")).unwrap();
-    let listed = value["features"].as_array_mut().unwrap();
-    listed.extend(features.iter().map(|f| serde_json::Value::from(*f)));
+    let mut value: serde_json::Value = serde_json::from_str(include_str!("../../../native-api/tests/fixtures/capabilities.json")).unwrap();
+    value["features"].as_array_mut().unwrap().extend(features.iter().map(|f| serde_json::Value::from(*f)));
     value["permissions"]["shared_folders"] = shared_folders.into();
     serde_json::from_value(value).unwrap()
 }
@@ -628,7 +626,8 @@ fn a_classic_pcs_app_list_becomes_its_home_library_and_is_saved() {
     let games: Vec<_> = pc.library().unwrap().games.iter().map(|g| (g.app_id, g.title.as_str(), g.running)).collect();
     assert_eq!(games, [(1, "Desktop", false), (2, "Hades", false)], "the games, not the control tiles");
     assert_eq!(pc.cover_version(2), "v2", "covers at the list's box art version");
-    let source = crate::console::Source::of(pc);
+    let view = pc.ui_view();
+    let source = crate::console::Source::of(&view);
     assert!(source.classic && source.library.is_some());
     let saves = hosts.take_classic_saves();
     assert_eq!(saves.len(), 1);
@@ -656,7 +655,7 @@ fn a_classic_pcs_app_list_becomes_its_home_library_and_is_saved() {
     let id = hosts.list[0].id;
     info_lands(&mut hosts, id, native_info());
     send(&mut hosts, Event::Apps { id, result: Ok(apps) });
-    assert!(hosts.list[0].classic.is_none() && !crate::console::Source::of(&hosts.list[0]).classic);
+    assert!(hosts.list[0].classic.is_none() && !crate::console::Source::of(&hosts.list[0].ui_view()).classic);
     let saves = hosts.take_classic_saves();
     assert_eq!((saves.len(), saves[0].1.is_none()), (1, true), "the saved list is forgotten");
 }
@@ -675,9 +674,9 @@ fn a_saved_app_list_shows_while_the_pc_is_away_unless_a_native_library_is_saved(
     hosts.load_cached_libraries(&store);
     let titles = |pc: &Host| pc.library().map(|l| l.games.iter().map(|g| g.title.clone()).collect::<Vec<_>>());
     assert_eq!(titles(&hosts.list[0]), Some(vec!["Celeste".to_owned()]));
-    assert!(crate::console::Source::of(&hosts.list[0]).classic);
+    assert!(crate::console::Source::of(&hosts.list[0].ui_view()).classic);
     assert_ne!(titles(&hosts.list[1]), Some(vec!["Celeste".to_owned()]), "the native library wins");
-    assert!(!crate::console::Source::of(&hosts.list[1]).classic);
+    assert!(!crate::console::Source::of(&hosts.list[1].ui_view()).classic);
     assert!(hosts.list[2].library().is_none(), "nothing for a PC not paired");
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1755,7 +1754,7 @@ fn the_engines_invite_errors_are_the_ones_translated() {
         nightjar_core::invite::REFUSED,
         nightjar_core::invite::INTERNET_OFF,
     ] {
-        crate::strings::tests::with_lang(crate::strings::Lang::De, || {
+        crate::strings::with_lang(crate::strings::Lang::De, || {
             assert_ne!(invite_error(known), known, "{known} has a German text");
         });
     }

@@ -62,7 +62,7 @@ pub mod error {
     pub const NO_VIDEO_FRAME: i32 = -101;
     /// Packed 4:4:4 cannot be streamed with this host ([`crate::rtsp::RtspError::PackedRefused`],
     /// Java's `CLIENT_ERROR_PACKED_444_REFUSED`): the client may reconnect without it.
-    pub const PACKED_444_REFUSED: i32 = -106;
+    pub const PACKED_444_REFUSED: i32 = nightjar_policy::full_chroma::PACKED_444_REFUSED;
     /// The PC is gone: its host said goodbye and closed its server (the PC shuts down, the host
     /// stopped or restarts; [`crate::host_loss`], Java's `CLIENT_ERROR_HOST_GONE`). Nothing
     /// reconnects on its own.

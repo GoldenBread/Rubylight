@@ -1,0 +1,32 @@
+[package]
+name = "nightjar-desktop-ui"
+description = "Nightjar desktop pure egui launcher UI, theme, widgets, pages and models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+# The Android demo's 36 games on the real launcher with no network and no host, driven from stdin
+# for captures (ui/demo.rs). Never in a build that ships.
+demo-library = []
+# Test fixtures/helpers used by `nightjar-desktop` unit tests only (`[dev-dependencies]`).
+test-support = []
+
+[dependencies]
+nightjar-desktop-config = { path = "../desktop-config" }
+nightjar-policy = { path = "../policy" }
+rubylight-native-api = { path = "../native-api" }
+rubylight-protocol = { path = "../core" }
+egui = { version = "0.37", default-features = false, features = ["default_fonts"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "png", "jpeg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+nightjar-desktop-config = { path = "../desktop-config", features = ["test-lang"] }
+
+[lints]
+workspace = true

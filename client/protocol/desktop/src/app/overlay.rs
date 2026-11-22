@@ -5,6 +5,122 @@ use super::*;
 /// The width of a list in the stream menu's rows.
 const MENU_LIST: f32 = 190.0;
 
+/// UI-owned in-stream menu/overlay state lifted off [`stream::Streaming`].
+#[derive(Default)]
+pub(crate) struct StreamOverlay {
+    pub(crate) menu_focus: Option<egui::Id>,
+    pub(crate) session_page: Option<session_page::Page>,
+    pub(crate) session_link: String,
+    pub(crate) session_page_requested: bool,
+    pub(crate) pending_exit: Option<session_page::HostExit>,
+    pub(crate) hints: session_page::Hints,
+    pub(crate) menu_page: stream_menu::Page,
+    pub(crate) menu_hotkey: Option<nightjar_policy::stream_menu::Hotkey>,
+    pub(crate) menu_hotkeys: Vec<nightjar_policy::stream_menu::Hotkey>,
+}
+
+impl StreamOverlay {
+    pub(crate) fn close_session_page(&mut self, streaming: &mut Streaming) {
+        if self.session_page.as_ref().is_some_and(session_page::Page::busy) {
+            return;
+        }
+        self.session_page = None;
+        streaming.session_page_open = false;
+        streaming.session_page_busy = false;
+        streaming.needs_redraw = true;
+    }
+
+    pub(crate) fn sync_to_stream(&mut self, streaming: &mut Streaming) {
+        if !streaming.menu_visible {
+            self.session_page = None;
+            self.pending_exit = None;
+            self.session_page_requested = false;
+            self.menu_page = stream_menu::Page::Grid;
+            self.menu_hotkey = None;
+        }
+        streaming.session_page_open = self.session_page.is_some();
+        streaming.session_page_busy = self.session_page.as_ref().is_some_and(session_page::Page::busy);
+    }
+}
+
+fn show_guests_section(ui: &mut egui::Ui, s: &mut Streaming) {
+    use nightjar_desktop_ui::stream_overlay_widgets::{show_guests, GuestUiAction, GuestsInviteView};
+    let Some(read) = s.guests.read().cloned() else {
+        ui.weak(tr("Waiting for the PC…"));
+        return;
+    };
+    let invite_view = match s.guests.invite() {
+        stream::guests::Invite::None => GuestsInviteView::None,
+        stream::guests::Invite::Making => GuestsInviteView::Making,
+        stream::guests::Invite::Made(made) => GuestsInviteView::Made(made),
+    };
+    for action in show_guests(ui, &read, s.guests.may_invite(), invite_view) {
+        match action {
+            GuestUiAction::Guest(action) => s.guest_action(action),
+            GuestUiAction::CreateInvite => s.create_invite(),
+            GuestUiAction::ResetInvite => s.reset_invite(),
+            GuestUiAction::Toast(msg) => s.show_toast(tr(msg)),
+        }
+    }
+}
+
+fn show_usb_section(ui: &mut egui::Ui, panel: &mut usb::Panel) {
+    use nightjar_desktop_ui::stream_overlay_widgets::{
+        usb_show, UsbDeviceView, UsbFailedAttachment, UsbPanelView, UsbUiAction,
+    };
+    if let Some(failed) = panel.take_opening_failed() {
+        panel.error = Some(failed);
+    }
+    let local = panel.local().to_vec();
+    let attachments = panel.attachments();
+    let devices = local
+        .iter()
+        .map(|d| UsbDeviceView {
+            busid: d.busid.clone(),
+            vid: d.vid,
+            pid: d.pid,
+            name: d.name.clone(),
+            blocked_message: d.blocked.as_ref().map(usb::Blocked::message),
+            can_auto: d.blocked.is_none(),
+            auto_on: panel.is_auto(d),
+            opening: panel.is_opening(d),
+            active: panel.active(d).map(|a| (a.request_id, usb::phase_label(&a.phase))),
+        })
+        .collect();
+    let mut shown = std::collections::HashSet::new();
+    let mut failed_attachments = Vec::new();
+    for attachment in attachments.iter().rev() {
+        if attachment.is_active()
+            || !usb::phase_failed(&attachment.phase)
+            || !shown.insert(attachment.busid.clone())
+            || panel.active_busid(&attachment.busid)
+        {
+            continue;
+        }
+        failed_attachments.push(UsbFailedAttachment {
+            busid: attachment.busid.clone(),
+            name: attachment.name.clone(),
+            phase_label: usb::phase_label(&attachment.phase),
+        });
+    }
+    let view = UsbPanelView {
+        devices,
+        failed_attachments,
+        error: panel.error.clone(),
+    };
+    for action in usb_show(ui, &view) {
+        match action {
+            UsbUiAction::Refresh => {
+                panel.error = None;
+                panel.refresh();
+            }
+            UsbUiAction::Attach(busid) => panel.attach_busid(&busid),
+            UsbUiAction::Detach(id) => panel.detach(id),
+            UsbUiAction::SetAuto(busid, on) => panel.set_auto_busid(&busid, on),
+        }
+    }
+}
+
 /// The overlay and toasts, drawn with egui over the picture.
 /// Returns whether the user's shortcuts changed (saved or deleted in the stream menu) and want writing.
 /// Whether a stream with `settings` goes on video planes, drawing straight to the display
@@ -36,7 +152,7 @@ pub(crate) fn kms_display_hdr(_window: *mut SDL_Window) -> bool {
     false
 }
 
-pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mut SDL_Renderer, s: &mut Streaming, pads: &mut Gamepads, shortcuts: &mut shortcuts::Shortcuts) -> bool {
+pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mut SDL_Renderer, s: &mut Streaming, overlay: &mut StreamOverlay, pads: &mut Gamepads, shortcuts: &mut shortcuts::Shortcuts) -> bool {
     // Glass holds nothing while a stream plays, and draws no live blur over its video.
     gui.set_over_video(true);
     // A stream started from the command line never drew the launcher, which loads these too.
@@ -101,13 +217,13 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                     }
                 });
         }
-        if s.menu_visible && s.session_page.is_some() {
-            let lines = s.connection_lines();
-            let hints = s.session_hints();
+        if s.menu_visible && overlay.session_page.is_some() {
+            let lines = page_hosts::connection_lines(s, &overlay.session_link);
+            let hints = overlay.hints;
             let mut outcome = session_ui::Outcome::Stay;
-            if let Some(page) = s.session_page.as_mut() {
+            if let Some(page) = overlay.session_page.as_mut() {
                 menu_style::show(&ctx, tr("Session and graphics"), "session-and-graphics", |ui| menu_style::body(ui, |ui| {
-                        gui::follow_focus(ui, &mut s.menu_focus);
+                        gui::follow_focus(ui, &mut overlay.menu_focus);
                         menu_style::header(ui, tr("Session and graphics"), &title);
                         outcome = session_ui::show(ui, page, &lines, hints);
                     }));
@@ -115,25 +231,25 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
             match outcome {
                 session_ui::Outcome::Stay => {}
                 session_ui::Outcome::Resume => s.toggle_menu(window, pads),
-                session_ui::Outcome::HostMenu => s.open_host_menu(window, pads),
-                session_ui::Outcome::Back => s.close_session_page(),
+                session_ui::Outcome::HostMenu => page_hosts::open_host_menu(s, window, pads),
+                session_ui::Outcome::Back => overlay.close_session_page(s),
                 session_ui::Outcome::Disconnect | session_ui::Outcome::Leave => s.exit = Some(Exit::User),
             }
         }
-        if s.menu_visible && s.session_page.is_none() && s.shortcut_sheet.is_some() {
+        if s.menu_visible && overlay.session_page.is_none() && s.shortcut_sheet.is_some() {
             let from_menu = s.shortcut_sheet == Some(stream::Sheet::FromMenu);
-            let style = glyphs::Style::of(pads);
+            let style = glyphs::Style::of_brands(pads.pads.iter().map(gamepad::Pad::brand));
             let offered = s.controller_mouse_offered(pads);
             let mut back = false;
             menu_style::show(&ctx, tr("Shortcuts & help"), "stream-controls", |ui| menu_style::body(ui, |ui| {
-                    gui::follow_focus(ui, &mut s.menu_focus);
+                    gui::follow_focus(ui, &mut overlay.menu_focus);
                     menu_style::header(ui, tr("Shortcuts & help"), &title);
                     back = menu_style::sheet(ui, style, pads.quit_combo(), pads.back_opens_menu(), offered, from_menu);
                 }));
             if back {
                 s.close_shortcut_sheet(window, pads);
             }
-        } else if s.menu_visible && s.session_page.is_none() {
+        } else if s.menu_visible && overlay.session_page.is_none() {
             let available = stream_menu::Available {
                 mouse: s.controller_mouse_offered(pads).then(|| pads.mouse_active()),
                 overlay: s.overlay_visible,
@@ -150,15 +266,15 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                 controller_audio: s.controller_audio_available(),
                 usb: s.usb.is_some() || s.usb_refused.is_some(),
                 guests: s.guests.shown(),
-                exits: s.game_exits(),
+                exits: page_hosts::game_exits(s, overlay.hints),
             };
             let layout = stream_menu::layout(&available, shortcuts.data.len(), pads.menu_buttons());
-            s.menu_hotkeys = layout.buttons.keys().copied().collect();
-            let mut page = std::mem::take(&mut s.menu_page);
+            overlay.menu_hotkeys = layout.buttons.keys().copied().collect();
+            let mut page = std::mem::take(&mut overlay.menu_page);
             let mut next = None;
             let grid_page = page == stream_menu::Page::Grid;
             let (heading, line) = if grid_page { s.menu_header() } else { (page.title().to_owned(), title.clone()) };
-            let button = if grid_page { s.menu_hotkey.and_then(|key| stream_menu::button_leave(&layout, key)) } else { None };
+            let button = if grid_page { overlay.menu_hotkey.and_then(|key| stream_menu::button_leave(&layout, key)) } else { None };
             let mut leave = None;
             menu_style::show(&ctx, tr("Stream menu"), "stream-controls", |ui| {
                 // On the grid the head and the ways out stay in view; only the tiles scroll.
@@ -168,7 +284,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                 let reserve = if grid_page { menu_style::pinned_room(&ctx, "stream-menu-footer") } else { 0.0 };
                 menu_style::body_above(ui, reserve, |ui| {
                     use glyphs::Icon;
-                    gui::follow_focus(ui, &mut s.menu_focus);
+                    gui::follow_focus(ui, &mut overlay.menu_focus);
                     if !grid_page {
                         menu_style::header(ui, &heading, &line);
                     }
@@ -177,7 +293,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                     let focus_first = ctx.memory(|m| m.focused().is_none());
                     match &mut page {
                         stream_menu::Page::Grid => {
-                            match stream_menu::grid(ui, &layout, shortcuts, s.menu_hotkey.take(), focus_first) {
+                            match stream_menu::grid(ui, &layout, shortcuts, overlay.menu_hotkey.take(), focus_first) {
                                 Some(stream_menu::Chosen::Tile(id)) => match id {
                                     "controller_mouse" => s.toggle_controller_mouse(pads),
                                     "overlay" => s.overlay_visible = !s.overlay_visible,
@@ -187,7 +303,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                     "clipboard_send" => s.clipboard(true),
                                     "clipboard_receive" => s.clipboard(false),
                                     "server_commands" => next = Some(stream_menu::Page::Commands),
-                                    "native_page" => s.session_page_requested = true,
+                                    "native_page" => overlay.session_page_requested = true,
                                     _ => next = Some(stream_menu::Page::More),
                                 },
                                 Some(stream_menu::Chosen::Shortcut(index)) => {
@@ -201,7 +317,12 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                         }
                         stream_menu::Page::Confirm(exit) => match stream_menu::confirm(ui, *exit, focus_first) {
                             Some(true) => {
-                                s.end_on_host(*exit);
+                                if s.session_page_available() {
+                                    overlay.pending_exit = Some(*exit);
+                                    overlay.session_page_requested = true;
+                                } else {
+                                    s.quit_app_and_leave();
+                                }
                                 next = Some(stream_menu::Page::Grid);
                             }
                             // Cancel goes back to where the question was asked from.
@@ -256,7 +377,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                 }
                             }
                         },
-                        stream_menu::Page::Guests => s.show_guests(ui),
+                        stream_menu::Page::Guests => show_guests_section(ui, s),
                         stream_menu::Page::Quality => menu_style::group(ui, |ui| {
                             let controls = s.menu_controls();
                             if s.facts.runtime_bitrate {
@@ -266,7 +387,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                         s.enable_adaptive_bitrate(enabled);
                                     }
                                 }
-                                if controls.http_bitrate && stream::menu_extras::bitrate_slider(ui, &mut s.bitrate_kbps, !s.adaptive_bitrate && !s.bitrate_busy) {
+                                if controls.http_bitrate && nightjar_desktop_ui::stream_overlay_widgets::bitrate_slider(ui, &mut s.bitrate_kbps, !s.adaptive_bitrate && !s.bitrate_busy) {
                                     s.set_bitrate();
                                 }
                             }
@@ -277,7 +398,7 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                 let busy = rates.menu_busy();
                                 // Disabled until the PC said what it counts the stream's bitrate as.
                                 let locked = rates.bitrate_locked();
-                                let mut apply = stream::menu_extras::bitrate_slider(ui, &mut rates.menu_kbps, !busy && !locked);
+                                let mut apply = nightjar_desktop_ui::stream_overlay_widgets::bitrate_slider(ui, &mut rates.menu_kbps, !busy && !locked);
                                 if let Some(mut keep) = kept
                                     && menu_style::switch(ui, Icon::Gauge, tr("Keep my bitrate"), &mut keep).changed() { keep_to = Some(keep); }
                                 menu_style::fold(ui, "rate-change", Icon::Gauge, tr("Change bitrate / frame rate"), |ui| {
@@ -436,14 +557,14 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
                                     }
                                     "usb_devices" => {
                                         if let Some(panel) = s.usb.as_mut() {
-                                            menu_style::fold(ui, "usb", Icon::Usb, tr("USB devices"), |ui| usb::show(ui, panel));
+                                            menu_style::fold(ui, "usb", Icon::Usb, tr("USB devices"), |ui| show_usb_section(ui, panel));
                                         } else if let Some(why) = s.usb_refused {
                                             // Why there are no devices shows without opening anything.
-                                            usb::show_refusal(ui, why);
+                                            nightjar_desktop_ui::stream_overlay_widgets::usb_show_refusal(ui, why);
                                         }
                                     }
                                     "guests" => {
-                                        menu_style::fold(ui, "guests", Icon::Controller, tr("Guests"), |ui| s.show_guests(ui));
+                                        menu_style::fold(ui, "guests", Icon::Controller, tr("Guests"), |ui| show_guests_section(ui, s));
                                     }
                                     "export_statistics" => if menu_style::action(ui, Icon::Download, tr("Export statistics (last hour)"), None).clicked() { s.export_statistics = true; },
                                     "help" => {
@@ -495,10 +616,11 @@ pub(crate) fn draw_overlay(gui: &mut Gui, window: *mut SDL_Window, renderer: *mu
             }
             // Closing from a page (Disconnect, a shortcut) already reset it to the grid.
             if s.menu_visible {
-                s.menu_page = page;
+                overlay.menu_page = page;
             }
+            overlay.sync_to_stream(s);
         } else {
-            s.settle_bitrate_slider(&ctx);
+            s.settle_bitrate_slider(nightjar_desktop_ui::stream_overlay_widgets::take_pending_bitrate_slider(&ctx));
         }
         if visible {
             let lines = s.overlay.lines(mode);
@@ -599,5 +721,44 @@ pub(crate) fn overlay_anchor(corner: config::OverlayCorner) -> (egui::Align2, eg
         OverlayCorner::TopRight => (egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 16.0)),
         OverlayCorner::BottomLeft => (egui::Align2::LEFT_BOTTOM, egui::vec2(16.0, -16.0)),
         OverlayCorner::BottomRight => (egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0)),
+    }
+}
+
+/// What a key or button does while the stream menu is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MenuStep {
+    /// Not the menu's: egui or the controller navigation gets it.
+    Pass,
+    /// A held key's repeat of a toggle: holding it doesn't flip the menu open and shut.
+    Swallow,
+    ToggleSheet,
+    CloseSessionPage,
+    CloseSheet,
+    /// Back from a page a tile opened to the grid.
+    ClosePage,
+    CloseMenu,
+}
+
+/// The step for a stream chord (`action`), Escape or B (`back`), with the menu's pages. Back acts
+/// on what is drawn: the Session page first (the sheet never draws over it), then the sheet, then
+/// a page a tile opened (`page`).
+pub(crate) fn menu_step(action: Option<Action>, back: bool, repeat: bool, sheet: bool, session_page: bool, page: bool) -> MenuStep {
+    let controls = action == Some(Action::StreamControls);
+    if action != Some(Action::StreamShortcuts) && !back && !controls {
+        return MenuStep::Pass;
+    }
+    if repeat {
+        return MenuStep::Swallow;
+    }
+    if action == Some(Action::StreamShortcuts) {
+        MenuStep::ToggleSheet
+    } else if session_page {
+        MenuStep::CloseSessionPage
+    } else if back && sheet {
+        MenuStep::CloseSheet
+    } else if back && page {
+        MenuStep::ClosePage
+    } else {
+        MenuStep::CloseMenu
     }
 }

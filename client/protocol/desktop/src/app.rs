@@ -62,7 +62,8 @@ impl App {
         self.save_edits();
         self.network_test = None;
         // Its decoders may run on the renderer's device, which goes with the process.
-        self.launcher.latency_bench.finish();
+        self.latency_bench.finish();
+        self.launcher.latency_bench = self.latency_bench.state();
         // Its input closes now; the process going closes it too.
         if let Some(companion) = self.second_screen.take() {
             companion.end();

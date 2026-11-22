@@ -1,0 +1,25 @@
+[package]
+name = "nightjar-desktop-config"
+description = "Nightjar desktop configuration, localized strings, shortcuts and pure state models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+# Thread-local language override in downstream crate test suites so parallel tests do not race on
+# the process-wide CURRENT atomic. Only enabled from downstream `[dev-dependencies]`.
+test-lang = []
+
+[dependencies]
+nightjar-policy = { path = "../policy" }
+rubylight-native-api = { path = "../native-api" }
+rubylight-protocol = { path = "../core" }
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

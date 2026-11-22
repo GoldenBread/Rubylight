@@ -1488,6 +1488,7 @@ dependencies = [
  "aes-gcm",
  "cbc",
  "libc",
+ "nightjar-policy",
  "proptest",
  "rand_core 0.6.4",
  "regex",
@@ -1513,9 +1514,7 @@ dependencies = [
  "accesskit_macos",
  "accesskit_unix",
  "accesskit_windows",
- "ash",
  "base64 0.22.1",
- "bindgen",
  "core-text",
  "directories",
  "egui",
@@ -1523,33 +1522,89 @@ dependencies = [
  "if-addrs",
  "image",
  "libc",
- "libloading",
  "mdns-sd",
  "nightjar-core",
+ "nightjar-desktop-config",
+ "nightjar-desktop-media",
+ "nightjar-desktop-ui",
+ "nightjar-policy",
+ "objc2",
+ "objc2-app-kit",
+ "ring",
+ "rubylight-protocol",
+ "sdl3-sys",
+ "serde",
+ "serde_json",
+ "sha2",
+ "skrifa",
+ "ureq",
+ "windows",
+ "zbus",
+]
+
+[[package]]
+name = "nightjar-desktop-config"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "nightjar-policy",
+ "rubylight-native-api",
+ "rubylight-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nightjar-desktop-media"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "bindgen",
+ "directories",
+ "if-addrs",
+ "image",
+ "libc",
+ "libloading",
+ "nightjar-core",
+ "nightjar-desktop-config",
  "nightjar-policy",
  "objc2",
  "objc2-app-kit",
  "pkg-config",
- "ring",
+ "rubylight-native-api",
  "rubylight-protocol",
  "rusb",
  "sdl3-sys",
  "serde",
  "serde_json",
  "sha2",
- "skrifa",
  "sonora",
  "system-configuration",
- "ureq",
  "windows",
  "windows-core",
  "zbus",
 ]
 
 [[package]]
+name = "nightjar-desktop-ui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "image",
+ "nightjar-desktop-config",
+ "nightjar-policy",
+ "rubylight-native-api",
+ "rubylight-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nightjar-policy"
 version = "0.1.0"
 dependencies = [
+ "rubylight-native-api",
+ "rubylight-protocol",
  "serde",
  "serde_json",
 ]

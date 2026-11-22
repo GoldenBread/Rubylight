@@ -3,7 +3,7 @@
 //! the running app. Every host request runs on a worker thread and comes back as an
 //! [`Event`]; the UI thread owns the list.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -12,10 +12,12 @@ use std::time::{Duration, Instant, SystemTime};
 use nightjar_core::http::native_api::feature;
 use nightjar_core::http::native_api::library::Library;
 use nightjar_core::http::native_api::session::{ActionId, Session};
+#[cfg(test)]
+use nightjar_core::http::Reason;
 use nightjar_core::http::{
     App, AppControl, Availability, ClientIdentity, Feature, HostClient, HostUpdate, InfoPath, LateRefusal, NativeCapabilities, NativeLibrary, PairResult, PairingRequest,
     StreamMove,
-    PcPower, PcPowerOffer, PowerError, PowerReply, Reason, ServerInfo, DEFAULT_HTTP_PORT,
+    PcPower, PcPowerOffer, PowerError, PowerReply, ServerInfo, DEFAULT_HTTP_PORT,
 };
 
 use rubylight_protocol::invite_uri::InviteUri;
@@ -36,8 +38,16 @@ pub use native::*;
 pub use pairing::*;
 pub use power::*;
 
-/// Wakes the UI thread after an event was queued.
-pub type Waker = Arc<dyn Fn() + Send + Sync>;
+pub use nightjar_desktop_config::hosts_types::{device_name, merge_native, Waker};
+#[cfg(test)]
+pub use nightjar_desktop_ui::hosts_model::ADDRESS_INVALID;
+pub use nightjar_desktop_ui::hosts_model::{
+    parse_entry, Apps, Art, Entry, Native, Reach, ANOTHER_PC_ANSWERS, CLIPBOARD_NO_LINK,
+    INVITE_INVALID, INVITE_KNOWN_PC, LINK_INVALID, PAIR_DECLINED, PAIR_IN_GAME, PAIR_IN_PROGRESS,
+    PAIR_LINK_MISMATCH, PAIR_NETWORK, PAIR_OFFLINE, PAIR_OTP_PIN_WRONG, PAIR_PIN_WRONG,
+    PAIR_UNVERIFIED, PC_POWER_BUSY, QUIT_OTHER_DEVICE, SLEEP_BUSY, SLEEP_NOT_ALLOWED,
+    SLEEP_UNSUPPORTED, UNPAIR_FAILED, UNPAIR_NOT_PAIRED, invite_error, quit_failure,
+};
 
 /// A request a PC's own worker runs; what it returns is queued for the UI thread.
 type PcJob = Box<dyn FnOnce() -> Option<Event> + Send>;
@@ -69,72 +79,6 @@ const ART_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const MDNS_SERVICE: &str = "_nvstream._tcp.local.";
 /// A sleep token older than this is asked for again before it is spent: the PC keeps it 30 s.
 const SLEEP_TOKEN_REFRESH: Duration = Duration::from_secs(25);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Reach {
-    Unknown,
-    Online,
-    Offline,
-}
-
-pub enum Apps {
-    NotLoaded,
-    Loading,
-    Loaded(Vec<App>),
-    Failed(String),
-}
-
-pub enum Art {
-    Loading,
-    Ready(egui::TextureHandle),
-    Missing,
-    /// It was loaded and its texture given up for room ([`Hosts::covers_shown`]). Its file is on
-    /// disk, so it loads again when it is next on screen, whether its PC is up or not.
-    Dropped,
-}
-
-/// What the Rubylight native API told us about a PC, cached per PC. The library of a PC that
-/// is away is the one saved on disk, so Home still has something to show.
-#[derive(Default)]
-pub struct Native {
-    /// Its features and this device's permissions; `Host::info` carries them merged in.
-    pub capabilities: Option<NativeCapabilities>,
-    pub library: Option<Library>,
-    /// When the library's games were last played, by install id (`NativeLibrary::last_played`).
-    pub last_played: BTreeMap<String, u64>,
-    /// How long the library's games were played, by install id (`NativeLibrary::playtime_minutes`).
-    pub playtime_minutes: BTreeMap<String, u64>,
-    /// The collections the library's games are in, by install id (`NativeLibrary::collections`).
-    pub collections: BTreeMap<String, Vec<String>>,
-    /// The library was read from the PC in this run (not loaded from disk).
-    pub library_live: bool,
-    pub session: Option<Session>,
-    /// Why the last read failed; the data above is then the last good one.
-    pub error: Option<String>,
-    /// The PC's host update, where it lists `update`.
-    pub update: Option<HostUpdate>,
-    /// Devices waiting to pair, as last read, where this device may approve them.
-    pub pairing_requests: Vec<PairingRequest>,
-    /// A session action (Close game) is running.
-    pub acting: bool,
-    loading: bool,
-    full_at: Option<Instant>,
-}
-
-impl Native {
-    /// Whether this device may end games on the PC (the host's `host_control` permission);
-    /// unknown counts as no.
-    pub fn host_control(&self) -> bool {
-        self.capabilities.as_ref().is_some_and(|c| c.capabilities.permissions.host_control)
-    }
-
-    /// This device's permissions for a stream as last read: the stream menu's ways out and the
-    /// Session and graphics page start from them. Unknown counts as no.
-    pub fn session_hints(&self) -> crate::session_page::Hints {
-        let permissions = self.capabilities.as_ref().map(|c| &c.capabilities.permissions);
-        crate::session_page::Hints { launch: permissions.is_some_and(|p| p.launch), host_control: self.host_control() }
-    }
-}
 
 /// One successful native read.
 pub struct NativeRead {
@@ -323,6 +267,7 @@ impl Host {
     }
 
     /// Whether the cover of `app` at `version` has not been asked for yet.
+    #[cfg(test)]
     pub fn art_wanted(&self, app: i32, version: &str) -> bool {
         !self.has_art(app) || self.art_versions.get(&app).is_none_or(|known| replaces(known, version))
     }
@@ -337,6 +282,7 @@ impl Host {
     }
 
     /// Whether the cover of `app` was given up for room and loads again from its file.
+    #[cfg(test)]
     pub fn art_dropped(&self, app: i32) -> bool {
         matches!(self.art.get(&app), Some(Art::Dropped))
     }
@@ -369,6 +315,7 @@ impl Host {
     /// The version the cover of `app` is asked for with, the same on every page: the native
     /// library's where it lists the app, else the app list's `ArtVersion`, else none. Pages that
     /// asked with versions of their own had each other's covers fetched again.
+    #[cfg(test)]
     pub fn cover_version(&self, app: i32) -> &str {
         let listed = self.library().and_then(|l| l.games.iter().find(|g| g.app_id == app as u32));
         match (listed, &self.apps) {
@@ -387,12 +334,6 @@ impl Host {
         } else {
             &self.record.address
         }
-    }
-
-    /// What the rename field starts with: the name chosen here, else the PC's own, and empty
-    /// when it never reported one (the address is not a name to keep).
-    pub fn rename_prefill(&self) -> &str {
-        self.record.alias.as_deref().filter(|a| !a.is_empty()).unwrap_or(&self.record.name)
     }
 
     /// Why pairing cannot start now, as text for the user.
@@ -416,6 +357,7 @@ impl Host {
 
     /// Sleep PC for a paired PC that answers: None when the PC does not offer it (stock hosts
     /// never do), `Some(Err(why))` when it does but not for this device.
+    #[cfg(test)]
     pub fn sleep_option(&self) -> Option<Result<(), &'static str>> {
         if self.reach != Reach::Online || !self.paired() {
             return None;
@@ -426,122 +368,7 @@ impl Host {
             _ => None,
         }
     }
-
-    /// Restart PC or Shut down PC for a paired PC that answers: None when the PC does not offer
-    /// it, `Some(Err(why))` when it does but not for this device.
-    pub fn pc_power_option(&self, action: PcPower) -> Option<Result<(), &'static str>> {
-        if self.reach != Reach::Online || !self.paired() {
-            return None;
-        }
-        let native = self.native.capabilities.as_ref()?;
-        if !native.capabilities.features.iter().any(|f| f == action.feature()) {
-            return None;
-        }
-        Some(if native.files.restart_shutdown { Ok(()) } else { Err(PC_POWER_NOT_ALLOWED) })
-    }
-
-    /// Pair another device: listed on every PC that offers it, off with its reason on a device
-    /// without the permission, so that it can be found.
-    pub fn pair_another_option(&self) -> Option<Result<(), &'static str>> {
-        if self.reach != Reach::Online || !self.paired() {
-            return None;
-        }
-        let native = self.native.capabilities.as_ref()?;
-        if !native.offers_pairing_approve() {
-            return None;
-        }
-        Some(if native.may_approve_pairing() { Ok(()) } else { Err(PAIRING_NOT_ALLOWED) })
-    }
-
-    /// Whether this device may approve devices waiting to pair on this PC, as last read.
-    pub fn may_approve_pairing(&self) -> bool {
-        self.reach == Reach::Online
-            && self.paired()
-            && self.native.capabilities.as_ref().is_some_and(NativeCapabilities::may_approve_pairing)
-    }
-
-    /// The devices waiting on this PC that this device may approve.
-    pub fn waiting_to_pair(&self) -> &[PairingRequest] {
-        if self.may_approve_pairing() { &self.native.pairing_requests } else { &[] }
-    }
-
-    /// The version "Update the PC’s streaming app" installs: only where the PC lists `update`, has one
-    /// to install, and lets this device control it. Not while it installs or is queued as an
-    /// Install now already; an automatic update waiting for an idle PC still takes one.
-    pub fn update_offer(&self) -> Option<&str> {
-        if self.reach != Reach::Online || !self.paired() || !self.native.host_control() {
-            return None;
-        }
-        let update = self.native.update.as_ref()?;
-        if update.installing_now() {
-            return None;
-        }
-        update.offered()
-    }
 }
-
-// The pairing and unpairing errors, worded like Nightjar Android's.
-pub const PAIR_OFFLINE: &str = en("Wake the PC and start its streaming app. Use the same network, then retry.");
-pub const PAIR_IN_GAME: &str = en("Stop the stream on the PC, then pair again.");
-pub const PAIR_PIN_WRONG: &str =
-    en("PIN rejected. Try pairing again and enter the new PIN shown on this device in the PC’s settings or web UI.");
-pub const PAIR_OTP_PIN_WRONG: &str =
-    en("PIN rejected. Generate a new one-time PIN in the PC’s web UI and check the passphrase.");
-pub const PAIR_IN_PROGRESS: &str = en("Finish or cancel the pending request on the PC.");
-pub const PAIR_DECLINED: &str =
-    en("The PC ended the pairing, for example because the PIN was not entered in time. Start pairing again and enter the new PIN on the PC.");
-pub const PAIR_UNVERIFIED: &str = en("The PC failed its identity check, so nothing was paired. Another device on this network may be posing as your PC: pair only on a network you trust.");
-pub const PAIR_NETWORK: &str = en("Use the same network and start the PC’s streaming app. Check its firewall, then retry.");
-pub const PAIR_LINK_MISMATCH: &str =
-    en("This PC’s certificate does not match the pairing link, so Nightjar did not pair. Pair only with a link or QR code from your own PC.");
-pub const LINK_INVALID: &str = en("That pairing link is not valid. Show a new QR code on the PC and copy its link again.");
-pub const ADDRESS_INVALID: &str = en("That address is not valid");
-pub const CLIPBOARD_NO_LINK: &str =
-    en("Copy the link under the QR code on the PC’s Devices page, then paste it here.");
-/// An invite link that does not read ([`nightjar_core::invite::NOT_AN_INVITE`]).
-pub const INVITE_INVALID: &str = en("This is not a Nightjar invite link");
-
-/// The engine's words for an invite that did not work, in the user's language where they are
-/// known ([`nightjar_core::invite`]); anything else as it came.
-pub fn invite_error(error: &str) -> String {
-    const KNOWN: [&str; 4] = [
-        en("This is not a Nightjar invite link"),
-        en("This invite has expired. Ask for a new one."),
-        en("The PC did not accept this invite: it was already used, taken back or has expired. Ask for a new one."),
-        en("Turn on Play over the internet in Nightjar's settings, then open the invite again."),
-    ];
-    KNOWN
-        .iter()
-        .find(|known| **known == error)
-        .map_or_else(|| error.to_owned(), |known| tr(known).to_owned())
-}
-/// An invite that names a PC of the list which is paired with another certificate than the invite's.
-pub const INVITE_KNOWN_PC: &str = en("This invite is for a PC that is already on your list with another certificate, so Nightjar did not join it and changed nothing. If that PC was set up again, remove it from the list and open the invite again.");
-pub const UNPAIR_FAILED: &str = en("Failed to unpair. The PC may still list this device.");
-pub const UNPAIR_NOT_PAIRED: &str = en("Device was not paired.");
-// A quit the PC refused because another device started the game, worded like Nightjar Android's.
-pub const QUIT_OTHER_DEVICE: &str = en("Another device started this game, so it can only be quit from that device or on the PC.");
-
-/// What a failed quit of `name` says: who may quit it, or what to check. The PC's own words go to the log.
-pub fn quit_failure(error: &str, name: &str) -> String {
-    if error == QUIT_OTHER_DEVICE {
-        return tr(QUIT_OTHER_DEVICE).to_owned();
-    }
-    eprintln!("nightjar: quitting {name} failed: {error}");
-    trf("Couldn’t quit {}. Check that the PC is on and on this network, then try again.", &[&name])
-}
-// Why the PC handed out no sleep token. A refusal shows the host's own words instead.
-pub const SLEEP_NOT_ALLOWED: &str = en("The PC does not let this device put it to sleep. Allow it in the PC’s device settings.");
-pub const SLEEP_UNSUPPORTED: &str = en("The PC cannot sleep.");
-pub const SLEEP_BUSY: &str = en("The PC cannot sleep right now. Close games and streams on it, then try again.");
-// Restart and shut down. A refusal shows the host's own words instead.
-pub const PC_POWER_NOT_ALLOWED: &str = en("The PC does not let this device restart or shut it down. Allow it in the PC’s device settings.");
-pub const PC_POWER_BUSY: &str = en("The PC cannot do this right now. Close games and streams on it, then try again.");
-// Approving a new device, without the permission for it. The console's own names, in every language.
-pub const PAIRING_NOT_ALLOWED: &str = en("Needs Approve new devices on the PC’s Devices page.");
-
-// A poll met another certificate at the PC's address.
-pub const ANOTHER_PC_ANSWERS: &str = en("Another PC or program answers at this PC’s address. If this PC was set up again, remove it and add it again.");
 
 pub enum Event {
     Info {
@@ -794,24 +621,6 @@ pub fn client_for(identity: &Arc<ClientIdentity>, record: &HostRecord, address: 
     Ok(client)
 }
 
-/// The name the host lists this client under.
-pub fn device_name() -> String {
-    let name = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .ok()
-        .filter(|n| !n.is_empty())
-        .or_else(|| {
-            std::fs::read_to_string("/etc/hostname")
-                .ok()
-                .map(|n| n.trim().to_owned())
-                .filter(|n| !n.is_empty())
-        });
-    match name {
-        Some(name) => format!("Nightjar ({name})"),
-        None => "Nightjar".into(),
-    }
-}
-
 /// What proves the pairing user is at the PC.
 enum Secret {
     /// A PIN this device shows; the user types it on the PC.
@@ -820,49 +629,6 @@ enum Secret {
     OneTime { pin: String, passphrase: String },
     /// A QR pairing link (Experimental): a one-time PIN, and the certificate the PC must have.
     Link(Box<PairingUri>),
-}
-
-/// What was typed or pasted in Add PC.
-#[derive(Debug, PartialEq)]
-pub enum Entry {
-    /// An address with an optional HTTP port.
-    Address(String, Option<u16>),
-    /// A QR pairing link (`rubylight://pair?...`) to add the PC and pair with at once.
-    Link(Box<PairingUri>),
-    /// An invite to play over the internet (`rubylight://invite#...`).
-    Invite(Box<InviteUri>),
-}
-
-/// Reads an Add PC entry. A pairing link that does not parse is refused with [`LINK_INVALID`],
-/// never read as an address.
-pub fn parse_entry(text: &str) -> Result<Entry, &'static str> {
-    let text = text.trim();
-    if InviteUri::is_link(text) {
-        return parse_invite(text).map(Entry::Invite);
-    }
-    if PairingUri::is_link(text) {
-        return parse_link(text).map(Entry::Link);
-    }
-    crate::config::parse_address(text)
-        .map(|(address, port)| Entry::Address(address, port))
-        .ok_or(ADDRESS_INVALID)
-}
-
-/// Reads a pairing link; anything else is refused with [`LINK_INVALID`].
-pub fn parse_link(text: &str) -> Result<Box<PairingUri>, &'static str> {
-    let mut link = PairingUri::parse(text.trim()).ok_or(LINK_INVALID)?;
-    // Records keep IPv6 addresses without brackets, as typed ones are.
-    if let Some(bare) = link.host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
-        link.host = bare.to_owned();
-    }
-    Ok(Box::new(link))
-}
-
-/// Reads an invite link; anything else is refused with [`INVITE_INVALID`].
-pub fn parse_invite(text: &str) -> Result<Box<InviteUri>, &'static str> {
-    InviteUri::parse(text.trim())
-        .map(Box::new)
-        .ok_or(INVITE_INVALID)
 }
 
 /// A poll's failure at one address. Another certificate there is another PC or program
@@ -1527,6 +1293,92 @@ impl Hosts {
             host.art_sized.clear();
         }
         self.art_used.clear();
+    }
+}
+
+struct HostFactsSource(bool);
+
+impl nightjar_desktop_ui::hosts_model::FactsSource for HostFactsSource {
+    fn offers_facts(&self) -> bool {
+        self.0
+    }
+    fn cached(&self, _key: &str) -> Option<nightjar_policy::game_info::cache::Facts> {
+        None
+    }
+}
+
+fn to_policy_path(path: nightjar_core::internet::InternetPath) -> nightjar_policy::internet_path::InternetPath {
+    match path {
+        nightjar_core::internet::InternetPath::Lan => nightjar_policy::internet_path::InternetPath::Lan,
+        nightjar_core::internet::InternetPath::Ipv6 => nightjar_policy::internet_path::InternetPath::Ipv6,
+        nightjar_core::internet::InternetPath::MappedIpv4 => nightjar_policy::internet_path::InternetPath::MappedIpv4,
+        nightjar_core::internet::InternetPath::Punched => nightjar_policy::internet_path::InternetPath::Punched,
+    }
+}
+
+impl Host {
+    /// UI-crate snapshot of this host.
+    pub fn ui_view(&self) -> nightjar_desktop_ui::hosts_model::Host {
+        nightjar_desktop_ui::hosts_model::Host {
+            id: self.id,
+            record: self.record.clone(),
+            reach: self.reach,
+            info: self.info.clone(),
+            apps: self.apps.clone(),
+            art: self.art.clone(),
+            ambient: self.ambient.clone(),
+            ambient_glow: self.ambient_glow.clone(),
+            art_versions: self.art_versions.clone(),
+            art_sized: self.art_sized.clone(),
+            art_retry: self.art_retry.clone(),
+            native: self.native.clone(),
+            classic_apps: self.classic_apps.clone(),
+            classic: self.classic.clone(),
+            error: self.error.clone(),
+            checking: self.checking,
+            via_remote: self.via_remote.clone(),
+            path_override: self.path().map(to_policy_path),
+        }
+    }
+}
+
+impl Hosts {
+    /// Applies mutations written by `ui::demo::{fill, covers}` onto `self`.
+    #[cfg(feature = "demo-library")]
+    pub fn apply_ui_demo(&mut self, view: nightjar_desktop_ui::hosts_model::Hosts) {
+        self.facts = view.facts;
+        for model in view.list {
+            if let Some(host) = self.get_mut(model.id) {
+                host.record = model.record;
+                host.reach = model.reach;
+                host.info = model.info;
+                host.apps = model.apps;
+                host.art = model.art;
+                host.ambient = model.ambient;
+                host.ambient_glow = model.ambient_glow;
+                host.art_versions = model.art_versions;
+                host.art_sized = model.art_sized;
+                host.art_retry = model.art_retry;
+                host.native = model.native;
+                host.classic_apps = model.classic_apps;
+                host.classic = model.classic;
+                host.error = model.error;
+                host.checking = model.checking;
+                host.via_remote = model.via_remote;
+            }
+        }
+    }
+
+    /// UI-crate view of the hosts list and cached game facts.
+    pub fn ui_view(&self) -> nightjar_desktop_ui::hosts_model::Hosts {
+        let mut out = nightjar_desktop_ui::hosts_model::Hosts::without_discovery(Vec::new(), self.waker.clone());
+        out.discovering = self.discovering;
+        out.has_identity = self.identity.is_some();
+        out.facts = self.facts.clone();
+        out.facts_asked = self.facts_asked.clone();
+        out.set_facts_source(Some(Arc::new(HostFactsSource(self.facts_offered()))));
+        out.list = self.list.iter().map(Host::ui_view).collect();
+        out
     }
 
     pub fn load_apps(&mut self, id: u64) {

@@ -56,7 +56,7 @@ jobs:
             glslang-tools libvulkan1 mesa-vulkan-drivers
           cd protocol
           cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo test -p nightjar-desktop --locked
+          cargo test -p nightjar-desktop -p nightjar-desktop-config -p nightjar-desktop-ui -p nightjar-desktop-media --locked
       # The PQ pass: its SPIR-V against glslang 15 (a missing or other glslang fails here), and the
       # ignored GPU test on Mesa's software Vulkan (lavapipe, the runner has no GPU).
       - name: Test the PQ present pass
@@ -64,7 +64,7 @@ jobs:
           NIGHTJAR_REQUIRE_GLSLANG: '1'
         run: |
           cd protocol
-          cargo test -p nightjar-desktop --locked -- pq_present --include-ignored
+          cargo test -p nightjar-desktop-media --locked -- pq_present --include-ignored
   # The APKs, lint, the JVM unit tests and the native sanitizer runs are four jobs that run side
   # by side; together they took 26-32 minutes as one job.
   build:

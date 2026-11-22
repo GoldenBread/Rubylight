@@ -129,9 +129,21 @@ impl App {
             }
             Command::CancelWake => self.waking.end(),
             Command::SleepOffer { host, ask } => self.hosts.sleep_offer(host, ask),
-            Command::Sleep { host, ask, token, at } => self.hosts.sleep(host, ask, token, at),
+            Command::Sleep { host, ask, token, at } => {
+                let at = self
+                    .pending_power_handed
+                    .remove(&ask)
+                    .unwrap_or_else(|| hosts::Handed::from_instant(at.0));
+                self.hosts.sleep(host, ask, token, at);
+            }
             Command::PcPowerOffer { host, ask, action } => self.hosts.pc_power_offer(host, ask, action),
-            Command::PcPower { host, ask, action, token, at } => self.hosts.pc_power(host, ask, action, token, at),
+            Command::PcPower { host, ask, action, token, at } => {
+                let at = self
+                    .pending_power_handed
+                    .remove(&ask)
+                    .unwrap_or_else(|| hosts::Handed::from_instant(at.0));
+                self.hosts.pc_power(host, ask, action, token, at);
+            }
             Command::InstallUpdate { host } => self.hosts.install_update(host),
             Command::Rename { host, alias } => {
                 if rename_host(&mut self.hosts, &self.store, host, &alias).is_err() {
@@ -151,7 +163,7 @@ impl App {
             }
             Command::HostSettings(id) => {
                 if let Some(host) = self.hosts.get(id) {
-                    self.launcher.open_host_settings(id, host);
+                    self.launcher.open_host_settings(id, &host.ui_view());
                 }
             }
             Command::SaveHostSettings(id) => {
@@ -162,7 +174,7 @@ impl App {
             }
             Command::AppSettings { host: id, app } => {
                 if let Some(host) = self.hosts.get(id) {
-                    self.launcher.open_app_settings(id, host, app);
+                    self.launcher.open_app_settings(id, &host.ui_view(), app);
                 }
             }
             Command::SaveAppSettings(id) => {
@@ -296,10 +308,14 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
             // The latency benchmark page (`latency_bench`).
             Command::StartLatencyBenchmark => {
                 let hardware = self.hardware(&self.launcher.settings);
-                self.launcher.latency_bench.device = Some(self.latency_device());
-                self.launcher.latency_bench.start(hardware, self.waker.clone());
+                self.latency_bench.device = Some(self.latency_device());
+                self.latency_bench.start(hardware, self.waker.clone());
+                self.launcher.latency_bench = self.latency_bench.state();
             }
-            Command::StopLatencyBenchmark => self.launcher.latency_bench.stop(),
+            Command::StopLatencyBenchmark => {
+                self.latency_bench.stop();
+                self.launcher.latency_bench = self.latency_bench.state();
+            }
             // Android's Export latency CSV: the last stream's file, saved where the dialog says.
             Command::ExportLatencyCsv => {
                 if !self.store.dir().join("statistics").join(stream::LATENCY_CSV).is_file() {
@@ -321,12 +337,12 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
             }
             Command::RemoteCheck(id) => {
                 if let Some(host) = self.hosts.get(id) {
-                    host_page::start_check(&mut self.launcher.remote, self.hosts.identity(), host, self.waker.clone());
+                    page_hosts::start_check(&mut self.launcher.remote, self.hosts.identity(), host, self.waker.clone());
                 }
             }
             Command::SharedFolders(id) => {
                 if let Some(host) = self.hosts.get(id) {
-                    folders_page::start(&mut self.launcher.folders, self.hosts.identity(), host, self.waker.clone());
+                    page_hosts::start_folders(&mut self.launcher.folders, self.hosts.identity(), host, self.waker.clone());
                 }
             }
             Command::FolderDownload { host, name, size } => {
@@ -339,12 +355,12 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
             }
             Command::Coop(id) => {
                 if let Some(host) = self.hosts.get(id) {
-                    coop_page::start(&mut self.launcher.coop, self.hosts.identity(), host, self.waker.clone());
+                    page_hosts::start_coop(&mut self.launcher.coop, self.hosts.identity(), host, self.waker.clone());
                 }
             }
             Command::Neural { host, game, app } => {
                 if let Some(host) = self.hosts.get(host) {
-                    neural_page::start(
+                    page_hosts::start_neural(
                         &mut self.launcher.neural,
                         self.hosts.identity(),
                         host,
@@ -356,7 +372,7 @@ Redacted logs, oldest line first; addresses, PC names, PINs and credentials are 
             }
             Command::OpenFiles(id) => {
                 if let Some(host) = self.hosts.get(id) {
-                    ui::files::open(&mut self.launcher, self.hosts.identity(), host, self.waker.clone());
+                    page_hosts::open_files(&mut self.launcher, self.hosts.identity(), host, self.waker.clone());
                 }
             }
             Command::ChooseFiles => {

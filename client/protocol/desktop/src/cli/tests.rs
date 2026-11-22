@@ -656,3 +656,63 @@ fn an_app_matches_its_name_without_the_legacy_ordering_prefix() {
     assert_eq!(found(&apps, "MoonDeckStream"), Ok(1));
     assert_eq!(found(&apps, "\u{200b}Desktop"), Ok(2));
 }
+
+#[test]
+fn the_second_screens_command_line_is_a_frontend_start_with_its_monitor() {
+    use nightjar_desktop_media::second_screen::{args, split_flag, split_join};
+    let args = args("PC-UUID", "Game, the sequel", (2560, -40), None);
+    let (rest, join) = split_join(args);
+    assert_eq!(join, Ok(None));
+    let (rest, point) = split_flag(rest);
+    assert_eq!(point, Ok(Some((2560, -40))));
+    match crate::cli::parse(rest) {
+        Ok(crate::cli::Parsed::Launch(launch)) => {
+            assert_eq!(launch.host, "PC-UUID");
+            assert_eq!(launch.app.as_deref(), Some("Game, the sequel"));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_joined_game_goes_to_the_second_screen_by_its_id() {
+    use nightjar_core::http::{App, AppControl};
+    use nightjar_desktop_config::config::HostRecord;
+    use nightjar_desktop_media::second_screen::{args, joined_running, split_flag, split_join, target};
+    let mk_app = |name: &str, id: i32, uuid: &str, control: AppControl| App {
+        name: name.into(),
+        id,
+        hdr_supported: false,
+        uuid: uuid.into(),
+        host_index: None,
+        art_version: String::new(),
+        control,
+        monitor_resume: false,
+    };
+    let os = |s: &[&str]| s.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+    let (rest, join) = split_join(args("PC-UUID", "GAME-UUID", (0, 0), Some(77)));
+    assert_eq!(join, Ok(Some(77)));
+    let (rest, point) = split_flag(rest);
+    assert_eq!(point, Ok(Some((0, 0))));
+    assert!(matches!(crate::cli::parse(rest), Ok(crate::cli::Parsed::Launch(_))));
+    for bad in [
+        &["--second-screen-join=x"][..],
+        &["--second-screen-join="],
+        &["--second-screen-join=1", "--second-screen-join=2"],
+    ] {
+        let (rest, join) = split_join(os(bad));
+        assert!(join.is_err() && rest.is_empty(), "{bad:?}");
+    }
+    let pc = HostRecord { unique_id: "PC-UUID".into(), ..HostRecord::default() };
+    let resume = mk_app("Resume", 9, "RESUME-UUID", AppControl::Resume);
+    let game = mk_app("Game", 77, "GAME-UUID", AppControl::None);
+    assert_eq!(
+        target(&pc, &resume, &[resume.clone(), game], joined_running(None, Some(77))),
+        Ok(("PC-UUID".into(), "GAME-UUID".into()))
+    );
+    assert_eq!(
+        joined_running(Some((3, Some("X"))), Some(77)),
+        Some((3, Some("X"))),
+        "what the PC reports wins"
+    );
+}

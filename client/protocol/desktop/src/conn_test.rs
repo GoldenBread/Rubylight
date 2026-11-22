@@ -8,6 +8,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, ToSocketAddrs,
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
+pub use nightjar_desktop_ui::conn_test::Outcome;
+
+/// Registers the real TCP/UDP connectivity test worker with `nightjar-desktop-ui::conn_test`.
+pub fn register() {
+    nightjar_desktop_ui::conn_test::register_start_hook(start);
+}
+
 /// Moonlight's test server for desktop clients, and the port tried first to find an address of it
 /// that this network reaches at all.
 pub const SERVER: &str = "qt.conntest.moonlight-stream.org";
@@ -23,17 +30,6 @@ const PROBE_SIZE: usize = 1040;
 const PROBE_TEXT: &[u8] = b"moonlight-ctest";
 const PROBE_SENDS: usize = 3;
 const PROBE_GAP: Duration = Duration::from_millis(50);
-
-/// What the test found.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome {
-    /// Every port answered.
-    Clear,
-    /// At least one did not: streaming over the internet may be blocked.
-    Blocked,
-    /// The test server could not be reached, so nothing is known.
-    Unknown,
-}
 
 /// Runs the test on its own thread; `waker` runs once the answer is in.
 pub fn start(waker: crate::hosts::Waker) -> Receiver<Outcome> {

@@ -108,7 +108,7 @@ Saving goes through [`save_setting`](../rust/host/web/src/web/config.rs), which 
 
 ### A capability a client can see
 
-The host says what it offers in three places: serverinfo fields ([`serverinfo_fields`](../rust/core/media-policy/src/extensions.rs)), DESCRIBE lines and the native API's capabilities (`client/protocol/native-api/src/capabilities.rs`). Nightjar reads them into [`Feature`, `HostCapabilities`](../client/protocol/client/src/http/capabilities.rs) and gates on that, never on a host's name. `client/protocol/client/tests/capabilities_contract.rs` checks the reading against recorded serverinfo replies.
+The host says what it offers in three places: serverinfo fields ([`serverinfo_fields`](../rust/core/media-policy/src/extensions.rs)), DESCRIBE lines and the native API's capabilities (`client/protocol/native-api/src/capabilities.rs`). Nightjar reads them into [`Feature`, `HostCapabilities`](../client/protocol/policy/src/http/capabilities.rs) and gates on that, never on a host's name. `client/protocol/client/tests/capabilities_contract.rs` checks the reading against recorded serverinfo replies.
 
 ### A native API endpoint
 

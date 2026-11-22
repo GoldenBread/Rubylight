@@ -30,7 +30,7 @@ SOURCES = ('.rs', '.java', '.kt', '.svelte', '.ts', '.js', '.mjs', '.cjs', '.py'
 # Other people's code and generated output: never ours to map.
 FOREIGN = re.compile(r'(^|/)(vendor|third-party|node_modules|include|openssl|moonlight-common-c)/')
 # The translations of one text change together; count them as one file.
-GROUPS = ((re.compile(r'(client/protocol/desktop/src/strings/)\w+\.rs$'), r'\1*.rs'),
+GROUPS = ((re.compile(r'(client/protocol/desktop-config/src/strings/)\w+\.rs$'), r'\1*.rs'),
           (re.compile(r'(client/app/src/main/res/values)[^/]*(/\w+\.xml)$'), r'\1*\2'),
           (re.compile(r'((?:rust/release|client)/notes\.d/).*$'), r'\1*'))
 TESTS = {'.rs': re.compile(r'^\s*#\[(?:tokio::)?test\b', re.M), '.java': re.compile(r'^\s*@Test\b', re.M),

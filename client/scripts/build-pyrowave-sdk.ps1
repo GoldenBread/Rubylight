@@ -27,7 +27,7 @@ $arm64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq
 $msystem = if ($arm64) { 'CLANGARM64' } else { 'UCRT64' }
 $envDir = $msystem.ToLowerInvariant()
 $pin = @{}
-Get-Content (Join-Path $repo 'protocol\desktop\pyrowave-sdk.pin') | Where-Object { $_ -match '^\s*[a-z_]+=' } | ForEach-Object {
+Get-Content (Join-Path $repo 'protocol\desktop-media\pyrowave-sdk.pin') | Where-Object { $_ -match '^\s*[a-z_]+=' } | ForEach-Object {
     $key, $value = $_ -split '=', 2
     $pin[$key.Trim()] = $value.Trim()
 }

@@ -18,7 +18,7 @@ KosmicKrisp and the Vulkan loader (Nightjar for macOS)
 Nightjar for macOS on Apple silicon bundles libvulkan_kosmickrisp.dylib, the
 KosmicKrisp Vulkan-on-Metal driver from Mesa 26.2.7 by LunarG and the Mesa
 contributors (MIT; https://archive.mesa3d.org/mesa-26.2.7.tar.xz), built by
-client/protocol/desktop/macos-vulkan.sh. It statically links SPIRV-Tools
+client/protocol/desktop-media/macos-vulkan.sh. It statically links SPIRV-Tools
 vulkan-sdk-1.4.357.0 (Apache-2.0; https://github.com/KhronosGroup/SPIRV-Tools), built
 against SPIRV-Headers vulkan-sdk-1.4.357.0 (Khronos MIT-style license;
 https://github.com/KhronosGroup/SPIRV-Headers). It also bundles libvulkan.1.dylib, the
@@ -262,8 +262,8 @@ client/app/src/main/java/com/limelight/binding/input/GyroAxisTransformer.java,
 GyroMappingPreferences.java and GyroDiagnosticOverlay.java,
 client/app/src/main/java/com/limelight/preferences/GyroProfileEditor.java, their hooks
 in binding/input/ControllerHandler.java and Game.java, and their tests. The desktop
-client's gyroscope axes and sensitivity (client/protocol/desktop/src/gamepad.rs,
-ui/pages.rs) follow the same design.
+client's gyroscope axes and sensitivity (client/protocol/desktop-media/src/gamepad.rs,
+client/protocol/desktop-ui/src/ui/pages.rs) follow the same design.
 
 Moonlight V+
 
@@ -400,60 +400,60 @@ in client/protocol/core/src/clipboard_sync.rs, the rules in
 client/protocol/client/src/control/clipboard_sync.rs, the host's side in
 rust/host/stream/src/stream/clipboard_sync.rs, and Nightjar's in
 client/app/src/main/java/com/limelight/utils/ClipboardSync.java and
-client/protocol/desktop/src/stream/clipboard_sync.rs.
+client/protocol/desktop-media/src/stream/clipboard_sync.rs.
 
 Nightjar desktop's AI enhancement on Windows follows Moonlight V+ PC
 (https://github.com/qiin2333/moonlight-qt, GPL-3.0, d3d11va.cpp and amfsession.cpp):
 the per-vendor probe, the NVIDIA and Intel video processor extensions, RTX Video HDR,
 the AMF HQ Scaler session and its sharpness, in
-client/protocol/desktop/src/stream/enhance.rs and amf_scaler.rs.
+client/protocol/desktop-media/src/stream/enhance.rs and amf_scaler.rs.
 Its drawing of D3D11VA pictures from the decoder's own textures, with the decoder
 textures made shader-readable on Intel GPUs as V+ does, follows the same d3d11va.cpp;
 the HDR tone map following HDR10+ metadata or the measured frame peak follows V+'s
-plvk.cpp and libplacebo's peak detection defaults (client/protocol/desktop/src/stream/direct.rs).
+plvk.cpp and libplacebo's peak detection defaults (client/protocol/desktop-media/src/stream/direct.rs).
 Its Vulkan video decoding on Linux is ported from moonlight-qt's plvk.cpp
 (https://github.com/moonlight-stream/moonlight-qt, GPL-3.0, Cameron Gutman and
 contributors) as Moonlight V+ ships it: FFmpeg's Vulkan device context filled from the
 renderer's own Vulkan device, its queue locks and the frame locks around the presenter's
-copy (client/protocol/desktop/src/vulkan_video.rs).
+copy (client/protocol/desktop-media/src/vulkan_video.rs).
 Its drawing straight to the display on Linux follows moonlight-qt v6.2.0's DRM renderer
 (app/streaming/video/ffmpeg-renderers/drm.cpp, same project and licence): sharing SDL's
 KMSDRM descriptor, choosing the video plane and its zpos under the overlay, and the
 connector and plane properties for HDR metadata, colorimetry, max bpc, YCbCr encoding and
-range (client/protocol/desktop/src/kms/ and stream/kms_scanout.rs).
+range (client/protocol/desktop-media/src/kms/ and stream/kms_scanout.rs).
 Its Native resolution on macOS is the display's own resolution as moonlight-qt finds it
 (app/streaming/streamutils.cpp, StreamUtils::getNativeDesktopMode, commit 67dbfddb2, same
 project and licence): CoreGraphics' modes of the display and the one IOKit flags native,
-whatever scaled mode the desktop runs (client/protocol/desktop/src/mac_display.rs).
+whatever scaled mode the desktop runs (client/protocol/desktop-media/src/mac_display.rs).
 Its Settings screen predicts the display mode Windows' Fullscreen takes as SDL 3's
 SDL_GetClosestFullscreenDisplayMode chooses it (src/video/SDL_video.c, SDL 3.4.20,
 https://github.com/libsdl-org/SDL, zlib license, Copyright (C) 1997-2026 Sam Lantinga):
 the smallest mode that holds the stream, the closest aspect ratio, then the closest
-refresh with the slower one on a tie (client/protocol/desktop/src/ui/settings.rs,
+refresh with the slower one on a tie (client/protocol/desktop-ui/src/ui/settings.rs,
 closest_fullscreen_mode, which quotes SDL's notice). zlib License; full text in
 third-party/licenses/SDL-LICENSE.txt.
 Nightjar desktop's high-performance GPU power while streaming on Linux, which holds an AMD
-GPU that drives a connected display at its peak stable power state (client/protocol/desktop/
+GPU that drives a connected display at its peak stable power state (client/protocol/desktop-media/
 src/stream/gpu_hold.rs), is ported from Nonary's moonlight-qt fork
 (https://github.com/Nonary/moonlight-qt, GPL-3.0): app/streaming/gpuperformancehold.{h,cpp}
 at commit 19758e5e6, with the same GPU selection, requests and release.
 From the same project and commit, on Windows: the measurement switch NIGHTJAR_VRR_SYNC=blank
-(client/protocol/desktop/src/stream/present/pacer.rs, `latch`, `planned_latch`,
+(client/protocol/desktop-media/src/stream/present/pacer.rs, `latch`, `planned_latch`,
 `present_adaptive`, `flip_statistics`; stream/render.rs, `blank_present`) is ported from its
 D3D11 flip protection (app/streaming/video/ffmpeg-renderers/d3d11presentpolicy.h,
 d3d11va.cpp, pacer/vrr/vrrtimingcontroller.cpp), with its test cases
 (tests/vrr/tst_dxgipresent.cpp); and on macOS what is read from NSScreen and the tests for a
-variable refresh range (client/protocol/desktop/src/mac_display.rs) are ported from
+variable refresh range (client/protocol/desktop-media/src/mac_display.rs) are ported from
 app/streaming/macdisplaytiming.{h,mm}.
 The FFmpeg that Nightjar desktop ships on Windows carries Moonlight's FFmpeg patch for
 D3D11VA, D3D12VA and DXVA2 decoding of HEVC Range Extension profiles (HEVC 4:4:4), by
 Cameron Gutman, from https://github.com/moonlight-stream/moonlight-qt-deps
 (patches/ffmpeg_dxva_hevc_rext.patch), adapted to FFmpeg 9.0
-(client/protocol/desktop/ffmpeg-patches/windows/). It is part of FFmpeg (LGPL-2.1 or
+(client/protocol/desktop-media/ffmpeg-patches/windows/). It is part of FFmpeg (LGPL-2.1 or
 later) and ships with FFmpeg's licence and source note.
 On macOS, Nightjar's FFmpeg carries a one-line change to libavcodec/videotoolbox.c that
 asks VideoToolbox for Metal-compatible instead of OpenGL-compatible pixel buffers
-(client/protocol/desktop/ffmpeg-patches/macos/), suggested by bit24 in Nightjar issue 141;
+(client/protocol/desktop-media/ffmpeg-patches/macos/), suggested by bit24 in Nightjar issue 141;
 Moonlight's moonlight-deps carries a similar change (patches/ffmpeg_metal_vt.patch). It is
 part of FFmpeg (LGPL-2.1 or later) and ships with FFmpeg's licence in the app.
 
@@ -475,7 +475,7 @@ in the app as client/app/src/main/assets/NOTICE-SGSR1.txt. It ships in:
 - Android MediaCodec path: client/app/src/main/assets/shaders/sgsr.frag;
 - Android PyroWave renderer: client/app/src/main/jni/pyrowave-renderer/shaders/sgsr.frag and its
   SPIR-V in shaders_spv.h;
-- desktop: client/protocol/desktop/src/upscale.hlsl, src/upscale.spv and src/metal/upscale.metal.
+- desktop: client/protocol/desktop-media/src/upscale.hlsl, src/upscale.spv and src/metal/upscale.metal.
 
 libvirtualgamepad (rubylight-vgamepad and rubylight-vgamepad-proto)
 

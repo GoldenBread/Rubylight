@@ -16,8 +16,8 @@ rust/core/media-policy/src/audio_dsp/*.bin binary
 # Nightjar's desktop string tables hold one entry per line between `TABLE: &[` and
 # `];`: two branches that append entries both keep theirs (union). An entry both
 # change then appears twice, which strings/tests.rs every_table_is_clean rejects.
-client/protocol/desktop/src/strings/*.rs merge=union
-client/protocol/desktop/src/strings/tests.rs !merge
+client/protocol/desktop-config/src/strings/*.rs merge=union
+client/protocol/desktop-config/src/strings/tests.rs !merge
 # Generated docs: `python tools/generated_docs.py install` registers the driver,
 # which takes one side's generated table on a conflict inside it; regenerate it
 # afterwards with `python tools/generated_docs.py`.

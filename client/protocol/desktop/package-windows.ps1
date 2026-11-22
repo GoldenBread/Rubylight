@@ -17,7 +17,7 @@
 #
 # With -PyrowaveSdkDir the package also carries the PyroWave SDK the GPU decoder loads at run time
 # (libpyrowave-shared-1.dll, so the import walk cannot see it): the DLL next to the exe, its
-# build-info.txt and its licences. The script refuses a DLL that is not the one protocol\desktop\
+# build-info.txt and its licences. The script refuses a DLL that is not the one protocol\desktop-media\
 # pyrowave-sdk.pin names (commit, Granite, API, patches) or whose SHA-256 is not the one the build
 # recorded. Without it the package has no GPU decoder and the client says so when asked for it.
 # With the SDK the unpacked exe is also run as `nightjar.exe --check-pyrowave <file>` (with only the
@@ -76,7 +76,7 @@ if ($PyrowaveSdkDir) {
     foreach ($path in $sdkDll, (Join-Path $PyrowaveSdkDir 'build-info.txt'), (Join-Path $PyrowaveSdkDir 'licenses')) {
         if (-not (Test-Path $path)) { throw "$path is missing; build the SDK with scripts\build-pyrowave-sdk.ps1" }
     }
-    $pin = Read-KeyValues (Join-Path $PSScriptRoot 'pyrowave-sdk.pin')
+    $pin = Read-KeyValues (Join-Path $workspace 'desktop-media\pyrowave-sdk.pin')
     $built = Read-KeyValues (Join-Path $PyrowaveSdkDir 'build-info.txt')
     foreach ($key in 'pyrowave_commit', 'api_version', 'patches') {
         if ($built[$key] -ne $pin[$key]) { throw "the PyroWave SDK in $PyrowaveSdkDir has $key=$($built[$key]), pyrowave-sdk.pin says $($pin[$key])" }

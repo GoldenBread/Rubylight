@@ -651,7 +651,7 @@ impl crate::App {
                 let mut commands = Vec::new();
                 let dialog = match self.hosts.get(host) {
                     Some(h) => match &h.apps {
-                        Apps::Loaded(apps) => apps.iter().find(|a| a.id == app).and_then(|a| self.launcher.start_app(h, a, &mut commands)),
+                        Apps::Loaded(apps) => apps.iter().find(|a| a.id == app).and_then(|a| self.launcher.start_app(&h.ui_view(), a, &mut commands)),
                         _ => None,
                     },
                     None => None,

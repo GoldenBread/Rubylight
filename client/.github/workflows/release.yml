@@ -67,7 +67,7 @@ jobs:
 
   desktop-linux:
     # The Linux desktop client: protocol/desktop/package-linux.sh builds it (SDL3 from
-    # source, linked statically; the decode-only FFmpeg of protocol/desktop/ffmpeg-decode-only.sh,
+    # source, linked statically; the decode-only FFmpeg of protocol/desktop-media/ffmpeg-decode-only.sh,
     # shipped in lib/ so the machine's own FFmpeg does not matter) and packs
     # nightjar-desktop-<version>-linux-<arch>.tar.gz; packaging/linux/build-packages.sh makes the
     # .deb, .rpm and AppImage from that archive, and each is installed and started here. A fixed
@@ -132,7 +132,7 @@ jobs:
       - name: SDL source
         run: git submodule update --init --depth 1 protocol/vendor/sdl3-src/SDL
       # patch 0002 and the Windows build script live in the public Rubylight repo; the SDK build
-      # (scripts/build-pyrowave-sdk.*, protocol/desktop/pyrowave-sdk.pin) needs only those files.
+      # (scripts/build-pyrowave-sdk.*, protocol/desktop-media/pyrowave-sdk.pin) needs only those files.
       - name: Rubylight host files for the PyroWave SDK
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -169,7 +169,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ffprefix
-          key: ffmpeg-decode-only-linux-${{ matrix.arch }}-${{ steps.image.outputs.os }}-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_SHA256 }}-${{ hashFiles('protocol/desktop/ffmpeg-decode-only.sh', 'protocol/desktop/ffmpeg-deps-linux.sh', 'protocol/desktop/ffmpeg-patches/*.patch') }}
+          key: ffmpeg-decode-only-linux-${{ matrix.arch }}-${{ steps.image.outputs.os }}-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_SHA256 }}-${{ hashFiles('protocol/desktop-media/ffmpeg-decode-only.sh', 'protocol/desktop-media/ffmpeg-deps-linux.sh', 'protocol/desktop-media/ffmpeg-patches/*.patch') }}
       - name: Build the decode-only FFmpeg
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         # Downloads retry for about 5 minutes: on 2026-11-08 ffmpeg.org and GitHub release
@@ -178,13 +178,13 @@ jobs:
           curl -sSLf --retry 10 --retry-delay 30 --retry-all-errors -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
           echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
           tar -xf ffmpeg.tar.xz
-          bash protocol/desktop/ffmpeg-deps-linux.sh "$RUNNER_TEMP/ffdeps"
-          PKG_CONFIG_PATH="$RUNNER_TEMP/ffdeps/lib/pkgconfig" bash protocol/desktop/ffmpeg-decode-only.sh "$PWD/ffmpeg-$FFMPEG_VERSION" "$PWD/ffprefix"
+          bash protocol/desktop-media/ffmpeg-deps-linux.sh "$RUNNER_TEMP/ffdeps"
+          PKG_CONFIG_PATH="$RUNNER_TEMP/ffdeps/lib/pkgconfig" bash protocol/desktop-media/ffmpeg-decode-only.sh "$PWD/ffmpeg-$FFMPEG_VERSION" "$PWD/ffprefix"
       - name: Check the FFmpeg source note
         run: |
           grep -qx "SHA-256: $FFMPEG_SHA256" ffprefix/licenses-ffmpeg/SOURCE.txt || { echo "::error::ffprefix/licenses-ffmpeg/SOURCE.txt has no SHA-256 $FFMPEG_SHA256"; exit 1; }
       - name: Check V4L2 P010 against a fake decoder
-        run: bash protocol/desktop/ffmpeg-patches/test-v4l2-p010.sh ffprefix
+        run: bash protocol/desktop-media/ffmpeg-patches/test-v4l2-p010.sh ffprefix
       - name: PyroWave SDK cache
         id: sdk-cache
         if: github.ref_type != 'tag'
@@ -194,7 +194,7 @@ jobs:
             pyrowave-sdk/libpyrowave-shared.so
             pyrowave-sdk/build-info.txt
             pyrowave-sdk/licenses
-          key: pyrowave-sdk-linux-${{ matrix.arch }}-${{ steps.image.outputs.os }}-${{ env.RUBYLIGHT_SHA }}-${{ hashFiles('protocol/desktop/pyrowave-sdk.pin', 'scripts/build-pyrowave-sdk.sh', 'app/src/main/jni/pyrowave-renderer/patches/*.patch') }}
+          key: pyrowave-sdk-linux-${{ matrix.arch }}-${{ steps.image.outputs.os }}-${{ env.RUBYLIGHT_SHA }}-${{ hashFiles('protocol/desktop-media/pyrowave-sdk.pin', 'scripts/build-pyrowave-sdk.sh', 'app/src/main/jni/pyrowave-renderer/patches/*.patch') }}
       - name: Build the PyroWave SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: bash scripts/build-pyrowave-sdk.sh -o "$GITHUB_WORKSPACE/pyrowave-sdk" -H "$GITHUB_WORKSPACE/rubylight-host"
@@ -398,7 +398,7 @@ jobs:
         with:
           persist-credentials: false
       # patch 0002 and the Windows build script live in the public Rubylight repo; the SDK build
-      # (scripts/build-pyrowave-sdk.*, protocol/desktop/pyrowave-sdk.pin) needs only those files.
+      # (scripts/build-pyrowave-sdk.*, protocol/desktop-media/pyrowave-sdk.pin) needs only those files.
       - name: Rubylight host files for the PyroWave SDK
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -466,7 +466,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ffprefix
-          key: ffmpeg-decode-only-${{ matrix.arch }}-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_SHA256 }}-${{ hashFiles('protocol/desktop/ffmpeg-decode-only.sh', 'protocol/desktop/ffmpeg-patches/windows/*.patch') }}
+          key: ffmpeg-decode-only-${{ matrix.arch }}-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_SHA256 }}-${{ hashFiles('protocol/desktop-media/ffmpeg-decode-only.sh', 'protocol/desktop-media/ffmpeg-patches/windows/*.patch') }}
       - name: Build the decode-only FFmpeg
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         run: |
@@ -479,7 +479,7 @@ jobs:
           # argument, or the login shell starts in its home directory.
           msys=$(cygpath -u "$MSYS_ROOT")
           "$msys/usr/bin/env.exe" MSYSTEM=${{ matrix.msystem }} CHERE_INVOKING=1 FFMPEG_SHA256="$FFMPEG_SHA256" "$msys/usr/bin/bash.exe" -l -c \
-            'cd "$(cygpath -u "$1")" && bash protocol/desktop/ffmpeg-decode-only.sh "$PWD/ffmpeg-$2" "$PWD/ffprefix"' \
+            'cd "$(cygpath -u "$1")" && bash protocol/desktop-media/ffmpeg-decode-only.sh "$PWD/ffmpeg-$2" "$PWD/ffprefix"' \
             _ "$(cygpath -w "$PWD")" "$FFMPEG_VERSION"
       # A cached prefix from before the hash reached the script would ship a source note without it.
       - name: Check the FFmpeg source note
@@ -495,7 +495,7 @@ jobs:
             pyrowave-sdk/libpyrowave-shared-1.dll
             pyrowave-sdk/build-info.txt
             pyrowave-sdk/licenses
-          key: pyrowave-sdk-windows-${{ matrix.arch }}-${{ env.RUBYLIGHT_SHA }}-${{ hashFiles('protocol/desktop/pyrowave-sdk.pin', 'scripts/build-pyrowave-sdk.ps1', 'app/src/main/jni/pyrowave-renderer/patches/*.patch') }}
+          key: pyrowave-sdk-windows-${{ matrix.arch }}-${{ env.RUBYLIGHT_SHA }}-${{ hashFiles('protocol/desktop-media/pyrowave-sdk.pin', 'scripts/build-pyrowave-sdk.ps1', 'app/src/main/jni/pyrowave-renderer/patches/*.patch') }}
       - name: Build the PyroWave SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         shell: pwsh
@@ -732,12 +732,12 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: protocol/target/macos-vulkan/*/prefix
-          key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('protocol/desktop/macos-vulkan.sh', 'protocol/desktop/macos-vulkan-requirements.txt') }}
+          key: macos-vulkan-${{ runner.arch }}-${{ hashFiles('protocol/desktop-media/macos-vulkan.sh', 'protocol/desktop-media/macos-vulkan-requirements.txt') }}
       - name: Build KosmicKrisp and the Vulkan loader
         if: matrix.gpu-pyrowave
         run: |
           set -o pipefail
-          desktop/macos-vulkan.sh "$PWD/target/macos-vulkan" | tee "$RUNNER_TEMP/macos-vulkan.log"
+          desktop-media/macos-vulkan.sh "$PWD/target/macos-vulkan" | tee "$RUNNER_TEMP/macos-vulkan.log"
           prefix=$(tail -n1 "$RUNNER_TEMP/macos-vulkan.log")
           echo "VULKAN_PREFIX=$prefix" >> "$GITHUB_ENV"
           cat "$prefix/build-info.txt"
@@ -750,7 +750,7 @@ jobs:
             pyrowave-sdk/libpyrowave-shared.dylib
             pyrowave-sdk/build-info.txt
             pyrowave-sdk/licenses
-          key: pyrowave-sdk-macos-${{ matrix.arch }}-${{ env.RUBYLIGHT_SHA }}-${{ hashFiles('protocol/desktop/pyrowave-sdk.pin', 'scripts/build-pyrowave-sdk.sh', 'scripts/pyrowave-macos/*.patch', 'app/src/main/jni/pyrowave-renderer/patches/*.patch') }}
+          key: pyrowave-sdk-macos-${{ matrix.arch }}-${{ env.RUBYLIGHT_SHA }}-${{ hashFiles('protocol/desktop-media/pyrowave-sdk.pin', 'scripts/build-pyrowave-sdk.sh', 'scripts/pyrowave-macos/*.patch', 'app/src/main/jni/pyrowave-renderer/patches/*.patch') }}
       - name: Build the PyroWave SDK
         if: matrix.gpu-pyrowave && steps.sdk-cache.outputs.cache-hit != 'true'
         working-directory: .
@@ -761,7 +761,7 @@ jobs:
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: protocol/target/macos-native/*/prefix
-          key: macos-media-${{ runner.arch }}-${{ hashFiles('protocol/desktop/macos-deps.sh', 'protocol/desktop/ffmpeg-patches/macos/*.patch') }}
+          key: macos-media-${{ runner.arch }}-${{ hashFiles('protocol/desktop-media/macos-deps.sh', 'protocol/desktop-media/ffmpeg-patches/macos/*.patch') }}
       - name: Build and zip the application
         run: |
           if [ "${{ matrix.gpu-pyrowave }}" = true ]; then

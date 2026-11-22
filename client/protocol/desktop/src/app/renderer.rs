@@ -397,7 +397,8 @@ impl App {
         // Waits for a settings probe still on the old device, and forgets what it found.
         stream::pyrowave_mode::settings_probe_reset();
         // And for the latency benchmark's decoders, which may decode on the old device.
-        self.launcher.latency_bench.finish();
+        self.latency_bench.finish();
+        self.launcher.latency_bench = self.latency_bench.state();
         self.gui.release_renderer();
         // SAFETY: the renderer run() made, its textures freed, with no stream or launch using it.
         unsafe { crate::sdl::destroy_renderer(self.renderer) };
@@ -451,9 +452,13 @@ impl App {
         self.gui.renderer_changed();
         self.hosts.renderer_changed();
         #[cfg(feature = "demo-library")]
-        ui::demo::covers(&mut self.hosts, &self.gui.ctx);
+        {
+            let mut hosts_view = self.hosts.ui_view();
+            ui::demo::covers(&mut hosts_view, &self.gui.ctx);
+            self.hosts.apply_ui_demo(hosts_view);
+        }
         self.launcher.renderer_changed(&self.gui.ctx);
-        self.launcher.gpu_device = renderer_gpu_device(made);
+        self.launcher.gpu_device = renderer_gpu_device(made).map(|d| d.0 as usize);
         self.color_probed = None;
         self.base_probed = None;
         self.packed_probed = None;
@@ -611,7 +616,8 @@ impl App {
         }
         // Waits for a settings probe and the latency benchmark, which may decode on the old device.
         stream::pyrowave_mode::settings_probe_reset();
-        self.launcher.latency_bench.finish();
+        self.latency_bench.finish();
+        self.launcher.latency_bench = self.latency_bench.state();
         self.gui.release_renderer();
         let old = self.renderer;
         let kind = sdl::renderer_name(old);
@@ -648,9 +654,13 @@ impl App {
         self.gui.renderer_changed();
         self.hosts.renderer_changed();
         #[cfg(feature = "demo-library")]
-        ui::demo::covers(&mut self.hosts, &self.gui.ctx);
+        {
+            let mut hosts_view = self.hosts.ui_view();
+            ui::demo::covers(&mut hosts_view, &self.gui.ctx);
+            self.hosts.apply_ui_demo(hosts_view);
+        }
         self.launcher.renderer_changed(&self.gui.ctx);
-        self.launcher.gpu_device = renderer_gpu_device(made);
+        self.launcher.gpu_device = renderer_gpu_device(made).map(|d| d.0 as usize);
         self.launcher.tearing_supported =
             media::swapchain_allows_tearing(sdl::renderer_pointer(made, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER));
         let device = sdl::renderer_pointer(made, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);

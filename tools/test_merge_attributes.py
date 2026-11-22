@@ -5,7 +5,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import generated_docs  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-TABLE = 'client/protocol/desktop/src/strings/de.rs'
+TABLE = 'client/protocol/desktop-config/src/strings/de.rs'
 ENTRY = re.compile(r'\(\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)"\s*\),', re.S)
 
 

@@ -1,191 +1,24 @@
-//! File transfer under the native API (`/api/native/v1/files`): list the host's transfer folder,
-//! upload into it and download from it. Same pinned HTTPS and client certificate as the rest of
-//! the native API; gate the calls on `Feature::FileUpload` and `Feature::FileDownload`.
-//!
-//! Bodies stream: no call holds a whole file. Every refusal the host documents becomes
-//! [`FileError::Refused`], by HTTP status and error code together; anything else is an
-//! [`Error`], never a quiet success.
+//! File transfer under the native API (`/api/native/v1/files`): HostClient calls.
+//! Wire DTOs live in `nightjar_policy::http`.
 
+pub use nightjar_policy::http::{
+    FileError, FileList, FileRefusal, RemoteFile, TransferCancel, Uploaded,
+};
 use super::native::error_of;
 use super::native_api::PREFIX;
 use super::transport::{self, encode_query, Request, Timeouts, Upload};
 use super::{Error, HostClient, LONG_CONNECT_TIMEOUT, READ_TIMEOUT};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::io::{ErrorKind, Read, Write};
+use std::sync::Arc;
 use std::time::Duration;
 
 const LIST_PATH: &str = "files";
 const CONTENT_PATH: &str = "files/content";
-/// A folder of a few thousand files is well under this.
 pub(super) const MAX_LIST_BYTES: usize = 4 * 1024 * 1024;
-/// An upload's answer, or a refusal.
 pub(super) const MAX_JSON_BYTES: usize = 1024 * 1024;
-/// The host gives up on a transfer idle for 30 s. The client waits a little longer, in either
-/// direction, so that the host's answer comes first.
 pub(super) const TRANSFER_TIMEOUT: Duration = Duration::from_secs(35);
 
-/// Cancels one upload or download from another thread, at once, even while it waits on the
-/// host: the transfer's socket is shut down. One per transfer, cheap to share as an `Arc`; it
-/// leaves the client's other requests alone, unlike `HostClient::cancel_pending_requests`.
-#[derive(Default)]
-pub struct TransferCancel(pub(super) transport::Cancel);
-
-impl TransferCancel {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The transfer fails with `Error::Cancelled`, and so does any transfer started with this
-    /// handle later.
-    pub fn cancel(&self) {
-        self.0.cancel();
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.0.is_cancelled()
-    }
-}
-
-/// One file in the host's transfer folder.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct RemoteFile {
-    pub name: String,
-    pub size: u64,
-    pub modified_unix_ms: u64,
-}
-
-/// The host's transfer folder.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct FileList {
-    /// Where the files land on the host, for display.
-    pub folder: String,
-    pub free_bytes: u64,
-    /// The largest upload the host takes.
-    pub max_file_bytes: u64,
-    pub files: Vec<RemoteFile>,
-}
-
-/// A finished upload: the name the host stored it under, which gains " (n)" when the name was
-/// taken, and its size.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct Uploaded {
-    pub name: String,
-    pub size: u64,
-}
-
-/// A refusal the host documents, by HTTP status and error code.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FileRefusal {
-    /// 403 `forbidden`: this device lacks the permission.
-    Forbidden,
-    /// 403 `file_transfer_disabled`: file transfer is off on the host.
-    FileTransferDisabled,
-    /// 400 `invalid_name`.
-    InvalidName,
-    /// 400 `incomplete_upload`: the body ended before its Content-Length.
-    IncompleteUpload,
-    /// 411 `length_required`.
-    LengthRequired,
-    /// 413 `too_large`: over `max_file_bytes`.
-    TooLarge,
-    /// 507 `insufficient_storage`.
-    InsufficientStorage,
-    /// 409 `no_console_user`: nobody is signed in on the host.
-    NoConsoleUser,
-    /// 409 `transfer_busy`: another upload from this device is running.
-    TransferBusy,
-    /// 404 `not_found`: no such file.
-    NotFound,
-    /// 403 `folders_disabled`: the host shares no folders.
-    FoldersDisabled,
-    /// 403 `folder_unreadable`: Windows denies the host's signed-in user reading the shared
-    /// folder, or a folder or file in it.
-    FolderUnreadable,
-}
-
-impl FileRefusal {
-    const ALL: [(u16, &'static str, FileRefusal); 12] = [
-        (403, "forbidden", FileRefusal::Forbidden),
-        (
-            403,
-            "file_transfer_disabled",
-            FileRefusal::FileTransferDisabled,
-        ),
-        (400, "invalid_name", FileRefusal::InvalidName),
-        (400, "incomplete_upload", FileRefusal::IncompleteUpload),
-        (411, "length_required", FileRefusal::LengthRequired),
-        (413, "too_large", FileRefusal::TooLarge),
-        (
-            507,
-            "insufficient_storage",
-            FileRefusal::InsufficientStorage,
-        ),
-        (409, "no_console_user", FileRefusal::NoConsoleUser),
-        (409, "transfer_busy", FileRefusal::TransferBusy),
-        (404, "not_found", FileRefusal::NotFound),
-        (403, "folders_disabled", FileRefusal::FoldersDisabled),
-        (403, "folder_unreadable", FileRefusal::FolderUnreadable),
-    ];
-
-    fn from_answer(status: u16, code: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .find(|(s, c, _)| *s == status && *c == code)
-            .map(|(_, _, refusal)| *refusal)
-    }
-
-    /// The host's error code.
-    pub fn code(self) -> &'static str {
-        Self::ALL
-            .iter()
-            .find(|(_, _, refusal)| *refusal == self)
-            .map_or("", |(_, code, _)| code)
-    }
-}
-
-/// Why a file call gave no success.
-#[derive(Debug)]
-pub enum FileError {
-    /// The host answered with a documented refusal.
-    Refused {
-        refusal: FileRefusal,
-        status: u16,
-        message: String,
-    },
-    /// Reading the file to upload, or writing the download, failed on this device.
-    Local(std::io::Error),
-    Host(Error),
-}
-
-impl std::fmt::Display for FileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FileError::Refused {
-                status, message, ..
-            } => write!(f, "host error {status}: {message}"),
-            FileError::Local(e) => write!(f, "local file: {e}"),
-            FileError::Host(e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for FileError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            FileError::Local(e) => Some(e),
-            FileError::Host(e) => Some(e),
-            FileError::Refused { .. } => None,
-        }
-    }
-}
-
-impl From<Error> for FileError {
-    fn from(e: Error) -> Self {
-        FileError::Host(e)
-    }
-}
-
-/// The error body with the code as the host sent it: the pinned `ErrorCode` has no file codes.
 #[derive(Deserialize)]
 struct ErrorBody {
     error: RawError,
@@ -201,7 +34,7 @@ struct RawError {
 /// A non-2xx answer: a documented refusal, or the native API's error for anything else.
 fn refusal(response: transport::Response, path: &str) -> FileError {
     if let Ok(ErrorBody { error }) = serde_json::from_slice(&response.body)
-        && let Some(refusal) = FileRefusal::from_answer(response.status, &error.code)
+        && let Some(refusal) = nightjar_policy::http::FileRefusal::from_answer(response.status, &error.code)
     {
         return FileError::Refused {
             refusal,
@@ -360,7 +193,11 @@ impl HostClient {
             content_type: "application/octet-stream",
             method: "POST",
         };
-        match transport::upload(&request, &self.cancel, upload, progress, &stop.0) {
+        let cancel = Arc::new(transport::Cancel::default());
+        let hook = stop.register_hook(Arc::new({ let cancel = cancel.clone(); move || cancel.cancel() }))?;
+        let res = transport::upload(&request, &self.cancel, upload, progress, &cancel);
+        stop.unregister_hook(hook);
+        match res {
             Ok(response) => uploaded(response, &path, length),
             Err(error) => Err(file.or(error)),
         }
@@ -432,7 +269,11 @@ pub(super) fn download_listed(
         length = done;
         progress(done, total);
     };
-    match transport::download(request, cancel, &mut sink, &mut counted, &stop.0) {
+    let stop_cancel = Arc::new(transport::Cancel::default());
+    let hook = stop.register_hook(Arc::new({ let stop_cancel = stop_cancel.clone(); move || stop_cancel.cancel() }))?;
+    let res = transport::download(request, cancel, &mut sink, &mut counted, &stop_cancel);
+    stop.unregister_hook(hook);
+    match res {
         Ok(response) => downloaded(response, path, length),
         Err(_) if sink.inner.over => Err(Error::Malformed(format!(
             "native API {path}: the host sent more than the {listed} bytes it listed"

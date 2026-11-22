@@ -23,22 +23,9 @@ const COVER_SHRINK_BELOW: f32 = 0.9;
 /// without reloading, and a library of thousands no longer keeps every cover it ever showed.
 const COVER_BUDGET: usize = 256 << 20;
 
-/// The covers drawn or asked for since [`Hosts::covers_shown`] last took them, by texture. A set,
-/// so it holds no more than there are covers however many frames pass before it is taken.
-#[derive(Clone, Default)]
-struct CoversUsed(std::collections::HashSet<egui::TextureId>);
-
-/// Notes that the cover `texture` is on screen (or needed off it) in this frame, so it is not one
-/// given up for room.
-pub fn cover_used(ctx: &egui::Context, texture: &egui::TextureHandle) {
-    ctx.data_mut(|d| d.get_temp_mut_or_default::<CoversUsed>(egui::Id::NULL).0.insert(texture.id()));
-}
-
-/// The covers noted as in use since they were last taken, for a test of the pages that note them.
 #[cfg(test)]
-pub(crate) fn covers_noted(ctx: &egui::Context) -> std::collections::HashSet<egui::TextureId> {
-    ctx.data_mut(|d| std::mem::take(&mut d.get_temp_mut_or_default::<CoversUsed>(egui::Id::NULL).0))
-}
+pub use nightjar_desktop_ui::hosts_model::cover_used;
+pub use nightjar_desktop_ui::hosts_model::covers_noted;
 
 impl Hosts {
     /// As [`Self::spawn`], for a cover: on one of the few threads covers load on.
@@ -122,7 +109,7 @@ impl Hosts {
     /// the cover textures hold more than their budget, the ones longest off screen are given up.
     pub fn covers_shown(&mut self, ctx: &egui::Context, store: &Store) {
         self.art_frame += 1;
-        let used = ctx.data_mut(|d| std::mem::take(&mut d.get_temp_mut_or_default::<CoversUsed>(egui::Id::NULL).0));
+        let used = covers_noted(ctx);
         for texture in used {
             self.art_used.insert(texture, self.art_frame);
         }

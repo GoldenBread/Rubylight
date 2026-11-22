@@ -398,50 +398,31 @@ impl Updates {
     /// The notice over the launcher until it is opened or dismissed.
     pub fn show(&mut self, ctx: &egui::Context) {
         let Some(release) = &self.found else { return };
-        let (mut update, mut stop, mut close, mut skip) = (false, false, false, false);
-        egui::Area::new(egui::Id::unique("update-notice"))
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-24.0, -24.0))
-            .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(*crate::theme::SURFACE_HIGHEST)
-                    .corner_radius(egui::CornerRadius::same(14))
-                    .inner_margin(egui::Margin::symmetric(16, 12))
-                    .show(ui, |ui| {
-                        ui.set_max_width(360.0);
-                        if let Some(job) = &self.job {
-                            ui.label(trf("Downloading Nightjar {}", &[&release.version]));
-                            let received = job.progress.received.load(Ordering::Relaxed);
-                            ui.add(egui::ProgressBar::new(received as f32 / job.size.max(1) as f32).desired_width(280.0).show_percentage());
-                            stop = crate::ui::quiet_button(ui, "Cancel").clicked();
-                            return;
-                        }
-                        ui.label(trf("Nightjar {} is available.", &[&release.version]));
-                        if let Some(failure) = &self.failure {
-                            ui.colored_label(ui.visuals().error_fg_color, failure_text(failure, &release.version));
-                        }
-                        ui.horizontal(|ui| {
-                            let refused = self.failure.as_ref().is_some_and(Failure::is_final);
-                            if self.steps.is_some() && !refused {
-                                update = ui.add_enabled_ui(!self.held, |ui| crate::ui::primary_button(ui, "Update now")).inner.clicked();
-                            }
-                            if crate::ui::quiet_button(ui, "Open download page").clicked() {
-                                if let Err(e) = crate::sdl::open_url(&release.url) { eprintln!("nightjar: update page: {e}"); }
-                                close = true;
-                            }
-                            close |= crate::ui::quiet_button(ui, "Not now").clicked();
-                        });
-                        ui.horizontal(|ui| {
-                            skip = crate::ui::quiet_button(ui, "Skip this version").clicked();
-                        });
-                    });
-            });
-        if update { self.update_now(); }
-        if stop { self.cancel(); }
-        if skip { self.skip(); }
-        if close {
-            self.found = None;
-            self.failure = None;
+        let refused = self.failure.as_ref().is_some_and(Failure::is_final);
+        let state = crate::update_banner::UpdateBannerState {
+            version: release.version.clone(),
+            url: release.url.clone(),
+            progress: self.job.as_ref().map(|job| (job.progress.received.load(Ordering::Relaxed), job.size)),
+            failure_text: self.failure.as_ref().map(|f| failure_text(f, &release.version)),
+            can_install: self.steps.is_some() && !refused,
+            held: self.held,
+        };
+        match crate::update_banner::show(ctx, &state) {
+            Some(crate::update_banner::UpdateBannerAction::UpdateNow) => self.update_now(),
+            Some(crate::update_banner::UpdateBannerAction::Cancel) => self.cancel(),
+            Some(crate::update_banner::UpdateBannerAction::OpenDownloadPage(url)) => {
+                if let Err(e) = crate::sdl::open_url(&url) {
+                    eprintln!("nightjar: update page: {e}");
+                }
+                self.found = None;
+                self.failure = None;
+            }
+            Some(crate::update_banner::UpdateBannerAction::SkipVersion) => self.skip(),
+            Some(crate::update_banner::UpdateBannerAction::Close) => {
+                self.found = None;
+                self.failure = None;
+            }
+            None => {}
         }
     }
 }

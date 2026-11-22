@@ -6,8 +6,6 @@
 //! client certificate, trusting only the host certificate pinned at pairing. The API is
 //! blocking; call it from a worker thread.
 
-mod apps;
-mod capabilities;
 mod clipboard_image;
 mod coop;
 mod crypto;
@@ -19,7 +17,6 @@ mod hardware_metrics;
 mod identity;
 mod internet_play;
 mod launch;
-mod luminance;
 mod native;
 mod network_path;
 mod pairing;
@@ -31,23 +28,14 @@ pub mod pace;
 mod power;
 mod probe;
 mod remote_check;
-mod serverinfo;
 mod transport;
 pub mod transfers;
 mod usb;
 mod wire;
-mod xml;
 
 #[cfg(test)]
 mod fuzz_tests;
 
-pub use apps::{app_control, parse_app_list, App, AppControl, AppRole};
-pub use capabilities::{
-    parse_rubylight_version, Availability, Evidence, Family, Feature, HostCapabilities, Reason,
-    PERMISSION_CLIPBOARD_READ, PERMISSION_CLIPBOARD_SET, PERMISSION_CONTROLLER, PERMISSION_INPUT,
-    PERMISSION_LAUNCH, PERMISSION_LIST, PERMISSION_SERVER_COMMAND, PERMISSION_VIEW,
-    PYROWAVE_CODEC_BITS,
-};
 pub use clipboard_image::{
     png_size, ImageClipboardError, MAX_CLIPBOARD_IMAGE_BYTES, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE,
     PNG_SIGNATURE,
@@ -69,7 +57,6 @@ pub use launch::{
     asks_to_confirm_replace, parse_launch_reply, HostDisplay, LaunchRequest, Launched,
     CONFIRM_REPLACE, CORE_LAUNCH_PARAMETERS,
 };
-pub use luminance::DisplayLuminance;
 pub use native::{FilePermissions, MovedTo, NativeCapabilities, NativeLibrary, PlayingOn, StreamMove};
 pub use device_approval::{
     valid_pairing_pin, PairingApprove, PairingApproved, PairingDeny, PairingRequest, PairingRequests,
@@ -93,22 +80,51 @@ pub use pc_power::{
 pub use power::{PowerError, PowerReply, Refusal};
 pub use probe::{probe_start_kbps, jumbo_probe_passes, jumbo_probe_size, LINK_PROBE_BYTES, JUMBO_PROBE_FPS, JUMBO_PROBE_KBPS, PROBE_FLOOR_KBPS, PROBE_START_SHARE};
 pub use remote_check::{ConnectionTestStats, RemoteCheck, RemoteOutcome, REMOTE_CHECK_PROBES};
-pub use serverinfo::ServerInfo;
 pub use transport::set_app_version;
 pub use usb::{
     UsbTunnel, TOKEN_HEADER as USB_TOKEN_HEADER, TUNNEL_PATH as USB_TUNNEL_PATH,
     UPGRADE as USB_UPGRADE,
 };
 
-/// The Rubylight native API v1 wire types, for callers of the `HostClient` native methods.
+/// Re-exported pure HTTP DTOs and parsers from `nightjar_policy::http`.
+pub use nightjar_policy::http::{
+    app_control, parse_app_list, parse_rubylight_version, xml, App, AppControl, AppRole,
+    Availability, DisplayLuminance, Error, Evidence, Family, Feature, HostApiError,
+    HostCapabilities, LaunchUnanswered, Reason, ServerInfo, DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT,
+    PERMISSION_CLIPBOARD_READ, PERMISSION_CLIPBOARD_SET, PERMISSION_CONTROLLER, PERMISSION_INPUT,
+    PERMISSION_LAUNCH, PERMISSION_LIST, PERMISSION_SERVER_COMMAND, PERMISSION_VIEW,
+    PYROWAVE_CODEC_BITS, SECOND_SCREEN_PARAMETER,
+};
 pub use rubylight_native_api as native_api;
+
+pub(crate) mod capabilities {
+    pub use nightjar_policy::http::{
+        Family, Feature, HostCapabilities, PYROWAVE_BANDWIDTH_PROBE_BYTES,
+    };
+    #[cfg(test)]
+    pub use nightjar_policy::http::{parse_rubylight_version, Availability, Evidence, Reason};
+}
+pub(crate) mod apps {
+    pub use nightjar_policy::http::AppRole;
+    #[cfg(test)]
+    pub use nightjar_policy::http::parse_app_list;
+}
+pub(crate) mod luminance {
+    pub use nightjar_policy::http::DisplayLuminance;
+}
+pub(crate) mod serverinfo {
+    #[cfg(test)]
+    pub use nightjar_policy::http::{parse_version_quad, ServerInfo};
+    #[cfg(test)]
+    pub(crate) mod tests {
+        pub(crate) const RUBYLIGHT: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?><root status_code=\"200\"><NetworkPathVersion>1</NetworkPathVersion><HardwareMetricsVersion>0</HardwareMetricsVersion><hostname>Gaming PC</hostname><appversion>7.1.431.-1</appversion><GfeVersion>3.23.0.74</GfeVersion><uniqueid>0123-ABCD</uniqueid><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort><PairStatus>1</PairStatus><currentgame>5</currentgame><currentgameuuid>uuid-5</currentgameuuid><state>SUNSHINE_SERVER_BUSY</state><LocalIP>192.168.1.20</LocalIP><mac>AA:BB:CC:DD:EE:FF</mac><MaxLumaPixelsHEVC>1869449984</MaxLumaPixelsHEVC><ServerCodecModeSupport>8457985</ServerCodecModeSupport><RustHostVersion>2.2.21</RustHostVersion><RustHostEncoderBitrateKbps>40000</RustHostEncoderBitrateKbps><RustHostInitialEncoderBitrateKbps>50000</RustHostInitialEncoderBitrateKbps><RustHostSessionCount></RustHostSessionCount><PyroWaveHostLinkMbps>2500</PyroWaveHostLinkMbps><PyroWaveBandwidthProbeBytes>33554432</PyroWaveBandwidthProbeBytes><PyroWaveUdpProbeVersion>1</PyroWaveUdpProbeVersion><PyroWaveUdpHandshakeVersion>1</PyroWaveUdpHandshakeVersion><PyroWaveUdpProbeBurstVersion>1</PyroWaveUdpProbeBurstVersion><PyroWaveWireBudgetVersion>1</PyroWaveWireBudgetVersion><PyroWaveCriticalFecPercentage>20</PyroWaveCriticalFecPercentage><PyroWaveMinParityShards>2</PyroWaveMinParityShards><Permission>119480064</Permission><FrameLimiterSupported>1</FrameLimiterSupported><FrameLimiterEnabled>1</FrameLimiterEnabled><VirtualDisplayFrameLimiterEnabled>0</VirtualDisplayFrameLimiterEnabled><FrameLimiterFpsLimitMilliHz>119880</FrameLimiterFpsLimitMilliHz><VirtualDisplayCapable>true</VirtualDisplayCapable><VirtualDisplayDriverReady>false</VirtualDisplayDriverReady><ControllerPreparation>1</ControllerPreparation><VirtualDisplayHDRCapable>true</VirtualDisplayHDRCapable><ServerCommand>Sleep</ServerCommand><ServerCommand></ServerCommand></root>";
+    }
+}
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use transport::{Cancel, Host, Request, Timeouts};
 
-pub const DEFAULT_HTTP_PORT: u16 = 47989;
-pub const DEFAULT_HTTPS_PORT: u16 = 47984;
 const SHORT_CONNECT_TIMEOUT: Duration = Duration::from_millis(3000);
 const LONG_CONNECT_TIMEOUT: Duration = Duration::from_millis(5000);
 const READ_TIMEOUT: Duration = Duration::from_millis(7000);
@@ -163,83 +179,6 @@ pub enum InfoPath {
     Plain,
 }
 
-/// Why a host request failed.
-#[derive(Debug)]
-pub enum Error {
-    Io(std::io::Error),
-    Tls(String),
-    /// The host presented a certificate other than the pinned one.
-    CertificateMismatch,
-    /// An HTTP status other than 2xx, or a reply whose `status_code` is not 200. Hosts use
-    /// 401 for unpaired clients; 599 is synthesized when a cancel left another client's game.
-    Status {
-        code: i32,
-        message: String,
-    },
-    /// HTTP 404.
-    NotFound(String),
-    /// A non-2xx answer from the native API, with the host's error body. `status` is the HTTP
-    /// status, which an `ErrorCode::Unknown` from a newer host is handled by.
-    Api {
-        status: u16,
-        error: native_api::error::ApiError,
-    },
-    Malformed(String),
-    /// HTTPS needs the host certificate from pairing.
-    NotPaired,
-    InvalidIdentity(String),
-    InvalidArgument(String),
-    /// Ended by [`HostClient::cancel_pending_requests`].
-    Cancelled,
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::Io(e) => write!(f, "{e}"),
-            Error::Tls(e) => write!(f, "TLS: {e}"),
-            Error::CertificateMismatch => f.write_str("Server certificate mismatch"),
-            Error::Status { code, message } => write!(f, "host error {code}: {message}"),
-            Error::NotFound(url) => write!(f, "not found: {url}"),
-            Error::Api { error, .. } => f.write_str(&error.message),
-            Error::Malformed(e) => f.write_str(e),
-            Error::NotPaired => f.write_str("the host is not paired"),
-            Error::InvalidIdentity(e) => write!(f, "invalid client identity: {e}"),
-            Error::InvalidArgument(e) => f.write_str(e),
-            Error::Cancelled => f.write_str("request cancelled"),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-/// The PC took a launch or resume and gave no answer within its limit
-/// ([`LAUNCH_READ_TIMEOUT`]); carried in an [`Error::Io`] of kind `Other`, so it is not
-/// mistaken for a dropped connection that a retry would cure.
-#[derive(Debug)]
-pub struct LaunchUnanswered {
-    pub seconds: u64,
-}
-
-impl std::fmt::Display for LaunchUnanswered {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "The PC didn't answer the start within {} seconds. Try again, or check what the PC is doing.",
-            self.seconds
-        )
-    }
-}
-
-impl std::error::Error for LaunchUnanswered {}
-
-impl Error {
-    /// Whether this is a launch or resume the PC never answered ([`LaunchUnanswered`]).
-    pub fn is_launch_unanswered(&self) -> bool {
-        matches!(self, Error::Io(e) if e.get_ref().is_some_and(|inner| inner.is::<LaunchUnanswered>()))
-    }
-}
-
 /// A launch's failure after `waited`: a timeout that took the whole `limit` is the PC's missing
 /// answer; a connect that timed out early stays the usual connection failure.
 fn launch_failure(error: Error, waited: Duration, limit: Duration) -> Error {
@@ -255,65 +194,6 @@ fn launch_failure(error: Error, waited: Duration, limit: Duration) -> Error {
             }))
         }
         other => other,
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Error::Io(e)
-    }
-}
-
-/// Why an optional host API (hardware metrics, network path) gave no answer.
-#[derive(Debug)]
-pub enum HostApiError {
-    /// The host does not offer the feature to this client, so nothing was sent;
-    /// `availability` says what would change that.
-    Unavailable {
-        feature: Feature,
-        availability: Availability,
-    },
-    /// The host answered with a schema version this client does not read.
-    UnsupportedVersion,
-    Host(Error),
-}
-
-impl HostApiError {
-    fn require(capabilities: &HostCapabilities, feature: Feature) -> Result<(), Self> {
-        match capabilities.availability(feature) {
-            Availability::Supported => Ok(()),
-            availability => Err(HostApiError::Unavailable {
-                feature,
-                availability,
-            }),
-        }
-    }
-}
-
-impl std::fmt::Display for HostApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HostApiError::Unavailable { feature, .. } => {
-                write!(f, "the host does not offer {feature:?}")
-            }
-            HostApiError::UnsupportedVersion => f.write_str("unsupported host API version"),
-            HostApiError::Host(e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for HostApiError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            HostApiError::Host(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<Error> for HostApiError {
-    fn from(e: Error) -> Self {
-        HostApiError::Host(e)
     }
 }
 
@@ -335,10 +215,6 @@ pub struct HostClient {
     cancel: Cancel,
 }
 
-/// The query parameter on every request a device's second screen makes: the host keeps that stream
-/// beside the device's first instead of taking it for the first starting again
-/// ([`Feature::SecondScreen`]).
-pub const SECOND_SCREEN_PARAMETER: &str = "rlSecondScreen";
 
 #[derive(Clone, Copy)]
 enum Scheme {

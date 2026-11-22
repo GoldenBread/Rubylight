@@ -1,7 +1,7 @@
 //! Artwork and facts from SteamGridDB and IGDB for the PCs' games ([`crate::game_info`]): the
 //! worker that looks facts up for the library's filters and game pages, and what the pages read.
 
-use nightjar_policy::game_info::cache::{Facts, Record};
+use nightjar_policy::game_info::cache::Record;
 use nightjar_policy::game_info::job::{Game, Keys};
 
 use super::*;
@@ -117,16 +117,6 @@ impl Hosts {
         self.game_info.as_ref().is_some_and(|i| i.keys().info())
     }
 
-    /// The facts of the game under `key` ([`crate::game_info::entry_key`]), when known.
-    pub fn facts(&self, key: &str) -> Option<&Facts> {
-        self.facts.get(key)
-    }
-
-    /// Whether the facts of `key` were asked for since the keys last changed.
-    pub fn facts_asked(&self, key: &str) -> bool {
-        self.facts_asked.contains(key)
-    }
-
     /// Asks for the facts of `games` that were not asked for yet: from disk when kept, else from
     /// IGDB, one at a time on the worker.
     pub fn want_facts(&mut self, games: Vec<Game>) {
@@ -162,11 +152,5 @@ impl Hosts {
         let game = host.library()?.games.iter().find(|g| g.app_id as i32 == app)?;
         let store = game.store.as_ref().map(|s| (s.source.as_str(), s.id.as_str()));
         Some(CoverFallback { info, worker, events: self.sender.clone(), waker: self.waker.clone(), game: crate::game_info::game_of(&game.title, game.game_id.as_deref(), store) })
-    }
-
-    /// Facts put in place without a worker, for tests.
-    #[cfg(test)]
-    pub(crate) fn put_facts(&mut self, key: &str, facts: Facts) {
-        self.facts.insert(key.to_owned(), facts);
     }
 }

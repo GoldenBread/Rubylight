@@ -17,8 +17,11 @@ All Rust is one Cargo workspace in `protocol/`.
 | `rubylight-native-api` | `protocol/native-api/` | Wire types of the Rubylight native API v1, versioned on their own and shared with the host. |
 | `rubylight-traverse` | `protocol/traverse/` | Internet play, shared with the host: DHT records, STUN, PCP and NAT-PMP, hole punching and the tunnel that reach a paired PC from outside its network. |
 | `nightjar-core` | `protocol/client/` | The streaming engine: pairing and HTTPS, RTSP, control, video and audio receive, input, USB forwarding. |
-| `nightjar-policy` | `protocol/policy/` | Decisions without I/O or a clock: bitrate, the quality ladder, the recovery budget, the overlay, the stream menu, the SteamGridDB and IGDB lookup (`game_info/`). Both apps call it, so they decide alike. |
-| `nightjar-desktop` | `protocol/desktop/` | The Windows, Linux and macOS app. |
+| `nightjar-policy` | `protocol/policy/` | Decisions without I/O or a clock: bitrate, the quality ladder, the recovery budget, the overlay, the stream menu, host capabilities (`http/capabilities.rs`), the SteamGridDB and IGDB lookup (`game_info/`). Both apps call it, so they decide alike. |
+| `nightjar-desktop-config` | `protocol/desktop-config/` | Desktop settings, shortcuts, string tables (`strings/`), pure state DTOs (`hosts_types`, `stream_types`, `gamepad_types`, `power_types`, `wol_types`, `pin_lock`). |
+| `nightjar-desktop-ui` | `protocol/desktop-ui/` | Pure `egui` desktop pages (`ui/`, `host_page`, `folders_page`, `coop_page`, `neural_page`, `session_page`, `console`, `stream_menu`, `radeon`, `theme`) and CPU test rasterizer (`shot.rs`). |
+| `nightjar-desktop-media` | `protocol/desktop-media/` | SDL3, FFmpeg, Opus, Vulkan/D3D11/Metal video decode and presentation (`media.rs`, `stream/`, `vulkan_video`, `kms/`, `metal/`), gamepads, and USB forwarding. |
+| `nightjar-desktop` | `protocol/desktop/` | Thin Windows, Linux and macOS binary entry, SDL3+egui host (`gui.rs`), launcher/session loop (`app/`), worker threads (`hosts/`), and OS hooks. |
 | `nightjar-android` | `protocol/android/` | `libnightjar_core.so`, the JNI side of the Android app's Rust engine. |
 | `rubylight-protocol-ffi` | `protocol/ffi/` | A C interface to `rubylight-protocol`. |
 | `nightjar-cli` | `protocol/cli/` | A headless client for tests. |
@@ -29,7 +32,7 @@ A feature lands in both apps in one change. What they share goes into `nightjar-
 
 | Step | Where |
 | --- | --- |
-| Find and pair a PC, list apps, launch | `protocol/client/src/http/`; what the host offers is [`Feature`, `HostCapabilities`](../protocol/client/src/http/capabilities.rs) |
+| Find and pair a PC, list apps, launch | `protocol/client/src/http/`; what the host offers is [`Feature`, `HostCapabilities`](../protocol/policy/src/http/capabilities.rs) |
 | Internet play, guests | `protocol/client/src/internet.rs` and `protocol/client/src/http/internet_play.rs` (over `rubylight-traverse`); joining another device's game in `protocol/client/src/http/session_guests.rs`; invite links in `protocol/core/src/invite_uri.rs`, opened by `protocol/client/src/invite.rs` (Android `computers/Invites.java`, desktop `hosts.rs`) |
 | RTSP | `protocol/client/src/rtsp/`, `protocol/client/src/sdp.rs` |
 | Control | `protocol/client/src/control/`: `session.rs` is the state machine without a socket, `driver.rs` runs it on ENet, `messages.rs` and `events.rs` are what is sent and received |
@@ -41,21 +44,21 @@ A feature lands in both apps in one change. What they share goes into `nightjar-
 
 ## The desktop app
 
-| Part | `protocol/desktop/src/` |
+| Part | Where (`protocol/desktop*/src/`) |
 | --- | --- |
-| Entry, command line | `main.rs` holds the app's state (`App`) and its loop; `cli.rs` |
-| What the app does | `app.rs` (saving, shutdown), `app/launcher.rs` (the launcher's events and frames), `app/command.rs` (carries out what the UI returns), `app/launch.rs` (starting a stream), `app/launch_probe.rs` (the decoder checks before a start, on a worker thread), `app/session.rs` (a running stream and its end), `app/overlay.rs` (statistics, toasts and the stream menu over the picture), `app/renderer.rs` and `render_device.rs` (the window's renderer and device-loss recovery) |
-| UI | `gui.rs` (egui on SDL3), `ui.rs` and `ui/`: pages only draw and return commands. Settings page: `ui/settings.rs` |
-| PCs and apps | `hosts.rs`: discovery and app lists on worker threads, results as events (`hosts/events.rs` applies them); `hosts/pairing.rs`, `hosts/power.rs` (wake, sleep, updates), `hosts/native.rs` (the native API's reads), `hosts/covers.rs`, `hosts/game_info.rs` (SteamGridDB covers and IGDB facts for the games) |
-| Stream | `stream/mod.rs` (session worker), `stream/connect.rs` (launch), `stream/negotiate.rs` (mode, bitrate, codecs, HDR), `stream/pipeline.rs` (picture loop, decoder order), `stream/present.rs` and `stream/present/` (the video texture; `stream/present/pacer.rs` decides when a picture is shown), `stream/upscale.rs` (FSR and SGSR upscaling), `stream/input.rs`, `stream/recovery.rs`, `stream/guests.rs`, `stream/touchpad/` |
-| Decode | `media.rs` (FFmpeg, Opus), `media/d3d11.rs` (Windows D3D11VA decode-device isolation, shared textures, monitored fences, `ID3D10Multithread` lock), `vulkan_video.rs`, `amd_decode.rs`, `linux_video.rs`, `dmabuf.rs`, `stream/pyrowave.rs`, `stream/pyrowave_gpu.rs`; `stream/decoder_cache.rs` keeps the last stream's decoder for the reconnect that follows it |
-| Windows only | `stream/direct.rs`, `stream/d3d11.rs` (`stream/d3d11/surface_cache.rs`), `stream/amf_scaler.rs`, `stream/wasapi.rs`, `stream/microphone.rs` |
-| Linux only | `dmabuf.rs`, `vulkan_video.rs`, `stream/wl_scanout.rs`, `stream/wl_presentation.rs`, `stream/drm_vrr.rs`, `stream/planes_gpu.rs`, `kms/` with `stream/kms_scanout.rs` (DRM/KMS output without a desktop), `stream/touchpad/evdev.rs` |
-| macOS only | `metal/`, `stream/macos_video_check.rs`, `stream/metalfx.rs` with its Objective-C bridge `stream/metalfx.m` (MetalFX upscaling, compiled by the crate's build script), `stream/pyrowave_sdk/own_vulkan.rs` (PyroWave's GPU decoder on the bundled KosmicKrisp Vulkan driver; the desktop crate's macos-vulkan.sh builds the driver and loader) |
-| Settings, text | `config.rs`, `strings.rs`, `strings/` |
-| Artwork and game facts | `game_info.rs` (keys, HTTPS, the record and image cache) over `nightjar_policy::game_info`; the HTTPS is `update_net.rs`'s `exchange` |
+| Entry, command line | `desktop/src/main.rs` holds the app's state (`App`) and its loop; `desktop/src/cli.rs` |
+| What the app does | `desktop/src/app.rs` (saving, shutdown), `desktop/src/app/launcher.rs` (the launcher's events and frames), `desktop/src/app/command.rs` (carries out what the UI returns), `desktop/src/app/launch.rs` (starting a stream), `desktop/src/app/launch_probe.rs` (the decoder checks before a start, on a worker thread), `desktop/src/app/session.rs` (a running stream and its end), `desktop/src/app/overlay.rs` (statistics, toasts and the stream menu over the picture), `desktop/src/app/renderer.rs` and `desktop-media/src/render_device.rs` (the window's renderer and device-loss recovery) |
+| UI | `desktop/src/gui.rs` (egui on SDL3); `desktop-ui/src/ui.rs` and `desktop-ui/src/ui/` pages only draw and return commands. Settings page: `desktop-ui/src/ui/settings.rs` |
+| PCs and apps | `desktop/src/hosts.rs`: discovery and app lists on worker threads, results as events (`desktop/src/hosts/events.rs` applies them); `desktop/src/hosts/pairing.rs`, `desktop/src/hosts/power.rs` (wake, sleep, updates), `desktop/src/hosts/native.rs` (the native API's reads), `desktop/src/hosts/covers.rs`, `desktop/src/hosts/game_info.rs` (SteamGridDB covers and IGDB facts for the games); UI models in `desktop-ui/src/hosts_model.rs` |
+| Stream (`desktop-media/src/`) | `stream/mod.rs` (session worker), `stream/connect.rs` (launch), `stream/negotiate.rs` (mode, bitrate, codecs, HDR), `stream/pipeline.rs` (picture loop, decoder order), `stream/present.rs` and `stream/present/` (the video texture; `stream/present/pacer.rs` decides when a picture is shown), `stream/upscale.rs` (FSR and SGSR upscaling), `stream/input.rs`, `stream/recovery.rs`, `stream/guests.rs`, `stream/touchpad/` |
+| Decode (`desktop-media/src/`) | `media.rs` (FFmpeg, Opus), `media/d3d11.rs` (Windows D3D11VA decode-device isolation, shared textures, monitored fences, `ID3D10Multithread` lock), `vulkan_video.rs`, `amd_decode.rs`, `linux_video.rs`, `dmabuf.rs`, `stream/pyrowave.rs`, `stream/pyrowave_gpu.rs`; `stream/decoder_cache.rs` keeps the last stream's decoder for the reconnect that follows it |
+| Windows only (`desktop-media/src/`) | `stream/direct.rs`, `stream/d3d11.rs` (`stream/d3d11/surface_cache.rs`), `stream/amf_scaler.rs`, `stream/wasapi.rs`, `stream/microphone.rs` |
+| Linux only (`desktop-media/src/`) | `dmabuf.rs`, `vulkan_video.rs`, `stream/wl_scanout.rs`, `stream/wl_presentation.rs`, `stream/drm_vrr.rs`, `stream/planes_gpu.rs`, `kms/` with `stream/kms_scanout.rs` (DRM/KMS output without a desktop), `stream/touchpad/evdev.rs` |
+| macOS only (`desktop-media/src/`) | `metal/`, `stream/macos_video_check.rs`, `stream/metalfx.rs` with its Objective-C bridge `stream/metalfx.m` (MetalFX upscaling, compiled by `desktop-media`'s build script), `stream/pyrowave_sdk/own_vulkan.rs` (PyroWave's GPU decoder on the bundled KosmicKrisp Vulkan driver; `desktop-media/macos-vulkan.sh` builds the driver and loader) |
+| Settings, text (`desktop-config/src/`) | `config.rs`, `strings.rs`, `strings/` |
+| Artwork and game facts | `desktop/src/game_info.rs` (keys, HTTPS, the record and image cache) over `nightjar_policy::game_info`; the HTTPS is `desktop/src/update_net.rs`'s `exchange` |
 
-`cfg(unix)` includes macOS: Linux-only code takes `target_os = "linux"`. A changed shader `.spv` needs its Metal translation from `protocol/desktop/src/metal/generate.py`.
+`cfg(unix)` includes macOS: Linux-only code takes `target_os = "linux"`. A changed shader `.spv` needs its Metal translation from `protocol/desktop-media/src/metal/generate.py`.
 
 ## The Android app
 
@@ -82,10 +85,10 @@ Native code beside the engines, in `app/src/main/jni/`: `pyrowave-renderer/`, `v
 
 Desktop:
 
-1. A field of [`Settings`](../protocol/desktop/src/config.rs) with a doc comment and its default. A stored name is never renamed: an old value is read with a serde alias or in [`migrate`](../protocol/desktop/src/config.rs). Per-PC and per-game values are [`Overrides`](../protocol/desktop/src/config.rs).
-2. A row in [`settings_rows`](../protocol/desktop/src/ui/settings.rs), in the section the setting belongs to.
-3. Its words: the English literal inside [`tr`, `trf`, `en`](../protocol/desktop/src/strings.rs) is the key, and every table in `protocol/desktop/src/strings/` needs an entry for it. A test fails for a missing one.
-4. Tests in `protocol/desktop/src/ui/settings_tests.rs`.
+1. A field of [`Settings`](../protocol/desktop-config/src/config.rs) with a doc comment and its default. A stored name is never renamed: an old value is read with a serde alias or in [`migrate`](../protocol/desktop-config/src/config.rs). Per-PC and per-game values are [`Overrides`](../protocol/desktop-config/src/config.rs).
+2. A row in [`settings_rows`](../protocol/desktop-ui/src/ui/settings.rs), in the section the setting belongs to.
+3. Its words: the English literal inside [`tr`, `trf`, `en`](../protocol/desktop-config/src/strings.rs) is the key, and every table in `protocol/desktop-config/src/strings/` needs an entry for it. A test fails for a missing one.
+4. Tests in `protocol/desktop-ui/src/ui/settings_tests.rs`.
 
 Android:
 
@@ -100,12 +103,12 @@ A decision both apps make from the setting goes into `protocol/policy/src/`.
 1. The id in [`ids.rs`](../protocol/core/src/ids.rs) and a module in `protocol/core/src/`.
 2. The engine: `protocol/client/src/control/messages.rs` to send, `events.rs` to receive. It is sent only to a host that announced it.
 3. Android: `protocol/android/src/lib.rs` and its [`RustBridge`](../app/src/main/java/com/limelight/nvstream/jni/RustBridge.java) method.
-4. Desktop: the handler in `protocol/desktop/src/stream/`.
+4. Desktop: the handler in `protocol/desktop-media/src/stream/`.
 5. Tests: `protocol/client/tests/control_messages_contract.rs` and [`MoonBridgeControlMessagesTest`](../app/src/test/java/com/limelight/nvstream/jni/MoonBridgeControlMessagesTest.java).
 
 ### A feature that needs the host
 
-Add it to [`Feature`](../protocol/client/src/http/capabilities.rs) with the evidence that proves it (a serverinfo field, a DESCRIBE line, a native API capability merged by [`with_native`](../protocol/client/src/http/capabilities.rs)), and to the Java [`HostCapabilities`](../app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java). Both read the recorded replies in `app/src/test/resources/protocol/capabilities/`, checked by `protocol/client/tests/capabilities_contract.rs`. Gate on the feature, never on a host's name.
+Add it to [`Feature`](../protocol/policy/src/http/capabilities.rs) with the evidence that proves it (a serverinfo field, a DESCRIBE line, a native API capability merged by [`with_native`](../protocol/policy/src/http/capabilities.rs)), and to the Java [`HostCapabilities`](../app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java). Both read the recorded replies in `app/src/test/resources/protocol/capabilities/`, checked by `protocol/client/tests/capabilities_contract.rs`. Gate on the feature, never on a host's name.
 
 ## The narrowest test
 
@@ -115,7 +118,7 @@ Add it to [`Feature`](../protocol/client/src/http/capabilities.rs) with the evid
 | Bytes from the network | The property tests `protocol/core/src/fuzz.rs`, `protocol/client/src/fuzz_tests.rs` and the `fuzz_tests.rs` under `http/` and `rtsp/`. `PROPTEST_CASES` raises the count. |
 | Same bytes as the classic C engine for audio, video and FEC | `cargo test -p nightjar-core --test golden_audio --test golden_video --test golden_fec` (digests recorded from it in `protocol/client/tests/golden/golden.txt`) |
 | A policy | Its module tests, and recorded traces under `protocol/policy/tests/traces/` replayed by `protocol/policy/tests/traces.rs` |
-| Desktop UI | `protocol/desktop/src/ui/tests.rs` draws pages and dialogs without a window; `protocol/desktop/src/shot.rs` rasterises them for screenshots. |
+| Desktop UI | `protocol/desktop-ui/src/ui/tests.rs` draws pages and dialogs without a window; `protocol/desktop-ui/src/shot.rs` rasterises them for screenshots. |
 | Android | `gradlew :app:testNonRootDebugUnitTest --tests <class>` (JUnit and Robolectric, under `app/src/test/java/`). The unit tests do not compile the JNI code: `gradlew :app:externalNativeBuildNonRootDebug` does. `scripts/test-native.sh` runs the native C tests, `scripts/emulator-smoke.py` drives the app on an emulator. |
 | Documentation | `node scripts/check-doc-links.mjs`, and `scripts/generate-settings.py` leaving `docs/settings.md` unchanged |
 
@@ -126,7 +129,7 @@ Add it to [`Feature`](../protocol/client/src/http/capabilities.rs) with the evid
 The fix history repeats a few shapes. Check a change against them before calling it done.
 
 - **One app only.** A setting, a text or a behaviour that reached Android or desktop and not the other. `with` on the file you changed shows what the other side touched last time.
-- **One language only.** A new text needs every table in `protocol/desktop/src/strings/` and every translated `strings.xml`.
+- **One language only.** A new text needs every table in `protocol/desktop-config/src/strings/` and every translated `strings.xml`.
 - **Gated by name or model.** A feature follows what the host announced and what the device's decoder reports at run time, not a host brand, a vendor or an Android version.
-- **Recovery.** A reconnect, a network change or a stopped stream meets state the first launch set. The cases live in `protocol/desktop/src/stream/recovery.rs`, `protocol/policy/src/recovery.rs` and [`GameRecoveryTest`](../app/src/test/java/com/limelight/GameRecoveryTest.java).
+- **Recovery.** A reconnect, a network change or a stopped stream meets state the first launch set. The cases live in `protocol/desktop-media/src/stream/recovery.rs`, `protocol/policy/src/recovery.rs` and [`GameRecoveryTest`](../app/src/test/java/com/limelight/GameRecoveryTest.java).
 - **Linux code compiled for macOS.** `cfg(unix)` is both; the macOS build runs only in CI.

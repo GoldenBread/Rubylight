@@ -288,9 +288,9 @@ fn the_color_probe_runs_once_per_decoder() {
 fn a_stream_starts_with_what_became_of_4_4_4_and_10_bit_next_to_the_warning() {
     assert_eq!(start_toast(None, None, false), "Ctrl+Alt+Shift+Tab opens controls, Ctrl+Alt+Shift+Q disconnects, Ctrl+Alt+Shift+Z releases input");
     // It names the key the layout has there: the key labelled Y on QWERTZ.
-    shortcuts::use_layout(&[(sdl3_sys::everything::SDL_SCANCODE_Z, sdl3_sys::everything::SDLK_Y)]);
+    crate::shortcuts_runtime::use_layout(&[(sdl3_sys::everything::SDL_SCANCODE_Z, sdl3_sys::everything::SDLK_Y)]);
     assert_eq!(start_toast(None, None, false), "Ctrl+Alt+Shift+Tab opens controls, Ctrl+Alt+Shift+Q disconnects, Ctrl+Alt+Shift+Y releases input");
-    shortcuts::use_layout(&[]);
+    crate::shortcuts_runtime::use_layout(&[]);
     // The hint follows the hotkeys as bound.
     shortcuts::record_hotkey("quit", &["CTRL".into(), "F9".into()]).unwrap();
     shortcuts::turn_off_hotkey("capture").unwrap();
@@ -656,7 +656,7 @@ fn controllers_off_with_one_connected_says_where_it_was_turned_off() {
     let mut kind = ControllersOffNotice::default();
     assert_eq!(kind.take(&off, &ControllersFrom::StreamKind, 1), None);
     assert_eq!(kind.take(&off, &ControllersFrom::StreamKind, 2), None, "a microphone-only stream or second screen never says it");
-    crate::strings::tests::with_lang(crate::strings::Lang::De, || {
+    crate::strings::with_lang(crate::strings::Lang::De, || {
         assert_eq!(controllers_notice(&off, &ControllersFrom::Profile("Reise".into()), 1).as_deref(),
             Some("„Controller“ ist im Profil Reise auf Aus gestellt, daher erreicht kein Controller den PC."));
     });
@@ -670,8 +670,8 @@ fn macos_fullscreen_leaves_spaces_for_the_notch() {
 
 /// A device still in use is not a renderer failure: only the stream that asked is refused, and the
 /// GPU renderer stays on offer for the next one.
-#[cfg(unix)]
 #[test]
+#[cfg(unix)]
 fn a_busy_switch_does_not_mark_the_gpu_renderer_failed() {
     use super::Rebuild;
     let mut state = super::RendererState::for_launcher(crate::config::Renderer::Auto, false, None);
@@ -680,4 +680,76 @@ fn a_busy_switch_does_not_mark_the_gpu_renderer_failed() {
     assert!(state.gpu_failed.is_none(), "busy is no failure");
     assert_eq!(state.rebuild_refused(&Rebuild::Failed("no vulkan".into())), "no vulkan");
     assert_eq!(state.gpu_failed.as_deref(), Some("no vulkan"), "a renderer that could not be made is remembered");
+}
+
+#[test]
+fn every_bound_key_has_a_handler() {
+    use crate::shortcuts::{keys_in, Action, Button, Press, Scope, KEYS, PAD};
+    fn strip(source: &str) -> &str {
+        let end = source.find("\n#[cfg(test)]").unwrap_or(source.len());
+        &source[..end]
+    }
+    let input = strip(include_str!("../../desktop-media/src/stream/input.rs"));
+    let main = strip(include_str!("main.rs")).to_owned()
+        + strip(include_str!("app/launcher.rs"))
+        + strip(include_str!("app/session.rs"))
+        + strip(include_str!("app/overlay.rs"));
+    let help = strip(include_str!("../../desktop-ui/src/ui/help.rs"));
+    for binding in KEYS.iter().cloned().chain(keys_in(Scope::Stream)) {
+        let name = format!("Action::{:?}", binding.action);
+        let handled = match binding.scope {
+            Scope::Stream => input.contains(&name) || main.contains(&name),
+            Scope::Anywhere => main.contains("Scope::Stream") && main.matches(&name).count() >= 2,
+            Scope::Launcher => match binding.action {
+                Action::Fullscreen => main.contains(&name),
+                Action::Help => help.contains(&name),
+                Action::Move
+                | Action::Select
+                | Action::Back
+                | Action::Options
+                | Action::AddPc
+                | Action::Unstar
+                | Action::ZoomIn
+                | Action::ZoomOut
+                | Action::ZoomReset => true,
+                _ => false,
+            },
+        };
+        assert!(handled, "{:?} in {:?} has no handler", binding.action, binding.scope);
+    }
+    for binding in PAD {
+        let name = format!("Action::{:?}", binding.action);
+        let handled = match (binding.scope, binding.press) {
+            (Scope::Launcher, Press::Any(_)) => binding.action == Action::Move || main.contains(&name),
+            (Scope::Stream, Press::Together(_)) => {
+                include_str!("../../desktop-media/src/gamepad.rs").contains("stream_controls_mask()")
+            }
+            (Scope::Stream, Press::QuitCombo) => {
+                include_str!("../../desktop-media/src/gamepad.rs").contains("quit_mask(self.quit_combo)")
+            }
+            (Scope::Stream, Press::Hold(Button::Start)) => {
+                include_str!("../../desktop-media/src/controller_mouse.rs").contains("750")
+            }
+            _ => false,
+        };
+        assert!(handled, "{:?} {:?} has no handler", binding.action, binding.press);
+    }
+}
+
+#[test]
+fn the_pages_that_show_the_link_speed_are_the_ones_read_often() {
+    use crate::network::Pace;
+    use crate::ui::Screen;
+    assert_eq!(Screen::Profiles.network_pace(), Pace::Live);
+    assert_eq!(Screen::HostSettings(1).network_pace(), Pace::Live);
+    for screen in [
+        Screen::Home,
+        Screen::AllGames,
+        Screen::Game { host: 1, app: 2 },
+        Screen::Hosts,
+        Screen::Apps(1),
+        Screen::Settings,
+    ] {
+        assert_eq!(screen.network_pace(), Pace::Idle, "{screen:?}");
+    }
 }

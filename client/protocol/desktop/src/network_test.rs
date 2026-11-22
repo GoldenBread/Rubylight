@@ -1,97 +1,31 @@
-//! The network tests a PC's settings run: Connection test, as Android's `PyroWaveBandwidthTest`
-//! (the delay first, then the speed where the PC has a speed test), and PyroWave's frame-pace
-//! calibration. Both run on their own thread, never during a stream.
+//! Network tests run from a PC's settings: Connection test (delay + speed test) and PyroWave's
+//! frame-pace calibration, re-exporting pure UI verdict/line types from
+//! `nightjar-desktop-ui::network_test`.
 
-use std::sync::{Arc, mpsc::{channel, Receiver}, atomic::{AtomicBool, Ordering}};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
 use std::time::Duration;
+
 use nightjar_core::http::{pace, ConnectionTestStats, Family, Feature, HostClient, ServerInfo};
 use nightjar_policy::connection_test::{self as plan, Speed, SpeedStep};
-use crate::{config::PaceCalibration, network::Network, strings::{en, tr, trf}};
+
+pub use nightjar_desktop_ui::network_test::Connection;
+#[cfg(test)]
+pub use nightjar_desktop_ui::network_test::Verdict;
+
+use crate::config::PaceCalibration;
+use crate::network::Network;
+use crate::strings::en;
 
 pub enum Outcome {
     Connection(Connection),
     Pace(PaceCalibration, pace::Measurement),
 }
 
-pub enum Event { Progress(String), Done(Result<Outcome, String>) }
-
-/// What Connection test found: the delay, and the speed or why it was not measured (`None` for a
-/// PC without a speed test, which gets the delay alone).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Connection {
-    pub latency_ms: Option<f64>,
-    pub jitter_ms: Option<f64>,
-    pub loss_percent: Option<f64>,
-    pub speed: Option<Speed>,
-}
-
-impl Connection {
-    pub fn new(stats: &ConnectionTestStats, speed: Option<Speed>) -> Self {
-        Self { latency_ms: stats.latency_ms(), jitter_ms: stats.jitter_ms(), loss_percent: stats.loss_percent(), speed }
-    }
-
-    /// "Ping 63 ms · Jitter 41 ms · Loss 0.0 %", Android's `connection_test_stats`.
-    pub fn delay_line(&self) -> String {
-        let ms = |value| plan::milliseconds(value).map_or_else(|| plan::UNAVAILABLE.to_owned(), |n| trf("{} ms", &[&local(n)]));
-        let loss = plan::percent(self.loss_percent).map_or_else(|| plan::UNAVAILABLE.to_owned(), |n| trf("{} %", &[&local(n)]));
-        trf("Ping {} · Jitter {} · Loss {}", &[&ms(self.latency_ms), &ms(self.jitter_ms), &loss])
-    }
-
-    /// The second line: the speed and the PC's link, or why the speed was not measured.
-    pub fn speed_line(&self) -> Option<String> {
-        Some(match self.speed? {
-            Speed::Measured { mbps, link_mbps } => {
-                let speed = trf("Speed {} Mbps", &[&local(plan::megabits(mbps))]);
-                if link_mbps > 0 { format!("{speed} · {}", trf("PC link {} Mbps", &[&link_mbps])) } else { speed }
-            }
-            Speed::NeedsPairing => tr("Speed not measured: pair this PC first").to_owned(),
-            Speed::NoAnswer => tr("Speed not measured: the PC didn’t answer").to_owned(),
-            Speed::Unsupported => tr("Speed not measured: this PC has no speed test").to_owned(),
-            Speed::Failed => tr("Speed not measured: the test failed").to_owned(),
-        })
-    }
-}
-
-/// What Connection test means for streaming, in plain words, with one next step.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Verdict {
-    pub title: &'static str,
-    pub step: Option<&'static str>,
-}
-
-/// Loss above this many percent shows as stutter.
-const LOSS_STUTTERS: f64 = 1.0;
-/// Jitter above this many milliseconds shows as uneven frames.
-const JITTER_STUTTERS: f64 = 10.0;
-/// The measured speed should carry the stream's bitrate this many times over.
-const SPEED_HEADROOM: f64 = 1.5;
-
-impl Connection {
-    /// Good for streaming, will stutter, or cannot connect, for a stream of `bitrate_kbps`.
-    pub fn verdict(&self, bitrate_kbps: u32) -> Verdict {
-        let finite = |v: Option<f64>| v.filter(|v| v.is_finite());
-        let loss = finite(self.loss_percent);
-        if finite(self.latency_ms).is_none() || loss.is_some_and(|l| l >= 100.0) {
-            return Verdict { title: en("Can’t connect to this PC"), step: Some(en("Check that the PC is on and on this network, then try again.")) };
-        }
-        let stutters = en("Streaming will stutter");
-        if loss.is_some_and(|l| l > LOSS_STUTTERS) {
-            return Verdict { title: stutters, step: Some(en("The network loses data. Connect this device or the PC by cable, or move closer to the router.")) };
-        }
-        if finite(self.jitter_ms).is_some_and(|j| j > JITTER_STUTTERS) {
-            return Verdict { title: stutters, step: Some(en("The delay keeps changing. Connect by cable, or pause other downloads on this network.")) };
-        }
-        if let Some(Speed::Measured { mbps, .. }) = self.speed
-            && mbps * 1000.0 < f64::from(bitrate_kbps) * SPEED_HEADROOM {
-                return Verdict { title: stutters, step: Some(en("The connection is slower than the stream needs. Lower the bitrate in Settings.")) };
-            }
-        Verdict { title: en("Good for streaming"), step: None }
-    }
-}
-
-/// A number with the language's decimal comma.
-fn local(number: String) -> String {
-    if crate::strings::current().decimal_comma() { number.replace('.', ",") } else { number }
+pub enum Event {
+    Progress(String),
+    Done(Result<Outcome, String>),
 }
 
 pub struct Test {
@@ -109,7 +43,17 @@ impl Test {
     /// run's setting: only it calibrates at the PC's jumbo packet size, so a user who leaves
     /// jumbo off keeps today's stock 1392-byte probes and their saved pace.
     #[allow(clippy::too_many_arguments)]
-    pub fn start(host: u64, client: HostClient, network: Network, address: String, mode: (u32, u32), calibrate: bool, measures_speed: bool, jumbo_frames: bool, waker: crate::hosts::Waker) -> Self {
+    pub fn start(
+        host: u64,
+        client: HostClient,
+        network: Network,
+        address: String,
+        mode: (u32, u32),
+        calibrate: bool,
+        measures_speed: bool,
+        jumbo_frames: bool,
+        waker: crate::hosts::Waker,
+    ) -> Self {
         let client = Arc::new(client);
         let worker = client.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -118,50 +62,114 @@ impl Test {
         std::thread::spawn(move || {
             let result = (|| -> Result<Outcome, String> {
                 if !calibrate {
-                    let progress = |stage: &str| { let _ = tx.send(Event::Progress(stage.to_owned())); waker(); };
-                    return Ok(Outcome::Connection(connection(&worker, measures_speed, || stop.load(Ordering::Acquire), progress)));
+                    let progress = |stage: &str| {
+                        let _ = tx.send(Event::Progress(stage.to_owned()));
+                        waker();
+                    };
+                    return Ok(Outcome::Connection(connection(
+                        &worker,
+                        measures_speed,
+                        || stop.load(Ordering::Acquire),
+                        progress,
+                    )));
                 }
                 // Calibrate for the interface that reaches this PC, which is what the stream will use.
                 let network = network.toward(crate::network::toward(&address));
                 let info = worker.server_info_https().map_err(|e| e.to_string())?;
-                if !info.paired || !info.capabilities.has(Feature::PyroWave) || !info.pyrowave_burst_probe {
+                if !info.paired
+                    || !info.capabilities.has(Feature::PyroWave)
+                    || !info.pyrowave_burst_probe
+                {
                     return Err("This paired PC does not support PyroWave pace calibration.".into());
                 }
                 let link = calibration_link(network.link_mbps, info.pyrowave_host_link_mbps);
-                if link == 0 { return Err("Neither endpoint reports a link speed. No calibration was saved.".into()); }
+                if link == 0 {
+                    return Err("Neither endpoint reports a link speed. No calibration was saved.".into());
+                }
                 let (bitrate, fps) = mode;
                 let packet_size = if jumbo_frames {
                     pace::packet_size_for(info.capabilities.max_video_packet())
                 } else {
                     pace::PACKET_SIZE
                 };
-                let kbps = pace::probe_kbps(bitrate, fps, packet_size, info.pyrowave_critical_fec_percentage, info.pyrowave_min_parity_shards);
+                let kbps = pace::probe_kbps(
+                    bitrate,
+                    fps,
+                    packet_size,
+                    info.pyrowave_critical_fec_percentage,
+                    info.pyrowave_min_parity_shards,
+                );
                 let floor = kbps / 4 * 5;
-                if floor >= link * 1000 { return Err("The stream's wire bitrate is too high for this link. Lower its bitrate before calibrating.".into()); }
-                let outcome = pace::search(link * 1000, floor, |pace_kbps| {
-                    let _ = tx.send(Event::Progress(format!("Testing {} Mbps frame pace", pace_kbps / 1000)));
-                    waker();
-                    worker.probe_pace(kbps, packet_size, fps.clamp(10, 500), pace_kbps.max(kbps))
-                }, || stop.load(Ordering::Acquire)).map_err(|e| e.to_string())?
-                    .ok_or("No usable pace was measured. The PC will keep its default.")?;
-                Ok(Outcome::Pace(PaceCalibration { pace_mbps: outcome.pace_kbps / 1000, client_link_mbps: network.link_mbps,
-                    host_link_mbps: info.pyrowave_host_link_mbps, wifi: network.wifi, ssid: network.ssid,
-                    qualified: outcome.qualified }, outcome.measurement))
+                if floor >= link * 1000 {
+                    return Err("The stream's wire bitrate is too high for this link. Lower its bitrate before calibrating.".into());
+                }
+                let outcome = pace::search(
+                    link * 1000,
+                    floor,
+                    |pace_kbps| {
+                        let _ = tx.send(Event::Progress(format!(
+                            "Testing {} Mbps frame pace",
+                            pace_kbps / 1000
+                        )));
+                        waker();
+                        worker.probe_pace(kbps, packet_size, fps.clamp(10, 500), pace_kbps.max(kbps))
+                    },
+                    || stop.load(Ordering::Acquire),
+                )
+                .map_err(|e| e.to_string())?
+                .ok_or("No usable pace was measured. The PC will keep its default.")?;
+                Ok(Outcome::Pace(
+                    PaceCalibration {
+                        pace_mbps: outcome.pace_kbps / 1000,
+                        client_link_mbps: network.link_mbps,
+                        host_link_mbps: info.pyrowave_host_link_mbps,
+                        wifi: network.wifi,
+                        ssid: network.ssid,
+                        qualified: outcome.qualified,
+                    },
+                    outcome.measurement,
+                ))
             })();
-            if !stop.load(Ordering::Acquire) { let _ = tx.send(Event::Done(result)); waker(); }
+            if !stop.load(Ordering::Acquire) {
+                let _ = tx.send(Event::Done(result));
+                waker();
+            }
         });
-        Self { host, calibrate, events, client, cancelled }
+        Self {
+            host,
+            calibrate,
+            events,
+            client,
+            cancelled,
+        }
     }
 }
 
 /// Connection test, as Android's `PyroWaveBandwidthTest`: [`plan::PROBES`] delay probes over
 /// HTTP, then the PC's speed test where it has one. `progress` gets each stage in English (the
 /// dialog translates it). A cancel ends it early; what it returns then is never shown.
-fn connection(client: &HostClient, measures_speed: bool, cancelled: impl Fn() -> bool, progress: impl Fn(&str)) -> Connection {
+fn connection(
+    client: &HostClient,
+    measures_speed: bool,
+    cancelled: impl Fn() -> bool,
+    progress: impl Fn(&str),
+) -> Connection {
     progress(en("Measuring ping, jitter and loss"));
-    let probe = || client.probe_server_latency(Duration::from_millis(plan::PROBE_TIMEOUT_MS)).ok();
-    let stats = delay(probe, || std::thread::sleep(Duration::from_millis(plan::PROBE_INTERVAL_MS)), &cancelled);
-    let step = plan::speed_step(measures_speed, client.server_certificate_pem().is_some(), stats.latency_ms());
+    let probe = || {
+        client
+            .probe_server_latency(Duration::from_millis(plan::PROBE_TIMEOUT_MS))
+            .ok()
+    };
+    let stats = delay(
+        probe,
+        || std::thread::sleep(Duration::from_millis(plan::PROBE_INTERVAL_MS)),
+        &cancelled,
+    );
+    let step = plan::speed_step(
+        measures_speed,
+        client.server_certificate_pem().is_some(),
+        stats.latency_ms(),
+    );
     let speed = match step {
         SpeedStep::Measure if !cancelled() => {
             progress(en("Receiving 32 MiB from the PC"));
@@ -175,11 +183,19 @@ fn connection(client: &HostClient, measures_speed: bool, cancelled: impl Fn() ->
 
 /// The delay probes: `probe` answers one round trip in milliseconds, `None` for a lost probe;
 /// `pause` waits between two.
-fn delay(mut probe: impl FnMut() -> Option<f64>, mut pause: impl FnMut(), cancelled: impl Fn() -> bool) -> ConnectionTestStats {
+fn delay(
+    mut probe: impl FnMut() -> Option<f64>,
+    mut pause: impl FnMut(),
+    cancelled: impl Fn() -> bool,
+) -> ConnectionTestStats {
     let mut stats = ConnectionTestStats::default();
     for n in 0..plan::PROBES {
-        if cancelled() { break; }
-        if n > 0 { pause(); }
+        if cancelled() {
+            break;
+        }
+        if n > 0 {
+            pause();
+        }
         match probe() {
             Some(ms) => stats.add(ms),
             None => stats.add_failure(),
@@ -203,9 +219,17 @@ fn speed(client: &HostClient) -> Speed {
 /// Moonlight V+ Android runs it).
 fn bandwidth(client: &HostClient, info: &ServerInfo) -> Speed {
     let measured = if info.capabilities.has(Feature::PyroWaveBandwidthProbe) {
-        client.probe_bandwidth(info).map(|mbps| Speed::Measured { mbps, link_mbps: info.pyrowave_host_link_mbps })
+        client.probe_bandwidth(info).map(|mbps| Speed::Measured {
+            mbps,
+            link_mbps: info.pyrowave_host_link_mbps,
+        })
     } else if has_foundation_probe(info) {
-        client.foundation_network_probe().map(|result| Speed::Measured { mbps: result.bandwidth_mbps, link_mbps: 0 })
+        client
+            .foundation_network_probe()
+            .map(|result| Speed::Measured {
+                mbps: result.bandwidth_mbps,
+                link_mbps: 0,
+            })
     } else {
         return Speed::Unsupported;
     };
@@ -227,7 +251,12 @@ pub fn has_foundation_probe(info: &ServerInfo) -> bool {
 
 /// The slower of the two ends' reported rates bounds the search; an end that reports none is ignored.
 fn calibration_link(client_mbps: u32, host_mbps: u32) -> u32 {
-    [client_mbps, host_mbps].into_iter().filter(|&n| n > 0).min().unwrap_or(0).min(9999)
+    [client_mbps, host_mbps]
+        .into_iter()
+        .filter(|&n| n > 0)
+        .min()
+        .unwrap_or(0)
+        .min(9999)
 }
 
 impl Drop for Test {
@@ -243,34 +272,105 @@ mod tests {
 
     #[test]
     fn the_verdict_says_good_stutter_or_no_connection() {
-        let at = |latency: Option<f64>, jitter: f64, loss: f64, speed: Option<Speed>| Connection { latency_ms: latency, jitter_ms: Some(jitter), loss_percent: Some(loss), speed }.verdict(20_000);
-        let fast = Some(Speed::Measured { mbps: 300.0, link_mbps: 1000 });
-        assert_eq!(at(Some(4.0), 1.0, 0.0, fast), Verdict { title: "Good for streaming", step: None });
-        assert_eq!(at(Some(4.0), 1.0, 0.0, None).title, "Good for streaming", "no speed test: the delay decides");
-        assert_eq!(at(None, 0.0, 100.0, None).title, "Can’t connect to this PC");
-        assert_eq!(at(Some(4.0), 1.0, 100.0, None).title, "Can’t connect to this PC");
+        let at = |latency: Option<f64>, jitter: f64, loss: f64, speed: Option<Speed>| {
+            Connection {
+                latency_ms: latency,
+                jitter_ms: Some(jitter),
+                loss_percent: Some(loss),
+                speed,
+            }
+            .verdict(20_000)
+        };
+        let fast = Some(Speed::Measured {
+            mbps: 300.0,
+            link_mbps: 1000,
+        });
+        assert_eq!(
+            at(Some(4.0), 1.0, 0.0, fast),
+            Verdict {
+                title: "Good for streaming",
+                step: None
+            }
+        );
+        assert_eq!(
+            at(Some(4.0), 1.0, 0.0, None).title,
+            "Good for streaming",
+            "no speed test: the delay decides"
+        );
+        assert_eq!(
+            at(None, 0.0, 100.0, None).title,
+            "Can’t connect to this PC"
+        );
+        assert_eq!(
+            at(Some(4.0), 1.0, 100.0, None).title,
+            "Can’t connect to this PC"
+        );
         let stutter = |v: Verdict| v.title == "Streaming will stutter" && v.step.is_some();
         assert!(stutter(at(Some(4.0), 1.0, 1.5, fast)), "loss");
         assert!(!stutter(at(Some(4.0), 1.0, 1.0, fast)), "1 % is still fine");
         assert!(stutter(at(Some(4.0), 12.0, 0.0, fast)), "jitter");
-        assert!(stutter(at(Some(4.0), 1.0, 0.0, Some(Speed::Measured { mbps: 25.0, link_mbps: 1000 }))), "25 Mbps for a 20 Mbps stream");
-        assert!(!stutter(at(Some(4.0), 1.0, 0.0, Some(Speed::Measured { mbps: 30.0, link_mbps: 1000 }))), "30 Mbps carries it");
+        assert!(
+            stutter(at(
+                Some(4.0),
+                1.0,
+                0.0,
+                Some(Speed::Measured {
+                    mbps: 25.0,
+                    link_mbps: 1000
+                })
+            )),
+            "25 Mbps for a 20 Mbps stream"
+        );
+        assert!(
+            !stutter(at(
+                Some(4.0),
+                1.0,
+                0.0,
+                Some(Speed::Measured {
+                    mbps: 30.0,
+                    link_mbps: 1000
+                })
+            )),
+            "30 Mbps carries it"
+        );
     }
 
     // Foundation Sunshine's test is offered to paired Sunshine PCs; Rubylight keeps its own.
     #[test]
     fn the_foundation_bandwidth_test_is_offered_to_paired_sunshine_pcs() {
-        let info = |extra: &str, paired: u8| ServerInfo::parse(&format!("<root status_code=\"200\"><uniqueid>pc</uniqueid>\
-            <state>SUNSHINE_SERVER_FREE</state><PairStatus>{paired}</PairStatus>{extra}</root>"), 47989).unwrap();
-        assert!(has_foundation_probe(&info("<appversion>7.1.431.-1</appversion><SunshineVersion>2025.1</SunshineVersion><VddCapabilityVersion>1</VddCapabilityVersion>", 1)));
+        let info = |extra: &str, paired: u8| {
+            ServerInfo::parse(
+                &format!(
+                    "<root status_code=\"200\"><uniqueid>pc</uniqueid>\
+            <state>SUNSHINE_SERVER_FREE</state><PairStatus>{paired}</PairStatus>{extra}</root>"
+                ),
+                47989,
+            )
+            .unwrap()
+        };
+        assert!(has_foundation_probe(&info(
+            "<appversion>7.1.431.-1</appversion><SunshineVersion>2025.1</SunshineVersion><VddCapabilityVersion>1</VddCapabilityVersion>",
+            1
+        )));
         assert!(!has_foundation_probe(&info("<appversion>7.1.431.-1</appversion>", 0)), "unpaired");
-        assert!(!has_foundation_probe(&info("<RustHostVersion>3.0.0</RustHostVersion>", 1)), "Rubylight");
+        assert!(
+            !has_foundation_probe(&info("<RustHostVersion>3.0.0</RustHostVersion>", 1)),
+            "Rubylight"
+        );
     }
 
     #[test]
     fn calibration_link_is_capped_by_the_wifi_rate_the_route_keeps() {
-        let wifi = Network { wifi: true, ssid: Some("Home".into()), link_mbps: 866, ..Default::default() };
-        let route = wifi.toward(Ok(crate::network::Toward { wireless: true, link_mbps: 0 }));
+        let wifi = Network {
+            wifi: true,
+            ssid: Some("Home".into()),
+            link_mbps: 866,
+            ..Default::default()
+        };
+        let route = wifi.toward(Ok(crate::network::Toward {
+            wireless: true,
+            link_mbps: 0,
+        }));
         assert_eq!(calibration_link(route.link_mbps, 2500), 866);
         // A host that reports nothing does not stop a Wi-Fi calibration.
         assert_eq!(calibration_link(route.link_mbps, 0), 866);
@@ -280,30 +380,82 @@ mod tests {
 
     fn result(latency: f64, jitter: f64, loss: f64, speed: Option<Speed>) -> Connection {
         let known = |v: f64| (!v.is_nan()).then_some(v);
-        Connection { latency_ms: known(latency), jitter_ms: known(jitter), loss_percent: known(loss), speed }
+        Connection {
+            latency_ms: known(latency),
+            jitter_ms: known(jitter),
+            loss_percent: known(loss),
+            speed,
+        }
     }
 
     // The lines of Android's ConnectionTestResultTest, in desktop's "{} %".
     #[test]
     fn the_result_reads_as_androids() {
-        assert_eq!(result(63.0, 41.0, 0.0, None).delay_line(), "Ping 63 ms · Jitter 41 ms · Loss 0.0 %");
-        assert_eq!(result(2.5, 1.0, 25.0, None).delay_line(), "Ping 2.5 ms · Jitter 1.0 ms · Loss 25.0 %");
-        assert_eq!(result(f64::NAN, f64::NAN, 100.0, None).delay_line(), "Ping – · Jitter – · Loss 100.0 %");
-        assert_eq!(result(63.0, 41.0, 0.0, None).speed_line(), None, "a PC without a speed test: the delay alone");
+        assert_eq!(
+            result(63.0, 41.0, 0.0, None).delay_line(),
+            "Ping 63 ms · Jitter 41 ms · Loss 0.0 %"
+        );
+        assert_eq!(
+            result(2.5, 1.0, 25.0, None).delay_line(),
+            "Ping 2.5 ms · Jitter 1.0 ms · Loss 25.0 %"
+        );
+        assert_eq!(
+            result(f64::NAN, f64::NAN, 100.0, None).delay_line(),
+            "Ping – · Jitter – · Loss 100.0 %"
+        );
+        assert_eq!(
+            result(63.0, 41.0, 0.0, None).speed_line(),
+            None,
+            "a PC without a speed test: the delay alone"
+        );
         let speed = |speed| result(5.0, 1.0, 0.0, Some(speed)).speed_line().unwrap();
-        assert_eq!(speed(Speed::Measured { mbps: 312.4, link_mbps: 1000 }), "Speed 312.4 Mbps · PC link 1000 Mbps");
-        assert_eq!(speed(Speed::Measured { mbps: 87.0, link_mbps: 0 }), "Speed 87.0 Mbps");
-        assert_eq!(speed(Speed::NeedsPairing), "Speed not measured: pair this PC first");
-        assert_eq!(speed(Speed::NoAnswer), "Speed not measured: the PC didn’t answer");
-        assert_eq!(speed(Speed::Unsupported), "Speed not measured: this PC has no speed test");
+        assert_eq!(
+            speed(Speed::Measured {
+                mbps: 312.4,
+                link_mbps: 1000
+            }),
+            "Speed 312.4 Mbps · PC link 1000 Mbps"
+        );
+        assert_eq!(
+            speed(Speed::Measured {
+                mbps: 87.0,
+                link_mbps: 0
+            }),
+            "Speed 87.0 Mbps"
+        );
+        assert_eq!(
+            speed(Speed::NeedsPairing),
+            "Speed not measured: pair this PC first"
+        );
+        assert_eq!(
+            speed(Speed::NoAnswer),
+            "Speed not measured: the PC didn’t answer"
+        );
+        assert_eq!(
+            speed(Speed::Unsupported),
+            "Speed not measured: this PC has no speed test"
+        );
         assert_eq!(speed(Speed::Failed), "Speed not measured: the test failed");
     }
 
     #[test]
     fn the_result_reads_in_german_with_decimal_commas() {
-        crate::strings::tests::with_lang(crate::strings::Lang::De, || {
-            assert_eq!(result(2.5, 1.0, 25.0, None).delay_line(), "Ping 2,5 ms · Jitter 1,0 ms · Verlust 25,0 %");
-            let line = result(5.0, 1.0, 0.0, Some(Speed::Measured { mbps: 312.4, link_mbps: 1000 })).speed_line().unwrap();
+        crate::strings::with_lang(crate::strings::Lang::De, || {
+            assert_eq!(
+                result(2.5, 1.0, 25.0, None).delay_line(),
+                "Ping 2,5 ms · Jitter 1,0 ms · Verlust 25,0 %"
+            );
+            let line = result(
+                5.0,
+                1.0,
+                0.0,
+                Some(Speed::Measured {
+                    mbps: 312.4,
+                    link_mbps: 1000,
+                }),
+            )
+            .speed_line()
+            .unwrap();
             assert_eq!(line, "Tempo 312,4 Mbit/s · PC-LAN 1000 Mbit/s");
         });
     }
@@ -311,13 +463,26 @@ mod tests {
     // ConnectionTestStatsTest's sequence, through the probe loop.
     #[test]
     fn ten_probes_with_a_pause_between_two_and_lost_ones_counted() {
-        let mut answers = [Some(10.0), None, Some(100.0), Some(110.0)].into_iter().chain(std::iter::repeat(Some(110.0)));
+        let mut answers = [Some(10.0), None, Some(100.0), Some(110.0)]
+            .into_iter()
+            .chain(std::iter::repeat(Some(110.0)));
         let (mut probes, mut pauses) = (0, 0);
-        let stats = delay(|| { probes += 1; answers.next().unwrap() }, || pauses += 1, || false);
+        let stats = delay(
+            || {
+                probes += 1;
+                answers.next().unwrap()
+            },
+            || pauses += 1,
+            || false,
+        );
         assert_eq!((probes, pauses), (10, 9));
         assert_eq!(stats.attempts(), 10);
         assert_eq!(stats.loss_percent(), Some(10.0));
-        assert_eq!(stats.jitter_ms(), Some(10.0 / 7.0), "the lost probe breaks the sequence: 10 then six zeros over 7");
+        assert_eq!(
+            stats.jitter_ms(),
+            Some(10.0 / 7.0),
+            "the lost probe breaks the sequence: 10 then six zeros over 7"
+        );
         let cancelled = std::cell::Cell::new(false);
         let stats = delay(|| { cancelled.set(true); Some(5.0) }, || {}, || cancelled.get());
         assert_eq!(stats.attempts(), 1, "a cancel stops the probes");
@@ -337,9 +502,16 @@ mod tests {
                 let (mut socket, _) = listener.accept().unwrap();
                 let mut request = [0u8; 4096];
                 let _ = socket.read(&mut request);
-                assert!(request.starts_with(b"GET /serverinfo?"), "{}", String::from_utf8_lossy(&request));
+                assert!(
+                    request.starts_with(b"GET /serverinfo?"),
+                    "{}",
+                    String::from_utf8_lossy(&request)
+                );
                 if answers {
-                    let reply = format!("HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
                     socket.write_all(reply.as_bytes()).unwrap();
                 }
             }
@@ -350,17 +522,31 @@ mod tests {
     fn client(port: u16, paired: bool) -> HostClient {
         let identity = Arc::new(nightjar_core::http::ClientIdentity::generate().expect("an identity"));
         let client = HostClient::new("127.0.0.1", port, identity.clone()).unwrap();
-        if paired { client.with_server_certificate_pem(identity.certificate_pem()).unwrap() } else { client }
+        if paired {
+            client
+                .with_server_certificate_pem(identity.certificate_pem())
+                .unwrap()
+        } else {
+            client
+        }
     }
 
     #[test]
     fn a_pc_that_answers_has_its_delay_measured_over_plain_http() {
         let (port, served) = http_pc(true, plan::PROBES as usize);
         let stages = std::cell::RefCell::new(Vec::new());
-        let found = connection(&client(port, false), false, || false, |stage| stages.borrow_mut().push(stage.to_owned()));
+        let found = connection(
+            &client(port, false),
+            false,
+            || false,
+            |stage| stages.borrow_mut().push(stage.to_owned()),
+        );
         served.join().unwrap();
         assert_eq!(found.loss_percent, Some(0.0));
-        assert!(found.latency_ms.is_some_and(|ms| (0.0..2000.0).contains(&ms)), "{found:?}");
+        assert!(
+            found.latency_ms.is_some_and(|ms| (0.0..2000.0).contains(&ms)),
+            "{found:?}"
+        );
         assert!(found.jitter_ms.is_some());
         assert_eq!(found.speed, None, "no speed test, no second line");
         assert_eq!(*stages.borrow(), ["Measuring ping, jitter and loss"]);
@@ -372,7 +558,15 @@ mod tests {
             let (port, served) = http_pc(false, plan::PROBES as usize);
             let found = connection(&client(port, paired), true, || false, |_| {});
             served.join().unwrap();
-            assert_eq!(found, Connection { latency_ms: None, jitter_ms: None, loss_percent: Some(100.0), speed: Some(why) });
+            assert_eq!(
+                found,
+                Connection {
+                    latency_ms: None,
+                    jitter_ms: None,
+                    loss_percent: Some(100.0),
+                    speed: Some(why)
+                }
+            );
             assert_eq!(found.delay_line(), "Ping – · Jitter – · Loss 100.0 %");
         }
     }

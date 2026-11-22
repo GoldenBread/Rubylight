@@ -6,8 +6,8 @@ import code_map  # noqa: E402
 LOG = '''@@fix(stream): keep the newest frame
 rust/host/src/stream.rs
 rust/core/src/session.rs
-client/protocol/desktop/src/strings/de.rs
-client/protocol/desktop/src/strings/fr.rs
+client/protocol/desktop-config/src/strings/de.rs
+client/protocol/desktop-config/src/strings/fr.rs
 
 @@feat(stream): a new setting
 rust/host/src/stream.rs
@@ -53,7 +53,7 @@ class History(unittest.TestCase):
 
     def test_translations_count_as_one_file(self):
         self.assertEqual(len(self.history), 4)
-        self.assertIn('client/protocol/desktop/src/strings/*.rs', self.history[0][1])
+        self.assertIn('client/protocol/desktop-config/src/strings/*.rs', self.history[0][1])
         self.assertEqual(code_map.grouped('client/app/src/main/res/values-de/strings.xml'),
                          code_map.grouped('client/app/src/main/res/values/strings.xml'))
         self.assertEqual(code_map.grouped('rust/release/notes.d/3.11.10/fix.md'), 'rust/release/notes.d/*')
@@ -62,7 +62,7 @@ class History(unittest.TestCase):
         count, rows = code_map.together(self.history, 'rust/host/src/stream.rs')
         self.assertEqual(count, 3)
         self.assertEqual({path for _, _, path in rows}, {'rust/core/src/session.rs', 'rust/core/src/config.rs',
-                                                         'docs/configuration.md', 'client/protocol/desktop/src/strings/*.rs'})
+                                                         'docs/configuration.md', 'client/protocol/desktop-config/src/strings/*.rs'})
         self.assertTrue(all(n == 1 and abs(share - 1 / 3) < 1e-9 for n, share, _ in rows))
 
     def test_together_ignores_sweeps(self):

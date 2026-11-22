@@ -47,6 +47,7 @@ pub(crate) struct PendingEnd {
 
 impl App {
     pub(crate) fn begin_stream(&mut self, connecting: Connecting, session: nightjar_core::session::Session, facts: stream::Facts) {
+        self.overlay = StreamOverlay::default();
         if let Some(auto) = self.autostream.as_mut() { auto.streaming_began(); }
         if let Some(cli) = self.cli.as_mut() { cli.streaming_began(); }
         let settings = connecting.settings.clone();
@@ -470,7 +471,21 @@ impl App {
         // SAFETY: the window lives as long as the app.
         let away = unsafe { SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN) != 0 };
         streaming.drain_notices(&mut self.pads, away);
-        streaming.open_guide_menu(window, &mut self.pads);
+        if let Some(name) = streaming.open_guide_menu(window, &mut self.pads) {
+            if !streaming.menu_visible {
+                streaming.toggle_menu(window, &mut self.pads);
+            }
+            if streaming.menu_visible
+                && self.overlay.menu_page == stream_menu::Page::Grid
+                && self.overlay.session_page.is_none()
+                && streaming.shortcut_sheet.is_none()
+            {
+                self.overlay.menu_page = stream_menu::Page::Guests;
+                streaming.needs_redraw = true;
+            } else {
+                streaming.show_toast(trf("{} wants to join your game", &[&name]));
+            }
+        }
         streaming.follow_text_field(window);
         streaming.follow_fullscreen(window);
         #[cfg(windows)]
@@ -530,12 +545,22 @@ impl App {
         streaming.pump_touchpad(window);
         streaming.pump();
         if let Some(host) = self.hosts.get(streaming.host_id) {
-            streaming.hints = host.native.session_hints();
+            self.overlay.hints = host.native.session_hints();
         }
-        if streaming.session_page_requested {
+        if std::mem::take(&mut streaming.close_session_page_requested) {
+            self.overlay.close_session_page(streaming);
+        }
+        if self.overlay.session_page_requested {
             let link = self.launcher.network.description(&self.launcher.profiles.home_wifi);
-            streaming.open_session_page(self.waker.clone(), link);
+            self.overlay.session_page_requested = false;
+            self.overlay.session_link = link;
+            self.overlay.session_page = Some(page_hosts::open_session_page(
+                streaming,
+                self.waker.clone(),
+                self.overlay.pending_exit.take(),
+            ));
         }
+        self.overlay.sync_to_stream(streaming);
         if streaming.update_overlay() && streaming.overlay_visible {
             streaming.needs_redraw = true;
         }
@@ -590,6 +615,7 @@ impl App {
         let dir = self.screenshot_dir.clone();
         let main_renderer = self.renderer;
         let gui_overlay = &mut self.gui_overlay;
+        let overlay = &mut self.overlay;
         streaming.present(renderer, |s, renderer| {
             // The overlay draws into a display plane's own renderer while the planes show the
             // stream (`kms_scanout`): the gui's textures move to the renderer it draws with.
@@ -601,7 +627,7 @@ impl App {
             }
             // In a video-only frame on a PQ output the overlay's meshes write PQ themselves.
             gui.set_window_state(s.ui_state(renderer));
-            shortcuts_changed = draw_overlay(gui, window, renderer, s, &mut pads.pads(), shortcuts);
+            shortcuts_changed = draw_overlay(gui, window, renderer, s, overlay, &mut pads.pads(), shortcuts);
             gui.set_window_state(std::ptr::null_mut());
             if screenshot {
                 let stamp = std::time::SystemTime::now()
@@ -656,11 +682,11 @@ impl App {
         if kind.0 == self.wake_event {
             // The Session page's worker published something new.
             if let Some((s, _)) = self.streaming.as_mut()
-                && s.session_page.is_some() { s.needs_redraw = true; }
+                && self.overlay.session_page.is_some() { s.needs_redraw = true; }
             return;
         }
         // SAFETY: a key event's members.
-        let key_action = (kind == SDL_EVENT_KEY_DOWN).then(|| unsafe { shortcuts::key_action(Scope::Stream, event.key.scancode, event.key.r#mod) }).flatten();
+        let key_action = (kind == SDL_EVENT_KEY_DOWN).then(|| unsafe { shortcuts_runtime::key_action(Scope::Stream, event.key.scancode, event.key.r#mod) }).flatten();
         // SAFETY: a key event's members.
         let repeat = kind == SDL_EVENT_KEY_DOWN && unsafe { event.key.repeat };
         if key_action == Some(Action::Screenshot) {
@@ -697,27 +723,38 @@ impl App {
                 || (kind == SDL_EVENT_GAMEPAD_BUTTON_DOWN && unsafe {
                     event.gbutton.button == back_button.0 as u8 || event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK.0 as u8
                 });
-            let page = streaming.menu_page != stream_menu::Page::Grid;
-            match menu_step(key_action, back, repeat, streaming.shortcut_sheet.is_some(), streaming.session_page.is_some(), page) {
+            let page = self.overlay.menu_page != stream_menu::Page::Grid;
+            match menu_step(key_action, back, repeat, streaming.shortcut_sheet.is_some(), self.overlay.session_page.is_some(), page) {
                 MenuStep::Pass => {}
                 MenuStep::Swallow => return,
-                MenuStep::ToggleSheet => return streaming.toggle_shortcut_sheet(self.window, &mut self.pads),
-                MenuStep::CloseSessionPage => return streaming.close_session_page(),
+                MenuStep::ToggleSheet => {
+                    streaming.toggle_shortcut_sheet(self.window, &mut self.pads);
+                    if std::mem::take(&mut streaming.close_session_page_requested) {
+                        self.overlay.close_session_page(streaming);
+                    }
+                    self.overlay.sync_to_stream(streaming);
+                    return;
+                }
+                MenuStep::CloseSessionPage => return self.overlay.close_session_page(streaming),
                 MenuStep::CloseSheet => return streaming.close_shortcut_sheet(self.window, &mut self.pads),
                 MenuStep::ClosePage => {
-                    streaming.menu_page = stream_menu::Page::Grid;
+                    self.overlay.menu_page = stream_menu::Page::Grid;
                     streaming.needs_redraw = true;
                     return;
                 }
-                MenuStep::CloseMenu => return streaming.toggle_menu(self.window, &mut self.pads),
+                MenuStep::CloseMenu => {
+                    streaming.toggle_menu(self.window, &mut self.pads);
+                    self.overlay.sync_to_stream(streaming);
+                    return;
+                }
             }
             // Y, X and the shoulders run their tiles while the grid shows (nightjar_policy::stream_menu);
             // one whose tile is not offered goes on to the menu's navigation as any other button.
-            if kind == SDL_EVENT_GAMEPAD_BUTTON_DOWN && !page && streaming.session_page.is_none() && streaming.shortcut_sheet.is_none() {
+            if kind == SDL_EVENT_GAMEPAD_BUTTON_DOWN && !page && self.overlay.session_page.is_none() && streaming.shortcut_sheet.is_none() {
                 // SAFETY: union member read by event type.
                 let button = SDL_GamepadButton(i32::from(unsafe { event.gbutton.button }));
-                if let Some(key) = stream_menu::offered_hotkey(button, &streaming.menu_hotkeys) {
-                    streaming.menu_hotkey = Some(key);
+                if let Some(key) = stream_menu::offered_hotkey(hotkey_sdl::menu_nav_button(button), &self.overlay.menu_hotkeys) {
+                    self.overlay.menu_hotkey = Some(key);
                     streaming.needs_redraw = true;
                     return;
                 }
@@ -749,44 +786,7 @@ impl App {
     }
 }
 
-/// What a key or button does while the stream menu is open.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MenuStep {
-    /// Not the menu's: egui or the controller navigation gets it.
-    Pass,
-    /// A held key's repeat of a toggle: holding it doesn't flip the menu open and shut.
-    Swallow,
-    ToggleSheet,
-    CloseSessionPage,
-    CloseSheet,
-    /// Back from a page a tile opened to the grid.
-    ClosePage,
-    CloseMenu,
-}
-
-/// The step for a stream chord (`action`), Escape or B (`back`), with the menu's pages. Back acts
-/// on what is drawn: the Session page first (the sheet never draws over it), then the sheet, then
-/// a page a tile opened (`page`).
-pub(crate) fn menu_step(action: Option<Action>, back: bool, repeat: bool, sheet: bool, session_page: bool, page: bool) -> MenuStep {
-    let controls = action == Some(Action::StreamControls);
-    if action != Some(Action::StreamShortcuts) && !back && !controls {
-        return MenuStep::Pass;
-    }
-    if repeat {
-        return MenuStep::Swallow;
-    }
-    if action == Some(Action::StreamShortcuts) {
-        MenuStep::ToggleSheet
-    } else if session_page {
-        MenuStep::CloseSessionPage
-    } else if back && sheet {
-        MenuStep::CloseSheet
-    } else if back && page {
-        MenuStep::ClosePage
-    } else {
-        MenuStep::CloseMenu
-    }
-}
+pub(crate) use super::overlay::{menu_step, MenuStep};
 
 /// The stream's window mode: gamescope scales the window itself, so no exclusive mode change there.
 /// Straight to the display (`kms`) the window keeps the display's mode at any setting: a window

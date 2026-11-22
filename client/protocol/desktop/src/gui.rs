@@ -234,16 +234,6 @@ fn holds(ui: &egui::Ui, response: &egui::Response) -> bool {
     content.x_range().contains(rect.center().x) && rect.center().y >= content.top()
 }
 
-/// [`follow_focus`] for a scroll area whose content passes beneath `top_inset` points of chrome,
-/// without a place of its own for the last focus: egui's memory keeps it under `area`, the scroll
-/// area's id salt. Call it first in the scroll area's content.
-pub fn follow_focus_under(ui: &mut egui::Ui, area: impl std::hash::Hash + std::fmt::Debug, top_inset: f32) {
-    let key = egui::Id::unique(("follow-focus", area));
-    let mut last = ui.data(|d| d.get_temp::<Option<egui::Id>>(key)).flatten();
-    follow_focus_inset(ui, &mut last, top_inset);
-    ui.data_mut(|d| d.insert_temp(key, last));
-}
-
 /// Whether Text and button size is Auto, kept in egui's memory by the launcher for the passes that
 /// run without it (keyed by type, as `CoversUsed` is).
 #[derive(Clone, Copy, Default)]

@@ -56,7 +56,7 @@ def main():
         if args.kosmickrisp and not icd.exists():
             raise ValueError(f"KosmicKrisp was asked for but {icd} is missing")
         # The bundled FFmpeg is patched (ffmpeg-patches/macos); the LGPL wants the changes shipped.
-        patches = Path(__file__).resolve().parent.parent / "ffmpeg-patches/macos"
+        patches = Path(__file__).resolve().parents[2] / "desktop-media/ffmpeg-patches/macos"
         missing = [change.name for change in sorted(patches.glob("*.patch"))
                    if not (contents / "Resources/Licenses/FFmpeg" / change.name).is_file()]
         if missing:

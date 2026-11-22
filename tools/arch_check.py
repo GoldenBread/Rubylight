@@ -6,7 +6,7 @@ Checks tracked non-foreign, non-generated source files for:
 3. Rule lints (baselined via tools/arch_baselines.json):
    - raw-config-read: raw Config reads in rust/host/src/stream(.rs|/**) outside stream/config.rs.
    - rubylight-family-gating: Family::Rubylight / Family.RUBYLIGHT feature gating in client/.
-   - unannotated-cfg-unix: cfg(...unix...) in client/protocol/desktop/ without OS-intent // comment.
+   - unannotated-cfg-unix: cfg(...unix...) in client/protocol/desktop{,-*}/ without OS-intent // comment.
 
 Usage:
     python tools/arch_check.py [--root PATH] [--write-baselines]
@@ -888,9 +888,9 @@ def compute_baselines(root):
     cfg_unix = {}
 
     allowed_family_files = {
-        'client/protocol/client/src/http/capabilities.rs',
+        'client/protocol/policy/src/http/capabilities.rs',
         'client/app/src/main/java/com/limelight/nvstream/http/HostCapabilities.java',
-        'client/protocol/desktop/src/host_page.rs',
+        'client/protocol/desktop-ui/src/host_page.rs',
     }
 
     for rel in files:
@@ -922,7 +922,7 @@ def compute_baselines(root):
                 else:
                     family_legacy[rel] = len(hits)
 
-        if rel.startswith('client/protocol/desktop/') and rel.endswith('.rs'):
+        if rel.startswith(('client/protocol/desktop/', 'client/protocol/desktop-config/', 'client/protocol/desktop-ui/', 'client/protocol/desktop-media/')) and rel.endswith('.rs'):
             hits = find_unannotated_cfg_unix(text)
             if hits:
                 cfg_unix[rel] = len(hits)
@@ -1023,7 +1023,7 @@ def check_repo(root):
                     ))
 
         # 5. Rule 3: unannotated-cfg-unix
-        if rel.startswith('client/protocol/desktop/') and rel.endswith('.rs'):
+        if rel.startswith(('client/protocol/desktop/', 'client/protocol/desktop-config/', 'client/protocol/desktop-ui/', 'client/protocol/desktop-media/')) and rel.endswith('.rs'):
             hits = find_unannotated_cfg_unix(text)
             limit = int(cfg_unix_allow.get(rel, 0))
             if len(hits) > limit:

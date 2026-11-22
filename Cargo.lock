@@ -2170,6 +2170,7 @@ dependencies = [
  "aes-gcm",
  "cbc",
  "libc",
+ "nightjar-policy",
  "rand_core 0.6.4",
  "regex",
  "ring",
@@ -2184,6 +2185,16 @@ dependencies = [
  "socket2 0.5.10",
  "windows-sys 0.61.2",
  "zbus",
+]
+
+[[package]]
+name = "nightjar-policy"
+version = "0.1.0"
+dependencies = [
+ "rubylight-native-api",
+ "rubylight-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

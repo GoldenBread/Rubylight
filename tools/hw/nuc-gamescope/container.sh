@@ -27,7 +27,7 @@ build)
 test)
   # The desktop tests in the container, with the ones that need a Vulkan device or glslang.
   docker exec -u $(id -u) -e HOME=$HOME -e PATH=$HOME/.cargo/bin:/usr/bin -w $W/src/client/protocol $name \
-    sh -c "CARGO_TARGET_DIR=$W/target-arch-test cargo test -p nightjar-desktop --locked -j 6 -- pq_present --include-ignored --nocapture --test-threads 1 >$W/arch-test.log 2>&1"
+    sh -c "CARGO_TARGET_DIR=$W/target-arch-test cargo test -p nightjar-desktop-media --locked -j 6 -- pq_present --include-ignored --nocapture --test-threads 1 >$W/arch-test.log 2>&1"
   code=$?
   grep -E '^test |^test result|panicked' $W/arch-test.log | head -20
   grep -E 'pixel [0-9]|glslangValidator' $W/arch-test.log | head -8

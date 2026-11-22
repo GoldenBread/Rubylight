@@ -61,7 +61,7 @@ if [[ -n $sdk ]]; then
 	for path in "$sdk/libpyrowave-shared.so" "$sdk/build-info.txt" "$sdk/licenses"; do
 		[[ -e $path ]] || { echo "error: $path is missing; build the SDK with scripts/build-pyrowave-sdk.sh" >&2; exit 1; }
 	done
-	pin=$here/pyrowave-sdk.pin
+	pin=$workspace/desktop-media/pyrowave-sdk.pin
 	for key in pyrowave_commit api_version patches; do
 		[[ $(value "$sdk/build-info.txt" $key) == "$(value "$pin" $key)" ]] ||
 			{ echo "error: the PyroWave SDK in $sdk has $key=$(value "$sdk/build-info.txt" $key), pyrowave-sdk.pin says $(value "$pin" $key)" >&2; exit 1; }

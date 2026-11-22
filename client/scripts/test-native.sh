@@ -30,7 +30,7 @@ for mode in plain sanitized; do
     echo "aaudio_output ($mode): passed"
 done
 
-cargo test --locked --manifest-path protocol/Cargo.toml --workspace --exclude nightjar-desktop
+cargo test --locked --manifest-path protocol/Cargo.toml --workspace --exclude nightjar-desktop --exclude nightjar-desktop-media
 cargo build --locked --manifest-path protocol/Cargo.toml -p rubylight-protocol-ffi --release
 c++ -std=c++17 -O2 "${sanitize[@]}" "$tests/pyrowave_frame_test.cpp" \
     protocol/target/release/librubylight_protocol.a -o "$out/pyrowave_frame"

@@ -15,6 +15,7 @@ import tempfile
 
 DESKTOP = Path(__file__).resolve().parent
 WORKSPACE = DESKTOP.parent
+DESKTOP_MEDIA = WORKSPACE / "desktop-media"
 ROOT = WORKSPACE.parent
 RUST_TARGETS = {"arm64": "aarch64-apple-darwin", "x86_64": "x86_64-apple-darwin"}
 
@@ -123,7 +124,7 @@ def main():
     # available on disk and surface the tail if any build step fails.
     log = target_root / "macos-deps.log"
     with log.open("w") as stream:
-        result = subprocess.run([DESKTOP / "macos-deps.sh", target_root / "macos-native", arch],
+        result = subprocess.run([DESKTOP_MEDIA / "macos-deps.sh", target_root / "macos-native", arch],
                                 env=env, stdout=stream, stderr=subprocess.STDOUT)
     if result.returncode:
         raise SystemExit(f"{log}\n" + "\n".join(log.read_text().splitlines()[-20:]))
@@ -190,7 +191,7 @@ def main():
         data = b"".join(chunks)
         (resources / "Nightjar.icns").write_bytes(struct.pack(">4sI", b"icns", len(data) + 8) + data)
         shutil.copytree(prefix / "licenses", notices, dirs_exist_ok=True)
-        shutil.copy2(DESKTOP / "macos-deps.sh", notices / "media-sources.sh")
+        shutil.copy2(DESKTOP_MEDIA / "macos-deps.sh", notices / "media-sources.sh")
         libs = bundle_libraries(binary, frameworks, prefix)
         # Loaded at run time, not linked: the PyroWave SDK, the Vulkan loader (macOS 13, so an older
         # Mac starts and decodes on the processor) and KosmicKrisp (macOS 26, Metal 4), which is the

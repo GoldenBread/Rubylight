@@ -88,7 +88,7 @@ jobs:
         run: |
           cd protocol
           cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo nextest run --config-file ../../.config/nextest.toml --profile ci -p nightjar-desktop --locked
+          cargo nextest run --config-file ../../.config/nextest.toml --profile ci -p nightjar-desktop -p nightjar-desktop-config -p nightjar-desktop-ui -p nightjar-desktop-media --locked
       # The PQ pass: its SPIR-V against glslang 15 (a missing or other glslang fails here), and the
       # ignored GPU test on Mesa's software Vulkan (lavapipe, the runner has no GPU).
       - name: Test the PQ present pass
@@ -96,7 +96,7 @@ jobs:
           NIGHTJAR_REQUIRE_GLSLANG: '1'
         run: |
           cd protocol
-          cargo nextest run --config-file ../../.config/nextest.toml --profile ci -p nightjar-desktop --locked --run-ignored all -E 'test(pq_present)'
+          cargo nextest run --config-file ../../.config/nextest.toml --profile ci -p nightjar-desktop-media --locked --run-ignored all -E 'test(pq_present)'
       # Saved by main only, as rust-cache: a branch run must not use up the repository cache.
       - uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
         if: github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true'

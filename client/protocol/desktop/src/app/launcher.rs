@@ -2,6 +2,7 @@
 //! dialogs of the shared folder browser.
 
 use super::*;
+use nightjar_desktop_media::shortcuts_runtime::ButtonSdlExt;
 
 /// What a file dialog of the shared folder browser was opened for, with where the browser was
 /// then.
@@ -222,15 +223,15 @@ impl App {
                 }
                 // A stream hotkey being recorded takes every key, F11 and F12 too; an arrow or Enter
                 // alone goes on to egui and moves in the dialog.
-                SDL_EVENT_KEY_DOWN if self.launcher.recording_hotkey() && !ui::moves_in_hotkey_dialog(event.key.scancode, event.key.r#mod) => {
-                    if let Some(command) = self.launcher.hotkey_key_down(event.key.scancode, event.key.r#mod, event.key.repeat) {
+                SDL_EVENT_KEY_DOWN if self.launcher.recording_hotkey() && !hotkey_sdl::moves_in_hotkey_dialog(event.key.scancode, event.key.r#mod) => {
+                    if let Some(command) = self.launcher.hotkey_input(hotkey_sdl::hotkey_input(event.key.scancode, event.key.r#mod, event.key.repeat)) {
                         self.command(command);
                     }
                 }
-                SDL_EVENT_KEY_DOWN if shortcuts::key_action(Scope::Launcher, event.key.scancode, event.key.r#mod) == Some(Action::Screenshot) => {
+                SDL_EVENT_KEY_DOWN if shortcuts_runtime::key_action(Scope::Launcher, event.key.scancode, event.key.r#mod) == Some(Action::Screenshot) => {
                     self.screenshot_requested = true;
                 }
-                SDL_EVENT_KEY_DOWN if shortcuts::key_action(Scope::Launcher, event.key.scancode, event.key.r#mod) == Some(Action::Fullscreen) => {
+                SDL_EVENT_KEY_DOWN if shortcuts_runtime::key_action(Scope::Launcher, event.key.scancode, event.key.r#mod) == Some(Action::Fullscreen) => {
                     let fullscreen = SDL_GetWindowFlags(self.window) & SDL_WINDOW_FULLSCREEN != 0;
                     SDL_SetWindowFullscreen(self.window, !fullscreen);
                 }
@@ -482,7 +483,7 @@ impl App {
                     }
                     Err(e) => {
                         self.pending_launch = None;
-                        let name = self.hosts.get(id).map_or_else(|| tr("the running app").to_owned(), crate::ui::running_name);
+                        let name = self.hosts.get(id).map_or_else(|| tr("the running app").to_owned(), |h| crate::ui::running_name(&h.ui_view()));
                         self.launcher.notify(tr("Could not quit the game"), crate::hosts::quit_failure(&e, &name));
                     }
                 },
@@ -493,14 +494,10 @@ impl App {
                         self.launcher.notify(tr("Could not wake the PC"), e);
                     }
                 }
-                HostEvent::Sleep { id, ask, name, confirmed, result } => self.launcher.sleep_answered(id, ask, &name, confirmed, result),
-                HostEvent::PcPower { id, ask, name, action, confirmed, result } => {
-                    self.launcher.pc_power_answered(id, ask, &name, action, confirmed, result)
-                }
-                HostEvent::HostUpdate { id, name, result } => self.launcher.update_answered(id, &name, result),
-                HostEvent::PairingAnswer { id, request, name, denied, result } => {
-                    self.launcher.pairing_answered(id, &request, &name, denied, result);
-                }
+                HostEvent::Sleep { id, ask, name, confirmed, result } => self.launcher.sleep_answered(id, ask, &name, confirmed, result.map(|s| s.into_ui(&mut self.pending_power_handed, ask))),
+                HostEvent::PcPower { id, ask, name, action, confirmed, result } => self.launcher.pc_power_answered(id, ask, &name, action, confirmed, result.map(|s| s.into_ui(&mut self.pending_power_handed, ask))),
+                HostEvent::HostUpdate { id, name, result } => self.launcher.update_answered(id, &name, result.map(hosts::UpdateStep::into_ui)),
+                HostEvent::PairingAnswer { id, request, name, denied, result } => self.launcher.pairing_answered(id, &request, &name, denied, result),
                 HostEvent::Unpaired { id, result } => {
                     if crate::hosts::now_unpaired(&result) {
                         self.forget_library(id);
@@ -530,7 +527,7 @@ impl App {
                         eprintln!("nightjar: another stream started while the PC said who plays; this start is dropped");
                         continue;
                     }
-                    let playing = read.as_ref().and_then(|read| self.hosts.get(id).and_then(|h| ui::playing_elsewhere(h, app, read)));
+                    let playing = read.as_ref().and_then(|read| self.hosts.get(id).and_then(|h| ui::playing_elsewhere(&h.ui_view(), app, read)));
                     let press_failed = read.as_ref().is_some_and(|read| read.press_failed);
                     let known = self.hosts.get(id).and_then(|h| match &h.apps {
                         hosts::Apps::Loaded(apps) => apps.iter().find(|known| known.id == app),
@@ -707,8 +704,8 @@ impl App {
         let demo_scrolling = self.demo_scrolling();
         let mut commands = Vec::new();
         let launcher = &mut self.launcher;
-        let hosts = &self.hosts;
-        let pads = &self.pads;
+        let hosts_view = self.hosts.ui_view();
+        let pads_view = self.pads.view();
         let updates = &mut self.updates;
         self.gui.set_readable(true);
         self.gui.set_over_video(false);
@@ -726,8 +723,8 @@ impl App {
             commands = launcher.ui(
                 ui,
                 View {
-                    hosts,
-                    pads,
+                    hosts: &hosts_view,
+                    pads: &pads_view,
                     connecting: connecting.clone(),
                     waking: waking.clone(),
                 },
@@ -738,7 +735,7 @@ impl App {
         self.gui.platform(self.window, &output.platform_output);
         if self.title_bar != *theme::NIGHT {
             self.title_bar = *theme::NIGHT;
-            sdl::blend_title_bar(self.window, self.title_bar, *theme::ON_SURFACE);
+            crate::blend_title_bar(self.window, self.title_bar, *theme::ON_SURFACE);
         }
         let renderer = self.renderer;
         // On a PQ renderer the launcher draws its white at the compositor's SDR white.
@@ -748,7 +745,7 @@ impl App {
         let rescaled = false;
         // The latency benchmark's frames each reach the screen, paced by V-Sync, as Android's
         // Choreographer frames are.
-        let must_draw = std::mem::take(&mut self.window_changed) || self.screenshot_requested || rescaled || self.launcher.latency_bench.timing();
+        let must_draw = std::mem::take(&mut self.window_changed) || self.screenshot_requested || rescaled || self.latency_bench.timing();
         // A screenshot or capture reads the frame back, and so does live glass's timed chain: the
         // frame stays in the GPU renderer's back buffer.
         #[cfg(feature = "demo-library")]
@@ -769,7 +766,8 @@ impl App {
             // SAFETY: a live renderer.
             present_failed = !unsafe { SDL_RenderPresent(self.renderer) };
             if !present_failed {
-                self.launcher.latency_bench.presented(session_now_ns());
+                self.latency_bench.presented(session_now_ns());
+                self.launcher.latency_bench = self.latency_bench.state();
             }
             static FIRST_FRAME_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if let Some(line) = first_frame_line(&FIRST_FRAME_SAID, LAUNCH.get().map(|at| at.elapsed())) {
@@ -788,37 +786,38 @@ impl App {
     /// advances, and while the timing test runs this frame is a sample.
     fn latency_bench_frame(&mut self) {
         if self.launcher.screen != Screen::LatencyBenchmark || self.attempts.is_connecting() || self.network_launch.is_some() || self.probe.is_some() {
-            let bench = &mut self.launcher.latency_bench;
-            if bench.running() || bench.device.is_some() {
-                bench.leave();
+            if self.latency_bench.running() || self.latency_bench.device.is_some() {
+                self.latency_bench.leave();
             }
+            self.launcher.latency_bench = self.latency_bench.state();
             return;
         }
-        if self.launcher.latency_bench.device.is_none() {
-            self.launcher.latency_bench.device = Some(self.latency_device());
+        if self.latency_bench.device.is_none() {
+            self.latency_bench.device = Some(self.latency_device());
         }
-        self.launcher.latency_bench.step(Instant::now());
-        if self.launcher.latency_bench.timing() {
+        self.latency_bench.step(Instant::now());
+        if self.latency_bench.timing() {
             let vblank = stream::phase::timing(self.renderer, display_of(self.window).refresh_hz, 1, &mut Default::default()).map(|(latch_us, _)| latch_us.saturating_mul(1000));
-            self.launcher.latency_bench.frame(vblank, session_now_ns());
+            self.latency_bench.frame(vblank, session_now_ns());
         }
+        self.launcher.latency_bench = self.latency_bench.state();
     }
 
     /// What the latency benchmark reports about this device: the display mode's refresh rate, the
     /// default output's audio format and the renderer's GPU.
-    pub(crate) fn latency_device(&self) -> latency_bench::Device {
+    pub(crate) fn latency_device(&self) -> latency_bench_state::Device {
         let display = display_of(self.window);
         #[cfg(windows)]
         let gpu = gpu_adapters::renderer_gpu(self.renderer_device());
         #[cfg(not(windows))]
         let gpu = None;
-        latency_bench::Device { panel_hz: display.refresh_reported.then_some(display.refresh_hz), audio: latency_bench::audio_format(), gpu }
+        latency_bench_state::Device { panel_hz: display.refresh_reported.then_some(display.refresh_hz), audio: latency_bench::audio_format(), gpu }
     }
 
     /// An input event's age for the latency benchmark while its test runs: SDL stamps events in
     /// `SDL_GetTicksNS` time.
     fn latency_input(&mut self, event: &SDL_Event) {
-        if !self.launcher.latency_bench.timing() {
+        if !self.latency_bench.timing() {
             return;
         }
         // SAFETY: every event starts with its type and timestamp.
@@ -833,7 +832,7 @@ impl App {
         if input && stamp > 0 {
             // SAFETY: SDL is up.
             let age = unsafe { SDL_GetTicksNS() }.saturating_sub(stamp);
-            self.launcher.latency_bench.input(age.min(i64::MAX as u64) as i64);
+            self.latency_bench.input(age.min(i64::MAX as u64) as i64);
         }
     }
 

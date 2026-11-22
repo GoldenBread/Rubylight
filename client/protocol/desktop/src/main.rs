@@ -9,99 +9,39 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod a11y;
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-mod amd_decode;
-#[allow(dead_code, reason = "glass foundation: the pages start using it in the next change")]
-mod ambient;
 mod app;
 mod autostart;
 mod autostream;
 mod cli;
-mod clipboard;
-mod config;
 mod conn_test;
 #[cfg(windows)]
 mod crash_dump;
 #[cfg(feature = "demo-library")]
 mod demo_driver;
-mod console;
-mod coop_page;
-mod folders_page;
-mod neural_page;
-mod full_chroma;
-mod controller_audio;
-mod controller_mouse;
-mod dmabuf;
-mod gamepad;
+mod font_loader;
 mod game_info;
-mod glyphs;
-#[cfg(windows)]
-mod gpu_adapters;
 mod gui;
-mod handheld;
-mod host_page;
 mod hosts;
+mod hotkey_sdl;
 mod input_source;
-mod keymap;
-mod kms;
+mod link_channel;
 mod live_glass;
 mod logfile;
-mod link_channel;
-#[cfg(any(target_os = "linux", test))]
-mod linux_diagnosis;
-#[cfg(any(target_os = "linux", test))]
-mod linux_video;
-mod latency_bench;
 mod logpipe;
-// The display's refresh range is NSScreen's; its tests for a variable range run everywhere.
-#[cfg(any(target_os = "macos", test))]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod mac_display;
-mod media;
-mod mp4;
-mod menu_style;
-mod nav_repeat;
 mod move_watch;
-mod network;
 mod network_test;
 mod open_play;
-mod pin_lock;
-mod pin_ui;
+mod page_hosts;
+mod pin_clock;
 mod power;
-mod radeon;
-mod render_device;
-mod sdl;
-mod second_screen;
-mod session_page;
-mod session_ui;
-mod shortcuts;
-mod stream;
-mod stream_menu;
-mod strings;
-mod theme;
-mod timing_csv;
-mod ui;
-mod usb;
-#[cfg(target_os = "linux")]
-mod usb_linux;
-// Windows reads its drivers here; the parsing is tested everywhere.
-#[cfg(any(windows, test))]
-mod usb_winusb;
-// build.rs uses the parser; here only its tests do.
-#[cfg_attr(not(test), allow(dead_code))]
-mod version_name;
 mod self_update;
 mod update_check;
 mod update_net;
-// Linux only, and in tests everywhere with zero_copy, which plans its extensions.
-#[cfg(any(unix, test))]
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-mod vulkan_video;
 mod window_place;
 mod wol;
 
-/// The release version: the `versionName` of the Android app, embedded by build.rs.
-const VERSION: &str = env!("NIGHTJAR_VERSION");
+mod crates;
+pub use crates::*;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
@@ -137,6 +77,7 @@ struct App {
     store: Store,
     hosts: Hosts,
     launcher: Launcher,
+    latency_bench: latency_bench::Bench,
     pads: Gamepads,
     /// The starts connecting and those just cancelled or timed out, whose workers may still run.
     attempts: stream::Attempts,
@@ -150,6 +91,8 @@ struct App {
     /// The PC being woken and the clock of its resends ("Waking <PC>…").
     waking: wol::Wakes,
     streaming: Option<(Streaming, TimerResolution)>,
+    overlay: StreamOverlay,
+    pending_power_handed: std::collections::HashMap<u64, hosts::Handed>,
     /// The request that turns the PC's automatic bitrate off after the last stream, while it may
     /// still be in flight, each with the PC it went to: the next stream to that PC (a reconnect
     /// too) turns it on only after it, and the app's end waits for them all.
@@ -556,6 +499,45 @@ fn message_box(flags: SDL_MessageBoxFlags, text: &str) {
 }
 
 fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<String>) -> Result<(), String> {
+    font_loader::register();
+    conn_test::register();
+    pin_clock::register();
+    shortcuts_runtime::register_hooks();
+    platform_hooks::register(platform_hooks::PlatformHooks {
+        pyrowave_probe: |device, ten_bit| {
+            stream::pyrowave_mode::settings_probe(device as *mut std::ffi::c_void, ten_bit)
+        },
+        enhance_probe: |device| {
+            stream::enhance::settings_probe(device as *mut std::ffi::c_void)
+                .map(|cap| cap.is_some())
+        },
+        clear_scan_sync: stream::scan_sync::clear_all,
+        metalfx_supported: stream::metalfx_supported,
+        offers_714: stream::offers_714,
+        self_update_checks: || self_update::current().checks(),
+        kms_active: kms::active,
+        gpu_pair: || {
+            #[cfg(windows)]
+            {
+                gpu_adapters::gpus()
+                    .map(|g| (g.power_saving.name.clone(), g.high_performance.name.clone()))
+            }
+            #[cfg(not(windows))]
+            {
+                None
+            }
+        },
+        video_driver: || {
+            #[cfg(target_os = "linux")]
+            {
+                sdl::video_driver()
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                String::new()
+            }
+        },
+    });
     sdl::set_hint(SDL_HINT_APP_NAME, c"Nightjar");
     sdl::set_hint(SDL_HINT_APP_ID, c"io.github.ramazankara.nightjar");
     #[cfg(windows)]
@@ -745,7 +727,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     sdl::set_icon(window, &theme::logo_rgba(64), 64);
     sdl::exclude_from_capture_if_asked(window);
     // Before the window shows, so its first frame already has the dark bar; again when the palette changes.
-    sdl::blend_title_bar(window, *theme::NIGHT, *theme::ON_SURFACE);
+    blend_title_bar(window, *theme::NIGHT, *theme::ON_SURFACE);
 
     let waker: hosts::Waker = Arc::new(move || {
         // SAFETY: SDL_PushEvent is thread-safe; the event is plain data.
@@ -844,7 +826,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         launcher.tearing_supported = variable && stream::env_flag("NIGHTJAR_MAC_VRR") == Some(true);
         if launcher.tearing_supported { eprintln!("nightjar: Real VRR on this display (NIGHTJAR_MAC_VRR)"); }
     }
-    launcher.gpu_device = renderer_gpu_device(renderer);
+    launcher.gpu_device = renderer_gpu_device(renderer).map(|d| d.0 as usize);
     // Off Windows the swapchain's present mode decides tearing, logged when a stream starts.
     eprintln!(
         "nightjar: renderer {}, display {}x{} at {:.2} Hz{}",
@@ -898,16 +880,23 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     launcher.game_info_keys = hosts.game_info_keys();
     {
         // Open on Home when it is on and some PC has a library to show.
-        let sources: Vec<console::Source> = hosts.list.iter().map(console::Source::of).collect();
+        let hosts_view = hosts.ui_view();
+        let sources: Vec<console::Source> = hosts_view.list.iter().map(console::Source::of).collect();
         if console::opens_on_home(settings.console_home, &sources) {
             launcher.go(Screen::Home);
         }
     }
     #[cfg(feature = "demo-library")]
-    ui::demo::fill(&mut hosts, &mut launcher, &gui.ctx);
+    {
+        let mut hosts_view = hosts.ui_view();
+        ui::demo::fill(&mut hosts_view, &mut launcher, &gui.ctx);
+        hosts.apply_ui_demo(hosts_view);
+    }
     // A stream started from the command line waits for the next ordinary start.
     let mut save_failed_told = false;
-    if cli.is_none() && std::env::var_os("NIGHTJAR_AUTOSTREAM").is_none() && launcher.show_kept_settings_once(&hosts.list)
+    if cli.is_none()
+        && std::env::var_os("NIGHTJAR_AUTOSTREAM").is_none()
+        && launcher.show_kept_settings_once(&hosts.ui_view().list)
         && let Err(e) = store.save_settings(&launcher.settings) {
             eprintln!("nightjar: saving settings failed: {e}");
             save_failed_told = true;
@@ -973,6 +962,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         store,
         hosts,
         launcher,
+        latency_bench: Default::default(),
         pads,
         attempts: stream::Attempts::default(),
         probe: None,
@@ -980,6 +970,8 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         ending_probes: Vec::new(),
         waking: wol::Wakes::default(),
         streaming: None,
+        overlay: StreamOverlay::default(),
+        pending_power_handed: std::collections::HashMap::new(),
         abr_stops: Vec::new(),
         teardowns: Vec::new(),
         pending_launch: None,
@@ -1102,6 +1094,10 @@ fn log_window_hdr(event: &SDL_Event) {
     }
 }
 
+pub(crate) fn blend_title_bar(window: *mut SDL_Window, bg: egui::Color32, fg: egui::Color32) {
+    sdl::blend_title_bar(window, [bg.r(), bg.g(), bg.b()], [fg.r(), fg.g(), fg.b()]);
+}
+
 /// The launcher window's flags for how it opens (handheld.rs).
 fn start_flags(start: handheld::StartWindow) -> SDL_WindowFlags {
     SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN
@@ -1111,7 +1107,7 @@ fn start_flags(start: handheld::StartWindow) -> SDL_WindowFlags {
 
 // Test only, and declared down here: `strings.rs` reads this file up to its first test item.
 #[cfg(test)]
-mod shot;
+mod ui_sdl_tests;
 
 #[cfg(test)]
 mod tests;

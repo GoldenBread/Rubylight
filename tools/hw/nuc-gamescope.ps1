@@ -195,7 +195,7 @@ if ($SelfTest) {
         # change (a prefix from before --enable-libdrm failed every VAAPI map with -38).
         $releaseLinux = Get-Content -Raw "$PSScriptRoot\nuc-gamescope\release-linux.sh"
         $key = (Select-String -Path "$repo\client\.github\workflows\release.yml" -Pattern 'key: ffmpeg-decode-only-linux').Line
-        $keyed = [regex]::Matches($key, "'(protocol/desktop/[^']+)'") | ForEach-Object { $_.Groups[1].Value }
+        $keyed = [regex]::Matches($key, "'(protocol/desktop-media/[^']+)'") | ForEach-Object { $_.Groups[1].Value }
         $recipe = ($releaseLinux -split "`n" | Where-Object { $_ -match '^\s*cat .*sha256sum' }) -join ''
         expect 'the FFmpeg recipe hashes what release.yml keys its FFmpeg cache by' ($keyed.Count -ge 3 -and
             @($keyed | Where-Object { $recipe -notmatch [regex]::Escape("`"`$1`"/$_") }).Count -eq 0)

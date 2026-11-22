@@ -29,6 +29,53 @@ pub enum UpdateStep {
     Back(String),
 }
 
+impl SleepStep {
+    pub(crate) fn into_ui(
+        self,
+        handed: &mut HashMap<u64, Handed>,
+        ask: u64,
+    ) -> crate::hosts_model::SleepStep {
+        match self {
+            Self::Offer { token, at } => {
+                handed.insert(ask, at);
+                crate::hosts_model::SleepStep::Offer { token, at: crate::hosts_model::Handed(at.at) }
+            }
+            Self::Accepted => crate::hosts_model::SleepStep::Accepted,
+        }
+    }
+}
+
+impl PcPowerStep {
+    pub(crate) fn into_ui(
+        self,
+        handed: &mut HashMap<u64, Handed>,
+        ask: u64,
+    ) -> crate::hosts_model::PcPowerStep {
+        match self {
+            Self::Offer { token, at, wake_from_off } => {
+                handed.insert(ask, at);
+                crate::hosts_model::PcPowerStep::Offer {
+                    token,
+                    at: crate::hosts_model::Handed(at.at),
+                    wake_from_off,
+                }
+            }
+            Self::Accepted => crate::hosts_model::PcPowerStep::Accepted,
+            Self::Unconfirmed(s) => crate::hosts_model::PcPowerStep::Unconfirmed(s),
+        }
+    }
+}
+
+impl UpdateStep {
+    pub(crate) fn into_ui(self) -> crate::hosts_model::UpdateStep {
+        match self {
+            Self::Started(v) => crate::hosts_model::UpdateStep::Started(v),
+            Self::Waiting(r) => crate::hosts_model::UpdateStep::Waiting(r),
+            Self::Back(v) => crate::hosts_model::UpdateStep::Back(v),
+        }
+    }
+}
+
 /// How long an update may take before Nightjar stops waiting for the PC to come back. Time
 /// spent waiting for another device's stream does not count.
 const UPDATE_WAIT: Duration = Duration::from_secs(15 * 60);
@@ -184,13 +231,19 @@ pub(super) fn pc_power_refusal(host: &impl PcPowerHost, reads: u32, pause: impl 
 /// token never looks younger than it is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Handed {
-    pub(super) at: Instant,
-    pub(super) wall: SystemTime,
+    pub at: Instant,
+    pub wall: SystemTime,
 }
 
 impl Handed {
     pub fn now() -> Self {
         Self { at: Instant::now(), wall: SystemTime::now() }
+    }
+
+    pub fn from_instant(at: Instant) -> Self {
+        let elapsed = at.elapsed();
+        let wall = SystemTime::now().checked_sub(elapsed).unwrap_or_else(SystemTime::now);
+        Self { at, wall }
     }
 
     pub(super) fn age(&self) -> Duration {

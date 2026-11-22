@@ -38,7 +38,7 @@ while getopts "o:H:j:" opt; do
 	esac
 done
 
-pin=$repo/protocol/desktop/pyrowave-sdk.pin
+pin=$repo/protocol/desktop-media/pyrowave-sdk.pin
 pin_value() { sed -n "s/^$1=//p" "$pin" | head -n1; }
 commit=$(pin_value pyrowave_commit)
 granite_pin=$(pin_value granite_commit)

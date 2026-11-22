@@ -3,15 +3,6 @@
 
 use super::*;
 
-/// Takes what the native API said into serverinfo's capabilities, so every gate on them
-/// (shared folders, co-op, the image clipboard) sees it. Without a native read nothing changes,
-/// and a PC without the native API offers none of those features either way.
-pub fn merge_native(info: &mut ServerInfo, native: Option<&NativeCapabilities>) {
-    if let Some(native) = native {
-        info.capabilities = info.capabilities.with_native(native);
-    }
-}
-
 /// How long selecting a game waits to learn who plays it, before it starts the stream as it always did.
 const SELECT_READ_WAIT: Duration = Duration::from_millis(1500);
 /// How often an open "Now playing on ..." asks the PC whether the move failed.

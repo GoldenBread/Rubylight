@@ -98,7 +98,7 @@ impl App {
                 }
                 if let Some(command) =
                     self.launcher
-                        .demo_page(page, &self.hosts, self.waker.clone())
+                        .demo_page(page, &self.hosts.ui_view(), self.waker.clone())
                 {
                     self.command(command);
                 }
