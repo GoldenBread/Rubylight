@@ -238,3 +238,14 @@ Measured on commit `<short-sha>` (release build):
 
 - **Harness unit tests (no GPU):** `python -m unittest rust/release/test_wave1_verify.py` and `python tools/hw/run.py --validate-catalog` (validates YAML schema, preconditions, and `{{var}}` substitutions).
 - **Mandatory Exit Code 3 Abort Rule:** If ANY leg of `wave1_verify.py`, `e2e.py`, `check.ps1`, or `laptop-host.ps1` exits with code **`3`**, an AMD video engine hang occurred (`gpu_hang.py`). The runner **stops immediately**, writes `gpu_hang` into `result.json`, releases `GPU-LOCK`/`LAPTOP-LOCK`, and exits `3`. Agents and operators MUST investigate the hang (and reboot if Device Manager reports Code 31) and **NEVER retry** the failed run.
+
+---
+
+## 8. Post-Discovery Addendum — Items `27`–`29` Verification & CI Binary/CPU Size Ratchet
+
+- **Wave 1 Gate Scope Expansion (`depends_on: ["03", "04", "05", "06", "21", "22", "27", "28", "29"]`):**
+  - **Item `28` (`wave1-capture-gpu-power`):** Verify cold launch from locked/display-off state (`#117`) succeeds in `<= 3 s` without client mouse jiggle on both virtual and physical displays (RX 7900 XT + Radeon 780M), and confirm `capture_luid == vdisplay_render_luid == encoder_luid` with zero-copy `idd-push` active.
+  - **Item `29` (`wave1-android-pacing`):** Run serialized ABBA release-build measurements across RX 7900 XT / Radeon 780M + real Android devices (Retroid Pocket 6, Galaxy Z Fold7, TCL C6K TV, and Shield TV Pro if attached) covering 60/120/240 Hz burst pacing (`present_to_sent p99 <= +0.05 ms` on wired LAN, reduced irregular receive intervals & `> 25 ms` gaps, zero reconnect decoder debt `#7`). Keep untested Android SoCs and NVIDIA NVENC strictly documented as unit-tested/auto-quarantined/header-verified only.
+- **Automated Non-GPU CI Binary/Installer Size & CPU Regression Gate (`tools/ci_size_perf_check.py`, `tools/artifact_size_ratchet.json`, `<= 250` LOC):**
+  - Track compiled byte-size ceilings (`+5%` alert / hard budget) across `rubylight-setup-*.exe`, `rubylight-*-windows-x64.zip`, `nightjar-nonRoot-release.apk`, `.aab`, `AppImage`, `.deb`, `.rpm`, `.flatpak`, `nightjar-desktop-*-setup.exe`, and `Nightjar.app.zip` in CI workflow summaries.
+  - Run lightweight deterministic non-GPU CPU/cold-start timing checks (Frame Warp prediction `04`, Annex-B/AVCC/HVCC/OBU framing `21`, log redactor throughput `27`, and `< 250 ms` cold-start init budget `17`).

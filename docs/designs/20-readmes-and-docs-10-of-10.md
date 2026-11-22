@@ -262,3 +262,10 @@ Pass criteria:
   2. Perform a complete release review from the previous release tag (`v6.2.0`) to the candidate SHA together with the assembled release notes from `rust/release/notes.d/` and `client/notes.d/`, fixing any discrepancy before tagging.
   3. If any fresh hardware benchmark is required to substantiate a number in `README.md` or `rust/PERFORMANCE.md`, execute it strictly under the serialized idle-gated protocol (`RustHostSessionCount == 0`, isolated test host on port `48123`, **immediate abort on exit code 3** AMD encoder hang without retry).
   4. Never create or push a release tag without explicit maintainer approval.
+
+---
+
+## 8. Post-Discovery & 6.3.0 (`995f2540c8` / `fc1704feb3`) Rebase Addendum
+
+- **Whole-Release Review Baseline (`v6.3.0`, NOT `v6.2.0`):** Anchor Wave 6's whole-release diff review strictly to **`v6.3.0` (`995f2540c8`)..HEAD** (with Nightjar `versionCode >= 406`) and build README refreshes cleanly atop `fc1704feb3`'s latency/smoothness structure.
+- **Sync `client/docs/CLIENT-PARITY.md` & Explicit 7.1+ Scope Boundaries:** Update `CLIENT-PARITY.md` to reflect shipping **Windows ARM64** (`aarch64-pc-windows-gnullvm`, CI-verified), **Desktop Presets** (already live + expanded to 4 presets in `02`), and **Desktop redacted support ZIP (`nightjar-support.zip`)** (`27`). Document explicit 7.1+ boundaries cleanly (`rubylight-vgamepad` v2 PID wheels/HOTAS, Flathub source build / F-Droid / macOS notarization / Homebrew Cask, WebRTC guest transcoding & self-hosted TURN, Desktop Dolby bitstream passthrough & Linux/macOS 7.1.4 native audio, Xbox UWP `#70`, LG webOS `#47`) per [`docs/reviews/gap-discovery-report.md`](../reviews/gap-discovery-report.md).

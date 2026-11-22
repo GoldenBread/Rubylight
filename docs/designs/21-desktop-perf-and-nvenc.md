@@ -184,3 +184,20 @@ Wave 1 scheduling note: Item 21 depends on `04` and `06` (so `render.rs` and `nv
      - Measure VA-API/Vulkan Video DMA-BUF zero-copy direct scanout hit rate (`>= 95%` fullscreen video-only frames), `0` CPU map fallbacks, `decode_to_present_us` p50/p99 improvement vs baseline (`NIGHTJAR_WAYLAND_DMABUF_DIRECT=0`), and clean Control Center open/close `wl_subsurface` handoff with zero `wl_display` protocol errors.
 3. **Mandatory Exit Code 3 Abort Rule:** If ANY host run exits with code `3` (AMD encoder hang), **abort immediately and investigate; never retry**.
 4. **Reporting:** Append measured Windows (RX 7900 XT, Radeon 780M) and Intel Linux (NUC) numbers to a dated section of `rust/PERFORMANCE.md`, explicitly stating: `"macOS Apple Silicon fast path verified via nightjar-macos.yml CI only; NVIDIA NVENC verified via SDK 13.0 headers and fake-driver tests only — neither was executed on local Apple Silicon or NVIDIA GPU hardware."`
+
+---
+
+## 8. Post-Discovery & 6.3.0 Rebase Addendum (`#139`, `#77`, `#141`, `#120`, `#116`, `#144`, Win ARM64 & macOS Updater)
+
+- **Host Virtual-Display Refresh Cap & AMD AMF AV1 Skip-Frame Fix (Slice 21-D / `rust/drivers/rubylight-vdisplay-proto`):**
+  1. Fix `rust/drivers/rubylight-vdisplay-proto/src/modes.rs:123-129` so ALL `default_modes()` fallback resolutions cap refresh rates to `<= fastest` (keeping `>= 60 Hz` if `fastest < 60_000`), preventing games switching to non-native resolutions from silently bumping a 60 Hz virtual display to 240 Hz (`#144`, `#131`).
+  2. Set `Av1RateControlSkipFrameEnable = false` for AV1 in `rust/core/src/encoder_policy.rs:554-563` (capability-checked so older Adrenalin drivers stay unaffected) + add VCN5 (RDNA 4) high-refresh queue-drain telemetry around `amf/submit.rs:326,602`.
+  3. Rebase NVENC & host pacing assumptions on `6.3.0` (`391229c60f`, `7945651f26`, `19c6742693`, `59dd5a0507`, `7f0e6e287d`), preserving strict header/sample-only NVENC honesty.
+- **Linux Steam Deck Gamescope 4K120 VRR (`#139`), `kms_scanout.rs` 6.3.0 Rebase & aarch64 V4L2 `P010` HDR (`#77`) (Slice 21-B):**
+  1. Explicitly gate `linux_dmabuf_direct.rs`'s child `wl_subsurface` **OFF** under `handheld::gamescope()` (Gamescope uses nested WSI `IMMEDIATE` swapchains, not arbitrary subsurfaces), add a dedicated Gamescope 4K120 HDR VRR swapchain/present-queue audit closing `#139`, and rebase `kms_scanout.rs` against `6.3.0` `6c2079fe3f` (ensuring net shrink below ratchet!).
+  2. Build `v4l2_m2m.rs` zero-copy `V4L2_PIX_FMT_P010`/`P010M` DMA-BUF export + multi-frame Main10 probing cleanly atop `media.rs` (`a25c5f491b`) & `color_probe.rs` Qualcomm Iris fixes (`#77`), and promote `desktop-linux` `aarch64` in `client/.github/workflows/release.yml:83` from `continue-on-error: true` to blocking once green.
+- **macOS Direct VT + Async MetalFX (`#141`), Host Phase-Lock (`#116`) & Broken Update-Check Fix (Slice 21-A):**
+  1. Integrate `metalfx.rs` asynchronously inside `macos_metal_present.m`'s single `MTLCommandBuffer` (eliminating `metalfx.rs:91-99`'s ~5 ms synchronous stall), pool fallback SDL Metal textures in `present/upload.rs:35-36,91-94`, wire VideoToolbox 4:4:4 (`media.rs:1626`), and feed `CADisplayLink` / `CAMetalLayer` latch timing into `stream/phase.rs` so macOS participates in host phase-lock (`#116`).
+  2. Fix `client/protocol/desktop/src/self_update.rs:186-190` (stop classifying standalone macOS `.app` bundles as `CopyKind::Managed`, which silently hid **Check for updates** in `ui/settings.rs:1866`) and fix `update_check.rs:150` User-Agent (`"macOS"` instead of `"Linux"`).
+- **Windows ARM64 & Win10 Exclusive Fullscreen Scaled PyroWave Validation (`#120`) (Slice 21-C):**
+  - Explicitly cover Windows ARM64 (`aarch64-pc-windows-gnullvm` / CLANGARM64 D3D12VA headers + Adreno fallback, verified via `windows-11-arm` CI only and never claimed locally benchmarked), and add Windows 10 Exclusive Fullscreen + `NIGHTJAR_DIRECT_PLANES=1` vs `=0` scaled PyroWave swapchain color-metadata verification to `win_perf_tests.rs` (`#120`).

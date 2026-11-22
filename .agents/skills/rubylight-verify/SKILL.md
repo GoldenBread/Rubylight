@@ -43,7 +43,19 @@ Additional targeted checks when their trees changed:
 - Verify LF-only line endings on all changed files (no `\r\n`).
 - Never run `python tools/arch_check.py --write-baselines` and never hand-edit `tools/size_ratchet.json` or `tools/arch_baselines.json`.
 
-## 3. Full Package Gate (Exclusive Lock Only)
+## 3. Remote Laptop Verification Lane (Up to 3 Concurrent Feature Workers!)
+
+When local desktop build capacity (`2` concurrent local build lanes under `tools/build_lock.py`) is saturated, push a `wip/roadmap/<id>-<slug>` branch and offload its full `dev.ps1 check` onto the laptop (`ramaz@192.168.4.12`) via `tools\remote-check.ps1` (giving **2 local desktop lanes + 1 remote laptop lane = 3 concurrent feature workers**):
+
+```powershell
+git push -u origin wip/roadmap/<id>-<slug>
+pwsh tools\remote-check.ps1 -Host laptop -Branch wip/roadmap/<id>-<slug>
+```
+
+- `remote-check.ps1` safely honors the laptop's `BUILD-LOCK` and `LAPTOP-LOCK` and runs inside the console user's interactive session.
+- **Automatic graceful fallback:** If SSH is unreachable or `remote-check.ps1` exits **`4`** (laptop busy) or **`5`** (nobody / another user at console), fall back transparently to local `tools\dev.ps1 check -Fast -Base <base>` (keeping local desktop concurrency capped at 2). Note: exit `3` from `remote-check.ps1` is a timeout, NOT an AMD encoder hang.
+
+## 4. Full Package Gate (Exclusive Lock Only)
 
 ```powershell
 python tools/build_lock.py -- pwsh rust/build.ps1
@@ -51,15 +63,15 @@ python tools/build_lock.py -- pwsh rust/build.ps1
 
 Never invoke `rust\build.ps1` without exclusive `tools/build_lock.py` (never pass `--lane` for `rust/build.ps1`).
 
-## 4. Serialized Hardware, E2E & Soak Gate (Phase 7 & Wave 6)
+## 5. Serialized Hardware, E2E & Soak Gate (Phase 7 & Wave 6)
 
-All hardware runners are gated on `hw_lock`, absence of `.agents/GPU_HANG_HALT`, and `RUBYLIGHT_ALLOW_HW_GATE=1` in the process environment:
-- `rust/release/e2e.py`, `rust/release/check.ps1`, `rust/release/soak.ps1`, `rust/release/soak.py`, `rust/release/focus_ab.py`
+Idle-gated serialized hardware runners are **allowed by default** (blocked only if `.agents/GPU_HANG_HALT` exists or `RUBYLIGHT_DISABLE_HW_GATE=1` is explicitly set in the process environment):
+- `rust/release/e2e.py`, `rust/release/check.ps1`, `rust/release/soak.ps1`, `rust/release/soak.py`, `rust/release/focus_ab.py`, `rust/tests/crash_restore_soak.py`
 - `tools/hw/run.ps1`, `tools/hw/run.py`, `tools/hw/laptop-host.ps1`, `tools/hw/demo-stream.ps1`, `tools/hw/wave1_verify.py`
 - Any `--ignored` / `--run-ignored` native GPU test
 
-Procedure:
+Mandatory Procedure:
 1. Verify installed host idle first:
    `(Invoke-WebRequest http://127.0.0.1:47989/serverinfo).Content` must report `RustHostSessionCount` = `0` and `RustHostPendingSessionCount` = `0`.
-2. Run isolated test host / runner with `RUBYLIGHT_ALLOW_HW_GATE=1`.
+2. Run serialized isolated test host / runner (`hw_lock`, never two GPU runs concurrently).
 3. **Exit code 3 from any hardware/stream/soak runner is an AMD encoder hang**: stop immediately, never retry, let `watch_gpu_hang.py` record `.agents/GPU_HANG_HALT`, and escalate for human GPU/driver inspection.

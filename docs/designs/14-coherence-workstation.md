@@ -312,3 +312,13 @@ Strictly non-overlapping file ownership per branch: **Stage 1 (`Slice 14A`)** la
   - Standard display stream (Coherence off): `present_to_sent p99` delta `<= +0.05 ms` (0 overhead).
   - 50 consecutive window switches at 1080p60 HEVC: median switch-to-first-frame `<= 120 ms`, p95 `<= 180 ms`, zero D3D11/D3D12 handle or VRAM growth, zero encoder hangs, zero stray `coherence-journal.json` entries after teardown.
 - **NVIDIA note:** NVIDIA NVENC path is checked against existing `rust/windows/src/nvenc.rs` frame contracts and vendor SDK headers/samples only; never claimed as hardware-tested.
+
+---
+
+## 8. Post-Discovery & 6.3.0 Rebase Addendum — Desktop IME, macOS Layout, Touchpad/Stylus & Sticky DDX
+
+- **Desktop CJK / Dead-Key IME Composition & Live Keyboard Layouts (Slice 14D, zero wire changes):**
+  1. Extend `client/protocol/desktop/src/stream/text_field.rs` + `input.rs` with a Coherence-aware desktop IME mode that calls `SDL_StartTextInputWithProperties` and handles `SDL_EVENT_TEXT_EDITING` pre-edit composition (porting Android `HostTextField.java`'s composing-diff algorithm over existing UTF-8 `send_text`, leaving raw scancodes untouched during gameplay).
+  2. Implement macOS `TISCopyCurrentKeyboardInputSource` and live Linux Wayland/X11 XKB layout reporting in `text_field.rs::current_layout()`.
+  3. Add Desktop relative trackpad touch mode in `stream/touch.rs` for Windows/Linux touchscreens (Surface / handhelds in Coherence) and wire Android `MotionEvent.AXIS_ORIENTATION` pen barrel roll (`0x5500000B`, Slice 14E) when advertised by `HostCapabilities`.
+- **6.3.0 (`7f0e6e287d`) Sticky DDX Clearance:** Explicitly clear `7f0e6e287d`'s mid-session sticky DDX fallback latch whenever Coherence initiates window-scoped WGC capture so switching to single-window streaming never stays trapped on Desktop Duplication.

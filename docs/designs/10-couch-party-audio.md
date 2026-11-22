@@ -292,3 +292,15 @@ Restore invariants:
   - **Solo bypass timing:** 90 s 1080p60 stream ABBA comparison — audio packet interval jitter p99 delta <= +0.05 ms; zero cadence dropouts.
   - **2-client + active mic + couch mirror soak (120 s):** zero WASAPI underruns on remote streams, `audio` thread CPU time per 5 ms packet < 0.15 ms p99, clean Windows speaker mute restore verified after killing test host via `Stop-Process -Force` and restarting!
 - **Exit code 3 abort rule:** If `e2e.py` or `check.ps1` exits with code `3` (AMD encoder hang), abort immediately and investigate — never retry.
+
+---
+
+## 8. Post-Discovery Addendum — Event-Driven Audio Hot-Plug & Android BT A2DP / Multichannel AAudio
+
+- **Windows Event-Driven `IMMNotificationClient` Hot-Plug & Dead-Sink Recovery (Slice 10-B):**
+  1. Implement an `IMMNotificationClient` COM listener in `rust/windows/src/audio_route.rs` (`OnDefaultDeviceChanged`, `OnDeviceStateChanged`, `OnDeviceAdded`, `OnDeviceRemoved`, `OnPropertyValueChanged`) that immediately unparks `RouteUpkeep` (<20 ms recovery instead of waiting up to 1000 ms poll when Exclusive virtual display drops an HDMI monitor or a USB/BT headset plugs in).
+  2. Verify `DEVICE_STATE_ACTIVE` on `AUDCLNT_E_DEVICE_INVALIDATED` in `capture_sink()` / `maintain_default()` so invalidated virtual or HDMI sinks re-acquire or fall back visibly instead of streaming silence forever, support headless virtual-sink-only acquisition, and recreate `KeepAlive` alongside `Loopback` on any endpoint or format change (`48 <-> 96 kHz`, `2ch <-> 7.1ch`).
+  3. Unify `party-audio-recovery.json` into Item `17`'s canonical crash-recovery journal (`RecoveryJournalV2`) rather than maintaining three fragmented audio recovery JSON files.
+- **Android Bluetooth A2DP Voice-Quality Guard & API 32+ Multichannel AAudio (Slice 10-E):**
+  1. Distinguish classic Bluetooth A2DP vs `TYPE_BLE_HEADSET` (LE Audio) in `MicRoute.java`: when classic BT A2DP headphones are active, route `AudioRecord` via `setPreferredDevice(TYPE_BUILTIN_MIC)` so enabling voice chat in Couch Party Audio **never** collapses 48 kHz stereo A2DP game audio into 8/16 kHz mono HFP/SCO (while letting LE Audio gaming headsets use bidirectional mic cleanly, surfaced with a plain-English notice in `PartyAudioSheet`).
+  2. Upgrade `aaudio_output.c` and `AudioBufferPolicy.useAAudio` on Android 12L+ (API 32+) to support 5.1/7.1/7.1.4 via `AAudioStreamBuilder_setChannelMask` + `AAudioStreamBuilder_setSpatializationBehavior(AUTO)` (keeping API 27–31 stereo fallback), and migrate `AudioPassthrough.java` on API 33+ from deprecated `AudioTrack.isDirectPlaybackSupported` to `AudioManager.getDirectPlaybackSupport`.

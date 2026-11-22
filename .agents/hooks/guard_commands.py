@@ -19,7 +19,7 @@ from typing import Any, Mapping
 
 RELEASE_SENTINEL = "RELEASE_7_0_AUTHORIZED"
 GPU_HANG_SENTINEL = "GPU_HANG_HALT"
-HW_GATE_ENV = "RUBYLIGHT_ALLOW_HW_GATE"
+HW_DISABLE_ENV = "RUBYLIGHT_DISABLE_HW_GATE"
 
 GIT_CMD = r"\bgit(?:\.exe)?\b"
 CARGO_CMD = r"\bcargo(?:\.exe)?\b"
@@ -100,7 +100,7 @@ GH_WORKFLOW_PUBLISH_RE = re.compile(
     re.IGNORECASE,
 )
 
-# 3. Hardware / GPU test patterns (denied unless RUBYLIGHT_ALLOW_HW_GATE=1 and GPU_HANG_HALT does not exist).
+# 3. Hardware / GPU test patterns (allowed by default when host is idle; denied if GPU_HANG_HALT exists or RUBYLIGHT_DISABLE_HW_GATE=1).
 HW_CMD_RE = re.compile(
     r"(?:(?:^|[\s\"'`/\\])(?:e2e\.py|check\.ps1|(?:[A-Za-z0-9_-]*_)?soak\.(?:ps1|py)|focus_ab\.py|wave1_verify\.py)\b|\btools[\\/]+hw[\\/]+(?:run(?:\.py|\.ps1)?|laptop-host\.ps1|demo-stream\.ps1)\b|--ignored\b|--run-ignored\b)",
     re.IGNORECASE,
@@ -262,17 +262,17 @@ def evaluate_command(
                 "reason": f"Hard-denied ({release_reason}): requires .agents/{RELEASE_SENTINEL} sentinel from Wave 6 maintainer-approved release gate.",
             }
 
-    # --- Tier 3: GPU / hardware test gate ---
+    # --- Tier 3: GPU / hardware test gate (allowed by default; opt-out via RUBYLIGHT_DISABLE_HW_GATE=1 or GPU_HANG_HALT) ---
     if any(HW_CMD_RE.search(seg) for seg in segments):
         if gpu_halted:
             return {
                 "decision": "deny",
                 "reason": f"Hard-denied (GPU/HW test): .agents/{GPU_HANG_SENTINEL} is active (exit code 3 encoder hang). Investigate, do not retry.",
             }
-        if env_map.get(HW_GATE_ENV) != "1":
+        if env_map.get(HW_DISABLE_ENV) == "1":
             return {
                 "decision": "deny",
-                "reason": f"Hard-denied (GPU/HW test): requires process environment {HW_GATE_ENV}=1 after host idle verification.",
+                "reason": f"Hard-denied (GPU/HW test): disabled by process environment {HW_DISABLE_ENV}=1.",
             }
 
     return {"decision": "allow"}

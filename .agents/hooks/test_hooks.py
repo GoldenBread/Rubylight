@@ -70,7 +70,7 @@ class GuardCommandsTests(unittest.TestCase):
 
     def test_always_hard_denied_including_bypass_vectors(self) -> None:
         (self.agents_dir / guard_commands.RELEASE_SENTINEL).write_text("ok\n", encoding="utf-8", newline="\n")
-        env = {guard_commands.HW_GATE_ENV: "1"}
+        env = {}
         denied = [
             "git push --force origin wip/foo",
             "git.exe push -f origin roadmap/foo",
@@ -174,7 +174,7 @@ class GuardCommandsTests(unittest.TestCase):
             with self.subTest(phase="gpu_halted", cmd=cmd):
                 self.assertEqual(self._eval(cmd)["decision"], "deny")
 
-    def test_hw_commands_require_env_and_no_gpu_halt(self) -> None:
+    def test_hw_commands_allowed_by_default_and_blocked_by_disable_or_gpu_halt(self) -> None:
         hw_cmds = [
             "python rust/release/e2e.py --codec hevc",
             r"pwsh tools\hw\run.ps1 -Batch desktop",
@@ -188,24 +188,34 @@ class GuardCommandsTests(unittest.TestCase):
             "python tools/hw/wave1_verify.py",
             "cargo test -p butterpollo-windows -- --ignored",
             "cargo nextest run --run-ignored only",
-            "$env:RUBYLIGHT_ALLOW_HW_GATE='1'; python rust/release/e2e.py",
         ]
+        # Allowed by default when neither RUBYLIGHT_DISABLE_HW_GATE=1 nor GPU_HANG_HALT is active.
         for cmd in hw_cmds:
-            with self.subTest(phase="no_env", cmd=cmd):
-                self.assertEqual(self._eval(cmd, env={})["decision"], "deny")
+            with self.subTest(phase="default_allow", cmd=cmd):
+                self.assertEqual(self._eval(cmd, env={})["decision"], "allow")
 
+        # Denied when explicitly opted out via RUBYLIGHT_DISABLE_HW_GATE=1.
         for cmd in hw_cmds:
-            with self.subTest(phase="env_set", cmd=cmd):
-                self.assertEqual(self._eval(cmd, env={guard_commands.HW_GATE_ENV: "1"})["decision"], "allow")
+            with self.subTest(phase="explicit_disable", cmd=cmd):
+                self.assertEqual(self._eval(cmd, env={guard_commands.HW_DISABLE_ENV: "1"})["decision"], "deny")
 
+        # Always denied when GPU_HANG_HALT sentinel exists.
         (self.agents_dir / guard_commands.GPU_HANG_SENTINEL).write_text("halted\n", encoding="utf-8", newline="\n")
         for cmd in hw_cmds:
             with self.subTest(phase="gpu_halted", cmd=cmd):
-                self.assertEqual(self._eval(cmd, env={guard_commands.HW_GATE_ENV: "1"})["decision"], "deny")
+                self.assertEqual(self._eval(cmd, env={})["decision"], "deny")
+
+        # Remote laptop build/test verification lane and wip branch push remain cleanly allowed.
+        for remote_cmd in (
+            r"pwsh tools\remote-check.ps1 -Host laptop -Branch wip/roadmap/03-launch-curtain",
+            "git push -u origin wip/roadmap/03-launch-curtain",
+        ):
+            with self.subTest(phase="remote_lane", cmd=remote_cmd):
+                self.assertEqual(self._eval(remote_cmd, env={})["decision"], "allow")
 
     def test_subprocess_cli_contract(self) -> None:
         env = dict(os.environ, RUBYLIGHT_AGENTS_DIR=str(self.agents_dir))
-        env.pop(guard_commands.HW_GATE_ENV, None)
+        env.pop(guard_commands.HW_DISABLE_ENV, None)
         proc = subprocess.run(
             [sys.executable, str(HOOKS_DIR / "guard_commands.py")],
             input=json.dumps(_pre_payload("git push origin main")),
@@ -295,6 +305,18 @@ class WatchGpuHangTests(unittest.TestCase):
             "error": "exit status 1",
         }
         self.assertFalse(watch_gpu_hang.process_post_tool(other_exit, agents_dir=self.agents_dir))
+
+        # `tools\remote-check.ps1` exit code 3 is a timeout, NOT an AMD encoder hang.
+        remote_timeout = {
+            "hookEventName": "PostToolUse",
+            "toolCall": {
+                "id": "t3",
+                "name": "run_command",
+                "args": {"CommandLine": r"pwsh tools\remote-check.ps1 -Host laptop -Branch wip/roadmap/03-launch-curtain"},
+            },
+            "exitCode": 3,
+        }
+        self.assertFalse(watch_gpu_hang.process_post_tool(remote_timeout, agents_dir=self.agents_dir))
 
 
 if __name__ == "__main__":

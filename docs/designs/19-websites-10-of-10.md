@@ -262,3 +262,9 @@ Review PNGs are saved into gitignored `_site_review/` and `client/site/_review/`
 - Item 19 requires **zero GPU execution, zero host streaming sessions, and zero live hardware runs**.
 - Should any cited benchmark in `rust/PERFORMANCE.md` be refreshed before publication, that measurement MUST follow the serialized idle-gated hardware procedure (`RustHostSessionCount == 0`, isolated test host on port `48123`, **immediate stop on exit code 3** AMD encoder hang without retry) and update `rust/PERFORMANCE.md`, `README.md`, `docs/performance.md`, and `site/index.html` in the same commit.
 - Live `gh-pages` deployment happens **only** after maintainer OK on a CI-green `main` SHA, strictly via history-preserving fast-forward push (never force-pushing or re-orphaning).
+
+---
+
+## 8. Post-Discovery & 6.3.0 (`fc1704feb3`) Rebase Addendum
+
+- **Build Cleanly Atop `6.3.0` (`fc1704feb3`) Site Structure:** Commit `fc1704feb3` already redesigned `site/index.html`, `site/style.css`, and `client/site/index.html` around `.pillars` and the 5-stage `.pipeline` with an explicit policy against stale release-specific static charts. Wave 5 Slice `19A`/`19B` MUST reconcile against `fc1704feb3` cleanly: keep the crisp 7.0 Obsidian Studio / Obsidian Cinema token pipeline (`sync_site_tokens.py` + `gen_design_tokens.py`), and for performance references link directly to dated `rust/PERFORMANCE.html#<anchor>` runs (or clearly dated, auto-checked excerpts from `rust/PERFORMANCE.md` — updating any contradictory HTML comment in `site/index.html` cleanly). Also highlight Items `27` (local-first privacy & anonymized support bundles), `28` (multi-GPU + locked-PC wake), and `29` (high-refresh & Android pacing) honestly alongside `21`.

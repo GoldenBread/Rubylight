@@ -90,10 +90,19 @@ class OrchestratorCoreTests(unittest.TestCase):
     def test_state_load_save_and_resume(self) -> None:
         state_path = self.root / core.STATE_REL
         st = core.load_state(state_path)
-        self.assertEqual(len(st["items"]), 21)
+        self.assertEqual(len(st["items"]), 29)
         self.assertEqual(core.item_by_id(st, "21")["wave"], 1)
         self.assertEqual(core.item_by_id(st, "21")["depends_on"], ["04", "06"])
-        self.assertIn("21", core.item_by_id(st, "07")["depends_on"])
+        self.assertEqual(core.item_by_id(st, "22")["wave"], 1)
+        self.assertEqual(core.item_by_id(st, "23")["wave"], 2)
+        self.assertEqual(core.item_by_id(st, "24")["wave"], 2)
+        self.assertEqual(core.item_by_id(st, "25")["depends_on"], ["22"])
+        self.assertEqual(core.item_by_id(st, "26")["depends_on"], ["13", "24"])
+        self.assertEqual(core.item_by_id(st, "27")["wave"], 1)
+        self.assertEqual(core.item_by_id(st, "28")["depends_on"], ["03"])
+        self.assertEqual(core.item_by_id(st, "29")["depends_on"], ["04", "06", "27"])
+        for dep in ("21", "22", "27", "28", "29"):
+            self.assertIn(dep, core.item_by_id(st, "07")["depends_on"])
         for wf_file in ("orchestrator_core.py", "roadmap_orchestrator.py"):
             self.assertNotIn("flash_lite", (WORKFLOWS_DIR / wf_file).read_text(encoding="utf-8"))
         core.item_by_id(st, "01")["status"] = "merged"
@@ -327,7 +336,7 @@ class OrchestratorCoreTests(unittest.TestCase):
         summary = asyncio.run(
             core.run_roadmap(rt, waves=[0, 1, 2, 3, 4, 5, 6], max_parallel=2, dry_run=True, authorize_publish=True)
         )
-        self.assertEqual(len(summary["merged_items"]), 21)
+        self.assertEqual(len(summary["merged_items"]), 29)
 
         # Dry run without authorize_publish blocks at Wave 6 maintainer gate.
         (self.root / core.STATE_REL).unlink()

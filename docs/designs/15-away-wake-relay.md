@@ -294,3 +294,12 @@ Executed through `orchestrator_core.py`'s staged slice runner with strictly non-
 - **Zero streaming interference:** Run 90 s `rust/release/e2e.py` on isolated host (`--port 48126`) while `ListeningQuiet` relay mode is active; assert `present_to_sent p99` delta `<= +0.05 ms` and zero dropped frames.
 - **Exit code 3 abort rule:** Exit code `3` from `e2e.py` or `check.ps1` indicates an AMD encoder hang — **abort immediately and investigate; never retry**.
 - **GPU/OS note:** Wake Relay is encoder-agnostic (AMD AMF, NVIDIA NVENC, Win10, Linux, macOS); no NVIDIA hardware claim is made.
+
+---
+
+## 8. Post-Discovery Addendum — `rubylight-traverse` Dual-Stack IPv6, Mid-Stream Roaming & Video MTU Clamping
+
+Because Away Wake Relay (`15`) and Internet Play both ride on `client/protocol/traverse/` and `rust/host/src/internet_play.rs`, Slice 15A/15B closes three critical Traverse transport blind spots (zero `PROTOCOL_VERSION` or `API_VERSION` changes):
+1. **Dual-Stack IPv4 + IPv6 Punching:** Run paired IPv4 + IPv6 UDP sockets inside `traverse::Node` (removing the single-family filter in `node.rs:155-160` and hardcoded `any_ipv4()` in `client.rs:252` & `internet_play.rs:688`), publishing both families in `record.rs` (whose wire format already carries IPv6) and punching Happy-Eyeballs-style so DS-Lite / CGNAT + IPv6 networks connect directly for both streaming and Away Wake Relay.
+2. **Seamless Mid-Stream Wi-Fi <-> 5G Roaming (<2 s vs 45 s stall):** Add `Tunnel::network_changed()` re-bind + immediate STUN/punch burst triggered by OS network hints (bypassing `Bridge::Device`'s `127.0.0.1` blind spot in `roam.rs:211`), and propagate a peer-path-change event through `Bridge::Host` to invoke the host's existing `Session::roamed()` / `rebuild_link_rate()` / `rebuild_congestion()` path (`rust/host/src/stream.rs:524-530`).
+3. **Tunnelled Video MTU Clamping:** Whenever `network::tunnelled(peer)` is true during RTSP negotiation (`rtsp_server.rs`), clamp effective video `packet_size <= 1200` B (IPv4) / `<= 1160` B (IPv6) so Traverse's 40-byte ChaCha20-Poly1305 overhead (`wire.rs:37`) stays strictly under the 1280-byte IPv6 minimum MTU and cellular/VPN/PPPoE MTUs without fragmentation or black-holing.

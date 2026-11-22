@@ -255,3 +255,10 @@ Strictly non-overlapping file lists for Phase 3 `parallel()`:
    - Stream-time overhead with `BUTTERPOLLO_TIMING_RECORD=1` (`e2e.py`, 60 s after curtain lifts): **0.00 ms** added to convert/encode/present_to_sent p99 (watcher drops back to idle polling once lifted; zero stream-time layers on client).
 4. **Abort rule:** **Exit code 3 from `e2e.py` or `check.ps1` means an AMD encoder hang — stop immediately and investigate; never retry.**
 5. **NVIDIA & Win10 verification:** Verify Win10 compatibility of `uac_probe.rs` and `focus_quietly`; audit NVENC launch/session paths against NVIDIA headers/samples (never claim tested on NVIDIA GPU hardware).
+
+---
+
+## 8. Post-Discovery & 6.3.0 Rebase Addendum (Rubylight `#131` Silent Launchers)
+
+- **Silent Store Launcher Startup (`#131`, Slices 03-A/03-B/03-D):** Deliver the missing silent-launcher half of `#131` alongside fullscreen focus recovery: add an opt-in `silent_launchers` host/app launch policy that pre-starts cold storefronts quietly where supported (`steam.exe -silent -nochatui -nofriendsui -applaunch <appid>` alongside Epic's existing `silent=true` and safe URI fallbacks) and minimizes leftover store windows immediately once `Phase::Ready` hands focus to the game.
+- **Expanded Launcher & Anti-Cheat Bootstrapper Detection (`launcher_prompt.rs`):** Extend `launcher_prompt::launcher_of` beyond Steam/Epic/EA/Ubisoft/Xbox to classify Battle.net (`battle.net.exe`), GOG Galaxy (`galaxyclient.exe`), Rockstar (`launcher.exe`/`rockstarservice.exe`), Riot (`riotclientux.exe`), and HoYoPlay (`hoyoplay.exe`/`hyp.exe`), and treat known anti-cheat bootstrappers (`start_protected_game.exe`, `EAAntiCheat.GameServiceLauncher.exe`) as transient pre-game stages rather than premature exits during `WaitingWindow`. (Locked-PC `#117` display-power wake is owned directly by [`28-host-capture-gpu-and-power.md`](28-host-capture-gpu-and-power.md).)

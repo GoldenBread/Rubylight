@@ -58,20 +58,28 @@ ITEM_CATALOG: tuple[dict[str, Any], ...] = (
     {"id": "05", "slug": "stream-dvr", "wave": 1, "title": "Host-Side Stream DVR & Instant Replay", "design_doc": "docs/designs/05-stream-dvr.md", "depends_on": ["01", "02"], "hw_required": True, "visual_review": True},
     {"id": "06", "slug": "hdr-sdr-tonemap", "wave": 1, "title": "Real-Time HDR-to-SDR Tone Mapping", "design_doc": "docs/designs/06-hdr-sdr-tonemap.md", "depends_on": [], "hw_required": True, "visual_review": False},
     {"id": "21", "slug": "desktop-perf-and-nvenc", "wave": 1, "title": "Desktop Client Performance Overhaul (macOS, Linux, Windows) & Host NVIDIA NVENC Low-Latency Overhaul", "design_doc": "docs/designs/21-desktop-perf-and-nvenc.md", "depends_on": ["04", "06"], "hw_required": True, "visual_review": False},
-    {"id": "07", "slug": "hw-verify", "wave": 1, "title": "Wave 1 Serialized Hardware Verification & Measurement", "design_doc": "docs/designs/07-hw-verify.md", "depends_on": ["03", "04", "05", "06", "21"], "hw_required": True, "visual_review": False},
-    # Wave 2: Everyday Quality-of-Life & Multi-Device
+    {"id": "22", "slug": "vibepollo-parity-core", "wave": 1, "title": "Vibepollo Protocol & Telemetry Parity Core (Launch Warnings, DXGI/PDH gpu_encoder_percent, FrameLimiterStatus & psmap)", "design_doc": "docs/designs/22-vibepollo-parity-core.md", "depends_on": [], "hw_required": False, "visual_review": False},
+    {"id": "27", "slug": "security-and-privacy-hardening", "wave": 1, "title": "Host Network, WebRTC & API Security Hardening + Support-Bundle Privacy Sanitization", "design_doc": "docs/designs/27-security-and-privacy-hardening.md", "depends_on": [], "hw_required": False, "visual_review": False},
+    {"id": "28", "slug": "host-capture-gpu-and-power", "wave": 1, "title": "Multi-GPU / Hybrid Laptop Routing, idd-push LUID Coherence & Locked-PC Cold Launch (#117)", "design_doc": "docs/designs/28-host-capture-gpu-and-power.md", "depends_on": ["03"], "hw_required": True, "visual_review": False},
+    {"id": "29", "slug": "android-pacing-and-transport", "wave": 1, "title": "High-Refresh Transport Pacing, Android MediaCodec/ARR Pacing & WebRTC Transport Resilience (#144, #7, #119, #116)", "design_doc": "docs/designs/29-android-pacing-and-transport.md", "depends_on": ["04", "06", "27"], "hw_required": True, "visual_review": False},
+    {"id": "07", "slug": "hw-verify", "wave": 1, "title": "Wave 1 Serialized Hardware Verification & Measurement", "design_doc": "docs/designs/07-hw-verify.md", "depends_on": ["03", "04", "05", "06", "21", "22", "27", "28", "29"], "hw_required": True, "visual_review": False},
+    # Wave 2: Everyday Quality-of-Life, Multi-Device & Vibepollo/USB Interop
     {"id": "08", "slug": "quick-suspend", "wave": 2, "title": "Quick Suspend & Resume", "design_doc": "docs/designs/08-quick-suspend.md", "depends_on": ["03"], "hw_required": True, "visual_review": True},
     {"id": "09", "slug": "host-hub-sync", "wave": 2, "title": "Host Hub Sync (Profiles, Covers & Capabilities)", "design_doc": "docs/designs/09-host-hub-sync.md", "depends_on": ["01", "02"], "hw_required": False, "visual_review": True},
     {"id": "10", "slug": "couch-party-audio", "wave": 2, "title": "Couch Party Audio Routing & Spatial Mix", "design_doc": "docs/designs/10-couch-party-audio.md", "depends_on": ["02"], "hw_required": True, "visual_review": True},
     {"id": "11", "slug": "stream-doctor", "wave": 2, "title": "Stream Doctor 2.0 & Upscaler Guidance", "design_doc": "docs/designs/11-stream-doctor.md", "depends_on": ["02"], "hw_required": True, "visual_review": True},
     {"id": "12", "slug": "phone-safe-area", "wave": 2, "title": "Phone Safe Area & Reverse Landscape (#152)", "design_doc": "docs/designs/12-phone-safe-area.md", "depends_on": ["02"], "hw_required": False, "visual_review": True},
-    # Wave 3: Power Features & Remote Reach
+    {"id": "23", "slug": "vibepollo-dolby-rtsp", "wave": 2, "title": "Vibepollo Dolby Audio RTSP Negotiation & Unchunked Datagram Receive Parity", "design_doc": "docs/designs/23-vibepollo-dolby-rtsp.md", "depends_on": [], "hw_required": False, "visual_review": False},
+    {"id": "24", "slug": "usb-forwarding-convenience", "wave": 2, "title": "USB Forwarding Convenience (Windows usbipd-win, Linux EACCES Fallback & Controller Arbitration)", "design_doc": "docs/designs/24-usb-forwarding-convenience.md", "depends_on": [], "hw_required": False, "visual_review": False},
+    {"id": "25", "slug": "ps-speaker-pcm-and-bt", "wave": 2, "title": "PlayStation Controller Speaker (Bluetooth DualSense HID & Vibepollo 0x5602 / 0x5500_0009 Interop)", "design_doc": "docs/designs/25-ps-speaker-pcm-and-bt.md", "depends_on": ["22"], "hw_required": False, "visual_review": False},
+    # Wave 3: Power Features, Steam Controller 2026 & Remote Reach
     {"id": "13", "slug": "client-input-deck", "wave": 3, "title": "Visual Console-Grade Controller Editor & Client Input Deck on First-Party Virtual Gamepad", "design_doc": "docs/designs/13-client-input-deck.md", "depends_on": ["09"], "hw_required": True, "visual_review": True},
     {"id": "14", "slug": "coherence-workstation", "wave": 3, "title": "Coherence Workstation Multi-Window Streaming", "design_doc": "docs/designs/14-coherence-workstation.md", "depends_on": ["03", "09"], "hw_required": True, "visual_review": True},
     {"id": "15", "slug": "away-wake-relay", "wave": 3, "title": "Away Wake Relay over Traverse Peer Mesh", "design_doc": "docs/designs/15-away-wake-relay.md", "depends_on": ["09"], "hw_required": False, "visual_review": True},
+    {"id": "26", "slug": "steam-controller-2026", "wave": 3, "title": "Physical Steam Controller (2026) Direct HID Driver (Desktop & Android) + Host vhf_steam Polish", "design_doc": "docs/designs/26-steam-controller-2026.md", "depends_on": ["13", "24"], "hw_required": False, "visual_review": False},
     # Wave 4: 10/10 Polish & Resilience
-    {"id": "16", "slug": "ui-final-polish", "wave": 4, "title": "UI Final Polish Pass (Console + Nightjar)", "design_doc": "docs/designs/16-ui-final-polish.md", "depends_on": ["01", "02", "03", "05", "08", "09", "10", "11", "12", "13", "14", "15"], "hw_required": False, "visual_review": True},
-    {"id": "17", "slug": "ux-craft-and-resilience", "wave": 4, "title": "UX Craft, Cold-Start, Installer, Errors & Crash-Restore Soak (#129)", "design_doc": "docs/designs/17-ux-craft-and-resilience.md", "depends_on": ["03", "07", "08", "12", "13"], "hw_required": True, "visual_review": True},
+    {"id": "16", "slug": "ui-final-polish", "wave": 4, "title": "UI Final Polish Pass (Console + Nightjar)", "design_doc": "docs/designs/16-ui-final-polish.md", "depends_on": ["01", "02", "03", "05", "08", "09", "10", "11", "12", "13", "14", "15", "22"], "hw_required": False, "visual_review": True},
+    {"id": "17", "slug": "ux-craft-and-resilience", "wave": 4, "title": "UX Craft, Cold-Start, Installer, Errors & Crash-Restore Soak (#129)", "design_doc": "docs/designs/17-ux-craft-and-resilience.md", "depends_on": ["03", "07", "08", "12", "13", "24", "27", "28"], "hw_required": True, "visual_review": True},
     # Wave 5: Showcase, Sites & Docs 10/10
     {"id": "18", "slug": "showcase-demos-and-videos", "wave": 5, "title": "Showcase Demos, Tours & Videos (Console + Nightjar)", "design_doc": "docs/designs/18-showcase-demos-and-videos.md", "depends_on": ["16", "17"], "hw_required": False, "visual_review": True},
     {"id": "19", "slug": "websites-10-of-10", "wave": 5, "title": "Rubylight & Nightjar Websites 10/10", "design_doc": "docs/designs/19-websites-10-of-10.md", "depends_on": ["16", "18"], "hw_required": False, "visual_review": True},
@@ -684,10 +692,12 @@ async def run_item_lifecycle(
                 save_state(state_path, state)
             plan = await rt.agent(
                 prompt=(
-                    f"Phase 2 path verification for item {item_id} ({slug}) from `{design_doc}`. "
-                    "Verify every `[verify post-sprint code-map.md]` path against current `docs/code-map.md`, "
-                    "`client/docs/code-map.md`, and `tools/size_ratchet.json`. Return staged disjoint implementer "
-                    "slices (stage=1 for any shared protocol/registration slice, stage=2 for independent parallel slices)."
+                    f"Phase 2 dynamic post-sprint path & workflow verification for item {item_id} ({slug}) from `{design_doc}`. "
+                    "Never trust pre-refactor monolithic file paths or line numbers: dynamically inspect the live post-sprint "
+                    "`docs/code-map.md`, `client/docs/code-map.md`, `tools/dev.ps1` flags, `tools/arch_check.py`, and "
+                    "`tools/size_ratchet.json` to resolve every `[verify post-sprint code-map.md]` / `[resolve post-sprint ...]` "
+                    "anchor onto the exact post-sprint split submodules. Return staged disjoint implementer slices "
+                    "(stage=1 for any shared protocol/registration slice, stage=2+ for independent parallel slices)."
                 ),
                 schema={
                     "type": "object",
@@ -1093,7 +1103,7 @@ async def run_wave_6_release(
     rt.phase("Wave 6: Release 7.0.0 Preflight")
     rl_tags: list[str] = []
     nj_tags: list[str] = []
-    prev_tag = "v6.2.0"
+    prev_tag = "v6.3.0"
     if not dry_run:
         rl_out = await rt.call_tool(
             "run_command",
@@ -1222,7 +1232,8 @@ async def run_wave_6_release(
             await rt.agent(
                 prompt=(
                     "Verify installed host is idle (`/serverinfo` session counts 0), then run "
-                    "`pwsh rust/release/check.ps1 v7.0.0` with `RUBYLIGHT_ALLOW_HW_GATE=1`. "
+                    "and `pwsh rust/release/check.ps1 v7.0.0` (after verifying installed-host idle "
+            "`RustHostSessionCount == 0 && RustHostPendingSessionCount == 0` and zero `.agents/GPU_HANG_HALT`). "
                     "Abort immediately on exit code 3."
                 ),
                 schema={"type": "string"},

@@ -94,4 +94,15 @@ Every new capability is added in lockstep to `client/protocol/client/src/http/ca
 
 ## 7. Items Requiring Zero Wire Changes
 
-- **Wave 0 (`01`, `02`)**, **Wave 1 (`07`, `21`)**, **Wave 2 (`12`)**, **Wave 4 (`16`, `17`)**, and **Wave 5 (`18`, `19`, `20`)** require zero new control message IDs or protocol changes (Wave 2 item `12` reuses existing `0x5532` reconfigure).
+- **Wave 0 (`01`, `02`)**, **Wave 1 (`07`, `21`, `27`, `28`, `29`)**, **Wave 2 (`12`, `24`)**, **Wave 4 (`16`, `17`)**, and **Wave 5 (`18`, `19`, `20`)** require zero new control message IDs or wire protocol changes (`12` reuses existing `0x5532` reconfigure; `24` reuses existing `0x553A` TLS USB tunnel).
+
+## 8. Vibepollo Interop & Adopted Wire Contracts (`22`, `23`, `25`, `26`)
+
+Zero collision with `RUBYLIGHT_7_CONTROL_IDS = 0x5548..=0x554F`, `INPUT_DECK_VIRTUAL_AXIS_MAGIC = 0x5500_0081`, or `OTHER_CLIENTS_CONTROL_IDS = 0x5506..=0x5510`:
+
+| Item | Surface / ID | Exact Wire Contract & Collision Safeguard |
+| --- | --- | --- |
+| **22** | `/launch`, `/resume` XML `<clientWarning>` & `<clientWarningMessage>`; query `&psmap=<mask>` | Depth-2 `<root>` XML emitted ONLY on HTTP 200 `<gamesession>1` or `<resume>1` (sanitized: `<=16 KiB`, no DTD, no duplicates, plain text, strip `Cc`/`Cf` except ZWJ/ZWNJ, `<=3` `\n`, `<=512` UTF-8 bytes); `&psmap=` masks `LI_CTYPE_PS` slots by `gcmap & 0xFFFF`. `"gpu_encoder_percent"` added inside existing `/api/native/v1/hardware-metrics`. |
+| **23** | RTSP `a=x-ss-audio-codec-offer:AC3\|EAC3`, `a=x-ss-audio-codec-accept:AC3\|EAC3`, response `X-SS-Audio-Codec` | Used ONLY when `a=x-rl-audio.codecs` is absent and channels in `{2, 6}`; case-insensitive response confirms Dolby (`32 ms`, unchunked `4096 + 64` B receive/RS cap, NO `assemble_frames()` / `ChunkHeader`). |
+| **25** | Control `0x5602` (unreliable ENet ch `0x08`, 992 B), `x-ml-general.featureFlags` bit `0x08`, PS cap `0x4000` (`type == 0x02`), Input `0x5500_0009` (20 B) | **Strict `0x5500_0009` length disambiguation:** `20 B` (`declared==16`) -> Vibepollo `ControllerSpeakerBinding` (ONLY with `ml_features & 0x08` + encrypted proto 13); `40 B` (`declared==36`) -> Foundation `Touchpad` (ONLY with `native_touchpad`). **`0x4000` scoping:** PS speaker ONLY on `type == 0x02`; `type == 0x04` keeps `LI_CCAP_STEAM_ATTRIBUTES`. Client NEVER emits `0x5500_0009`/`0x08`/`0x4000` if host offers `0x5533` in `a=x-rl-control` OR Foundation `x-ss-general.featureFlags & 0x10`. `0x5602` is right beside `0x5601`, bit-15 clear. |
+| **26** | Existing `0x5500_0008`, `0x5504`, `0x5505` | Reuses already-registered `STEAM_ATTRIBUTES_MAGIC` (`0x5500_0008`), `STEAM_HAPTIC_MESSAGE_TYPE` (`0x5504`), and `STEAM_SETTINGS_MESSAGE_TYPE` (`0x5505`) for physical Steam Controller (2026) (`28de:1302`/`1304`), preserving `0x40_0000` Switch 2 C-button vs `LEFT_GRIP_TOUCH_FLAG` guard. |

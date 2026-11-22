@@ -299,3 +299,13 @@ All slices below have **strictly non-overlapping file lists** for Phase 3 `paral
   1. Verify `(Invoke-WebRequest http://127.0.0.1:47989/serverinfo).Content` shows `RustHostSessionCount == 0` and `RustHostPendingSessionCount == 0` and the user is idle.
   2. Run isolated test host (`butterpollo.exe --config-dir C:\tests\hub-sync --port 48123 --bind 127.0.0.1`) with two paired test certs; verify `GET /hub/snapshot` p99 < 15 ms for a 200-app library after warm cover-hash cache, and `304` cover hits transfer 0 image bytes.
   3. **Exit code 3 abort rule:** If any companion `e2e.py` or `check.ps1` smoke run exits with code `3` (AMD encoder hang), stop immediately and investigate — never retry blindly.
+
+---
+
+## 8. Post-Discovery Addendum — Per-Display Recall (`#137`) & Cross-PC Library Sync Hardening
+
+- **Per-Display Profile Recall (`#137`):** Extend `StreamProfileSpec` with strictly additive `#[serde(default)]` fields `resolution_scale_pct: Option<u8>` (paired with `02`'s `nightjar_policy::resolution_scale`) and `display_matcher: Option<DisplayMatcher>` (keyed by persistent monitor/EDID ID on Desktop via `stream/scan_sync.rs:46-52` and built-in vs external display ID on Android), so switching between built-in Retina/handheld displays and external monitors automatically recalls each screen's resolution and HDR (`API_VERSION = 1` & `PROTOCOL_VERSION` unchanged).
+- **Multi-PC Library Deduplication, Store Sync & Android Copy Ranking Fixes:**
+  1. Align Android `ConsoleRepository.java:447` copy sorting with Desktop `console.rs:640` (`(!running, !installed, !online)` plus user preferred-PC priority) so Android stops picking offline/uninstalled copies over ready ones.
+  2. Propagate canonical store IDs (`launcher-source`/`launcher-id`) from Playnite (`rust/core/src/playnite.rs:500-533`) when known so `native.rs::store_of` merges Playnite vs native stores across PCs instead of creating duplicates.
+  3. Harden Windows store discovery without scope creep: treat lock-screen Xbox `UserNotSignedIn` (`rust/windows/src/library/store.rs:45-48`) as `skipped` (preserving cached installed state rather than marking games uninstalled), normalize Windows case/separator path comparisons for EA/Ubisoft (`rust/windows/src/library.rs:598-645`, supporting `link2ea://`), and discover Battle.net games dynamically from `.product.db`/Registry instead of failing outside the hardcoded 31-game `BATTLENET_PRODUCTS` list. *(Non-Steam `shortcuts.vdf` binary scraping & emulator ROM rules stay deferred to 7.1+.)*

@@ -261,3 +261,12 @@ Every Wave 4 PR MUST generate and visually inspect (multimodal human/agent revie
     - Host `present_to_sent p99` delta `<= +0.05 ms` vs `6.2.0` baseline (proving zero closed-path Couch Menu cost).
   - Physical TV + handheld + phone check: visually confirm 10-ft TV focus halo from 3 m, Reverse Landscape (`#152`) + Virtual Controller Studio (`#151`) thumb ergonomics, `#144`/`#146` 4K vs 720p desktop crispness, and instant Remote vs Gamepad vs Keyboard vs Touch glyph switching.
   - **NVIDIA note:** No NVIDIA encoder changes occur in Wave 4; NVIDIA NVENC compatibility remains header/sample-verified only and never claimed as hardware-tested.
+
+---
+
+## 8. Post-Discovery Addendum — Complete GPL-3.0 §7(e) `"Nucleus Co-op"` Host-API & UI Scrub
+
+- **Eliminate Host-Emitted & Unassigned UI `"Nucleus Co-op"` Leaks (Slices 16A, 16B, 16D, 16E):**
+  1. Replace all user-facing `"Nucleus Co-op"` refusal and status strings emitted by host Rust code (`rust/core/src/nucleus/coop.rs:421-432`, `rust/host/src/nucleus/registry.rs:202,700,705,725,775` — currently serialized verbatim by `native_api/coop.rs` & `nvhttp/launch_steps.rs` straight into Nightjar!) with capability-based copy (`"Co-op runner"`, `"Background mode"`, `"separate session folder"`), keeping upstream credits strictly in `NOTICE` / `rust/THIRD_PARTY.md` / README credits.
+  2. Scrub remaining mod names and legacy `(Experimental)` tags across `rust/web/src/lib/coop-view.ts`, `PlayTogether.svelte`, `rust/web/src/lib/schema/extensions.ts` (move external setup guidance to linked docs), `DeviceEditor.svelte`, `AppEditor.svelte`, `client/protocol/desktop/src/coop_page.rs`, `strings_70/*.rs` / `strings/*.rs` (in-place wording replacement without adding a single line to grandfathered `strings/*.rs`!), and `client/app/src/main/java/com/limelight/computers/CoopSheet.java`, clearly distinguishing Background Mode UX from one-time PC-monitor Co-op setup.
+  3. Extend `client/scripts/ui_polish_audit.py` to scan host API/refusal string modules (`rust/core/src/nucleus/`, `rust/host/src/nucleus/`, `rust/host/src/native_api/`) in addition to Web/Desktop/Android locale files so GPL-3.0 §7(e) compliance is 100% machine-enforced.

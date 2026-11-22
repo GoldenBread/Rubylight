@@ -290,3 +290,12 @@ Strictly non-overlapping file lists for Phase 3 `parallel()` execution (Stage 1 
      - **Pass gate:** Post-close client frame time p99 within `±0.1 ms` of pre-open baseline; zero dropped frames on close; zero compositor freeze or stuck blur window (`#61`); launcher scroll p90 `<= 70%` of display frame budget on `Lens`/`Live` or clean auto-stepdown within 60 frames.
 4. **Abort rule:** **Exit code 3 from `e2e.py` or `check.ps1` means an AMD encoder hang — stop immediately and investigate; never retry.**
 5. **Compatibility matrix:** Verify Desktop builds on Windows (D3D11/SDL GPU), Linux (Wayland/X11/KMS), and macOS (`nightjar-macos.yml`), and Android API 25–35 (`nonRoot` and `root` flavors). NVIDIA host/client paths remain checked against vendor headers/samples only and are never claimed run on NVIDIA hardware.
+
+---
+
+## 8. Post-Discovery & 6.3.0 Rebase Addendum (Nightjar `#137`, `#140`)
+
+- **Native-Aspect Relative Resolutions (`#137`, Slice 02-A/C/D):** Add a pure `<= 200`-LOC `client/protocol/policy/src/resolution_scale.rs` generating encoder-safe (even / macroblock-aligned) fractional scales (`100%`, `85%`, `75%`, `67%`, `50%`) of the active display's true native pixels (e.g., `3024×1964` @ 75% -> `2268×1472`), surfaced directly inside the existing Resolution picker on Desktop (`ui/settings.rs`) and Android (`ResolutionPreference.java`) with **zero new settings rows** (paired with per-display profile recall in [`09-host-hub-sync.md`](09-host-hub-sync.md)).
+- **Android TV `(i)` Info Remote/Gamepad Access & 4 Outcome Presets (`#140`, Slice 02-A/C/D):**
+  1. In `UiNavigation.bindPreferences`, trigger `R.id.preference_help` on `KEYCODE_INFO`, `KEYCODE_HELP`, and `KEYCODE_BUTTON_Y` (un-swallowing `BUTTON_Y` in `swallowsPadY` whenever the focused settings row carries a `preference_help` tag), alongside `DPAD_RIGHT`/`F1`, and display a subtle dynamic glyph pill beside `(i)` on the focused TV/gamepad settings row via canonical `nightjar-policy::input_glyphs` (hidden for touch/mouse).
+  2. Expand `client/protocol/policy/src/presets.rs` from 2 to 4 outcome-first presets on both Android and Desktop (**zero new preference keys** — reuses existing Presets chips): **Native (Lowest Latency)**, **Smooth TV** (Balanced pacing, matched refresh/60 Hz-safe, Automatic bitrate), **Wi-Fi / Away** (native-aspect 75%/1080p60 + Automatic quality), and **Battery Saver** (30 fps).

@@ -319,3 +319,11 @@ When applying `render_scale_stepdown` + client upscaling:
   - Verify `GET /stream/doctor` classifies network jitter (NOT host encode overload) while host stage p95 stays clean, and one-tap `fec_auto` + `bitrate_stepdown` recovers unrecoverable FEC blocks to 0 within 10 s, then one-tap Undo restores original bitrate/FEC.
   - Verify 0.00 ms encode/convert p99 regression when Stream Doctor panel is closed (ABBA 90 s `e2e.py` run).
 - **Exit code 3 abort rule:** If `e2e.py` or `check.ps1` exits with code `3` (AMD encoder hang), stop immediately and investigate — never retry.
+
+---
+
+## 8. Post-Discovery & 6.3.0 Rebase Addendum — `#142` Transport, Multi-GPU LUIDs, OEM 60 Hz & Aspect-Safe Stepdown
+
+- **Fuse 6.3.0 `#142` Transport Telemetry into `DoctorSnapshot` (`API_VERSION = 1` additive `#[serde(default)]`):** Add a compact `transport` sub-object populated from live host telemetry (`pacing_reason`, `pacing_bps`, `link_ceiling_kbps`, `ceiling_source`, `enobufs_waits`, `gso_fallbacks`, `send_losses`, `queue_p95_ms`, `congestion_state`, `link_rate_state`, `traverse_active`) and split coarse `network_loss` into four precision rules: `host_socket_pressure` (`WSAENOBUFS`/GSO fallback -> host NIC/offload, not Wi-Fi), `wireless_burst_clamp`, `wifi_queue_jitter`, and `link_bandwidth_ceiling`.
+- **Multi-GPU & Android 60 Hz Diagnostics:** Surface Item `28` active `capture_luid`, `vdisplay_render_luid`, `encoder_luid`, and `cross_adapter_copy` state in `DoctorSnapshot`, and wire Item `29`'s `RefreshSwitchDiagnosis` (`UNEXPLAINED` / `USER_LIMIT`) + `ArrHalfRateCheck` directly into a `DisplayPacingMismatch` card with plain-English OEM 60 Hz unlock steps (OriginOS / Samsung GOS / MIUI / Android 15 Game Default Frame Rate).
+- **Aspect-Safe `render_scale_stepdown` (`#137`):** Replace hardcoded `1920×1080` stepdown target with `02`'s shared `nightjar_policy::resolution_scale` helper so 16:10, 3:2, 20:9, and Retina displays step down cleanly along their native aspect ratio without letterboxing.

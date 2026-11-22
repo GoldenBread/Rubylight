@@ -322,3 +322,11 @@ Executed under [07-hw-verify.md](07-hw-verify.md) on **RX 7900 XT desktop** and 
    - **Active HDR-to-SDR path (both D3D12 compute and D3D11 graphics fallback):** convert p99 overhead `<= +0.15 ms` at 4K60 (single pass, zero extra barrier), `present_to_sent` p99 within `+0.20 ms`, `0` frame drops.
 3. **Default-on promotion criterion:** Promote `sdr_tonemap` default from `off` to `auto` ONLY after both RX 7900 XT and Radeon 780M pass all golden luminance/gamut checks and ABBA timing bounds.
 4. **Exit code 3 abort rule:** Exit code **3** from `e2e.py` or `check.ps1` is an AMD encoder hang — **STOP immediately**, preserve `gpu_hang` report, and investigate without retrying.
+
+---
+
+## 8. Post-Discovery & 6.3.0 Rebase Addendum (Critical `#142` Luminance & Dynamic VDD EDID)
+
+- **Critical 6.3.0 (`7f0e6e287d`) `sdr_white_nits` Bug Fix:** On `origin/main` `6.3.0` (`rust/host/src/stream/video/run.rs:1599-1607`), `Encoder::set_luminance(image.gpu.sdr_white_nits(), 1.0)` ONLY fires when `stream.hdr == true` (or RTX HDR is active), leaving converters frozen at `[100.0, 1.0]` for all `stream.hdr == false` sessions! Slice 6B/6C MUST drive `Encoder::set_luminance(image.gpu.sdr_white_nits(), 1.0)` inside `ToneMapController` whenever Source Pixel is `RgbaF16` / `Rgba10Pq` and SDR tone-mapping is active — **even when `stream.hdr == false`** — and clearly separate Windows `DISPLAYCONFIG_SDR_WHITE_LEVEL` (`80..1000` nits from `7f0e6e287d`) from BT.2390 peak target so pure SDR desktop content never dims or clips on 200–480+ nit HDR monitors.
+- **6.3.0 (`3b660899c5`) `fallback_hdr_if_sdr()` & 10-Bit SDR Interplay:** Define explicit state transitions when `fallback_hdr_if_sdr()` triggers: if source stays `Bgra8`, keep tone-mapping `Inactive` (never double-switch HDR state); when `ten_bit == true && !stream_hdr` with an HDR desktop source, engage BT.2390 cleanly onto the 10-bit SDR target.
+- **Dynamic `rubylight-vdisplay` EDID Mastering Luminance:** Replace hardcoded zeros (`max_frame_avg_nits: 0, min_luminance_millinits: 0`) in `rust/windows/src/display/rubylight_vdd.rs:240-242` with real client HDR mastering values, and trigger a controlled virtual-display EDID refresh when client roaming / Continue Here (`01`/`08`) shifts peak luminance by `> 100` nits (e.g., 400-nit OLED handheld -> 1000-nit TV) so DXGI `MaxLuminance` matches the active screen.

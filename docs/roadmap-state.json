@@ -2,7 +2,7 @@
   "schema_version": 1,
   "release_target": "7.0.0",
   "integration_branch": "roadmap/redesign-and-waves-1-5",
-  "updated_at": "2026-11-22T02:16:30Z",
+  "updated_at": "2026-11-22T03:06:20Z",
   "waves": {
     "0": {
       "status": "pending",
@@ -219,6 +219,80 @@
       "hw_verified": false
     },
     {
+      "id": "22",
+      "slug": "vibepollo-parity-core",
+      "wave": 1,
+      "title": "Vibepollo Protocol & Telemetry Parity Core (Launch Warnings, DXGI/PDH gpu_encoder_percent, FrameLimiterStatus & psmap)",
+      "design_doc": "docs/designs/22-vibepollo-parity-core.md",
+      "depends_on": [],
+      "hw_required": false,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/22-vibepollo-parity-core",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "27",
+      "slug": "security-and-privacy-hardening",
+      "wave": 1,
+      "title": "Host Network, WebRTC & API Security Hardening + Support-Bundle Privacy Sanitization",
+      "design_doc": "docs/designs/27-security-and-privacy-hardening.md",
+      "depends_on": [],
+      "hw_required": false,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/27-security-and-privacy-hardening",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "28",
+      "slug": "host-capture-gpu-and-power",
+      "wave": 1,
+      "title": "Multi-GPU / Hybrid Laptop Routing, idd-push LUID Coherence & Locked-PC Cold Launch (#117)",
+      "design_doc": "docs/designs/28-host-capture-gpu-and-power.md",
+      "depends_on": [
+        "03"
+      ],
+      "hw_required": true,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/28-host-capture-gpu-and-power",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "29",
+      "slug": "android-pacing-and-transport",
+      "wave": 1,
+      "title": "High-Refresh Transport Pacing, Android MediaCodec/ARR Pacing & WebRTC Transport Resilience (#144, #7, #119, #116)",
+      "design_doc": "docs/designs/29-android-pacing-and-transport.md",
+      "depends_on": [
+        "04",
+        "06",
+        "27"
+      ],
+      "hw_required": true,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/29-android-pacing-and-transport",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
       "id": "07",
       "slug": "hw-verify",
       "wave": 1,
@@ -229,7 +303,11 @@
         "04",
         "05",
         "06",
-        "21"
+        "21",
+        "22",
+        "27",
+        "28",
+        "29"
       ],
       "hw_required": true,
       "visual_review": false,
@@ -338,6 +416,59 @@
       "hw_verified": false
     },
     {
+      "id": "23",
+      "slug": "vibepollo-dolby-rtsp",
+      "wave": 2,
+      "title": "Vibepollo Dolby Audio RTSP Negotiation & Unchunked Datagram Receive Parity",
+      "design_doc": "docs/designs/23-vibepollo-dolby-rtsp.md",
+      "depends_on": [],
+      "hw_required": false,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/23-vibepollo-dolby-rtsp",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "24",
+      "slug": "usb-forwarding-convenience",
+      "wave": 2,
+      "title": "USB Forwarding Convenience (Windows usbipd-win, Linux EACCES Fallback & Controller Arbitration)",
+      "design_doc": "docs/designs/24-usb-forwarding-convenience.md",
+      "depends_on": [],
+      "hw_required": false,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/24-usb-forwarding-convenience",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
+      "id": "25",
+      "slug": "ps-speaker-pcm-and-bt",
+      "wave": 2,
+      "title": "PlayStation Controller Speaker (Bluetooth DualSense HID & Vibepollo 0x5602 / 0x5500_0009 Interop)",
+      "design_doc": "docs/designs/25-ps-speaker-pcm-and-bt.md",
+      "depends_on": [
+        "22"
+      ],
+      "hw_required": false,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/25-ps-speaker-pcm-and-bt",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
       "id": "13",
       "slug": "client-input-deck",
       "wave": 3,
@@ -396,6 +527,26 @@
       "hw_verified": false
     },
     {
+      "id": "26",
+      "slug": "steam-controller-2026",
+      "wave": 3,
+      "title": "Physical Steam Controller (2026) Direct HID Driver (Desktop & Android) + Host vhf_steam Polish",
+      "design_doc": "docs/designs/26-steam-controller-2026.md",
+      "depends_on": [
+        "13",
+        "24"
+      ],
+      "hw_required": false,
+      "visual_review": false,
+      "status": "pending",
+      "phase": "not_started",
+      "branch": "wip/roadmap/26-steam-controller-2026",
+      "worktree": null,
+      "commit_sha": null,
+      "quarantine_reason": null,
+      "hw_verified": false
+    },
+    {
       "id": "16",
       "slug": "ui-final-polish",
       "wave": 4,
@@ -413,7 +564,8 @@
         "12",
         "13",
         "14",
-        "15"
+        "15",
+        "22"
       ],
       "hw_required": false,
       "visual_review": true,
@@ -436,7 +588,10 @@
         "07",
         "08",
         "12",
-        "13"
+        "13",
+        "24",
+        "27",
+        "28"
       ],
       "hw_required": true,
       "visual_review": true,

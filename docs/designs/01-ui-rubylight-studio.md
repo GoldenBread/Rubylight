@@ -275,3 +275,10 @@ Designed for Phase 3 `parallel()` execution with **strictly non-overlapping file
     - **Pass gate:** Post-close host `present_to_sent p99` delta `<= +0.05 ms` vs baseline; `compute_menu` records `0` GPU dispatches while closed.
 - **Abort rule:** **Exit code 3 from `e2e.py` or `check.ps1` indicates an AMD encoder hang — stop immediately and investigate; never retry.**
 - **Platform & encoder compatibility:** Verify Windows 10 & Windows 11 compatibility for `rust/setup/src/ui_theme.rs` (best-effort `DwmSetWindowAttribute`), physical displays, WGC, Desktop Duplication, D3D11, AMD AMF, and NVIDIA NVENC (NVIDIA code paths remain header/sample-verified per `docs/nvenc.md#checking-nvidia-code` and are never claimed run on NVIDIA hardware).
+
+---
+
+## 8. Post-Discovery & 6.3.0 Rebase Addendum (Rubylight `#140`)
+
+- **Complete Per-Device & `App × Device` Override Coverage (`#140`):** `rust/core/src/config/overrides.rs` already honors 147 per-device / app-device keys, whereas legacy `device.ts` (`DISPLAY_OVERRIDES` / `AUDIO_OVERRIDES`), `DeviceEditor.svelte`, `DeviceOverrides.svelte`, and `rust/host/src/console/settings.rs::CLIENT` expose only a tiny subset. Slice 01-B / 01-D MUST surface the high-demand already-supported backend keys (`Display`: resolution, refresh, HDR, virtual display refresh/activation; `Stream & Codec`: `max_bitrate`, `fec_percentage`, `hevc_mode`, `av1_mode`, `packed_444`, `frame_limiter_*`; `Audio`: `stream_audio`, `audio_sink`, `virtual_sink`, `audio_capture_mode`, `stream_mic`, `audio_passthrough`, `audio_surround_714`; `Input`: `mouse_mode`, `controller`) cleanly through `OverrideCascadeCards.svelte` with reset-to-inherited pills and a tidy advanced fold (`<= 800` LOC per file, zero new backend config keys).
+- **6.3.0 Size-Ratchet Re-Baseline:** Re-verify `rust/windows/src/tray.rs` (`909` LOC in post-sprint `size_ratchet.json`) and `rust/host/src/main.rs` (`1151` LOC) in Phase 2 against post-sprint `tools/size_ratchet.json`.

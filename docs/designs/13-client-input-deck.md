@@ -355,3 +355,9 @@ Every file path belongs to **exactly one** slice below (zero overlap across para
   - Deck disabled (default): `present_to_sent p99` delta `<= +0.05 ms` (within noise); `gamepad timings` unchanged.
   - Deck active with 250 Hz gyro-to-stick + radial open/close: `present_to_sent p99` delta `<= +0.15 ms`, zero `control` thread stalls in `stall_watch.rs`, radial open-to-first-frame `<= 1 frame`, and post-close client GPU frame time matches pre-open baseline.
 - **NVIDIA note:** NVIDIA NVENC code paths are untouched by Input Deck; any verification on NVIDIA remains header/sample-checked only and is never claimed as run on NVIDIA hardware.
+
+---
+
+## 8. Post-Discovery Addendum — Steam Virtual Trackpad Touch-Down Click Guard (`#150`)
+
+- **Binary-Pressure Guard on VHF `SteamController` Trackpads (`#150`):** Alongside `d91b511e82`, explicitly verify and enforce inside `TouchStudioTabBridge` / `ModernController` and host `rust/windows/src/input/gamepads.rs:1737` that Android binary-pressure touchscreens (`ABS_MT_PRESSURE = 1.0` -> `65535`) clamp/zero virtual Steam trackpad pressure during touch-move unless an explicit tap/click press bit is active, preventing Steam Input from misfiring trackpad clicks on every touch-down. Add a regression test in Slice 13A/13D covering `ABS_MT_PRESSURE = 1.0` move vs tap-click.
