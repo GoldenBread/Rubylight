@@ -743,6 +743,70 @@ class Execution(unittest.TestCase):
             self.assertEqual(seen_lines, many)
             self.assertFalse(seen_path.exists())
 
+    def test_gradle_lane_normalizes_long_windows_temp_and_passes_java_io_tmpdir(self):
+        if os.name != 'nt':
+            self.skipTest('Windows MAX_PATH temp normalization only')
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            short_local = base / 'l'
+            short_temp = short_local / 'Temp'
+            short_temp.mkdir(parents=True)
+            long_temp = base / ('a' * 50) / 'antigravity' / 'run-123456'
+            long_temp.mkdir(parents=True)
+
+            # Long TEMP/TMP (> 45 chars) normalizes to shorter existing LOCALAPPDATA\Temp and passes -Djava.io.tmpdir=.
+            with mock.patch.dict(os.environ, {
+                'TEMP': str(long_temp),
+                'TMP': str(long_temp),
+                'LOCALAPPDATA': str(short_local),
+                'CARGO_TARGET_DIR': str(base / 'target'),
+            }):
+                env = dev.gradle_env()
+                self.assertEqual(env['TEMP'], str(short_temp))
+                self.assertEqual(env['TMP'], str(short_temp))
+                self.assertNotIn('CARGO_TARGET_DIR', env)
+
+                seen = {}
+                def fake_run(cmd, cwd_or_log, cwd, run_env=None, **kwargs):
+                    seen['cmd'] = cmd
+                    seen['env'] = run_env
+                    return 0
+                with mock.patch.object(dev, 'run', side_effect=fake_run):
+                    ok = dev.execute(dev.Check('app', 'gradle', ['com.limelight.GameQualityTest']),
+                                     ROOT, base / 'gradle.log', None)
+                self.assertTrue(ok)
+                self.assertEqual(seen['env']['TEMP'], str(short_temp))
+                self.assertEqual(seen['env']['TMP'], str(short_temp))
+                self.assertIn(f'-Djava.io.tmpdir={short_temp}', seen['cmd'])
+                self.assertLess(seen['cmd'].index(f'-Djava.io.tmpdir={short_temp}'),
+                                seen['cmd'].index(dev.GRADLE_TASK))
+
+            # Already short TEMP/TMP (<= 45 chars) is preserved and no -Djava.io.tmpdir override is injected.
+            with mock.patch.dict(os.environ, {
+                'TEMP': r'C:\T',
+                'TMP': r'C:\T',
+                'LOCALAPPDATA': str(short_local),
+            }):
+                env = dev.gradle_env()
+                self.assertEqual(env['TEMP'], r'C:\T')
+                self.assertEqual(env['TMP'], r'C:\T')
+                with mock.patch.object(dev, 'run', return_value=0) as run_mock:
+                    self.assertTrue(dev.execute(dev.Check('app', 'gradle', []),
+                                                ROOT, base / 'gradle-short.log', None))
+                self.assertFalse(any(a.startswith('-Djava.io.tmpdir=') for a in run_mock.call_args.args[0]))
+
+            # Long TEMP with no shorter existing directory leaves TEMP unchanged rather than inventing a missing path.
+            missing_local = base / ('m' * 60)
+            with mock.patch.dict(os.environ, {
+                'TEMP': str(long_temp),
+                'TMP': str(long_temp),
+                'LOCALAPPDATA': str(missing_local),
+                'USERPROFILE': str(missing_local),
+            }):
+                env = dev.gradle_env()
+                self.assertEqual(env['TEMP'], str(long_temp))
+                self.assertEqual(env['TMP'], str(long_temp))
+
 
 if __name__ == '__main__':
     unittest.main()

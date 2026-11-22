@@ -372,7 +372,7 @@ $held = Enter-CheckBuildLock -RespectPriority
 try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
 """)
         env = dict(os.environ, CHECK_STREAMS=str(pathlib.Path(__file__).resolve().parents[1] / 'rust/release/check_streams.ps1'))
-        stage = self.hold('cargo', 'stage', seconds=4)
+        stage = self.hold('cargo', 'stage', seconds=12)
         child = subprocess.run(['pwsh', '-NoProfile', '-File', str(driver), '-Locks', str(self.root)],
                                capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(child.returncode, 0, child.stdout + child.stderr)

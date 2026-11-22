@@ -627,6 +627,45 @@ def service_env(target, fast=False, lock_directory=None):
     return env
 
 
+# Robolectric's native Windows SQLite opens <TEMP>\robolectric-<Class>_<Method><id>\...\computers4.db-wal;
+# sandbox TEMP paths longer than ~45 chars push long test names past Win32 MAX_PATH (260).
+GRADLE_TEMP_MAX_LEN = 45
+
+
+def short_windows_temp(env):
+    """Return a shorter existing Windows temp directory when TEMP/TMP exceeds GRADLE_TEMP_MAX_LEN."""
+    if os.name != 'nt':
+        return None
+    temps = [v for k, v in env.items() if k.upper() in ('TEMP', 'TMP') and v]
+    if not temps or max(len(v) for v in temps) <= GRADLE_TEMP_MAX_LEN:
+        return None
+    cur_max = max(len(v) for v in temps)
+    candidates = []
+    for var, suffix in (('LOCALAPPDATA', ('Temp',)), ('USERPROFILE', ('AppData', 'Local', 'Temp'))):
+        val = next((v for k, v in env.items() if k.upper() == var and v), None)
+        if val:
+            candidates.append(pathlib.Path(val).joinpath(*suffix))
+    for cand in candidates:
+        text = str(cand)
+        if len(text) < cur_max and cand.is_dir():
+            return text
+    return None
+
+
+def gradle_env(fast=False, lock_directory=None):
+    env = tool_env(fast=fast, lock_directory=lock_directory)
+    env = {k: v for k, v in env.items() if k.upper() != 'CARGO_TARGET_DIR'}
+    # Its Rust engine builds beside the Cargo stages: at most a stage's share of the CPU.
+    env['CARGO_BUILD_JOBS'] = str(build_lock.CARGO_STAGE_THREADS)
+    short = short_windows_temp(env)
+    if short:
+        for key in [k for k in env if k.upper() in ('TEMP', 'TMP')]:
+            env[key] = short
+        env['TEMP'] = short
+        env['TMP'] = short
+    return env
+
+
 # cmd takes at most 8191 characters on a command line ("Die Befehlszeile ist zu lang" with 170 test classes), and
 # gradlew.bat hands the arguments on in a longer line: the JDK, JAVA_OPTS and GRADLE_OPTS come first.
 CMD_LINE_LIMIT = 8191
@@ -635,11 +674,14 @@ CMD_LINE_LIMIT = 8191
 GRADLEW_OVERHEAD = 400
 
 
-def gradle_command(root, items, test_list_path=None):
+def gradle_command(root, items, test_list_path=None, temp_dir=None):
     """The app tests for these classes (via --tests or -PrubylightTestList), or the whole suite + lint."""
     # By its full path: with NoDefaultCurrentDirectoryInExePath set, cmd
     # doesn't look in its working folder for a bare gradlew.bat.
-    command = ['cmd', '/c', str(root / 'client' / 'gradlew.bat'), '--no-daemon', '--max-workers=2', GRADLE_TASK]
+    command = ['cmd', '/c', str(root / 'client' / 'gradlew.bat'), '--no-daemon', '--max-workers=2']
+    if temp_dir:
+        command.append(f'-Djava.io.tmpdir={temp_dir}')
+    command.append(GRADLE_TASK)
     if not items:
         return command + [GRADLE_LINT_TASK]
     filters = [a for t in items for a in ('--tests', t)]
@@ -939,19 +981,18 @@ def execute(check, root, log, target, fresh_dependencies=False, fast=False, lock
                     if has_nextest(env) else ['cargo', 'test', '-j', '4', '--locked', *manifest])
         return run(test_cmd, log, root, env) == 0
     if check.kind == 'gradle':
-        env = tool_env(fast=fast, lock_directory=lock_directory)
-        env = {k: v for k, v in env.items() if k.upper() != 'CARGO_TARGET_DIR'}
-        # Its Rust engine builds beside the Cargo stages: at most a stage's share of the CPU.
-        env['CARGO_BUILD_JOBS'] = str(build_lock.CARGO_STAGE_THREADS)
+        before = os.environ.get('TEMP'), os.environ.get('TMP')
+        env = gradle_env(fast=fast, lock_directory=lock_directory)
+        normalized = env.get('TEMP') if os.name == 'nt' and env.get('TEMP') and (env.get('TEMP'), env.get('TMP')) != before else None
         list_path = None
         try:
             try:
-                command = gradle_command(root, check.items)
+                command = gradle_command(root, check.items, temp_dir=normalized)
             except ValueError:
-                fd, raw = tempfile.mkstemp(prefix='rubylight-tests-', suffix='.txt')
+                fd, raw = tempfile.mkstemp(prefix='rubylight-tests-', suffix='.txt', dir=env.get('TEMP'))
                 os.close(fd)
                 list_path = pathlib.Path(raw)
-                command = gradle_command(root, check.items, test_list_path=list_path)
+                command = gradle_command(root, check.items, test_list_path=list_path, temp_dir=normalized)
             return run(command, log, root / 'client', env) == 0
         finally:
             if list_path is not None:
