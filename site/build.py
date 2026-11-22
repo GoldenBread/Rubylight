@@ -63,7 +63,7 @@ PAGES = sorted(
 # Files copied as they are when a page or the landing page links them.
 MEDIA = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".mp4"}
 STATIC = ["style.css", "favicon.svg", "poster.jpg"]
-LANDING_MEDIA = ["docs/media/demo.mp4"]
+LANDING_MEDIA = ["docs/media/readme/console-tour.mp4", "docs/media/readme/console-tour.webp"]
 # The documentation pages' top bar.
 NAV = [
     ("Docs", "docs/index.html"),
@@ -104,7 +104,7 @@ SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*:")
 # Raw HTML in Markdown and the landing page: the ids a #fragment can name,
 # and the attributes that link.
 ID_ATTR = re.compile(r"""\b(?:id|name)\s*=\s*["']([^"']+)["']""")
-HTML_LINK = re.compile(r"""\b(?:href|src|poster)\s*=\s*["']([^"']+)["']""")
+HTML_LINK = re.compile(r"""\b(?:href|src|srcset|poster)\s*=\s*["']([^"']+)["']""")
 
 
 def github_slug(title):

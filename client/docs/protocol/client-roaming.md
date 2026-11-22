@@ -136,5 +136,5 @@ An implementation must reproduce these (`rubylight_protocol::roaming::vectors`; 
 
 - **The host's address.** A session started on the host's LAN address cannot follow the phone onto mobile data, whatever the host does. Version 1 has no switch to another known host address (remote, IPv6); that would need the host to listen on all addresses.
 - **NAT that maps control and media to different public IPs.** Media never resumes, and the stream ends with a clear message.
-- **Engines.** Only Nightjar's Rust streaming engine roams; the classic engine does not.
+- **Engine.** Roaming runs in Nightjar's Rust streaming engine (`nightjar-core`).
 - **Testing.** Phone moves between Wi-Fi and mobile data are tested by hand only.

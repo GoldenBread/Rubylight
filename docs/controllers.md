@@ -2,7 +2,7 @@
 
 [Rubylight docs](README.md) › [Controllers](README.md#controllers) · [Controllers reference](configuration.md#controllers) · [Troubleshooting](troubleshooting.md#a-controller-or-other-input-does-nothing)
 
-Controllers, keyboards, mice, touch and pens on the device reach games on the PC as if they were plugged in there. The installer sets up the virtual gamepad driver, so a controller works without any setup.
+Controllers, keyboards, mice, touch and pens on the device reach games on the PC as if they were plugged in there. The installer sets up Rubylight's own first-party virtual gamepad driver built from source, so a controller works without third-party driver downloads.
 
 ## Controller types
 

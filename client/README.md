@@ -5,7 +5,7 @@
 <h3 align="center">Every PC. Every game. Every screen.</h3>
 
 <p align="center">
-  Stream your PC to a phone, handheld, TV or laptop with the picture, sound and controls of playing at your desk.<br>
+  Stream your PC to a phone, handheld, TV or computer—engineered around a single Rust streaming engine for immediate response, Real VRR cadence, Frame Warp and true HDR.<br>
   Free and open source. No accounts, no ads, no tracking.
 </p>
 
@@ -39,31 +39,31 @@
 
 <table>
   <tr>
-    <td width="33%" valign="top"><h4>One library for every PC</h4>The games of every paired PC on one Home, with covers, Continue playing and a page for each game.<br><a href="#one-library-for-every-pc">The library</a></td>
-    <td width="33%" valign="top"><h4>At home on every screen</h4>Phones, handhelds, TVs, Windows, Linux, the Steam Deck and macOS, by controller, remote, touch, mouse or keyboard.<br><a href="#at-home-on-every-screen">Screens</a></td>
-    <td width="33%" valign="top"><h4>Simple first</h4>A Recommended page with a few choices set for your device, and every other setting one step further down.<br><a href="#simple-first-every-setting-when-you-want-it">Settings</a></td>
+    <td width="33%" valign="top"><h4>Engineered in Rust for low latency</h4>One shared Rust streaming engine across every platform, with per-chip decoder flags, decoder receive priority and non-blocking decode hand-off.<br><a href="#smooth-and-it-stays-in-the-game">Latency &amp; core</a></td>
+    <td width="33%" valign="top"><h4>Real VRR, Frame Warp &amp; pacing</h4>Frames pace to your game’s own rhythm under VRR, camera turns update on your screen’s next refresh, and wired desktop PyroWave races the beam.<br><a href="#smooth-and-it-stays-in-the-game">Smoothness</a></td>
+    <td width="33%" valign="top"><h4>Stays solid on real networks</h4>Bounded adaptive bitrate, loss-aware error correction, connection recovery after dropouts and seamless network roaming keep you in the game.<br><a href="#smooth-and-it-stays-in-the-game">Resilience</a></td>
   </tr>
   <tr>
-    <td valign="top"><h4>Smooth, and it stays in the game</h4>Frames paced to your display, Real VRR, Frame Warp, a bitrate that follows the network and a stream that recovers by itself.<br><a href="#smooth-and-it-stays-in-the-game">Smoothness</a></td>
-    <td valign="top"><h4>The picture your screen can show</h4>H.264, HEVC, AV1 and PyroWave, HDR10, HDR10+, Dolby Vision, 4:4:4, upscaling, and sound up to 7.1.4.<br><a href="#the-picture-and-sound-your-setup-can-play">Picture and sound</a></td>
-    <td valign="top"><h4>Every controller, touch and pen</h4>Up to 16 controllers, on-screen controls you lay out yourself, a full PC keyboard, trackpad touch and pens.<br><a href="#every-controller-touch-and-pen">Controls</a></td>
+    <td valign="top"><h4>One library for every PC</h4>Every paired PC’s games on one Home with cover art, Continue playing, store shelves, sorting by play time or installed state, and Wake-on-LAN.<br><a href="#one-library-for-every-pc">The library</a></td>
+    <td valign="top"><h4>At home on every screen</h4>Android phones, handhelds &amp; TVs, Windows, Linux (Desktop, KMS &amp; Steam Deck) and macOS—controller, remote, touch drag, mouse or keyboard, with Auto UI scaling.<br><a href="#at-home-on-every-screen">Screens</a></td>
+    <td valign="top"><h4>Simple first, deep when needed</h4>Recommended defaults tuned for immediate playback, paired with per-game profiles, network-aware presets, presets search and 15 languages.<br><a href="#simple-first-every-setting-when-you-want-it">Settings</a></td>
   </tr>
   <tr>
-    <td valign="top"><h4>Tune it while you play</h4>A stream menu for the bitrate, the keyboard, the clipboard and, where the PC offers them, its graphics settings.<br><a href="#tune-it-while-you-play">The stream menu</a></td>
-    <td valign="top"><h4>Together, and away from home</h4>Join a friend's game as a guest, take a co-op seat, and reach your PC from anywhere over a private VPN.<br><a href="#play-together-and-away-from-home">Together and away</a></td>
-    <td valign="top"><h4>Private by design</h4>No accounts, advertising or analytics. Everything travels only between your device and your PC.<br><a href="#private-by-design">Privacy</a></td>
+    <td valign="top"><h4>The picture your screen can show</h4>H.264, HEVC, AV1 and GPU PyroWave (macOS Apple silicon included), HDR10, HDR10+, Dolby Vision, HLG, 4:4:4, FSR/SGSR/MetalFX and 7.1.4 sound.<br><a href="#the-picture-and-sound-your-setup-can-play">Picture and sound</a></td>
+    <td valign="top"><h4>Every controller, touch and pen</h4>Up to 16 controllers, custom on-screen controls, Steam Controller pads/grips, USB DualSense haptics &amp; audio, precision touchpads and pens.<br><a href="#every-controller-touch-and-pen">Controls</a></td>
+    <td valign="top"><h4>Tune, share &amp; play together</h4>In-stream bitrate/FPS/driver menu, Continue here, Dual screen, co-op, guests, bidirectional clipboard, files and USB forwarding.<br><a href="#tune-it-while-you-play">Tune &amp; share</a></td>
   </tr>
 </table>
 
-Nightjar speaks the Moonlight protocol, so it works with the host you already run, and every host gets the complete stream: hardware decoding, HDR10, surround sound, every controller, touch, mouse and keyboard, recovery and diagnostics. It turns on more from the capabilities each PC's host reports, never from the host's name.
+Nightjar speaks the Moonlight protocol, so it works with the host you already run, and every host gets the complete Rust engine: hardware decoding tuned per chip, HDR10, surround sound, every controller, touch, mouse and keyboard, recovery and diagnostics. It unlocks richer extensions strictly from the capabilities each PC’s host advertises, never from the host’s name.
 
 ## A closer look
 
 ### One library for every PC
 
-Home gathers the games of every paired PC, with cover art, **Continue playing** and a page for each game that shows its store, the PC it runs on, whether it is running and the exact settings the stream will use. The glass takes the colours of the cover in focus. On a TV, each store gets its own shelf. Pick a game on a sleeping PC and Nightjar wakes the PC and starts it.
+Home gathers the games of every paired PC, with cover art, **Continue playing**, flexible sorting (by title, last played or play time) and grouping (including installed games apart from unowned/uninstalled entries), and a page for each game showing its store, the PC it runs on, whether it is running and the exact settings the stream will use. The glass takes the colours of the cover in focus. On a TV, each store gets its own shelf. Pick a game on a sleeping PC and Nightjar wakes the PC and starts it.
 
-Store shelves, Steam collections and Playnite categories and the richer game pages come from a Rubylight PC; with any other Moonlight host, Home shows the PC's app list. Games from any host also launch from Android TV's home screen, Beacon, ES-DE, Daijisho, Pegasus and the desktop command line, which takes moonlight-qt's `stream` options too, so launchers such as MoonDeck keep working.
+Store shelves, Steam collections and Playnite categories, play time and the richer game pages come from a Rubylight PC; with any other Moonlight host, Home shows the PC’s app list. Games from any host also launch from Android TV’s home screen, Beacon, ES-DE, Daijisho, Pegasus and the desktop command line, which takes moonlight-qt’s `stream` options too, so launchers such as MoonDeck keep working.
 
 <table>
 <tr>
@@ -96,23 +96,23 @@ Every screen works with a controller or a TV remote as well as touch, mouse and 
 
 ### Simple first, every setting when you want it
 
-Settings open on **Recommended**: **Stream smoothness**, **Picture quality**, the screen and **HDR**, each on Auto, which uses what your device measured as best, and **Back to recommended** returns to it. **Console mode** opens Nightjar straight into Home. Controls, Audio and App follow, and **More settings** unfolds the rest, with search, presets and help on every row.
+Settings open on **Recommended**: **Stream smoothness**, **Picture quality**, the screen and **HDR**, each on Auto, with **Back to recommended** to reset at any time. **Console mode** opens Nightjar straight into Home, and the desktop & TV launcher scales its text and controls to your display by default (`Auto`, or `Ctrl+0` to reset). Controls, Audio and App follow, and **More settings** unfolds the rest with search, presets and help on every row.
 
-Phones, TVs and computers share one settings layout, and **Interface layout** (Automatic, TV or Handheld) in every Android build gives a handheld the TV screens or a TV the touch ones. Settings can differ per PC and per game, with profiles that switch by network: mobile data, home Wi-Fi or other Wi-Fi. Nightjar comes in 15 languages, with high contrast, reduced motion and screen reader support.
+Phones, TVs and computers share one settings layout, and **Interface layout** (Automatic, TV or Handheld) in every Android build gives a handheld the TV screens or a TV the touch ones. Desktop users can scroll the launcher directly by dragging a touchscreen and match the launcher window to **Window** mode (`Fullscreen`, `Borderless` or `Windowed`). Settings can differ per PC and per game, with profiles that switch by network: mobile data, home Wi-Fi or other Wi-Fi. Nightjar comes in 15 languages, with high contrast, reduced motion and screen reader support.
 
 <p align="center"><img src="docs/assets/readme/desktop-settings.webp" width="820" alt="Settings on the desktop, on the Recommended page: Stream smoothness, Picture quality, Screen and HDR on Auto, a Console mode switch and Back to recommended, beside Controls, Audio, App and More settings (demo data)"></p>
 
 ### Smooth, and it stays in the game
 
-Hardware decoding is tuned for [each decoder family](docs/decoder-flags.md), and frames are paced to your display's refresh rate, including Android's adaptive refresh rate and VRR on the desktop. Hosts that support it receive phase-lock reports, so frames arrive just before the display needs them, and the desktop client can [beam race](docs/beam-racing.md).
+Every Nightjar client runs the same Rust streaming engine (`nightjar-core`) with **Decoder priority for receiving** on by default, non-blocking decode input hand-off (a momentary decoder hiccup never stalls the receive path), and per-chip low-latency flags tuned for Snapdragon, MediaTek, Exynos, Tensor, Tegra and Amlogic decoders. Frames are paced to your display's refresh rate, hosts that support phase lock receive latch reports so frames arrive right before scanout, and the desktop client can [beam race](docs/beam-racing.md) PyroWave frames as slices arrive.
 
-- **Stays in the game.** The bitrate drops when the network is busy, following loss, round-trip variation and decode headroom, and error correction can follow measured loss, with hosts that accept it. An interrupted stream recovers into the running game, and a stream holds through up to a minute of network silence. With a Rubylight PC, the stream follows your device to a new network.
-- **Real VRR,** on by default with Variable refresh rate: on a G-Sync, FreeSync or HDMI VRR screen, frames land on the game's own rhythm instead of the network's. [How it works](docs/real-vrr.md)
-- **Frame Warp,** with a Rubylight PC: a mouse or right-stick camera turn shows on your screen's next refresh, and the game's HUD stays in place. [How it works](docs/protocol/frame-warp.md)
+- **Stays in the game.** The bitrate adapts automatically when the network is busy, following loss, round-trip variation and decode headroom, while error correction scales to measured loss with supporting hosts. An interrupted stream recovers into the running game, holds through up to a minute of network silence, and follows your phone across network changes on a Rubylight PC.
+- **Real VRR,** on by default with Variable refresh rate: on a G-Sync, FreeSync, HDMI VRR or Android adaptive screen, frames land on the game's own rhythm instead of the network's. Fixed high-refresh screens can hold an even cadence with Fractional V-Sync. [How it works](docs/real-vrr.md)
+- **Frame Warp,** with a Rubylight PC: a mouse or right-stick camera turn shows on your screen's next refresh while the game's HUD stays locked in place. [How it works](docs/protocol/frame-warp.md)
 
 ### The picture and sound your setup can play
 
-H.264, HEVC and AV1 on the hardware decoder, and the PyroWave codec decoded on the GPU, on Apple silicon Macs with macOS 26 or later too. HDR10 with any HDR-capable host; HDR10+, HLG and Dolby Vision where the PC, decoder and display support them, and on Linux HDR straight to the desktop. Full-chroma 4:4:4 keeps small text sharp, and Nightjar checks before a stream starts whether the PC and the device can do it. Upscaling uses FSR 1, Snapdragon GSR, MetalFX on a Mac or, on Windows, the graphics card's video upscaler.
+H.264, HEVC and AV1 on the hardware decoder, and GPU-accelerated PyroWave decoded on the GPU—including on Apple silicon Macs through KosmicKrisp and across Linux via VA-API, Vulkan Video, V4L2 M2M (including Steam Deck & ARM handhelds) or NVDEC. HDR10 works with any HDR-capable host; HDR10+, HLG and Dolby Vision light up where the PC, decoder and display support them, and on Linux Nightjar can render straight to DRM/KMS without a desktop session. Sharper colored text (4:4:4) checks hardware support up front before starting. Upscaling uses AMD FSR 1 or Snapdragon GSR on Android, MetalFX on macOS, or GPU video enhancement on Windows.
 
 Sound comes in stereo, 5.1, 7.1 and 7.1.4, or as PCM, Dolby Digital or Dolby Digital Plus passed through to a receiver, soundbar or TV. The microphone has echo cancellation on every platform, plus noise suppression, gain and one-tap mute on Android.
 
@@ -256,7 +256,7 @@ The **Error correction** setting and host-side automatic bitrate also work with 
 | Linux | x86-64 with glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36 or later; aarch64 packages for ARM handhelds and boards. Hardware decoding through VA-API, Vulkan video, V4L2 M2M or NVDEC. |
 | PC | A Moonlight-compatible host. The host's own requirements apply. |
 
-Decoder benchmark results by device are in [device results](docs/devices.md#devices); the built-in benchmark measures yours.
+Use the built-in decoder benchmark to measure your own device; community-submitted results live in [device results](docs/devices.md#devices).
 
 ## Documentation
 
