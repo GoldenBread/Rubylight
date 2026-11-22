@@ -1605,3 +1605,9 @@ fn classify_segmented_error_falls_back_on_enobufs_without_disabling_offload() {
     }
     assert_eq!(classify_segmented_error(WSAEACCES), SegmentedFailure::Fatal);
 }
+
+#[test]
+fn segmented_enobufs_falls_back_to_datagrams_without_waiting_in_place() {
+    assert!(!segmented_retries_in_place(WSAENOBUFS));
+    assert!(segmented_retries_in_place(WSAEWOULDBLOCK));
+}

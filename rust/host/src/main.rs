@@ -970,21 +970,22 @@ async fn run_logged(
         return Ok(ExitAction::Exit(code as i32));
     }
     if h.restart.load(Ordering::Acquire) {
-        let code = butterpollo_windows::service::RESTART_EXIT_CODE;
-        tracing::info!(
-            reason,
-            exit_code = code,
-            supervised,
-            "host exiting for restart"
-        );
+        let exit_code = if supervised {
+            butterpollo_windows::service::RESTART_EXIT_CODE
+        } else {
+            0
+        };
+        tracing::info!(reason, exit_code, supervised, "host exiting for restart");
         if supervised {
-            return Ok(ExitAction::Exit(code as i32));
+            return Ok(ExitAction::Exit(exit_code as i32));
         } else {
             use std::os::windows::process::CommandExt;
             std::process::Command::new(std::env::current_exe()?)
                 .args(std::env::args_os().skip(1))
                 .creation_flags(0x08000000)
                 .spawn()?;
+            outcome?;
+            return Ok(ExitAction::Return);
         }
     }
     outcome?;

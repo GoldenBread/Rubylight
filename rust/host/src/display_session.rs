@@ -624,6 +624,9 @@ struct ModeReportState {
     /// Why this stream leaves the primary where Windows puts it: Windows refused the layout,
     /// or kept taking the primary back.
     primary_stopped: Option<PrimaryStop>,
+    /// The stream already fell back from HDR to SDR and replaced `"display_hdr"` with its own
+    /// fallback explanation, so later mode reports must not overwrite or clear it.
+    hdr_fell_back: bool,
 }
 /// Why the primary watch stopped for the stream, for the card that says so.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -646,12 +649,21 @@ impl ModeReportState {
                 {
                     requested.1 = None;
                 }
-                butterpollo_core::display_policy::report_mode(
-                    &self.warnings,
-                    requested,
-                    *actual,
-                    self.stream_rate,
-                );
+                if self.hdr_fell_back {
+                    butterpollo_core::display_policy::report_mode_keeping_hdr(
+                        &self.warnings,
+                        requested,
+                        *actual,
+                        self.stream_rate,
+                    );
+                } else {
+                    butterpollo_core::display_policy::report_mode(
+                        &self.warnings,
+                        requested,
+                        *actual,
+                        self.stream_rate,
+                    );
+                }
             }
             Some(Err(error)) => self.warnings.set("display_verify", format!("Could not verify the applied display mode ({error}); refresh and HDR may differ from the request. Check Windows display settings and reconnect.")),
             None => {}
@@ -700,7 +712,13 @@ impl ModeReport {
             unrepaired: None,
             primary_refused: None,
             primary_stopped: None,
+            hdr_fell_back: false,
         })))
+    }
+    /// Record that the stream fell back from HDR to SDR so later mode reports do
+    /// not overwrite or clear the fallback explanation on `"display_hdr"`.
+    fn hdr_fell_back(&self) {
+        self.0.lock().unwrap().hdr_fell_back = true;
     }
     /// What Windows recalled when this stream's display arrived could not be put back.
     fn unrepaired_at_start(&self, failure: Option<&str>) {
@@ -759,6 +777,7 @@ impl ModeReport {
     fn attach(&self, warnings: Arc<Warnings>) {
         let mut state = self.0.lock().unwrap();
         state.warnings = warnings;
+        state.hdr_fell_back = false;
         state.report();
     }
     /// The stream asks for another rate than the launch the display was
@@ -1227,6 +1246,12 @@ impl Ready {
             display: self,
             _limiter: limiter,
         })
+    }
+    /// Notes that the stream fell back from HDR to 10-bit SDR after capture
+    /// showed the display stayed in SDR, keeping the `"display_hdr"` fallback
+    /// explanation intact across subsequent mode reports.
+    pub fn note_hdr_fallback(&self) {
+        self.mode_report.hdr_fell_back();
     }
     /// What the console changed while the stream was paused, for its resume at `stream`: the
     /// frame limiter's policy, the device's HDR profile and whether the layout holds while

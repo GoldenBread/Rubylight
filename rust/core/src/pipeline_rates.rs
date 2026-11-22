@@ -427,16 +427,16 @@ fn rounded_fps(mhz: u32) -> u32 {
 }
 
 /// The stream card's wording for [`SourceRateWarning::Below`]. `pushed`: the
-/// capture is Rubylight's own virtual display (`idd-push`), whose frame push is
-/// the limit there rather than the game; `game`: a game is streaming, not the
-/// desktop. `source_mhz` and `limit_mhz` are in millihertz: a 144 fps stream says
-/// 144 and 59.94 fps rounds to 60.
+/// capture is Rubylight's own virtual display (`idd-push`), where either the
+/// virtual display's delivery or the game can limit the rate; `game`: a game is
+/// streaming, not the desktop. `source_mhz` and `limit_mhz` are in millihertz: a
+/// 144 fps stream says 144 and 59.94 fps rounds to 60.
 pub fn below_message(pushed: bool, game: bool, source_mhz: u32, limit_mhz: u32) -> String {
     let source_fps = source_mhz.saturating_add(500) / 1000;
     let limit_fps = limit_mhz.saturating_add(500) / 1000;
     if pushed {
         format!(
-            "Rubylight's virtual display is delivering about {source_fps} fps, below the {limit_fps} fps this stream can show; the display's frame push is the limit here, not the game's own frame rate. Check the virtual display driver, or lower the stream's frame rate to match."
+            "Rubylight's virtual display is delivering about {source_fps} fps, below the {limit_fps} fps this stream can show. Check the virtual display mode or driver and the game's frame rate, or lower the stream's frame rate to match."
         )
     } else if game {
         format!(
@@ -913,8 +913,8 @@ mod tests {
         );
     }
 
-    /// `idd-push` blames the virtual display's frame push, not the game, and exact stream rates
-    /// like 144 and 59.94 show as 144 and 60 fps.
+    /// `idd-push` points to the virtual display capture rather than blaming the game alone, and
+    /// exact stream rates like 144 and 59.94 show as 144 and 60 fps.
     #[test]
     fn wording_matches_the_capture_backend_and_exact_stream_rate() {
         let pushed = below_message(true, true, 70_000, 144_000);
@@ -922,7 +922,11 @@ mod tests {
             pushed.contains("70 fps") && pushed.contains("144 fps"),
             "{pushed}"
         );
-        assert!(pushed.contains("not the game's own frame rate"), "{pushed}");
+        assert!(
+            pushed.contains("virtual display") && pushed.contains("game's frame rate"),
+            "{pushed}"
+        );
+        assert!(!pushed.contains("The game is rendering"), "{pushed}");
         assert!(!pushed.contains("Raise the game's own"), "{pushed}");
 
         let game = below_message(false, true, 50_000, 59_940);

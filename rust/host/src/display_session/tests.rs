@@ -497,6 +497,32 @@ fn a_joined_stream_hears_of_a_slower_or_other_hdr_display_and_nothing_fails() {
 }
 
 #[test]
+fn hdr_fallback_preserves_display_hdr_warning_across_mode_reports() {
+    let warnings = Arc::new(Warnings::default());
+    let report = ModeReport::new(
+        warnings.clone(),
+        joined_report(Rate(144_000), Some(true)),
+        144_000,
+    );
+    report.publish(Ok((2560, 1440, 144_000, false)));
+    let fallback = "Requested display HDR state was not applied; capture source HDR is off, so this stream fell back to SDR. Check Windows HDR and the display policy, or reconnect with HDR disabled.";
+    warnings.set("display_hdr", fallback);
+    report.hdr_fell_back();
+
+    // Subsequent mode reports (e.g. primary/follow updates) must not overwrite or clear it.
+    report.publish(Ok((2560, 1440, 144_000, true)));
+    let snap = warnings.snapshot();
+    assert_eq!(snap.len(), 1);
+    assert_eq!(snap[0].code, "display_hdr");
+    assert_eq!(snap[0].message, fallback);
+
+    // Attaching a fresh stream's warnings resets the fallback latch.
+    let resumed_warnings = Arc::new(Warnings::default());
+    report.attach(resumed_warnings.clone());
+    assert!(resumed_warnings.snapshot().is_empty());
+}
+
+#[test]
 fn a_joined_stream_at_another_rate_keeps_its_place_and_leaves_the_display() {
     let fixture = crate::state::test_support::Fixture::new();
     let config = Config::default();

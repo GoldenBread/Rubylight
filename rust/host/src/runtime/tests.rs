@@ -389,8 +389,13 @@ fn display_recovery_retry_waits_for_session_ready_and_backs_off_on_failure() {
     let t0 = Instant::now();
     let mut launches = 0usize;
 
-    // Skips while no user session is unlocked or host is busy streaming.
+    // Skips while no user session is unlocked or host is busy streaming, while
+    // keeping a future wake deadline instead of spinning or dropping due().
     retry.poll(t0, true, true, false, |_, _| launches += 1);
+    assert_eq!(
+        retry.due(true),
+        Some(t0 + DisplayRecoveryRetry::MIN_BACKOFF)
+    );
     retry.poll(t0, true, false, true, |_, _| launches += 1);
     assert_eq!(launches, 0);
 
@@ -437,6 +442,7 @@ fn display_recovery_retry_waits_for_session_ready_and_backs_off_on_failure() {
     });
     assert_eq!(launches, 2);
     assert_eq!(retry.due(false), None);
+    assert_eq!(retry.due(true), None);
 }
 
 #[test]
@@ -461,15 +467,28 @@ fn display_recovery_retry_runs_immediately_when_session_unlocks() {
             *result.lock().unwrap() = Some(Err("Access is denied. (os error 5)".into()));
         },
     );
-    // Drain failure #2 while session locks (sets 4 s backoff).
+    // Drain failure #2 while session locks (sets MIN_BACKOFF wait from now).
     retry.poll(t0 + Duration::from_secs(2), true, true, false, |_, _| {
         launches += 1;
     });
     assert_eq!(launches, 2);
+    assert_eq!(
+        retry.due(true),
+        Some(t0 + Duration::from_secs(2) + DisplayRecoveryRetry::MIN_BACKOFF)
+    );
+    // Once a prior deadline has passed while still locked, it advances to the future
+    // instead of returning a past instant that would busy-spin maintain().
+    retry.poll(t0 + Duration::from_secs(5), true, true, false, |_, _| {
+        launches += 1;
+    });
+    assert_eq!(
+        retry.due(true),
+        Some(t0 + Duration::from_secs(5) + DisplayRecoveryRetry::MIN_BACKOFF)
+    );
 
-    // As soon as session unlocks again (even 1 s later, before the 4 s backoff), it retries immediately.
+    // As soon as session unlocks again (before backoff expires), it retries immediately.
     retry.poll(
-        t0 + Duration::from_secs(3),
+        t0 + Duration::from_secs(6),
         true,
         true,
         true,

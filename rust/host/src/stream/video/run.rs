@@ -911,9 +911,8 @@ impl SessionThread<'_> {
                             use butterpollo_core::pipeline_rates::{SourceRateWarning, below_message};
                             match change {
                                 SourceRateWarning::Below { source_mhz, limit_mhz } => {
-                                    // `idd-push` frames come from Rubylight's own virtual
-                                    // display driver: a low rate there is the display's frame
-                                    // push (item 8 of #142), not the game's own rate.
+                                    // `idd-push` captures Rubylight's virtual display: a low rate
+                                    // can come from the display's frame delivery or the game.
                                     let pushed = backend == "idd-push";
                                     tracing::warn!(
                                         client = %s.launch.client.name,
@@ -923,7 +922,7 @@ impl SessionThread<'_> {
                                         capture = backend,
                                         "{}",
                                         if pushed {
-                                            "the virtual display's frame push is the frame-rate limit"
+                                            "the virtual display capture is below the stream's frame rate"
                                         } else {
                                             "the game or desktop is the frame-rate limit"
                                         }
@@ -1474,6 +1473,7 @@ impl SessionThread<'_> {
                     &image,
                     enhancer.hdr_peak(&runtime_config).is_some(),
                 ) {
+                    prepared.note_hdr_fallback();
                     rebuild_encoder = true;
                     pacer.reset_source_phase();
                 }

@@ -1748,18 +1748,28 @@ fn handle_control_packet(
                 s.set_client_bitrate(encoder_kbps);
             }
             let result = decision.result;
-            tracing::info!(
-                client = %s.launch.client.name,
-                serial = request.serial,
-                bitrate_kbps = request.bitrate_kbps,
-                fps_millihz = request.fps_millihz,
-                applied_kbps = result.bitrate_kbps,
-                encoder_kbps = ?decision.bitrate_kbps,
-                switch_to = ?decision.switch_to.map(|mode| mode.to_string()),
-                bitrate = ?result.bitrate,
-                fps = ?result.fps,
-                "rate change"
-            );
+            if request.is_query() {
+                tracing::debug!(
+                    client = %s.launch.client.name,
+                    serial = request.serial,
+                    bitrate_kbps = result.bitrate_kbps,
+                    fps_millihz = result.fps_millihz,
+                    "rate query"
+                );
+            } else {
+                tracing::info!(
+                    client = %s.launch.client.name,
+                    serial = request.serial,
+                    bitrate_kbps = request.bitrate_kbps,
+                    fps_millihz = request.fps_millihz,
+                    applied_kbps = result.bitrate_kbps,
+                    encoder_kbps = ?decision.bitrate_kbps,
+                    switch_to = ?decision.switch_to.map(|mode| mode.to_string()),
+                    bitrate = ?result.bitrate,
+                    fps = ?result.fps,
+                    "rate change"
+                );
+            }
         }
         0x0109 => {
             if encrypted {

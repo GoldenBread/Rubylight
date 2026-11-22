@@ -114,6 +114,27 @@ pub fn report_mode(
     actual: (u32, u32, u32, bool),
     stream_rate: u32,
 ) {
+    report_mode_with(warnings, requested, actual, stream_rate, true);
+}
+
+/// Like [`report_mode`], but leaves `"display_hdr"` untouched when the stream already fell back
+/// from HDR to SDR and wrote its own fallback warning.
+pub fn report_mode_keeping_hdr(
+    warnings: &crate::session::Warnings,
+    requested: (Option<(u32, u32)>, Option<u32>, Option<bool>),
+    actual: (u32, u32, u32, bool),
+    stream_rate: u32,
+) {
+    report_mode_with(warnings, requested, actual, stream_rate, false);
+}
+
+fn report_mode_with(
+    warnings: &crate::session::Warnings,
+    requested: (Option<(u32, u32)>, Option<u32>, Option<bool>),
+    actual: (u32, u32, u32, bool),
+    stream_rate: u32,
+    check_hdr: bool,
+) {
     if let Some((width, height)) = requested.0
         && (width, height) != (actual.0, actual.1)
     {
@@ -130,10 +151,12 @@ pub fn report_mode(
     } else {
         warnings.clear("display_refresh");
     }
-    if requested.2.is_some_and(|hdr| hdr != actual.3) {
-        warnings.set("display_hdr", format!("Requested display HDR state was not applied; capture source HDR is {}. The display may lack HDR or be shared. Check Windows HDR and the display policy, or reconnect with HDR disabled.", if actual.3 { "on" } else { "off" }));
-    } else {
-        warnings.clear("display_hdr");
+    if check_hdr {
+        if requested.2.is_some_and(|hdr| hdr != actual.3) {
+            warnings.set("display_hdr", format!("Requested display HDR state was not applied; capture source HDR is {}. The display may lack HDR or be shared. Check Windows HDR and the display policy, or reconnect with HDR disabled.", if actual.3 { "on" } else { "off" }));
+        } else {
+            warnings.clear("display_hdr");
+        }
     }
 }
 

@@ -740,11 +740,19 @@ impl DisplayRecoveryRetry {
         ),
     ) {
         self.drain_result(now);
-        if !pending || !resting || self.active.load(Ordering::Acquire) {
+        if !pending {
+            self.waiting_for_session = false;
+            self.next_at = None;
+            return;
+        }
+        if !resting || self.active.load(Ordering::Acquire) {
             return;
         }
         if !session_ready {
             self.waiting_for_session = true;
+            // Wake on a bounded backoff instead of leaving next_at None (delays
+            // unlock recovery) or expired in the past (busy-spins maintain()).
+            self.next_at = Some(now + Self::MIN_BACKOFF);
             return;
         }
         if self.waiting_for_session {

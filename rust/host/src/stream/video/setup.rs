@@ -270,7 +270,9 @@ impl SessionThread<'_> {
         let rtx_hdr_active = crate::nvidia_enhance::generated_peak(&c, effective.hdr, first.pixel)
             .is_some()
             && butterpollo_core::encoder_gpu::is_nvidia(first.gpu.vendor);
-        m.fallback_hdr_if_sdr(&s, &mut effective, &first, rtx_hdr_active);
+        if m.fallback_hdr_if_sdr(&s, &mut effective, &first, rtx_hdr_active) {
+            prepared.note_hdr_fallback();
+        }
         s.source_checked.store(true, Ordering::Release);
         m.configure_encoder(&s, &c, &first, &prepared, &mut encoder)
             .map_err(|error| error.context(EncoderFailure("the encoder could not be created")))?;
@@ -328,7 +330,7 @@ impl SessionThread<'_> {
         );
         {
             let (enabled, shadow) = congestion_mode(&c);
-            s.configure_congestion(enabled, max_bitrate_kbps(&s, &c), shadow);
+            s.configure_congestion(enabled, max_kbps, shadow);
         }
         // Packet adaptation is opt-in, or automatic for a client that
         // reports a wireless route. Explicit pacing and host bitrate

@@ -1187,6 +1187,9 @@ struct FrameWait {
     enobufs_until: Option<std::time::Instant>,
     enobufs_deadline: Option<std::time::Instant>,
 }
+fn segmented_retries_in_place(error: WSA_ERROR) -> bool {
+    error != WSAENOBUFS
+}
 impl Batch {
     /// Start one video frame: its batches share one wait for room in a full
     /// socket, up to `wait` from now or [`WRITABLE_WAIT`] from the frame's
@@ -1472,7 +1475,13 @@ impl Batch {
                 *system_calls += 1;
                 send_message(socket, buffers, &segmented.address, &segmented.control)
             },
-            |error| buffer_available(socket, error, budget, self.waits.as_mut()),
+            // Transient ENOBUFS on a multi-packet GSO buffer falls back immediately
+            // to individual datagrams (which get the full enobufs_deadline) without
+            // spending the recovery budget inside send_segmented or disabling offload.
+            |error| {
+                segmented_retries_in_place(error)
+                    && buffer_available(socket, error, budget, self.waits.as_mut())
+            },
         );
         Ok(match result {
             Ok(sent) => {
