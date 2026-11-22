@@ -945,6 +945,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write # uploads to the release for this tag
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
       # Only a tag push (or a manual run on a tag with dry_run off) publishes.
@@ -987,6 +989,7 @@ jobs:
           done
           ls -l desktop android
       - name: Publish to the release
+        id: publish
         if: ${{ env.PUBLISH == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1005,6 +1008,7 @@ jobs:
           if [[ $VERSION == *-* ]]; then flags+=(--prerelease --latest=false); fi
           # rc.yml made a release candidate's release as a draft with its text: publish it now.
           if [[ $GITHUB_REF_NAME =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then flags+=(--draft=false); fi
+          published_here=false
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             # CI replaces assets only on a draft; a published release keeps what it has.
             if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true ]; then
@@ -1024,7 +1028,9 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" out/* --verify-tag --title "Nightjar $VERSION" \
               --notes "The APKs are signed by CI with the Nightjar release key; $DESKTOP_SIGNING SHA-256 hashes of everything are in SHA256SUMS-$VERSION.txt." "${flags[@]}"
+            if [[ $VERSION != *-* ]]; then published_here=true; fi
           fi
+          echo "published=$published_here" >> "$GITHUB_OUTPUT"
           echo "::notice::published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
       # A full release removes the RCs it replaces; an RC drops failed RC drafts (rc.mjs prune).
       - if: ${{ env.PUBLISH == 'true' }}
@@ -1040,3 +1046,14 @@ jobs:
       - name: Dry run result
         if: ${{ env.PUBLISH != 'true' }}
         run: echo "::notice::dry run of $VERSION built and verified (APKs, bundle, desktop client); nothing was published"
+
+  play:
+    # Releases published by GITHUB_TOKEN above do not trigger play.yml's on.release
+    # event, so call play.yml directly once a non-prerelease release is published here.
+    # Draft releases stay drafts until published manually, which triggers play.yml itself.
+    needs: [preflight, release]
+    if: ${{ github.ref_type == 'tag' && !inputs.dry_run && !contains(needs.preflight.outputs.version, '-') && needs.release.outputs.published == 'true' }}
+    uses: ./.github/workflows/play.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

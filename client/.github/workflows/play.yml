@@ -1,7 +1,8 @@
 name: Google Play
 
-# Publishing a GitHub release (a draft made public, see release.yml) uploads its
-# bundle, R8 mapping and native symbols to Google Play with the release notes from
+# Publishing a GitHub release (directly from release.yml via workflow_call, or a
+# draft made public by hand) uploads its bundle, R8 mapping and native symbols to
+# Google Play with the release notes from
 # fastlane/metadata/android/*/changelogs/<versionCode>.txt. Prereleases and release
 # candidates are skipped.
 # The track is the PLAY_TRACK repository variable (default alpha, the closed test;
@@ -11,6 +12,22 @@ name: Google Play
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to upload, such as v6.3.0
+        required: true
+        type: string
+      check_only:
+        description: Only check the service account's access; upload nothing
+        type: boolean
+        required: false
+        default: false
+      track:
+        description: Track (empty uses the PLAY_TRACK variable or alpha)
+        type: string
+        required: false
+        default: ''
   workflow_dispatch:
     inputs:
       tag:
@@ -33,8 +50,9 @@ concurrency:
 
 jobs:
   upload:
-    # Release candidates (vX.Y.Z-rc.N) never go to Google Play, not even by hand.
-    if: ${{ (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease) && !contains(github.event.release.tag_name || inputs.tag, '-rc.') }}
+    # Release candidates (vX.Y.Z-rc.N) and prereleases never go to Google Play automatically;
+    # RCs never go even by hand.
+    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_call' && !contains(inputs.tag, '-')) || !github.event.release.prerelease) && !contains(github.event.release.tag_name || inputs.tag, '-rc.') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

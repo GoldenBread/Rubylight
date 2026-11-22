@@ -326,5 +326,31 @@ jobs:
         self.assertEqual(_workflow_doctest_violations(ok_wf, 'synthetic-ok.yml', ci.ROOT), [])
 
 
+class NightjarPlayWorkflow(unittest.TestCase):
+    def test_release_calls_play_workflow_for_ci_published_non_prereleases(self):
+        client_wf = ci.ROOT / 'client' / '.github' / 'workflows'
+        play = yaml.safe_load((client_wf / 'play.yml').read_text(encoding='utf-8'))
+        release = yaml.safe_load((client_wf / 'release.yml').read_text(encoding='utf-8'))
+
+        # PyYAML 1.1 parses bare `on:` as boolean True.
+        play_on = play.get('on') or play.get(True)
+        self.assertIn('workflow_call', play_on)
+        call_inputs = play_on['workflow_call']['inputs']
+        self.assertEqual(set(call_inputs), {'tag', 'check_only', 'track'})
+        self.assertTrue(call_inputs['tag']['required'])
+        upload_if = play['jobs']['upload']['if']
+        self.assertIn("github.event_name == 'workflow_call'", upload_if)
+        self.assertIn("'-rc.'", upload_if)
+
+        release_job = release['jobs']['release']
+        self.assertIn('published', release_job['outputs'])
+        play_job = release['jobs']['play']
+        self.assertEqual(play_job['uses'], './.github/workflows/play.yml')
+        self.assertEqual(play_job['secrets'], 'inherit')
+        self.assertEqual(play_job['needs'], ['preflight', 'release'])
+        self.assertIn("needs.release.outputs.published == 'true'", play_job['if'])
+        self.assertIn("!contains(needs.preflight.outputs.version, '-')", play_job['if'])
+
+
 if __name__ == '__main__':
     unittest.main()
