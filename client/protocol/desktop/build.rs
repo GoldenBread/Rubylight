@@ -3,9 +3,13 @@ mod version_name;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=CARGO_MANIFEST_DIR");
     // The release version is Android's versionName, so both clients report the same one.
-    let gradle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/build.gradle");
-    println!("cargo:rerun-if-changed={}", gradle.display());
+    let manifest_dir = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    );
+    let gradle = manifest_dir.join("../../app/build.gradle");
+    println!("cargo:rerun-if-changed=../../app/build.gradle");
     println!("cargo:rerun-if-changed=src/version_name.rs");
     let gradle_text = std::fs::read_to_string(&gradle)
         .unwrap_or_else(|e| panic!("read {}: {e}", gradle.display()));
@@ -35,10 +39,10 @@ fn main() {
         // than ship an exe with no icon at all.
         // packaging/nightjar.exe.manifest becomes manifest resource 1 (RT_MANIFEST is 24) in the
         // same script; tests/manifest.rs reads it back from the built exe.
-        let icon = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/icons/nightjar.ico");
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/nightjar.exe.manifest");
-        println!("cargo:rerun-if-changed={}", icon.display());
-        println!("cargo:rerun-if-changed={}", manifest.display());
+        let icon = manifest_dir.join("packaging/icons/nightjar.ico");
+        let manifest = manifest_dir.join("packaging/nightjar.exe.manifest");
+        println!("cargo:rerun-if-changed=packaging/icons/nightjar.ico");
+        println!("cargo:rerun-if-changed=packaging/nightjar.exe.manifest");
         let rc = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("nightjar.rc");
         let path = icon.display().to_string().replace('\\', "/");
         let manifest_path = manifest.display().to_string().replace('\\', "/");
