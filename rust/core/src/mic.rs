@@ -28,7 +28,10 @@
 //! of the packet after it.
 use std::collections::VecDeque;
 
-pub use rubylight_wire::mic::*;
+pub use rubylight_wire::mic::{
+    ENCRYPTION, HEADER, MAGIC, ONLY_OPTION, PACKET_TYPE_OPUS, PORT_OFFSET, Packet, RATE, iv, open,
+    parse, sdp, seal,
+};
 
 /// The device permissions a microphone-only session keeps: none of its input.
 pub const ONLY_PERMISSION: u32 =

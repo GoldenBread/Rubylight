@@ -24,7 +24,7 @@ use nightjar_core::session::{
     NetworkChange, NetworkHint, SessionConfig, Stage, VideoDecoder, VideoSetup,
 };
 use nightjar_core::video::{Frame, FrameType};
-use rubylight_protocol::roaming::{is_roaming, Datagram, Header, Payload, SDP_ATTRIBUTE};
+use rubylight_protocol::roaming::{is_roaming, Datagram, Header, Payload};
 use rusty_enet::{Event, Host, HostSettings, Packet, PacketReceived, MTU_MAX};
 
 const KEY: [u8; 16] = *b"session-test-key";
@@ -368,7 +368,7 @@ fn start_host_with(packed_format: Option<u32>, roaming: bool) -> FakeHost {
                 "DESCRIBE" => {
                     // Control encryption v2 only: plain audio and video.
                     let mut describe = host_rtsp::describe(
-                        0, 1, 0, false, packed_format.is_some(), false, roaming, false,
+                        0, 1, 0, false, packed_format.is_some(), false, roaming, roaming,
                     );
                     if packed_format.is_some() {
                         describe.push_str(
@@ -376,7 +376,6 @@ fn start_host_with(packed_format: Option<u32>, roaming: bool) -> FakeHost {
                         );
                     }
                     if roaming {
-                        describe.push_str(&format!("{SDP_ATTRIBUTE}\r\n"));
                         describe.push_str(&host_mic::sdp(ports.3));
                     }
                     body = describe.into_bytes();

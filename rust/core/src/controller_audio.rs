@@ -2,7 +2,9 @@
 use crate::haptics;
 use std::{collections::VecDeque, time::Instant};
 
-pub use rubylight_wire::controller_audio::*;
+pub use rubylight_wire::controller_audio::{
+    CAPTURE, CONTROL, HEADPHONES, MICROPHONE, MUTED, PLAYBACK, SPEAKER, pcm, status,
+};
 
 /// The USB speaker endpoint has no process provenance. It must not bypass
 /// game-only capture, disabled stream sound or an input-only client's role.

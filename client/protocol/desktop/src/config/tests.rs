@@ -95,7 +95,7 @@ fn the_second_screens_store_reads_the_files_and_writes_none() {
 
 #[test]
 fn one_unreadable_value_costs_neither_the_pcs_nor_the_other_settings() {
-    let dir = std::env::temp_dir().join(format!("nightjar-unreadable-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("nightjar-unreadable-value-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let store = Store::at(dir.clone()).unwrap();
     let kept = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
@@ -1343,7 +1343,7 @@ fn an_override_this_version_cannot_read_keeps_the_base_setting() {
 
 #[test]
 fn an_unreadable_file_keeps_its_bytes_and_refuses_a_save_over_it() {
-    let dir = std::env::temp_dir().join(format!("nightjar-unreadable-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("nightjar-unreadable-file-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     let store = Store::at(dir.clone()).unwrap();
     // A directory where the file should be: the read fails for a reason that is not "no file".

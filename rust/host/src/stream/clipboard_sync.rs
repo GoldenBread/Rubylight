@@ -190,9 +190,9 @@ pub(crate) trait Clipboard: Send + 'static {
 }
 
 /// This PC's clipboard.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 struct System;
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 impl Clipboard for System {
     fn sequence(&self) -> u32 {
         butterpollo_windows::clipboard::sequence()
@@ -210,12 +210,12 @@ impl Clipboard for System {
         butterpollo_windows::clipboard::write_png(png)
     }
 }
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-harness")))]
 fn system() -> impl Clipboard {
     System
 }
 /// Tests never touch the clipboard of the PC running them.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 fn system() -> impl Clipboard {
     tests::FAKE.clone()
 }
@@ -589,5 +589,5 @@ fn run<C: Clipboard>(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 pub(crate) mod tests;

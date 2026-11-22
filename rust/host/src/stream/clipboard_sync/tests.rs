@@ -10,6 +10,7 @@ pub(crate) struct FakeState {
     pub text: String,
     pub png: Option<Vec<u8>>,
 }
+#[cfg(test)]
 impl Fake {
     /// Copies `text` as a program on the PC would.
     pub(crate) fn copy(&self, text: &str) {
@@ -57,16 +58,19 @@ impl Clipboard for Fake {
 /// The clipboard streams in tests use.
 pub(crate) static FAKE: LazyLock<Fake> = LazyLock::new(Fake::default);
 
+#[cfg(test)]
 const ALL: Allowed = Allowed {
     write: true,
     read: true,
     png: Some(MAX_PAYLOAD_BYTES),
 };
 
+#[cfg(test)]
 fn text(token: u32, text: &str) -> Vec<u8> {
     Item::Text(text.into()).frame(token).encode().unwrap()
 }
 
+#[cfg(test)]
 fn client(perm: u32) -> Client {
     Client {
         name: "phone".into(),
