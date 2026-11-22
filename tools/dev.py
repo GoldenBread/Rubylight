@@ -330,7 +330,8 @@ def _expand_short_path(text):
 
 
 def path_key(path):
-    text = _expand_short_path(str(path).strip())
+    raw = str(path).strip()
+    text = _expand_short_path(os.path.normpath(raw) if raw else '')
     return os.path.normcase(os.path.normpath(text))
 
 
@@ -507,8 +508,7 @@ def _is_msys_path(path):
 
 
 def _is_windows_apps_path(path):
-    norm = os.path.normcase(os.path.normpath(str(path)))
-    return os.path.join('microsoft', 'windowsapps') in norm
+    return os.path.join('microsoft', 'windowsapps') in path_key(path)
 
 
 def preferred_python(env=None):

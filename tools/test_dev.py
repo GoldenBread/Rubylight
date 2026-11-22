@@ -451,7 +451,7 @@ class EnvironmentAndNextest(unittest.TestCase):
                 parts = [dev.path_key(p) for p in env['PATH'].split(os.pathsep)]
                 self.assertLess(parts.index(dev.path_key(win_py.parent)),
                                 parts.index(dev.path_key(msys_bin)))
-                self.assertEqual(parts[0], dev.path_key(win_py.resolve().parent))
+                self.assertEqual(parts[0], dev.path_key(win_py.parent))
                 with mock.patch.object(dev, 'run', return_value=0) as run_mock:
                     self.assertTrue(dev.execute(dev.Check('code-map', 'code_map', ['docs/code-map.md']),
                                                 ROOT, base / 'cm.log', None))
@@ -476,6 +476,10 @@ class EnvironmentAndNextest(unittest.TestCase):
             short_base = pathlib.Path(buf.value)
             self.assertTrue(dev.same_path(short_base, long_base))
             self.assertTrue(dev.same_path(short_base / 'missing-leaf', long_base / 'missing-leaf'))
+            self.assertTrue(dev.same_path(short_base / 'nonexistent' / '..', long_base))
+            self.assertTrue(dev.same_path(short_base / 'nonexistent' / '..' / 'missing-leaf', long_base / 'missing-leaf'))
+            self.assertTrue(dev.same_path('', '   '))
+            self.assertEqual(dev.path_key(''), '.')
 
             msys_bin = short_base / 'msys64' / 'ucrt64' / 'bin'
             msys_bin.mkdir(parents=True)
@@ -501,6 +505,25 @@ class EnvironmentAndNextest(unittest.TestCase):
                 self.assertEqual(norm_parts.count(norm_parts[0]), 1)
                 self.assertLess(norm_parts.index(dev.path_key(win_py_short.parent)),
                                 norm_parts.index(dev.path_key(msys_bin)))
+
+            winapps_long = long_base / 'Microsoft' / 'WindowsApps'
+            winapps_long.mkdir(parents=True)
+            (winapps_long / 'python.exe').write_text('')
+            n_wa = ctypes.windll.kernel32.GetShortPathNameW(str(winapps_long), buf, len(buf))
+            if 0 < n_wa < len(buf) and '~' in buf.value:
+                winapps_short = pathlib.Path(buf.value)
+                self.assertTrue(dev._is_windows_apps_path(winapps_short))
+                self.assertTrue(dev._is_windows_apps_path(winapps_short / 'python.exe'))
+                alt_dir = long_base / 'AltPython'
+                alt_dir.mkdir()
+                alt_py = alt_dir / 'python.exe'
+                alt_py.write_text('')
+                with mock.patch.object(dev.sys, 'executable', str(msys_py)), \
+                        mock.patch.dict(os.environ, {
+                            'LOCALAPPDATA': str(short_base / 'empty-local'),
+                            'PATH': f'{winapps_short};{msys_bin};{alt_dir}',
+                        }):
+                    self.assertTrue(dev.same_path(dev.preferred_python(), alt_py))
 
     def test_programs_come_from_the_env_path_and_a_missing_one_fails_in_its_log(self):
         with tempfile.TemporaryDirectory() as directory:

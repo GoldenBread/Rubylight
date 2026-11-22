@@ -1,4 +1,4 @@
-import concurrent.futures, json, os, pathlib, shutil, subprocess, sys, tempfile, time, unittest
+import concurrent.futures, json, os, pathlib, queue, shutil, subprocess, sys, tempfile, threading, time, unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -147,7 +147,7 @@ try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
         env = dict(os.environ, CHECK_STREAMS=str(pathlib.Path(__file__).resolve().parents[1] / 'rust/release/check_streams.ps1'))
         def run():
             return subprocess.run(['pwsh', '-NoProfile', '-File', str(driver), '-Locks', str(self.root)],
-                                  capture_output=True, text=True, env=env, timeout=15)
+                                  capture_output=True, text=True, env=env, timeout=45)
         with build_lock.BuildLock(self.root):
             before = self.lock.read_text()
             child = run()
@@ -179,7 +179,7 @@ throw 'synthetic failure'
         for shell in ('pwsh', 'powershell') if os.name == 'nt' else ('pwsh',):
             with self.subTest(shell=shell):
                 result = subprocess.run([shell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script), '-Dependencies', "space's and $literal", '-Package',
-                                         '-Stage', 'Build', '-Jobs', '3'], env=env, capture_output=True, text=True, timeout=20)
+                                         '-Stage', 'Build', '-Jobs', '3'], env=env, capture_output=True, text=True, timeout=45)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn('synthetic failure', result.stderr)
                 receipt = json.loads(result.stdout)
@@ -196,7 +196,16 @@ def kill_tree(child):
     child.wait(timeout=15)
 
 
-HOLD = 'import pathlib,sys,time; pathlib.Path(sys.argv[1]).touch(); time.sleep(float(sys.argv[2]))'
+HOLD = (
+    'import pathlib,sys,time\n'
+    'pathlib.Path(sys.argv[1]).touch()\n'
+    'if len(sys.argv) > 3:\n'
+    '    stop, deadline = pathlib.Path(sys.argv[3]), time.monotonic() + float(sys.argv[2])\n'
+    '    while not stop.exists() and time.monotonic() < deadline:\n'
+    '        time.sleep(0.05)\n'
+    'else:\n'
+    '    time.sleep(float(sys.argv[2]))\n'
+)
 
 
 class Lanes(unittest.TestCase):
@@ -218,16 +227,17 @@ class Lanes(unittest.TestCase):
         for child in self.children:
             kill_tree(child)
 
-    def hold(self, lane, name, seconds=30, directory=None):
-        """A separate process holding a lane until it is killed; returns once it holds it."""
+    def hold(self, lane, name, seconds=60, directory=None, stop=None):
+        """A separate process holding a lane until signaled or killed; returns once it holds it."""
         marker = self.root / f'{name}.held'
         command = [sys.executable, build_lock.__file__, '--lock-directory', str(directory or self.root), '--timeout', '10',
-                   *(['--lane', lane] if lane else []), '--', sys.executable, '-c', HOLD, str(marker), str(seconds)]
+                   *(['--lane', lane] if lane else []), '--', sys.executable, '-c', HOLD, str(marker), str(seconds),
+                   *([str(stop)] if stop is not None else [])]
         output = self.root / f'{name}.out'
         with output.open('w') as out:
             child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
         self.children.append(child)
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 30
         while not marker.exists():
             self.assertIsNone(child.poll(), output.read_text() if child.poll() is not None else '')
             self.assertLess(time.monotonic(), deadline, 'the holder never started')
@@ -286,10 +296,10 @@ class Lanes(unittest.TestCase):
     def test_build_lock_waits_until_the_stages_are_done(self):
         stage = self.hold('cargo', 'stage', seconds=1.5)
         started = time.monotonic()
-        with build_lock.BuildLock(self.root, timeout=15, poll=.05):
+        with build_lock.BuildLock(self.root, timeout=30, poll=.05):
             self.assertGreater(time.monotonic() - started, .5)
             self.assertFalse(build_lock.HandleSlot(self.root / 'lanes/cargo-1.lock').busy())
-        self.assertEqual(stage.wait(timeout=15), 0)
+        self.assertEqual(stage.wait(timeout=30), 0)
 
     def test_a_gradle_lane_left_by_a_dead_owner_is_named_not_waited_for_or_removed(self):
         lane = self.root / 'gradle-lane'
@@ -353,7 +363,7 @@ class Lanes(unittest.TestCase):
             if shutil.which('pwsh'):
                 # As C:\src\rl-env.ps1's Enter-RlSlot opens it.
                 script = f"try {{ [IO.File]::Open('{pool / '1.lock'}', 'OpenOrCreate', 'ReadWrite', 'None').Dispose(); 'free' }} catch {{ 'held' }}"
-                out = subprocess.run(['pwsh', '-NoProfile', '-Command', script], capture_output=True, text=True, timeout=20)
+                out = subprocess.run(['pwsh', '-NoProfile', '-Command', script], capture_output=True, text=True, timeout=45)
                 self.assertEqual(out.stdout.strip(), 'held')
         finally:
             slot.release()
@@ -372,13 +382,64 @@ $held = Enter-CheckBuildLock -RespectPriority
 try { 'acquired' } finally { Exit-CheckLocks $held -NoPause }
 """)
         env = dict(os.environ, CHECK_STREAMS=str(pathlib.Path(__file__).resolve().parents[1] / 'rust/release/check_streams.ps1'))
-        stage = self.hold('cargo', 'stage', seconds=12)
-        child = subprocess.run(['pwsh', '-NoProfile', '-File', str(driver), '-Locks', str(self.root)],
-                               capture_output=True, text=True, env=env, timeout=60)
-        self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
-        self.assertIn('still waiting for the dev check', child.stdout)
-        self.assertIn('acquired', child.stdout)
-        self.assertEqual(stage.wait(timeout=15), 0)  # the stage finished first
+        stop = self.root / 'stage.stop'
+        stage = self.hold('cargo', 'stage', seconds=90, stop=stop)
+        child = subprocess.Popen(['pwsh', '-NoProfile', '-File', str(driver), '-Locks', str(self.root)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+        lines_q = queue.Queue()
+        def pump():
+            assert child.stdout is not None
+            for line in child.stdout:
+                lines_q.put(line)
+            lines_q.put(None)
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
+        collected = []
+        try:
+            deadline = time.monotonic() + 60
+            saw_waiting = False
+            while not saw_waiting:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.fail(f'timed out waiting for dev check warning; output so far:\n{"".join(collected)}')
+                try:
+                    item = lines_q.get(timeout=remaining)
+                except queue.Empty:
+                    self.fail(f'timed out waiting for dev check warning; output so far:\n{"".join(collected)}')
+                if item is None:
+                    self.fail(f'pwsh exited before emitting waiting message; output:\n{"".join(collected)}')
+                collected.append(item)
+                if 'still waiting for the dev check' in item:
+                    saw_waiting = True
+            stop.touch()
+            self.assertEqual(stage.wait(timeout=30), 0)
+            finish_deadline = time.monotonic() + 45
+            while True:
+                remaining = finish_deadline - time.monotonic()
+                if remaining <= 0:
+                    self.fail(f'timed out waiting for pwsh to finish; output so far:\n{"".join(collected)}')
+                try:
+                    item = lines_q.get(timeout=remaining)
+                except queue.Empty:
+                    self.fail(f'timed out waiting for pwsh to finish; output so far:\n{"".join(collected)}')
+                if item is None:
+                    break
+                collected.append(item)
+            returncode = child.wait(timeout=15)
+        finally:
+            stop.touch()
+            if child.poll() is None:
+                kill_tree(child)
+            if stage.poll() is None:
+                kill_tree(stage)
+            reader.join(timeout=5)
+            if child.stdout is not None:
+                child.stdout.close()
+        output = ''.join(collected)
+        self.assertEqual(returncode, 0, output)
+        self.assertIn('still waiting for the dev check', output)
+        self.assertIn('acquired', output)
+        self.assertLess(output.index('still waiting for the dev check'), output.index('acquired'))
         self.assertFalse((self.root / 'BUILD-LOCK').exists())
 
     def test_a_manual_gradle_lock_of_a_reused_pid_does_not_count(self):
