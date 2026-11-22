@@ -338,11 +338,12 @@ pub fn single_display() -> bool {
     unsafe { GetSystemMetrics(SM_CMONITORS) == 1 }
 }
 
-/// The device serial: the host's process, so a restarted host is a new device to Windows'
-/// HID stack but the same one across streams.
-pub fn serial() -> String {
-    format!("RUBYLIGHT{}", std::process::id())
-}
+/// The device serial, fixed so Windows keeps one device instance for the mouse and one for the
+/// touchpad across streams and host restarts. A serial per host process made every restart a
+/// new device and left the old one behind as a ghost (793 mice on the RX 7900 XT PC by
+/// 2026-11-23). Bump the number when a device's descriptors change, so Windows enumerates it
+/// as a new device.
+pub const SERIAL: &str = "RUBYLIGHT1";
 
 /// QueryPerformanceCounter now, for the input timing log (`input_timing` at trace level)
 /// that `input_latency_probe` pairs with the WM_INPUT it sees.

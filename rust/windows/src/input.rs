@@ -416,7 +416,7 @@ impl Injector {
             virtual_hid::MOUSE.acquire();
             self.virtual_mouse = true;
             let availability = virtual_hid::MOUSE
-                .plug(|| butterpollo_core::virtual_hid::HidMouse::new(&virtual_hid::serial()));
+                .plug(|| butterpollo_core::virtual_hid::HidMouse::new(virtual_hid::SERIAL));
             self.report_virtual_mouse(&availability);
         }
         if self.policy.native_touchpad {
@@ -601,7 +601,7 @@ impl Injector {
                 butterpollo_core::virtual_hid::PrecisionTouchpad::new(
                     width_mm,
                     height_mm,
-                    &virtual_hid::serial(),
+                    virtual_hid::SERIAL,
                     Instant::now(),
                 )
             }) {
