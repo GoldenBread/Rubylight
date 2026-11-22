@@ -432,7 +432,7 @@ fn sdl_needs_rgb(format: SDL_PixelFormat, transfer: super::direct::Transfer) -> 
 /// The pass for the renderer's device, made on first use or after the device changed.
 #[cfg(windows)]
 fn direct_pass(direct: &mut Option<(usize, super::direct::Direct)>, renderer: *mut SDL_Renderer) -> Result<&mut super::direct::Direct, String> {
-    let device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
+    let device = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
     if !direct.as_ref().is_some_and(|(made_on, _)| *made_on == device as usize) {
         *direct = None;
         // SAFETY: The renderer's live device, used on the presenting thread.
@@ -665,10 +665,10 @@ impl VideoTexture {
             }
         }
         let view = self.converted_view.clone().ok_or("the RGB texture has no view")?;
-        let size = (self.size().0 as u32, self.size().1 as u32);
+        let (size, white_nits) = ((self.size().0 as u32, self.size().1 as u32), 80.0 * self.white_level);
         // SAFETY: The live renderer belongs to the presenting thread.
         let headroom = unsafe { SDL_GetFloatProperty(SDL_GetRendererProperties(renderer), SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT, 1.0) };
-        let white_nits = 80.0 * self.white_level;
+        self.wait_held_d3d11(picture.texture)?;
         let pass = direct_pass(&mut self.direct, renderer)?;
         let held = &self.held;
         // SAFETY: The picture's texture and the view belong to the renderer's device.

@@ -168,6 +168,8 @@ struct Flipped {
     scan: Option<race_probe::ScanReport>,
     /// The picture was not presented: the last one still waits for the display.
     refused: bool,
+    /// The render device was lost or reset during this present: the swap chain must not be read.
+    device_lost: bool,
 }
 
 impl Streaming {
@@ -488,6 +490,7 @@ impl Streaming {
         if self.vrr.recheck_due(now)
             && let Some(probe) = self.race_probe.as_mut() { probe.recheck(); }
         if let Some(interval) = interval {
+            if crate::render_device::event_pending() || self.plan.device.is_removed() { return; }
             // SAFETY: the live renderer belongs to the presenting thread.
             let set = unsafe { SDL_SetRenderVSync(renderer, interval) };
             if !set {
@@ -647,10 +650,10 @@ impl Streaming {
     /// `VrrSync::Blank` on Windows: presents with tearing only when the display is in its vertical
     /// blank and the last present has left the queue, otherwise with sync interval 1. Until the scan
     /// line can be read no present tears, as upstream has it: unknown scanout authorises no tearing
-    /// flip. Returns whether it presented; false leaves the present to the caller.
-    fn blank_present(&mut self, renderer: *mut SDL_Renderer, probe: bool) -> bool {
+    /// flip. Returns `Some(ok)` when it presented, or `None` to leave the present to the caller.
+    fn blank_present(&mut self, renderer: *mut SDL_Renderer, probe: bool) -> Option<bool> {
         if !cfg!(windows) || !probe || self.vrr.sync != present::VrrSync::Blank
-            || !matches!(self.pacer.mode, PacingMode::Immediate | PacingMode::HostTimes) { return false; }
+            || !matches!(self.pacer.mode, PacingMode::Immediate | PacingMode::HostTimes) { return None; }
         let now = session::now_us();
         let since = self.flip_guard.last_flip_us.map(|last| now.saturating_sub(last));
         // The display's mode gives the period until the scan is calibrated.
@@ -681,10 +684,7 @@ impl Streaming {
             self.flip_guard.tearing += 1;
         }
         // SAFETY: a live renderer.
-        unsafe {
-            if !present::present_adaptive(renderer, latched) { SDL_RenderPresent(renderer); }
-        }
-        true
+        Some(unsafe { present::present_adaptive(renderer, latched) || SDL_RenderPresent(renderer) })
     }
 
     /// Takes the slices the decoder finished since the last call into the racer.
@@ -725,6 +725,7 @@ impl Streaming {
         if let Some(warp) = self.frame_warp.as_mut() { self.texture.warp = warp.draw(Some(self.racer.seq())); }
         let flipped = self.render_flip(renderer, draw_overlay, true, false, None);
         self.needs_redraw = false;
+        if flipped.device_lost { return true; }
         self.racer.presented(flipped.issued_us, &scan);
         for (band, _) in &batch {
             self.latency.record(self.racer.presentable_us(band.ready_us), flipped.issued_us, flipped.returned_us, flipped.returned_us);
@@ -833,7 +834,7 @@ impl Streaming {
         let key = enhance::Key { source, output, hdr_display: crate::sdl::hdr_available(renderer) };
         if !self.enhancer.as_ref().is_some_and(|enhancer| enhancer.matches(&key)) {
             self.enhancer = None;
-            let device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
+            let device = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
             let made = enhance::stream_probe(device)
                 .and_then(|capability| capability.ok_or_else(|| "this GPU has neither video super resolution nor RTX Video HDR".to_owned()))
                 .and_then(|capability| enhance::Enhancer::new(renderer, key, capability, self.facts.fps.max(1) as u32));
@@ -1167,53 +1168,48 @@ impl Streaming {
                 self.swapchain_hdr_metadata = Some(metadata);
             }
         }
+        if self.check_render_device_lost() { if holds { self.direct_motion.presenting(None); } let now = session::now_us(); return Flipped { issued_us: now, returned_us: now, scan: None, refused: false, device_lost: true }; }
         // With Frame Warp the hold came before its shift (`present`).
         if probe && self.frame_warp.is_none() { self.hold_for_turn(renderer); }
         let issued_us = session::now_us();
         let blank = self.blank_present(renderer, probe);
         // SAFETY: a live renderer.
         let mut latched = false;
-        let refused = unsafe {
+        let (refused, present_failed) = unsafe {
             let done = if skips { present::present_without_waiting(renderer, self.skipped.hold()) } else { present::NoWait::Failed };
             if skips { self.no_wait_present = done != present::NoWait::Failed; }
-            if done == present::NoWait::Failed && !blank {
+            let failed = if let Some(ok) = blank { !ok } else if done != present::NoWait::Failed { false } else {
                 // Sync interval 1 shows the picture whole at the next refresh when the wait for
                 // the scan would have cost the next picture its turn (`scan_sync::scan_wait`).
-                // SDL's own present tears, so only a successful adaptive present is a latch.
                 latched = latch && present::present_adaptive(renderer, true);
-                if !latched { SDL_RenderPresent(renderer); }
-            }
-            done == present::NoWait::Refused
+                !latched && !SDL_RenderPresent(renderer)
+            };
+            (done == present::NoWait::Refused, failed)
         };
+        let device_lost = crate::render_device::after_present_lost(present_failed, &self.plan.device);
+        if device_lost { self.note_render_device_lost(crate::render_device::lost_reason().into()); } else if !refused { self.texture.mark_d3d11_flushed(); }
         self.flip_guard.last_flip_us = Some(issued_us);
         self.flip_guard.last_flip_latched = latched;
         if latched { self.scan_tally.latched += 1; }
         let returned_us = session::now_us();
         if let Some(warp) = self.frame_warp.as_mut() { warp.presented(returned_us); }
         #[cfg(target_os = "linux")]
-        {
+        if !device_lost {
             self.window_target.after_present(crate::sdl::window_target_frames(renderer));
             self.video_only_presented(renderer);
         }
-        if holds {
-            self.direct_motion.presenting(None);
-        }
-        let fps = f64::from(self.facts.fps);
-        let probe_tears = self.vrr.probe_tears(self.pacer.mode);
-        // A refused present reached no display, so it says nothing about the scan.
-        let scan = self.race_probe.as_mut().filter(|_| probe && !refused).map(|probe| {
+        if holds { self.direct_motion.presenting(None); }
+        let (fps, probe_tears) = (f64::from(self.facts.fps), self.vrr.probe_tears(self.pacer.mode));
+        let scan = self.race_probe.as_mut().filter(|_| probe && !refused && !device_lost).map(|probe| {
             probe.after_present(renderer, beam_before, probe_tears, fps);
             probe.report(beam_before)
         });
-        Flipped { issued_us, returned_us, scan, refused }
+        Flipped { issued_us, returned_us, scan, refused, device_lost }
     }
 
     /// Shows the due picture, if any. Returns whether something was drawn.
-    pub fn present(
-        &mut self,
-        renderer: *mut SDL_Renderer,
-        mut draw_overlay: impl FnMut(&mut Self, *mut SDL_Renderer),
-    ) -> bool {
+    pub fn present(&mut self, renderer: *mut SDL_Renderer, mut draw_overlay: impl FnMut(&mut Self, *mut SDL_Renderer)) -> bool {
+        if self.exit.is_some() || self.check_render_device_lost() { return false; }
         // An HDR stream whose output stops showing HDR for a held second plays on in SDR: an HDR10
         // picture is drawn tone mapped to the output (SDL's draw of the texture, or the direct and
         // plane passes, with SDL's tone map to the output's headroom), and HDR output that comes
@@ -1233,6 +1229,7 @@ impl Streaming {
         // The slices of a frame still being received go out ahead of the beam.
         // Slices are drawn by the renderer, which a display plane's pictures pass by.
         let sliced = !self.kms_engaged() && self.present_slices(renderer, &mut draw_overlay, session::now_us());
+        if self.exit.is_some() || self.check_render_device_lost() { return sliced; }
         let now = session::now_us();
         let overdue = self.skipped.take_due(now);
         let (picture, mut dropped) = self.pacer.take_due(now);
@@ -1351,6 +1348,7 @@ impl Streaming {
         // whose time then stays out of the hold's margin.
         let held_before_draw = has_picture && self.frame_warp.is_some() && self.vrr.held(self.pacer.mode) > 1;
         // SAFETY: a live renderer.
+        if self.exit.is_some() || self.check_render_device_lost() { return false; }
         let window = unsafe { SDL_GetRenderWindow(renderer) };
         if held_before_draw { self.hold_for_turn_lending(renderer, window); }
         let draw_begin_us = session::now_us();
@@ -1364,6 +1362,8 @@ impl Streaming {
             None => (self.render_flip(renderer, &mut draw_overlay, has_picture, has_picture, picture.as_ref().map(|p| p.present_us)), false),
         };
         self.needs_redraw = false;
+        if flipped.device_lost { return true; }
+        if !flipped.refused && let Some(frame) = picture.as_ref().and_then(|p| p.decoded.picture.frame()) { frame.mark_d3d11_flushed(); }
         // The draw after the hold, which the hold's margin has to leave time for.
         if held_before_draw && !flipped.refused {
             self.held_draw.record(flipped.issued_us.saturating_sub(draw_begin_us));
@@ -1543,7 +1543,7 @@ impl Streaming {
             self.needs_redraw = true;
             return None;
         }
-        Some(Flipped { issued_us, returned_us, scan: None, refused: false })
+        Some(Flipped { issued_us, returned_us, scan: None, refused: false, device_lost: false })
     }
 
     #[cfg(not(target_os = "linux"))]

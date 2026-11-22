@@ -17,6 +17,11 @@ pub(crate) mod ffi {
 }
 use ffi::*;
 
+#[cfg(windows)]
+mod d3d11;
+#[cfg(windows)]
+pub use d3d11::ProbeVideoDevice;
+
 #[cfg(target_os = "linux")]
 use crate::stream::stage_times::Stages;
 
@@ -201,6 +206,9 @@ pub struct Pictures {
     /// (Nightjar issue 77 on Qualcomm Iris). 0 leaves the size to the driver, as before.
     pub width: u32,
     pub height: u32,
+    /// Decoder probe (`color_probe`) that already created its own `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`
+    /// device and never presents decoded surfaces to SDL's renderer.
+    pub probe_only: bool,
 }
 
 /// The device VAAPI opens on (`Pictures::vaapi_node`, [`vaapi_node`]).
@@ -228,6 +236,27 @@ impl VaapiNode {
             Self::Default => None,
             Self::Mapped(minor) | Self::Display(minor) => Some(minor),
         }
+    }
+}
+
+/// Guard holding a dedicated `D3D11_CREATE_DEVICE_VIDEO_SUPPORT` probe device on Windows so
+/// off-thread probes never touch SDL3's immediate context.
+pub struct ProbeHardware {
+    pub hardware: Hardware,
+    #[cfg(windows)]
+    _device: Option<ProbeVideoDevice>,
+}
+
+impl ProbeHardware {
+    pub fn isolate(hardware: Hardware) -> Self {
+        #[cfg(windows)]
+        if let Hardware::D3d11(raw) = hardware {
+            match ProbeVideoDevice::for_renderer(raw) {
+                Ok(dev) => return Self { hardware: Hardware::D3d11(dev.as_raw()), _device: Some(dev) },
+                Err(why) => eprintln!("nightjar: decoder probe: could not open a dedicated D3D11 video device ({why}); probing on the renderer's device"),
+            }
+        }
+        Self { hardware, #[cfg(windows)] _device: None }
     }
 }
 
@@ -275,6 +304,13 @@ impl DeviceRef {
         #[cfg(not(windows))]
         None
     }
+
+    /// Whether the held Direct3D 11 device is already in a removed or reset state.
+    pub fn is_removed(&self) -> bool { self.removed_reason().is_some() }
+
+    /// Whether this holds a Direct3D 11 device reference.
+    #[cfg(windows)]
+    pub fn is_some(&self) -> bool { self.0.is_some() }
 
     /// Has the held device destroy what its users already let go of. Direct3D defers that until
     /// its immediate context is flushed, and a swap chain kept that way stays on its window, which
@@ -730,6 +766,11 @@ pub struct VideoDecoder {
     /// said so.
     refused: bool,
     told: bool,
+    /// Separate `D3D11_CREATE_DEVICE_VIDEO_SUPPORT` decode device bridged to SDL3's renderer via
+    /// NT-handle shared textures and monitored `ID3D11Fence`s. None when decoding in software,
+    /// running a probe-only device, or falling back to SDL3's shared renderer device.
+    #[cfg(windows)]
+    d3d11_bridge: Option<std::sync::Arc<d3d11::DecodeBridge>>,
     /// A hardware decoder's time per picture in `send`, in FFmpeg's `receive` and in handing the
     /// picture on (DMA-BUF export, Vulkan map, copy to memory), summed up in the log when it
     /// closes after a stream's worth of pictures. Linux only.
@@ -1007,6 +1048,8 @@ impl VideoDecoder {
                 spare: None,
                 refused: false,
                 told: false,
+                #[cfg(windows)]
+                d3d11_bridge: None,
                 #[cfg(target_os = "linux")]
                 stages: (hardware != Hardware::None).then(|| Box::new(Stages::new(DECODE_STAGES))),
             };
@@ -1044,31 +1087,9 @@ impl VideoDecoder {
                     Hardware::D3d11(device) => {
                         #[cfg(windows)]
                         {
-                            use windows::core::Interface;
-                            use windows::Win32::Graphics::{
-                                Direct3D10::ID3D10Multithread, Direct3D11::ID3D11Device,
-                            };
-                            let device = ID3D11Device::from_raw_borrowed(&device)
-                                .ok_or("No D3D11 device.")?;
-                            let reference = av_hwdevice_ctx_alloc(kind);
-                            if reference.is_null() {
-                                return Err("Could not allocate a D3D11 device context.".into());
-                            }
-                            context.hw_device_ctx = reference;
-                            let device_context = (*reference).data.cast::<AVHWDeviceContext>();
-                            let d3d =
-                                &mut *((*device_context).hwctx.cast::<AVD3D11VADeviceContext>());
-                            d3d.device = device.clone().into_raw().cast();
-                            // SDL and FFmpeg share the immediate context from different threads.
-                            let _ = device
-                                .cast::<ID3D10Multithread>()
-                                .map_err(|e| format!("D3D11 multithread protection: {e}"))?
-                                .SetMultithreadProtected(true);
-                            video._format.bind_textures = crate::stream::direct::bind_decoder_textures(device);
-                            let status = av_hwdevice_ctx_init(reference);
-                            if status < 0 {
-                                return Err(error(status));
-                            }
+                            let (bridge, bind) = d3d11::open_device_context(context, kind, device, pictures)?;
+                            video._format.bind_textures = bind;
+                            video.d3d11_bridge = bridge;
                         }
                         #[cfg(not(windows))]
                         {
@@ -1358,6 +1379,17 @@ impl VideoDecoder {
         }
     }
 
+    /// Whether this decoder owns a dedicated Direct3D 11 video device separate from SDL3's
+    /// renderer device (so rebuilding the decoder gives it a fresh decode device).
+    pub fn owns_d3d11_device(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.d3d11_bridge.is_some()
+        }
+        #[cfg(not(windows))]
+        false
+    }
+
     /// Hands VAAPI pictures to the presenter as DMA-BUFs instead of CPU mappings, and says whether
     /// it does: only a VAAPI decoder on Linux.
     pub fn export_dmabuf(&mut self) -> bool {
@@ -1555,6 +1587,13 @@ impl VideoDecoder {
                 }
                 return Received::Frame(memory);
             }
+            #[cfg(windows)]
+            if format == AV_PIX_FMT_D3D11 && let Some(bridge) = &self.d3d11_bridge {
+                match bridge.export(raw.as_ref()) {
+                    Ok(shared) => { frame.shared = Some(shared); return Received::Frame(frame); }
+                    Err(why) => { eprintln!("nightjar: D3D11 decode bridge export failed: {why}"); return Received::Error; }
+                }
+            }
             Received::Frame(frame)
         }
     }
@@ -1673,6 +1712,9 @@ pub struct Frame {
     /// The VAAPI surface's DMA-BUFs, for a presenter that imports them.
     #[cfg(unix)]
     dmabuf: Option<Box<crate::dmabuf::Export>>,
+    /// Renderer-visible NT-handle shared texture exported from a separate D3D11 decode device.
+    #[cfg(windows)]
+    shared: Option<d3d11::SharedFrame>,
 }
 
 // An owned AVFrame reference can be handed from the decoder to the renderer.
@@ -1685,6 +1727,8 @@ impl Frame {
             wavelet: false,
             #[cfg(unix)]
             dmabuf: None,
+            #[cfg(windows)]
+            shared: None,
         }
     }
 
@@ -1694,7 +1738,15 @@ impl Frame {
         // SAFETY: a live frame; the clone is a new reference to its buffers.
         let mut frame = Self::new(NonNull::new(unsafe { av_frame_clone(self.raw.as_ptr()) })?);
         frame.wavelet = self.wavelet;
+        #[cfg(windows)]
+        { frame.shared = self.shared.clone(); }
         Some(frame)
+    }
+
+    /// Notes that `Present` flushed the renderer queue, skipping a redundant `SlotLease::drop` flush.
+    pub fn mark_d3d11_flushed(&self) {
+        #[cfg(windows)]
+        if let Some(shared) = &self.shared { shared.mark_renderer_flushed(); }
     }
 
     /// A VAAPI picture mapped for reading, not transferred: the driver's copy of the surface goes
@@ -1779,50 +1831,12 @@ impl Frame {
 
     #[cfg(windows)]
     pub fn copy_to_d3d11(&self, texture: *mut c_void, width: i32, height: i32) -> bool {
-        unsafe {
-            use windows::core::Interface;
-            use windows::Win32::Graphics::Direct3D11::{
-                ID3D11DeviceContext, ID3D11Texture2D, D3D11_BOX,
-            };
-            let frame = self.raw.as_ref();
-            if frame.format != AV_PIX_FMT_D3D11 || frame.hw_frames_ctx.is_null() {
-                return false;
-            }
-            let frames = &*((*frame.hw_frames_ctx).data.cast::<AVHWFramesContext>());
-            let d3d = &*((*frames.device_ctx).hwctx.cast::<AVD3D11VADeviceContext>());
-            let context_raw = d3d.device_context.cast();
-            let source_raw = frame.data[0].cast();
-            let Some(context) = ID3D11DeviceContext::from_raw_borrowed(&context_raw) else {
-                return false;
-            };
-            let Some(source) = ID3D11Texture2D::from_raw_borrowed(&source_raw) else {
-                return false;
-            };
-            let Some(target) = ID3D11Texture2D::from_raw_borrowed(&texture) else {
-                return false;
-            };
-            let region = D3D11_BOX {
-                left: 0,
-                top: 0,
-                front: 0,
-                right: (width & !1) as u32,
-                bottom: (height & !1) as u32,
-                back: 1,
-            };
-            (d3d.lock.unwrap())(d3d.lock_ctx);
-            context.CopySubresourceRegion(
-                target,
-                0,
-                0,
-                0,
-                0,
-                source,
-                frame.data[1] as usize as u32,
-                Some(&region),
-            );
-            (d3d.unlock.unwrap())(d3d.lock_ctx);
-            true
+        if let Some(shared) = &self.shared {
+            // SAFETY: Caller guarantees `texture` is a live `ID3D11Texture2D` on the renderer device.
+            return unsafe { shared.copy_to_renderer_texture(texture, width, height) };
         }
+        // SAFETY: Caller guarantees `texture` is a live `ID3D11Texture2D`; `self.raw` is live.
+        unsafe { d3d11::copy_shared_device_frame(self.raw.as_ref(), texture, width, height) }
     }
 }
 
@@ -1847,38 +1861,21 @@ pub struct D3d11Surface {
 #[cfg(windows)]
 impl Frame {
     pub fn d3d11_surface(&self) -> Option<D3d11Surface> {
-        // SAFETY: The fields of the live AVFrame and its frames context.
-        unsafe {
-            let frame = self.raw.as_ref();
-            if frame.format != AV_PIX_FMT_D3D11 || frame.hw_frames_ctx.is_null() || frame.data[0].is_null() {
-                return None;
-            }
-            let frames = &*((*frame.hw_frames_ctx).data.cast::<AVHWFramesContext>());
-            let d3d = &*frames.hwctx.cast::<AVD3D11VAFramesContext>();
-            let readable = d3d.BindFlags & windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32 != 0;
-            Some(D3d11Surface { texture: frame.data[0].cast(), slice: frame.data[1] as usize as u32, readable })
-        }
+        // SAFETY: `self.raw` is a live `AVFrame`.
+        unsafe { d3d11::surface_of(self.raw.as_ref(), self.shared.as_ref()) }
     }
 
-    /// Runs `f` under the D3D11VA device's lock, which FFmpeg holds while it decodes.
+    pub fn wait_d3d11_ready(&self) -> Result<(), String> {
+        self.shared.as_ref().map_or(Ok(()), d3d11::SharedFrame::wait_on_renderer)
+    }
+
     pub fn with_decoder_lock(&self, f: &mut dyn FnMut()) {
-        // SAFETY: The device context of the live frame's frames context.
-        unsafe {
-            let frame = self.raw.as_ref();
-            if frame.hw_frames_ctx.is_null() {
-                return f();
-            }
-            let frames = &*((*frame.hw_frames_ctx).data.cast::<AVHWFramesContext>());
-            let d3d = &*((*frames.device_ctx).hwctx.cast::<AVD3D11VADeviceContext>());
-            match (d3d.lock, d3d.unlock) {
-                (Some(lock), Some(unlock)) => {
-                    lock(d3d.lock_ctx);
-                    f();
-                    unlock(d3d.lock_ctx);
-                }
-                _ => f(),
-            }
-        }
+        // SAFETY: `self.raw` is a live `AVFrame`.
+        unsafe { d3d11::with_lock(self.raw.as_ref(), self.shared.as_ref(), f) }
+    }
+    pub fn with_shared_device_lock(&self, f: &mut dyn FnMut()) {
+        // SAFETY: `self.raw` is a live `AVFrame`.
+        unsafe { d3d11::with_shared_device_lock(self.raw.as_ref(), self.shared.as_ref(), f) }
     }
 
     /// The frame's HDR10+ (SMPTE ST 2094-40) scene peak in nits: the largest MaxSCL of its first

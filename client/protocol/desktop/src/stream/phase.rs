@@ -435,7 +435,7 @@ pub fn held_wait_us(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, mar
     if held <= 1 || refresh_hz <= 0.0 { return Some(0); }
     // SAFETY: the chain pointer comes from the live renderer and is only borrowed for these calls.
     unsafe {
-        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         let chain = IDXGISwapChain::from_raw_borrowed(&chain)?;
         let mut stats = DXGI_FRAME_STATISTICS::default();
         if chain.GetFrameStatistics(&mut stats).is_err() || stats.SyncQPCTime <= 0 { return None; }
@@ -458,7 +458,7 @@ pub fn last_present_count(renderer: *mut SDL_Renderer) -> u32 {
     use windows::Win32::Graphics::Dxgi::IDXGISwapChain;
     // SAFETY: the chain pointer comes from the live renderer and is only borrowed for this call.
     unsafe {
-        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         IDXGISwapChain::from_raw_borrowed(&chain).and_then(|chain| chain.GetLastPresentCount().ok()).unwrap_or(0)
     }
 }
@@ -487,7 +487,7 @@ pub fn timing(renderer: *mut SDL_Renderer, refresh_hz: f32, held: u32, anchor: &
     use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DWM_TIMING_INFO};
     unsafe {
         let period_ns = (1_000_000_000.0 / f64::from(refresh_hz)) as i64;
-        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         let stats = IDXGISwapChain::from_raw_borrowed(&chain).and_then(|chain| {
             let mut stats = DXGI_FRAME_STATISTICS::default();
             chain.GetFrameStatistics(&mut stats).ok().map(|_| stats)
@@ -523,7 +523,7 @@ pub fn present_stats(renderer: *mut SDL_Renderer) -> crate::timing_csv::Flip {
     use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_FRAME_STATISTICS};
     // SAFETY: the chain pointer comes from the live renderer and is only borrowed for these calls.
     unsafe {
-        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return Default::default() };
         let mut flip = crate::timing_csv::Flip { present_count: chain.GetLastPresentCount().unwrap_or(0), ..Default::default() };
         let mut stats = DXGI_FRAME_STATISTICS::default();

@@ -136,7 +136,7 @@ impl VideoTexture {
         super::super::direct_planes::goes_direct(super::super::direct_planes::Conditions {
             switch: super::super::direct_planes::enabled(),
             failed: self.direct_planes_failed,
-            swap_chain: !self.d3d11.is_null() && !crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER).is_null(),
+            swap_chain: !self.d3d11.is_null() && !crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER).is_null(),
             partial,
         })
     }
@@ -225,7 +225,7 @@ impl VideoTexture {
             return false;
         }
         let step = std::time::Instant::now();
-        let swap_chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let swap_chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         if swap_chain.is_null() { return false; }
         let mut output = (0, 0);
         // SAFETY: The live renderer and texture of the presenting thread.
@@ -337,6 +337,11 @@ impl VideoTexture {
         };
         let drawn = direct_pass(&mut self.direct, renderer).and_then(|pass| {
             let held = &self.held;
+            if let Some(frame) = held
+                && frame.d3d11_surface().is_some_and(|s| s.texture == picture.texture)
+            {
+                frame.wait_d3d11_ready()?;
+            }
             // SAFETY: The picture's texture and the renderer belong to the pass's device.
             unsafe { pass.present(renderer, destination, &picture, tone, &self.warp, |submit| lock_for(held, picture.texture, submit)) }
         });
@@ -347,6 +352,30 @@ impl VideoTexture {
                 self.direct_failed = true;
                 self.direct = None;
                 false
+            }
+        }
+    }
+
+    /// Waits on the decode fence when `self.held` backs `texture`.
+    #[cfg(windows)]
+    pub(super) fn wait_held_d3d11(&self, texture: *mut c_void) -> Result<(), String> {
+        if let Some(frame) = &self.held
+            && frame.d3d11_surface().is_some_and(|s| s.texture == texture)
+        {
+            frame.wait_d3d11_ready()?;
+        }
+        Ok(())
+    }
+
+    /// Marks held bridged D3D11 frames as flushed after `Present` submits the renderer queue.
+    pub fn mark_d3d11_flushed(&self) {
+        #[cfg(windows)]
+        {
+            if let Some(frame) = &self.held {
+                frame.mark_d3d11_flushed();
+            }
+            if let Some(DirectPlanes { source: PlanesHold::Surface { held: Some(frame) }, .. }) = &self.direct_planes {
+                frame.mark_d3d11_flushed();
             }
         }
     }

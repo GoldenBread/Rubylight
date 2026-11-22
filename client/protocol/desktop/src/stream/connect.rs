@@ -1073,7 +1073,7 @@ pub(super) fn reconnects_automatically(auto_reconnect: bool, away: bool, role: A
 /// budget renews after `connected_ms` of a stable stream; `retry_now`: the first attempt starts
 /// without its delay (it still spends one). `had_video`: the dropped stream or an earlier one of its
 /// chain showed video, which the next connection carries.
-pub(super) fn automatic_rejoin(plan: &LaunchPlan, role: AppRole, auto_reconnect: bool, away: bool, connected_ms: u64, retry_now: bool, had_video: bool) -> Option<LaunchPlan> {
+pub(crate) fn automatic_rejoin(plan: &LaunchPlan, role: AppRole, auto_reconnect: bool, away: bool, connected_ms: u64, retry_now: bool, had_video: bool) -> Option<LaunchPlan> {
     // Microphone only runs minimized or behind other windows by design, so it reconnects there too.
     let on_its_own = if plan.mic_only { auto_reconnect } else { reconnects_automatically(auto_reconnect, away, role) };
     if !on_its_own { return None; }

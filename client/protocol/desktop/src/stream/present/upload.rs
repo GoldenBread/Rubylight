@@ -253,7 +253,7 @@ impl VideoTexture {
                     && f32::from(peak) / (80.0 * white_level)
                         <= SDL_GetFloatProperty(properties, SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT, 1.0)
             })
-                && !crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER)
+                && !crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER)
                     .is_null()
             {
                 if self.packed.is_none() || !self.texture.is_null() {

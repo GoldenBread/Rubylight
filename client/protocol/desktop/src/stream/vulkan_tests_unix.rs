@@ -188,6 +188,7 @@ fn decode(
         vaapi_node: media::VaapiNode::Default,
         width: case.size.max(0) as u32,
         height: case.size.max(0) as u32,
+        probe_only: false,
     };
     let mut decoder = match hardware {
         Hardware::None => VideoDecoder::open(case.codec, hardware, 1, false)?,
@@ -459,7 +460,7 @@ fn the_vulkan_picture_matches_the_software_picture_on_the_fixtures() {
 /// renderer's Vulkan device when `map`, else in memory; the decoder lives as long as the picture.
 fn packed_picture(rig: &Rig, map: bool) -> Result<(VideoDecoder, media::Frame), String> {
     let vaapi_node = if map { media::vaapi_node(Hardware::Auto(rig.device(), None)) } else { media::VaapiNode::Default };
-    let pictures = Pictures { ten_bit: false, chroma444: false, packed: true, waiting: 0, vaapi_node, width: 128, height: 128 };
+    let pictures = Pictures { ten_bit: false, chroma444: false, packed: true, waiting: 0, vaapi_node, width: 128, height: 128, probe_only: false };
     let mut decoder = VideoDecoder::open_for(Codec::Hevc, pictures, Hardware::Vaapi, 1, true)?;
     if map && !decoder.map_to_vulkan(rig.device()) {
         return Err("VAAPI pictures are not mapped into Vulkan on this device".into());
@@ -574,7 +575,7 @@ fn a_sequence_of_vulkan_pictures_reuses_the_copy_slots_and_stays_the_software_pi
 #[cfg(target_os = "linux")]
 fn mapped_vaapi(rig: &Rig, case: &Case, look: Look) -> Result<(VideoDecoder, media::Frame), String> {
     let vaapi_node = media::vaapi_node(Hardware::Auto(rig.device(), None));
-    let pictures = Pictures { ten_bit: case.ten, chroma444: false, packed: false, waiting: 0, vaapi_node, width: case.size.max(0) as u32, height: case.size.max(0) as u32 };
+    let pictures = Pictures { ten_bit: case.ten, chroma444: false, packed: false, waiting: 0, vaapi_node, width: case.size.max(0) as u32, height: case.size.max(0) as u32, probe_only: false };
     let mut decoder = VideoDecoder::open_for(case.codec, pictures, Hardware::Vaapi, 1, true)?;
     if !decoder.map_to_vulkan(rig.device()) {
         return Err("VAAPI pictures are not mapped into Vulkan on this device".into());

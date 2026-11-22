@@ -77,6 +77,7 @@ impl App {
         plan.hardware = self.hardware(&plan.settings);
         plan.gpu_decoder = plan.gpu_decoder.and(self.gpu_device());
         plan.device = media::DeviceRef::of_device(self.renderer_device());
+        plan.display_luminance = sdl::launch_luminance(self.renderer);
         let mask = self.pads.launch_mask(&plan.settings);
         if mask != plan.gamepad_mask {
             let pads: Vec<&str> = self.pads.pads.iter().map(|pad| pad.name.as_str()).collect();
@@ -106,13 +107,12 @@ impl App {
 
     /// Drives a `--host` start from the command line (see `cli`); does nothing otherwise.
     pub(crate) fn cli_step(&mut self) {
+        let pending_reconnect = self.has_pending_device_reconnect();
         let Some(cli) = self.cli.as_mut() else { return };
-        if cli.failed.is_some() {
-            return;
-        }
+        if cli.failed.is_some() { return; }
         let message = self.launcher.message_shown();
         // The stream and any reconnect are over: --quit-on-exit closes Nightjar.
-        if self.streaming.is_none() && !self.attempts.is_connecting() && cli.stream_ended(message.clone()) {
+        if self.streaming.is_none() && !self.attempts.is_connecting() && !pending_reconnect && cli.stream_ended(message.clone()) {
             self.running = false;
             return;
         }

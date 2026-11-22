@@ -767,7 +767,7 @@ fn surroundings(renderer: *mut SDL_Renderer, mode_tears: bool, content_hz: f64) 
     let flags = (!window.is_null()).then(|| unsafe { SDL_GetWindowFlags(window) });
     let has = |flag| flags.is_some_and(|flags| flags & flag != 0);
     #[cfg(windows)]
-    let chain_tears = super::super::media::swapchain_allows_tearing(crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER));
+    let chain_tears = super::super::media::swapchain_allows_tearing(crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER));
     #[cfg(not(windows))]
     let chain_tears = true;
     let surroundings = Surroundings {

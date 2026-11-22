@@ -84,7 +84,7 @@ fn fixture_label(mode: usize) -> String {
 
 /// The fixture `data` decoded with `hardware` as a packed 4:2:0 picture of the mode's depth.
 fn decode(hardware: media::Hardware, codec: media::Codec, data: &[u8], ten_bit: bool) -> Result<media::Frame, String> {
-    let pictures = media::Pictures { ten_bit, chroma444: false, packed: true, waiting: 0, vaapi_node: media::vaapi_node(hardware), width: 128, height: 128 };
+    let pictures = media::Pictures { ten_bit, chroma444: false, packed: true, waiting: 0, vaapi_node: media::vaapi_node(hardware), width: 128, height: 128, probe_only: false };
     let mut decoder = media::VideoDecoder::open_first(codec, pictures, hardware, true, |_, _| {})?;
     #[cfg(target_os = "linux")]
     if let media::Hardware::Auto(gpu, _) = hardware
@@ -335,7 +335,7 @@ impl Reconstruction {
         unsafe {
             #[cfg(windows)]
             {
-                let device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
+                let device = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
                 if !device.is_null() {
                     let texture = if _target.is_null() { ptr::null_mut() } else {
                         SDL_GetPointerProperty(SDL_GetTextureProperties(_target), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, ptr::null_mut())
@@ -510,12 +510,11 @@ impl Reconstruction {
     ) -> bool {
         // SAFETY: All renderer calls and the native draw run on the presenting thread.
         unsafe {
-            let properties = SDL_GetRendererProperties(renderer);
-            let swapchain = SDL_GetPointerProperty(
-                properties,
+            let swapchain = crate::render_device::live_renderer_pointer(
+                renderer,
                 SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER,
-                ptr::null_mut(),
             );
+            let properties = SDL_GetRendererProperties(renderer);
             let (mut width, mut height) = (0, 0);
             if swapchain.is_null() || !SDL_GetCurrentRenderOutputSize(renderer, &mut width, &mut height) {
                 if let Some(native) = &self.native { native.release_back_buffer(); }

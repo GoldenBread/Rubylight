@@ -102,6 +102,7 @@ fn fixture_pictures(format: u32, vaapi_node: media::VaapiNode) -> media::Picture
         vaapi_node,
         width: FIXTURE_WIDTH,
         height: FIXTURE_HEIGHT,
+        probe_only: true,
     }
 }
 
@@ -143,7 +144,9 @@ pub fn probe_base(hardware: media::Hardware, wanted: u32, budget: &mut ProbeBudg
         reason: String::new(),
         backends: Vec::new(),
     };
+    if wanted == 0 { return base; }
     let mut failures = Vec::new();
+    let probe = media::ProbeHardware::isolate(hardware);
     // VAAPI on the GPU the stream will decode on.
     let vaapi_node = media::vaapi_node(hardware);
     for (format, codec, name, data) in BASE_FIXTURES {
@@ -151,11 +154,12 @@ pub fn probe_base(hardware: media::Hardware, wanted: u32, budget: &mut ProbeBudg
             continue;
         }
         let pictures = fixture_pictures(format, vaapi_node);
-        match decode(hardware, pictures, codec, data, budget) {
+        match decode(probe.hardware, pictures, codec, data, budget) {
             Ok((_, backend)) => {
                 eprintln!("nightjar: decoder probe: {name} {} ok", backend.label());
                 base.decodable |= format;
-                base.backends.push((format, backend));
+                let reported = if matches!(backend, media::Hardware::D3d11(_)) { hardware } else { backend };
+                base.backends.push((format, reported));
             }
             Err(reason) => {
                 eprintln!("nightjar: decoder probe: {name} failed, so it is not offered: no hardware decoder decodes it here: {reason}");
@@ -178,7 +182,9 @@ pub fn probe(
     budget: &mut ProbeBudget,
 ) -> (u32, String) {
     let mut decodable = 0;
+    if wanted == 0 { return (0, String::new()); }
     let mut failures = Vec::new();
+    let probe = media::ProbeHardware::isolate(hardware);
     // VAAPI on the GPU the stream will decode on.
     let vaapi_node = media::vaapi_node(hardware);
     for (format, codec, name, data) in FIXTURES {
@@ -187,7 +193,7 @@ pub fn probe(
         }
         let yuv444 = format & VIDEO_FORMAT_MASK_YUV444 != 0;
         let pictures = fixture_pictures(format, vaapi_node);
-        match decode(hardware, pictures, codec, data, budget)
+        match decode(probe.hardware, pictures, codec, data, budget)
             .and_then(|(info, backend)| {
                 drawable(&info, yuv444, &planes)?;
                 keeps_depth(&info, pictures.ten_bit)?;
@@ -490,7 +496,7 @@ fn keeps_depth(info: &media::FrameInfo, ten_bit: bool) -> Result<(), String> {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS checks it at start.
 pub fn planes_drawable(renderer: *mut SDL_Renderer, ten_bit: bool) -> Result<(), String> {
     #[cfg(windows)]
-    let device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
+    let device = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
     #[cfg(unix)]
     let device = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_GPU_DEVICE_POINTER);
     #[cfg(not(any(windows, unix)))]

@@ -69,6 +69,7 @@ mod pin_lock;
 mod pin_ui;
 mod power;
 mod radeon;
+mod render_device;
 mod sdl;
 mod second_screen;
 mod session_page;
@@ -126,13 +127,9 @@ use app::*;
 struct App {
     window: *mut SDL_Window,
     renderer: *mut SDL_Renderer,
-    /// Windows: SDL's Direct3D 11 device was lost or made again (`renderer_gone`), and the
-    /// launcher's next frame makes the renderer again (`recover_renderer`).
+    /// Windows: D3D11 device-loss recovery, remake guard, lost devices, and deferred reconnect.
     #[cfg(windows)]
-    renderer_lost: bool,
-    /// Windows: the times the renderer was made again.
-    #[cfg(windows)]
-    remakes: RemakeGuard,
+    recovery: render_device::Recovery,
     gui: Gui,
     /// The software renderer of a stream's overlay plane (`kms_scanout`) the gui's textures are
     /// on; null while they are on `renderer`.
@@ -970,9 +967,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         window,
         renderer,
         #[cfg(windows)]
-        renderer_lost: false,
-        #[cfg(windows)]
-        remakes: RemakeGuard::default(),
+        recovery: render_device::Recovery::default(),
         gui,
         gui_overlay: std::ptr::null_mut(),
         store,

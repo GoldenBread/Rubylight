@@ -61,37 +61,9 @@ impl RendererState {
     }
 }
 
-/// SDL's events after which the renderer's device is gone: made again by SDL with every texture
-/// lost (`SDL_EVENT_RENDER_DEVICE_RESET`), or not at all (`SDL_EVENT_RENDER_DEVICE_LOST`), when
-/// SDL's Direct3D 11 renderer draws and presents nothing ever again.
-pub(crate) fn renderer_gone(kind: SDL_EventType) -> bool {
-    matches!(kind, SDL_EVENT_RENDER_DEVICE_RESET | SDL_EVENT_RENDER_DEVICE_LOST)
-}
-
-/// How often Windows' renderer may be made again (`App::recover_renderer`): a driver that loses
-/// every new device would otherwise have Nightjar make it again forever, showing nothing.
 #[cfg(any(windows, test))]
-#[derive(Default)]
-pub(crate) struct RemakeGuard(std::collections::VecDeque<Instant>);
-
-#[cfg(any(windows, test))]
-impl RemakeGuard {
-    pub(crate) const MOST: usize = 5;
-    pub(crate) const WITHIN: Duration = Duration::from_secs(60);
-
-    /// Whether the renderer may be made again at `now`, counted when it may: at most `MOST` times
-    /// within `WITHIN`.
-    pub(crate) fn allow(&mut self, now: Instant) -> bool {
-        while self.0.front().is_some_and(|&at| now.saturating_duration_since(at) >= Self::WITHIN) {
-            self.0.pop_front();
-        }
-        if self.0.len() >= Self::MOST {
-            return false;
-        }
-        self.0.push_back(now);
-        true
-    }
-}
+pub(crate) use crate::render_device::RemakeGuard;
+pub(crate) use crate::render_device::renderer_gone;
 
 /// Whether any layer (the global settings, a PC, a game or a profile) asks for YUV 4:4:4.
 #[cfg(windows)]
@@ -122,6 +94,9 @@ pub(crate) fn renderer_gpu_device(renderer: *mut SDL_Renderer) -> Option<stream:
         ("gpu", SDL_PROP_RENDERER_GPU_DEVICE_POINTER)
     };
     if sdl::renderer_name(renderer) != name { return None; }
+    #[cfg(windows)]
+    let device = crate::render_device::live_renderer_pointer(renderer, property);
+    #[cfg(not(windows))]
     let device = sdl::renderer_pointer(renderer, property);
     (!device.is_null()).then_some(stream::pipeline::GpuDevice(device))
 }
@@ -304,7 +279,9 @@ impl App {
     #[cfg(windows)]
     pub(crate) fn apply_graphics_card(&mut self) {
         let choice = self.launcher.settings.graphics_card;
-        if choice == self.graphics_card || self.streaming.is_some() || self.pending_replace.is_some() {
+        if choice == self.graphics_card || self.streaming.is_some() || self.pending_replace.is_some()
+            || self.recovery.is_lost() || self.recovery.pending_reconnect.is_some()
+        {
             return;
         }
         // A start still connecting uses the device it would replace; a start that was cancelled or
@@ -504,11 +481,92 @@ impl App {
     pub(crate) fn note_render_device(&mut self, kind: SDL_EventType) {
         let gone = renderer_gone(kind);
         #[cfg(windows)]
-        if gone {
-            self.renderer_lost = true;
-        }
+        if gone { self.recovery.lost = true; }
         #[cfg(not(windows))]
         let _ = gone;
+    }
+
+    /// Whether the renderer's device is known to be lost or has a pending SDL render-device event.
+    /// Always false off Windows, where `recover_renderer` does not apply.
+    pub(crate) fn is_renderer_lost(&self) -> bool {
+        #[cfg(windows)] { self.recovery.is_lost() }
+        #[cfg(not(windows))] { false }
+    }
+
+    /// Sets the renderer's V-Sync interval unless the D3D11 device is already lost (SDL3's
+    /// `D3D11_ReleaseAll` zeroes `swapChain` without clearing `swapChainFlags`, so calling
+    /// `SDL_SetRenderVSync` on a lost D3D11 renderer dereferences a null swap chain).
+    pub(crate) fn set_render_vsync(&self, interval: i32) {
+        if !self.is_renderer_lost() {
+            // SAFETY: renderer call on the main thread while the render device is live.
+            unsafe { SDL_SetRenderVSync(self.renderer, interval) };
+        }
+    }
+
+    /// Records render-device loss from a stream's `exit` and keeps its device reference so
+    /// `recover_renderer` can log `GetDeviceRemovedReason()` and flush deferred releases.
+    pub(crate) fn note_stream_end_device(&mut self, exit: &Exit, streaming: &mut Streaming) -> bool {
+        #[cfg(windows)]
+        if matches!(exit, Exit::RenderDeviceLost(_)) || streaming.device_removed() {
+            self.recovery.lost = true;
+        }
+        #[cfg(not(windows))]
+        let _ = exit;
+        let lost = self.is_renderer_lost();
+        #[cfg(windows)]
+        if lost {
+            self.recovery.lost = true;
+            self.recovery.remember_device(streaming.take_device());
+        }
+        #[cfg(not(windows))]
+        let _ = streaming;
+        lost
+    }
+
+    /// Starts a stream reconnect immediately, or defers it until `recover_renderer` replaces a
+    /// lost Windows render device.
+    pub(crate) fn start_or_defer_reconnect(&mut self, mut plan: LaunchPlan, teardown: stream::Teardown, renderer_lost: bool) {
+        #[cfg(windows)]
+        if renderer_lost {
+            self.recovery.defer_reconnect(plan);
+            self.push_teardown(teardown);
+            return;
+        }
+        #[cfg(not(windows))]
+        let _ = renderer_lost;
+        self.refresh_plan(&mut plan);
+        let mut stopping = self.take_stopping();
+        stopping.push(teardown);
+        self.attempts.begin(Connecting::start(plan, self.waker.clone(), stopping));
+    }
+
+    /// Whether a mid-stream reconnect is waiting for `recover_renderer` to finish.
+    pub(crate) fn has_pending_device_reconnect(&self) -> bool {
+        #[cfg(windows)] { self.recovery.pending_reconnect.is_some() }
+        #[cfg(not(windows))] { false }
+    }
+
+    /// Ends the stream with `exit` and updates `--autostream` if active.
+    pub(crate) fn finish_stream_exit(&mut self, exit: Exit) {
+        let planned = matches!(exit, Exit::User);
+        self.end_stream(exit);
+        let reconnecting = self.attempts.is_connecting() || self.has_pending_device_reconnect();
+        if let Some(auto) = self.autostream.as_mut()
+            && !auto.stream_ended(planned, reconnecting) { self.running = false; }
+    }
+
+    /// Checks whether a launcher present lost the Windows D3D11 device (via SDL event or
+    /// `GetDeviceRemovedReason()` on `DXGI_ERROR_DEVICE_RESET`) and recovers before commands run.
+    pub(crate) fn recover_after_launcher_present(&mut self, present_failed: bool) {
+        if present_failed {
+            eprintln!("nightjar: launcher SDL_RenderPresent failed: {}", sdl::error());
+        }
+        #[cfg(windows)]
+        if self.recovery.is_lost()
+            || self.recovery.check_launcher_present_failure(present_failed, self.renderer_device())
+        {
+            self.recover_renderer();
+        }
     }
 
     /// Makes the window's renderer again once SDL lost its Direct3D 11 device (`renderer_gone`),
@@ -522,8 +580,10 @@ impl App {
     /// new one (`RemakeGuard`), Nightjar ends, loudly.
     #[cfg(windows)]
     pub(crate) fn recover_renderer(&mut self) {
-        // Direct3D's reason, from a launch's hold on the old device; with none, SDL let it go.
-        let why = self.launch_devices().find_map(|device| device.removed_reason());
+        self.recovery.lost = false;
+        // Direct3D's reason, from a launch's or ended stream's hold on the old device; with none,
+        // SDL let it go.
+        let why = self.launch_devices().chain(self.recovery.lost_devices.iter()).find_map(|device| device.removed_reason());
         let why = why.map_or(String::new(), |why| format!(" ({why})"));
         eprintln!("nightjar: the renderer's Direct3D 11 device was lost{why}; the renderer is made again");
         if let Some(connecting) = self.attempts.take() {
@@ -537,12 +597,17 @@ impl App {
             self.ending_probes.push(probe);
             self.start_failed(launch, Some(name), None, tr("The graphics driver was reset, which ended the stream. Connect again.").to_owned());
         }
-        if !self.remakes.allow(Instant::now()) {
+        if !self.recovery.remakes.allow(Instant::now()) {
             no_renderer(&format!(
                 "the graphics driver lost its device {} times within {} seconds{why}",
                 RemakeGuard::MOST,
                 RemakeGuard::WITHIN.as_secs()
             ));
+        }
+        // Wait for any ending stream's teardown (`Session::stop`) so its decoder releases COM
+        // references on the old device before SDL destroys the renderer and flushes the swap chain.
+        if !self.join_teardowns(stream::LEAVE_WAIT) {
+            eprintln!("nightjar: a stream's teardown is still letting go of the lost device after {} ms; continuing renderer recovery", stream::LEAVE_WAIT.as_millis());
         }
         // Waits for a settings probe and the latency benchmark, which may decode on the old device.
         stream::pyrowave_mode::settings_probe_reset();
@@ -564,17 +629,21 @@ impl App {
         // frame, and a launch or a decoder still on the old device holds that device itself.
         unsafe { crate::sdl::destroy_renderer(old) };
         // The old swap chain stays on the window, which then takes no new one, while anything
-        // else holds its device (a launch's `LaunchPlan::device`, its decoder): Direct3D destroys
-        // it at the device's next flush. A stream's decoder lets go of it as the stream ends; the
-        // remake's tries wait for one that is slow to.
-        let devices: Vec<_> = self.launch_devices().cloned().collect();
+        // else holds its device (a launch's `LaunchPlan::device`, its decoder, or an ended stream):
+        // Direct3D destroys it at the device's next flush. Taking `lost_devices` drops our own
+        // references as soon as the flush completes, before `remake_renderer`.
+        let mut devices: Vec<_> = self.launch_devices().cloned().collect();
+        devices.extend(std::mem::take(&mut self.recovery.lost_devices));
         Self::flush_released(devices, Self::FLUSH_WAIT);
         let made = sdl::remake_renderer(self.window, linear, &kind, Duration::from_secs(10));
         if made.is_null() {
             no_renderer(&format!("the {kind:?} renderer could not be made again after its device was lost ({})", sdl::error()));
         }
-        // SAFETY: the renderer just made.
-        unsafe { SDL_SetRenderVSync(made, 1) };
+        // SAFETY: the renderer just made; flush stale render-device events from the old one now.
+        unsafe {
+            SDL_SetRenderVSync(made, 1);
+            SDL_FlushEvents(SDL_EVENT_RENDER_TARGETS_RESET.0, SDL_EVENT_RENDER_DEVICE_LOST.0);
+        }
         self.renderer = made;
         self.gui.renderer_changed();
         self.hosts.renderer_changed();
@@ -590,10 +659,17 @@ impl App {
         self.base_probed = None;
         self.packed_probed = None;
         self.window_changed = true;
-        // SAFETY: on the main thread. What the old renderer queued is about it.
-        unsafe { SDL_FlushEvents(SDL_EVENT_RENDER_TARGETS_RESET.0, SDL_EVENT_RENDER_DEVICE_LOST.0) };
         let gpu = gpu_adapters::renderer_gpu(device).unwrap_or_else(|| "an unknown GPU".to_owned());
         eprintln!("nightjar: renderer {} made again on {gpu}, tearing {}", sdl::renderer_name(made), self.launcher.tearing_supported);
+        // If a running stream was ended by this device loss, reconnect on the fresh renderer now.
+        if let Some(mut plan) = self.recovery.pending_reconnect.take()
+            && self.running
+        {
+            eprintln!("nightjar: reconnecting {} after renderer recovery", plan.app.name);
+            self.refresh_plan(&mut plan);
+            let stopping = self.take_stopping();
+            self.attempts.begin(Connecting::start(plan, self.waker.clone(), stopping));
+        }
     }
 
     /// How long a remake waits for the old devices to flush what their users let go of: the flush
@@ -639,7 +715,7 @@ impl App {
     /// The renderer's device, for PyroWave decoding on the GPU.
     pub(crate) fn gpu_device(&self) -> Option<stream::pipeline::GpuDevice> {
         #[cfg(windows)]
-        if self.renderer_lost {
+        if self.recovery.is_lost() {
             return None;
         }
         renderer_gpu_device(self.renderer)
@@ -656,7 +732,7 @@ impl App {
             return Hardware::None;
         }
         #[cfg(windows)]
-        if self.renderer_lost {
+        if self.recovery.is_lost() {
             return Hardware::None;
         }
         if cfg!(windows) {

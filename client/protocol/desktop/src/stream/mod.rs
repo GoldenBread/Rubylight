@@ -24,7 +24,7 @@ pub mod host_abr;
 pub mod doctor;
 mod gateway;
 pub mod overlay;
-mod recovery;
+pub(crate) mod recovery;
 mod quality;
 mod rate_change;
 pub use rate_change::{own_lowering_at_start, store_keep};
@@ -102,7 +102,7 @@ pub mod ui_pq;
 #[cfg(all(test, unix))]
 mod vulkan_tests_unix;
 mod negotiate;
-mod connect;
+pub(crate) mod connect;
 pub(crate) mod decoder_cache;
 mod stats;
 mod input;
@@ -457,6 +457,8 @@ pub enum Exit {
     Ended(Option<String>),
     /// A lost network came back where the connection cannot carry on: reconnect at once.
     NetworkReturned,
+    /// The render device was lost mid-stream; Windows recovers it and reconnects.
+    RenderDeviceLost(String),
 }
 
 impl Exit {
@@ -466,6 +468,7 @@ impl Exit {
     pub fn retryable(&self, video_started: bool) -> bool {
         match self {
             Self::NetworkReturned => video_started,
+            Self::RenderDeviceLost(_) => cfg!(windows) && video_started,
             Self::Terminated(code) => recovery::recovers_termination(*code, video_started),
             _ => false,
         }
@@ -899,15 +902,8 @@ pub enum Wait {
     For(Duration),
 }
 
-/// Why the stream ends after SDL's render device event `kind`: the stream's textures and the
-/// decoder's GPU planes are gone with the device, and the picture would freeze without a word.
-fn render_device_ended(kind: SDL_EventType) -> Option<&'static str> {
-    match kind {
-        SDL_EVENT_RENDER_DEVICE_RESET => Some("The graphics driver was reset, which ended the stream. Connect again."),
-        SDL_EVENT_RENDER_DEVICE_LOST => Some("The graphics device was lost (the driver stopped or the GPU was removed), which ended the stream. Restart Nightjar."),
-        _ => None,
-    }
-}
+/// Why the stream ends after SDL's render device event `kind`.
+fn render_device_ended(kind: SDL_EventType) -> Option<&'static str> { crate::render_device::ended_reason(kind) }
 
 /// [`Streaming::sends_controllers`] for `settings` in a session of `role`.
 fn sends_controllers(settings: &Settings, role: AppRole) -> bool {
@@ -2550,11 +2546,15 @@ impl Streaming {
 
     /// The stream ends into a reconnect, on its own or by the player's choice: the decoder's
     /// device and codec context are kept for the session that follows it when it is the same
-    /// stream (`stream::pipeline::Decoder::cleanup`). Off by default, so a stream that ends for
-    /// good drops its decoder as before.
+    /// stream (`stream::pipeline::Decoder::cleanup`).
     pub fn keep_decoder_for_reconnect(&self, keep: bool) {
         self.shared.keep_decoder.store(keep, Ordering::Relaxed);
     }
+
+    #[cfg(windows)] pub fn take_device(&mut self) -> crate::media::DeviceRef { std::mem::take(&mut self.plan.device) }
+    pub fn device_removed(&self) -> bool { self.plan.device.is_removed() }
+    pub fn note_render_device_lost(&mut self, reason: String) { self.retry_now = true; self.exit.get_or_insert(Exit::RenderDeviceLost(reason)); }
+    pub fn check_render_device_lost(&mut self) -> bool { let lost = crate::render_device::event_pending() || self.device_removed(); if lost { self.note_render_device_lost(crate::render_device::lost_reason().into()); } lost }
 
     /// Ends the stream: releases input, stops the session on a reaper thread. Returns the request
     /// that turns the PC's automatic bitrate off while it runs (one closing Nightjar waits for it)
@@ -2693,7 +2693,7 @@ impl Teardown {
 
 /// Runs `work` on a thread of its own, for teardown that may block on a socket, a decoder or an
 /// audio device. The UI thread does not wait for it; a [`Teardown`] owner does where it must.
-fn spawn_background(work: impl FnOnce() + Send + 'static) -> Teardown {
+pub(crate) fn spawn_background(work: impl FnOnce() + Send + 'static) -> Teardown {
     match std::thread::Builder::new().name("nightjar teardown".into()).spawn(work) {
         Ok(handle) => Teardown(Some(handle)),
         Err(e) => {

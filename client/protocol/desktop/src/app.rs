@@ -180,7 +180,6 @@ impl App {
 
     /// Waits up to `wait` for the sessions still stopping to end. False says one is still using the
     /// renderer's device; its handle is kept for the next wait or the exit, never dropped.
-    #[cfg(unix)]
     pub(crate) fn join_teardowns(&mut self, wait: std::time::Duration) -> bool {
         let deadline = Instant::now() + wait;
         let mut still = Vec::new();

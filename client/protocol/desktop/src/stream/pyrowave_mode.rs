@@ -197,7 +197,10 @@ fn settings_probe_state() -> &'static ProbeState {
 /// while it runs. `device` is the renderer's, which outlives the probe: a new renderer (Linux) waits
 /// for it first ([`settings_probe_reset`]).
 pub fn settings_probe(device: *mut std::ffi::c_void, ten_bit: bool) -> Option<Result<(), String>> {
-    probe_in(settings_probe_state(), device, ten_bit, gpu_probe)
+    // Hold a reference on the D3D11 device for the probe thread's lifetime on Windows so a
+    // driver reset or renderer remake cannot free it underneath the probe.
+    let hold = crate::media::DeviceRef::of_device(device);
+    probe_in(settings_probe_state(), device, hold, ten_bit, gpu_probe)
 }
 
 /// Before the renderer goes (Linux's switch to the GPU renderer or back): waits for a probe still
@@ -209,12 +212,14 @@ pub fn settings_probe_reset() {
 fn probe_in(
     state: &'static ProbeState,
     device: *mut std::ffi::c_void,
+    hold: crate::media::DeviceRef,
     ten_bit: bool,
     probe: fn(*mut std::ffi::c_void, bool) -> Result<(), String>,
 ) -> Option<Result<(), String>> {
     struct Raw(*mut std::ffi::c_void);
     #[cfg(windows)]
-    // SAFETY: D3D11 devices are free-threaded and the renderer outlives the probe thread's use.
+    // SAFETY: D3D11 devices are free-threaded and `hold` (`DeviceRef`) keeps the COM reference
+    // alive for the probe thread's entire run.
     unsafe impl Send for Raw {}
     #[cfg(unix)]
     // SAFETY: The pointer is the renderer's SDL_GPUDevice, which outlives the probe thread (a new
@@ -232,6 +237,7 @@ fn probe_in(
     probes.results.push((ten_bit, None));
     let device = Raw(device);
     let thread = std::thread::spawn(move || {
+        let _hold = hold;
         let device = device;
         let result = probe(device.0, ten_bit);
         let mut probes = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -277,19 +283,65 @@ mod tests {
             if device.is_null() { Err("needs the SDL GPU renderer".into()) } else { Ok(()) }
         }
         let opengl = std::ptr::null_mut();
-        assert_eq!(probe_in(&STATE, opengl, false, slow), None, "it runs on its own thread");
+        assert_eq!(probe_in(&STATE, opengl, crate::media::DeviceRef::default(), false, slow), None, "it runs on its own thread");
         reset_in(&STATE);
         assert_eq!(*DEVICES.lock().unwrap(), [0], "the reset waited for it");
         assert!(STATE.lock().unwrap().results.is_empty(), "and forgot what it found");
         let gpu = 0x60 as *mut std::ffi::c_void;
-        assert_eq!(probe_in(&STATE, gpu, false, slow), None, "probed again, on the new device");
+        assert_eq!(probe_in(&STATE, gpu, crate::media::DeviceRef::default(), false, slow), None, "probed again, on the new device");
         reset_in(&STATE);
         assert_eq!(*DEVICES.lock().unwrap(), [0, 0x60]);
-        assert_eq!(probe_in(&STATE, gpu, false, slow), None);
+        assert_eq!(probe_in(&STATE, gpu, crate::media::DeviceRef::default(), false, slow), None);
         while STATE.lock().unwrap().results[0].1.is_none() {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(probe_in(&STATE, gpu, false, slow), Some(Ok(())), "kept until the renderer changes");
+        assert_eq!(probe_in(&STATE, gpu, crate::media::DeviceRef::default(), false, slow), Some(Ok(())), "kept until the renderer changes");
+        reset_in(&STATE);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_probe_holds_d3d11_device_alive_past_callers_release() {
+        use windows::core::Interface;
+        use windows::Win32::Foundation::HMODULE;
+        use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_11_0};
+        use windows::Win32::Graphics::Direct3D11::{D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION};
+
+        static STATE: ProbeState = std::sync::Mutex::new(Probes { results: Vec::new(), running: Vec::new() });
+        static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        static RELEASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+        fn hold_and_check(raw: *mut std::ffi::c_void, _: bool) -> Result<(), String> {
+            STARTED.store(true, std::sync::atomic::Ordering::Release);
+            while !RELEASE.load(std::sync::atomic::Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            // SAFETY: `DeviceRef` held inside `probe_in` must keep the D3D11 device alive even
+            // after the caller dropped its own reference.
+            unsafe {
+                let device = ID3D11Device::from_raw_borrowed(&raw).ok_or("null device")?;
+                let _ = device.GetDeviceRemovedReason();
+            }
+            Ok(())
+        }
+
+        let mut device = None;
+        unsafe {
+            D3D11CreateDevice(
+                None, D3D_DRIVER_TYPE_WARP, HMODULE::default(), D3D11_CREATE_DEVICE_FLAG(0),
+                Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION, Some(&mut device), None, None,
+            ).unwrap();
+        }
+        let device = device.unwrap();
+        let raw = device.as_raw();
+        let hold = crate::media::DeviceRef::of_device(raw);
+        assert_eq!(probe_in(&STATE, raw, hold, false, hold_and_check), None);
+        while !STARTED.load(std::sync::atomic::Ordering::Acquire) {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // Caller drops its own reference while the probe thread is still running.
+        drop(device);
+        RELEASE.store(true, std::sync::atomic::Ordering::Release);
         reset_in(&STATE);
     }
 

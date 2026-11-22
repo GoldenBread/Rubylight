@@ -480,7 +480,7 @@ mod windows_impl {
             let source = key.source;
             let plan = plan(capability, source.hdr(), source.ten_bit, key.hdr_display);
             let label = super::describe(capability, plan);
-            let raw = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
+            let raw = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
             // SAFETY: The renderer's live device and textures, used on the presenting thread.
             unsafe {
                 let device = ID3D11Device::from_raw_borrowed(&raw).ok_or("AI enhancement needs the Direct3D 11 renderer")?;

@@ -671,8 +671,8 @@ fn surface_direct_on_warp(in_place: bool, width: u32, height: u32, code: impl Fn
             BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, Some(data.as_ptr()), Some(&mut array)).unwrap();
         let array = array.unwrap();
         if in_place {
-            let view = pass.slice_view(&array, 1, 1, DXGI_FORMAT_AYUV).unwrap();
-            pass.bound = Some(BoundSurface { view: Some(view), parameters });
+            let mut locked = 0; let view = pass.slice_view(&array, 1, 1, DXGI_FORMAT_AYUV, &mut |op| { locked += 1; op() }).unwrap();
+            assert_eq!(locked, 1); pass.bound = Some(BoundSurface { view: Some(view), parameters });
         } else {
             let copy = SurfaceCopy::new(&pass.device, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, (width, height)).unwrap();
             context.CopySubresourceRegion(&copy.texture, 0, 0, 0, 0, &array, 1, None);
@@ -728,11 +728,11 @@ fn a_surface_read_in_place_is_also_drawn_into_the_texture_for_what_reads_it() {
         device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: width, Height: height, MipLevels: 1, ArraySize: 2, Format: DXGI_FORMAT_R8G8B8A8_UNORM,
             SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() }, Some(data.as_ptr()), Some(&mut array)).unwrap();
-        let view = pass.slice_view(array.as_ref().unwrap(), 7, 1, DXGI_FORMAT_AYUV).unwrap();
-        pass.bound = Some(BoundSurface { view: Some(view), parameters });
         let mut locked = 0;
-        pass.draw_bound_surface(&mut |submit| { locked += 1; submit() }).unwrap();
-        assert_eq!(locked, 1, "the submission of a surface read in place runs under the decoder's lock");
+        let view = pass.slice_view(array.as_ref().unwrap(), 7, 1, DXGI_FORMAT_AYUV, &mut |op| { locked += 1; op() }).unwrap();
+        let _ = pass.slice_view(array.as_ref().unwrap(), 7, 1, DXGI_FORMAT_AYUV, &mut |op| { locked += 1; op() }).unwrap();
+        assert_eq!(locked, 1, "slice_view locks only on creation"); pass.bound = Some(BoundSurface { view: Some(view), parameters });
+        pass.draw_bound_surface(&mut |submit| { locked += 1; submit() }).unwrap(); assert_eq!(locked, 2, "the submission of a surface read in place runs under the decoder's lock");
         read_back(&device, &context, &target)
     };
     for (at, (got, want)) in pixels.iter().zip(&expected).enumerate() {

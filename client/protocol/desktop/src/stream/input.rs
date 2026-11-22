@@ -145,7 +145,7 @@ impl Streaming {
                 SDL_EVENT_RENDER_DEVICE_RESET | SDL_EVENT_RENDER_DEVICE_LOST => {
                     let reason = render_device_ended(kind).expect("a render device event");
                     eprintln!("nightjar: {reason}");
-                    self.exit.get_or_insert(Exit::Ended(Some(reason.into())));
+                    self.note_render_device_lost(reason.into());
                 }
                 SDL_EVENT_KEY_DOWN | SDL_EVENT_KEY_UP => self.key(&event.key, direct_motion::sent(event), window, pads),
                 SDL_EVENT_TEXT_INPUT if !event.text.text.is_null() => {

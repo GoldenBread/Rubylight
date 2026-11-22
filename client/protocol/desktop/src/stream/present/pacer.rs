@@ -565,7 +565,7 @@ pub unsafe fn present_without_waiting(renderer: *mut SDL_Renderer, hold: std::ti
     use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_ERROR_WAS_STILL_DRAWING, DXGI_PRESENT_DO_NOT_WAIT};
     // SAFETY: caller guarantees `renderer` is the live D3D11 renderer of this thread.
     unsafe {
-        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return NoWait::Failed };
         if !SDL_FlushRenderer(renderer) { return NoWait::Failed; }
         let begun = std::time::Instant::now();
@@ -605,7 +605,7 @@ pub unsafe fn present_adaptive(renderer: *mut SDL_Renderer, latched: bool) -> bo
     use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_PRESENT, DXGI_PRESENT_ALLOW_TEARING};
     // SAFETY: caller guarantees `renderer` is the live D3D11 renderer of this thread.
     unsafe {
-        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return false };
         if !SDL_FlushRenderer(renderer) { return false; }
         let result = if latched { chain.Present(1, DXGI_PRESENT(0)) } else { chain.Present(0, DXGI_PRESENT_ALLOW_TEARING) };
@@ -634,7 +634,7 @@ pub unsafe fn flip_statistics(renderer: *mut SDL_Renderer) -> (bool, bool, bool)
     use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_FRAME_STATISTICS};
     // SAFETY: caller guarantees `renderer` is the live D3D11 renderer of this thread.
     unsafe {
-        let chain = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return (false, false, false) };
         let last = chain.GetLastPresentCount();
         let mut stats = DXGI_FRAME_STATISTICS::default();

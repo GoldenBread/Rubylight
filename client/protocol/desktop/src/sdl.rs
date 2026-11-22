@@ -1283,7 +1283,7 @@ pub fn display_caps(renderer: *mut SDL_Renderer) -> rubylight_protocol::control:
     {
         use windows::core::Interface;
         use windows::Win32::Graphics::Dxgi::{IDXGIOutput6, IDXGISwapChain};
-        let chain = renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
+        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
         let desc = unsafe {
             IDXGISwapChain::from_raw_borrowed(&chain)
                 .and_then(|chain| chain.GetContainingOutput().ok())

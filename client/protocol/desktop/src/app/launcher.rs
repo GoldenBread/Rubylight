@@ -269,11 +269,11 @@ impl App {
         let frame = Duration::from_secs_f32(1.0 / display_of(self.window).refresh_hz.max(30.0));
         // SAFETY: a live window, read on the main thread.
         let seen = animations_seen(unsafe { SDL_GetWindowFlags(self.window) });
-        let timeout = if seen { self.gui.repaint_in(frame).map_or(timeout, |wait| timeout.min(wait.as_millis() as i32)) } else { timeout };
+        let timeout = if self.is_renderer_lost() { 0 } else if seen { self.gui.repaint_in(frame).map_or(timeout, |wait| timeout.min(wait.as_millis() as i32)) } else { timeout };
         // SAFETY: event polling on the main thread.
         unsafe {
             let mut event: SDL_Event = std::mem::zeroed();
-            if SDL_WaitEventTimeout(&mut event, timeout) {
+            if if timeout > 0 { SDL_WaitEventTimeout(&mut event, timeout) } else { SDL_PollEvent(&mut event) } {
                 self.latency_input(&event);
                 self.handle_launcher_event(&event);
                 while SDL_PollEvent(&mut event) {
@@ -289,7 +289,7 @@ impl App {
         self.screen_awake.apply(Instant::now());
         // Before anything this frame launches or draws: SDL lost its device (`recover_renderer`).
         #[cfg(windows)]
-        if std::mem::take(&mut self.renderer_lost) {
+        if self.is_renderer_lost() {
             self.recover_renderer();
         }
         self.repeat_navigation();
@@ -761,25 +761,23 @@ impl App {
             SDL_SetRenderDrawColor(renderer, 0x14, 0x16, 0x1F, 255);
             SDL_RenderClear(renderer);
         });
-        if drew {
+        let mut present_failed = false;
+        if drew && !self.is_renderer_lost() {
             #[cfg(feature = "demo-library")]
             self.demo_drew();
             self.take_screenshot("launcher");
             // SAFETY: a live renderer.
-            unsafe { SDL_RenderPresent(self.renderer) };
-            self.launcher.latency_bench.presented(session_now_ns());
+            present_failed = !unsafe { SDL_RenderPresent(self.renderer) };
+            if !present_failed {
+                self.launcher.latency_bench.presented(session_now_ns());
+            }
             static FIRST_FRAME_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if let Some(line) = first_frame_line(&FIRST_FRAME_SAID, LAUNCH.get().map(|at| at.elapsed())) {
                 eprintln!("{line}");
             }
         }
-        // A present that lost the device queued SDL's event about it, and SDL's device pointer may
-        // be freed: the renderer is made again before a command launches on it.
-        // SAFETY: on the main thread; the events stay queued.
-        #[cfg(windows)]
-        if unsafe { SDL_HasEvents(SDL_EVENT_RENDER_DEVICE_RESET.0, SDL_EVENT_RENDER_DEVICE_LOST.0) } {
-            self.recover_renderer();
-        }
+        // Recover a lost Windows D3D11 device before a command launches on it.
+        self.recover_after_launcher_present(present_failed);
         for command in commands {
             self.command(command);
         }

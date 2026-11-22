@@ -238,23 +238,23 @@ fn flags(picture: &Picture, output: &Output, tonemap: bool) -> u32 {
         | u32::from(picture.transfer == Transfer::Hlg) << 7 | u32::from(picture.centred_chroma) << 8
 }
 
-/// A decoder texture's description, asked once for the texture and not for each picture: the
-/// decoder's pool is a few textures that live as long as it does. The reference keeps the texture
-/// alive, so no other texture takes its address (the key) while it is kept.
+/// Decoder texture descriptions, asked once per texture and cached across the shared texture ring.
+/// The references keep each cached texture alive so no other texture takes its address while cached.
 #[derive(Default)]
 pub(super) struct KeptDesc {
-    kept: Option<(usize, ID3D11Texture2D, D3D11_TEXTURE2D_DESC)>,
+    kept: Vec<(usize, ID3D11Texture2D, D3D11_TEXTURE2D_DESC)>,
     /// How often a texture was asked (a test counts it).
     #[cfg(test)]
     pub(super) queries: u32,
 }
 
 impl KeptDesc {
-    /// `texture`'s description, from what is kept when it is the texture kept.
+    /// `texture`'s description, from the ring cache when seen before.
     pub(super) fn of(&mut self, texture: &ID3D11Texture2D) -> D3D11_TEXTURE2D_DESC {
         let key = texture.as_raw() as usize;
-        if let Some((kept, _, desc)) = &self.kept
-            && *kept == key { return *desc; }
+        if let Some((_, _, desc)) = self.kept.iter().find(|(kept, _, _)| *kept == key) {
+            return *desc;
+        }
         #[cfg(test)]
         {
             self.queries += 1;
@@ -262,13 +262,19 @@ impl KeptDesc {
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         // SAFETY: A live texture.
         unsafe { texture.GetDesc(&mut desc) };
-        self.kept = Some((key, texture.clone(), desc));
+        if self.kept.len() >= 32 {
+            self.kept.remove(0);
+        }
+        self.kept.push((key, texture.clone(), desc));
         desc
     }
 
-    /// Lets go of the kept texture (a new stream, or the device goes).
-    pub(super) fn clear(&mut self) { self.kept = None; }
+    /// Lets go of the kept textures (a new stream, or the device goes).
+    pub(super) fn clear(&mut self) { self.kept.clear(); }
 }
+
+/// Cached SRVs for one `ID3D11Texture2D` in the shared texture ring.
+type TextureViews = (usize, ID3D11Texture2D, std::collections::HashMap<u32, Planes>);
 
 /// The pass. It records on a deferred context, so SDL's cached immediate-context state holds.
 pub struct Direct {
@@ -285,8 +291,8 @@ pub struct Direct {
     /// Read-back copies of the histogram, measured in turn and read once the GPU is done.
     staging: [ID3D11Buffer; 3],
     pending: std::collections::VecDeque<usize>,
-    /// The texture the views are for, and its views per slice.
-    views: Option<(usize, bool, std::collections::HashMap<u32, Planes>)>,
+    /// Cached shader resource views per texture across the shared texture ring (all sharing `ten_bit`).
+    views: Option<(bool, Vec<TextureViews>)>,
     /// What the picture's texture was last asked for.
     facts: KeptDesc,
     tracker: PeakTracker,
@@ -403,13 +409,24 @@ impl Direct {
     /// context lock when the picture is the decoder's texture.
     unsafe fn views(&mut self, picture: &Picture, lock: &mut dyn FnMut(&mut dyn FnMut())) -> Result<Planes, String> {
         let key = picture.texture as usize;
-        if !self.views.as_ref().is_some_and(|(texture, ten, _)| *texture == key && *ten == picture.ten_bit) {
-            self.views = Some((key, picture.ten_bit, Default::default()));
+        if !self.views.as_ref().is_some_and(|(ten, _)| *ten == picture.ten_bit) {
+            self.views = Some((picture.ten_bit, Vec::new()));
         }
-        let (_, _, views) = self.views.as_mut().unwrap();
-        if let Some(found) = views.get(&picture.slice) { return Ok(found.clone()); }
+        let (_, entries) = self.views.as_mut().unwrap();
         // SAFETY: caller guarantees `picture.texture` is a live `ID3D11Texture2D` on `self.device`.
         let texture = unsafe { ID3D11Texture2D::from_raw_borrowed(&picture.texture) }.ok_or("no picture texture")?;
+        let pos = match entries.iter().position(|(t, _, _)| *t == key) {
+            Some(pos) => pos,
+            None => {
+                if entries.len() >= 32 {
+                    entries.remove(0);
+                }
+                entries.push((key, texture.clone(), Default::default()));
+                entries.len() - 1
+            }
+        };
+        let (_, _, views) = &mut entries[pos];
+        if let Some(found) = views.get(&picture.slice) { return Ok(found.clone()); }
         let (device, slice, ten_bit) = (&self.device, picture.slice, picture.ten_bit);
         let mut made: Result<Planes, String> = Err("the picture's views were not made".into());
         // A view of the decoder's texture made beside its own use of the device removed Intel's
@@ -547,6 +564,9 @@ impl Direct {
     pub unsafe fn present(&mut self, renderer: *mut sdl3_sys::everything::SDL_Renderer, destination: &sdl3_sys::everything::SDL_FRect,
         picture: &Picture, tone: Tone, warp: &super::frame_warp::WarpDraw, lock: impl FnMut(&mut dyn FnMut())) -> Result<(), String> {
         use sdl3_sys::everything::*;
+        if crate::render_device::event_pending() {
+            return Err("the render device was lost".into());
+        }
         // SAFETY: caller guarantees `renderer` is the live D3D11 renderer on this thread.
         unsafe {
             let properties = SDL_GetRendererProperties(renderer);
@@ -716,6 +736,46 @@ mod tests {
             metadata.params[0].maxscl = [AVRational { num: 4000, den: 100000 }, AVRational { num: 9000, den: 100000 }, AVRational { num: 2500, den: 100000 }];
         }
         assert_eq!(frame.hdr10_plus_peak(), Some(900.0));
+    }
+
+    #[test]
+    fn kept_desc_caches_multiple_ring_textures_without_requerying() {
+        use windows::Win32::Foundation::HMODULE;
+        use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_11_0};
+        let mut device = None;
+        unsafe {
+            D3D11CreateDevice(
+                None, D3D_DRIVER_TYPE_WARP, HMODULE::default(), D3D11_CREATE_DEVICE_FLAG(0),
+                Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION, Some(&mut device), None, None,
+            ).unwrap();
+        }
+        let device = device.unwrap();
+        let textures: Vec<ID3D11Texture2D> = (0..24)
+            .map(|_| {
+                let mut tex = None;
+                unsafe {
+                    device.CreateTexture2D(
+                        &D3D11_TEXTURE2D_DESC {
+                            Width: 16, Height: 16, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_NV12,
+                            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                            Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                            ..Default::default()
+                        },
+                        None,
+                        Some(&mut tex),
+                    ).unwrap();
+                }
+                tex.unwrap()
+            })
+            .collect();
+        let mut kept = KeptDesc::default();
+        for round in 0..5 {
+            for tex in &textures {
+                let desc = kept.of(tex);
+                assert_eq!((desc.Width, desc.Height), (16, 16), "round {round}");
+            }
+        }
+        assert_eq!(kept.queries, 24, "each ring texture (up to 32) is queried once without thrashing");
     }
 }
 

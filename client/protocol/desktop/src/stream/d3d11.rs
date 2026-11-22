@@ -2,7 +2,7 @@ use std::ffi::c_void;
 
 use windows::core::{s, Interface, PCSTR};
 use windows::Win32::Graphics::Direct3D::{
-    Fxc::*, ID3DBlob, D3D11_SRV_DIMENSION_TEXTURE2DARRAY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D_SRV_DIMENSION_TEXTURE2D,
+    Fxc::*, ID3DBlob, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D_SRV_DIMENSION_TEXTURE2D,
 };
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
@@ -11,6 +11,9 @@ use windows::Win32::Graphics::Dxgi::IDXGISwapChain;
 use crate::media;
 use super::gpu_planes::{Lease, Pin, Planes};
 use super::pyrowave_sdk::fence_ready_within;
+
+mod surface_cache;
+use surface_cache::SurfaceCache;
 
 pub struct Filter {
     device: ID3D11Device,
@@ -146,10 +149,8 @@ pub struct PlanesPass {
     back_buffer: BackBuffer,
     /// The 4:4:4 surface `bind_surface` left, for `draw_direct` and `draw_bound_surface`.
     bound: Option<BoundSurface>,
-    /// Views of the decoder's readable textures' slices, for the one texture they are of.
-    surface_views: Option<(usize, SliceViews)>,
-    /// What `check_surface` asked the decoder's texture last, kept by the texture.
-    surface_facts: Option<SurfaceFacts>,
+    /// Ring caches for decoder texture descriptions and slice SRVs.
+    surface_cache: SurfaceCache,
     /// How often `check_surface` asked a texture (a test counts it).
     #[cfg(test)]
     surface_queries: u32,
@@ -157,18 +158,6 @@ pub struct PlanesPass {
     mask: super::frame_warp::D3d11Mask,
     mask_view: Option<ID3D11ShaderResourceView>,
 }
-
-/// A decoder texture's description, which `check_surface` asks once for the texture and not for
-/// each picture: the decoder's pool is a few textures that live as long as it does. The reference
-/// keeps the texture alive, so no other texture takes its address (the key) while it is kept.
-struct SurfaceFacts {
-    key: usize,
-    _texture: ID3D11Texture2D,
-    desc: D3D11_TEXTURE2D_DESC,
-}
-
-/// A decoder texture's slice views by slice and format.
-type SliceViews = std::collections::HashMap<(u32, i32), ID3D11ShaderResourceView>;
 
 /// The pixel shaders of the direct draw (planes_direct.hlsl) and its constants (b1).
 struct DirectShaders {
@@ -329,7 +318,7 @@ impl PlanesPass {
             Ok(Self { context, queue, deferred: deferred.unwrap(), device, target: [target_view],
                 vertex: vertex.unwrap(), fragment: fragment.unwrap(), constants: [constants], sampler: [sampler],
                 raster: raster.unwrap(), size: (desc.Width, desc.Height), views: Default::default(), owner: None, frame: None,
-                surface: None, surface_fragment: None, direct: None, back_buffer: BackBuffer::default(), bound: None, surface_views: None, surface_facts: None, #[cfg(test)] surface_queries: 0,
+                surface: None, surface_fragment: None, direct: None, back_buffer: BackBuffer::default(), bound: None, surface_cache: SurfaceCache::default(), #[cfg(test)] surface_queries: 0,
                 mask: Default::default(), mask_view: None })
         }
     }
@@ -390,8 +379,7 @@ impl PlanesPass {
     /// them may be gone, and they would keep a pool slice and its device alive.
     pub fn release_surface(&mut self) {
         self.bound = None;
-        self.surface_views = None;
-        self.surface_facts = None;
+        self.surface_cache.clear();
     }
 
     /// Lets go of SDL's back buffer, for a frame the pass does not draw into it (SDL may resize then).
@@ -418,6 +406,7 @@ impl PlanesPass {
     /// target, converted as a planar picture is: its slice is copied under FFmpeg's device lock
     /// into a texture of the pass, which the surface entry reads.
     pub fn draw_surface(&mut self, frame: &media::Frame, info: &media::FrameInfo, parameters: &[u32; 8]) -> Result<(), String> {
+        frame.wait_d3d11_ready()?;
         let surface = frame.d3d11_surface().ok_or("the picture is not a Direct3D 11 decoder surface")?;
         let raw = surface.texture;
         // SAFETY: The live frame's texture array, borrowed while the frame is.
@@ -467,26 +456,12 @@ impl PlanesPass {
     /// reads, a picture that fits, the pass's own device. The texture's description and the
     /// constants of the surface entries.
     fn check_surface(&mut self, source: &ID3D11Texture2D, slice: u32, size: (u32, u32), parameters: &[u32; 8]) -> Result<(D3D11_TEXTURE2D_DESC, [u32; 8]), String> {
-        let key = source.as_raw() as usize;
-        let desc = match &self.surface_facts {
-            Some(facts) if facts.key == key => facts.desc,
-            _ => {
-                #[cfg(test)]
-                {
-                    self.surface_queries += 1;
-                }
-                let mut desc = D3D11_TEXTURE2D_DESC::default();
-                // SAFETY: A live texture.
-                unsafe { source.GetDesc(&mut desc) };
-                // SAFETY: A live texture's device.
-                let device = unsafe { source.GetDevice() }.map_err(|e| format!("the decoder's texture has no device: {e}"))?;
-                if device.as_raw() != self.device.as_raw() {
-                    return Err("the decoder's pictures are on another Direct3D 11 device than the renderer's".into());
-                }
-                self.surface_facts = Some(SurfaceFacts { key, _texture: source.clone(), desc });
-                desc
-            }
-        };
+        let desc = self.surface_cache.desc(
+            &self.device,
+            source,
+            #[cfg(test)]
+            &mut self.surface_queries,
+        )?;
         let Some(parameters) = surface_parameters(*parameters, desc.Format) else {
             return Err(format!("the decoder's pictures are DXGI format {}, not a 4:4:4 format this pass reads", desc.Format.0));
         };
@@ -501,6 +476,7 @@ impl PlanesPass {
     /// frame and draws under its lock): true. Otherwise, or when no view of it can be made, its
     /// slice is copied now into the pass's texture (under the decoder's lock): false.
     pub fn bind_surface(&mut self, frame: &media::Frame, info: &media::FrameInfo, parameters: &[u32; 8], in_place: bool) -> Result<bool, String> {
+        frame.wait_d3d11_ready()?;
         let surface = frame.d3d11_surface().ok_or("the picture is not a Direct3D 11 decoder surface")?;
         let raw = surface.texture;
         // SAFETY: The live frame's texture array, borrowed while the frame is.
@@ -508,7 +484,7 @@ impl PlanesPass {
         let size = (info.width.max(0) as u32, info.height.max(0) as u32);
         if in_place && surface.readable {
             let (desc, parameters) = self.check_surface(source, surface.slice, size, parameters)?;
-            match self.slice_view(source, raw as usize, surface.slice, desc.Format) {
+            match self.slice_view(source, raw as usize, surface.slice, desc.Format, &mut |op: &mut dyn FnMut()| frame.with_shared_device_lock(op)) {
                 Ok(view) => {
                     self.bound = Some(BoundSurface { view: Some(view), parameters });
                     return Ok(true);
@@ -521,26 +497,10 @@ impl PlanesPass {
         Ok(false)
     }
 
-    /// A view of slice `slice` of the decoder's texture `source` as the surface entries read it.
-    fn slice_view(&mut self, source: &ID3D11Texture2D, key: usize, slice: u32, format: DXGI_FORMAT) -> Result<ID3D11ShaderResourceView, String> {
-        let (view_format, _) = surface_view(format).ok_or("not a 4:4:4 format")?;
-        if !self.surface_views.as_ref().is_some_and(|(texture, _)| *texture == key) {
-            self.surface_views = Some((key, Default::default()));
-        }
-        let (_, views) = self.surface_views.as_mut().unwrap();
-        if let Some(view) = views.get(&(slice, format.0)) {
-            return Ok(view.clone());
-        }
-        let mut view = None;
-        // SAFETY: A view of a live texture made with the shader resource bind flag.
-        unsafe {
-            self.device.CreateShaderResourceView(source, Some(&D3D11_SHADER_RESOURCE_VIEW_DESC { Format: view_format, ViewDimension: D3D11_SRV_DIMENSION_TEXTURE2DARRAY,
-                Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 { Texture2DArray: D3D11_TEX2D_ARRAY_SRV { MostDetailedMip: 0, MipLevels: 1, FirstArraySlice: slice, ArraySize: 1 } } }), Some(&mut view))
-                .map_err(|e| format!("a view of slice {slice}: {e}"))?;
-        }
-        let view = view.ok_or("no view")?;
-        views.insert((slice, format.0), view.clone());
-        Ok(view)
+    /// A view of slice `slice` of `source`, creating it under `lock` (FFmpeg's decoder lock).
+    fn slice_view(&mut self, source: &ID3D11Texture2D, key: usize, slice: u32, format: DXGI_FORMAT,
+        lock: &mut dyn FnMut(&mut dyn FnMut())) -> Result<ID3D11ShaderResourceView, String> {
+        self.surface_cache.slice_view(&self.device, source, key, slice, format, lock)
     }
 
     /// Draws the bound surface into the target (the RGBA64F texture), for what reads the texture.

@@ -480,7 +480,7 @@ pub unsafe fn finish_drawing(renderer: *mut sdl3_sys::everything::SDL_Renderer, 
     };
     // SAFETY: caller guarantees `renderer` is a live D3D11 renderer on the calling thread.
     unsafe {
-        let device_ptr = crate::sdl::renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
+        let device_ptr = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER);
         let device = ID3D11Device::from_raw_borrowed(&device_ptr)?;
         // SDL's own draws reach the context first.
         if !SDL_FlushRenderer(renderer) { return None; }

@@ -444,7 +444,7 @@ mod tests {
             width,
             height,
             chroma_packing: 0,
-            pictures: Pictures { ten_bit: true, chroma444: false, packed: false, waiting: 8, vaapi_node: VaapiNode::Default, width: 1920, height: 1080 },
+            pictures: Pictures { ten_bit: true, chroma444: false, packed: false, waiting: 8, vaapi_node: VaapiNode::Default, width: 1920, height: 1080, probe_only: false },
             threads: 4,
         }
     }

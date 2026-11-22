@@ -76,8 +76,8 @@ impl App {
         #[cfg(target_os = "linux")]
         sdl::prefer_immediate(self.renderer, stream::present::prefers_immediate(connecting.vrr(), sdl::video_driver() == "wayland", handheld::gamescope()));
         // SAFETY: window and renderer calls on the main thread.
+        self.set_render_vsync(stream::present::sync_interval(pacing, stream::present::VrrSync::Off));
         unsafe {
-            SDL_SetRenderVSync(self.renderer, stream::present::sync_interval(pacing, stream::present::VrrSync::Off));
             #[cfg(target_os = "linux")]
             eprintln!("nightjar: present mode {}", sdl::present_mode_name(sdl::present_mode(self.renderer)));
             let wanted = if facts.role == nightjar_core::http::AppRole::InputOnly { WindowMode::Windowed } else { settings.window_mode };
@@ -126,7 +126,7 @@ impl App {
         }
         streaming.watch_microphone_busy(self.waker.clone());
         self.pads.prepare_audio(settings.controllers && settings.controller_audio && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor);
-        streaming.display_changed(self.renderer);
+        if !self.is_renderer_lost() { streaming.display_changed(self.renderer); }
         if stream::own_lowering_at_start(manual_bitrate, settings.lower_bitrate.keeps(), settings.lower_bitrate.busy_controller(), streaming.quality_mode != config::QualityMode::Off) { streaming.enable_adaptive_bitrate(true); }
         if settings.controllers && streaming.facts.role != nightjar_core::http::AppRole::RemoteMonitor {
             self.pads.set_limit(streaming.facts.controller_limit);
@@ -275,14 +275,14 @@ impl App {
     /// The second screen ends with the first screen's stream, a reconnect aside, and a second
     /// screen that failed says so.
     pub(crate) fn second_screen_step(&mut self) {
-        let Some(companion) = self.second_screen.as_mut() else { return };
-        if self.streaming.is_none() && !self.attempts.is_connecting() {
+        if self.streaming.is_none() && !self.attempts.is_connecting() && !self.has_pending_device_reconnect() {
             if let Some(companion) = self.second_screen.take() {
                 companion.end();
                 self.second_screen_gone();
             }
             return;
         }
+        let Some(companion) = self.second_screen.as_mut() else { return };
         let failed = match companion.exited() {
             None => return,
             Some(Ok(status)) if status.success() => {
@@ -340,6 +340,7 @@ impl App {
         // The launcher didn't see the window move while the stream had it.
         self.gui.set_refresh(display_of(self.window).refresh_hz);
         self.open_play.left_by_player = matches!(exit, Exit::User | Exit::CloseWindow);
+        let renderer_lost = self.note_stream_end_device(&exit, &mut streaming);
         // Microphone only has no video; it is going once connected.
         let reconnect = if matches!(exit, Exit::Reconnect) || exit.retryable(streaming.video_started() || streaming.mic_only()) {
             // SAFETY: the window lives as long as the app.
@@ -355,6 +356,7 @@ impl App {
                 Exit::CloseWindow => "window closed".to_owned(),
                 Exit::Reconnect => "reconnecting".to_owned(),
                 Exit::NetworkReturned => "the network is back where the connection cannot carry on, reconnecting".to_owned(),
+                Exit::RenderDeviceLost(m) => m.clone(),
                 Exit::Terminated(code) => format!("host or transport error {code}"),
                 Exit::Ended(None) => "ended by the PC".to_owned(),
                 Exit::Ended(Some(m)) => m.clone(),
@@ -386,8 +388,9 @@ impl App {
         // Show decode time after streaming, Android's post-stream toast; a reconnect isn't an end.
         let decode_time = streaming.decode_time_line().filter(|_| self.launcher.settings.post_stream_decode_time && reconnect.is_none());
         // A reconnect of the same stream starts on the decoder this one leaves when its
-        // parameters still hold: a new codec context, device and frames pool are not made again.
-        streaming.keep_decoder_for_reconnect(reconnect.is_some());
+        // parameters still hold and the render device is still alive: never keep a decoder on a
+        // lost device.
+        streaming.keep_decoder_for_reconnect(reconnect.is_some() && !renderer_lost);
         // Kept for the next stream, which turns the PC's automatic bitrate on only after it is off.
         let stopped_host = streaming.host_id;
         let (stop, teardown) = streaming.finish(self.window, &mut self.pads);
@@ -407,47 +410,40 @@ impl App {
         } else {
             self.apply_launcher_window_mode();
         }
-        // SAFETY: a renderer call on the main thread.
-        unsafe { SDL_SetRenderVSync(self.renderer, 1); }
+        self.set_render_vsync(1);
         self.hosts.refresh_after_exit(host);
         // A reconnect asks the PC itself before it launches.
         if reconnect.is_none() && self.running {
             self.hosts.read_stream_move(host, streaming_app, matches!(exit, Exit::User | Exit::CloseWindow));
         }
-        if let Some(mut plan) = reconnect {
-            self.refresh_plan(&mut plan);
-            // The old session's threads join before the next launch's HTTP request (the connect
-            // thread joins this handle first): its control connection must be closed first, or
-            // the PC sees two of this device. So does any earlier session still stopping.
-            let mut stopping = self.take_stopping();
-            stopping.push(teardown);
-            self.attempts.begin(Connecting::start(plan, self.waker.clone(), stopping));
+        if let Some(plan) = reconnect {
+            self.start_or_defer_reconnect(plan, teardown, renderer_lost);
         } else {
             self.push_teardown(teardown);
-        // A failure the PC ended the stream on: the message waits for the poll just started,
-        // which carries the PC's own words for it where it says them.
-        let reason_poll = match exit {
-            Exit::Terminated(code) if stream::host_ended_stream(code) => self.hosts.polling_seq(host),
-            _ => None,
-        };
-        let ended = match exit {
-            Exit::CloseWindow => { self.running = false; None }
-            Exit::User | Exit::Reconnect | Exit::Ended(None) => None,
-            Exit::Terminated(code) => stream::termination_text(code),
-            // Not reconnecting after all (minimized since the network came back): the connection is lost.
-            Exit::NetworkReturned => stream::termination_text(nightjar_core::session::error::FAILED),
-            Exit::Ended(Some(message)) => Some(message),
-        };
-        match reason_poll {
-            Some(seq) if self.running => {
-                self.pending_end = Some(PendingEnd { host, seq, ended, health, until: Instant::now() + REASON_WAIT });
-            }
-            _ => {
-                if let Some((title, body)) = stream::doctor::after_stream(ended, health).filter(|_| self.running) {
-                    self.launcher.message(title, body);
+            // A failure the PC ended the stream on: the message waits for the poll just started,
+            // which carries the PC's own words for it where it says them.
+            let reason_poll = match exit {
+                Exit::Terminated(code) if stream::host_ended_stream(code) => self.hosts.polling_seq(host),
+                _ => None,
+            };
+            let ended = match exit {
+                Exit::CloseWindow => { self.running = false; None }
+                Exit::User | Exit::Reconnect | Exit::Ended(None) => None,
+                Exit::Terminated(code) => stream::termination_text(code),
+                // Not reconnecting after all (minimized since the network came back): the connection is lost.
+                Exit::NetworkReturned => stream::termination_text(nightjar_core::session::error::FAILED),
+                Exit::RenderDeviceLost(message) | Exit::Ended(Some(message)) => Some(message),
+            };
+            match reason_poll {
+                Some(seq) if self.running => {
+                    self.pending_end = Some(PendingEnd { host, seq, ended, health, until: Instant::now() + REASON_WAIT });
+                }
+                _ => {
+                    if let Some((title, body)) = stream::doctor::after_stream(ended, health).filter(|_| self.running) {
+                        self.launcher.message(title, body);
+                    }
                 }
             }
-        }
         }
         if let Some(line) = decode_time.filter(|_| self.running) {
             eprintln!("nightjar: {line}");
@@ -467,6 +463,7 @@ impl App {
         let display = display_of(window);
         // The stream menu animates at most once per refresh.
         let menu_frame = Duration::from_secs_f32(1.0 / display.refresh_hz.max(30.0));
+        let renderer_lost = self.is_renderer_lost() || self.streaming.as_ref().is_some_and(|(s, _)| s.device_removed());
         let Some((streaming, _)) = self.streaming.as_mut() else {
             return;
         };
@@ -483,18 +480,19 @@ impl App {
         if streaming.export_statistics {
             streaming.save_statistics(&self.store.dir().join("statistics"));
         }
+        let wait = if renderer_lost || streaming.exit.is_some() { stream::Wait::Now } else { streaming.wait() };
         // Wait for input, a decoded picture or the next present time.
         // SAFETY: event calls on the main thread.
         unsafe {
             let mut event: SDL_Event = std::mem::zeroed();
-            match streaming.wait() {
+            match wait {
                 stream::Wait::Now => {}
                 stream::Wait::For(duration) => {
                     // A held direction in the stream menu wakes the loop for its next step.
                     let duration = self.nav_repeat.next(Instant::now()).map_or(duration, |next| duration.min(next + Duration::from_millis(1)));
                     // An animating menu wakes it for egui's next frame, at most once per refresh.
                     let duration = match self.gui.repaint_in(menu_frame) {
-                        Some(wait) if streaming.menu_visible => duration.min(wait),
+                        Some(wait) if self.streaming.as_ref().is_some_and(|(s, _)| s.menu_visible) => duration.min(wait),
                         _ => duration,
                     };
                     if duration > Duration::from_micros(1500) {
@@ -520,9 +518,11 @@ impl App {
         } else {
             self.nav_repeat.clear();
         }
-        let Some((streaming, _)) = self.streaming.as_mut() else {
-            return;
-        };
+        let renderer_lost = self.is_renderer_lost() || self.streaming.as_ref().is_some_and(|(s, _)| s.device_removed());
+        let Some((streaming, _)) = self.streaming.as_mut() else { return };
+        if renderer_lost && streaming.exit.is_none() { streaming.note_render_device_lost(crate::render_device::lost_reason().into()); }
+        // Never touch the renderer once the device was lost or the stream already decided to exit.
+        if let Some(exit) = streaming.exit.take() { return self.finish_stream_exit(exit); }
         // Without a new picture (a still desktop, a paused game) the menu draws when egui asks.
         if streaming.menu_visible && self.gui.repaint_in(menu_frame).is_some_and(|wait| wait.is_zero()) {
             streaming.needs_redraw = true;
@@ -584,10 +584,10 @@ impl App {
         // The input filter sends controller input while the present waits (direct_motion.rs).
         let pads = streaming.direct_motion.lend(std::mem::take(&mut self.pads));
         let shortcuts = &mut self.launcher.shortcuts;
+        let mut shortcuts_changed = false;
         let screenshot = std::mem::take(&mut self.screenshot_requested);
         sdl::read_back_frames(renderer, screenshot);
         let dir = self.screenshot_dir.clone();
-        let mut shortcuts_changed = false;
         let main_renderer = self.renderer;
         let gui_overlay = &mut self.gui_overlay;
         streaming.present(renderer, |s, renderer| {
@@ -629,15 +629,7 @@ impl App {
             && streaming.exit.is_none() && auto.ran_its_time() {
                 streaming.exit = Some(Exit::User);
             }
-        if let Some(exit) = streaming.exit.take() {
-            let planned = matches!(exit, Exit::User);
-            self.end_stream(exit);
-            // A dropped stream may reconnect (end_stream started it); a failed reconnect ends the
-            // run through its message, in autostream_step.
-            let reconnecting = self.attempts.is_connecting();
-            if let Some(auto) = self.autostream.as_mut()
-                && !auto.stream_ended(planned, reconnecting) { self.running = false; }
-        }
+        if let Some(exit) = streaming.exit.take() { self.finish_stream_exit(exit); }
     }
 
     fn dispatch_stream_event(&mut self, event: &SDL_Event) {
@@ -690,9 +682,11 @@ impl App {
             && let Some((s, _)) = self.streaming.as_mut() {
                 s.needs_redraw = true;
             }
-        let Some((streaming, _)) = self.streaming.as_mut() else {
+        if self.is_renderer_lost() || self.streaming.as_ref().is_some_and(|(s, _)| s.device_removed()) {
+            if crate::render_device::is_exit_event(kind) && let Some((s, _)) = self.streaming.as_mut() { s.handle(event, self.window, self.renderer, &mut self.pads); }
             return;
-        };
+        }
+        let Some((streaming, _)) = self.streaming.as_mut() else { return };
         if matches!(kind, SDL_EVENT_WINDOW_HDR_STATE_CHANGED | SDL_EVENT_WINDOW_DISPLAY_CHANGED | SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED) {
             streaming.display_changed(self.renderer);
         }
