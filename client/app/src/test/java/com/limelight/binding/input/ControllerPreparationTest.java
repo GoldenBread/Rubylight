@@ -528,6 +528,8 @@ public class ControllerPreparationTest {
     }
 
     @Test public void onscreenOwnPlayerSendsAHandheldsBackAsGuideAndDeviceLessInputOnItsBuiltInPad() {
+        org.robolectric.Shadows.shadowOf(org.robolectric.RuntimeEnvironment.getApplication()).declareComponentUnbindable(
+                new android.content.ComponentName("com.nvidia.blakepairing", "com.nvidia.blakepairing.AccessoryService"));
         try (ActivityController<Activity> activity = Robolectric.buildActivity(Activity.class).create()) {
             addInputDevice(activity.get(), 2, true, JOYPAD);
             addInputDevice(activity.get(), 8, false, JOYPAD);
@@ -553,6 +555,8 @@ public class ControllerPreparationTest {
                         connection.events.get(connection.events.size() - 1));
                 builtIn.inputMap = 0;
                 assertTrue(handler.handleHandheldBackAsGuide(systemBack(android.view.KeyEvent.ACTION_UP)));
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+                        .idleFor(25, java.util.concurrent.TimeUnit.MILLISECONDS);
                 assertEquals("input 2 0", connection.events.get(connection.events.size() - 1));
                 for (String event : connection.events) assertFalse(event, event.startsWith("input 0 "));
 

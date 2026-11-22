@@ -656,12 +656,14 @@ impl Scanout {
             let bytes = ((canvas.w.max(0) as u32).min(buffer.width) * 4) as usize;
             let (from, from_pitch) = (canvas.pixels.cast::<u8>(), canvas.pitch.max(0) as usize);
             sync_overlay_bytes(
-                from,
-                from_pitch,
-                buffer.map,
-                buffer.pitch as usize,
-                rows,
-                bytes,
+                OverlayPlanes {
+                    src: from,
+                    src_pitch: from_pitch,
+                    dst: buffer.map,
+                    dst_pitch: buffer.pitch as usize,
+                    rows,
+                    row_bytes: bytes,
+                },
                 engaged.overlay.shown,
                 &mut engaged.overlay.last_canvas,
             )
@@ -836,22 +838,28 @@ impl Drop for Scanout {
     }
 }
 
-/// Copies `rows` x `row_bytes` from `src` (stride `src_pitch`) to `dst` (stride `dst_pitch`) and
-/// updates `cache` only when `!already_shown` or the pixels differ from `cache`.
-///
-/// # Safety
-/// `src` must be valid for `rows` rows of `row_bytes` at stride `src_pitch`, and `dst` must be
-/// valid for `rows` rows of `row_bytes` at stride `dst_pitch`.
-unsafe fn sync_overlay_bytes(
+struct OverlayPlanes {
     src: *const u8,
     src_pitch: usize,
     dst: *mut u8,
     dst_pitch: usize,
     rows: usize,
     row_bytes: usize,
+}
+
+/// Copies `rows` x `row_bytes` from `src` (stride `src_pitch`) to `dst` (stride `dst_pitch`) and
+/// updates `cache` only when `!already_shown` or the pixels differ from `cache`.
+///
+/// # Safety
+/// `planes.src` must be valid for `planes.rows` rows of `planes.row_bytes` at stride
+/// `planes.src_pitch`, and `planes.dst` must be valid for `planes.rows` rows of
+/// `planes.row_bytes` at stride `planes.dst_pitch`.
+unsafe fn sync_overlay_bytes(
+    planes: OverlayPlanes,
     already_shown: bool,
     cache: &mut Vec<u8>,
 ) -> bool {
+    let OverlayPlanes { src, src_pitch, dst, dst_pitch, rows, row_bytes } = planes;
     let total = rows * row_bytes;
     // SAFETY: caller guarantees `src` covers `rows` rows of `row_bytes` bytes at `src_pitch`.
     let unchanged = already_shown
@@ -912,25 +920,49 @@ mod tests {
         let mut dst = vec![0u8; 8];
         let mut cache = Vec::new();
         // First draw (not yet shown): copies into dst and caches.
-        let changed = unsafe { sync_overlay_bytes(src.as_ptr(), 4, dst.as_mut_ptr(), 4, 2, 4, false, &mut cache) };
+        let changed = unsafe {
+            sync_overlay_bytes(
+                OverlayPlanes { src: src.as_ptr(), src_pitch: 4, dst: dst.as_mut_ptr(), dst_pitch: 4, rows: 2, row_bytes: 4 },
+                false,
+                &mut cache,
+            )
+        };
         assert!(changed);
         assert_eq!(dst, src);
 
         // Identical pixels while already shown: skips dst copy (clear dst to prove it isn't touched).
         dst.fill(0xAA);
-        let changed = unsafe { sync_overlay_bytes(src.as_ptr(), 4, dst.as_mut_ptr(), 4, 2, 4, true, &mut cache) };
+        let changed = unsafe {
+            sync_overlay_bytes(
+                OverlayPlanes { src: src.as_ptr(), src_pitch: 4, dst: dst.as_mut_ptr(), dst_pitch: 4, rows: 2, row_bytes: 4 },
+                true,
+                &mut cache,
+            )
+        };
         assert!(!changed);
         assert_eq!(dst, vec![0xAA; 8], "write-combined buffer must not be written when unchanged");
 
         // Changing a single pixel copies again.
         src[5] = 99;
-        let changed = unsafe { sync_overlay_bytes(src.as_ptr(), 4, dst.as_mut_ptr(), 4, 2, 4, true, &mut cache) };
+        let changed = unsafe {
+            sync_overlay_bytes(
+                OverlayPlanes { src: src.as_ptr(), src_pitch: 4, dst: dst.as_mut_ptr(), dst_pitch: 4, rows: 2, row_bytes: 4 },
+                true,
+                &mut cache,
+            )
+        };
         assert!(changed);
         assert_eq!(dst, src);
 
         // Re-showing after the plane was hidden still copies even if pixels match cache.
         dst.fill(0x55);
-        let changed = unsafe { sync_overlay_bytes(src.as_ptr(), 4, dst.as_mut_ptr(), 4, 2, 4, false, &mut cache) };
+        let changed = unsafe {
+            sync_overlay_bytes(
+                OverlayPlanes { src: src.as_ptr(), src_pitch: 4, dst: dst.as_mut_ptr(), dst_pitch: 4, rows: 2, row_bytes: 4 },
+                false,
+                &mut cache,
+            )
+        };
         assert!(changed);
         assert_eq!(dst, src);
     }

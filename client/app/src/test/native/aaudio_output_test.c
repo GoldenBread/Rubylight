@@ -385,6 +385,11 @@ int main(void) {
     };
     JNIEnv env = &functions;
 
+    // Null stream handles must fail safely before stats/buffer calls touch AAudio callbacks.
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioStats(&env, NULL, handle) == NULL);
+    assert(Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioBuffer(NULL, NULL, handle, 768) == 0);
+    output.stream = (AAudioStream*)&output;
+
     Java_com_limelight_binding_audio_AndroidAudioRenderer_nativeAudioStats(&env, NULL, handle);
     assert(stats[1] == 4096);
     assert(stats[7] == 42);

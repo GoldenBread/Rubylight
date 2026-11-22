@@ -291,6 +291,6 @@ fn an_output_name_saved_by_an_older_version_is_not_trusted() {
 #[test]
 fn finish_drawing_returns_none_without_a_renderer() {
     // SAFETY: null renderer pointer returns None before dereferencing any D3D11 device.
-    let mut cache = DrawQuery::default();
+    let mut cache = DrawQuery::new();
     assert_eq!(unsafe { finish_drawing(std::ptr::null_mut(), std::time::Duration::from_millis(1), &mut cache) }, None);
 }

@@ -1195,7 +1195,7 @@ impl Streaming {
             phase_steady_windows: std::env::var("NIGHTJAR_PHASE_STEADY_WINDOWS").ok().and_then(|windows| windows.parse().ok()).unwrap_or(phase::STEADY_WINDOWS),
             scan_waits: (0, 0),
             scan_tally: scan_sync::Tally::default(),
-            scan_query: scan_sync::DrawQuery::default(),
+            scan_query: scan_sync::DrawQuery::new(),
             scan_settles: env_flag("NIGHTJAR_VRR_SETTLE") != Some(false),
             keeper: None,
             keeper_on: false,

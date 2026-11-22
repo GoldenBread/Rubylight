@@ -451,6 +451,20 @@ pub struct DrawQuery(Option<(usize, windows::Win32::Graphics::Direct3D11::ID3D11
 #[derive(Default)]
 pub struct DrawQuery;
 
+impl DrawQuery {
+    /// Creates an empty D3D11 query cache for the stream.
+    #[cfg(windows)]
+    pub const fn new() -> Self {
+        Self(None)
+    }
+
+    /// Creates a stub query cache on non-Windows hosts.
+    #[cfg(not(windows))]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
 /// Waits for the GPU to finish what this thread has drawn (a D3D11 event query behind the draws),
 /// so the present that follows is all that is left before the picture can be shown. Returns how
 /// long that took, None when it could not be asked or took longer than `limit`.

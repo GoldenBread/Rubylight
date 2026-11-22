@@ -114,11 +114,14 @@ public class MediaCodecPhaseReportTest {
             MediaCodec codec = MediaCodec.createDecoderByType("video/avc");
             try {
                 ReflectionHelpers.setField(renderer, "videoDecoder", codec);
-                // Refreshes long enough that the test's own delays stay inside one. With no host
-                // time the scheduler stamps the frame due at its ready time plus the deadline.
+                // Refreshes long enough that the test's own delays stay inside one, and schedule
+                // on the grid so dueNs carries the scheduled presentation lead (deadlineNs).
                 long vsyncNs = System.nanoTime();
                 long intervalNs = 10_000_000_000L;
                 long deadlineNs = 4_000_000_000L;
+                HostFrameClock clock = ReflectionHelpers.getField(renderer, "hostFrameClock");
+                ReflectionHelpers.setField(clock, "scheduling", true);
+                clock.onQueued(1, 1000);
                 ReflectionHelpers.setField(renderer, "vsyncTimeNs", vsyncNs);
                 ReflectionHelpers.setField(renderer, "vsyncIntervalNs", intervalNs);
                 ReflectionHelpers.setField(renderer, "vsyncPresentationDeadlineNs", deadlineNs);
@@ -395,6 +398,17 @@ public class MediaCodecPhaseReportTest {
             slacks.add(slackNs);
             intervals.add(intervalNs);
             return false;
+        }
+        @Implementation protected static boolean presentClockScheduleOnGrid(long hostUs, long readyNs,
+                long anchorNs, long intervalNs, long leadNs, long slackNs, long[] out) {
+            out[0] = readyNs;
+            out[1] = anchorNs + intervalNs;
+            out[2] = 1;
+            out[3] = 0;
+            out[4] = 0;
+            out[5] = -1;
+            out[6] = 0;
+            return true;
         }
     }
 
