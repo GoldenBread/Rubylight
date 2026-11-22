@@ -277,7 +277,7 @@ impl<'de> Deserialize<'de> for NativeLibrary {
                 .filter_map(|name| name.as_str().map(str::to_owned))
                 .collect();
             if !names.is_empty() {
-                collections.insert(id, names);
+                collections.insert(id, names.clone());
             }
             if let Some(fields) = game.as_object_mut() {
                 if fields.get("last_played").is_some_and(|v| !v.is_u64()) {
@@ -286,11 +286,12 @@ impl<'de> Deserialize<'de> for NativeLibrary {
                 if fields.get("playtime_minutes").is_some_and(|v| !v.is_u64()) {
                     fields.remove("playtime_minutes");
                 }
-                if fields
-                    .get("collections")
-                    .is_some_and(|v| !v.as_array().is_some_and(|a| a.iter().all(serde_json::Value::is_string)))
-                {
-                    fields.remove("collections");
+                if fields.contains_key("collections") {
+                    if names.is_empty() {
+                        fields.remove("collections");
+                    } else {
+                        fields.insert("collections".into(), names.into());
+                    }
                 }
             }
         }
@@ -848,6 +849,52 @@ mod tests {
                 Err(Error::Malformed(_))
             ));
         }
+    }
+
+    #[test]
+    fn native_library_keeps_mixed_collections_consistent() {
+        let body = r#"{
+            "revision": "r1",
+            "games": [
+                {
+                    "install_id": "mixed",
+                    "app_id": 1,
+                    "title": "Mixed",
+                    "running": false,
+                    "artwork": {"cover": "/c", "version": "v"},
+                    "collections": ["Action", 123, null, "RPG"]
+                },
+                {
+                    "install_id": "bad-arr",
+                    "app_id": 2,
+                    "title": "BadArr",
+                    "running": false,
+                    "artwork": {"cover": "/c", "version": "v"},
+                    "collections": [123, null]
+                },
+                {
+                    "install_id": "not-arr",
+                    "app_id": 3,
+                    "title": "NotArr",
+                    "running": false,
+                    "artwork": {"cover": "/c", "version": "v"},
+                    "collections": "Nope"
+                }
+            ]
+        }"#;
+        let parsed: NativeLibrary = serde_json::from_str(body).unwrap();
+        assert_eq!(
+            parsed.collections.get("mixed").map(Vec::as_slice),
+            Some(&["Action".to_owned(), "RPG".to_owned()][..])
+        );
+        assert_eq!(
+            parsed.library.games[0].collections,
+            vec!["Action".to_owned(), "RPG".to_owned()]
+        );
+        assert!(!parsed.collections.contains_key("bad-arr"));
+        assert!(parsed.library.games[1].collections.is_empty());
+        assert!(!parsed.collections.contains_key("not-arr"));
+        assert!(parsed.library.games[2].collections.is_empty());
     }
 
     #[test]

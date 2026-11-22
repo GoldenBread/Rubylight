@@ -35,7 +35,8 @@ fn plane_format(ten_bit: bool) -> SDL_GPUTextureFormat {
 /// # Safety
 /// `device` must be a live GPU device of the calling thread's renderer.
 unsafe fn create_shader(device: *mut SDL_GPUDevice) -> *mut SDL_GPUShader {
-    SDL_CreateGPUShader(device, &super::shader::Shader::Planes.info())
+    // SAFETY: Caller guarantees `device` is a live GPU device on its renderer's thread.
+    unsafe { SDL_CreateGPUShader(device, &super::shader::Shader::Planes.info()) }
 }
 
 pub struct PlanesPass {
@@ -117,14 +118,17 @@ impl PlanesPass {
         if device.is_null() {
             return Err("PyroWave GPU decoding needs the SDL GPU renderer".to_owned());
         }
-        if !SDL_GPUTextureSupportsFormat(device, plane_format(ten_bit), SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER) {
-            return Err(format!("the GPU renderer cannot sample {} planes", if ten_bit { "R16" } else { "R8" }));
+        // SAFETY: Caller guarantees `device` is a live SDL_GPUDevice on its own thread.
+        unsafe {
+            if !SDL_GPUTextureSupportsFormat(device, plane_format(ten_bit), SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER) {
+                return Err(format!("the GPU renderer cannot sample {} planes", if ten_bit { "R16" } else { "R8" }));
+            }
+            let shader = create_shader(device);
+            if shader.is_null() {
+                return Err(format!("the PyroWave plane shader does not load: {}", crate::sdl::error()));
+            }
+            SDL_ReleaseGPUShader(device, shader);
         }
-        let shader = create_shader(device);
-        if shader.is_null() {
-            return Err(format!("the PyroWave plane shader does not load: {}", crate::sdl::error()));
-        }
-        SDL_ReleaseGPUShader(device, shader);
         Ok(())
     }
 
@@ -133,7 +137,8 @@ impl PlanesPass {
     /// # Safety
     /// `renderer` must be the live SDL GPU renderer of the calling thread.
     pub unsafe fn new(renderer: *mut SDL_Renderer, config: GpuConfig) -> Result<Self, String> {
-        Self::with_planes(renderer, [0, 1, 2].map(|plane| config.plane_size(plane)), config.ten_bit)
+        // SAFETY: Caller guarantees `renderer` is live on the calling thread.
+        unsafe { Self::with_planes(renderer, [0, 1, 2].map(|plane| config.plane_size(plane)), config.ten_bit) }
     }
 
     /// The pass for the decoder's `planes`: one without plane textures of its own when it samples
@@ -143,10 +148,13 @@ impl PlanesPass {
     /// As `new`.
     pub unsafe fn for_planes(renderer: *mut SDL_Renderer, planes: &Planes) -> Result<Self, String> {
         let config = planes.config();
-        if !samples_in_place(planes) {
-            return Self::new(renderer, config);
+        // SAFETY: Caller guarantees `renderer` is live on the calling thread.
+        unsafe {
+            if !samples_in_place(planes) {
+                return Self::new(renderer, config);
+            }
+            Self::shader_only(renderer, [0, 1, 2].map(|plane| config.plane_size(plane)), if config.ten_bit { 2 } else { 1 })
         }
-        Self::shader_only(renderer, [0, 1, 2].map(|plane| config.plane_size(plane)), if config.ten_bit { 2 } else { 1 })
     }
 
     /// Whether the pass reads `planes` the way it was made for (`for_planes`): in place, or from
@@ -160,7 +168,8 @@ impl PlanesPass {
     /// # Safety
     /// `renderer` must be the live SDL GPU renderer of the calling thread.
     pub unsafe fn for_frames(renderer: *mut SDL_Renderer, layout: crate::media::PlanarLayout) -> Result<Self, String> {
-        Self::with_planes(renderer, [0, 1, 2].map(|plane| layout.plane_size(plane)), layout.ten_bit)
+        // SAFETY: Caller guarantees `renderer` is live on the calling thread.
+        unsafe { Self::with_planes(renderer, [0, 1, 2].map(|plane| layout.plane_size(plane)), layout.ten_bit) }
     }
 
     /// The pass for Vulkan video pictures: it draws `textures`, the luma and the interleaved chroma
@@ -171,9 +180,12 @@ impl PlanesPass {
     /// `renderer` must be the live SDL GPU renderer of the calling thread, and `textures` live
     /// textures of its device that outlive the pass.
     pub unsafe fn for_vulkan(renderer: *mut SDL_Renderer, textures: [*mut SDL_GPUTexture; 2]) -> Result<Self, String> {
-        let mut pass = Self::shader_only(renderer, [(0, 0); 3], 1)?;
-        pass.bind(renderer, [textures[0], textures[1], textures[1]])?;
-        Ok(pass)
+        // SAFETY: Caller guarantees `renderer` and `textures` are live and `textures` outlive the pass.
+        unsafe {
+            let mut pass = Self::shader_only(renderer, [(0, 0); 3], 1)?;
+            pass.bind(renderer, [textures[0], textures[1], textures[1]])?;
+            Ok(pass)
+        }
     }
 
     /// Draws the textures a `for_vulkan` pass was made with, converted, over all of `target`
@@ -182,7 +194,8 @@ impl PlanesPass {
     /// # Safety
     /// `renderer` and `target` must be live and the pass the one made on this renderer.
     pub unsafe fn draw_bound(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, parameters: &[u32; 8]) -> Result<(), String> {
-        self.convert(renderer, target, parameters, None)
+        // SAFETY: Caller guarantees `renderer` and `target` are live and match this pass.
+        unsafe { self.convert(renderer, target, parameters, None) }
     }
 
     /// The next draws read the planes `vulkan_video::Planes::copy` copied into (what `for_vulkan` bound).
@@ -198,39 +211,45 @@ impl PlanesPass {
     /// As `draw_bound`, and `textures` live textures of the renderer's device that outlive the pass.
     pub unsafe fn draw_sampled_textures(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, textures: [*mut SDL_GPUTexture; 2], parameters: &[u32; 8]) -> Result<(), String> {
         let key = textures[0] as usize;
-        let state = match self.sampled_states.get(&key) {
-            Some(&(state, _)) => state,
-            None => {
-                let textures = [textures[0], textures[1], textures[1]];
-                let state = self.make_state(renderer, textures)?;
-                self.sampled_states.insert(key, (state, textures));
-                state
-            }
-        };
-        self.sampled_active = state;
-        self.convert(renderer, target, parameters, None)
+        // SAFETY: Caller guarantees `renderer`, `target`, and `textures` are live and outlive the pass.
+        unsafe {
+            let state = match self.sampled_states.get(&key) {
+                Some(&(state, _)) => state,
+                None => {
+                    let textures = [textures[0], textures[1], textures[1]];
+                    let state = self.make_state(renderer, textures)?;
+                    self.sampled_states.insert(key, (state, textures));
+                    state
+                }
+            };
+            self.sampled_active = state;
+            self.convert(renderer, target, parameters, None)
+        }
     }
 
     unsafe fn with_planes(renderer: *mut SDL_Renderer, sizes: [(u32, u32); 3], ten_bit: bool) -> Result<Self, String> {
-        let mut pass = Self::shader_only(renderer, sizes, if ten_bit { 2 } else { 1 })?;
-        let device = pass.device;
-        for (plane, texture) in pass.textures.iter_mut().enumerate() {
-            let (width, height) = sizes[plane];
-            *texture = SDL_CreateGPUTexture(device, &SDL_GPUTextureCreateInfo {
-                r#type: SDL_GPU_TEXTURETYPE_2D, format: plane_format(ten_bit), usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                width, height, layer_count_or_depth: 1, num_levels: 1, sample_count: SDL_GPU_SAMPLECOUNT_1, ..Default::default() });
-            if texture.is_null() {
-                return Err(format!("a {width}x{height} plane texture cannot be created: {}", crate::sdl::error()));
+        // SAFETY: Caller guarantees `renderer` is live on the calling thread.
+        unsafe {
+            let mut pass = Self::shader_only(renderer, sizes, if ten_bit { 2 } else { 1 })?;
+            let device = pass.device;
+            for (plane, texture) in pass.textures.iter_mut().enumerate() {
+                let (width, height) = sizes[plane];
+                *texture = SDL_CreateGPUTexture(device, &SDL_GPUTextureCreateInfo {
+                    r#type: SDL_GPU_TEXTURETYPE_2D, format: plane_format(ten_bit), usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                    width, height, layer_count_or_depth: 1, num_levels: 1, sample_count: SDL_GPU_SAMPLECOUNT_1, ..Default::default() });
+                if texture.is_null() {
+                    return Err(format!("a {width}x{height} plane texture cannot be created: {}", crate::sdl::error()));
+                }
             }
+            let bytes: usize = (0..3).map(|plane| pass.plane_bytes(plane)).sum();
+            pass.transfer = SDL_CreateGPUTransferBuffer(device, &SDL_GPUTransferBufferCreateInfo {
+                usage: SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size: bytes as u32, ..Default::default() });
+            if pass.transfer.is_null() {
+                return Err(format!("the plane transfer buffer cannot be created: {}", crate::sdl::error()));
+            }
+            pass.bind(renderer, pass.textures)?;
+            Ok(pass)
         }
-        let bytes: usize = (0..3).map(|plane| pass.plane_bytes(plane)).sum();
-        pass.transfer = SDL_CreateGPUTransferBuffer(device, &SDL_GPUTransferBufferCreateInfo {
-            usage: SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size: bytes as u32, ..Default::default() });
-        if pass.transfer.is_null() {
-            return Err(format!("the plane transfer buffer cannot be created: {}", crate::sdl::error()));
-        }
-        pass.bind(renderer, pass.textures)?;
-        Ok(pass)
     }
 
     /// The pass's shader and sampler, without textures or a render state yet.
@@ -244,16 +263,19 @@ impl PlanesPass {
             transfer: ptr::null_mut(), state: ptr::null_mut(), bound: [ptr::null_mut(); 3], sizes, sample_bytes, wrapped: None, handover: Handover::default(),
             sampled_states: Default::default(), sampled_active: ptr::null_mut(), mask: ptr::null_mut(), mask_made: None, mask_failed: false,
         };
-        pass.shader = create_shader(device);
-        if pass.shader.is_null() {
-            return Err(format!("the plane shader does not load: {}", crate::sdl::error()));
-        }
-        pass.sampler = SDL_CreateGPUSampler(device, &SDL_GPUSamplerCreateInfo {
-            min_filter: SDL_GPU_FILTER_LINEAR, mag_filter: SDL_GPU_FILTER_LINEAR, mipmap_mode: SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
-            address_mode_u: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE, address_mode_v: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-            address_mode_w: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE, ..Default::default() });
-        if pass.sampler.is_null() {
-            return Err(format!("the plane sampler cannot be created: {}", crate::sdl::error()));
+        // SAFETY: `device` is the live GPU device of `renderer` on the calling thread.
+        unsafe {
+            pass.shader = create_shader(device);
+            if pass.shader.is_null() {
+                return Err(format!("the plane shader does not load: {}", crate::sdl::error()));
+            }
+            pass.sampler = SDL_CreateGPUSampler(device, &SDL_GPUSamplerCreateInfo {
+                min_filter: SDL_GPU_FILTER_LINEAR, mag_filter: SDL_GPU_FILTER_LINEAR, mipmap_mode: SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+                address_mode_u: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE, address_mode_v: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+                address_mode_w: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE, ..Default::default() });
+            if pass.sampler.is_null() {
+                return Err(format!("the plane sampler cannot be created: {}", crate::sdl::error()));
+            }
         }
         // The shader reads the mask only while Frame Warp shifts with one, so its texture waits
         // for the first (`upload_mask`): until then the slot holds a plane.
@@ -262,7 +284,8 @@ impl PlanesPass {
 
     /// The render state drawing `textures` in the shader's three plane slots.
     unsafe fn bind(&mut self, renderer: *mut SDL_Renderer, textures: [*mut SDL_GPUTexture; 3]) -> Result<(), String> {
-        self.state = self.make_state(renderer, textures)?;
+        // SAFETY: Caller guarantees `renderer` and `textures` are live on the calling thread.
+        self.state = unsafe { self.make_state(renderer, textures) }?;
         self.bound = textures;
         Ok(())
     }
@@ -272,30 +295,33 @@ impl PlanesPass {
     /// it lets the state go.
     unsafe fn rebind_mask(&mut self) -> Result<(), String> {
         let renderer = self.renderer;
-        if !self.state.is_null() {
-            let state = self.make_state(renderer, self.bound)?;
-            SDL_DestroyGPURenderState(std::mem::replace(&mut self.state, state));
-        }
-        let sets = self.wrapped.as_ref().map(|wrapped| wrapped.sets.clone()).unwrap_or_default();
-        for (set, textures) in sets.into_iter().enumerate() {
-            let Some(old) = self.wrapped.as_ref().and_then(|wrapped| wrapped.states.get(set).copied()) else { break };
-            if old.is_null() {
-                continue;
+        // SAFETY: `renderer` and its render states are live on the calling thread.
+        unsafe {
+            if !self.state.is_null() {
+                let state = self.make_state(renderer, self.bound)?;
+                SDL_DestroyGPURenderState(std::mem::replace(&mut self.state, state));
             }
-            let state = self.make_state(renderer, textures)?;
-            if let Some(wrapped) = self.wrapped.as_mut() {
-                wrapped.states[set] = state;
+            let sets = self.wrapped.as_ref().map(|wrapped| wrapped.sets.clone()).unwrap_or_default();
+            for (set, textures) in sets.into_iter().enumerate() {
+                let Some(old) = self.wrapped.as_ref().and_then(|wrapped| wrapped.states.get(set).copied()) else { break };
+                if old.is_null() {
+                    continue;
+                }
+                let state = self.make_state(renderer, textures)?;
+                if let Some(wrapped) = self.wrapped.as_mut() {
+                    wrapped.states[set] = state;
+                }
+                SDL_DestroyGPURenderState(old);
             }
-            SDL_DestroyGPURenderState(old);
-        }
-        let sampled: Vec<_> = self.sampled_states.iter().map(|(&key, &made)| (key, made)).collect();
-        for (key, (old, textures)) in sampled {
-            let state = self.make_state(renderer, textures)?;
-            self.sampled_states.insert(key, (state, textures));
-            if self.sampled_active == old {
-                self.sampled_active = state;
+            let sampled: Vec<_> = self.sampled_states.iter().map(|(&key, &made)| (key, made)).collect();
+            for (key, (old, textures)) in sampled {
+                let state = self.make_state(renderer, textures)?;
+                self.sampled_states.insert(key, (state, textures));
+                if self.sampled_active == old {
+                    self.sampled_active = state;
+                }
+                SDL_DestroyGPURenderState(old);
             }
-            SDL_DestroyGPURenderState(old);
         }
         Ok(())
     }
@@ -304,8 +330,11 @@ impl PlanesPass {
         // The fourth slot is Frame Warp's HUD mask; the shader loads it, so the sampler is any.
         let mask = if self.mask.is_null() { textures[0] } else { self.mask };
         let bindings = [textures[0], textures[1], textures[2], mask].map(|texture| SDL_GPUTextureSamplerBinding { texture, sampler: self.sampler });
-        let state = SDL_CreateGPURenderState(renderer, &SDL_GPURenderStateCreateInfo {
-            fragment_shader: self.shader, num_sampler_bindings: 4, sampler_bindings: bindings.as_ptr(), ..Default::default() });
+        // SAFETY: Caller guarantees `renderer` and `textures` are live on the calling thread.
+        let state = unsafe {
+            SDL_CreateGPURenderState(renderer, &SDL_GPURenderStateCreateInfo {
+                fragment_shader: self.shader, num_sampler_bindings: 4, sampler_bindings: bindings.as_ptr(), ..Default::default() })
+        };
         if state.is_null() {
             return Err(format!("the plane render state cannot be created: {}", crate::sdl::error()));
         }
@@ -338,22 +367,30 @@ impl PlanesPass {
             if !self.suits(lease.planes()) {
                 return Err("the plane pass was made for the other way of reading the decoder's images".into());
             }
-            if images.handoff() == PlaneHandoff::Sample {
-                return self.draw_sampled(renderer, target, lease, &images, parameters, stages);
-            }
-            return self.draw_shared(renderer, target, lease, &images, parameters, stages);
+            // SAFETY: Caller guarantees `renderer` and `target` are live and match this pass.
+            return unsafe {
+                if images.handoff() == PlaneHandoff::Sample {
+                    self.draw_sampled(renderer, target, lease, &images, parameters, stages)
+                } else {
+                    self.draw_shared(renderer, target, lease, &images, parameters, stages)
+                }
+            };
         }
         if self.textures[0].is_null() {
             return Err("the plane pass was made for the decoder's images, not CPU planes".into());
         }
         let bytes = [0, 1, 2].map(|plane| self.plane_bytes(plane));
-        self.draw_with(renderer, target, parameters, Some(stages), |mapped, offsets| {
-            lease.with_buffers(|buffers| {
-                for (plane, buffer) in buffers.iter().enumerate() {
-                    ptr::copy_nonoverlapping(buffer.as_ptr(), mapped.add(offsets[plane]), bytes[plane]);
-                }
-            });
-        })
+        // SAFETY: Caller guarantees `renderer` and `target` are live; `draw_with` maps `transfer` for `bytes`.
+        unsafe {
+            self.draw_with(renderer, target, parameters, Some(stages), |mapped, offsets| {
+                lease.with_buffers(|buffers| {
+                    for (plane, buffer) in buffers.iter().enumerate() {
+                        // SAFETY: `mapped` holds at least `offsets[plane] + bytes[plane]` bytes and `buffer` holds `bytes[plane]`.
+                        unsafe { ptr::copy_nonoverlapping(buffer.as_ptr(), mapped.add(offsets[plane]), bytes[plane]); }
+                    }
+                });
+            })
+        }
     }
 
     /// `draw` for a set in the decoder's images: copies it into the plane textures on the GPU,
@@ -361,29 +398,32 @@ impl PlanesPass {
     /// decoder can write it again as soon as the copy is done, not after the draw.
     unsafe fn draw_shared(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, images: &SharedImages, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
         let step = Instant::now();
-        if !SDL_FlushRenderer(renderer) {
-            return Err(format!("the renderer cannot flush: {}", crate::sdl::error()));
+        // SAFETY: Caller guarantees `renderer` and `target` are live on the calling thread.
+        unsafe {
+            if !SDL_FlushRenderer(renderer) {
+                return Err(format!("the renderer cannot flush: {}", crate::sdl::error()));
+            }
+            let sources = self.wrap(lease.planes(), images)?.sets[lease.set()];
+            let commands = SDL_AcquireGPUCommandBuffer(self.device);
+            if commands.is_null() {
+                return Err(format!("no GPU command buffer for the plane copy: {}", crate::sdl::error()));
+            }
+            let copy = SDL_BeginGPUCopyPass(commands);
+            for (plane, source) in sources.into_iter().enumerate() {
+                let (width, height) = self.sizes[plane];
+                SDL_CopyGPUTextureToTexture(copy,
+                    &SDL_GPUTextureLocation { texture: source, ..Default::default() },
+                    &SDL_GPUTextureLocation { texture: self.textures[plane], ..Default::default() },
+                    width, height, 1, true);
+            }
+            SDL_EndGPUCopyPass(copy);
+            if !SDL_SubmitGPUCommandBuffer(commands) {
+                return Err(format!("the plane copy cannot be submitted: {}", crate::sdl::error()));
+            }
+            lease.release_after(images.signal_reuse()?);
+            stages.add(super::pyrowave_gpu::UPLOAD, step);
+            self.convert(renderer, target, parameters, Some(stages))
         }
-        let sources = self.wrap(lease.planes(), images)?.sets[lease.set()];
-        let commands = SDL_AcquireGPUCommandBuffer(self.device);
-        if commands.is_null() {
-            return Err(format!("no GPU command buffer for the plane copy: {}", crate::sdl::error()));
-        }
-        let copy = SDL_BeginGPUCopyPass(commands);
-        for (plane, source) in sources.into_iter().enumerate() {
-            let (width, height) = self.sizes[plane];
-            SDL_CopyGPUTextureToTexture(copy,
-                &SDL_GPUTextureLocation { texture: source, ..Default::default() },
-                &SDL_GPUTextureLocation { texture: self.textures[plane], ..Default::default() },
-                width, height, 1, true);
-        }
-        SDL_EndGPUCopyPass(copy);
-        if !SDL_SubmitGPUCommandBuffer(commands) {
-            return Err(format!("the plane copy cannot be submitted: {}", crate::sdl::error()));
-        }
-        lease.release_after(images.signal_reuse()?);
-        stages.add(super::pyrowave_gpu::UPLOAD, step);
-        self.convert(renderer, target, parameters, Some(stages))
     }
 
     /// `draw` for a set sampled in place: takes the picture's lease over, makes the set readable
@@ -391,55 +431,61 @@ impl PlanesPass {
     /// then draws from it (now, into `target`, or at present time).
     unsafe fn draw_sampled(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, lease: &Lease, images: &Arc<SharedImages>, parameters: &[u32; 8], stages: &mut Stages<2>) -> Result<(), String> {
         let step = Instant::now();
-        self.wrap(lease.planes(), images)?;
-        let next = lease.hand_over().ok_or("the picture's plane set was given back already")?;
-        self.handover.show(&mut Sets { renderer, images: images.as_ref() }, next)?;
-        stages.add(super::pyrowave_gpu::UPLOAD, step);
-        self.convert(renderer, target, parameters, Some(stages))
+        // SAFETY: Caller guarantees `renderer` and `target` are live on the calling thread.
+        unsafe {
+            self.wrap(lease.planes(), images)?;
+            let next = lease.hand_over().ok_or("the picture's plane set was given back already")?;
+            self.handover.show(&mut Sets { renderer, images: images.as_ref() }, next)?;
+            stages.add(super::pyrowave_gpu::UPLOAD, step);
+            self.convert(renderer, target, parameters, Some(stages))
+        }
     }
 
     /// The textures wrapping each plane set of `planes`' images (and, sampled in place, a render
     /// state per set), made on first use. Those of earlier planes (an earlier decoder's) are
     /// released first, the set held from them given back.
     unsafe fn wrap(&mut self, planes: &Arc<Planes>, images: &SharedImages) -> Result<&Wrapped, String> {
-        if self.wrapped.as_ref().is_some_and(|wrapped| !Arc::ptr_eq(&wrapped.planes, planes)) {
-            self.unwrap();
-        }
-        if self.wrapped.is_none() {
-            let config = images.config();
-            let sampled = images.handoff() == PlaneHandoff::Sample;
-            // Sampled, SDL expects the image in SHADER_READ_ONLY_OPTIMAL whenever it draws it (the
-            // held set is, `SharedImages::sampled`); as compute storage, in GENERAL, where the
-            // decoder leaves it, for the copy.
-            let usage = if sampled { SDL_GPU_TEXTUREUSAGE_SAMPLER } else { SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE };
-            // Kept as it is made, so `unwrap` releases what was made on a failure.
-            self.wrapped = Some(Wrapped { planes: planes.clone(), sets: Vec::new(), states: Vec::new() });
-            for set in 0..config.slots {
-                let mut textures = [ptr::null_mut(); 3];
-                for (plane, texture) in textures.iter_mut().enumerate() {
-                    let (width, height) = config.plane_size(plane);
-                    let props = SDL_CreateProperties();
-                    SDL_SetNumberProperty(props, TEXTURE_IMAGE_PROPERTY.as_ptr(), ash::vk::Handle::as_raw(images.image(set, plane)) as i64);
-                    *texture = SDL_CreateGPUTexture(self.device, &SDL_GPUTextureCreateInfo {
-                        r#type: SDL_GPU_TEXTURETYPE_2D, format: plane_format(config.ten_bit), usage,
-                        width, height, layer_count_or_depth: 1, num_levels: 1, sample_count: SDL_GPU_SAMPLECOUNT_1, props });
-                    SDL_DestroyProperties(props);
-                }
-                let failed = textures.iter().any(|texture| texture.is_null());
-                if let Some(wrapped) = self.wrapped.as_mut() { wrapped.sets.push(textures); }
-                let state = if failed || !sampled {
-                    Ok(ptr::null_mut())
-                } else {
-                    self.make_state(self.renderer, textures)
-                };
-                match state {
-                    Ok(state) if !failed => {
-                        if sampled { if let Some(wrapped) = self.wrapped.as_mut() { wrapped.states.push(state); } }
+        // SAFETY: `self.renderer`, `self.device`, and `images` are live on the calling thread.
+        unsafe {
+            if self.wrapped.as_ref().is_some_and(|wrapped| !Arc::ptr_eq(&wrapped.planes, planes)) {
+                self.unwrap();
+            }
+            if self.wrapped.is_none() {
+                let config = images.config();
+                let sampled = images.handoff() == PlaneHandoff::Sample;
+                // Sampled, SDL expects the image in SHADER_READ_ONLY_OPTIMAL whenever it draws it (the
+                // held set is, `SharedImages::sampled`); as compute storage, in GENERAL, where the
+                // decoder leaves it, for the copy.
+                let usage = if sampled { SDL_GPU_TEXTUREUSAGE_SAMPLER } else { SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE };
+                // Kept as it is made, so `unwrap` releases what was made on a failure.
+                self.wrapped = Some(Wrapped { planes: planes.clone(), sets: Vec::new(), states: Vec::new() });
+                for set in 0..config.slots {
+                    let mut textures = [ptr::null_mut(); 3];
+                    for (plane, texture) in textures.iter_mut().enumerate() {
+                        let (width, height) = config.plane_size(plane);
+                        let props = SDL_CreateProperties();
+                        SDL_SetNumberProperty(props, TEXTURE_IMAGE_PROPERTY.as_ptr(), ash::vk::Handle::as_raw(images.image(set, plane)) as i64);
+                        *texture = SDL_CreateGPUTexture(self.device, &SDL_GPUTextureCreateInfo {
+                            r#type: SDL_GPU_TEXTURETYPE_2D, format: plane_format(config.ten_bit), usage,
+                            width, height, layer_count_or_depth: 1, num_levels: 1, sample_count: SDL_GPU_SAMPLECOUNT_1, props });
+                        SDL_DestroyProperties(props);
                     }
-                    outcome => {
-                        let error = outcome.err().unwrap_or_else(crate::sdl::error);
-                        self.unwrap();
-                        return Err(format!("the decoder's plane images cannot be wrapped as textures: {error}"));
+                    let failed = textures.iter().any(|texture| texture.is_null());
+                    if let Some(wrapped) = self.wrapped.as_mut() { wrapped.sets.push(textures); }
+                    let state = if failed || !sampled {
+                        Ok(ptr::null_mut())
+                    } else {
+                        self.make_state(self.renderer, textures)
+                    };
+                    match state {
+                        Ok(state) if !failed => {
+                            if sampled { if let Some(wrapped) = self.wrapped.as_mut() { wrapped.states.push(state); } }
+                        }
+                        outcome => {
+                            let error = outcome.err().unwrap_or_else(crate::sdl::error);
+                            self.unwrap();
+                            return Err(format!("the decoder's plane images cannot be wrapped as textures: {error}"));
+                        }
                     }
                 }
             }
@@ -458,19 +504,22 @@ impl PlanesPass {
     /// the images go. SDL destroys a texture's views only once its last command is done, and the
     /// images must outlive them, so this waits for that.
     unsafe fn unwrap(&mut self) {
-        self.give_back_held();
-        let Some(Wrapped { planes, sets, states }) = self.wrapped.take() else { return };
-        for texture in sets.into_iter().flatten().filter(|texture| !texture.is_null()) {
-            SDL_ReleaseGPUTexture(self.device, texture);
-        }
-        let idle = SDL_WaitForGPUIdle(self.device);
-        for state in states.into_iter().filter(|state| !state.is_null()) {
-            SDL_DestroyGPURenderState(state);
-        }
-        if !idle {
-            // The views may still be in use: keep the images rather than free them under the GPU.
-            eprintln!("nightjar: the GPU did not go idle after the PyroWave planes ({}), so their images stay allocated", crate::sdl::error());
-            std::mem::forget(planes);
+        // SAFETY: `self.renderer` and `self.device` outlive the wrapped resources on this thread.
+        unsafe {
+            self.give_back_held();
+            let Some(Wrapped { planes, sets, states }) = self.wrapped.take() else { return };
+            for texture in sets.into_iter().flatten().filter(|texture| !texture.is_null()) {
+                SDL_ReleaseGPUTexture(self.device, texture);
+            }
+            let idle = SDL_WaitForGPUIdle(self.device);
+            for state in states.into_iter().filter(|state| !state.is_null()) {
+                SDL_DestroyGPURenderState(state);
+            }
+            if !idle {
+                // The views may still be in use: keep the images rather than free them under the GPU.
+                eprintln!("nightjar: the GPU did not go idle after the PyroWave planes ({}), so their images stay allocated", crate::sdl::error());
+                std::mem::forget(planes);
+            }
         }
     }
 
@@ -487,7 +536,13 @@ impl PlanesPass {
             return Err(format!("plane {plane} of the picture is missing"));
         }
         let (sizes, sample_bytes) = (self.sizes, self.sample_bytes);
-        self.draw_with(renderer, target, parameters, None, |mapped, offsets| fill_planes(info, sizes, sample_bytes, mapped, offsets))
+        // SAFETY: Caller guarantees `renderer`, `target`, and `info` are live and match `sizes`.
+        unsafe {
+            self.draw_with(renderer, target, parameters, None, |mapped, offsets| {
+                // SAFETY: `info` matches `sizes` and `mapped` holds the packed planes at `offsets`.
+                unsafe { fill_planes(info, sizes, sample_bytes, mapped, offsets); }
+            })
+        }
     }
 
     /// The bytes of plane `plane` in the transfer buffer (tightly packed rows).
@@ -500,37 +555,40 @@ impl PlanesPass {
     /// it), uploads it into the plane textures and draws them over `target`.
     unsafe fn draw_with(&mut self, renderer: *mut SDL_Renderer, target: *mut SDL_Texture, parameters: &[u32; 8], mut stages: Option<&mut Stages<2>>, fill: impl FnOnce(*mut u8, [usize; 3])) -> Result<(), String> {
         let step = Instant::now();
-        if !SDL_FlushRenderer(renderer) {
-            return Err(format!("the renderer cannot flush: {}", crate::sdl::error()));
+        // SAFETY: Caller guarantees `renderer` and `target` are live on the calling thread.
+        unsafe {
+            if !SDL_FlushRenderer(renderer) {
+                return Err(format!("the renderer cannot flush: {}", crate::sdl::error()));
+            }
+            let mapped = SDL_MapGPUTransferBuffer(self.device, self.transfer, true).cast::<u8>();
+            if mapped.is_null() {
+                return Err(format!("the plane transfer buffer cannot be mapped: {}", crate::sdl::error()));
+            }
+            let mut offsets = [0usize; 3];
+            for plane in 1..3 {
+                offsets[plane] = offsets[plane - 1] + self.plane_bytes(plane - 1);
+            }
+            fill(mapped, offsets);
+            SDL_UnmapGPUTransferBuffer(self.device, self.transfer);
+            let commands = SDL_AcquireGPUCommandBuffer(self.device);
+            if commands.is_null() {
+                return Err(format!("no GPU command buffer for the plane upload: {}", crate::sdl::error()));
+            }
+            let copy = SDL_BeginGPUCopyPass(commands);
+            for (plane, offset) in offsets.into_iter().enumerate() {
+                let (width, height) = self.sizes[plane];
+                SDL_UploadToGPUTexture(copy,
+                    &SDL_GPUTextureTransferInfo { transfer_buffer: self.transfer, offset: offset as u32, pixels_per_row: width, rows_per_layer: height },
+                    &SDL_GPUTextureRegion { texture: self.textures[plane], w: width, h: height, d: 1, ..Default::default() },
+                    true);
+            }
+            SDL_EndGPUCopyPass(copy);
+            if !SDL_SubmitGPUCommandBuffer(commands) {
+                return Err(format!("the plane upload cannot be submitted: {}", crate::sdl::error()));
+            }
+            if let Some(stages) = stages.as_deref_mut() { stages.add(super::pyrowave_gpu::UPLOAD, step); }
+            self.convert(renderer, target, parameters, stages)
         }
-        let mapped = SDL_MapGPUTransferBuffer(self.device, self.transfer, true).cast::<u8>();
-        if mapped.is_null() {
-            return Err(format!("the plane transfer buffer cannot be mapped: {}", crate::sdl::error()));
-        }
-        let mut offsets = [0usize; 3];
-        for plane in 1..3 {
-            offsets[plane] = offsets[plane - 1] + self.plane_bytes(plane - 1);
-        }
-        fill(mapped, offsets);
-        SDL_UnmapGPUTransferBuffer(self.device, self.transfer);
-        let commands = SDL_AcquireGPUCommandBuffer(self.device);
-        if commands.is_null() {
-            return Err(format!("no GPU command buffer for the plane upload: {}", crate::sdl::error()));
-        }
-        let copy = SDL_BeginGPUCopyPass(commands);
-        for (plane, offset) in offsets.into_iter().enumerate() {
-            let (width, height) = self.sizes[plane];
-            SDL_UploadToGPUTexture(copy,
-                &SDL_GPUTextureTransferInfo { transfer_buffer: self.transfer, offset: offset as u32, pixels_per_row: width, rows_per_layer: height },
-                &SDL_GPUTextureRegion { texture: self.textures[plane], w: width, h: height, d: 1, ..Default::default() },
-                true);
-        }
-        SDL_EndGPUCopyPass(copy);
-        if !SDL_SubmitGPUCommandBuffer(commands) {
-            return Err(format!("the plane upload cannot be submitted: {}", crate::sdl::error()));
-        }
-        if let Some(stages) = stages.as_deref_mut() { stages.add(super::pyrowave_gpu::UPLOAD, step); }
-        self.convert(renderer, target, parameters, stages)
     }
 
     /// Draws the plane textures, converted, over `target`. A null `target` leaves the planes
@@ -540,17 +598,20 @@ impl PlanesPass {
             return Ok(());
         }
         let step = Instant::now();
-        self.set_uniforms(&Uniforms { parameters: *parameters, ..Default::default() })?;
-        let previous = SDL_GetRenderTarget(renderer);
-        if !SDL_SetRenderTarget(renderer, target) {
-            return Err(format!("the picture texture cannot be the render target: {}", crate::sdl::error()));
+        // SAFETY: Caller guarantees `renderer` and `target` are live on the calling thread.
+        unsafe {
+            self.set_uniforms(&Uniforms { parameters: *parameters, ..Default::default() })?;
+            let previous = SDL_GetRenderTarget(renderer);
+            if !SDL_SetRenderTarget(renderer, target) {
+                return Err(format!("the picture texture cannot be the render target: {}", crate::sdl::error()));
+            }
+            let drawn = SDL_SetGPURenderState(renderer, self.active_state()) && SDL_RenderFillRect(renderer, ptr::null()) && SDL_FlushRenderer(renderer);
+            let error = if drawn { String::new() } else { crate::sdl::error() };
+            SDL_SetGPURenderState(renderer, ptr::null_mut());
+            SDL_SetRenderTarget(renderer, previous);
+            if let Some(stages) = stages { stages.add(super::pyrowave_gpu::PASSES, step); }
+            if drawn { Ok(()) } else { Err(format!("the planes cannot be drawn: {error}")) }
         }
-        let drawn = SDL_SetGPURenderState(renderer, self.active_state()) && SDL_RenderFillRect(renderer, ptr::null()) && SDL_FlushRenderer(renderer);
-        let error = if drawn { String::new() } else { crate::sdl::error() };
-        SDL_SetGPURenderState(renderer, ptr::null_mut());
-        SDL_SetRenderTarget(renderer, previous);
-        if let Some(stages) = stages { stages.add(super::pyrowave_gpu::PASSES, step); }
-        if drawn { Ok(()) } else { Err(format!("the planes cannot be drawn: {error}")) }
     }
 }
 
@@ -560,7 +621,8 @@ impl PlanesPass {
         if state.is_null() {
             return Err("no picture's planes to draw".into());
         }
-        if !SDL_SetGPURenderStateFragmentUniforms(state, 0, (uniforms as *const Uniforms).cast(), std::mem::size_of::<Uniforms>() as u32) {
+        // SAFETY: `state` is a live SDL_GPURenderState on the calling thread and `uniforms` is valid.
+        if !unsafe { SDL_SetGPURenderStateFragmentUniforms(state, 0, (uniforms as *const Uniforms).cast(), std::mem::size_of::<Uniforms>() as u32) } {
             return Err(format!("the plane constants cannot be set: {}", crate::sdl::error()));
         }
         Ok(())
@@ -576,7 +638,8 @@ impl PlanesPass {
     /// `renderer` must be live and the pass the one made on it, its planes copied for `parameters`.
     #[cfg(test)]
     pub unsafe fn draw_direct(&mut self, renderer: *mut SDL_Renderer, parameters: &[u32; 8], destination: &SDL_FRect, visible: (i32, i32), look: SdlLook) -> Result<(), String> {
-        self.draw_direct_warped(renderer, parameters, destination, visible, look, &super::frame_warp::WarpDraw::default())
+        // SAFETY: Caller guarantees `renderer` is live and matches this pass.
+        unsafe { self.draw_direct_warped(renderer, parameters, destination, visible, look, &super::frame_warp::WarpDraw::default()) }
     }
 
     /// `draw_direct` with the picture shifted by Frame Warp's `warp`, its HUD mask uploaded when
@@ -587,18 +650,21 @@ impl PlanesPass {
     pub unsafe fn draw_direct_warped(&mut self, renderer: *mut SDL_Renderer, parameters: &[u32; 8], destination: &SDL_FRect, visible: (i32, i32), look: SdlLook,
         warp: &super::frame_warp::WarpDraw) -> Result<(), String> {
         let mut viewport = SDL_Rect::default();
-        SDL_GetRenderViewport(renderer, &mut viewport);
-        let mut uniforms = direct_uniforms(parameters, destination, (viewport.x, viewport.y), visible, look);
-        if !warp.is_identity() {
-            let mask = self.ready_mask(renderer, warp);
-            uniforms.warp = warp.row(mask);
-            uniforms.warp_lens = warp.lens_row();
+        // SAFETY: Caller guarantees `renderer` is live on the calling thread.
+        unsafe {
+            SDL_GetRenderViewport(renderer, &mut viewport);
+            let mut uniforms = direct_uniforms(parameters, destination, (viewport.x, viewport.y), visible, look);
+            if !warp.is_identity() {
+                let mask = self.ready_mask(renderer, warp);
+                uniforms.warp = warp.row(mask);
+                uniforms.warp_lens = warp.lens_row();
+            }
+            self.set_uniforms(&uniforms)?;
+            let drawn = SDL_SetGPURenderState(renderer, self.active_state()) && SDL_RenderFillRect(renderer, destination);
+            let error = if drawn { String::new() } else { crate::sdl::error() };
+            SDL_SetGPURenderState(renderer, ptr::null_mut());
+            if drawn { Ok(()) } else { Err(format!("the planes cannot be drawn into the back buffer: {error}")) }
         }
-        self.set_uniforms(&uniforms)?;
-        let drawn = SDL_SetGPURenderState(renderer, self.active_state()) && SDL_RenderFillRect(renderer, destination);
-        let error = if drawn { String::new() } else { crate::sdl::error() };
-        SDL_SetGPURenderState(renderer, ptr::null_mut());
-        if drawn { Ok(()) } else { Err(format!("the planes cannot be drawn into the back buffer: {error}")) }
     }
 
     /// Whether the mask texture holds `warp`'s HUD mask for the shader, uploading it when it
@@ -608,7 +674,8 @@ impl PlanesPass {
         let Some(hud) = warp.mask() else { return false };
         if self.mask_failed { return false; }
         if self.mask_made.as_ref().is_some_and(|made| Arc::ptr_eq(made, hud)) { return true; }
-        match self.upload_mask(renderer, &hud.mask) {
+        // SAFETY: Caller guarantees `renderer` is live on the calling thread.
+        match unsafe { self.upload_mask(renderer, &hud.mask) } {
             Ok(()) => {
                 self.mask_made = Some(hud.clone());
                 true
@@ -629,46 +696,49 @@ impl PlanesPass {
         if bytes.is_empty() || row as u32 > MASK_ROW_BYTES || rows > MASK_ROWS {
             return Err(format!("a {}x{} mask is larger than its texture", mask.width, mask.height));
         }
-        if self.mask.is_null() {
-            self.mask = SDL_CreateGPUTexture(self.device, &SDL_GPUTextureCreateInfo {
-                r#type: SDL_GPU_TEXTURETYPE_2D, format: SDL_GPU_TEXTUREFORMAT_R8_UNORM, usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
-                width: MASK_ROW_BYTES, height: MASK_ROWS, layer_count_or_depth: 1, num_levels: 1, sample_count: SDL_GPU_SAMPLECOUNT_1, ..Default::default() });
+        // SAFETY: Caller guarantees `renderer` is live on the calling thread.
+        unsafe {
             if self.mask.is_null() {
-                return Err(format!("its texture could not be made: {}", crate::sdl::error()));
+                self.mask = SDL_CreateGPUTexture(self.device, &SDL_GPUTextureCreateInfo {
+                    r#type: SDL_GPU_TEXTURETYPE_2D, format: SDL_GPU_TEXTUREFORMAT_R8_UNORM, usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                    width: MASK_ROW_BYTES, height: MASK_ROWS, layer_count_or_depth: 1, num_levels: 1, sample_count: SDL_GPU_SAMPLECOUNT_1, ..Default::default() });
+                if self.mask.is_null() {
+                    return Err(format!("its texture could not be made: {}", crate::sdl::error()));
+                }
+                self.rebind_mask().map_err(|error| format!("its texture cannot be bound: {error}"))?;
             }
-            self.rebind_mask().map_err(|error| format!("its texture cannot be bound: {error}"))?;
-        }
-        // The draws queued so far read the mask before this upload replaces it.
-        if !SDL_FlushRenderer(renderer) {
-            return Err(format!("the renderer cannot flush: {}", crate::sdl::error()));
-        }
-        let transfer = SDL_CreateGPUTransferBuffer(self.device, &SDL_GPUTransferBufferCreateInfo {
-            usage: SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size: bytes.len() as u32, ..Default::default() });
-        if transfer.is_null() {
-            return Err(format!("no transfer buffer: {}", crate::sdl::error()));
-        }
-        let mapped = SDL_MapGPUTransferBuffer(self.device, transfer, false).cast::<u8>();
-        let result = if mapped.is_null() {
-            Err(format!("the transfer buffer cannot be mapped: {}", crate::sdl::error()))
-        } else {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), mapped, bytes.len());
-            SDL_UnmapGPUTransferBuffer(self.device, transfer);
-            let commands = SDL_AcquireGPUCommandBuffer(self.device);
-            if commands.is_null() {
-                Err(format!("no GPU command buffer: {}", crate::sdl::error()))
+            // The draws queued so far read the mask before this upload replaces it.
+            if !SDL_FlushRenderer(renderer) {
+                return Err(format!("the renderer cannot flush: {}", crate::sdl::error()));
+            }
+            let transfer = SDL_CreateGPUTransferBuffer(self.device, &SDL_GPUTransferBufferCreateInfo {
+                usage: SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size: bytes.len() as u32, ..Default::default() });
+            if transfer.is_null() {
+                return Err(format!("no transfer buffer: {}", crate::sdl::error()));
+            }
+            let mapped = SDL_MapGPUTransferBuffer(self.device, transfer, false).cast::<u8>();
+            let result = if mapped.is_null() {
+                Err(format!("the transfer buffer cannot be mapped: {}", crate::sdl::error()))
             } else {
-                let copy = SDL_BeginGPUCopyPass(commands);
-                SDL_UploadToGPUTexture(copy,
-                    &SDL_GPUTextureTransferInfo { transfer_buffer: transfer, offset: 0, pixels_per_row: row as u32, rows_per_layer: rows },
-                    &SDL_GPUTextureRegion { texture: self.mask, w: row as u32, h: rows, d: 1, ..Default::default() },
-                    true);
-                SDL_EndGPUCopyPass(copy);
-                if SDL_SubmitGPUCommandBuffer(commands) { Ok(()) } else { Err(format!("the upload cannot be submitted: {}", crate::sdl::error())) }
-            }
-        };
-        // SDL keeps the buffer until the GPU is done with it.
-        SDL_ReleaseGPUTransferBuffer(self.device, transfer);
-        result
+                ptr::copy_nonoverlapping(bytes.as_ptr(), mapped, bytes.len());
+                SDL_UnmapGPUTransferBuffer(self.device, transfer);
+                let commands = SDL_AcquireGPUCommandBuffer(self.device);
+                if commands.is_null() {
+                    Err(format!("no GPU command buffer: {}", crate::sdl::error()))
+                } else {
+                    let copy = SDL_BeginGPUCopyPass(commands);
+                    SDL_UploadToGPUTexture(copy,
+                        &SDL_GPUTextureTransferInfo { transfer_buffer: transfer, offset: 0, pixels_per_row: row as u32, rows_per_layer: rows },
+                        &SDL_GPUTextureRegion { texture: self.mask, w: row as u32, h: rows, d: 1, ..Default::default() },
+                        true);
+                    SDL_EndGPUCopyPass(copy);
+                    if SDL_SubmitGPUCommandBuffer(commands) { Ok(()) } else { Err(format!("the upload cannot be submitted: {}", crate::sdl::error())) }
+                }
+            };
+            // SDL keeps the buffer until the GPU is done with it.
+            SDL_ReleaseGPUTransferBuffer(self.device, transfer);
+            result
+        }
     }
 }
 
@@ -730,27 +800,30 @@ impl SdlLook {
     /// # Safety
     /// `renderer` and `texture` must be live, on the calling thread.
     pub unsafe fn of(renderer: *mut SDL_Renderer, texture: *mut SDL_Texture) -> Self {
-        let target = SDL_GetRenderTarget(renderer);
-        let (output, colorspace, sdr_white, output_headroom) = if target.is_null() {
-            let props = SDL_GetRendererProperties(renderer);
-            (props, SDL_GetNumberProperty(props, SDL_PROP_RENDERER_OUTPUT_COLORSPACE_NUMBER, 0),
-                SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT)
-        } else {
-            let props = SDL_GetTextureProperties(target);
-            (props, SDL_GetNumberProperty(props, SDL_PROP_TEXTURE_COLORSPACE_NUMBER, 0),
-                SDL_PROP_TEXTURE_SDR_WHITE_POINT_FLOAT, SDL_PROP_TEXTURE_HDR_HEADROOM_FLOAT)
-        };
-        let mut color_scale = 1.0;
-        SDL_GetRenderColorScale(renderer, &mut color_scale);
-        Self {
-            // SDL leaves a texture's headroom out when it is 0, its default for the linear format.
-            texture_headroom: SDL_GetFloatProperty(SDL_GetTextureProperties(texture), SDL_PROP_TEXTURE_HDR_HEADROOM_FLOAT, 0.0),
-            output_headroom: SDL_GetFloatProperty(output, output_headroom, 0.0),
-            sdr_white: SDL_GetFloatProperty(output, sdr_white, 1.0),
-            color_scale,
-            linear_output: colorspace == i64::from(SDL_COLORSPACE_SRGB_LINEAR.0),
-            pq_target: false,
-            target_encoding: crate::sdl::present_encoding(renderer),
+        // SAFETY: Caller guarantees `renderer` and `texture` are live on the calling thread.
+        unsafe {
+            let target = SDL_GetRenderTarget(renderer);
+            let (output, colorspace, sdr_white, output_headroom) = if target.is_null() {
+                let props = SDL_GetRendererProperties(renderer);
+                (props, SDL_GetNumberProperty(props, SDL_PROP_RENDERER_OUTPUT_COLORSPACE_NUMBER, 0),
+                    SDL_PROP_RENDERER_SDR_WHITE_POINT_FLOAT, SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT)
+            } else {
+                let props = SDL_GetTextureProperties(target);
+                (props, SDL_GetNumberProperty(props, SDL_PROP_TEXTURE_COLORSPACE_NUMBER, 0),
+                    SDL_PROP_TEXTURE_SDR_WHITE_POINT_FLOAT, SDL_PROP_TEXTURE_HDR_HEADROOM_FLOAT)
+            };
+            let mut color_scale = 1.0;
+            SDL_GetRenderColorScale(renderer, &mut color_scale);
+            Self {
+                // SDL leaves a texture's headroom out when it is 0, its default for the linear format.
+                texture_headroom: SDL_GetFloatProperty(SDL_GetTextureProperties(texture), SDL_PROP_TEXTURE_HDR_HEADROOM_FLOAT, 0.0),
+                output_headroom: SDL_GetFloatProperty(output, output_headroom, 0.0),
+                sdr_white: SDL_GetFloatProperty(output, sdr_white, 1.0),
+                color_scale,
+                linear_output: colorspace == i64::from(SDL_COLORSPACE_SRGB_LINEAR.0),
+                pq_target: false,
+                target_encoding: crate::sdl::present_encoding(renderer),
+            }
         }
     }
 
@@ -817,16 +890,19 @@ unsafe fn fill_planes(info: &crate::media::FrameInfo, sizes: [(u32, u32); 3], sa
         for (plane, &(width, height)) in sizes.iter().enumerate() {
             let row = width as usize * sample_bytes;
             for y in 0..height as usize {
-                let source = info.data[plane].add(y * info.linesize[plane] as usize);
-                let target = mapped.add(offsets[plane] + y * row);
-                if high_bits {
-                    let source = std::slice::from_raw_parts(source, row);
-                    let target = std::slice::from_raw_parts_mut(target, row);
-                    for (target, source) in target.as_chunks_mut::<2>().0.iter_mut().zip(source.as_chunks::<2>().0) {
-                        target.copy_from_slice(&(u16::from_le_bytes([source[0], source[1]]) >> 6).to_le_bytes());
+                // SAFETY: Caller guarantees `info.data[plane]` and `mapped` cover `sizes` at `linesize`/`offsets`.
+                unsafe {
+                    let source = info.data[plane].add(y * info.linesize[plane] as usize);
+                    let target = mapped.add(offsets[plane] + y * row);
+                    if high_bits {
+                        let source = std::slice::from_raw_parts(source, row);
+                        let target = std::slice::from_raw_parts_mut(target, row);
+                        for (target, source) in target.as_chunks_mut::<2>().0.iter_mut().zip(source.as_chunks::<2>().0) {
+                            target.copy_from_slice(&(u16::from_le_bytes([source[0], source[1]]) >> 6).to_le_bytes());
+                        }
+                    } else {
+                        ptr::copy_nonoverlapping(source, target, row);
                     }
-                } else {
-                    ptr::copy_nonoverlapping(source, target, row);
                 }
             }
         }
@@ -843,8 +919,11 @@ unsafe fn fill_planes(info: &crate::media::FrameInfo, sizes: [(u32, u32); 3], sa
     let (width, height) = sizes[0];
     let row = width as usize * sample_bytes;
     for y in 0..height as usize {
-        let source = std::slice::from_raw_parts(info.data[0].add(y * info.linesize[0] as usize), row);
-        let target = std::slice::from_raw_parts_mut(mapped.add(offsets[0] + y * row), row);
+        // SAFETY: Caller guarantees `info.data[0]` and `mapped` cover luma `sizes[0]` at `linesize[0]`/`offsets[0]`.
+        let (source, target) = unsafe {
+            (std::slice::from_raw_parts(info.data[0].add(y * info.linesize[0] as usize), row),
+             std::slice::from_raw_parts_mut(mapped.add(offsets[0] + y * row), row))
+        };
         if p010 {
             target.as_chunks_mut::<2>().0.iter_mut().zip(source.as_chunks::<2>().0).for_each(|(target, source)| put(target, source));
         } else {
@@ -854,9 +933,12 @@ unsafe fn fill_planes(info: &crate::media::FrameInfo, sizes: [(u32, u32); 3], sa
     let (width, height) = sizes[1];
     let row = width as usize * sample_bytes;
     for y in 0..height as usize {
-        let source = std::slice::from_raw_parts(info.data[1].add(y * info.linesize[1] as usize), 2 * row);
-        let cb = std::slice::from_raw_parts_mut(mapped.add(offsets[1] + y * row), row);
-        let cr = std::slice::from_raw_parts_mut(mapped.add(offsets[2] + y * row), row);
+        // SAFETY: Caller guarantees `info.data[1]` and `mapped` cover chroma `sizes[1]`/`sizes[2]` at `linesize[1]`/`offsets`.
+        let (source, cb, cr) = unsafe {
+            (std::slice::from_raw_parts(info.data[1].add(y * info.linesize[1] as usize), 2 * row),
+             std::slice::from_raw_parts_mut(mapped.add(offsets[1] + y * row), row),
+             std::slice::from_raw_parts_mut(mapped.add(offsets[2] + y * row), row))
+        };
         for (pair, (cb, cr)) in source.chunks_exact(2 * sample_bytes).zip(cb.chunks_exact_mut(sample_bytes).zip(cr.chunks_exact_mut(sample_bytes))) {
             put(cb, &pair[..sample_bytes]);
             put(cr, &pair[sample_bytes..]);

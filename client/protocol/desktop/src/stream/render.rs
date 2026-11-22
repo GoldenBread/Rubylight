@@ -927,37 +927,40 @@ impl Streaming {
     /// `renderer` is the live renderer of the presenting thread.
     #[cfg(target_os = "linux")]
     unsafe fn clear_window(&mut self, renderer: *mut SDL_Renderer, unscaled: bool) {
-        let props = SDL_GetRendererProperties(renderer);
-        let pq_output = crate::sdl::output_decision() == Some(Ok(crate::handheld::Output::Pq));
-        let planes_direct = unscaled && self.texture.draws_planes_direct();
-        // What `draw_overlay` in app/overlay.rs draws: nothing, or egui meshes, which write PQ themselves
-        // (`ui_pq`) where a frame could be video only but for them.
-        let meshes = self.overlay_visible || self.toast.is_some() || self.menu_visible;
-        let frame = present::VideoOnlyFrame {
-            pq_output,
-            planes_direct,
-            nothing_else: self.facts.role != nightjar_core::http::AppRole::InputOnly
-                && (!meshes || (pq_output && planes_direct && self.texture.ui_draws_pq(renderer))),
-            read_back: SDL_GetBooleanProperty(props, READ_BACK_PROPERTY.as_ptr(), false),
-        };
-        let (asked, line) = self.texture.video_only().wanted(frame, session::now_us());
-        if let Some(line) = line { eprintln!("{line}"); }
-        if asked {
-            SDL_SetBooleanProperty(props, VIDEO_ONLY_FRAME_PROPERTY.as_ptr(), false);
-            SDL_SetBooleanProperty(props, VIDEO_ONLY_PROPERTY.as_ptr(), true);
+        // SAFETY: caller guarantees `renderer` is the live renderer of the presenting thread.
+        unsafe {
+            let props = SDL_GetRendererProperties(renderer);
+            let pq_output = crate::sdl::output_decision() == Some(Ok(crate::handheld::Output::Pq));
+            let planes_direct = unscaled && self.texture.draws_planes_direct();
+            // What `draw_overlay` in app/overlay.rs draws: nothing, or egui meshes, which write PQ themselves
+            // (`ui_pq`) where a frame could be video only but for them.
+            let meshes = self.overlay_visible || self.toast.is_some() || self.menu_visible;
+            let frame = present::VideoOnlyFrame {
+                pq_output,
+                planes_direct,
+                nothing_else: self.facts.role != nightjar_core::http::AppRole::InputOnly
+                    && (!meshes || (pq_output && planes_direct && self.texture.ui_draws_pq(renderer))),
+                read_back: SDL_GetBooleanProperty(props, READ_BACK_PROPERTY.as_ptr(), false),
+            };
+            let (asked, line) = self.texture.video_only().wanted(frame, session::now_us());
+            if let Some(line) = line { eprintln!("{line}"); }
+            if asked {
+                SDL_SetBooleanProperty(props, VIDEO_ONLY_FRAME_PROPERTY.as_ptr(), false);
+                SDL_SetBooleanProperty(props, VIDEO_ONLY_PROPERTY.as_ptr(), true);
+            }
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+            let mut pq_target = false;
+            if asked {
+                // SDL_FlushRenderer's failure leaves the frame undecided, which the reset below settles
+                // as not video only; the settled value says which it was either way.
+                SDL_FlushRenderer(renderer);
+                SDL_SetBooleanProperty(props, VIDEO_ONLY_PROPERTY.as_ptr(), false);
+                pq_target = SDL_GetBooleanProperty(props, VIDEO_ONLY_FRAME_PROPERTY.as_ptr(), false);
+                if let Some(line) = self.texture.video_only().settled(pq_target) { eprintln!("{line}"); }
+            }
+            self.texture.set_pq_target(pq_target);
         }
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
-        let mut pq_target = false;
-        if asked {
-            // SDL_FlushRenderer's failure leaves the frame undecided, which the reset below settles
-            // as not video only; the settled value says which it was either way.
-            SDL_FlushRenderer(renderer);
-            SDL_SetBooleanProperty(props, VIDEO_ONLY_PROPERTY.as_ptr(), false);
-            pq_target = SDL_GetBooleanProperty(props, VIDEO_ONLY_FRAME_PROPERTY.as_ptr(), false);
-            if let Some(line) = self.texture.video_only().settled(pq_target) { eprintln!("{line}"); }
-        }
-        self.texture.set_pq_target(pq_target);
     }
 
     #[cfg(not(target_os = "linux"))]

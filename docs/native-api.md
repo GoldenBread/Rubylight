@@ -268,7 +268,7 @@ Only asking for the game shares: `/resume`, or a `/launch` of a Resume tile. Any
 "launcher": { "launcher": "steam", "kind": "update", "window_title": "Updating Dota 2", "since_unix_ms": 1792303212000 }
 ```
 
-`kind` is `update` (an update, install or download is in the way), `sign_in` (a sign in, a verification code or Steam Guard) or `prompt` (a launcher window in front for more than 20 s with a title that names nothing; a client shows `window_title`). An unknown kind reads as `prompt`. The host reads the visible windows every 2 s while the game has not shown up (`rust/host/src/launcher_watch.rs`, classifier in `rust/core/src/launcher_prompt.rs`). A note needs two looks in a row, goes when two looks in a row find no launcher window, and goes at once when the game's process or window appears. It is a note, not a state: the session state does not change, and the host never clicks or types into a launcher. Only the owner sees it, and an app that starts no program of its own (a desktop tile) or only opens a launcher (Steam Big Picture, a bare `steam.exe`) is not watched, because the launcher is the app. A Playnite-started game counts as seen when Playnite reports it running. A windowed game that the host cannot tell from the launcher can leave a note up until the launcher window closes or the watch's 10-minute limit passes, after which the host stops looking. The fixture is `rust/core/native-api/tests/fixtures/session_launcher.json`.
+`kind` is `update` (an update, install or download is in the way), `sign_in` (a sign in, a verification code or Steam Guard) or `prompt` (a launcher window in front for more than 20 s with a title that names nothing; a client shows `window_title`). An unknown kind reads as `prompt`. The host reads the visible windows every 2 s while the game has not shown up (`rust/host/src/launcher_watch.rs`, classifier in `rust/core/src/launcher_prompt.rs`). A note needs two looks in a row, goes when two looks in a row find no launcher window, and goes at once when the game's process or window appears. It is a note, not a state: the session state does not change, and the host never clicks or types into a launcher. Only the owner sees it, and an app that starts no program of its own (a desktop tile) or only opens a launcher (Steam Big Picture, a bare `steam.exe`) is not watched, because the launcher is the app. A Playnite-started game counts as seen when Playnite reports it running. A windowed game that the host cannot tell from the launcher can leave a note up until the launcher window closes or the watch's 10-minute limit passes, after which the host stops looking. The fixture is `client/protocol/native-api/tests/fixtures/session_launcher.json`.
 
 **Radeon profile (`radeon.profile`).** An app with `radeon-profile` set (see [Radeon settings per game](configuration.md#radeon-settings-per-game)) puts `radeon_profile` in the owner's Session: `profile` (`competitive`, `smoothness`, `quality` or `custom`), `state` (`applying`, `applied` or `failed`), `settings` (the ids written, which go back when the session ends) and, when something was left out or failed, `message`. A failed profile does not stop the launch: the game runs without it, the host log names the setting with `ERROR`, and the session shows `failed` with the reason. The profile goes through the same journaled path as `POST /radeon/settings` and is restored by the same session-end hooks. It needs no `host_control` on the device: the app's config is the consent.
 
@@ -371,7 +371,7 @@ POST /api/native/v1/radeon/settings
 
 ## Wake targets (`wake`)
 
-Status: served since 3.0.0 ([design](wake-and-audio-design.md) A.2, A.3 and A.6). Types in `rubylight_native_api::wake`, fixture `rust/core/native-api/tests/fixtures/wake.json`.
+Status: served since 3.0.0 ([design](wake-and-audio-design.md) A.2, A.3 and A.6). Types in `rubylight_native_api::wake`, fixture `client/protocol/native-api/tests/fixtures/wake.json`.
 
 ```http
 GET /api/native/v1/wake
@@ -715,11 +715,11 @@ Which actions are allowed (`GET /session`, and the same rules apply to the POSTs
 
 ## Where the types live
 
-The API types live in a dependency-light crate inside `rust/core`, re-exported by butterpollo-core:
+The API types live in a dependency-light crate inside `client/protocol`, re-exported by butterpollo-core:
 
-- `rust/core/native-api/Cargo.toml`: package `rubylight-native-api`, a workspace member. Its only dependency is `serde` with `derive` (`serde_json` for tests). Its manifest is self-contained: it sets `version`, `edition = "2021"`, `rust-version = "1.80"`, `license` and `repository` itself and copies the workspace lints, because a `*.workspace = true` key makes cargo read the root manifest, whose `resolver = "3"` a 1.80 cargo can't parse. The crate has its own version (`1.1.0`), which follows the API and not the host, so `rust/release/bump.py` (which only bumps `rust/*/Cargo.toml`) leaves it alone.
+- `client/protocol/native-api/Cargo.toml`: package `rubylight-native-api`, a workspace member of `client/protocol/Cargo.toml`. Its only dependency is `serde` with `derive` (`serde_json` for tests). It inherits `edition` (`"2024"`), `rust-version` (`"1.91"`), `license` and `[lints]` from `client/protocol/Cargo.toml` (`resolver = "3"`). The crate has its own version (`1.1.0`), which follows the API and not the host, so `rust/release/bump.py` (which only bumps `rust/*/Cargo.toml`) leaves it alone.
 - `butterpollo-core` depends on it by path and exposes it as `butterpollo_core::native_api` (`pub use rubylight_native_api as native_api;` in `rust/core/src/lib.rs`).
-- Why not `butterpollo-core` itself: nightjar-core uses butterpollo-core only as a **dev-dependency** for interop tests. As a runtime dependency it would pull `x509-parser`, `rcgen`, `regex`, `quick-xml`, `prost`, `anyhow` and an `embed-resource` build script into the Android library, and its edition 2024 / Rust 1.89 floor into Nightjar's 1.80 workspace. Why not `rubylight-protocol`: it is `no_std` without serde, and JSON doesn't belong there.
+- Why not `butterpollo-core` itself: nightjar-core uses butterpollo-core only as a **dev-dependency** for interop tests. As a runtime dependency it would pull `x509-parser`, `rcgen`, `regex`, `quick-xml`, `prost`, `anyhow` and an `embed-resource` build script into the Android library. Why not `rubylight-protocol`: it is `no_std` without serde, and JSON doesn't belong there.
 
 Modules (serde shapes as in the examples above, all `snake_case`; the source is authoritative):
 
@@ -740,7 +740,7 @@ Modules (serde shapes as in the examples above, all `snake_case`; the source is 
 | `usb` | `TUNNEL_PATH`, `UPGRADE`, `TOKEN_HEADER`, `TOKEN_BYTES`, `TOKEN_TTL_SECS` |
 | `error` | `ErrorBody`, `ApiError`, `ErrorCode` with `ErrorCode::status()`, the table in [Errors](#errors) |
 
-`Option` fields skip serialisation when `None`, except where the examples show `null` on purpose (`game_id`, `store`, `installed`, `app`, `setting` and `retry_after_ms` in an error, and `primary` and `idle_sleep.reason` in Wake). Response structs don't deny unknown fields, so old clients read newer hosts. In a Radeon response, a setting's `value`, `range` or `restore` of a shape the client doesn't know (a float, an array) reads as absent instead of failing the whole response. Request structs deny unknown fields, so typos fail loudly. The crate carries JSON fixtures (`rust/core/native-api/tests/fixtures/*.json`, one per example above) with round-trip tests, and Nightjar's tests reuse them.
+`Option` fields skip serialisation when `None`, except where the examples show `null` on purpose (`game_id`, `store`, `installed`, `app`, `setting` and `retry_after_ms` in an error, and `primary` and `idle_sleep.reason` in Wake). Response structs don't deny unknown fields, so old clients read newer hosts. In a Radeon response, a setting's `value`, `range` or `restore` of a shape the client doesn't know (a float, an array) reads as absent instead of failing the whole response. Request structs deny unknown fields, so typos fail loudly. The crate carries JSON fixtures (`client/protocol/native-api/tests/fixtures/*.json`, one per example above) with round-trip tests, and Nightjar's tests reuse them.
 
 ## Design decisions
 

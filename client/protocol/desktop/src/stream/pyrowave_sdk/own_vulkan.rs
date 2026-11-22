@@ -125,48 +125,51 @@ impl OwnVulkan {
     /// The first device the decoder runs on, its graphics queue family, its features, its name
     /// and the device made on it.
     unsafe fn on(instance: &ash::Instance) -> Result<(vk::PhysicalDevice, u32, Features, String, ash::Device), String> {
-        let devices = instance.enumerate_physical_devices().map_err(|e| format!("Vulkan lists no devices ({e})"))?;
-        if devices.is_empty() {
-            return Err("the bundled Vulkan driver finds no GPU it supports".into());
-        }
-        let mut refused = Vec::new();
-        for physical_device in devices {
-            let caps = zero_copy::caps_of(instance, physical_device);
-            let features = match zero_copy::plan(std::slice::from_ref(&caps)) {
-                Ok(features) => features,
-                Err(e) => {
-                    refused.push(e);
+        // SAFETY: Caller guarantees `instance` is a live Vulkan instance created in `Self::new`.
+        unsafe {
+            let devices = instance.enumerate_physical_devices().map_err(|e| format!("Vulkan lists no devices ({e})"))?;
+            if devices.is_empty() {
+                return Err("the bundled Vulkan driver finds no GPU it supports".into());
+            }
+            let mut refused = Vec::new();
+            for physical_device in devices {
+                let caps = zero_copy::caps_of(instance, physical_device);
+                let features = match zero_copy::plan(std::slice::from_ref(&caps)) {
+                    Ok(features) => features,
+                    Err(e) => {
+                        refused.push(e);
+                        continue;
+                    }
+                };
+                let family = instance
+                    .get_physical_device_queue_family_properties(physical_device)
+                    .iter()
+                    .position(|family| family.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE));
+                let Some(family) = family else {
+                    refused.push(format!("{} has no graphics and compute queue", caps.name));
+                    continue;
+                };
+                // A partial Vulkan (VK_KHR_portability_subset, such as MoltenVK) would have to be enabled
+                // and told to the SDK, whose shaders were never checked against its limits: refused.
+                let subset = c"VK_KHR_portability_subset";
+                let extensions = instance.enumerate_device_extension_properties(physical_device).unwrap_or_default();
+                if extensions.iter().any(|e| e.extension_name_as_c_str() == Ok(subset)) {
+                    refused.push(format!("{} is a partial Vulkan (VK_KHR_portability_subset)", caps.name));
                     continue;
                 }
-            };
-            let family = instance
-                .get_physical_device_queue_family_properties(physical_device)
-                .iter()
-                .position(|family| family.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE));
-            let Some(family) = family else {
-                refused.push(format!("{} has no graphics and compute queue", caps.name));
-                continue;
-            };
-            // A partial Vulkan (VK_KHR_portability_subset, such as MoltenVK) would have to be enabled
-            // and told to the SDK, whose shaders were never checked against its limits: refused.
-            let subset = c"VK_KHR_portability_subset";
-            let extensions = instance.enumerate_device_extension_properties(physical_device).unwrap_or_default();
-            if extensions.iter().any(|e| e.extension_name_as_c_str() == Ok(subset)) {
-                refused.push(format!("{} is a partial Vulkan (VK_KHR_portability_subset)", caps.name));
-                continue;
+                let mut chain = Chain::new();
+                chain.enable(features);
+                let priority = [1.0f32];
+                let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(family as u32).queue_priorities(&priority)];
+                let mut info = vk::DeviceCreateInfo::default().queue_create_infos(&queues);
+                info.p_next = (&raw const chain.pdf2).cast();
+                match instance.create_device(physical_device, &info, None) {
+                    Ok(device) => return Ok((physical_device, family as u32, features, caps.name, device)),
+                    Err(e) => refused.push(format!("{} refused a device ({e})", caps.name)),
+                }
             }
-            let mut chain = Chain::new();
-            chain.enable(features);
-            let priority = [1.0f32];
-            let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(family as u32).queue_priorities(&priority)];
-            let mut info = vk::DeviceCreateInfo::default().queue_create_infos(&queues);
-            info.p_next = (&raw const chain.pdf2).cast();
-            match instance.create_device(physical_device, &info, None) {
-                Ok(device) => return Ok((physical_device, family as u32, features, caps.name, device)),
-                Err(e) => refused.push(format!("{} refused a device ({e})", caps.name)),
-            }
+            Err(refused.join("; "))
         }
-        Err(refused.join("; "))
     }
 
     /// The device as the SDK's shared-device creation takes it (`ShareInfo`), no compute queue.
