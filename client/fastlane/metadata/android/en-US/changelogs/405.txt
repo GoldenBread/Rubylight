@@ -1,0 +1,5 @@
+• Rust streaming engine only (classic engine removed). Needs Android 7.1+.
+• Sort Home by title, last played or play time; group installed games (Justin Delano, #136).
+• Decoder priority for receiving on by default; decoder stalls no longer hold packets.
+• Smoother frame pacing, non-blocking input release and clean AAudio teardown.
+• Fixes for Steam trackpad click, gesture scroll speed and cancelled taps (madesho, #148, #149).

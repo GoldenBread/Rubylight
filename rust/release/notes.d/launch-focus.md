@@ -1,2 +1,0 @@
-# Launch focus
-- **A launched game comes back to the front.** A game that switches the streamed display to another exclusive-fullscreen resolution could be left minimised, or behind the Steam window that started with it, showing a quarter of the game until it was clicked in the taskbar. For the minute after the game's window appears, Rubylight now brings it back to the front itself, at most three times, three seconds apart, and never over a program you opened on the PC.

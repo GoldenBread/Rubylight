@@ -1,2 +1,0 @@
-# Virtual display refresh
-- **Virtual display refresh holds against a game.** The virtual display no longer offers a faster refresh at the stream's resolution or left over from an earlier stream than Virtual display refresh asks for, so a game in exclusive fullscreen keeps the stream's rate instead of switching the display to a higher fallback or a 1000 Hz mode from an earlier stream. 1000 Hz still offers every rate it did.
