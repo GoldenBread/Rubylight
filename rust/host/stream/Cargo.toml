@@ -1,0 +1,61 @@
+[package]
+name = "butterpollo-stream"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+log = "0.4"
+butterpollo-crypto = { path = "../../core/crypto" }
+butterpollo-config = { path = "../../core/config" }
+butterpollo-media-policy = { path = "../../core/media-policy" }
+butterpollo-input-policy = { path = "../../core/input-policy" }
+butterpollo-session = { path = "../../core/session" }
+rubylight-native-api = { path = "../../../client/protocol/native-api" }
+rubylight-protocol = { path = "../../../client/protocol/core" }
+rubylight-traverse = { path = "../../../client/protocol/traverse" }
+butterpollo-win-display = { path = "../../windows/display" }
+butterpollo-win-graphics = { path = "../../windows/graphics" }
+butterpollo-win-io = { path = "../../windows/io" }
+tokio = { version = "1.48", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+hyper = { version = "1", features = ["http1"] }
+hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
+tower = "0.5"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2.2"
+rustls-webpki = { version = "0.103", default-features = false }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+hex = "0.4"
+rand = "0.8"
+sha2 = "0.10"
+uuid = { version = "1.18", features = ["v4"] }
+url = "2.5"
+socket2 = { version = "0.6", features = ["all"] }
+rusty_enet = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+tokio-util = { version = "0.7", features = ["io"] }
+time = { version = "0.3", features = ["formatting"] }
+mdns-sd = "=0.21.5"
+igd-next = { version = "=0.17.1", default-features = false, features = ["aio_tokio"] }
+if-addrs = "=0.15.0"
+xmltree = "=0.10.3"
+xml-rs = "0.8"
+
+[features]
+test-support = ["butterpollo-win-io/test-folder", "butterpollo-win-io/test-route"]
+
+[dev-dependencies]
+butterpollo-win-io = { path = "../../windows/io", features = ["test-folder", "test-route"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[lints]
+workspace = true

@@ -20,7 +20,8 @@ class Plan(unittest.TestCase):
         self.assertTrue({
             'butterpollo-config', 'butterpollo-media-policy', 'butterpollo-input-policy',
             'butterpollo-session', 'butterpollo-win-display', 'butterpollo-win-graphics',
-            'butterpollo-win-io', 'butterpollo',
+            'butterpollo-win-io', 'butterpollo-stream', 'butterpollo-webrtc',
+            'butterpollo-web', 'butterpollo',
         } <= crates, crates)
         self.assertNotIn('butterpollo-crypto', crates)
         self.assertNotIn('butterpollo-win-abi', crates)
@@ -31,7 +32,16 @@ class Plan(unittest.TestCase):
         planned, _ = checks('rust/windows/display/src/lib.rs')
         self.assertEqual(
             planned['host'].items,
-            ['butterpollo', 'butterpollo-probes', 'butterpollo-win-display', 'rubylight-interop'],
+            [
+                'butterpollo',
+                'butterpollo-host-tests',
+                'butterpollo-probes',
+                'butterpollo-stream',
+                'butterpollo-web',
+                'butterpollo-webrtc',
+                'butterpollo-win-display',
+                'rubylight-interop',
+            ],
         )
         planned, _ = checks('rust/host/src/main.rs')
         self.assertEqual(planned['host'].items, ['butterpollo', 'rubylight-interop'])

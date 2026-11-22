@@ -2,11 +2,11 @@
 mod common;
 
 use anyhow::Result;
-use butterpollo::stream::reconnect_harness::{CLOSED, Harness, until};
 use butterpollo_media_policy::{
     extensions::FecChoice,
     statistical_fec::{FEC_REPORT_MESSAGE_TYPE, FecReport},
 };
+use butterpollo_stream::stream::reconnect_harness::{CLOSED, Harness, until};
 use common::{LOADED, MOVED, Recorder, device, stream, stream_asking, stream_with};
 use nightjar_core::{
     control::{ControlEvent, ptype},

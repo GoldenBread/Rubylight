@@ -387,58 +387,25 @@ name = "butterpollo"
 version = "6.3.1"
 dependencies = [
  "anyhow",
- "axum",
- "base64 0.22.1",
  "butterpollo-config",
- "butterpollo-crypto",
- "butterpollo-input-policy",
  "butterpollo-media-policy",
  "butterpollo-session",
+ "butterpollo-stream",
+ "butterpollo-web",
+ "butterpollo-webrtc",
  "butterpollo-win-display",
  "butterpollo-win-graphics",
  "butterpollo-win-io",
  "clap",
  "embed-resource",
- "hex",
- "hyper",
- "hyper-util",
- "if-addrs",
- "igd-next",
- "libloading",
- "log",
- "mdns-sd",
- "proptest",
- "qrcodegen",
- "rand 0.8.8",
- "reqwest",
- "rubylight-native-api",
- "rubylight-protocol",
- "rubylight-traverse",
- "rustls",
- "rustls-pemfile",
- "rustls-webpki",
  "rusty_enet",
- "serde",
  "serde_json",
- "sha2",
- "socket2 0.6.5",
- "str0m",
  "time",
  "tokio",
- "tokio-rustls",
- "tokio-util",
- "tower",
- "tower-http",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "url",
  "uuid",
- "windows",
- "xml-rs",
- "xmltree",
- "zeroize",
- "zip",
 ]
 
 [[package]]
@@ -473,6 +440,48 @@ dependencies = [
  "time",
  "x509-parser",
  "zeroize",
+]
+
+[[package]]
+name = "butterpollo-host-tests"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
+ "butterpollo-stream",
+ "butterpollo-web",
+ "butterpollo-webrtc",
+ "butterpollo-win-display",
+ "butterpollo-win-graphics",
+ "butterpollo-win-io",
+ "hex",
+ "hyper-util",
+ "proptest",
+ "reqwest",
+ "rubylight-native-api",
+ "rubylight-protocol",
+ "rubylight-traverse",
+ "rusty_enet",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2 0.6.5",
+ "str0m",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "windows",
+ "xmltree",
+ "zip",
 ]
 
 [[package]]
@@ -583,11 +592,123 @@ dependencies = [
 ]
 
 [[package]]
+name = "butterpollo-stream"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
+ "butterpollo-win-display",
+ "butterpollo-win-graphics",
+ "butterpollo-win-io",
+ "hex",
+ "hyper",
+ "hyper-util",
+ "if-addrs",
+ "igd-next",
+ "log",
+ "mdns-sd",
+ "proptest",
+ "rand 0.8.8",
+ "reqwest",
+ "rubylight-native-api",
+ "rubylight-protocol",
+ "rubylight-traverse",
+ "rustls",
+ "rustls-pemfile",
+ "rustls-webpki",
+ "rusty_enet",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2 0.6.5",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "windows",
+ "xml-rs",
+ "xmltree",
+ "zip",
+]
+
+[[package]]
 name = "butterpollo-vulkan-layer"
 version = "6.3.1"
 dependencies = [
  "embed-resource",
  "windows",
+]
+
+[[package]]
+name = "butterpollo-web"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
+ "butterpollo-stream",
+ "butterpollo-win-display",
+ "butterpollo-win-graphics",
+ "butterpollo-win-io",
+ "hex",
+ "hyper",
+ "hyper-util",
+ "proptest",
+ "qrcodegen",
+ "rand 0.8.8",
+ "reqwest",
+ "rubylight-native-api",
+ "rubylight-protocol",
+ "serde",
+ "serde_json",
+ "sha2",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "butterpollo-webrtc"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
+ "butterpollo-stream",
+ "butterpollo-win-graphics",
+ "butterpollo-win-io",
+ "hyper-util",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "socket2 0.6.5",
+ "str0m",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1600,12 +1721,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http-range-header"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9171a2ea8a68358193d15dd5d70c1c10a2afc3e7e4c5bc92bc9f025cebd7359c"
-
-[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2008,16 +2123,6 @@ name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
-
-[[package]]
-name = "mime_guess"
-version = "2.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
-dependencies = [
- "mime",
- "unicase",
-]
 
 [[package]]
 name = "minimal-lexical"
@@ -2815,18 +2920,17 @@ name = "rubylight-interop"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "butterpollo",
  "butterpollo-crypto",
  "butterpollo-input-policy",
  "butterpollo-media-policy",
  "butterpollo-session",
+ "butterpollo-stream",
+ "butterpollo-web",
  "butterpollo-win-display",
  "nightjar-core",
  "rubylight-native-api",
  "rubylight-protocol",
- "rubylight-wire",
  "rustls",
- "serde",
  "serde_json",
  "tokio",
  "uuid",
@@ -3594,23 +3698,13 @@ checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
  "bitflags",
  "bytes",
- "futures-core",
  "futures-util",
  "http",
  "http-body",
- "http-body-util",
- "http-range-header",
- "httpdate",
- "mime",
- "mime_guess",
- "percent-encoding",
  "pin-project-lite",
- "tokio",
- "tokio-util",
  "tower",
  "tower-layer",
  "tower-service",
- "tracing",
  "url",
 ]
 
@@ -3745,12 +3839,6 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
-
-[[package]]
-name = "unicase"
-version = "2.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
 
 [[package]]
 name = "unicode-ident"

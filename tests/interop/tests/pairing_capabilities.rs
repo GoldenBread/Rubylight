@@ -2,8 +2,8 @@
 mod common;
 
 use anyhow::Result;
-use butterpollo::stream::reconnect_harness::{HOST_VERSION, Harness};
 use butterpollo_session::power_action::SleepStates;
+use butterpollo_stream::stream::reconnect_harness::{HOST_VERSION, Harness};
 use common::{LOADED, device};
 use nightjar_core::http::{
     Availability, ClientIdentity, Family, Feature, HostClient, PairResult, Reason, ServerInfo,
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 /// A power backend with S3 that counts suspends in place of the PC's.
 #[derive(Default)]
 struct Suspends(AtomicUsize);
-impl butterpollo::power_action::Backend for Suspends {
+impl butterpollo_stream::power_action::Backend for Suspends {
     fn states(&self) -> Result<SleepStates> {
         Ok(SleepStates {
             s3: true,
@@ -37,7 +37,8 @@ impl butterpollo::power_action::Backend for Suspends {
 /// over HTTPS pinned to the certificate it got. A wrong PIN is caught on both ends.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_pairs_with_the_pin_entered_on_the_host() -> Result<()> {
-    let h = Harness::new(10_000, 1).await?;
+    let h = Harness::configured_with(10_000, 1, "", Some(butterpollo_web::native_api::router()))
+        .await?;
     let identity = Arc::new(ClientIdentity::generate()?);
     let client = Arc::new(
         HostClient::new("127.0.0.1", h.ports.http, identity.clone())?
@@ -115,8 +116,9 @@ async fn nightjar_pairs_with_the_pin_entered_on_the_host() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_pairs_from_the_qr_link_and_checks_the_host_certificate() -> Result<()> {
     use rubylight_protocol::pairing_uri::PairingUri;
-    let h = Harness::new(10_000, 1).await?;
-    let (url, mut received) = butterpollo::webhooks::test_support::receiver(vec![200]).await;
+    let h = Harness::configured_with(10_000, 1, "", Some(butterpollo_web::native_api::router()))
+        .await?;
+    let (url, mut received) = butterpollo_stream::webhooks::test_support::receiver(vec![200]).await;
     {
         let mut config = h.h.config.write().unwrap();
         config.values.insert("qr_pairing".into(), "true".into());
@@ -128,7 +130,7 @@ async fn nightjar_pairs_from_the_qr_link_and_checks_the_host_certificate() -> Re
     }
     let link = |h: &Harness| {
         let answer =
-            butterpollo::web::pairing_qr(&h.h, "", None, vec!["127.0.0.1".into()]).unwrap();
+            butterpollo_web::web::pairing_qr(&h.h, "", None, vec!["127.0.0.1".into()]).unwrap();
         let mut link = PairingUri::parse(answer["codes"][0]["uri"].as_str().unwrap()).unwrap();
         assert_eq!(link.host, "127.0.0.1");
         // The harness listens on its own port.
@@ -420,7 +422,8 @@ fn expected(feature: Feature) -> Availability {
 /// host's answer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_knows_every_capability_the_host_advertises() -> Result<()> {
-    let h = Harness::new(10_000, 1).await?;
+    let h = Harness::configured_with(10_000, 1, "", Some(butterpollo_web::native_api::router()))
+        .await?;
     // Seed an AMD GPU so GPU-less CI runners exercise host neural frame generation advertisement.
     *h.h.neural.adapters.lock().unwrap() = Some(vec![butterpollo_session::neural::Adapter {
         name: "AMD Radeon 780M Graphics".into(),

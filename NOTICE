@@ -75,7 +75,7 @@ Per-app stream-menu commands (the app key menu-cmd with name, cmd and elevated,
 rust/core/input-policy/src/menu_commands.rs) follow Foundation Sunshine's menu commands
 (src/process.cpp, src/nvhttp/apps.cpp); the undo is Rubylight's.
 Settings backup and restore from the console and the tray
-(rust/core/session/src/settings_backup.rs, rust/host/src/settings_backup.rs) follow
+(rust/core/session/src/settings_backup.rs, rust/host/stream/src/settings_backup.rs) follow
 Foundation Sunshine v2025.1011.143611's tray export, import and restore (pull
 request 248); the archive format and its checks are Rubylight's.
 
@@ -98,11 +98,11 @@ touchpad input packets 0x55000009 and 0x5500000A and their feature flags
 
 The per-application design of the NVIDIA image enhancements, the single pre-encode
 slot that RTX HDR takes first, and the HDR proxy through which RTX Video enhancement
-treats an HDR picture (rust/core/media-policy/src/nvidia_enhance.rs, rust/host/src/nvidia_enhance.rs,
+treats an HDR picture (rust/core/media-policy/src/nvidia_enhance.rs, rust/host/stream/src/nvidia_enhance.rs,
 rust/windows/graphics/src/rtx_video.rs and rust/windows/abi/src/shaders/rtx_video.hlsl) follow
 Foundation Sunshine's src/platform/windows/image_enhancement/, including
 dlss_nr/hdr_filter.cpp. The NVIDIA component's design (rust/core/media-policy/src/nvidia_component.rs,
-rust/host/src/nvidia_component.rs and rust/windows/graphics/src/nvidia_enhance.rs: NVIDIA's files
+rust/host/stream/src/nvidia_component.rs and rust/windows/graphics/src/nvidia_enhance.rs: NVIDIA's files
 trusted by digests in the host and kept apart from the adapter's build, fixed file roles
 in a fixed folder, a check before each load, installed only at the user's request)
 follows its docs/native_sideload_components.md, and the NGX adapter's set-up in rust/truehdr-runtime (NGX's
@@ -144,7 +144,7 @@ Annex
 
 Restoring the Windows settings that the removed background child-session
 feature changed (rust/core/session/src/child_session.rs, rust/windows/io/src/child_session.rs,
-rust/host/src/child_session.rs) is ported from Annex
+rust/host/stream/src/child_session.rs) is ported from Annex
 (https://github.com/mattxslv/annex), Copyright (c) 2026 mattxslv, MIT licensed,
 with ocr1n's launcher rework (mattxslv/annex#2). The MIT license text is in
 third-party/licenses/annex-LICENSE.txt.
@@ -161,7 +161,7 @@ handler hub and are the user's own content.
 
 ANR frame generation (Neural Rendering)
 
-The per-app frame generation switch (rust/core/session/src/neural.rs, rust/host/src/neural.rs)
+The per-app frame generation switch (rust/core/session/src/neural.rs, rust/host/stream/src/neural.rs)
 installs ANR frame generation by apex-compute (https://github.com/apex-compute/ANR),
 release FG-V.B16, into a game's folder. Its authors publish no license for it.
 Rubylight does not host, bundle, mirror or modify any of its files: at the user's
@@ -201,7 +201,7 @@ rumble and motion timestamps.
 
 DS4Windows and Foundation Sunshine (DSU motion server)
 
-The DSU (cemuhook) motion server (rust/core/input-policy/src/dsu.rs, rust/host/src/dsu.rs) follows
+The DSU (cemuhook) motion server (rust/core/input-policy/src/dsu.rs, rust/host/stream/src/dsu.rs) follows
 the protocol of DS4Windows' UdpServer.cs (https://github.com/schmaldeo/DS4Windows,
 GPL-3.0, Jays2Kings, Ryochan7, schmaldeo and contributors). Its settings
 (enable_dsu_server, dsu_server_port) and default port 26760 are Foundation Sunshine's
@@ -398,7 +398,7 @@ Clipboard sync (control message 0x5508) uses Moonlight V+'s frame and behaviour
 GPL-3.0), so a V+ client syncs with the host unchanged: the frame and its echo tokens
 in client/protocol/core/src/clipboard_sync.rs, the rules in
 client/protocol/client/src/control/clipboard_sync.rs, the host's side in
-rust/host/src/stream/clipboard_sync.rs, and Nightjar's in
+rust/host/stream/src/stream/clipboard_sync.rs, and Nightjar's in
 client/app/src/main/java/com/limelight/utils/ClipboardSync.java and
 client/protocol/desktop/src/stream/clipboard_sync.rs.
 

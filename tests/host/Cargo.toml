@@ -1,0 +1,48 @@
+[package]
+name = "butterpollo-host-tests"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+butterpollo-crypto = { path = "../../rust/core/crypto" }
+butterpollo-config = { path = "../../rust/core/config" }
+butterpollo-media-policy = { path = "../../rust/core/media-policy" }
+butterpollo-input-policy = { path = "../../rust/core/input-policy" }
+butterpollo-session = { path = "../../rust/core/session" }
+rubylight-native-api = { path = "../../client/protocol/native-api" }
+rubylight-protocol = { path = "../../client/protocol/core" }
+rubylight-traverse = { path = "../../client/protocol/traverse" }
+butterpollo-win-display = { path = "../../rust/windows/display" }
+butterpollo-win-graphics = { path = "../../rust/windows/graphics" }
+butterpollo-win-io = { path = "../../rust/windows/io", features = ["test-folder", "test-route"] }
+butterpollo-stream = { path = "../../rust/host/stream", features = ["test-support"] }
+butterpollo-webrtc = { path = "../../rust/host/webrtc", features = ["test-support"] }
+butterpollo-web = { path = "../../rust/host/web", features = ["test-support"] }
+tokio = { version = "1.48", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+axum = { version = "0.8", features = ["ws"] }
+hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
+tower = "0.5"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+hex = "0.4"
+sha2 = "0.10"
+uuid = { version = "1.18", features = ["v4"] }
+url = "2.5"
+socket2 = { version = "0.6", features = ["all"] }
+rusty_enet = "0.4"
+xmltree = "=0.10.3"
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+str0m = { version = "=0.24.1", default-features = false, features = ["rust-crypto"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
+
+[lints]
+workspace = true

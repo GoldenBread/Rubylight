@@ -2,7 +2,7 @@
 mod common;
 
 use anyhow::{Context, Result};
-use butterpollo::{
+use butterpollo_stream::{
     stream::reconnect_harness::{Harness, until},
     usb_forward::test_support::FakeVhci,
 };
@@ -173,7 +173,13 @@ async fn let_go(h: &Harness, driver: &mut Driver, device: &FakeDevice) {
 /// goes on, and with the stream.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_forwards_a_usb_device_and_every_ending_detaches_it() -> Result<()> {
-    let h = Harness::configured(10_000, 1, "usb_forwarding=enabled\n").await?;
+    let h = Harness::configured_with(
+        10_000,
+        1,
+        "usb_forwarding=enabled\n",
+        Some(butterpollo_web::native_api::router()),
+    )
+    .await?;
     let (vhci, connections) = FakeVhci::new(true);
     h.h.usb.set_vhci(vhci.clone());
     let client = Arc::new(device(&h, u32::MAX, &[("allow_usb", true)])?);

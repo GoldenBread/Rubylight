@@ -1,6 +1,9 @@
 //! Command-line parsing and subcommand dispatch for the Rubylight host binary.
-use crate::{child_session, neural, nvidia_enhance, playnite, service_tasks, state, wake};
+use crate::service_tasks;
 use anyhow::{Context, Result};
+use butterpollo_stream::{
+    child_session, neural, nvidia_enhance, playnite, state, wake, win_bridge,
+};
 use clap::Parser;
 use std::{
     net::IpAddr,
@@ -160,14 +163,14 @@ pub fn run() -> Result<()> {
         return butterpollo_win_graphics::codec_probe::worker_with(
             pipe,
             args.codec_probe_parent.unwrap(),
-            &crate::win_bridge::HostUserLauncher,
+            &win_bridge::HostUserLauncher,
         );
     }
     if let Some(pipe) = &args.wgc_worker {
         return butterpollo_win_graphics::capture::run_wgc_worker_with(
             pipe,
             args.wgc_parent.unwrap(),
-            &crate::win_bridge::HostUserLauncher,
+            &win_bridge::HostUserLauncher,
         );
     }
     if let Some(source) = &args.import_config {
@@ -189,13 +192,13 @@ pub fn run() -> Result<()> {
         );
     }
     if let Some(pid) = args.display_watch {
-        crate::win_bridge::install_hooks();
+        win_bridge::install_hooks();
         return butterpollo_win_display::display_recovery::wait_and_recover_with(
             pid,
             &args
                 .config_dir
                 .context("display watcher requires a config directory")?,
-            crate::win_bridge::recovery_hooks(),
+            win_bridge::recovery_hooks(),
         );
     }
     if args.diagnostics {
@@ -348,4 +351,19 @@ fn smoke(args: &Args) -> Result<()> {
     }
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    #[test]
+    fn the_uninstallers_restore_flag_is_the_hosts() {
+        let args = crate::cli::Args::try_parse_from([
+            "butterpollo.exe",
+            butterpollo_session::child_session::RESTORE_FLAG,
+        ])
+        .unwrap();
+        assert!(args.child_session_restore);
+    }
 }

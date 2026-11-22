@@ -2,11 +2,11 @@
 mod common;
 
 use anyhow::Result;
-use butterpollo::stream::reconnect_harness::{Harness, until};
 use butterpollo_session::{
     native::{FILE_DOWNLOAD, FILE_UPLOAD},
     power_action::SleepStates,
 };
+use butterpollo_stream::stream::reconnect_harness::{Harness, until};
 use common::{LOADED, device, paired, stream};
 use nightjar_core::http::{
     Availability, EntryKind, Feature, FileError, FolderAccess, HostClient, PowerError, Reason,
@@ -101,10 +101,11 @@ fn refusal<T: std::fmt::Debug>(result: Result<T, FileError>) -> (u16, &'static s
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_transfers_files_and_reads_each_refusal() -> Result<()> {
     let folder = Folder::new()?;
-    let h = Harness::configured(
+    let h = Harness::configured_with(
         10_000,
         1,
         &format!("{}file_transfer_max_mb=1\n", folder.setting()),
+        Some(butterpollo_web::native_api::router()),
     )
     .await?;
     let client = device(&h, u32::MAX, &[])?;
@@ -237,7 +238,8 @@ async fn nightjar_transfers_files_and_reads_each_refusal() -> Result<()> {
 /// lists no file features.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_reads_file_transfer_turned_off() -> Result<()> {
-    let h = Harness::new(10_000, 1).await?;
+    let h = Harness::configured_with(10_000, 1, "", Some(butterpollo_web::native_api::router()))
+        .await?;
     let client = device(&h, u32::MAX, &[])?;
     let native = client.native_capabilities_with_files()?;
     assert!(
@@ -291,7 +293,8 @@ async fn nightjar_browses_and_moves_files_through_shared_folders() -> Result<()>
     }
     std::fs::write(games.join("readme.txt"), b"hello")?;
     std::fs::write(games.join("saves").join("slot1.sav"), b"slot")?;
-    let h = Harness::new(10_000, 1).await?;
+    let h = Harness::configured_with(10_000, 1, "", Some(butterpollo_web::native_api::router()))
+        .await?;
     h.h.file_transfers.fake_space(1 << 40, 1 << 41);
     let client = device(&h, u32::MAX, &[])?;
     assert_eq!(refusal(client.shared_folders()), (403, "folders_disabled"));
@@ -421,12 +424,13 @@ async fn nightjar_browses_and_moves_files_through_shared_folders() -> Result<()>
 /// `clipboard_image_max_mb` or with a broken image, Nightjar reads the host's refusal.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_copies_images_both_ways_while_it_streams() -> Result<()> {
-    use butterpollo::nvhttp::clipboard;
     use butterpollo_session::clipboard_image::{Image, decode_png, encode_png};
+    use butterpollo_stream::nvhttp::clipboard;
     use nightjar_core::http::ImageClipboardError;
     let _turn = clipboard::TURN.lock().await;
     *clipboard::PNG.lock().unwrap() = None;
-    let h = Harness::new(10_000, 1).await?;
+    let h = Harness::configured_with(10_000, 1, "", Some(butterpollo_web::native_api::router()))
+        .await?;
     let client = device(&h, u32::MAX, &[])?;
     let capabilities = client
         .server_info(true)?
@@ -486,7 +490,7 @@ async fn nightjar_copies_images_both_ways_while_it_streams() -> Result<()> {
 /// A power backend with S3 that counts suspends in place of the PC's.
 #[derive(Default)]
 struct Suspends(AtomicUsize);
-impl butterpollo::power_action::Backend for Suspends {
+impl butterpollo_stream::power_action::Backend for Suspends {
     fn states(&self) -> Result<SleepStates> {
         Ok(SleepStates {
             s3: true,
@@ -513,7 +517,8 @@ fn power_refusal<T: std::fmt::Debug>(result: Result<T, PowerError>) -> (Refusal,
 /// (fake) PC to sleep once and can't be spent again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_puts_the_host_to_sleep_once_allowed() -> Result<()> {
-    let h = Harness::new(10_000, 1).await?;
+    let h = Harness::configured_with(10_000, 1, "", Some(butterpollo_web::native_api::router()))
+        .await?;
     let suspends = Arc::new(Suspends::default());
     h.h.power.set_backend(suspends.clone());
     let client = device(&h, u32::MAX, &[])?;

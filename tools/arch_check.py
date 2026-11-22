@@ -907,8 +907,8 @@ def compute_baselines(root):
             if not has_java_kt_module_header(text, suffix):
                 missing_java_kt.append(rel)
 
-        if (rel == 'rust/host/src/stream.rs' or rel.startswith('rust/host/src/stream/')) \
-                and rel != 'rust/host/src/stream/config.rs' and rel.endswith('.rs') \
+        if (rel == 'rust/host/stream/src/stream.rs' or rel.startswith('rust/host/stream/src/stream/')) \
+                and rel != 'rust/host/stream/src/stream/config.rs' and rel.endswith('.rs') \
                 and not is_rust_test_file(rel):
             hits = find_raw_config_reads(text)
             if hits:
@@ -995,8 +995,8 @@ def check_repo(root):
                 violations.append((rel, 1, 'missing-module-header', 'missing /** module Javadoc header'))
 
         # 3. Rule 1: raw-config-read
-        if (rel == 'rust/host/src/stream.rs' or rel.startswith('rust/host/src/stream/')) \
-                and rel != 'rust/host/src/stream/config.rs' and rel.endswith('.rs') \
+        if (rel == 'rust/host/stream/src/stream.rs' or rel.startswith('rust/host/stream/src/stream/')) \
+                and rel != 'rust/host/stream/src/stream/config.rs' and rel.endswith('.rs') \
                 and not is_rust_test_file(rel):
             hits = find_raw_config_reads(text)
             limit = int(raw_config_allow.get(rel, 0))

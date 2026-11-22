@@ -1,0 +1,51 @@
+[package]
+name = "butterpollo-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+butterpollo-crypto = { path = "../../core/crypto" }
+butterpollo-config = { path = "../../core/config" }
+butterpollo-media-policy = { path = "../../core/media-policy" }
+butterpollo-input-policy = { path = "../../core/input-policy" }
+butterpollo-session = { path = "../../core/session" }
+rubylight-native-api = { path = "../../../client/protocol/native-api" }
+rubylight-protocol = { path = "../../../client/protocol/core" }
+butterpollo-win-display = { path = "../../windows/display" }
+butterpollo-win-graphics = { path = "../../windows/graphics" }
+butterpollo-win-io = { path = "../../windows/io" }
+butterpollo-stream = { path = "../stream" }
+tokio = { version = "1.48", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+hyper = { version = "1", features = ["http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio-util = { version = "0.7", features = ["io"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+base64 = "0.22"
+hex = "0.4"
+rand = "0.8"
+sha2 = "0.10"
+uuid = { version = "1.18", features = ["v4"] }
+url = "2.5"
+time = "0.3"
+# The console's pairing QR code (Project Nayuki, MIT, no dependencies).
+qrcodegen = "1.8"
+tower = { version = "0.5", optional = true }
+
+[features]
+test-support = ["butterpollo-stream/test-support", "butterpollo-win-io/test-folder", "dep:tower"]
+
+[dev-dependencies]
+butterpollo-stream = { path = "../stream", features = ["test-support"] }
+butterpollo-win-io = { path = "../../windows/io", features = ["test-folder"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
+tower = "0.5"
+
+[lints]
+workspace = true

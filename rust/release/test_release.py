@@ -710,7 +710,7 @@ class Signing(unittest.TestCase):
         self.assertNotIn('rubylight-nvidia-setup', self.workflow)
         script = (ROOT / 'rust/release/sign-local.ps1').read_text(encoding='utf-8')
         self.assertNotIn('rubylight-nvidia-setup', script)
-        updater = (ROOT / 'rust/host/src/updater.rs').read_text(encoding='utf-8')
+        updater = (ROOT / 'rust/host/stream/src/updater.rs').read_text(encoding='utf-8')
         self.assertIn('const INSTALLERS: &[&str] = &["rubylight-setup", "butterpollo-setup"];', updater)
 
     def test_local_signing_holds_the_release_as_a_draft(self):

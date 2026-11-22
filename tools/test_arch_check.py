@@ -215,22 +215,22 @@ class RuleLintTests(unittest.TestCase):
             root = pathlib.Path(tmp)
             _write_configs(root, baselines={
                 'missing_headers': {'rust': [], 'java_kt': []},
-                'raw_config_read': {'rust/host/src/stream/baselined.rs': 1},
+                'raw_config_read': {'rust/host/stream/src/stream/baselined.rs': 1},
                 'rubylight_family_gating': {'allowed': {}, 'legacy': {}},
                 'unannotated_cfg_unix': {},
             })
             _write_files(root, {
-                'rust/host/src/stream/config.rs': '//! Allowed config module.\nfn f(c: &Config) { let _ = c.boolean("a", false); }\n',
-                'rust/host/src/stream/tests.rs': '//! Test module.\nfn t(c: &Config) { let _ = c.boolean("a", false); }\n',
-                'rust/host/src/stream/foo_tests.rs': '//! Test module.\nfn t(c: &Config) { let _ = c.integer("a", 1); }\n',
-                'rust/host/src/stream/reconnect_tests/helper.rs': '//! Test helper.\nfn t(c: &Config) { let _ = c.get("a", "b"); }\n',
-                'rust/host/src/stream/baselined.rs': (
+                'rust/host/stream/src/stream/config.rs': '//! Allowed config module.\nfn f(c: &Config) { let _ = c.boolean("a", false); }\n',
+                'rust/host/stream/src/stream/tests.rs': '//! Test module.\nfn t(c: &Config) { let _ = c.boolean("a", false); }\n',
+                'rust/host/stream/src/stream/foo_tests.rs': '//! Test module.\nfn t(c: &Config) { let _ = c.integer("a", 1); }\n',
+                'rust/host/stream/src/stream/reconnect_tests/helper.rs': '//! Test helper.\nfn t(c: &Config) { let _ = c.get("a", "b"); }\n',
+                'rust/host/stream/src/stream/baselined.rs': (
                     '//! Baselined.\n'
                     'fn ok(c: &Config) {\n'
                     '    let _ = c.boolean("legacy_one", false);\n'
                     '}\n'
                 ),
-                'rust/host/src/stream/clean.rs': (
+                'rust/host/stream/src/stream/clean.rs': (
                     '//! Clean production file.\n'
                     'fn clean(c: &Config, peers: &Mutex<Peers>, ciphers: &Ciphers, m: &HashMap<String, i32>, usb: &Usb) {\n'
                     '    // c.boolean("in_comment", false)\n'
@@ -249,7 +249,7 @@ class RuleLintTests(unittest.TestCase):
                     '    fn t(c: &Config) { let _ = c.boolean("test_mod", false); }\n'
                     '}\n'
                 ),
-                'rust/host/src/stream/bad.rs': (
+                'rust/host/stream/src/stream/bad.rs': (
                     '//! Violating file with inline cfg(test).\n'
                     'fn f(c: &Config) {\n'
                     '    #[cfg(test)]\n'
@@ -268,7 +268,7 @@ class RuleLintTests(unittest.TestCase):
                     '    let _g = &c.values["y"];\n'
                     '}\n'
                 ),
-                'rust/host/src/stream/b_quote_and_cfg_edges.rs': (
+                'rust/host/stream/src/stream/b_quote_and_cfg_edges.rs': (
                     '//! Regression tests for b\'"\' byte-char, arg2 if/match, and cfg(all(..., test)).\n'
                     'fn f<' + "'a" + '>(b: u8, s: &' + "'a" + ' str, c: &Config, flag: i32, map: &Map) {\n'
                     '    if b == b\'"\' || b == b\'\\\\\' || b == b\'\\\'\' || b == b\'\\x22\' {\n'
@@ -299,10 +299,10 @@ class RuleLintTests(unittest.TestCase):
                 ),
             })
             violations = arch_check.check_repo(root)
-            bad_lines = [line for p, line, rule, _ in violations if p == 'rust/host/src/stream/bad.rs' and rule == 'raw-config-read']
+            bad_lines = [line for p, line, rule, _ in violations if p == 'rust/host/stream/src/stream/bad.rs' and rule == 'raw-config-read']
             edge_lines = [
                 line for p, line, rule, _ in violations
-                if p == 'rust/host/src/stream/b_quote_and_cfg_edges.rs' and rule == 'raw-config-read'
+                if p == 'rust/host/stream/src/stream/b_quote_and_cfg_edges.rs' and rule == 'raw-config-read'
             ]
             self.assertEqual(len(violations), 14, violations)
             self.assertEqual(bad_lines, [8, 9, 10, 11, 13, 15, 16])

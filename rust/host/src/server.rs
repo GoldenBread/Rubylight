@@ -1,13 +1,17 @@
 //! Async Tokio host server lifecycle, logging, panic hook, and graceful shutdown.
-use crate::{
-    child_session, dsu, game_files, game_settings, host_warnings, internet_play, invites, library,
-    logging, multiclient, network, nvhttp, radeon_session, remote_display, rtsp_server, runtime,
-    service_tasks, session_end, state, steamgriddb, stream, tls, web, webrtc,
-};
+use crate::service_tasks;
 use anyhow::{Context, Result};
+use butterpollo_stream::{
+    child_session, dsu, game_files, game_settings, host_warnings, internet_play, invites, library,
+    logging, multiclient, network, nvhttp, nvidia_component, radeon_session, remote_display,
+    rtsp_server, runtime, session_end, state, steamgriddb, stream, tls,
+    webrtc_bridge::WebRtcWebService, win_bridge,
+};
+use butterpollo_web::{native_api, web};
+use butterpollo_webrtc::WebRtcRuntime;
 use std::{
     path::PathBuf,
-    sync::atomic::Ordering,
+    sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
 };
 
@@ -159,10 +163,10 @@ pub(crate) async fn run(args: crate::cli::Args, assets: PathBuf) -> Result<()> {
     // Crash reporting must not keep the host from starting, e.g. when the
     // reporter process is blocked.
     let crash_reporting = butterpollo_win_io::crash::initialize(&h.directory).err();
-    crate::win_bridge::install_hooks();
+    win_bridge::install_hooks();
     let display_recovery = butterpollo_win_display::display_recovery::initialize_with(
         &h.directory,
-        crate::win_bridge::recovery_hooks(),
+        win_bridge::recovery_hooks(),
     )?;
     let log_path = h
         .config
@@ -295,7 +299,7 @@ async fn run_logged(
     // With the NVIDIA component installed, the GPU and driver are asked which image enhancements
     // they offer, after the power profile, off startup's path: serverinfo and the console read
     // the answer. An adapter from an earlier host version is replaced first.
-    crate::nvidia_component::start(&h);
+    nvidia_component::start(&h);
     // The first launcher scan for the native library runs on its own thread, so the first request
     // finds it done and startup does not wait.
     library::installed(&h);
@@ -394,6 +398,8 @@ async fn run_logged(
     let media = stream::Media::new(h.clone(), bind)?;
     log_encoder_gpu_check();
     h.probe_codecs();
+    let webrtc_service: Arc<dyn WebRtcWebService> =
+        Arc::new(WebRtcRuntime::install(&h, Some(media.clone())));
     let mut tasks = tokio::task::JoinSet::new();
     for (port, https, web) in [
         (ports.http, false, false),
@@ -401,9 +407,9 @@ async fn run_logged(
         (ports.web, true, true),
     ] {
         let router = if web {
-            web::router_with(h.clone(), webrtc::server::Console::new(Some(media.clone())))
+            web::router_with(h.clone(), Some(webrtc_service.clone()))
         } else {
-            nvhttp::router(h.clone(), https)
+            nvhttp::router_with(h.clone(), https, https.then(native_api::router))
         };
         let acceptor = if web {
             Some(tls::console_acceptor(&h.console)?)
@@ -426,8 +432,7 @@ async fn run_logged(
         let address: std::net::SocketAddr = (bind, ports.guest).into();
         let h = h.clone();
         let acceptor = tls::console_acceptor(&h.console)?;
-        let router =
-            web::guest_router_with(h.clone(), webrtc::server::Console::new(Some(media.clone())));
+        let router = web::guest_router_with(h.clone(), Some(webrtc_service.clone()));
         tokio::spawn(async move {
             if let Err(error) = tls::serve(address, router, Some(acceptor)).await {
                 let error = format!("{error:#}");
@@ -443,7 +448,7 @@ async fn run_logged(
         })
     };
     // None when the setting is off or the port is taken; the console says which.
-    let webrtc = webrtc::server::start(h.clone(), bind, Some(media.clone()));
+    let webrtc = butterpollo_webrtc::server::start(h.clone(), bind, Some(media.clone()));
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         web_port = ports.web,
@@ -747,7 +752,7 @@ mod shutdown_tests {
 
     #[test]
     fn host_request_stop_records_first_reason_and_restart_flag() {
-        let fixture = crate::state::test_support::Fixture::new();
+        let fixture = butterpollo_stream::state::test_support::Fixture::new();
         let host = &fixture.host;
         assert_eq!(host.stop_reason(), None);
         host.request_stop("tray_restart", true);
