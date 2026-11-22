@@ -172,12 +172,15 @@ def plan(paths, root=ROOT, fast=False):
     interop_in_host = 'tests/interop' in host
 
     host_dirs, client_dirs, client_all, service = set(), set(), False, False
-    app_sources, gradle_all, web, release, tools, interop_hit, notes = [], False, False, set(), False, False, []
+    app_sources, gradle_all, web, release, tools, interop_hit, arch_hit, notes = [], False, False, set(), False, False, False, []
     for path in paths:
         hit = False
         if path.endswith('.md'):
             notes.append(path)
             continue
+        if path.endswith(('.rs', '.java', '.kt', '.c', '.cpp', '.h', '.hpp', '.ts', '.svelte')):
+            arch_hit = True
+            hit = True
         if under(path, HOST_WIDE):
             host_dirs.update(host)
             hit = True
@@ -253,10 +256,7 @@ def plan(paths, root=ROOT, fast=False):
         if tools:
             checks.append(Check('tools-py', 'tools', ['tools/test_*.py']))
         checks.append(Check('code-map', 'code_map', ['docs/code-map.md', 'client/docs/code-map.md']))
-        if (root / 'tools/arch_check.py').is_file():
-            checks.append(Check('arch-check', 'arch', ['tools/arch_check.py']))
-        else:
-            checks.append(Check('arch-check', 'arch', skip='tools/arch_check.py not present yet'))
+        checks.append(Check('arch-check', 'arch', ['tools/arch_check.py']))
         checks.append(Check('generated-docs', 'generated', [d.path for d in generated_docs.DOCS]))
         return checks, notes
     if gradle_all:
@@ -278,6 +278,8 @@ def plan(paths, root=ROOT, fast=False):
     generated = generated_docs.affected(paths)
     if generated:
         checks.append(Check('generated-docs', 'generated', [d.path for d in generated]))
+    if checks or arch_hit:
+        checks.append(Check('arch-check', 'arch', ['tools/arch_check.py']))
     return checks, notes
 
 
@@ -1074,7 +1076,7 @@ def extract_failure_lines(kind, log_text):
                     pending_test = None
                 else:
                     out.append(f'{m.group(1)}:{m.group(2)}:1')
-            elif m := re.match(r'^((?:[A-Za-z]:)?[^\s:]+\.(?:md|py|rs|java|kt|ts|tsx|js|mjs|svelte|toml|gradle))(?::(\d+)(?::(\d+))?)?:\s*(.+)$', stripped):
+            elif m := re.match(r'^((?:[A-Za-z]:)?[^\s:]+\.(?:md|py|rs|java|kt|ts|tsx|js|mjs|svelte|toml|gradle|c|cpp|cc|h|hpp|hh|json))(?::(\d+)(?::(\d+))?)?:\s*(.+)$', stripped):
                 ln = m.group(2) or '1'
                 col = m.group(3) or '1'
                 out.append(f'{m.group(1)}:{ln}:{col}: {m.group(4)}')

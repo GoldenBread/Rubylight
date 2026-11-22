@@ -21,9 +21,9 @@ class Filters(unittest.TestCase):
             self.assertTrue(ci.branch_matches(branches, 'wip/x'), key)
             self.assertFalse(ci.branch_matches(branches, 'RamazanKara/nj-redesign'), key)
         self.assertEqual(ci.expected('wip/x', ['docs/building.md', 'rust/RELEASE_NOTES.md', 'client/docs/settings.md']), [])
-        self.assertEqual(ci.expected('wip/x', ['rust/core/src/lib.rs']), ['host'])
-        self.assertEqual(ci.expected('wip/x', ['client/protocol/core/src/lib.rs']), ['host', 'android', 'macos'])
-        self.assertEqual(ci.expected('wip/x', ['client/app/src/main/java/A.java']), ['android'])
+        self.assertEqual(ci.expected('wip/x', ['rust/core/src/lib.rs']), ['host', 'tools'])
+        self.assertEqual(ci.expected('wip/x', ['client/protocol/core/src/lib.rs']), ['host', 'android', 'macos', 'tools'])
+        self.assertEqual(ci.expected('wip/x', ['client/app/src/main/java/A.java']), ['android', 'tools'])
         self.assertEqual(ci.expected('wip/x', ['tools/dev.py']), ['tools'])
         self.assertEqual(ci.expected('feature/x', ['rust/core/src/lib.rs']), [])
 
@@ -60,8 +60,10 @@ class Watch(unittest.TestCase):
         return code, out.getvalue(), calls
 
     def test_passed_runs_exit_zero(self):
-        code, out, _ = self.main([self.runs(('Rubylight Windows', 'in_progress', '', 'push')),
-                                  self.runs(('Rubylight Windows', 'completed', 'success', 'push'))])
+        code, out, _ = self.main([self.runs(('Rubylight Windows', 'in_progress', '', 'push'),
+                                            ('Developer workflow checks', 'completed', 'success', 'push')),
+                                  self.runs(('Rubylight Windows', 'completed', 'success', 'push'),
+                                            ('Developer workflow checks', 'completed', 'success', 'push'))])
         self.assertEqual(code, 0, out)
         self.assertIn('Rubylight Windows            success', out)
 

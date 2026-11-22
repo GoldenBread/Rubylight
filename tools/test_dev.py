@@ -111,24 +111,24 @@ class Plan(unittest.TestCase):
 
     def test_web_release_and_tools(self):
         planned, _ = checks('rust/web/src/App.svelte')
-        self.assertEqual(set(planned), {'web'})
+        self.assertEqual(set(planned), {'web', 'arch-check'})
         planned, _ = checks('rust/release/e2e_result.py')
         self.assertIn('test_e2e_result.py', planned['release-py'].items)
         self.assertIn('test_release.py', planned['release-py'].items)
         planned, _ = checks('rust/release/test_soak.py')
         self.assertIn('test_soak.py', planned['release-py'].items)
         planned, _ = checks('tools/hw/catalog.yaml')
-        self.assertEqual(set(planned), {'tools-py'})
+        self.assertEqual(set(planned), {'tools-py', 'arch-check'})
         planned, _ = checks('tools/nightjar_notes.py')
-        self.assertEqual(set(planned), {'tools-py', 'release-py'})
+        self.assertEqual(set(planned), {'tools-py', 'release-py', 'arch-check'})
 
     def test_the_service_has_its_own_check_and_its_version_rule(self):
         planned, _ = checks('rust/service/src/supervisor.rs')
-        self.assertEqual(set(planned), {'service', 'release-py'})
+        self.assertEqual(set(planned), {'service', 'release-py', 'arch-check'})
         self.assertIn('test_release.py', planned['release-py'].items)
         # The version resource script goes into every executable, the service's too.
         planned, _ = checks('rust/assets/version_info.rs')
-        self.assertEqual(set(planned), {'host', 'service', 'release-py'})
+        self.assertEqual(set(planned), {'host', 'service', 'release-py', 'arch-check'})
         self.assertIn('butterpollo-setup', planned['host'].items)
         planned, _ = checks('rust-toolchain.toml')
         self.assertIn('service', planned)
@@ -606,8 +606,7 @@ class Execution(unittest.TestCase):
         self.assertIn('code-map', by_name)
         self.assertIn('generated-docs', by_name)
         self.assertIn('arch-check', by_name)
-        if not (ROOT / 'tools/arch_check.py').is_file():
-            self.assertTrue(by_name['arch-check'].skip)
+        self.assertFalse(by_name['arch-check'].skip)
 
         with tempfile.TemporaryDirectory() as directory:
             fake_root = pathlib.Path(directory)
