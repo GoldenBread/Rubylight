@@ -18,7 +18,9 @@ butterpollo-input-policy = { path = "../core/input-policy" }
 butterpollo-session = { path = "../core/session" }
 rubylight-native-api = { path = "../../client/protocol/native-api" }
 rubylight-protocol = { path = "../../client/protocol/core" }
-butterpollo-windows = { path = "../windows" }
+butterpollo-win-display = { path = "../windows/display" }
+butterpollo-win-graphics = { path = "../windows/graphics" }
+butterpollo-win-io = { path = "../windows/io" }
 tokio = { version = "1.48", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
 # The USB tunnel's upgrade; already in the tree through axum and hyper-util.
@@ -64,12 +66,12 @@ rubylight-traverse = { path = "../../client/protocol/traverse" }
 embed-resource = "3.0.12"
 
 [features]
-test-harness = ["butterpollo-windows/test-folder", "butterpollo-windows/test-route"]
+test-harness = ["butterpollo-win-io/test-folder", "butterpollo-win-io/test-route"]
 
 [dev-dependencies]
 # File transfer tests open their folder as the developer; session tests hold
 # an audio route that owns no device.
-butterpollo-windows = { path = "../windows", features = ["test-folder", "test-route"] }
+butterpollo-win-io = { path = "../windows/io", features = ["test-folder", "test-route"] }
 # Property tests over the query fields and bodies peers send.
 proptest = { version = "1", default-features = false, features = ["std"] }
 # The Nucleus Co-op hardware case reads its processes' token elevation and integrity level.

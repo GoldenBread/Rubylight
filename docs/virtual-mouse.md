@@ -40,10 +40,10 @@ The first three rows follow from how Windows marks input and are what the probe 
 
 ## Measuring it
 
-`input_latency_probe` (an example of the `butterpollo-windows` crate) shows what a game sees:
+`input_latency_probe` (a binary of the `butterpollo-probes` crate) shows what a game sees:
 
 ```powershell
-cargo run --release -p butterpollo-windows --example input_latency_probe -- watch 30 vm.csv
+cargo run --release -p butterpollo-probes --bin input_latency_probe -- watch 30 vm.csv
 ```
 
 It takes raw mouse input in the background as games do and installs a low-level mouse hook, writes every `WM_INPUT` with its QueryPerformanceCounter time, sending device and motion, and every hook event with its injected flag, then prints the devices seen and the injected share. Run it on the host PC in the user's session while a client moves the mouse in short strokes.
@@ -51,7 +51,7 @@ It takes raw mouse input in the background as games do and installs a low-level 
 For the delay, run the host with `RUST_LOG=info,input_timing=trace`: each relative move is logged with its QPC time as it reaches the injector (`arrived`), and each delivery with its route (`delivered`, `virtual_mouse` or `injection`). Then:
 
 ```powershell
-cargo run --release -p butterpollo-windows --example input_latency_probe -- pair butterpollo.log vm.csv
+cargo run --release -p butterpollo-probes --bin input_latency_probe -- pair butterpollo.log vm.csv
 ```
 
 pairs each `WM_INPUT` with the latest earlier arrival of the same motion delivered on its route (injected `WM_INPUT` with `injection`, the virtual mouse's with `virtual_mouse`), so a move that never reached the probe stays unpaired instead of shifting later pairs, and prints p50, p95 and p99 per device. Compare one run with `mouse_mode = "virtual_mouse"` and one with `mouse_mode = "injection"`, 30-60 s each, on an isolated test host.

@@ -113,7 +113,7 @@ pub fn trigger_update(h: &Shared, tell: bool) {
                 crate::updater::remember_check(&h);
                 tracing::info!(current, latest = ?latest, "release check succeeded");
                 if tell && latest.is_none() {
-                    butterpollo_windows::tray::notify(
+                    butterpollo_win_io::tray::notify(
                         "Rubylight is up to date",
                         &format!("Version {current} is the latest."),
                     );
@@ -132,7 +132,7 @@ pub fn trigger_update(h: &Shared, tell: bool) {
             Err(error) => {
                 tracing::warn!(error = %format!("{error:#}"), "release check failed");
                 if tell {
-                    butterpollo_windows::tray::notify(
+                    butterpollo_win_io::tray::notify(
                         "Update check failed",
                         "GitHub could not be reached. See Maintenance in the console.",
                     );
@@ -184,7 +184,7 @@ fn announce(h: &Shared, version: &str) -> bool {
     true
 }
 fn notify_update(version: &str) {
-    butterpollo_windows::tray::notify(
+    butterpollo_win_io::tray::notify(
         "Rubylight update",
         &format!(
             "Version {} is available. See Maintenance in the console.",
@@ -277,7 +277,7 @@ pub fn dismiss_crash(h: &Shared, data: &Value) -> Result<Value> {
 pub fn golden_status(h: &Shared, compare: bool) -> Result<Value> {
     let snapshot = baseline(h)?;
     let mismatch = if compare && let Some(old) = snapshot.as_ref() {
-        let current = butterpollo_windows::display::Snapshot::capture()?;
+        let current = butterpollo_win_display::display::Snapshot::capture()?;
         serde_json::to_value(&current)? != serde_json::to_value(old)?
     } else {
         false
@@ -299,7 +299,7 @@ pub fn capture_golden(h: &Shared) -> Result<Value> {
     }
     butterpollo_session::state::write_json(
         &h.directory.join("display-baseline-rust.json"),
-        &butterpollo_windows::display::Snapshot::capture()?,
+        &butterpollo_win_display::display::Snapshot::capture()?,
     )?;
     let tombstone = h.directory.join("display-baseline-disabled");
     if tombstone.exists() {
@@ -346,10 +346,12 @@ pub fn display_exclusions(config: &butterpollo_config::config::Config) -> Result
         .collect())
 }
 /// Read previous snapshots without modifying the old installation's files.
-pub fn baseline(h: &Shared) -> Result<Option<butterpollo_windows::display::Snapshot>> {
+pub fn baseline(h: &Shared) -> Result<Option<butterpollo_win_display::display::Snapshot>> {
     let own = h.directory.join("display-baseline-rust.json");
     if own.exists() {
-        return Ok(Some(butterpollo_windows::display::Snapshot::read(&own)?));
+        return Ok(Some(butterpollo_win_display::display::Snapshot::read(
+            &own,
+        )?));
     }
     if h.directory.join("display-baseline-disabled").exists() {
         return Ok(None);
@@ -357,7 +359,7 @@ pub fn baseline(h: &Shared) -> Result<Option<butterpollo_windows::display::Snaps
     let mut candidates = vec![h.directory.join("display_golden_restore.json")];
     // Before sign-in there is no user whose folders could hold an old
     // snapshot; only the machine-wide folder is searched then (issue #6).
-    let environment = butterpollo_windows::process::user_environment().unwrap_or_else(|error| {
+    let environment = butterpollo_win_io::process::user_environment().unwrap_or_else(|error| {
         tracing::debug!(%error, "no signed-in user; searching only machine-wide display snapshots");
         std::env::var("PROGRAMDATA")
             .map(|root| [("PROGRAMDATA".to_owned(), root)].into())
@@ -370,7 +372,9 @@ pub fn baseline(h: &Shared) -> Result<Option<butterpollo_windows::display::Snaps
     }
     for path in candidates {
         if path.is_file() {
-            return Ok(Some(butterpollo_windows::display::Snapshot::read(&path)?));
+            return Ok(Some(butterpollo_win_display::display::Snapshot::read(
+                &path,
+            )?));
         }
     }
     Ok(None)
@@ -464,7 +468,7 @@ fn bundle_with_dump(h: &Shared, dump: impl FnOnce() -> Option<Dump>) -> Result<P
     Ok(path)
 }
 pub fn integration_status(h: &Shared) -> Value {
-    butterpollo_windows::limiter::status(&h.config.read().unwrap())
+    butterpollo_win_io::limiter::status(&h.config.read().unwrap())
 }
 
 #[cfg(test)]

@@ -11,8 +11,8 @@ use super::sdp::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use butterpollo_media_policy::{audio::OpusLayout, network_pacing};
-use butterpollo_windows::net::Segments;
-use butterpollo_windows::timing::{Signal, Timer};
+use butterpollo_win_graphics::timing::{Signal, Timer};
+use butterpollo_win_io::net::Segments;
 use socket2::{Domain, Protocol as SockProtocol, Socket, Type};
 use std::collections::VecDeque;
 use std::net::{SocketAddr, UdpSocket};

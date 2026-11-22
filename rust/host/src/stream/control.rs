@@ -176,7 +176,7 @@ impl ControlSocket {
         for (address, mut buffer) in self.held.drain(..) {
             let address = self.roaming.wire_of(address);
             if let Err(error) = self.socket.send_to(&buffer, address) {
-                if !butterpollo_windows::net::datagram_lost(&error) {
+                if !butterpollo_win_io::net::datagram_lost(&error) {
                     return Err(error);
                 }
                 tracing::debug!(%error, %address, "control datagram dropped");
@@ -207,7 +207,7 @@ impl rusty_enet::Socket for ControlSocket {
             return Ok(buffer.len());
         }
         match self.socket.send_to(buffer, self.roaming.wire_of(address)) {
-            Err(error) if butterpollo_windows::net::datagram_lost(&error) => Ok(0),
+            Err(error) if butterpollo_win_io::net::datagram_lost(&error) => Ok(0),
             result => result,
         }
     }
@@ -221,7 +221,7 @@ impl rusty_enet::Socket for ControlSocket {
             let (size, from, local) = match self.socket.receive(buffer) {
                 Ok(received) => received,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
-                Err(error) if butterpollo_windows::net::datagram_lost(&error) => continue,
+                Err(error) if butterpollo_win_io::net::datagram_lost(&error) => continue,
                 Err(error) => return Err(error),
             };
             if self.roaming.intercepts(&buffer[..size]) {
@@ -260,7 +260,7 @@ impl Media {
         let socket = Arc::new(ReplySocket::new(crate::network::udp(
             (self.bind, self.control_port).into(),
         )?)?);
-        butterpollo_windows::net::configure_udp(&socket)?;
+        butterpollo_win_io::net::configure_udp(&socket)?;
         // Input from every client arrives here; the Windows default buffer is small.
         if let Err(error) = socket2::SockRef::from(&*socket).set_recv_buffer_size(1 << 20) {
             tracing::warn!(%error, "control socket receive buffer unchanged");
@@ -306,7 +306,7 @@ impl Media {
         let mut active_sessions: Vec<Arc<Session>> = Vec::new();
         // The couch menu workers, one per session.
         let mut menus = crate::couch_menu::Workers::default();
-        let input_timer = butterpollo_windows::timing::Timer::new()?;
+        let input_timer = butterpollo_win_graphics::timing::Timer::new()?;
         let mut feedback_at = Instant::now();
         let mut controller_cleanup = Instant::now();
         let mut unattended_sweep = UnattendedSweep::new(Instant::now());
@@ -936,7 +936,7 @@ impl Media {
                                     let wake = self.control_wake.clone();
                                     p.cursor_scale.poll(
                                         output,
-                                        butterpollo_windows::display::output_scale,
+                                        butterpollo_win_display::display::output_scale,
                                         move || {
                                             let _ = wake.send(&[1]);
                                         },
@@ -1232,7 +1232,7 @@ impl Media {
             // And for the unattended sweep's timer.
             let due = due.min(unattended_sweep.next());
             let timeout = control_wait_timeout(due.saturating_duration_since(now), serviced);
-            if butterpollo_windows::net::wait_readable_or_wake(raw_socket, raw_wake, timeout)
+            if butterpollo_win_io::net::wait_readable_or_wake(raw_socket, raw_wake, timeout)
                 .is_err()
             {
                 // A polling error must not spin the loop.
@@ -2112,7 +2112,7 @@ pub(super) struct ControlPeer {
     cursor_owner: usize,
     /// The text field watcher, from the client's first text input request (0x553B); paused
     /// while the client turned it off, and dropped with the peer at session end.
-    focus_watch: Option<butterpollo_windows::text_focus::FocusWatch>,
+    focus_watch: Option<butterpollo_win_io::text_focus::FocusWatch>,
     /// Clipboard sync (0x5508), from the device's first frame; its worker ends with the peer.
     clipboard_sync: clipboard_sync::PeerSync,
     /// The session's settings for control packets that read them.
@@ -2171,7 +2171,7 @@ impl ControlPeer {
         let session = Arc::downgrade(s);
         let failed = session.clone();
         let wake = wake.clone();
-        let started = butterpollo_windows::text_focus::FocusWatch::start(
+        let started = butterpollo_win_io::text_focus::FocusWatch::start(
             max_text,
             move |focused| {
                 if let Some(s) = session.upgrade() {
@@ -2439,7 +2439,7 @@ pub(crate) fn controllers_back(s: &Session) {
 /// for them before they came.
 pub(crate) fn attach_pads(
     i: &mut Injector,
-    pads: Arc<butterpollo_windows::input::GamepadThread>,
+    pads: Arc<butterpollo_win_io::input::GamepadThread>,
     announced: &[u8; 16],
 ) {
     i.use_gamepads(pads);

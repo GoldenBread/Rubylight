@@ -20,7 +20,7 @@ pub(super) fn handle(
         ("POST", "/api/display/export_golden") => crate::maintenance::capture_golden(h)?,
         ("POST", "/api/display/restore_golden") => crate::maintenance::restore_golden(h)?,
         ("POST", "/api/reset-display-device-persistence") => {
-            reset_persistence(h, butterpollo_windows::display_recovery::reset)?
+            reset_persistence(h, butterpollo_win_display::display_recovery::reset)?
         }
         ("DELETE", "/api/display/golden") => {
             let path = h.directory.join("display-baseline-rust.json");
@@ -40,12 +40,12 @@ pub(super) fn handle(
         }
         ("GET", "/api/clients/display-layout") => crate::remote_display::snapshot(h)?,
         ("PUT", "/api/clients/display-layout") => crate::remote_display::save(h, data)?,
-        ("GET", "/api/health/vulkan-hdr-layer") => butterpollo_windows::vulkan::status(
+        ("GET", "/api/health/vulkan-hdr-layer") => butterpollo_win_graphics::vulkan::status(
             h.config.read().unwrap().boolean("vulkan_hdr_layer", true),
         ),
         ("POST", "/api/health/vulkan-hdr-layer/register") => {
-            butterpollo_windows::vulkan::register(true)?;
-            butterpollo_windows::vulkan::status(
+            butterpollo_win_graphics::vulkan::register(true)?;
+            butterpollo_win_graphics::vulkan::status(
                 h.config.read().unwrap().boolean("vulkan_hdr_layer", true),
             )
         }
@@ -59,8 +59,8 @@ pub(super) fn handle(
             json!({"status":true,"profiles":profiles})
         }
         ("GET", "/api/display-devices") => {
-            let monitors = butterpollo_windows::input::on_input_desktop(
-                butterpollo_windows::display::monitors,
+            let monitors = butterpollo_win_io::input::on_input_desktop(
+                butterpollo_win_display::display::monitors,
             )
             .map_err(|error| anyhow::anyhow!("Windows display enumeration failed ({error:#}). If Windows is at the sign-in screen or an RDP session was disconnected, sign in to and unlock the console session, then retry"))?;
             serde_json::to_value(monitors)?
@@ -87,7 +87,7 @@ pub(super) fn handle(
             if targets.is_empty() {
                 targets = vec![120, 180, 240, 288];
             }
-            butterpollo_windows::display::edid_refresh(hint, &targets)?
+            butterpollo_win_display::display::edid_refresh(hint, &targets)?
         }
         _ => return Err(anyhow::anyhow!("unknown API endpoint")),
     })
@@ -143,7 +143,7 @@ mod tests {
         f.host.sessions.lock().unwrap().teardown.clear();
         f.host.monitors.lock().unwrap().insert(
             "x".into(),
-            std::sync::Arc::new(butterpollo_windows::display::Retained::inert("x")),
+            std::sync::Arc::new(butterpollo_win_display::display::Retained::inert("x")),
         );
         assert!(reset_persistence(&f.host, reset).is_err());
         f.host.monitors.lock().unwrap().clear();

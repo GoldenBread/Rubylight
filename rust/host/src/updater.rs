@@ -144,7 +144,7 @@ pub fn install_supported(h: &Shared) -> bool {
 
 fn supported(h: &Shared) -> bool {
     let profile = butterpollo_session::paths::installed_profile();
-    butterpollo_windows::process::is_system()
+    butterpollo_win_io::process::is_system()
         && std::fs::canonicalize(&h.directory)
             .ok()
             .zip(std::fs::canonicalize(profile).ok())
@@ -251,7 +251,7 @@ fn next_check(h: &Shared) -> Option<u64> {
 
 /// What this PC's clock shows at a moment, as Unix seconds as if it were UTC.
 fn local_clock(at: u64) -> i64 {
-    butterpollo_windows::local_time::utc_to_local(at).unwrap_or(at as i64)
+    butterpollo_win_io::local_time::utc_to_local(at).unwrap_or(at as i64)
 }
 
 /// The state file's entry for the last successful release check.
@@ -963,18 +963,18 @@ fn prepare_download(install: &Path, id: &str) -> Result<PathBuf> {
     let staging = staging_folder(install);
     match std::fs::symlink_metadata(&staging) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            butterpollo_windows::process::create_folder_administrators_only(&staging)?
+            butterpollo_win_io::process::create_folder_administrators_only(&staging)?
         }
         Err(error) => return Err(error.into()),
         Ok(_) => {}
     }
-    butterpollo_windows::process::restrict_to_administrators(&staging)
+    butterpollo_win_io::process::restrict_to_administrators(&staging)
         .with_context(|| format!("securing {}", staging.display()))?;
     remove_downloads(&staging);
     // A UUID folder per download avoids partial downloads and overlapping
     // cancellation races; a new one, so nothing made before is inside it.
     let directory = staging.join(format!("{DOWNLOAD_PREFIX}{id}"));
-    butterpollo_windows::process::create_folder_administrators_only(&directory)?;
+    butterpollo_win_io::process::create_folder_administrators_only(&directory)?;
     Ok(directory)
 }
 /// Remove the download folders in `staging`. Returns how many are left: one a setup still runs from, or a cancelled transfer

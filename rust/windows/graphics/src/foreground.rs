@@ -1,0 +1,585 @@
+//! Read-only visible window stack, including passive shell/compositor
+//! overlays, and the foreground window's process.
+
+use crate::capture::Display;
+use butterpollo_media_policy::capture_policy::InFront;
+use std::sync::{Arc, Mutex, mpsc};
+use windows::{
+    Win32::{Foundation::*, Graphics::Dwm::*, System::Threading::*, UI::WindowsAndMessaging::*},
+    core::{BOOL, PWSTR},
+};
+#[derive(Clone, PartialEq, Eq)]
+struct Request {
+    owned: Vec<u32>,
+    rect: [i32; 4],
+}
+struct Snapshot {
+    request: Request,
+    /// The selected window's program and process.
+    selected: Option<(String, u32)>,
+}
+/// Window enumeration and process image queries never run on the encode thread.
+pub struct Tracker {
+    sender: Option<mpsc::SyncSender<Request>>,
+    result: Arc<Mutex<Option<Snapshot>>>,
+}
+impl Default for Tracker {
+    fn default() -> Self {
+        let (sender, receiver) = mpsc::sync_channel::<Request>(1);
+        let result = Arc::new(Mutex::new(None));
+        let worker = result.clone();
+        let started = std::thread::Builder::new()
+            .name("visible-game".into())
+            .spawn(move || {
+                while let Ok(request) = receiver.recv() {
+                    let selected = visible_executable(&request);
+                    *worker.lock().unwrap() = Some(Snapshot { request, selected });
+                }
+            })
+            .is_ok();
+        Self {
+            sender: started.then_some(sender),
+            result,
+        }
+    }
+}
+impl Tracker {
+    pub fn poll(&self, owned: &[u32], display: &Display) -> Option<String> {
+        self.poll_process(owned, display).map(|(exe, _)| exe)
+    }
+    /// The program and process of the selected window, as of the last scan.
+    pub fn poll_process(&self, owned: &[u32], display: &Display) -> Option<(String, u32)> {
+        let request = Request {
+            owned: owned.to_vec(),
+            rect: [
+                display.x,
+                display.y,
+                display.x.saturating_add(display.width as i32),
+                display.y.saturating_add(display.height as i32),
+            ],
+        };
+        if let Some(sender) = &self.sender {
+            let _ = sender.try_send(request.clone());
+        }
+        self.result
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|snapshot| snapshot.request == request)
+            .and_then(|snapshot| snapshot.selected.clone())
+    }
+}
+/// The process of the foreground window on the input desktop.
+pub fn process() -> Option<u32> {
+    crate::process_info::follow_input_desktop();
+    // SAFETY: GetForegroundWindow has no preconditions and `pid` is a live out-pointer.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() {
+            return None;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        (pid != 0).then_some(pid)
+    }
+}
+/// The process of the active non-shell foreground window on the input desktop,
+/// returning `None` for desktop/shell/taskbar windows, minimised windows, or our
+/// own process so launch focus does not mistake them for another user app.
+pub fn active_process() -> Option<u32> {
+    crate::process_info::follow_input_desktop();
+    // SAFETY: each call takes a window handle or no arguments, and writes only
+    // into a live local of the size passed.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() || is_shell_or_desktop(window) || IsIconic(window).as_bool() {
+            return None;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        (pid != 0 && pid != GetCurrentProcessId()).then_some(pid)
+    }
+}
+/// Whether `window` is the Windows desktop, shell, or a shell/taskbar window.
+fn is_shell_or_desktop(window: HWND) -> bool {
+    let mut class = [0u16; 256];
+    // SAFETY: `window` is taken by value and `class` holds its UTF-16 buffer capacity.
+    unsafe {
+        if window == GetDesktopWindow() || window == GetShellWindow() {
+            return true;
+        }
+        let count = GetClassNameW(window, &mut class).max(0) as usize;
+        shell_class(&String::from_utf16_lossy(&class[..count]))
+    }
+}
+fn process_path(pid: u32) -> Option<String> {
+    // SAFETY: the process handle is closed once after the query, and `count` is the capacity of
+    // `name` in UTF-16 units, updated to the length written.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut name = [0; 32768];
+        let mut count = name.len() as u32;
+        let queried = QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(name.as_mut_ptr()),
+            &mut count,
+        );
+        let _ = CloseHandle(process);
+        queried.ok()?;
+        Some(String::from_utf16_lossy(&name[..count as usize]))
+    }
+}
+#[derive(Default)]
+struct Evidence {
+    belongs: bool,
+    desktop: bool,
+    passive: bool,
+    fullscreen: bool,
+    opaque: bool,
+    transient: bool,
+}
+#[derive(Debug, PartialEq)]
+enum Decision {
+    Continue,
+    Select,
+    Block,
+}
+fn decide(e: &Evidence, attributed: bool) -> Decision {
+    if e.transient || e.passive {
+        return Decision::Continue;
+    }
+    if e.desktop {
+        return Decision::Block;
+    }
+    if attributed && e.belongs {
+        return if e.fullscreen && e.opaque {
+            Decision::Select
+        } else {
+            Decision::Continue
+        };
+    }
+    if !e.opaque {
+        return Decision::Continue;
+    }
+    if attributed || !e.fullscreen {
+        Decision::Block
+    } else {
+        Decision::Select
+    }
+}
+fn fullscreen(rect: RECT, capture: [i32; 4], framed: bool) -> bool {
+    !framed
+        && rect.left <= capture[0].saturating_add(2)
+        && rect.top <= capture[1].saturating_add(2)
+        && rect.right >= capture[2].saturating_sub(2)
+        && rect.bottom >= capture[3].saturating_sub(2)
+}
+
+/// What sits in front of `display` (the primary for an empty name) right now, for
+/// `butterpollo_media_policy::capture_policy::duplication_for_fullscreen`: the foreground
+/// window's coverage of the display, with Windows' own shell and desktop windows and
+/// this process's own windows kept apart, since they cover it without being an app that
+/// can present past the compositor. Read-only: no window is touched, activated or
+/// resized.
+pub fn in_front(display: &str) -> InFront {
+    let Some(display) = crate::capture::display_rect(display) else {
+        return InFront::Nothing;
+    };
+    in_front_rect(display)
+}
+
+/// [`in_front`] for a display rectangle already resolved.
+fn in_front_rect(display: [i32; 4]) -> InFront {
+    // SAFETY: each call takes a window handle or no arguments, and writes only into a
+    // live local of the size passed. No window state is changed.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() {
+            return InFront::Nothing;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        // A shell window Windows reports when the desktop is focused (Progman, the
+        // taskbar's classes) or one of our own covers the display without presenting
+        // past the compositor.
+        let nothing = is_shell_or_desktop(window)
+            || pid == GetCurrentProcessId()
+            || IsIconic(window).as_bool();
+        let mut cloaked = 0u32;
+        let _ = DwmGetWindowAttribute(window, DWMWA_CLOAKED, (&mut cloaked as *mut u32).cast(), 4);
+        // A caption or resize border means a window, never a fullscreen picture.
+        let style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
+        let framed = style & (WS_CAPTION.0 | WS_THICKFRAME.0) != 0;
+        let mut frame = RECT::default();
+        // SAFETY: `frame` is a live local of the size passed.
+        let readable = DwmGetWindowAttribute(
+            window,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&mut frame as *mut RECT).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        )
+        .is_ok();
+        classify(
+            nothing || cloaked != 0,
+            readable.then_some(frame),
+            display,
+            framed,
+        )
+    }
+}
+
+/// [`in_front`] from values alone: `nothing` for Windows' shell and desktop windows, this
+/// process's windows, a minimised or cloaked window; otherwise `Covering` when a frame
+/// without a caption or resize border covers the whole display.
+fn classify(nothing: bool, frame: Option<RECT>, display: [i32; 4], framed: bool) -> InFront {
+    if nothing {
+        return InFront::Nothing;
+    }
+    match frame {
+        Some(frame) if fullscreen(frame, display, framed) => InFront::Covering,
+        _ => InFront::Partial,
+    }
+}
+
+/// Whether `class` is one of Windows' own shell or desktop window classes: the desktop,
+/// its WorkerW layers, the taskbar and the shell's default view. They cover the display
+/// without being an app that can present past the compositor.
+fn shell_class(class: &str) -> bool {
+    matches!(
+        class,
+        "Progman" | "WorkerW" | "SHELLDLL_DefView" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+    )
+}
+
+/// Whether Windows reports an exclusive-fullscreen (Direct3D) app in front right now:
+/// `SHQueryUserNotificationState() == QUNS_RUNNING_D3D_FULL_SCREEN`, the state Windows
+/// uses to hold notifications back for a fullscreen game. A game in a borderless window
+/// does not set it, and a failed query reports false, which leaves capture as it is.
+pub fn exclusive_fullscreen() -> bool {
+    use windows::Win32::UI::Shell::{QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState};
+    // SAFETY: the call takes no arguments and writes only into its own result.
+    match unsafe { SHQueryUserNotificationState() } {
+        Ok(state) => state == QUNS_RUNNING_D3D_FULL_SCREEN,
+        Err(error) => {
+            tracing::debug!(%error, "the shell's fullscreen state is unavailable");
+            false
+        }
+    }
+}
+
+fn visible_executable(request: &Request) -> Option<(String, u32)> {
+    struct Scan<'a> {
+        request: &'a Request,
+        selected: Option<(String, u32)>,
+        count: usize,
+    }
+    unsafe extern "system" fn visit(window: HWND, context: LPARAM) -> BOOL {
+        // SAFETY: EnumWindows passes the `&mut Scan` from visible_executable as `context`, which
+        // outlives the enumeration; every out-pointer is a live local of the size passed.
+        unsafe {
+            let scan = &mut *(context.0 as *mut Scan<'_>);
+            scan.count += 1;
+            if scan.count > 4096 {
+                return false.into();
+            }
+            if !IsWindowVisible(window).as_bool() || IsIconic(window).as_bool() {
+                return true.into();
+            }
+            let mut cloaked = 0u32;
+            let _ =
+                DwmGetWindowAttribute(window, DWMWA_CLOAKED, (&mut cloaked as *mut u32).cast(), 4);
+            if cloaked != 0 {
+                return true.into();
+            }
+            let style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
+            let ex = GetWindowLongPtrW(window, GWL_EXSTYLE) as u32;
+            let framed = style & (WS_CAPTION.0 | WS_THICKFRAME.0) != 0;
+            let mut color = COLORREF::default();
+            let mut alpha = 255;
+            let mut flags = LAYERED_WINDOW_ATTRIBUTES_FLAGS::default();
+            let layered = ex & WS_EX_LAYERED.0 != 0;
+            let alpha_known = layered
+                && GetLayeredWindowAttributes(
+                    window,
+                    Some(&mut color),
+                    Some(&mut alpha),
+                    Some(&mut flags),
+                )
+                .is_ok();
+            if alpha_known && flags.0 & LWA_ALPHA.0 != 0 && alpha == 0 {
+                return true.into();
+            }
+            let opaque = !layered
+                || (alpha_known
+                    && flags.0 & LWA_COLORKEY.0 == 0
+                    && flags.0 & LWA_ALPHA.0 != 0
+                    && alpha == 255);
+            let mut rect = RECT::default();
+            if DwmGetWindowAttribute(
+                window,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                (&mut rect as *mut RECT).cast(),
+                std::mem::size_of::<RECT>() as u32,
+            )
+            .is_err()
+                && GetWindowRect(window, &mut rect).is_err()
+            {
+                return true.into();
+            }
+            let c = scan.request.rect;
+            if rect.right.min(c[2]) - rect.left.max(c[0]) < 3
+                || rect.bottom.min(c[3]) - rect.top.max(c[1]) < 3
+            {
+                return true.into();
+            }
+            let mut pid = 0;
+            GetWindowThreadProcessId(window, Some(&mut pid));
+            let exe = process_path(pid);
+            let basename = exe
+                .as_ref()
+                .and_then(|p| p.rsplit(['/', '\\']).next())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let mut class = [0; 256];
+            let count = GetClassNameW(window, &mut class).max(0) as usize;
+            let class = String::from_utf16_lossy(&class[..count]);
+            let attributed = !scan.request.owned.is_empty();
+            let belongs = attributed && scan.request.owned.contains(&pid);
+            let desktop = window == GetDesktopWindow()
+                || window == GetShellWindow()
+                || matches!(
+                    class.as_str(),
+                    "Progman"
+                        | "WorkerW"
+                        | "SHELLDLL_DefView"
+                        | "Shell_TrayWnd"
+                        | "Shell_SecondaryTrayWnd"
+                )
+                || matches!(
+                    basename.as_str(),
+                    "explorer.exe"
+                        | "startmenuexperiencehost.exe"
+                        | "searchhost.exe"
+                        | "searchapp.exe"
+                        | "shellexperiencehost.exe"
+                        | "textinputhost.exe"
+                        | "lockapp.exe"
+                        | "systemsettings.exe"
+                        | "applicationframehost.exe"
+                )
+                || (!attributed && exe.is_none());
+            let fullscreen = fullscreen(rect, c, framed);
+            let transient = desktop
+                && (matches!(
+                    class.as_str(),
+                    "XamlExplorerHostIslandWindow"
+                        | "MultitaskingViewFrame"
+                        | "TaskSwitcherWnd"
+                        | "TaskSwitcherOverlayWnd"
+                        | "ForegroundStaging"
+                ) || (!fullscreen
+                    && matches!(class.as_str(), "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")));
+            let passive = !desktop
+                && !belongs
+                && ((!framed
+                    && (ex & (WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0) != 0
+                        || ex & (WS_EX_LAYERED.0 | WS_EX_TOOLWINDOW.0)
+                            == (WS_EX_LAYERED.0 | WS_EX_TOOLWINDOW.0)))
+                    || (alpha_known
+                        && (flags.0 & LWA_COLORKEY.0 != 0
+                            || (flags.0 & LWA_ALPHA.0 != 0 && alpha < 255))));
+            match decide(
+                &Evidence {
+                    belongs,
+                    desktop,
+                    passive,
+                    fullscreen,
+                    opaque,
+                    transient,
+                },
+                attributed,
+            ) {
+                Decision::Select => {
+                    scan.selected = exe.map(|exe| (exe, pid));
+                    false.into()
+                }
+                Decision::Block if !attributed => false.into(),
+                _ => true.into(),
+            }
+        }
+    }
+    let mut scan = Scan {
+        request,
+        selected: None,
+        count: 0,
+    };
+    // SAFETY: `scan` outlives the synchronous EnumWindows call that reads it through `visit`.
+    unsafe {
+        let _ = EnumWindows(Some(visit), LPARAM((&mut scan as *mut Scan<'_>) as isize));
+    }
+    scan.selected
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn visible_stack_preserves_previous_shell_overlay_and_untracked_game_semantics() {
+        let mut game = Evidence {
+            fullscreen: true,
+            opaque: true,
+            ..Default::default()
+        };
+        assert_eq!(decide(&game, false), Decision::Select);
+        assert_eq!(decide(&game, true), Decision::Block);
+        game.belongs = true;
+        assert_eq!(decide(&game, true), Decision::Select);
+        game.fullscreen = false;
+        assert_eq!(decide(&game, true), Decision::Continue);
+        assert_eq!(
+            decide(
+                &Evidence {
+                    desktop: true,
+                    transient: true,
+                    opaque: true,
+                    ..Default::default()
+                },
+                false
+            ),
+            Decision::Continue
+        );
+        assert_eq!(
+            decide(
+                &Evidence {
+                    desktop: true,
+                    opaque: true,
+                    ..Default::default()
+                },
+                false
+            ),
+            Decision::Block
+        );
+        assert_eq!(
+            decide(
+                &Evidence {
+                    passive: true,
+                    opaque: true,
+                    ..Default::default()
+                },
+                true
+            ),
+            Decision::Continue
+        );
+        let capture = [0, 0, 1920, 1080];
+        assert!(!fullscreen(
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1800,
+                bottom: 1080
+            },
+            capture,
+            false
+        ));
+        assert!(fullscreen(
+            RECT {
+                left: 2,
+                top: 1,
+                right: 1918,
+                bottom: 1080
+            },
+            capture,
+            false
+        ));
+        assert!(!fullscreen(
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1080
+            },
+            capture,
+            true
+        ));
+    }
+    #[test]
+    fn only_a_borderless_window_over_the_streamed_display_is_a_fullscreen_picture() {
+        // A display to the left of the primary one that a fullscreen app covers: the
+        // probe that moves a frozen Windows Graphics Capture stream to Desktop
+        // Duplication reads the captured display, never the primary by assumption.
+        let display = [-1920, 0, 0, 1080];
+        let full = RECT {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        assert!(fullscreen(full, display, false));
+        // A borderless window of the other display leaves this one alone.
+        assert!(!fullscreen(
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1080
+            },
+            display,
+            false
+        ));
+        // A maximised window keeps its caption and is no fullscreen picture.
+        assert!(!fullscreen(full, display, true));
+    }
+    #[test]
+    fn the_shell_the_desktop_and_our_own_windows_are_no_fullscreen_app() {
+        let display = [-1920, 0, 0, 1080];
+        let whole = Some(RECT {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        });
+        // The shell window Windows reports when the desktop is focused (Progman) covers
+        // the display, and an idle desktop sends WGC no picture: neither may count as an
+        // app that presents past the compositor.
+        assert_eq!(classify(true, whole, display, false), InFront::Nothing);
+        for class in [
+            "Progman",
+            "WorkerW",
+            "SHELLDLL_DefView",
+            "Shell_TrayWnd",
+            "Shell_SecondaryTrayWnd",
+        ] {
+            assert!(shell_class(class), "{class}");
+        }
+        for class in [
+            "ApplicationFrameWindow",
+            "rpcs3",
+            "RPCS3",
+            "",
+            "Progman2",
+            "workerw",
+        ] {
+            assert!(!shell_class(class), "{class}");
+        }
+        // Another program's window covering the display is the exclusive-fullscreen case.
+        assert_eq!(classify(false, whole, display, false), InFront::Covering);
+        // A maximised window keeps its caption, so it does not count.
+        assert_eq!(classify(false, whole, display, true), InFront::Partial);
+        // A window covering only half of it, or bounds that cannot be read, do not count.
+        assert_eq!(
+            classify(
+                false,
+                Some(RECT {
+                    left: -1920,
+                    top: 0,
+                    right: -960,
+                    bottom: 1080
+                }),
+                display,
+                false
+            ),
+            InFront::Partial
+        );
+        assert_eq!(classify(false, None, display, false), InFront::Partial);
+    }
+}

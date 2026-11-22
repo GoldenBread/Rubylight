@@ -4,7 +4,7 @@
 //! Every route needs the host's File transfer setting and the device's
 //! Upload files or Download files bit, read on each request and again every
 //! [`PACE_CHECK`] while a transfer runs. Files are opened as the signed-in
-//! Windows user on a blocking thread (`butterpollo_windows::user_folder`).
+//! Windows user on a blocking thread (`butterpollo_win_io::user_folder`).
 //! While a stream runs, uploads and downloads together move at
 //! `file_transfer_stream_mbps`. An upload streams to its `.part` file and is
 //! renamed only once all of its `Content-Length` arrived.
@@ -22,7 +22,7 @@ use butterpollo_session::{
     native::{FILE_DOWNLOAD, FILE_UPLOAD},
     state::Client,
 };
-use butterpollo_windows::user_folder::{PartFile, UserFolder, UserFolderError};
+use butterpollo_win_io::user_folder::{PartFile, UserFolder, UserFolderError};
 use rubylight_native_api::{
     error::ErrorCode,
     files::{FileEntry, FileList, Uploaded},

@@ -183,7 +183,7 @@ fn loud_strike(h: &Host, address: IpAddr, device: &str) {
     }
     tracing::warn!(client = %device, %address, "Three wrong PINs from other devices: this address can now only be paired in the console");
     let (title, text) = crate::state::pairing_ended_notice(address);
-    butterpollo_windows::tray::notify(&title, &text);
+    butterpollo_win_io::tray::notify(&title, &text);
 }
 
 /// What a device gets for pairing, and who approved it.

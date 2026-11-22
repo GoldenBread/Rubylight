@@ -58,10 +58,10 @@ pub trait Vhci: Send + Sync {
 struct Usbip;
 impl Vhci for Usbip {
     fn ready(&self) -> bool {
-        butterpollo_windows::input::UsbipDriver::find().is_some()
+        butterpollo_win_io::input::UsbipDriver::find().is_some()
     }
     fn is_driver(&self, peer: SocketAddr, relay: SocketAddr) -> Result<bool> {
-        butterpollo_windows::input::UsbipDriver::connected(peer, relay)
+        butterpollo_win_io::input::UsbipDriver::connected(peer, relay)
     }
     fn attach(&self, tcp_port: u16, busid: &str) -> Result<u32> {
         usbip()?.attach(tcp_port, busid)
@@ -93,8 +93,8 @@ async fn unplug_blocking(
         .await
         .context("the driver's detach stopped")?
 }
-fn usbip() -> Result<butterpollo_windows::input::UsbipDriver> {
-    butterpollo_windows::input::UsbipDriver::find().context("usbip-win2 is not installed")
+fn usbip() -> Result<butterpollo_win_io::input::UsbipDriver> {
+    butterpollo_win_io::input::UsbipDriver::find().context("usbip-win2 is not installed")
 }
 
 /// The devices clients forward to this host.

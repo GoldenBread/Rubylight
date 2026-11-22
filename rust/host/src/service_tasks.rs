@@ -24,7 +24,7 @@ fn log_to_stderr() {
 
 /// As a host starts: what a Nucleus Co-op session left for the user at the
 /// console when an earlier host stopped mid-session is put back (`restore`,
-/// [`butterpollo_windows::service::restore_nucleus_layers`], which logs what
+/// [`butterpollo_win_io::service::restore_nucleus_layers`], which logs what
 /// failed) before a stream can start a new one, when the service runs this
 /// host (`supervised`). The service asks for it again only as the user signs
 /// in while a host runs, and leaves a sign-in before a host it launches to
@@ -40,10 +40,10 @@ pub fn restore_nucleus_at_start(
 }
 
 /// What a Nucleus Co-op session left for the user at the console, put back
-/// ([`butterpollo_windows::service::restore_nucleus_layers`]).
+/// ([`butterpollo_win_io::service::restore_nucleus_layers`]).
 pub fn restore_nucleus_exit_code(profile: &Path) -> i32 {
     log_to_stderr();
-    if butterpollo_windows::service::restore_nucleus_layers(profile) {
+    if butterpollo_win_io::service::restore_nucleus_layers(profile) {
         0
     } else {
         1
@@ -54,10 +54,10 @@ pub fn restore_nucleus_exit_code(profile: &Path) -> i32 {
 /// repair watch; when it is missing, standard output says why.
 pub fn virtual_display_installed_exit_code() -> i32 {
     log_to_stderr();
-    if butterpollo_windows::display::virtual_display_installed() {
+    if butterpollo_win_display::display::virtual_display_installed() {
         return 0;
     }
-    let status = butterpollo_windows::display::virtual_display_status();
+    let status = butterpollo_win_display::display::virtual_display_status();
     println!("{}", status["reason"].as_str().unwrap_or(""));
     1
 }
@@ -123,11 +123,11 @@ mod tests {
         let supervisor = include_str!("../../service/src/supervisor.rs");
         assert!(supervisor.contains(&format!(
             "pub const NAME: &str = \"{}\";",
-            butterpollo_windows::service::NAME
+            butterpollo_win_io::service::NAME
         )));
         assert!(supervisor.contains(&format!(
             "pub const RESTART_EXIT_CODE: u32 = {};",
-            butterpollo_windows::service::RESTART_EXIT_CODE
+            butterpollo_win_io::service::RESTART_EXIT_CODE
         )));
         let main = include_str!("../../service/src/main.rs");
         assert!(main.contains("\"--display-self-test\""));

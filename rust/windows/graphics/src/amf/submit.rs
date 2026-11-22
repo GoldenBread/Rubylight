@@ -1,0 +1,683 @@
+//! Encoder input: preparing and submitting a surface, the per-frame bitrate
+//! and frame cap, waiting for queue capacity, and re-encoding a cut as a
+//! keyframe.
+use super::*;
+
+pub(super) fn acknowledge_keyframe(
+    idr: bool,
+    result: AMF_RESULT,
+    recover: &mut bool,
+    metadata: &mut metadata::State,
+) {
+    // All reasons are satisfied by the same accepted keyframe. A non-IDR
+    // must retain a recovery request raised by poll() during backpressure.
+    if idr && result == AMF_RESULT_AMF_OK {
+        *recover = false;
+        metadata.submitted(result);
+    }
+}
+/// The pace-based cap target keyframes are measured against: none for an
+/// explicit `amd_max_frame_size` (including driver default), which is the
+/// user's limit, not the host's.
+pub(super) fn frame_cap_target(automatic: bool, bytes: u64) -> Option<u64> {
+    (automatic && bytes > 0).then_some(bytes)
+}
+/// `AMFTextureArrayIndexGUID` (AMF samples' DX11 interop): the slice of a
+/// texture array an AMF surface lives in.
+const ARRAY_INDEX: windows::core::GUID = windows::core::GUID::from_values(
+    0x2811_5527,
+    0xe7c3,
+    0x4b66,
+    [0x99, 0xd3, 0x4f, 0x2a, 0xe6, 0xb4, 0x7f, 0xaf],
+);
+
+/// Copy `subresource` of `texture` into an exclusive single-slice D3D11 texture
+/// suitable for wrapping as an AMF input surface.
+fn copy_d3d11_texture(
+    gpu: &Device,
+    texture: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+    subresource: u32,
+) -> Result<std::sync::Arc<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>> {
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC,
+        D3D11_USAGE_DEFAULT, ID3D11Multithread, ID3D11Texture2D,
+    };
+    // SAFETY: `texture` and `gpu.device` are live on the same D3D11 device;
+    // `desc` is filled by `GetDesc`, and the copy runs under the context's
+    // multithread lock.
+    unsafe {
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        texture.GetDesc(&mut desc);
+        let copy_desc = D3D11_TEXTURE2D_DESC {
+            Width: desc.Width,
+            Height: desc.Height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: desc.Format,
+            SampleDesc: desc.SampleDesc,
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        let mut copy: Option<ID3D11Texture2D> = None;
+        gpu.device
+            .CreateTexture2D(&copy_desc, None, Some(&mut copy))
+            .context("allocate D3D11 texture copy for AMF re-encode")?;
+        let copy = copy.context("D3D11 returned no texture copy")?;
+        let lock: ID3D11Multithread = gpu.context.cast()?;
+        lock.Enter();
+        gpu.context
+            .CopySubresourceRegion(&copy, 0, 0, 0, 0, texture, subresource, None);
+        lock.Leave();
+        Ok(std::sync::Arc::new(copy))
+    }
+}
+
+/// Extract the VPE-converted NV12 or P010 D3D11 texture from `surface` so an
+/// oversize scene cut can be re-encoded as an IDR. Array-backed AMF surfaces
+/// are copied to a single-slice texture because `gpu::wrap` wraps slice 0.
+fn vpe_kept_texture(
+    gpu: &Device,
+    surface: &gpu::Surface,
+) -> Result<Option<std::sync::Arc<windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>>> {
+    use windows::Win32::Graphics::{
+        Direct3D11::{D3D11_TEXTURE2D_DESC, ID3D11Texture2D},
+        Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_FORMAT_P010},
+    };
+    // SAFETY: `surface.0` is a live `AMFSurface` returned by `Vpe::convert`;
+    // plane 0's native pointer is a live `ID3D11Texture2D` kept alive by the
+    // surface, cloned (`AddRef`) or copied before returning.
+    unsafe {
+        let v = &*(*surface.0).pVtbl;
+        if (v.GetMemoryType.unwrap())(surface.0) != AMF_MEMORY_TYPE_AMF_MEMORY_DX11 {
+            return Ok(None);
+        }
+        let plane = (v.GetPlaneAt.unwrap())(surface.0, 0);
+        if plane.is_null() {
+            return Ok(None);
+        }
+        let raw = ((*(*plane).pVtbl).GetNative.unwrap())(plane);
+        let Some(texture) = ID3D11Texture2D::from_raw_borrowed(&raw) else {
+            return Ok(None);
+        };
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        texture.GetDesc(&mut desc);
+        if desc.Format != DXGI_FORMAT_NV12 && desc.Format != DXGI_FORMAT_P010 {
+            return Ok(None);
+        }
+        if desc.ArraySize > 1 {
+            let mut index = 0u32;
+            let mut size = std::mem::size_of::<u32>() as u32;
+            let _ = texture.GetPrivateData(
+                &ARRAY_INDEX,
+                &mut size,
+                Some(ptr::addr_of_mut!(index).cast()),
+            );
+            if index >= desc.ArraySize {
+                index = 0;
+            }
+            return copy_d3d11_texture(gpu, texture, index).map(Some);
+        }
+        Ok(Some(std::sync::Arc::new(texture.clone())))
+    }
+}
+
+impl Encoder {
+    pub(super) fn prepare_surface(
+        &mut self,
+        surface: *mut AMFSurface,
+        idr: bool,
+    ) -> Result<(butterpollo_media_policy::ltr::Plan, bool)> {
+        let (plan, idr, ltr_rejected) =
+            self.prepare_surface_at(surface, self.index as u64 + 1, idr)?;
+        if ltr_rejected {
+            self.references.disable();
+        }
+        Ok((plan, idr))
+    }
+    /// [`Self::prepare_surface`] for wire frame `frame`: a re-encode prepares
+    /// the frame already submitted again. It changes only the surface: when
+    /// the surface rejects the LTR properties, the plan is the keyframe of
+    /// disabled references and the caller disables them (the third value)
+    /// once that is certain.
+    fn prepare_surface_at(
+        &mut self,
+        surface: *mut AMFSurface,
+        frame: u64,
+        mut idr: bool,
+    ) -> Result<(butterpollo_media_policy::ltr::Plan, bool, bool)> {
+        let mut plan = self.references.plan(frame, idr);
+        let [_, _, mark, reference] = self.ltr_properties();
+        let apply = |name: &'static str, value: AMFVariantStruct| -> Result<()> {
+            // SAFETY: Both callers own surface throughout preparation. These local
+            // variants have matching scalar tags, and AMF copies them and the terminated
+            // property name synchronously while the runtime remains loaded.
+            unsafe {
+                check(((*(*surface).pVtbl).SetProperty.unwrap())(
+                    surface,
+                    static_wide(name).as_ptr(),
+                    value,
+                ))
+            }
+        };
+        let ltr = (|| -> Result<()> {
+            if let Some(slot) = plan.mark {
+                apply(mark, int(slot as i64))?;
+            }
+            if let Some(slot) = plan.reference {
+                apply(reference, int(1 << slot))?;
+            }
+            Ok(())
+        })();
+        let ltr_rejected = ltr.is_err();
+        if let Err(error) = ltr {
+            tracing::warn!(%error,"AMF LTR surface rejected; requesting a larger IDR recovery frame. Disable amd_ltr_frames if this repeats");
+            idr = true;
+            plan = butterpollo_media_policy::ltr::References::disabled_keyframe_plan();
+        }
+        if idr {
+            apply(
+                match self.codec {
+                    0 => "ForcePictureType",
+                    1 => "HevcForcePictureType",
+                    _ => "Av1ForceFrameType",
+                },
+                int(if self.codec == 2 { 1 } else { 2 }),
+            )?;
+            // A requested keyframe must start a fresh decoder: a client that
+            // reset its decoder otherwise stays frozen. AV1 repeats its
+            // sequence header only when asked, as the original backend did.
+            let headers: &[&str] = match self.codec {
+                0 => &["InsertSPS", "InsertPPS"],
+                1 => &["HevcInsertHeader"],
+                _ => &["Av1ForceInsertSequenceHeader"],
+            };
+            for header in headers {
+                apply(header, gpu::boolean(true))?;
+            }
+        }
+        // LTR rejection can force a keyframe here even when the caller did not
+        // request one. Retain that effective type for acknowledgements and output.
+        Ok((plan, idr, ltr_rejected))
+    }
+    /// A CPU image, such as the codec probe's, goes through the same GPU
+    /// conversion as a capture.
+    pub fn encode(&mut self, image: &Image, idr: bool, bitrate: u32) -> Result<Vec<Encoded>> {
+        anyhow::ensure!(
+            self.overlay.is_none(),
+            "couch menu: needs wgc_direct_encoder_input"
+        );
+        let image = GpuImage::upload(&self._device, image).context("AMF image upload")?;
+        self.encode_gpu(&image, idr, bitrate)
+    }
+    /// Apply a pace-based encoded-byte budget. An explicit user setting,
+    /// including driver default (zero), is preserved. Optional property failures
+    /// warn without interrupting the stream; return only the observed limit.
+    /// An automatic cap in frame mode is written under `bytes` while AMF's
+    /// keyframes overshoot it ([`KeyframeCapScale`]), never under `floor`;
+    /// submissions keep `bytes` as their target.
+    pub fn set_frame_cap(&mut self, bytes: u64, floor: u64) -> Option<u64> {
+        let target = bytes;
+        self.frame_cap_target = frame_cap_target(self.frame_cap.automatic(), target);
+        let bytes = butterpollo_media_policy::encoder_policy::keyframe_cap_bytes(
+            self.frame_cap.automatic(),
+            self.slice_blocks,
+            &self.keyframe_cap,
+            target,
+            floor,
+        );
+        let component = self.component;
+        self.frame_cap
+            .update_toward(self.codec, bytes, target, &self.warnings, |name, bits| {
+                // SAFETY: Self owns the live component/runtime for this entire
+                // update. SetProperty copies the terminated name and integer.
+                unsafe {
+                    let result = check(((*(*component).pVtbl).SetProperty.unwrap())(
+                        component,
+                        to_wide(name).as_ptr(),
+                        int(bits),
+                    ));
+                    (result, Self::read_component(component, name))
+                }
+            })
+    }
+    pub fn frame_cap(&self) -> Option<u64> {
+        self.frame_cap.effective()
+    }
+    /// The largest inter frame sent as encoded ([`reencodes_cut`]), with an
+    /// automatic frame cap only: an explicit `amd_max_frame_size` is kept.
+    pub fn set_cut_limit(&mut self, bytes: u64) {
+        self.cut_limit = (self.frame_cap.automatic() && bytes > 0).then_some(bytes);
+    }
+    pub fn reencoded_cuts(&self) -> u64 {
+        self.reencoded_cuts
+    }
+    /// Keyframes AMF made more than 1.1 times the cap the host asked for.
+    pub fn keyframes_over_cap(&self) -> u64 {
+        self.keyframes_over_cap
+    }
+    pub fn keyframe_cap_scale(&self) -> f64 {
+        self.keyframe_cap.scale()
+    }
+    fn set_bitrate(&mut self, bitrate: u32) -> Result<()> {
+        let changed = bitrate != self.rate_control.requested();
+        let component = self.component;
+        self.rate_control.update(
+            self.codec,
+            bitrate,
+            &self.warnings,
+            |name| {
+                // SAFETY: Self retains the component/runtime and its borrowed
+                // property info. Null checks and INT64 tags precede all reads;
+                // only copied integers escape this call.
+                unsafe {
+                    let mut current = int(0);
+                    let mut info = ptr::null();
+                    let table = &*(*component).pVtbl;
+                    if (table.GetProperty.unwrap())(component, to_wide(name).as_ptr(), &mut current)
+                        != AMF_RESULT_AMF_OK
+                        || current.type_ != AMF_VARIANT_TYPE_AMF_VARIANT_INT64
+                        || (table.GetPropertyInfo.unwrap())(
+                            component,
+                            to_wide(name).as_ptr(),
+                            &mut info,
+                        ) != AMF_RESULT_AMF_OK
+                        || info.is_null()
+                    {
+                        return None;
+                    }
+                    Some(rate_control::Limit {
+                        value: current.__bindgen_anon_1.int64Value,
+                        minimum: ((*info).minValue.type_ == AMF_VARIANT_TYPE_AMF_VARIANT_INT64)
+                            .then(|| (*info).minValue.__bindgen_anon_1.int64Value),
+                        maximum: ((*info).maxValue.type_ == AMF_VARIANT_TYPE_AMF_VARIANT_INT64)
+                            .then(|| (*info).maxValue.__bindgen_anon_1.int64Value),
+                    })
+                }
+            },
+            |name, value| {
+                // SAFETY: The live component copies the terminated name and
+                // the correctly tagged integer during SetProperty.
+                unsafe {
+                    check(((*(*component).pVtbl).SetProperty.unwrap())(
+                        component,
+                        to_wide(name).as_ptr(),
+                        int(value),
+                    ))
+                    .with_context(|| format!("AMF property {name}"))
+                }
+            },
+        );
+        if changed {
+            self.frame_cap
+                .observe(self.read(rate_control::frame_cap_name(self.codec)));
+        }
+        Ok(())
+    }
+    pub fn accepts_gpu_device(&self, image: &GpuImage) -> bool {
+        self._device.device.as_raw() == image.gpu.device.as_raw()
+            && (self.compute.is_none() || crate::compute::shareable(&image.texture))
+    }
+    fn wait_capacity(&mut self) -> Result<Vec<Encoded>> {
+        // Only a full queue waits: a poll blocks for the query timeout while a
+        // frame is in flight, which delayed submitting the next frame.
+        let mut output = Vec::new();
+        let deadline = Instant::now() + Duration::from_millis(100);
+        while self.in_flight.len() >= AMF_SURFACE_LIMIT
+            || self.ownership.retained() >= AMF_SURFACE_LIMIT
+        {
+            let queried = Instant::now();
+            output.extend(self.poll_now()?);
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            // One lock for the count and, while the driver owns every
+            // input, the wait for its release notification. Output can be
+            // complete while AMF still owns every input: QueryOutput then
+            // returns immediately, so the release notification is the wait.
+            // At the deadline the wait is zero and only reads the count.
+            let retained = self
+                .ownership
+                .wait_below(AMF_SURFACE_LIMIT, remaining.min(QUERY_TIMEOUT));
+            // A completion at the deadline still frees capacity successfully.
+            if self.in_flight.len() < AMF_SURFACE_LIMIT && retained < AMF_SURFACE_LIMIT {
+                break;
+            }
+            if remaining.is_zero() {
+                bail!("AMF GPU queue failed to drain");
+            }
+            if retained < AMF_SURFACE_LIMIT {
+                if let Some(thread) = &self.output_thread {
+                    // The output thread waits in the driver; wait for what it queues.
+                    thread.wait(remaining.min(QUERY_TIMEOUT));
+                } else {
+                    // Some drivers ignore QueryTimeout or return REPEAT early.
+                    // Bound those retries too, without extending a real driver wait.
+                    let pause = QUERY_TIMEOUT
+                        .saturating_sub(queried.elapsed())
+                        .min(remaining);
+                    if !pause.is_zero() {
+                        std::thread::sleep(pause);
+                    }
+                }
+            }
+        }
+        Ok(output)
+    }
+    /// Submit `cut`'s converted input again as a keyframe, in place of the
+    /// inter frame AMF made of it ([`reencodes_cut`]). The keyframe takes the
+    /// frame's index and resets the long-term references, so a later repair
+    /// names only the keyframe. SubmitInput is the last step that can fail:
+    /// before it, nothing has changed.
+    pub(super) fn reencode_as_idr(&mut self, cut: &Submission) -> Result<()> {
+        let (surface, reencoded_converted) =
+            match (&cut._converted, &cut._converted12, self.compute.as_ref()) {
+                (Some(texture), _, _) => {
+                    // VPE's output surface may live in AMFVideoConverter's internal pool,
+                    // which the next frame can reuse once the encoder outputs this one.
+                    // Copy to an exclusive texture when VPE is active so the IDR reads
+                    // intact pixels.
+                    let texture = if self.vpe.is_some() {
+                        copy_d3d11_texture(&self._device, texture, 0)?
+                    } else {
+                        texture.clone()
+                    };
+                    (
+                        gpu::wrap(self.context, &texture, &mut self.ownership)?.0,
+                        Some(texture),
+                    )
+                }
+                (None, Some(texture), Some(input)) => {
+                    (input.context.wrap(texture, &mut self.ownership)?, None)
+                }
+                _ => bail!("the frame's converted input was not kept"),
+            };
+        let frame = cut.pts as u64 + 1;
+        // SAFETY: As in `encode_gpu`: the fresh surface wraps the converted
+        // texture the submission kept, which no later conversion has reused.
+        unsafe {
+            let v = &*(*surface.0).pVtbl;
+            check((v.SetCrop.unwrap())(
+                surface.0,
+                0,
+                0,
+                self.config.coded_size().0 as i32,
+                self.config.coded_size().1 as i32,
+            ))
+            .context("AMF native surface crop")?;
+            (v.SetPts.unwrap())(surface.0, cut.pts);
+            (v.SetDuration.unwrap())(
+                surface.0,
+                10_000_000_000 / i64::from(self.config.fps_millihz()),
+            );
+            let (plan, _, ltr_rejected) = self.prepare_surface_at(surface.0, frame, true)?;
+            let result = timed("AMF SubmitInput", || {
+                ((*(*self.component).pVtbl).SubmitInput.unwrap())(self.component, surface.0.cast())
+            });
+            self.last_submit = Some(result);
+            check(result).context("AMF SubmitInput of the keyframe")?;
+            // Only now: had SubmitInput failed, the references stay as they were.
+            if ltr_rejected {
+                self.references.disable();
+            }
+            acknowledge_keyframe(true, result, &mut self.recover, &mut self.hdr_metadata);
+            let accepted = Instant::now();
+            self.last_accepted = Some(accepted);
+            self.in_flight.push_back(Submission {
+                pts: cut.pts,
+                // From the first submission: the frame's encode time counts both.
+                started: cut.started,
+                accepted,
+                presentation: cut.presentation,
+                idr: true,
+                after_invalidation: false,
+                frame_cap_bytes: cut.frame_cap_bytes,
+                frame_cap_target: cut.frame_cap_target,
+                skipped: plan.skipped,
+                cut_limit: cut.cut_limit,
+                reencoded: true,
+                _capture: cut._capture.clone(),
+                _converted: reencoded_converted,
+                _converted12: None,
+            });
+            if let Some(thread) = &self.output_thread {
+                thread.want(true);
+            }
+            self.references.accepted(frame, &plan);
+            self.focus.keyframe_out();
+            self.reencoded_cuts += 1;
+            Ok(())
+        }
+    }
+    /// Convert `image` with AMF's video converter, or `None` when the
+    /// stream has none or this frame takes the shader conversion. A failed
+    /// conversion leaves the shaders converting the rest of the stream.
+    fn convert_vpe(
+        &mut self,
+        image: &GpuImage,
+        source: (u32, u32, crate::capture::Pixel),
+    ) -> Result<Option<vpe::Converted>> {
+        let Some(converter) = self.vpe.as_deref_mut() else {
+            return Ok(None);
+        };
+        if converter.failed {
+            return Ok(None);
+        }
+        let Ok(input) = converter.plan(image, self.luminance, self.overlay.is_some()) else {
+            return Ok(None);
+        };
+        match converter.convert(image, input, &mut self.ownership) {
+            Ok(converted) => {
+                // HDR dynamic metadata reads the capture, as on the shader path.
+                if let Some(stats) = self.graphics_stats.as_deref_mut() {
+                    if self
+                        .gpu_convert
+                        .as_ref()
+                        .is_none_or(|converter| converter.source != source)
+                    {
+                        self.gpu_convert =
+                            Some(gpu::Converter::new(&self._device, &self.config, source)?);
+                    }
+                    stats.queue(image, &self.gpu_convert.as_ref().unwrap().color);
+                }
+                Ok(Some(converted))
+            }
+            Err(error) => {
+                converter.failed = true;
+                let error = format!("{error:#}");
+                tracing::warn!(%error, "AMF video converter failed; the shader conversion converts the rest of this stream");
+                self.warnings.set("encoder_vpe", &format!("AMD hardware colour conversion stopped ({error}); converting with Rubylight's shaders for the rest of this stream."));
+                Ok(None)
+            }
+        }
+    }
+    pub fn encode_gpu(
+        &mut self,
+        image: &GpuImage,
+        idr: bool,
+        bitrate: u32,
+    ) -> Result<Vec<Encoded>> {
+        let started = Instant::now();
+        let mut output = self.wait_capacity()?;
+        let idr = idr || self.hdr_metadata.needs_idr() || self.recover;
+        if self._device.device.as_raw() != image.gpu.device.as_raw() {
+            bail!("GPU frame and encoder must use the same D3D11 device");
+        }
+        let source = (image.width, image.height, image.pixel);
+        let conversion_started = Instant::now();
+        // Whether AMF's video converter took this frame, on a stream that has one.
+        let mut vpe_used = None;
+        let (surface, converted, conversion) = if let Some(input) = self.compute.as_mut() {
+            let compute = input.converter.compute().clone();
+            let texture = timed("compute open", || compute.open(&image.texture))?;
+            let pointer = image
+                .cursor
+                .as_ref()
+                .map(|cursor| input.converter.pointer(cursor))
+                .transpose()?;
+            input.converter.values = crate::gpu_color::constants(
+                &self.config,
+                source,
+                self.luminance,
+                image.cursor.as_ref(),
+            );
+            input.converter.set_overlay(self.overlay.as_ref());
+            let converted = timed("compute conversion", || {
+                input.converter.convert(
+                    &texture,
+                    crate::compute::format(image.pixel),
+                    pointer.as_ref(),
+                    image,
+                )
+            })?;
+            timed("conversion fence wait", || {
+                gpu::synchronize(&converted.texture, &converted.fence, converted.value)
+            })?;
+            let surface = timed("AMF surface wrap", || {
+                input.context.wrap(&converted.texture, &mut self.ownership)
+            })?;
+            // Kept while the frame may need encoding again (`reencodes_cut`).
+            let kept = self.cut_limit.map(|_| converted.texture.clone());
+            (surface, (None, kept), Some(converted.conversion))
+        } else if let Some(converted) = self.convert_vpe(image, source)? {
+            vpe_used = Some(true);
+            // HLG's `held` prepass texture is RGB/FP16 input to VPE (already
+            // held by `self.ownership`), not the NV12/P010 output for re-encoding.
+            let _ = converted.held;
+            let kept = if self.cut_limit.is_some() {
+                vpe_kept_texture(&self._device, &converted.surface)?
+            } else {
+                None
+            };
+            (converted.surface, (kept, None), None)
+        } else {
+            if self.vpe.is_some() {
+                vpe_used = Some(false);
+            }
+            if self
+                .gpu_convert
+                .as_ref()
+                .is_none_or(|converter| converter.source != source)
+            {
+                self.gpu_convert = Some(gpu::Converter::new(&self._device, &self.config, source)?);
+            }
+            let color = &mut self.gpu_convert.as_mut().unwrap().color;
+            color.set_luminance(self.luminance);
+            color.set_overlay(self.overlay.as_ref());
+            let (surface, texture) = timed("graphics conversion", || {
+                self.gpu_convert
+                    .as_mut()
+                    .unwrap()
+                    .convert(self.context, image, &mut self.ownership)
+            })?;
+            // Submitted with `sample_dynamic`, once the frame went to the encoder.
+            if let Some(stats) = self.graphics_stats.as_deref_mut() {
+                stats.queue(image, &self.gpu_convert.as_ref().unwrap().color);
+            }
+            (surface, (Some(texture), None), None)
+        };
+        let conversion_elapsed = conversion_started.elapsed();
+        let (converted, converted12) = converted;
+        self.set_bitrate(bitrate)?;
+        // SAFETY: surface owns a live AMF interface backed by this encoder's device;
+        // conversion has synchronized the GPU writes and the boxed ownership observer
+        // retains textures until AMF releases them. SubmitInput retains its own surface
+        // reference, while self keeps the component, context and runtime alive.
+        unsafe {
+            let v = &*(*surface.0).pVtbl;
+            check((v.SetCrop.unwrap())(
+                surface.0,
+                0,
+                0,
+                self.config.coded_size().0 as i32,
+                self.config.coded_size().1 as i32,
+            ))
+            .context("AMF native surface crop")?;
+            (v.SetPts.unwrap())(surface.0, self.index);
+            (v.SetDuration.unwrap())(
+                surface.0,
+                10_000_000_000 / i64::from(self.config.fps_millihz()),
+            );
+            let (plan, idr) = self.prepare_surface(surface.0, idr)?;
+            self.attach_focus(surface.0, idr, plan.after_invalidation, conversion)?;
+            let deadline = Instant::now() + Duration::from_millis(100);
+            loop {
+                let result = timed("AMF SubmitInput", || {
+                    ((*(*self.component).pVtbl).SubmitInput.unwrap())(
+                        self.component,
+                        surface.0.cast(),
+                    )
+                });
+                self.last_submit = Some(result);
+                acknowledge_keyframe(idr, result, &mut self.recover, &mut self.hdr_metadata);
+                if result != AMF_RESULT_AMF_INPUT_FULL {
+                    check(result)?;
+                    break;
+                }
+                self.input_full += 1;
+                // This input's references are planned: a re-encode now would
+                // drop the ones it may name.
+                self.preparing = true;
+                let queried = Instant::now();
+                let polled = self.poll_now();
+                self.preparing = false;
+                let polled = polled?;
+                let nothing = polled.is_empty();
+                output.extend(polled);
+                if Instant::now() >= deadline {
+                    bail!("AMF GPU input queue failed to drain");
+                }
+                match &self.output_thread {
+                    // A query that blocked used to pace this loop.
+                    Some(thread) if nothing => thread.wait(QUERY_TIMEOUT),
+                    // As in `wait_capacity`: a driver that ignores QueryTimeout
+                    // would otherwise spin a core while the GPU is saturated.
+                    None if nothing => {
+                        let pause = QUERY_TIMEOUT
+                            .saturating_sub(queried.elapsed())
+                            .min(deadline.saturating_duration_since(Instant::now()));
+                        if !pause.is_zero() {
+                            std::thread::sleep(pause);
+                        }
+                    }
+                    _ => std::thread::yield_now(),
+                }
+            }
+            // Compute keeps the capture until conversion completes; graphics
+            // still retains it until the encoder returns its output.
+            let accepted = Instant::now();
+            self.last_accepted = Some(accepted);
+            // AMF's video converter: which path converted the frame, how long it took and
+            // how old the frame was when the encoder accepted it.
+            if let (Some(vpe), Some(used)) = (self.vpe.as_deref_mut(), vpe_used) {
+                vpe.record(used, conversion_elapsed, image.captured);
+            }
+            self.in_flight.push_back(Submission {
+                pts: self.index,
+                started,
+                accepted,
+                presentation: image.captured,
+                idr,
+                after_invalidation: plan.after_invalidation,
+                frame_cap_bytes: self.frame_cap.effective(),
+                frame_cap_target: self.frame_cap_target,
+                skipped: plan.skipped,
+                cut_limit: self.cut_limit,
+                reencoded: false,
+                _capture: self.compute.is_none().then(|| image.clone()),
+                _converted: converted,
+                _converted12: converted12,
+            });
+            self.backlog.submitted();
+            if let Some(thread) = &self.output_thread {
+                thread.want(true);
+            }
+            self.references.accepted(self.index as u64 + 1, &plan);
+            self.index += 1;
+            // Before the poll, so the frame it returns carries the newest
+            // finished sample; the frames already collected stay either way.
+            self.sample_dynamic();
+            output.extend(self.poll()?);
+            Ok(output)
+        }
+    }
+}

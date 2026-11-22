@@ -256,7 +256,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             json!({
                 "status": true,
                 "otp": pin,
-                "ip": butterpollo_windows::net::lan_addresses().unwrap_or_default().first().cloned().unwrap_or_default(),
+                "ip": butterpollo_win_io::net::lan_addresses().unwrap_or_default().first().cloned().unwrap_or_default(),
                 "name": crate::network::host_name(&config),
                 "message": "OTP created, effective within 3 minutes.",
             })
@@ -303,7 +303,7 @@ pub(crate) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
             h,
             text("address"),
             butterpollo_session::state::pairing_access(text("access"))?,
-            butterpollo_windows::net::lan_addresses()?,
+            butterpollo_win_io::net::lan_addresses()?,
         )?,
         _ => return Err(anyhow::anyhow!("unknown API endpoint")),
     })

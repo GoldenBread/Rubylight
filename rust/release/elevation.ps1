@@ -24,8 +24,8 @@ anything running as you can replace them before a harness run. Only install
 it on a machine where you accept that.
 
 .PARAMETER SystemLaunch
-The built system_launch example (cargo build --release -p butterpollo-windows
---example system_launch) to install. Without it, the one from the harness's
+The built system_launch binary (cargo build --release -p butterpollo-probes
+--bin system_launch) to install. Without it, the one from the harness's
 default build is installed if it is there; otherwise SYSTEM test hosts refuse
 to start until this runs again with it.
 
@@ -60,13 +60,13 @@ foreach ($script in 'elevated.ps1', 'elevated-task.ps1') {
 Copy-Item (Join-Path $PSScriptRoot '..\tests\webrtc_client\elevated_tasks.ps1') (Join-Path $home_ 'webrtc-e2e-elevated.ps1') -Force
 # Its SYSTEM task runs this launcher from here, so the program that checks what it starts cannot be
 # replaced by the user (the staged host it starts can be: see the trade-off above).
-$launcher = if ($SystemLaunch) { $SystemLaunch } else { 'C:\src\butterpollo-release\wr\target\release\examples\system_launch.exe' }
+$launcher = if ($SystemLaunch) { $SystemLaunch } else { 'C:\src\butterpollo-release\wr\target\release\system_launch.exe' }
 if (Test-Path -LiteralPath $launcher -PathType Leaf) {
     Copy-Item -LiteralPath $launcher (Join-Path $home_ 'system_launch.exe') -Force
 } elseif ($SystemLaunch) {
     throw "no system_launch.exe at $SystemLaunch"
 } else {
-    Write-Warning "No system_launch.exe at $launcher, so the WebRTC harness cannot start a SYSTEM test host. Build it (cargo build --release -p butterpollo-windows --example system_launch) and run this again with -SystemLaunch <path>."
+    Write-Warning "No system_launch.exe at $launcher, so the WebRTC harness cannot start a SYSTEM test host. Build it (cargo build --release -p butterpollo-probes --bin system_launch) and run this again with -SystemLaunch <path>."
 }
 # On demand only (no trigger), for the signed-in user, with the elevated token.
 # An interactive principal needs no stored password.

@@ -50,7 +50,7 @@ pub struct DeviceGuests {
     release: Mutex<BTreeSet<Source>>,
     releasing: AtomicBool,
     /// The PC's own keyboard and mouse, watched while a guest may hold them.
-    local: Mutex<Option<butterpollo_windows::local_input::Watch>>,
+    local: Mutex<Option<butterpollo_win_io::local_input::Watch>>,
     /// Whether the watcher failed to start, so the log says it once.
     local_failed: AtomicBool,
     /// Each guest's controllers in the pool (`controller_sessions::key` of its launch), to
@@ -215,7 +215,7 @@ fn follow_local_input(h: &Shared, wanted: bool) {
         return;
     }
     let host = std::sync::Arc::downgrade(h);
-    match butterpollo_windows::local_input::watch(move || {
+    match butterpollo_win_io::local_input::watch(move || {
         if let Some(h) = host.upgrade() {
             h.device_guests.local_input();
         }

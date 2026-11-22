@@ -5,7 +5,7 @@ use butterpollo_media_policy::{
     topology::{Kind, Layout, Node},
 };
 use butterpollo_session::session::{Role, Warnings};
-use butterpollo_windows::{
+use butterpollo_win_display::{
     display::{self, Retained},
     display_arrangement,
 };
@@ -249,13 +249,13 @@ pub fn activate(
             .and_then(|c| c.extra.get("hdr_profile"))
             .and_then(Value::as_str)
             .and_then(|p| {
-                butterpollo_windows::hdr_profile::peak_luminance(p)
+                butterpollo_win_display::hdr_profile::peak_luminance(p)
                     .ok()
                     .flatten()
             })
             .unwrap_or(1000)
             .clamp(400, 2000),
-        render_adapter: display::configured_render_adapter(&h.config.read().unwrap()),
+        render_adapter: crate::win_bridge::configured_render_adapter(&h.config.read().unwrap()),
         joins: false,
     };
     // Read while the display is not there yet: Windows can recall a saved layout

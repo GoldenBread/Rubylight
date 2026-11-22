@@ -238,7 +238,7 @@ pub fn prepare(
         .ok_or_else(|| Refusal::unavailable("The Nucleus Co-op session ended: launch it again"))?;
     instance.resize(seat.slot, stream.display_size())?;
     // The display only picks the GPU the window is captured on.
-    let display = butterpollo_windows::capture::primary_display()
+    let display = butterpollo_win_graphics::capture::primary_display()
         .context("no display is on the desktop to capture the game window on")?;
     let first = match first_window(instance.as_ref(), seat.slot, &display, wait) {
         Ok(first) => first,
@@ -253,7 +253,7 @@ pub fn prepare(
     };
     tracing::info!(session = seat.session, slot = seat.slot, target = %first, "Nucleus Co-op: streaming the player's game window");
     warn_audio(
-        butterpollo_windows::display::windows_build(),
+        butterpollo_win_display::display::windows_build(),
         &launch.warnings,
     );
     crate::display_session::Ready::window(
@@ -285,7 +285,7 @@ pub fn resize(h: &Host, seat: Seat, size: (u32, u32)) -> Result<()> {
 /// Below the build with process loopback capture, the stream says it has
 /// no audio of the player's own game.
 pub(super) fn warn_audio(build: Option<u32>, warnings: &Warnings) {
-    if let Some(limit) = butterpollo_windows::nucleus::session::audio_limit(build) {
+    if let Some(limit) = butterpollo_win_io::nucleus::session::audio_limit(build) {
         warnings.set("coop_audio", limit);
     }
 }

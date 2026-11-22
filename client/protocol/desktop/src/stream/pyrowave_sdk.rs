@@ -7,8 +7,8 @@
 //! be shared, on a device of its own with the planes read back into CPU buffers that the presenter
 //! uploads (`unix.rs`).
 //!
-//! Ported from the Rubylight host's decode test harness (rust/windows/src/pyrowave/decode_tests.rs,
-//! `Decoder`) and its `api!` loader (rust/windows/src/pyrowave.rs). The structs are hand-written
+//! Ported from the Rubylight host's decode test harness (rust/windows/graphics/src/pyrowave/decode_tests.rs,
+//! `Decoder`) and its `api!` loader (rust/windows/graphics/src/pyrowave.rs). The structs are hand-written
 //! against the pinned `pyrowave.h` (API 1.0) with Vulkan types from `ash::vk`, and `tests.rs`
 //! checks their sizes and offsets.
 //!

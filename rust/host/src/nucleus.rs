@@ -9,7 +9,7 @@
 //! [`Registry::instance`]; the launch's last copy gives the slot back with
 //! [`Registry::leave`], and the launch id that holds a slot makes a stale
 //! leave do nothing. [`Pc`] and [`Instance`] are the seams to
-//! `butterpollo_windows::nucleus`; the tests use the fakes in `fake`.
+//! `butterpollo_win_io::nucleus`; the tests use the fakes in `fake`.
 use crate::state::{Host, Launch, Shared};
 use anyhow::{Context, Result};
 use butterpollo_config::config::Config;
@@ -23,11 +23,11 @@ use butterpollo_session::nucleus::install::{Problem, Unusable};
 use butterpollo_session::nucleus::mode;
 use butterpollo_session::session::{Seat, Warnings};
 use butterpollo_session::state::{App, Client};
-use butterpollo_windows::input::PadReport;
-use butterpollo_windows::nucleus::pads::{self, Dropped};
-use butterpollo_windows::nucleus::session::{Opened, Running, Start};
-use butterpollo_windows::nucleus::{files, install, user_copy};
-use butterpollo_windows::process::AudioProcess;
+use butterpollo_win_io::input::PadReport;
+use butterpollo_win_io::nucleus::pads::{self, Dropped};
+use butterpollo_win_io::nucleus::session::{Opened, Running, Start};
+use butterpollo_win_io::nucleus::{files, install, user_copy};
+use butterpollo_win_io::process::AudioProcess;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -105,7 +105,7 @@ impl std::fmt::Display for Refusal {
 }
 impl std::error::Error for Refusal {}
 
-/// The PC side: `butterpollo_windows::nucleus` on this PC, a fake in tests.
+/// The PC side: `butterpollo_win_io::nucleus` on this PC, a fake in tests.
 pub trait Pc: Send + Sync {
     /// Why this host cannot run Nucleus Co-op sessions, or None.
     fn unavailable(&self) -> Option<String>;
@@ -119,7 +119,7 @@ pub trait Pc: Send + Sync {
     fn instead(&self, configured: &str) -> Option<(Unusable, String)>;
     /// Put back what sessions left in the Nucleus at `folder` before the host
     /// runs another, so it doesn't stay where no session looks again
-    /// ([`butterpollo_windows::nucleus::layers::put_back_to_leave`]).
+    /// ([`butterpollo_win_io::nucleus::layers::put_back_to_leave`]).
     fn put_back(&self, folder: &Path) -> Result<()>;
     /// Open Nucleus Co-op's own window at `folder` on the PC's screen, as the
     /// signed-in user, so they can add a handler or a game.
@@ -146,7 +146,7 @@ pub trait Pc: Send + Sync {
     fn reads_direct_input(&self, exe: &str) -> Result<bool>;
     /// The signed-in user's own copy of the Nucleus at `folder`, made again
     /// when it isn't that one's program
-    /// ([`butterpollo_windows::nucleus::user_copy`]).
+    /// ([`butterpollo_win_io::nucleus::user_copy`]).
     fn user_copy(&self, folder: &Path) -> Result<PathBuf>;
     /// Write Rubylight's one-player handler for `setup` into the Nucleus at
     /// `folder` and add its game to Nucleus' game list; with the user's own
@@ -175,7 +175,7 @@ pub trait Pc: Send + Sync {
 }
 
 /// The Nucleus Co-op [`Pc::open`] started for the user:
-/// `butterpollo_windows::nucleus::session::Opened`.
+/// `butterpollo_win_io::nucleus::session::Opened`.
 pub trait Window: Send {
     fn pid(&self) -> u32;
     /// Whether it still runs.
@@ -183,7 +183,7 @@ pub trait Window: Send {
     /// Ask it to close and wait up to `timeout`; it is never ended.
     fn close(&self, timeout: Duration) -> Result<()>;
 }
-impl Window for butterpollo_windows::nucleus::session::Opened {
+impl Window for butterpollo_win_io::nucleus::session::Opened {
     fn pid(&self) -> u32 {
         Opened::pid(self)
     }
@@ -195,7 +195,7 @@ impl Window for butterpollo_windows::nucleus::session::Opened {
     }
 }
 
-/// A running session: `butterpollo_windows::nucleus::session::Running`.
+/// A running session: `butterpollo_win_io::nucleus::session::Running`.
 /// No call waits for a [`stop`](Instance::stop) in progress.
 pub trait Instance: Send + Sync {
     /// Read or change the session's players and phase.
@@ -383,6 +383,9 @@ use stream::{end_without_window, first_window, warn_audio};
 
 #[cfg(test)]
 pub(crate) mod fake;
+
+#[cfg(test)]
+mod capture_tests;
 
 #[cfg(test)]
 mod tests;

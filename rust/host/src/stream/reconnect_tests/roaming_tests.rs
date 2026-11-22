@@ -113,7 +113,7 @@ impl Roamer {
                     }
                     Err(error)
                         if error.kind() == std::io::ErrorKind::WouldBlock
-                            || butterpollo_windows::net::datagram_lost(&error) =>
+                            || butterpollo_win_io::net::datagram_lost(&error) =>
                     {
                         tokio::time::sleep(Duration::from_millis(5)).await;
                     }

@@ -42,7 +42,7 @@ fn a_focus_check_error_marks_only_that_codec_unsupported() {
 }
 #[test]
 fn a_timed_out_early_or_crashed_pyrowave_probe_is_probed_again() {
-    use butterpollo_windows::codec_probe::{Crashed, SessionNotReady, TimedOut};
+    use butterpollo_win_graphics::codec_probe::{Crashed, SessionNotReady, TimedOut};
     use std::time::Duration;
     // A probe that stalled under a busy CPU left PyroWave unoffered
     // until the host restarted. The load that stalled it, such as a
@@ -72,7 +72,7 @@ fn a_timed_out_early_or_crashed_pyrowave_probe_is_probed_again() {
 mod pyrowave_retry {
     use crate::state::test_support::Fixture;
     use butterpollo_config::config::Config;
-    use butterpollo_windows::codec_probe::{Crashed, Interrupted, SessionNotReady, TimedOut};
+    use butterpollo_win_graphics::codec_probe::{Crashed, Interrupted, SessionNotReady, TimedOut};
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::time::{Duration, Instant};
 
@@ -247,7 +247,7 @@ mod packed_reprobe {
     use crate::state::test_support::Fixture;
     use butterpollo_config::config::Config;
     use butterpollo_media_policy::rtsp::Negotiated;
-    use butterpollo_windows::codec_probe::{Interrupted, SessionNotReady};
+    use butterpollo_win_graphics::codec_probe::{Interrupted, SessionNotReady};
     use rubylight_protocol::packed444::mode_bit;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::time::{Duration, Instant};
@@ -1031,8 +1031,8 @@ use super::*;
 #[test]
 #[ignore = "requires SYSTEM in a console session with nobody signed in"]
 fn standard_codec_retries_do_not_wait_for_windows_sign_in() {
-    assert!(butterpollo_windows::process::is_system());
-    assert!(!butterpollo_windows::process::user_signed_in());
+    assert!(butterpollo_win_io::process::is_system());
+    assert!(!butterpollo_win_io::process::user_signed_in());
     let f = test_support::Fixture::new();
     let now = Instant::now() - CODEC_RETRY_MIN;
     let mut retry = CodecRetry::new(now);
@@ -1241,7 +1241,7 @@ fn a_profile_with_earlier_setting_names_loads_under_the_current_ones() {
 /// deadline, while a fast close releases it by its notice without a warning.
 mod shutdown_audio {
     use super::super::{AppStop, test_support::Fixture};
-    use butterpollo_windows::audio_route::Route;
+    use butterpollo_win_io::audio_route::Route;
     use std::{
         sync::Arc,
         time::{Duration, Instant},

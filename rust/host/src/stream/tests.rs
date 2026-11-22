@@ -1052,7 +1052,7 @@ fn a_game_window_target_reopens_on_itself_never_the_primary_display() {
         r"window:0@\\.\DISPLAY1",
         "window:garbage",
     ] {
-        let present = butterpollo_windows::capture::display_present(target);
+        let present = butterpollo_win_graphics::capture::display_present(target);
         let mut missing = None;
         for background in [false, true] {
             for elapsed in [Duration::ZERO, DISPLAY_RETURN_WAIT, Duration::from_secs(61)] {
@@ -1184,7 +1184,7 @@ fn a_game_windows_capture_is_tried_again_only_within_the_streams_wait() {
     let started = Instant::now();
     let stop = AtomicBool::new(false);
     let at = |millis: u64| started + Duration::from_millis(millis);
-    let helper = butterpollo_windows::capture::WGC_START_TIMEOUT;
+    let helper = butterpollo_win_graphics::capture::WGC_START_TIMEOUT;
     let last = CAPTURE_START_WAIT - RECOVERY_RETRY - helper - WINDOW_OPEN_MARGIN;
     assert_eq!(last, Duration::from_millis(5850));
     let same = SAME_WINDOW_WAIT - RECOVERY_RETRY - helper - WINDOW_OPEN_MARGIN;
@@ -1650,7 +1650,7 @@ fn enet_control_answers_from_the_address_the_client_reached() {
         channel_limit: 1,
         ..Default::default()
     };
-    let addresses = butterpollo_windows::net::unicast_addresses().unwrap();
+    let addresses = butterpollo_win_io::net::unicast_addresses().unwrap();
     // A client address that reaches another address of this PC.
     let pair = addresses.iter().find_map(|&client_ip| {
         addresses.iter().find_map(|&reached| {

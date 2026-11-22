@@ -11,10 +11,8 @@ use butterpollo_media_policy::{
     packet::{ConventionalPlan, PacketBlock, VideoPacketizer},
     performance::{Claim, Claims},
 };
-use butterpollo_windows::{
-    encoder::{Encoded, Unit},
-    net::ReplySocket,
-};
+use butterpollo_win_graphics::encoder::{Encoded, Unit};
+use butterpollo_win_io::net::ReplySocket;
 use std::{
     net::SocketAddr,
     sync::{
@@ -57,7 +55,7 @@ pub(crate) fn oversized_warning(s: &Session) {
 }
 
 /// [`oversized_warning`] when `batch` refused oversized datagrams since `before`.
-pub(crate) fn report_oversized(s: &Session, batch: &butterpollo_windows::net::Batch, before: u64) {
+pub(crate) fn report_oversized(s: &Session, batch: &butterpollo_win_io::net::Batch, before: u64) {
     if batch.oversized != before {
         oversized_warning(s);
     }
@@ -387,7 +385,7 @@ impl Slot {
 /// continues their frame, packet and IV numbering and their pacing.
 pub struct Handoff {
     pub packetizer: VideoPacketizer,
-    pub present_stamper: Option<butterpollo_windows::present_timing::Stamper>,
+    pub present_stamper: Option<butterpollo_win_graphics::present_timing::Stamper>,
     pub last_stamp: Instant,
     pub pacing_due: Instant,
     pub send_loss: butterpollo_media_policy::stream_policy::SendLossRecovery,
@@ -405,12 +403,12 @@ pub struct Handoff {
 /// `video_send_mmcss_only`, MMCSS's boost alone, as the input thread has it:
 /// the thread priority [`Priority::new`] sets after it cancels the boost.
 ///
-/// [`Priority::new`]: butterpollo_windows::capture::Priority::new
-pub(crate) fn send_priority(mmcss_only: bool) -> butterpollo_windows::capture::Priority {
+/// [`Priority::new`]: butterpollo_win_graphics::capture::Priority::new
+pub(crate) fn send_priority(mmcss_only: bool) -> butterpollo_win_graphics::capture::Priority {
     if mmcss_only {
-        butterpollo_windows::capture::Priority::input()
+        butterpollo_win_graphics::capture::Priority::input()
     } else {
-        butterpollo_windows::capture::Priority::new()
+        butterpollo_win_graphics::capture::Priority::new()
     }
 }
 pub struct Sender {

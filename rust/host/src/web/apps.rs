@@ -312,7 +312,7 @@ pub(super) async fn playnite(h: &Shared, method: &Method, action: &str, data: &V
             tokio::task::spawn_blocking(move || {
                 crate::playnite::install_plugin(&h).map(|folder| {
                     json!({"status":true,"path":folder,
-                           "restart_required":butterpollo_windows::playnite::running().is_some()})
+                           "restart_required":butterpollo_win_io::playnite::running().is_some()})
                 })
             })
             .await
@@ -370,7 +370,7 @@ pub(super) async fn lossless_scaling(h: &Shared, uri: &axum::http::Uri) -> Respo
         .to_owned();
     let checked = candidate.unwrap_or_else(|| configured.clone());
     let result = tokio::task::spawn_blocking(move || {
-        let resolved = butterpollo_windows::lossless::program(&checked);
+        let resolved = butterpollo_win_io::lossless::program(&checked);
         let status = match (&resolved, checked.trim().is_empty()) {
             (Some(_), _) => "detected",
             (None, true) => "not-configured",
@@ -397,7 +397,7 @@ pub(super) async fn browse(uri: &axum::http::Uri) -> Response {
     let result = tokio::task::spawn_blocking(move || {
         if butterpollo_session::browse::root(&requested) {
             Ok(butterpollo_session::browse::drives(
-                &butterpollo_windows::files::drives(),
+                &butterpollo_win_io::files::drives(),
             ))
         } else {
             butterpollo_session::browse::listing(std::path::Path::new(&requested), filter)

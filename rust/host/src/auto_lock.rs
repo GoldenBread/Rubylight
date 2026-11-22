@@ -75,7 +75,7 @@ fn skip_reason(
 }
 
 fn lock(h: &Host) {
-    use butterpollo_windows::process;
+    use butterpollo_win_io::process;
     if let Some(why) = skip_reason(
         devices_connected(h),
         process::is_system(),
@@ -84,7 +84,7 @@ fn lock(h: &Host) {
         tracing::info!("auto lock: skipped: {why}");
         return;
     }
-    match butterpollo_windows::process::Process::shell_detached(LOCK, None, false, &BTreeMap::new())
+    match butterpollo_win_io::process::Process::shell_detached(LOCK, None, false, &BTreeMap::new())
     {
         Ok(()) => tracing::info!("auto lock: the last device left; Windows is locked"),
         Err(error) => tracing::warn!(%error, "auto lock: Windows could not be locked"),

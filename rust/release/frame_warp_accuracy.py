@@ -3,7 +3,7 @@
     python frame_warp_accuracy.py --probe OUT.json --client fw.csv [--json result.json] [--skip-seconds 0]
         [--stream-size WIDTHxHEIGHT]
 
-OUT.json is look_probe's report (rust/windows/examples/look_probe.rs) and OUT.frames.csv, beside it, its frames.
+OUT.json is look_probe's report (rust/probes/src/look_probe.rs) and OUT.frames.csv, beside it, its frames.
 fw.csv is nightjar-cli's NIGHTJAR_CLI_FRAME_WARP log of the same run, made on the same PC (docs/frame-warp.md,
 "Measuring"). Only the standard library is used.
 

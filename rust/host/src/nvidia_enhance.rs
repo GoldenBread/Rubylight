@@ -9,7 +9,7 @@ use crate::state::{Session, Shared};
 use butterpollo_config::config::Config;
 use butterpollo_media_policy::nvidia_enhance::Enhancement;
 use butterpollo_media_policy::nvidia_enhance::{self, RTX_HDR, RTX_VIDEO, Source};
-use butterpollo_windows::capture::{GpuImage, Pixel};
+use butterpollo_win_graphics::capture::{GpuImage, Pixel};
 use std::sync::{Arc, atomic::Ordering};
 
 /// The session warning naming an enhancement that was asked for and does
@@ -39,11 +39,11 @@ pub(crate) fn probe(h: &Shared) {
 /// crash in it leaves a report in `profile`'s crashes folder.
 pub(crate) fn probe_main(profile: &std::path::Path) -> i32 {
     // Without crash reports the check still runs; its exit code tells a crash.
-    let _ = butterpollo_windows::crash::initialize(profile);
+    let _ = butterpollo_win_io::crash::initialize(profile);
     let (offered, errors) = match crate::nvidia_component::component_for(profile) {
         Ok(component) => {
-            butterpollo_windows::nvidia_enhance::set_component(Some(component));
-            butterpollo_windows::nvidia_enhance::probe()
+            butterpollo_win_graphics::nvidia_enhance::set_component(Some(component));
+            butterpollo_win_graphics::nvidia_enhance::probe()
         }
         Err(error) => (
             0,
@@ -349,7 +349,7 @@ impl Enhancer {
 mod active {
     use super::*;
     use anyhow::Context as _;
-    use butterpollo_windows::{rtx_profiles::Profiles, rtx_video, truehdr};
+    use butterpollo_win_graphics::{rtx_profiles::Profiles, rtx_video, truehdr};
     use std::{
         sync::Weak,
         time::{Duration, Instant},
@@ -375,7 +375,7 @@ mod active {
         /// the copy made for the fresh picture serves its repeats.
         last: Option<(Weak<GpuImage>, u64, Arc<GpuImage>)>,
         profiles: Option<Profiles>,
-        foreground: Option<butterpollo_windows::foreground::Tracker>,
+        foreground: Option<butterpollo_win_graphics::foreground::Tracker>,
         profile_due: Option<Instant>,
     }
 
@@ -537,7 +537,7 @@ mod active {
             let visible = running
                 .then(|| {
                     self.foreground
-                        .get_or_insert_with(butterpollo_windows::foreground::Tracker::default)
+                        .get_or_insert_with(butterpollo_win_graphics::foreground::Tracker::default)
                         .poll(&owned, &image.gpu.display)
                 })
                 .flatten();

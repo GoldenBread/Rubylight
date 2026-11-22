@@ -1,4 +1,4 @@
-//! This PC behind the [`Pc`] and [`Instance`] seams: `butterpollo_windows::nucleus`.
+//! This PC behind the [`Pc`] and [`Instance`] seams: `butterpollo_win_io::nucleus`.
 use super::*;
 
 /// This PC.
@@ -6,12 +6,12 @@ use super::*;
 pub(super) struct OnPc;
 impl Pc for OnPc {
     fn unavailable(&self) -> Option<String> {
-        if !butterpollo_windows::process::is_system() {
+        if !butterpollo_win_io::process::is_system() {
             return Some("Nucleus Co-op sessions need the host to run as the Rubylight Windows service, which starts Nucleus Co-op as the signed-in user".into());
         }
-        butterpollo_session::os_gate::missing(
-            butterpollo_windows::display::windows_build(),
-            butterpollo_session::os_gate::Feature::WgcWindow,
+        butterpollo_media_policy::os_gate::missing(
+            butterpollo_win_display::display::windows_build(),
+            butterpollo_media_policy::os_gate::Feature::WgcWindow,
         )
     }
     fn installed(&self, configured: &str) -> Result<Option<PathBuf>> {
@@ -24,15 +24,15 @@ impl Pc for OnPc {
         Some((found.instead?, notice))
     }
     fn put_back(&self, folder: &Path) -> Result<()> {
-        butterpollo_windows::nucleus::layers::put_back_to_leave(folder)
+        butterpollo_win_io::nucleus::layers::put_back_to_leave(folder)
     }
     fn open(&self, folder: &Path) -> Result<Box<dyn Window>> {
-        Ok(Box::new(butterpollo_windows::nucleus::session::open(
+        Ok(Box::new(butterpollo_win_io::nucleus::session::open(
             folder,
         )?))
     }
     fn running(&self) -> Result<Option<u32>> {
-        butterpollo_windows::nucleus::session::running()
+        butterpollo_win_io::nucleus::session::running()
     }
     fn catalog(&self, folder: &Path) -> Result<Catalog> {
         files::catalog(folder, true)
@@ -47,7 +47,7 @@ impl Pc for OnPc {
                 .ok()
                 .and_then(|app| butterpollo_session::steam::game_of(&app))
         {
-            let roots = butterpollo_windows::steam::roots();
+            let roots = butterpollo_win_io::steam::roots();
             let launch = butterpollo_session::steam::game_executable(appid, &roots)
                 .map_err(Refusal::not_found)?;
             return Ok(Setup {
@@ -76,7 +76,7 @@ impl Pc for OnPc {
         let steam = butterpollo_session::steam::library_app(
             Path::new(exe),
             &arguments(app),
-            &butterpollo_windows::steam::roots(),
+            &butterpollo_win_io::steam::roots(),
         )
         .map_err(Refusal::not_found)?;
         Ok(match steam {
@@ -96,7 +96,7 @@ impl Pc for OnPc {
         })
     }
     fn account(&self) -> Result<Account> {
-        butterpollo_windows::process::user_account()
+        butterpollo_win_io::process::user_account()
     }
     fn game_need(&self, exe: &str, folder: bool) -> Result<Need> {
         // The game's folder is usually the user's to change: its files are
@@ -105,10 +105,10 @@ impl Pc for OnPc {
         let sid = user_copy::sid(&user)?;
         let exe = Path::new(exe);
         let need = elevation::most([
-            butterpollo_windows::nucleus::elevation::game_need(exe, &sid, Some(&user))?,
+            butterpollo_win_io::nucleus::elevation::game_need(exe, &sid, Some(&user))?,
             match exe.parent().filter(|_| folder) {
                 Some(parent) => {
-                    butterpollo_windows::nucleus::elevation::folder_need(parent, Some(&user))?
+                    butterpollo_win_io::nucleus::elevation::folder_need(parent, Some(&user))?
                 }
                 None => Need::Nothing,
             },
@@ -117,7 +117,7 @@ impl Pc for OnPc {
     }
     fn reads_direct_input(&self, exe: &str) -> Result<bool> {
         // Read as the user, as game_need reads the game's files.
-        butterpollo_windows::nucleus::elevation::reads_direct_input(
+        butterpollo_win_io::nucleus::elevation::reads_direct_input(
             Path::new(exe),
             Some(&user_copy::user()?),
         )
@@ -134,7 +134,7 @@ impl Pc for OnPc {
     }
     fn write_own(&self, folder: &Path, copy: Option<&Path>, setup: &Setup) -> Result<Handler> {
         if let Some(pid) = self.running()? {
-            anyhow::bail!(butterpollo_windows::nucleus::session::already_running(pid));
+            anyhow::bail!(butterpollo_win_io::nucleus::session::already_running(pid));
         }
         let own = match copy {
             None => files::write_own(folder, setup)?,
@@ -143,7 +143,7 @@ impl Pc for OnPc {
         // Earlier builds added their games to a list Nucleus Co-op never
         // reads; they go from it once. The list is inert, so a failure is
         // only logged.
-        match butterpollo_windows::user_folder::roaming_app_data() {
+        match butterpollo_win_io::user_folder::roaming_app_data() {
             Ok(appdata) => {
                 if let Err(error) = files::forget_appdata_games(&appdata) {
                     tracing::warn!(
@@ -161,7 +161,7 @@ impl Pc for OnPc {
     }
     fn remove_own(&self, folder: &Path, copy: Option<&Path>, own: &Handler) -> Result<()> {
         if let Some(pid) = self.running()? {
-            anyhow::bail!(butterpollo_windows::nucleus::session::already_running(pid));
+            anyhow::bail!(butterpollo_win_io::nucleus::session::already_running(pid));
         }
         files::remove_own(folder, own)?;
         match copy {
@@ -176,7 +176,7 @@ impl Pc for OnPc {
         own: Option<&Setup>,
         stale: &[&Handler],
     ) -> Result<()> {
-        butterpollo_windows::nucleus::session::ready(folder, run)?;
+        butterpollo_win_io::nucleus::session::ready(folder, run)?;
         if own.is_some() || !stale.is_empty() {
             if let Some(setup) = own {
                 files::check_own(folder, setup)?;
@@ -192,7 +192,7 @@ impl Pc for OnPc {
         policy: Policy,
         warnings: Arc<Warnings>,
     ) -> Result<Box<dyn Instance>> {
-        let running = butterpollo_windows::nucleus::session::start_on_pc(start, policy, warnings)?;
+        let running = butterpollo_win_io::nucleus::session::start_on_pc(start, policy, warnings)?;
         Ok(Box::new(OnPcInstance(running)))
     }
 }

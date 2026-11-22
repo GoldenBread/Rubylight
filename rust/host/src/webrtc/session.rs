@@ -39,7 +39,7 @@ use butterpollo_session::webrtc::{
         VideoSettings, classify_control,
     },
 };
-use butterpollo_windows::encoder::{Encoded, Unit};
+use butterpollo_win_graphics::encoder::{Encoded, Unit};
 use std::{
     cell::Cell,
     collections::HashMap,
@@ -1202,7 +1202,7 @@ fn start_live(
     let answered_layout = answered.audio_layout.clone();
     let audio_layout = audio_layout(settings.audio_channels as u8, answered.audio_layout)
         .map_err(Rejected::Answer)?;
-    let link = butterpollo_windows::net::routed_link(peer);
+    let link = butterpollo_win_io::net::routed_link(peer);
     let (configured_kbps, paced, loss_permille) = {
         let config = h.config.read().unwrap();
         (

@@ -1,6 +1,6 @@
 use super::*;
 use crate::stream::video::{CountedFailures, count_rebuild_failure};
-use butterpollo_windows::encoder::Encoded;
+use butterpollo_win_graphics::encoder::Encoded;
 use std::{collections::VecDeque, path::PathBuf};
 
 #[derive(Default)]
@@ -14,14 +14,14 @@ struct MockEncoder {
     /// What the encoder predicts or arms for its output, and its poll
     /// returns at once.
     due: Option<Instant>,
-    event: Option<butterpollo_windows::timing::Signal>,
+    event: Option<butterpollo_win_graphics::timing::Signal>,
     immediate: bool,
 }
 fn frame(idr: bool) -> Encoded {
     Encoded {
         framing: None,
         bytes: vec![0, 0, 0, 1, 0x26, 1, 0x80],
-        unit: butterpollo_windows::encoder::Unit::Whole,
+        unit: butterpollo_win_graphics::encoder::Unit::Whole,
         idr,
         after_invalidation: false,
         frame_cap_bytes: None,
@@ -59,7 +59,7 @@ impl EncoderOutput for MockEncoder {
     fn output_due(&self) -> Option<Instant> {
         self.due
     }
-    fn output_event(&self) -> Option<&butterpollo_windows::timing::Signal> {
+    fn output_event(&self) -> Option<&butterpollo_win_graphics::timing::Signal> {
         self.event.as_ref()
     }
     fn poll_blocks(&self) -> bool {
@@ -658,8 +658,8 @@ fn only_a_blocking_poll_keeps_clear_of_the_claim() {
 #[test]
 fn an_idle_full_encoder_sleeps_on_its_event_or_prediction_but_not_after_a_device_loss() -> Result<()>
 {
-    let timer = butterpollo_windows::timing::Timer::new()?;
-    let event = butterpollo_windows::timing::Signal::new()?;
+    let timer = butterpollo_win_graphics::timing::Timer::new()?;
+    let event = butterpollo_win_graphics::timing::Signal::new()?;
     event.set()?;
     let mut recovery = EncoderRecovery::default();
     let mut encoder = MockEncoder {

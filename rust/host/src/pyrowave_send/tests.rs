@@ -1,5 +1,6 @@
 use super::*;
-use butterpollo_windows::{net::Batch, timing::Timer};
+use butterpollo_win_graphics::timing::Timer;
+use butterpollo_win_io::net::Batch;
 use std::net::UdpSocket;
 
 #[test]
@@ -34,7 +35,7 @@ fn stopping_interrupts_a_paced_wait_without_sending_another_packet() -> Result<(
         vec![Encoded {
             framing: None,
             bytes: vec![42; 3000],
-            unit: butterpollo_windows::encoder::Unit::Whole,
+            unit: butterpollo_win_graphics::encoder::Unit::Whole,
             idr: true,
             after_invalidation: false,
             frame_cap_bytes: None,
@@ -116,7 +117,7 @@ fn a_pyrowave_picture_yields_host_timing_stages_and_a_record_row() {
     let picture = Encoded {
         framing: None,
         bytes: vec![42; 3000],
-        unit: butterpollo_windows::encoder::Unit::Whole,
+        unit: butterpollo_win_graphics::encoder::Unit::Whole,
         idr: true,
         after_invalidation: false,
         frame_cap_bytes: None,
@@ -214,7 +215,7 @@ fn a_sent_pyrowave_picture_is_recorded_for_the_link_rate_controller() {
             vec![Encoded {
                 framing: None,
                 bytes: vec![42; 3000],
-                unit: butterpollo_windows::encoder::Unit::Whole,
+                unit: butterpollo_win_graphics::encoder::Unit::Whole,
                 idr: true,
                 after_invalidation: false,
                 frame_cap_bytes: None,
@@ -309,7 +310,7 @@ fn prepared_intra_frames_freeze_timing_and_keep_only_the_newest_waiter() {
         let frame = || Encoded {
             framing: None,
             bytes: vec![42; 3000],
-            unit: butterpollo_windows::encoder::Unit::Whole,
+            unit: butterpollo_win_graphics::encoder::Unit::Whole,
             idr: true,
             after_invalidation: false,
             frame_cap_bytes: None,
@@ -418,7 +419,7 @@ fn an_idle_sender_gets_each_block_as_it_is_built() {
                     vec![Encoded {
                         framing: None,
                         bytes: vec![42; 400_000],
-                        unit: butterpollo_windows::encoder::Unit::Whole,
+                        unit: butterpollo_win_graphics::encoder::Unit::Whole,
                         idr: true,
                         after_invalidation: false,
                         frame_cap_bytes: None,
@@ -658,7 +659,7 @@ fn a_streamed_frame_goes_out_whole() {
             vec![Encoded {
                 framing: None,
                 bytes: vec![42; 400_000],
-                unit: butterpollo_windows::encoder::Unit::Whole,
+                unit: butterpollo_win_graphics::encoder::Unit::Whole,
                 idr: true,
                 after_invalidation: false,
                 frame_cap_bytes: None,
@@ -930,9 +931,8 @@ fn pyrowave_loopback_sends_a_budget_sized_1080p_frame_within_85_percent_of_the_p
     };
     let socket = ReplySocket::bind("127.0.0.1:0")?;
     socket.set_nonblocking(true)?;
-    butterpollo_windows::net::configure_udp(&socket)?;
-    let timer = Timer::new()?;
-    let mut batch = Batch::default();
+    butterpollo_win_io::net::configure_udp(&socket)?;
+    let (timer, mut batch) = (Timer::new()?, Batch::default());
     let mut pacer = butterpollo_media_policy::network_pacing::Pacer::new(Instant::now());
     let mut spans = Vec::new();
     for _ in 0..180 {

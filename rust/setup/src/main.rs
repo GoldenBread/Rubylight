@@ -23,9 +23,9 @@ mod install;
 mod libvirtualdisplay;
 mod libvirtualgamepad;
 mod log;
-// Shared with the host's butterpollo-windows, which uses more of them.
+// Shared with the host's butterpollo-win-io, which uses more of them.
 #[allow(dead_code)]
-#[path = "../../windows/src/net_adapter.rs"]
+#[path = "../../windows/io/src/net_adapter.rs"]
 mod net_adapter;
 mod payload;
 #[cfg(test)]
@@ -41,7 +41,7 @@ mod usbip;
 mod version;
 mod wake;
 #[allow(dead_code)]
-#[path = "../../windows/src/wmi.rs"]
+#[path = "../../windows/io/src/wmi.rs"]
 mod wmi;
 
 use std::path::PathBuf;

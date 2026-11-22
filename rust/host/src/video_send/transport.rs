@@ -7,10 +7,8 @@ use butterpollo_media_policy::{
         AdapterStall, JitterLine, SendDrop, SendJitter, SendLoss, SendLossRecovery, SendOutage,
     },
 };
-use butterpollo_windows::{
-    net::{Batch, Link, WRITABLE_WAIT, WritableWaits},
-    timing::Timer,
-};
+use butterpollo_win_graphics::timing::Timer;
+use butterpollo_win_io::net::{Batch, Link, WRITABLE_WAIT, WritableWaits};
 
 /// How long the sender waits between frames before it looks for a new one,
 /// while a test stall holds datagrams.

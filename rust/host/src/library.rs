@@ -47,10 +47,10 @@ fn settings(h: &Shared) -> library::Settings {
 fn scan_installed(settings: library::Settings) -> Scan {
     // Only the files are read in background mode, which must hold no lock: what the scan keeps and
     // Playnite's catalog are locked after it.
-    let (discovery, steam, collections) = butterpollo_windows::library::in_background(|| {
-        let discovery = butterpollo_windows::library::discover(&settings);
+    let (discovery, steam, collections) = butterpollo_win_io::library::in_background(|| {
+        let discovery = butterpollo_win_io::library::discover(&settings);
         // The launcher scan leaves Steam's tools out; an app for one is still installed.
-        let roots = butterpollo_windows::steam::roots();
+        let roots = butterpollo_win_io::steam::roots();
         (
             discovery,
             butterpollo_session::steam::discover(&roots),
@@ -210,7 +210,7 @@ fn refresh(
 }
 
 pub fn discovery(h: &Shared) -> Result<Value> {
-    let mut catalog = butterpollo_windows::library::discover(&settings(h));
+    let mut catalog = butterpollo_win_io::library::discover(&settings(h));
     let apps: Vec<Value> = h
         .apps
         .read()
@@ -346,7 +346,7 @@ fn launcher_cover(h: &Shared, game: &mut library::Game) {
         game.cover = Some(destination);
         return;
     }
-    match butterpollo_windows::image::to_png(&source, &destination) {
+    match butterpollo_win_graphics::image::to_png(&source, &destination) {
         Ok(_) => game.cover = Some(destination),
         Err(error) => {
             tracing::debug!(%error, source = %source.display(), "Launcher cover unavailable")
@@ -403,8 +403,8 @@ pub fn sync(h: &Shared) -> Result<Value> {
 /// automatically (Library sync › Sync automatically).
 fn sync_with(h: &Shared, automatic: bool) -> Result<Value> {
     sync_discovering(h, automatic, |settings| {
-        let discovery = butterpollo_windows::library::in_background(|| {
-            butterpollo_windows::library::discover(settings)
+        let discovery = butterpollo_win_io::library::in_background(|| {
+            butterpollo_win_io::library::discover(settings)
         });
         let read = discovery
             .sources
@@ -524,7 +524,7 @@ fn steam_moved(directory: &Path, stamp: u64) -> bool {
 }
 #[cfg(not(any(test, feature = "test-harness")))]
 fn steam_stamp(roots: &crate::steam::Roots) -> u64 {
-    butterpollo_windows::library::in_background(|| butterpollo_session::steam::library_stamp(roots))
+    butterpollo_win_io::library::in_background(|| butterpollo_session::steam::library_stamp(roots))
 }
 /// Tests never read the registry and the launchers' folders.
 #[cfg(any(test, feature = "test-harness"))]
@@ -569,7 +569,7 @@ pub fn import(h: &Shared, selected: &[Selection]) -> Result<Value> {
     ensure!(!selected.is_empty(), "Select at least one installed game.");
     let result = import_games(
         h,
-        butterpollo_windows::library::discover(&settings(h)).games,
+        butterpollo_win_io::library::discover(&settings(h)).games,
         selected,
     );
     invalidate(h);

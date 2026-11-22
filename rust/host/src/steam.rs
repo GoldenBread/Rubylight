@@ -36,7 +36,7 @@ pub fn catalog(settings: &Settings) -> Result<(Vec<PathBuf>, Vec<Game>)> {
     if !settings.enabled {
         bail!("Steam integration is disabled");
     }
-    let roots = butterpollo_windows::steam::roots();
+    let roots = butterpollo_win_io::steam::roots();
     if roots.is_empty() {
         bail!("Steam installation was not found");
     }
@@ -46,7 +46,7 @@ pub fn catalog(settings: &Settings) -> Result<(Vec<PathBuf>, Vec<Game>)> {
 /// Sync the managed Steam apps now.
 pub fn sync(h: &Shared) -> Result<Outcome> {
     let settings = Settings::from_config(&h.config.read().unwrap());
-    let (_, games) = butterpollo_windows::library::in_background(|| catalog(&settings))?;
+    let (_, games) = butterpollo_win_io::library::in_background(|| catalog(&settings))?;
     sync_beside(h, &settings, &games, crate::playnite::syncs_launchers(h))
 }
 /// While Playnite syncs the library its export brings the Steam games too, so the Steam
@@ -129,7 +129,7 @@ fn cover(h: &Shared, game: &Game) -> Option<PathBuf> {
     let png = folder.join(format!("steam_{}.png", game.appid));
     let mut source = game.artwork().map(Path::to_owned);
     let small = source.as_deref().is_none_or(|path| {
-        butterpollo_windows::image::dimensions(path).is_ok_and(|(w, h)| w < 600 || h < 900)
+        butterpollo_win_graphics::image::dimensions(path).is_ok_and(|(w, h)| w < 600 || h < 900)
     });
     if small && let Some(download) = store_portrait(&folder, game.appid, source.as_deref()) {
         source = Some(download);
@@ -153,7 +153,7 @@ fn cover(h: &Shared, game: &Game) -> Option<PathBuf> {
     if png.is_file() && std::fs::read_to_string(&meta).is_ok_and(|saved| saved == stamp) {
         return Some(png);
     }
-    match butterpollo_windows::image::to_png(&source, &png) {
+    match butterpollo_win_graphics::image::to_png(&source, &png) {
         Ok(_) => {
             let _ = butterpollo_session::state::atomic_write(&meta, stamp.as_bytes());
             Some(png)
@@ -219,7 +219,7 @@ pub(crate) fn download_artwork(url: &str) -> Result<Vec<u8>> {
 fn store_portrait(folder: &Path, appid: u32, local: Option<&Path>) -> Option<PathBuf> {
     let file = folder.join(format!("steam_{appid}_600x900_2x.jpg"));
     let valid = |path: &Path| {
-        butterpollo_windows::image::dimensions(path).is_ok_and(|(w, h)| w >= 600 && h >= 900)
+        butterpollo_win_graphics::image::dimensions(path).is_ok_and(|(w, h)| w >= 600 && h >= 900)
     };
     if file.is_file() && valid(&file) {
         return Some(file);
@@ -454,7 +454,7 @@ pub fn watch(h: &Shared, roots: &Roots) {
     if RUNNING.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return;
     }
-    let current = butterpollo_windows::library::in_background(|| fingerprint(&settings, roots));
+    let current = butterpollo_win_io::library::in_background(|| fingerprint(&settings, roots));
     let due = {
         let watch = WATCH.lock().unwrap();
         watch.fingerprint != current
@@ -480,7 +480,7 @@ pub fn watch(h: &Shared, roots: &Roots) {
 /// `/api/steam/status`.
 pub fn status(h: &Shared) -> Value {
     let settings = Settings::from_config(&h.config.read().unwrap());
-    let roots = butterpollo_windows::steam::roots();
+    let roots = butterpollo_win_io::steam::roots();
     let games = if roots.is_empty() {
         vec![]
     } else {
@@ -578,8 +578,8 @@ pub fn launch(h: &Shared, appid: u32) -> Result<Value> {
     {
         bail!("Steam app {appid} is excluded");
     }
-    let environment = butterpollo_windows::process::user_environment()?;
-    butterpollo_windows::process::Process::shell_detached(
+    let environment = butterpollo_win_io::process::user_environment()?;
+    butterpollo_win_io::process::Process::shell_detached(
         &steam::launch_command(appid),
         None,
         false,
@@ -679,7 +679,7 @@ mod tests {
         let png = Path::new(app["image-path"].as_str().unwrap());
         assert_eq!(&std::fs::read(png).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
         assert_eq!(
-            butterpollo_windows::image::dimensions(png).unwrap(),
+            butterpollo_win_graphics::image::dimensions(png).unwrap(),
             (600, 900)
         );
         assert!(!sync_catalog(&f.host, &settings, &games).unwrap().changed);

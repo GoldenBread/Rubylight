@@ -84,12 +84,12 @@ To try an archive before a release, `BUTTERPOLLO_TEST_NVIDIA_COMPONENT=<zip> car
 
 ## SDK environment
 
-Cargo alone cannot build the Windows crates: their build scripts generate bindings from the pinned PyroWave and Vulkan headers. The AMF headers are vendored in `rust/windows/include/AMF`. The build script sets these variables for the session it runs in; set them yourself to run `cargo` in another shell.
+Cargo alone cannot build the Windows crates: `butterpollo-win-abi`'s build script generates bindings from the pinned PyroWave and Vulkan headers. The AMF headers are vendored in `rust/windows/abi/include/AMF`. The build script sets these variables for the session it runs in; set them yourself to run `cargo` in another shell.
 
 | Variable | Read by | Points at |
 | --- | --- | --- |
-| `BUTTERPOLLO_PYROWAVE_ROOT` | `rust/windows/build.rs` | The pinned PyroWave SDK built by `rust/tools/build_pyrowave.sh`. |
-| `BUTTERPOLLO_VULKAN_INCLUDE` | `rust/windows/build.rs` | Vulkan 1.4 headers, `C:\msys64\ucrt64\include` in MSYS2. |
+| `BUTTERPOLLO_PYROWAVE_ROOT` | `rust/windows/abi/build.rs` | The pinned PyroWave SDK built by `rust/tools/build_pyrowave.sh`. |
+| `BUTTERPOLLO_VULKAN_INCLUDE` | `rust/windows/abi/build.rs` | Vulkan 1.4 headers, `C:\msys64\ucrt64\include` in MSYS2. |
 | `LIBCLANG_PATH` | bindgen | MSYS2's `ucrt64\bin`, which holds `libclang.dll`. |
 | `BUTTERPOLLO_DRIVER_ROOT` | `rust/build.ps1` | Default for `-DriverRoot`. |
 | `BUTTERPOLLO_FFMPEG_ROOT` | `rust/build.ps1` | Default for `-FfmpegRoot`. |

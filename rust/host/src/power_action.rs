@@ -52,13 +52,13 @@ struct Native;
 #[cfg(not(any(test, feature = "test-harness")))]
 impl Backend for Native {
     fn states(&self) -> Result<SleepStates> {
-        butterpollo_windows::power::sleep_states()
+        butterpollo_win_io::power::sleep_states()
     }
     fn suspend(&self) -> Result<()> {
-        butterpollo_windows::power::suspend()
+        butterpollo_win_io::power::suspend()
     }
     fn power_off(&self, action: Action) -> Result<()> {
-        butterpollo_windows::power::power_off(action == Action::Restart)
+        butterpollo_win_io::power::power_off(action == Action::Restart)
     }
     fn native(&self) -> bool {
         true

@@ -2,7 +2,7 @@
 //! fetches them back. The rules here are pure: which names the host accepts,
 //! the name a file takes when one with its name already exists, and the
 //! pace that keeps an upload from competing with a running stream.
-//! `butterpollo-windows` opens the files as the signed-in user.
+//! `butterpollo-win-io` opens the files as the signed-in user.
 use std::time::{Duration, Instant};
 
 /// The longest name the host accepts, counted in UTF-16 units as Windows

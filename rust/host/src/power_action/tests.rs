@@ -618,7 +618,7 @@ async fn every_busy_reason_refuses_sleep() {
     // A display kept for a client.
     f.host.monitors.lock().unwrap().insert(
         "x".into(),
-        Arc::new(butterpollo_windows::display::Retained::inert("x")),
+        Arc::new(butterpollo_win_display::display::Retained::inert("x")),
     );
     assert_eq!(sleep(&f, &token).await.message(), busy);
     f.host.monitors.lock().unwrap().clear();

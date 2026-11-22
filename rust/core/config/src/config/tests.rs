@@ -1616,7 +1616,7 @@ fn retired_vigem_controllers_become_their_vhf_pads() {
 fn nvenc_settings_are_kept_and_overridable() {
     let source = [
         include_str!("../../../media-policy/src/nvenc.rs"),
-        include_str!("../../../../windows/src/gpu_priority.rs"),
+        include_str!("../../../../windows/graphics/src/gpu_priority.rs"),
     ]
     .concat();
     let keys: std::collections::BTreeSet<&str> = source

@@ -3,9 +3,9 @@
 .SYNOPSIS
 Run isolated stream, reconnect and fault checks without changing the service.
 .EXAMPLE
-pwsh rust/release/soak.ps1 -Package 'C:\Program Files\ButterpolloRust' -Client target/soak-fixtures/moonlight-client.exe -GpuLoad target/qa/release/examples/gpu_load.exe
+pwsh rust/release/soak.ps1 -Package 'C:\Program Files\ButterpolloRust' -Client target/soak-fixtures/moonlight-client.exe -GpuLoad target/qa/release/gpu_load.exe
 .EXAMPLE
-pwsh rust/release/soak.ps1 -Mode long -Package target/soak-package -Client target/soak-fixtures/moonlight-client.exe -GpuLoad target/qa/release/examples/gpu_load.exe
+pwsh rust/release/soak.ps1 -Mode long -Package target/soak-package -Client target/soak-fixtures/moonlight-client.exe -GpuLoad target/qa/release/gpu_load.exe
 #>
 param(
     [ValidateSet('short', 'long')][string] $Mode = 'short',

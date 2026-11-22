@@ -35,7 +35,6 @@ pub mod multiclient;
 pub mod native;
 pub mod neural;
 pub mod nucleus;
-pub mod os_gate;
 pub mod paths;
 pub mod playnite;
 pub mod power_action;

@@ -12,7 +12,7 @@ use crate::state::Shared;
 use anyhow::Result;
 use butterpollo_config::config::Config;
 use butterpollo_session::audio_scope::Identity;
-use butterpollo_windows::{
+use butterpollo_win_io::{
     audio_app_route::{AppRoute, Closing, no_sound_yet},
     nucleus::session::Told,
 };
@@ -149,7 +149,7 @@ pub(crate) fn put_back(
     directory: &Path,
     pids: impl FnOnce() -> Result<Vec<u32>>,
 ) -> Option<Closing> {
-    butterpollo_windows::audio_app_route::put_back(directory, pids)
+    butterpollo_win_io::audio_app_route::put_back(directory, pids)
         .inspect_err(|error| {
             tracing::warn!(
                 error = format!("{error:#}"),

@@ -1,0 +1,98 @@
+[package]
+name = "butterpollo-win-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+butterpollo-config = { path = "../../core/config" }
+butterpollo-input-policy = { path = "../../core/input-policy" }
+butterpollo-media-policy = { path = "../../core/media-policy" }
+butterpollo-session = { path = "../../core/session" }
+rubylight-protocol = { path = "../../../client/protocol/core" }
+rubylight-vdisplay-proto = { path = "../../drivers/rubylight-vdisplay-proto" }
+rubylight-vgamepad-proto = { path = "../../drivers/rubylight-vgamepad-proto" }
+libloading = "0.8"
+socket2 = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-core = "0.62.2"
+windows-service = "=0.8.1"
+windows = { version = "0.62.2", features = [
+    "ApplicationModel",
+    "Management_Deployment",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WiFi",
+    "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Environment",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_JobObjects",
+    "Win32_System_Kernel",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Performance",
+    "Win32_System_Pipes",
+    "Win32_System_Power",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Services",
+    "Win32_System_Shutdown",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_Wmi",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_Input_Touch",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[features]
+# `UserFolder::unimpersonated`, for the host's file transfer tests only.
+test-folder = []
+# `Route::detached`, for the host's audio route lifetime tests only.
+test-route = []
+
+[dev-dependencies]
+tempfile = "3.23"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[lints]
+workspace = true

@@ -8,7 +8,7 @@
 //! and again every 250 ms while a transfer runs, so dropping a folder or a
 //! grant, or moving the folder, ends a running transfer. Files are opened as
 //! the signed-in Windows user, confined to the folder's root
-//! (`butterpollo_windows::shared_folder`), and move with file transfer's
+//! (`butterpollo_win_io::shared_folder`), and move with file transfer's
 //! limits: its size limit, free-space reserve, slots and stream rate. The
 //! File transfer setting itself isn't needed.
 use super::{
@@ -26,7 +26,7 @@ use axum::{
 };
 use butterpollo_config::config::SharedFolderConfig;
 use butterpollo_session::{file_transfer, state::Client};
-use butterpollo_windows::{shared_folder::SharedFolder as Root, user_folder::UserFolderError};
+use butterpollo_win_io::{shared_folder::SharedFolder as Root, user_folder::UserFolderError};
 use rubylight_native_api::{
     error::ErrorCode,
     folders::{EntryKind, FolderAccess, FolderEntries, FolderEntry, FolderList, SharedFolder},

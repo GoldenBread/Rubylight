@@ -9,7 +9,7 @@ impl Prepared {
         if let Some(snapshot) = &self.layout_snapshot {
             return Ok(snapshot.clone());
         }
-        Ok(butterpollo_windows::display::monitors()?
+        Ok(butterpollo_win_display::display::monitors()?
             .into_iter()
             .map(|m| (m.display_name, m.primary))
             .collect())
@@ -164,7 +164,7 @@ impl Prepared {
             &self.output,
             scale,
             self.recovery_dimensions,
-            butterpollo_windows::display::virtual_scale,
+            butterpollo_win_display::display::virtual_scale,
         );
         #[cfg(test)]
         let applied: Result<()> = Ok(());
@@ -183,7 +183,7 @@ impl Prepared {
         if let Some(snapshot) = self.scale_snapshot {
             return Ok(snapshot);
         }
-        butterpollo_windows::display::output_scale(&self.output)
+        butterpollo_win_display::display::output_scale(&self.output)
     }
     /// Keep the scale the user chose for the stream's display in Windows for the
     /// device when its last stream disconnects, and put it back on recovery from

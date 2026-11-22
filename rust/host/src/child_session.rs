@@ -10,7 +10,7 @@
 use crate::state::Shared;
 use anyhow::{Context, Result, bail};
 use butterpollo_session::child_session::{self as logic, SetupState, SystemSettings, Unrecorded};
-use butterpollo_windows::child_session as native;
+use butterpollo_win_io::child_session as native;
 use serde_json::{Value, json};
 use std::{
     fs::File,
@@ -54,11 +54,11 @@ impl Record {
     fn new() -> Self {
         Self {
             path: logic::setup_record(),
-            create_folder: butterpollo_windows::process::create_folder_administrators_readable,
-            create_file: butterpollo_windows::process::create_file_administrators_readable,
+            create_folder: butterpollo_win_io::process::create_folder_administrators_readable,
+            create_file: butterpollo_win_io::process::create_file_administrators_readable,
             trusted: administrators_own,
             trusted_root: administrators_own_root,
-            elevated: butterpollo_windows::process::elevated,
+            elevated: butterpollo_win_io::process::elevated,
         }
     }
     fn folder(&self) -> &Path {
@@ -78,7 +78,7 @@ impl Record {
         let Some(_folder) = self.open_folder()? else {
             return Ok(None);
         };
-        let mut file = match butterpollo_windows::process::open_unfollowed(path, false) {
+        let mut file = match butterpollo_win_io::process::open_unfollowed(path, false) {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
@@ -95,7 +95,7 @@ impl Record {
     /// be renamed or deleted while open.
     fn open_folder(&self) -> Result<Option<File>> {
         let folder = self.folder();
-        match butterpollo_windows::process::open_unfollowed(folder, true) {
+        match butterpollo_win_io::process::open_unfollowed(folder, true) {
             Ok(open) => {
                 (self.trusted)(&open, folder)?;
                 Ok(Some(open))
@@ -172,7 +172,7 @@ impl Record {
             }
             _ => {}
         }
-        let open = butterpollo_windows::process::open_unfollowed(root, true)
+        let open = butterpollo_win_io::process::open_unfollowed(root, true)
             .with_context(|| format!("opening {}", root.display()))?;
         (self.trusted_root)(&open, root)?;
         Ok(open)
@@ -231,7 +231,7 @@ fn administrators_own(file: &File, path: &Path) -> Result<()> {
             path.display()
         ));
     }
-    let owner = butterpollo_windows::process::open_file_owner(file)
+    let owner = butterpollo_win_io::process::open_file_owner(file)
         .with_context(|| format!("reading the owner of {}", path.display()))?;
     if !matches!(owner.as_str(), "S-1-5-18" | "S-1-5-32-544") {
         return foreign(format!(
@@ -239,7 +239,7 @@ fn administrators_own(file: &File, path: &Path) -> Result<()> {
             path.display()
         ));
     }
-    let writers = butterpollo_windows::process::open_file_writers(file)
+    let writers = butterpollo_win_io::process::open_file_writers(file)
         .with_context(|| format!("reading the permissions of {}", path.display()))?;
     if let Some(other) = writers
         .iter()
@@ -268,7 +268,7 @@ fn administrators_own_root(file: &File, path: &Path) -> Result<()> {
             path.display()
         );
     }
-    let owner = butterpollo_windows::process::open_file_owner(file)
+    let owner = butterpollo_win_io::process::open_file_owner(file)
         .with_context(|| format!("reading the owner of {}", path.display()))?;
     if !matches!(owner.as_str(), "S-1-5-18" | "S-1-5-32-544") {
         bail!(
@@ -276,7 +276,7 @@ fn administrators_own_root(file: &File, path: &Path) -> Result<()> {
             path.display()
         );
     }
-    let writers = butterpollo_windows::process::open_file_writers(file)
+    let writers = butterpollo_win_io::process::open_file_writers(file)
         .with_context(|| format!("reading the permissions of {}", path.display()))?;
     if let Some(other) = writers
         .iter()

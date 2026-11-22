@@ -7,7 +7,7 @@ use butterpollo_input_policy::{
     input_policy::{Policy, gamepad_profile},
 };
 use butterpollo_session::session::Warning;
-use butterpollo_windows::input::GamepadThread;
+use butterpollo_win_io::input::GamepadThread;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},

@@ -39,7 +39,7 @@ LOCK = pathlib.Path(os.environ.get('LINKSPEED_LOCK', r'C:\src\butterpollo-releas
 LOCK_NAME = os.environ.get('LINKSPEED_LOCK_NAME', 'link-speed')
 PROFILE = pathlib.Path(os.environ.get('LINKSPEED_PROFILE', r'C:\tests\linkspeed'))
 DEFAULT_PACKAGE = pathlib.Path(r'C:\src\butterpollo-release\3.0.0-beta.1\release\butterpollo-rust-release')
-MOTION_PROBE = pathlib.Path(os.environ.get('LINKSPEED_MOTION_PROBE', r'C:\src\rl-target\release\examples\motion_probe.exe'))
+MOTION_PROBE = pathlib.Path(os.environ.get('LINKSPEED_MOTION_PROBE', r'C:\src\rl-target\release\motion_probe.exe'))
 # What the client asks for (linkspeed_client.py): rlFecPercentage at launch, and a bandwidth probe before it.
 CLIENT_CHOICES = ('LINKSPEED_CLIENT_FEC', 'LINKSPEED_CLIENT_PROBE')
 IPERF3 = pathlib.Path(r'C:\src\rl-link-tools\iperf3\iperf3.exe')

@@ -1,7 +1,7 @@
 use super::*;
 use crate::state::{Host, test_support::Fixture};
 use butterpollo_config::config::Config;
-use butterpollo_windows::capture::{Display, Gpu};
+use butterpollo_win_graphics::capture::{Display, Gpu};
 
 fn hybrid_gpus() -> Vec<Gpu> {
     vec![

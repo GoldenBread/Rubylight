@@ -195,19 +195,19 @@ struct System;
 #[cfg(not(any(test, feature = "test-harness")))]
 impl Clipboard for System {
     fn sequence(&self) -> u32 {
-        butterpollo_windows::clipboard::sequence()
+        butterpollo_win_io::clipboard::sequence()
     }
     fn read(&self) -> Result<String> {
-        butterpollo_windows::clipboard::read()
+        butterpollo_win_io::clipboard::read()
     }
     fn read_png(&self, max_bytes: usize) -> Result<Option<Vec<u8>>> {
-        butterpollo_windows::clipboard::read_png(max_bytes)
+        butterpollo_win_io::clipboard::read_png(max_bytes)
     }
     fn write(&self, text: &str) -> Result<()> {
-        butterpollo_windows::clipboard::write(text)
+        butterpollo_win_io::clipboard::write(text)
     }
     fn write_png(&self, png: &[u8]) -> Result<()> {
-        butterpollo_windows::clipboard::write_png(png)
+        butterpollo_win_io::clipboard::write_png(png)
     }
 }
 #[cfg(not(any(test, feature = "test-harness")))]

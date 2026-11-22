@@ -1285,8 +1285,8 @@ NS = '{http://signpath.io/artifact-configuration/v1}'
 class PortedCredits(unittest.TestCase):
     """Code ported from Foundation Sunshine is credited by file in NOTICE, which AGENTS.md points to."""
 
-    PORTED = ['rust/core/media-policy/src/hdr_dynamic.rs', 'rust/windows/src/shaders/color.hlsl',
-              'rust/windows/src/compute_hdr_stats.rs']
+    PORTED = ['rust/core/media-policy/src/hdr_dynamic.rs', 'rust/windows/abi/src/shaders/color.hlsl',
+              'rust/windows/graphics/src/compute_hdr_stats.rs']
 
     def test_notice_names_every_ported_hdr_file(self):
         notice = ' '.join((ROOT / 'NOTICE').read_text(encoding='utf-8').split())

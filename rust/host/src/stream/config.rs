@@ -199,7 +199,7 @@ pub(crate) fn effective_config(h: &Shared, launch: &Launch) -> Result<Config> {
             .and_then(serde_json::Value::as_str)
             .filter(|s| !s.is_empty())
     {
-        match butterpollo_windows::hdr_profile::peak_luminance(selection) {
+        match butterpollo_win_display::hdr_profile::peak_luminance(selection) {
             Ok(Some(peak)) => {
                 config.values.insert(
                     "hdr_peak_brightness".into(),

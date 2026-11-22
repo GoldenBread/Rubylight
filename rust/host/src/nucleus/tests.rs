@@ -951,7 +951,7 @@ fn background(
 fn a_started_session_tells_the_launchs_routes_its_instances() {
     let (registry, pc, apps) = setup();
     let routes = crate::stream::InstanceRoutes::start(
-        |_| None::<anyhow::Result<butterpollo_windows::audio_app_route::AppRoute>>,
+        |_| None::<anyhow::Result<butterpollo_win_io::audio_app_route::AppRoute>>,
         |_| None,
         false,
     );
@@ -970,7 +970,7 @@ fn a_started_session_tells_the_launchs_routes_its_instances() {
         .unwrap();
     let started = pc.instances.lock().unwrap();
     let given = started[0].as_ref().unwrap();
-    let routes_told: butterpollo_windows::nucleus::session::Instances = routes.clone();
+    let routes_told: butterpollo_win_io::nucleus::session::Instances = routes.clone();
     assert!(Arc::ptr_eq(given, &routes_told));
     // Each player's choice reaches its session's routes: nothing started
     // yet, so nothing to tell.
@@ -2358,9 +2358,9 @@ fn a_hardware_case_streams_the_exe_or_the_steam_link_as_an_app_would() {
 }
 
 /// The share of a BGRA frame's pixels that are not near black.
-fn lit(image: &butterpollo_windows::capture::Image) -> Result<f64> {
+fn lit(image: &butterpollo_win_graphics::capture::Image) -> Result<f64> {
     ensure!(
-        image.pixel == butterpollo_windows::capture::Pixel::Bgra8,
+        image.pixel == butterpollo_win_graphics::capture::Pixel::Bgra8,
         "a {:?} frame, not BGRA",
         image.pixel
     );
@@ -2383,7 +2383,7 @@ fn lit(image: &butterpollo_windows::capture::Image) -> Result<f64> {
 
 #[test]
 fn a_black_frame_is_told_from_a_picture() {
-    let frame = |fill: &dyn Fn(usize) -> [u8; 4]| butterpollo_windows::capture::Image {
+    let frame = |fill: &dyn Fn(usize) -> [u8; 4]| butterpollo_win_graphics::capture::Image {
         width: 64,
         height: 32,
         stride: 64 * 4 + 16,
@@ -2391,7 +2391,7 @@ fn a_black_frame_is_told_from_a_picture() {
             .map(|at| fill(at % (64 * 4 + 16) / 4)[at % 4])
             .collect(),
         captured: Instant::now(),
-        pixel: butterpollo_windows::capture::Pixel::Bgra8,
+        pixel: butterpollo_win_graphics::capture::Pixel::Bgra8,
     };
     assert_eq!(lit(&frame(&|_| [8, 8, 8, 255])).unwrap(), 0.0);
     assert_eq!(lit(&frame(&|_| [0, 0, 200, 255])).unwrap(), 1.0);
@@ -2399,7 +2399,7 @@ fn a_black_frame_is_told_from_a_picture() {
     let half = lit(&frame(&|x| if x < 32 { [90, 90, 90, 255] } else { [0; 4] })).unwrap();
     assert!((0.4..0.6).contains(&half), "{half}");
     let mut hdr = frame(&|_| [0; 4]);
-    hdr.pixel = butterpollo_windows::capture::Pixel::RgbaF16;
+    hdr.pixel = butterpollo_win_graphics::capture::Pixel::RgbaF16;
     assert!(lit(&hdr).is_err());
 }
 
@@ -2422,12 +2422,12 @@ fn nucleus_sets(name: &str, game: &str, contents: &[PathBuf], executable: &str) 
 /// not as it was, with the data it gets, None to remove it. Another
 /// program's, even one of the same file name, is never touched.
 fn layer_changes(
-    before: &BTreeMap<String, butterpollo_windows::nucleus::layers::Value>,
-    after: &BTreeMap<String, butterpollo_windows::nucleus::layers::Value>,
+    before: &BTreeMap<String, butterpollo_win_io::nucleus::layers::Value>,
+    after: &BTreeMap<String, butterpollo_win_io::nucleus::layers::Value>,
     game: &str,
     contents: &[PathBuf],
     executable: &str,
-) -> Vec<(String, Option<butterpollo_windows::nucleus::layers::Value>)> {
+) -> Vec<(String, Option<butterpollo_win_io::nucleus::layers::Value>)> {
     let named = |name: &&String| nucleus_sets(name, game, contents, executable);
     let mut changes: Vec<_> = after
         .iter()
@@ -2446,7 +2446,7 @@ fn layer_changes(
 
 #[test]
 fn a_hardware_case_puts_back_only_its_games_compatibility_settings() {
-    use butterpollo_windows::nucleus::layers::Value;
+    use butterpollo_win_io::nucleus::layers::Value;
     let text = |byte: u8| Value {
         kind: 1,
         data: vec![byte, 0, 0, 0],
@@ -2763,7 +2763,7 @@ struct CaseCleanup {
     kept: KeptFiles,
     kept_copy: KeptFiles,
     user: Option<std::os::windows::io::OwnedHandle>,
-    layers_before: BTreeMap<String, butterpollo_windows::nucleus::layers::Value>,
+    layers_before: BTreeMap<String, butterpollo_win_io::nucleus::layers::Value>,
     /// The `content` folder of each Nucleus copy the session may run
     /// from: the host's and the user's own.
     contents: Vec<PathBuf>,
@@ -2786,8 +2786,8 @@ impl CaseCleanup {
         }
         if let Some((game, executable)) = &self.game {
             let changed = (|| -> Result<usize> {
-                use butterpollo_windows::nucleus::layers::Layers;
-                let mut hive = butterpollo_windows::nucleus::layers::UserHive::signed_in()?;
+                use butterpollo_win_io::nucleus::layers::Layers;
+                let mut hive = butterpollo_win_io::nucleus::layers::UserHive::signed_in()?;
                 let changes = layer_changes(
                     &self.layers_before,
                     &hive.values()?,
@@ -2988,7 +2988,7 @@ fn a_hardware_case_asks_for_standard_rights_at_medium_integrity() {
     assert!(standard_rights("Game.exe", 2, false, 0x1000).is_err());
     // This test's own process, read as the case reads the session's.
     let (elevated, integrity) = token_rights(std::process::id()).unwrap();
-    assert_eq!(elevated, butterpollo_windows::process::elevated().unwrap());
+    assert_eq!(elevated, butterpollo_win_io::process::elevated().unwrap());
     if elevated {
         assert!(integrity >= 0x3000, "0x{integrity:x}");
     } else {
@@ -3137,9 +3137,9 @@ fn read_if_there(path: &Path) -> Result<Option<Vec<u8>>> {
 /// The windows of the message boxes Windows shows now, for any program:
 /// none of them is the case's.
 fn windows_boxes(
-    desktop: &mut butterpollo_windows::nucleus::desktop::Win32,
+    desktop: &mut butterpollo_win_io::nucleus::desktop::Win32,
 ) -> Result<BTreeSet<u64>> {
-    use butterpollo_windows::nucleus::instances::Desktop;
+    use butterpollo_win_io::nucleus::instances::Desktop;
     Ok(desktop
         .message_boxes(&BTreeSet::new())?
         .into_iter()
@@ -3150,13 +3150,13 @@ fn windows_boxes(
 /// Fails while Nucleus Co-op or the game started since `since` shows a
 /// message box, naming it; Windows' boxes up `before` the case aside.
 fn no_message_box(
-    desktop: &mut butterpollo_windows::nucleus::desktop::Win32,
+    desktop: &mut butterpollo_win_io::nucleus::desktop::Win32,
     before: &BTreeSet<u64>,
     since: u64,
     executable: &str,
 ) -> Result<()> {
-    use butterpollo_windows::nucleus::instances::Desktop;
-    let processes: BTreeSet<u32> = butterpollo_windows::process::processes()?
+    use butterpollo_win_io::nucleus::instances::Desktop;
+    let processes: BTreeSet<u32> = butterpollo_win_io::process::processes()?
         .into_iter()
         .filter(|p| {
             p.started >= since
@@ -3290,7 +3290,7 @@ fn kept_settings_go_back_and_take_the_sessions_journal_along() {
 #[test]
 #[ignore = "starts a game through Nucleus Co-op on this PC as SYSTEM"]
 fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
-    use butterpollo_windows::nucleus::layers::{Layers, UserHive};
+    use butterpollo_win_io::nucleus::layers::{Layers, UserHive};
     let log = CaseLog::install()?;
     let cold = std::env::var("RUBYLIGHT_NUCLEUS_COLD").is_ok_and(|v| v == "1");
     let game = std::env::var("RUBYLIGHT_NUCLEUS_GAME").ok();
@@ -3394,9 +3394,9 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     let owner = client("hw-case", false);
     let config = Config::default();
     let warnings = Arc::new(Warnings::default());
-    let mut desktop = butterpollo_windows::nucleus::desktop::Win32::default();
+    let mut desktop = butterpollo_win_io::nucleus::desktop::Win32::default();
     let boxes_before = windows_boxes(&mut desktop)?;
-    let since = butterpollo_windows::process::now();
+    let since = butterpollo_win_io::process::now();
     let seat = registry
         .admit(Admission {
             launch: "hw-case",
@@ -3416,11 +3416,11 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     // Where its NucleusCoop.exe runs from says how it was run.
     let looking = Instant::now();
     let nucleus: Vec<(u32, String)> = loop {
-        let found = butterpollo_windows::process::processes()?
+        let found = butterpollo_win_io::process::processes()?
             .into_iter()
             .filter(|p| p.started >= since && p.name.eq_ignore_ascii_case("NucleusCoop.exe"))
             .map(|p| {
-                let image = butterpollo_windows::process::image_path(p.pid)
+                let image = butterpollo_win_io::process::image_path(p.pid)
                     .with_context(|| format!("NucleusCoop.exe {}'s program path", p.pid))?;
                 Ok((p.pid, image))
             })
@@ -3533,7 +3533,7 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
         "Nucleus Co-op set no DPI mode for {}",
         handler.executable
     );
-    let game_processes: Vec<u32> = butterpollo_windows::process::processes()?
+    let game_processes: Vec<u32> = butterpollo_win_io::process::processes()?
         .into_iter()
         .filter(|p| p.started >= since && p.name.eq_ignore_ascii_case(&handler.executable))
         .map(|p| p.pid)
@@ -3560,10 +3560,10 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
         println!("rights: NucleusCoop.exe and the game unelevated at medium integrity");
     }
     // The window streams through WGC, on the primary display's GPU.
-    let display = butterpollo_windows::capture::primary_display().context("no display")?;
-    let _com = butterpollo_windows::capture::ComGuard::new()?;
+    let display = butterpollo_win_graphics::capture::primary_display().context("no display")?;
+    let _com = butterpollo_win_graphics::capture::ComGuard::new()?;
     let target = instance.capture_target(0, &display)?;
-    let mut capture = butterpollo_windows::capture::Capture::open_for_stream_reported(
+    let mut capture = crate::win_bridge::open_capture(
         &target,
         "wgc",
         false,
@@ -3638,7 +3638,7 @@ fn a_background_stream_without_a_hub_handler_on_this_pc() -> Result<()> {
     let stopping = Instant::now();
     ensure!(registry.end(seat.session), "the session was gone");
     println!("stopped in {:?}", stopping.elapsed());
-    let left: Vec<String> = butterpollo_windows::process::processes()?
+    let left: Vec<String> = butterpollo_win_io::process::processes()?
         .into_iter()
         .filter(|p| p.started >= since)
         .filter(|p| {

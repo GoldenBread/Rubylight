@@ -142,7 +142,7 @@ fn stopping_an_app_ends_its_state_commands_and_runs_undo() {
     let fixture = Fixture::new();
     let trace = fixture.host.directory.join("trace.txt");
     let ready = fixture.host.directory.join("ready.txt");
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let app: App = serde_json::from_value(json!({
         "name": "State command cancellation",
         "prep-cmd": [{"do": format!("echo prepared>\"{}\"", trace.display()),
@@ -329,7 +329,7 @@ fn previously_paired_names_keep_streaming_with_safe_command_values() {
 
 #[test]
 fn preparation_undo_and_failed_preparation_keep_global_order_and_rollback() {
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let f = Fixture::new();
     let trace = f.host.directory.join("commands.txt");
     let command = |name: &str| format!("echo {name}>>\"{}\"", trace.display());
@@ -395,7 +395,7 @@ fn a_stopped_launch_whose_command_would_not_end_says_stopped_not_timed_out() {
 
 #[test]
 fn a_stopped_launch_ends_its_running_preparation_command_and_undoes_the_finished_ones() {
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let f = Fixture::new();
     let trace = f.host.directory.join("commands.txt");
     let pid = f.host.directory.join("helper.pid");
@@ -540,7 +540,7 @@ fn a_program_a_preparation_command_left_running_is_never_taken_for_the_game() {
     // The helper is a fullscreen window on the stream's display, created after the launch
     // began but before the app's own command: it is not a game another program started.
     use butterpollo_session::steam::Process;
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let f = Fixture::new();
     let pid = f.host.directory.join("helper.pid");
     let app: App = serde_json::from_value(json!({"name":"Helper","prep-cmd":[
@@ -571,7 +571,7 @@ fn a_program_a_preparation_command_left_running_is_never_taken_for_the_game() {
 fn what_a_finished_preparation_command_started_keeps_running() {
     // Issue 135: a boot-screen helper the preparation command started must still run when the
     // app's own command looks for it.
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let f = Fixture::new();
     let pid = f.host.directory.join("helper.pid");
     let app: App = serde_json::from_value(json!({"name":"Helper","prep-cmd":[
@@ -590,7 +590,7 @@ fn what_a_finished_preparation_command_started_keeps_running() {
 fn what_a_failed_preparation_command_started_is_ended_with_it() {
     // Only a command that ended with exit code 0 leaves its programs running: a failed one
     // cancels the launch and its undo is never queued, so nothing else would end the helper.
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let f = Fixture::new();
     let pid = f.host.directory.join("helper.pid");
     let failing = starts_helper(&pid).strip_suffix('"').unwrap().to_owned() + "; exit 1\"";
@@ -612,7 +612,7 @@ fn what_a_failed_preparation_command_started_is_ended_with_it() {
 #[test]
 fn what_a_finished_undo_command_started_keeps_running() {
     // `undo: start "" app.exe` brings a program back after the stream.
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let f = Fixture::new();
     let pid = f.host.directory.join("helper.pid");
     let app: App = serde_json::from_value(json!({"name":"Helper","prep-cmd":[
@@ -628,7 +628,7 @@ fn what_a_finished_undo_command_started_keeps_running() {
 
 #[test]
 fn application_executable_paths_preserve_shell_environment_expansion() {
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let system_root = std::env::var("SystemRoot").unwrap();
     let app: App = serde_json::from_value(json!({
         "name":"Shell expansion",
@@ -656,8 +656,8 @@ fn application_executable_paths_preserve_shell_environment_expansion() {
 fn programs_on_drives_the_host_cannot_see_start_with_the_users_token() {
     // As the service, the host runs as SYSTEM and does not see a drive the
     // signed-in user mapped; the app itself starts with the user's token.
-    let elevated = butterpollo_windows::process::user_environment().is_err();
-    let drives = butterpollo_windows::files::drives();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
+    let drives = butterpollo_win_io::files::drives();
     let unused = (b'D'..=b'Z')
         .map(char::from)
         .find(|letter| !drives.contains(&format!("{letter}:\\")))
@@ -709,7 +709,7 @@ fn working_directory_inference_uses_only_absolute_programs_with_existing_parents
 
 #[test]
 fn detached_app_commands_run_with_the_supplied_environment() {
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let f = Fixture::new();
     let output = f.host.directory.join("detached.txt");
     let app: App =
@@ -737,7 +737,7 @@ fn detached_app_commands_run_with_the_supplied_environment() {
 fn stopping_an_app_undoes_its_menu_commands_once_last_run_first() {
     let fixture = Fixture::new();
     let trace = fixture.host.directory.join("menu-undo.txt");
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let undo = |name: &str| format!("echo {name}>>\"{}\"", trace.display());
     let app: App = serde_json::from_value(json!({
         "name": "Menu commands",

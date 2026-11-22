@@ -26,7 +26,7 @@ fn png() -> Vec<u8> {
         std::fs::create_dir_all(&folder).unwrap();
         let (bmp, png) = (folder.join("grid.bmp"), folder.join("grid.png"));
         std::fs::write(&bmp, bitmap()).unwrap();
-        butterpollo_windows::image::to_png(&bmp, &png).unwrap();
+        butterpollo_win_graphics::image::to_png(&bmp, &png).unwrap();
         let bytes = std::fs::read(&png).unwrap();
         let _ = std::fs::remove_dir_all(&folder);
         assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));

@@ -7,7 +7,7 @@ use butterpollo_media_policy::encoder_focus::{
     self, Context, FocusState, Levels, Requested, Resolved,
 };
 use butterpollo_session::session::Warnings;
-use butterpollo_windows::compute::FocusSettings;
+use butterpollo_win_graphics::compute::FocusSettings;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 

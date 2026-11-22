@@ -102,7 +102,7 @@ impl SessionThread<'_> {
         drop(com);
         // The encoders' reused frame buffers go with the last stream that used them; this
         // session's streaming scope ended with its setup and loop.
-        butterpollo_windows::frame_pool::clear_after_stream();
+        butterpollo_win_graphics::frame_pool::clear_after_stream();
         if s.launch.role == Role::RemoteMonitor
             && h.config
                 .read()

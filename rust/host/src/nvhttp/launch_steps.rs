@@ -549,7 +549,7 @@ pub(super) fn prepare_launch_display(
             &config,
             app.as_ref(),
             |lease| lease.resumes(&stream) && lease.serves(client_display, layout),
-            |display| butterpollo_windows::display::joinable_mode(display).is_some(),
+            |display| butterpollo_win_display::display::joinable_mode(display).is_some(),
         );
         match retained {
             Ok(lease) => {
@@ -590,7 +590,7 @@ pub(super) fn prepare_launch_app(
             let channels = crate::stream::audio_encoder::surround_channels(
                 args.get("surroundAudioInfo").map(String::as_str),
             ) as usize;
-            match butterpollo_windows::audio_route::Route::acquire(
+            match butterpollo_win_io::audio_route::Route::acquire(
                 &config,
                 &h.directory,
                 launch.host_audio,
@@ -622,7 +622,7 @@ pub(super) fn prepare_launch_app(
         // The frame limiter's rate, which the stream's display set up, for the managed game
         // files' double limiter warning.
         process_args.remove(crate::game_files::FRAME_LIMIT_ARG);
-        if let Some(rate) = butterpollo_windows::limiter::active_rate() {
+        if let Some(rate) = butterpollo_win_io::limiter::active_rate() {
             process_args.insert(
                 crate::game_files::FRAME_LIMIT_ARG.into(),
                 rate.rounded().to_string(),

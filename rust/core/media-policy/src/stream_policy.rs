@@ -1192,7 +1192,7 @@ impl SendOutage {
                 < self.length
     }
 }
-/// The video socket's send buffer (`SO_SNDBUF`, `butterpollo_windows::net`).
+/// The video socket's send buffer (`SO_SNDBUF`, `butterpollo_win_io::net`).
 pub const VIDEO_SOCKET_BUFFER: usize = 1 << 20;
 /// Test-only adapter stall, from `BUTTERPOLLO_TEST_SEND_OUTAGE=every:length:stall`:
 /// the #59 field event, a large frame meeting a network adapter that stopped

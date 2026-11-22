@@ -11,7 +11,7 @@ static FILTER: OnceLock<reload::Handle<EnvFilter, Registry>> = OnceLock::new();
 fn directives(level: &str) -> &str {
     match level {
         "debug" => {
-            "info,butterpollo=debug,butterpollo_crypto=debug,butterpollo_config=debug,butterpollo_media_policy=debug,butterpollo_input_policy=debug,butterpollo_session=debug,butterpollo_windows=debug"
+            "info,butterpollo=debug,butterpollo_crypto=debug,butterpollo_config=debug,butterpollo_media_policy=debug,butterpollo_input_policy=debug,butterpollo_session=debug,butterpollo_win_abi=debug,butterpollo_win_graphics=debug,butterpollo_win_display=debug,butterpollo_win_io=debug"
         }
         level => level,
     }

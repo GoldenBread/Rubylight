@@ -25,7 +25,7 @@ pub fn watch(h: &Shared) {
         |snapshot| snapshot.candidate_pids().unwrap_or_default(),
         game_windows,
         is_store_client,
-        butterpollo_windows::lossless::focus_quietly,
+        butterpollo_win_io::lossless::focus_quietly,
     );
 }
 
@@ -79,20 +79,23 @@ fn look(
 /// The game's unowned, uncloaked top-level windows now on the desktop (`pid`, minimised), and
 /// the active non-shell process in front.
 fn game_windows(pids: &BTreeSet<u32>) -> (Vec<(u32, bool)>, Option<u32>) {
-    let windows = butterpollo_windows::window_list::visible()
+    let windows = butterpollo_win_io::window_list::visible()
         .into_iter()
         .filter(|window| {
             !window.owned && !window.tool && !window.cloaked && pids.contains(&window.pid)
         })
         .map(|window| (window.pid, window.minimized))
         .collect();
-    (windows, butterpollo_windows::foreground::active_process())
+    (
+        windows,
+        butterpollo_win_graphics::foreground::active_process(),
+    )
 }
 
 /// Whether a process's program is a store client's or launcher's (Steam, Epic, EA, Ubisoft,
 /// Xbox): its window in front of the game's is what the game is brought back over.
 fn is_store_client(pid: u32) -> bool {
-    butterpollo_windows::process::image_path(pid).is_some_and(|path| {
+    butterpollo_win_io::process::image_path(pid).is_some_and(|path| {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(&path);
         store_client(name) || butterpollo_session::launcher_prompt::launcher_of(name).is_some()
     })

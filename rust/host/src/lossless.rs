@@ -416,17 +416,17 @@ fn lossless_processes(program: &Path, session: u32) -> std::collections::BTreeMa
     let Ok(program) = std::fs::canonicalize(program) else {
         return BTreeMap::new();
     };
-    butterpollo_windows::process::processes()
+    butterpollo_win_io::process::processes()
         .unwrap_or_default()
         .into_iter()
         .filter(|p| {
-            butterpollo_windows::lossless::PROCESSES
+            butterpollo_win_io::lossless::PROCESSES
                 .iter()
                 .any(|n| p.name.eq_ignore_ascii_case(n))
         })
         .filter(|p| {
-            butterpollo_windows::process::process_session(p.pid).ok() == Some(session)
-                && butterpollo_windows::process::image_path(p.pid)
+            butterpollo_win_io::process::process_session(p.pid).ok() == Some(session)
+                && butterpollo_win_io::process::image_path(p.pid)
                     .and_then(|path| std::fs::canonicalize(path).ok())
                     .is_some_and(|path| path.as_os_str().eq_ignore_ascii_case(program.as_os_str()))
         })
@@ -434,7 +434,7 @@ fn lossless_processes(program: &Path, session: u32) -> std::collections::BTreeMa
         .collect()
 }
 fn close_lossless(program: &Path, session: u32) {
-    butterpollo_windows::process::stop_processes(
+    butterpollo_win_io::process::stop_processes(
         &lossless_processes(program, session),
         Duration::from_secs(4),
     );
@@ -462,11 +462,11 @@ fn run(
     stop: &AtomicBool,
     applied: &Mutex<Option<Applied>>,
 ) -> Result<()> {
-    let program = butterpollo_windows::lossless::program(configured_program)
+    let program = butterpollo_win_io::lossless::program(configured_program)
         .context("Lossless Scaling was not found; set its path in Settings")?;
-    let settings = butterpollo_windows::lossless::settings_path().context("no signed-in user")?;
+    let settings = butterpollo_win_io::lossless::settings_path().context("no signed-in user")?;
     let known: HashSet<(u32, u64)> = baseline.iter().map(|p| (p.pid, p.started)).collect();
-    let (cpu_count, windows) = butterpollo_windows::lossless::scoring_environment();
+    let (cpu_count, windows) = butterpollo_win_io::lossless::scoring_environment();
     let mut current: Option<Sample> = None;
     loop {
         let folder = folder().filter(|f| !f.trim().is_empty()).or_else(|| {
@@ -481,11 +481,11 @@ fn run(
             if stop.load(Ordering::Acquire) {
                 return Ok(());
             }
-            let samples = butterpollo_windows::process::processes()?
+            let samples = butterpollo_win_io::process::processes()?
                 .into_iter()
                 .filter(|p| current.is_some() || !known.contains(&(p.pid, p.started)))
                 .filter_map(|process| {
-                    let path = butterpollo_windows::process::image_path(process.pid)?;
+                    let path = butterpollo_win_io::process::image_path(process.pid)?;
                     let mut sample = Sample {
                         windowed: true,
                         process,
@@ -498,13 +498,13 @@ fn run(
                     }
                     if current.is_some() {
                         sample.windowed =
-                            !butterpollo_windows::lossless::windows_of(sample.process.pid)
+                            !butterpollo_win_io::lossless::windows_of(sample.process.pid)
                                 .is_empty();
                         if !sample.windowed {
                             return None;
                         }
                     }
-                    let usage = butterpollo_windows::process::usage(sample.process.pid)?;
+                    let usage = butterpollo_win_io::process::usage(sample.process.pid)?;
                     if usage.started != sample.process.started {
                         return None;
                     }
@@ -538,7 +538,7 @@ fn run(
         if current.is_none() && !wait(stop, Duration::from_secs(options.launch_delay)) {
             return Ok(());
         }
-        if butterpollo_windows::process::creation_time(game.process.pid) != game.process.started {
+        if butterpollo_win_io::process::creation_time(game.process.pid) != game.process.started {
             continue;
         }
         tracing::info!(game = %game.process.name, pid = game.process.pid, "targeting Lossless Scaling at the game");
@@ -563,7 +563,7 @@ fn apply_game(
     stop: &AtomicBool,
     applied: &Mutex<Option<Applied>>,
 ) -> Result<()> {
-    let session = butterpollo_windows::process::current_session()?;
+    let session = butterpollo_win_io::process::current_session()?;
     close_lossless(program, session);
     if stop.load(Ordering::Acquire) {
         return Ok(());
@@ -589,15 +589,15 @@ fn apply_game(
     if stop.load(Ordering::Acquire) {
         return Ok(());
     }
-    butterpollo_windows::process::Process::spawn_detached(
+    butterpollo_win_io::process::Process::spawn_detached(
         program,
         &[],
-        butterpollo_windows::process::Target::User { elevated: false },
+        butterpollo_win_io::process::Target::User { elevated: false },
     )?;
     let started = Instant::now();
     let lossless = loop {
         if let Some(pid) = lossless_processes(program, session).keys().next().copied()
-            && !butterpollo_windows::lossless::windows_of(pid).is_empty()
+            && !butterpollo_win_io::lossless::windows_of(pid).is_empty()
         {
             break Some(pid);
         }
@@ -610,17 +610,17 @@ fn apply_game(
         return Ok(());
     }
     if let Some(pid) = lossless {
-        butterpollo_windows::lossless::minimize(pid);
+        butterpollo_win_io::lossless::minimize(pid);
     }
     let Some((modifiers, key)) = hotkey(&updated) else {
         bail!("Lossless Scaling has no usable hotkey");
     };
     for attempt in 1..=3 {
-        let focused = butterpollo_windows::lossless::focus(game.process.pid);
+        let focused = butterpollo_win_io::lossless::focus(game.process.pid);
         if !wait(stop, Duration::from_millis(250)) {
             break;
         }
-        let sent = butterpollo_windows::lossless::press(&modifiers, key);
+        let sent = butterpollo_win_io::lossless::press(&modifiers, key);
         tracing::debug!(attempt, focused, sent, "sent the Lossless Scaling hotkey");
         if focused && sent {
             break;

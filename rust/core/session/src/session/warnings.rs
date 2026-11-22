@@ -95,7 +95,39 @@ impl butterpollo_media_policy::WarningSink for Warnings {
         Warnings::set(self, code, message);
     }
 
+    fn event(&self, code: &str, message: &str, period: Duration) {
+        Warnings::event(self, code, message, period);
+    }
+
     fn clear(&self, code: &str) {
         Warnings::clear(self, code);
+    }
+
+    fn replay(&self, target: &dyn butterpollo_media_policy::WarningSink) {
+        let now = Instant::now();
+        let entries: Vec<_> = {
+            let entries = self.entries.lock().unwrap();
+            entries
+                .iter()
+                .map(|(code, (message, until))| (code.clone(), message.clone(), *until))
+                .collect()
+        };
+        for (code, message, until) in entries {
+            match until {
+                Some(until) if until > now => target.event(&code, &message, until - now),
+                Some(_) => {}
+                None => target.set(&code, &message),
+            }
+        }
+    }
+
+    fn snapshot(&self) -> Vec<butterpollo_media_policy::RecordedWarning> {
+        self.snapshot()
+            .into_iter()
+            .map(|warning| butterpollo_media_policy::RecordedWarning {
+                code: warning.code,
+                message: warning.message,
+            })
+            .collect()
     }
 }

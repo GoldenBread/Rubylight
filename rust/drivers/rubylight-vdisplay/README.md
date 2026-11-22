@@ -133,7 +133,7 @@ path, and the existing WGC fallback still applies if driver capture cannot recov
 console warning identifies fallback; enabling the setting alone does not prove the
 fence path is active.
 
-The two-device native tests in `rust/windows/src/capture/idd_push/fence_tests.rs` cover
+The two-device native tests in `rust/windows/graphics/src/capture/idd_push/fence_tests.rs` cover
 SDR/HDR pixels, multiple readers, ring replacement and delayed GPU completion without
 installing a driver. Its ignored ABBA transport probe measures producer copy through
 completed conversion. These component checks do not establish latency or picture quality

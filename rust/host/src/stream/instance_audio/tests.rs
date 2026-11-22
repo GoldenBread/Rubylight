@@ -189,7 +189,7 @@ fn instances_just_before_a_choice_are_routed() {
 }
 
 fn silent() -> Option<Result<Route>> {
-    Some(Err(butterpollo_windows::audio_app_route::NoSoundYet.into()))
+    Some(Err(butterpollo_win_io::audio_app_route::NoSoundYet.into()))
 }
 
 /// #59: an instance routed as it starts hasn't opened its sound, which
@@ -279,7 +279,7 @@ fn a_process_that_never_opens_its_sound_is_tried_less_often() {
                 if opened {
                     Some(Ok(pid))
                 } else {
-                    Some(Err(butterpollo_windows::audio_app_route::NoSoundYet.into()))
+                    Some(Err(butterpollo_win_io::audio_app_route::NoSoundYet.into()))
                 }
             },
             now,
@@ -311,7 +311,7 @@ fn a_process_that_never_opens_its_sound_is_tried_less_often() {
     let mut gone = Early::<u32>::default();
     gone.update_at(
         &tree,
-        &mut |_| Some(Err(butterpollo_windows::audio_app_route::NoSoundYet.into())),
+        &mut |_| Some(Err(butterpollo_win_io::audio_app_route::NoSoundYet.into())),
         t0,
     );
     assert!(gone.waiting.next(t0).is_some());

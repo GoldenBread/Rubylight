@@ -5,7 +5,7 @@ use crate::state::{Session, Shared};
 use anyhow::Result;
 use butterpollo_config::config::Config;
 use butterpollo_session::audio_scope::{Identity, tree};
-use butterpollo_windows::{
+use butterpollo_win_io::{
     audio::{Loopback, ProcessActivation},
     audio_app_route::{AppRoute, OnThePc, no_sound_yet},
     process::AudioProcess,
@@ -197,7 +197,7 @@ fn windows_program(path: &str) -> bool {
 /// (conhost, WerFault) share one setting with every other process of that
 /// program.
 pub(super) fn routable(pid: u32) -> bool {
-    !butterpollo_windows::process::image_path(pid).is_some_and(|path| windows_program(&path))
+    !butterpollo_win_io::process::image_path(pid).is_some_and(|path| windows_program(&path))
 }
 /// Whether a stream of `config` moves its game's sound off the PC: game-only
 /// audio it streams, and doesn't also play on the PC.
@@ -240,7 +240,7 @@ const PLACE_CHECK: u32 = 5;
 impl Routes {
     fn update(&mut self, h: &Shared, s: &Session, config: &Config, target: Option<&AudioProcess>) {
         let tree = match target
-            .map(|t| butterpollo_windows::process::processes().map(|all| tree(t.identity, &all)))
+            .map(|t| butterpollo_win_io::process::processes().map(|all| tree(t.identity, &all)))
         {
             None => vec![],
             Some(Ok(tree)) => tree,
@@ -326,7 +326,7 @@ impl Routes {
             (None, Some(Elsewhere::Opened { voice: false })) => s.launch.warnings.set("audio_game_host", OPENED_EARLY),
             (None, Some(Elsewhere::Opened { voice: true })) => s.launch.warnings.set("audio_game_host", OPENED_EARLY_OR_VOICE),
             (None, Some(Elsewhere::Windows(pid))) => {
-                let program = butterpollo_windows::process::image_path(pid)
+                let program = butterpollo_win_io::process::image_path(pid)
                     .and_then(|path| path.rsplit('\\').next().map(str::to_string))
                     .unwrap_or_else(|| format!("process {pid}"));
                 s.launch.warnings.set("audio_game_host", format!("Game sound also plays on the PC: the game plays it through {program}, a Windows program Rubylight doesn't move, as that would move every program of it."));

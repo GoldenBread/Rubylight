@@ -384,7 +384,7 @@ fn expected(feature: Feature) -> Availability {
         | Feature::VirtualDisplayHdr
         | Feature::HostDisplayModes
         | Feature::DisplayScale => {
-            if butterpollo_windows::display::virtual_display_os() {
+            if butterpollo_win_display::display::virtual_display_os() {
                 Unsupported(Some(Reason::VirtualDisplayDriver))
             } else {
                 Unsupported(Some(Reason::VirtualDisplayOff))

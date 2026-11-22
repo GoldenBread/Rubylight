@@ -3,7 +3,7 @@
 //! When Windows shuts down it ends the console session's processes, the host among them,
 //! before the service hears of the shutdown. Without this the host died mid-stream: clients
 //! waited out their connection timeout and saw forwarded USB devices fail instead of detach.
-//! The session-end window (butterpollo_windows::session_end) asks the host's normal shutdown
+//! The session-end window (butterpollo_win_io::session_end) asks the host's normal shutdown
 //! to run and holds Windows' reply until that shutdown has told the clients, for at most
 //! [`WAIT`]. The service's stop takes the same path, and whichever comes first runs it, once.
 use std::{
@@ -68,7 +68,7 @@ impl SessionEnd {
 /// down for the end of its session leaves as Windows would have ended it, so the service starts
 /// the next session's host as before. Returning, its exit code 0 would stop the service.
 pub(crate) fn exit_code(supervised: bool, session_ended: bool) -> Option<u32> {
-    (supervised && session_ended).then_some(butterpollo_windows::service::SESSION_ENDED_EXIT_CODE)
+    (supervised && session_ended).then_some(butterpollo_win_io::service::SESSION_ENDED_EXIT_CODE)
 }
 
 #[cfg(test)]

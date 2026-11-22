@@ -1,0 +1,129 @@
+//! Compile fixed shaders once when building the Windows host, rather than on
+//! the customer's first frame or when a capture device is recreated.
+use std::path::Path;
+
+#[cfg(windows)]
+const SOURCE: &str = include_str!("src/shaders/color.hlsl");
+
+#[cfg(windows)]
+pub fn compile(out: &Path) {
+    println!("cargo:rerun-if-changed=src/shaders/color.hlsl");
+    const ENTRIES: [(&str, &str); 36] = [
+        ("vertex", "vs_5_0"),
+        ("luma", "ps_5_0"),
+        ("chroma", "ps_5_0"),
+        ("pyro_y", "ps_5_0"),
+        ("pyro_u", "ps_5_0"),
+        ("pyro_v", "ps_5_0"),
+        ("pyro_444", "ps_5_0"),
+        ("yuv420_cs", "cs_5_0"),
+        ("chroma_pack_cs", "cs_5_0"),
+        ("chroma_pack_y", "ps_5_0"),
+        ("chroma_pack_uv", "ps_5_0"),
+        ("pyro_cs", "cs_5_0"),
+        ("yuv420_focus_cs", "cs_5_0"),
+        ("focus_map_cs", "cs_5_0"),
+        // The couch menu's passes over its panel (docs/couch-menu-design.md
+        // 6.2 and 6.3), the bodies above with `menu` set.
+        ("yuv420_menu_cs", "cs_5_0"),
+        ("chroma_pack_menu_cs", "cs_5_0"),
+        ("pyro_menu_cs", "cs_5_0"),
+        ("menu_luma", "ps_5_0"),
+        ("menu_chroma", "ps_5_0"),
+        ("menu_chroma_pack_y", "ps_5_0"),
+        ("menu_chroma_pack_uv", "ps_5_0"),
+        ("menu_pyro_y", "ps_5_0"),
+        ("menu_pyro_u", "ps_5_0"),
+        ("menu_pyro_v", "ps_5_0"),
+        ("menu_pyro_444", "ps_5_0"),
+        // NVENC's native 4:4:4 input (`gpu_color::Layout::Ayuv`, `Planes444`).
+        ("yuv444_ayuv", "ps_5_0"),
+        ("yuv444_planes", "ps_5_0"),
+        ("menu_yuv444_ayuv", "ps_5_0"),
+        ("menu_yuv444_planes", "ps_5_0"),
+        // HDR dynamic metadata statistics (`compute_hdr_stats.rs`).
+        ("hdr_stats_clear_cs", "cs_5_0"),
+        ("hdr_stats_cs", "cs_5_0"),
+        // Frame Warp's thumbnail and HUD passes (`compute_frame_warp.rs`).
+        ("frame_warp_thumb_cs", "cs_5_0"),
+        ("frame_warp_hud_cs", "cs_5_0"),
+        ("frame_warp_score_cs", "cs_5_0"),
+        ("frame_warp_bits_cs", "cs_5_0"),
+        // AMF video converter's HLG input (`amf::vpe`).
+        ("hlg_scene_cs", "cs_5_0"),
+    ];
+    // One thread per entry, so the step takes as long as the slowest shader
+    // rather than the sum. Each entry still compiles alone, byte for byte as
+    // before; a failed entry's panic fails the scope and the build.
+    std::thread::scope(|scope| {
+        for (entry, target) in ENTRIES {
+            scope.spawn(move || compile_entry(out, entry, target));
+        }
+    });
+    let mut generated = String::from(
+        "pub fn shader_bytecode(entry: &[u8], target: &[u8]) -> Option<&'static [u8]> {\nmatch (entry, target) {\n",
+    );
+    for (entry, target) in ENTRIES {
+        generated.push_str(&format!(
+            "(b\"{entry}\\0\", b\"{target}\\0\") => Some(include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{entry}.dxbc\"))),\n",
+        ));
+    }
+    generated.push_str("_ => None,\n}\n}\n");
+    std::fs::write(out.join("shader_bytecode.rs"), generated).expect("write shader bindings");
+}
+
+/// Compile `entry` for `target` into `out/{entry}.dxbc`.
+#[cfg(windows)]
+fn compile_entry(out: &Path, entry: &str, target: &str) {
+    use std::ffi::CString;
+    use windows::{
+        Win32::Graphics::Direct3D::Fxc::{D3DCOMPILE_OPTIMIZATION_LEVEL3, D3DCompile},
+        core::PCSTR,
+    };
+    let name = CString::new(entry).unwrap();
+    let profile = CString::new(target).unwrap();
+    unsafe {
+        let mut code = None;
+        let mut errors = None;
+        if let Err(error) = D3DCompile(
+            SOURCE.as_ptr().cast(),
+            SOURCE.len(),
+            PCSTR::null(),
+            None,
+            None,
+            PCSTR(name.as_ptr().cast()),
+            PCSTR(profile.as_ptr().cast()),
+            D3DCOMPILE_OPTIMIZATION_LEVEL3,
+            0,
+            &mut code,
+            Some(&mut errors),
+        ) {
+            let detail = errors
+                .map(|blob| {
+                    String::from_utf8_lossy(std::slice::from_raw_parts(
+                        blob.GetBufferPointer().cast(),
+                        blob.GetBufferSize(),
+                    ))
+                    .into_owned()
+                })
+                .unwrap_or_default();
+            panic!("compile {entry}/{target}: {error}: {detail}");
+        }
+        let code = code.expect("shader compiler returned no bytecode");
+        std::fs::write(
+            out.join(format!("{entry}.dxbc")),
+            std::slice::from_raw_parts(code.GetBufferPointer().cast::<u8>(), code.GetBufferSize()),
+        )
+        .expect("write compiled shader");
+    }
+}
+
+#[cfg(not(windows))]
+pub fn compile(out: &Path) {
+    // Non-Windows cross builds keep the existing runtime compiler fallback.
+    std::fs::write(
+        out.join("shader_bytecode.rs"),
+        "pub fn shader_bytecode(_: &[u8], _: &[u8]) -> Option<&'static [u8]> { None }\n",
+    )
+    .expect("write cross-build shader fallback");
+}

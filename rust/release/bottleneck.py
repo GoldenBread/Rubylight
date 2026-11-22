@@ -68,7 +68,7 @@ args = parser.parse_args()
 assert not (args.cut_ms and args.noise_height), '--cut-ms and --noise-height are separate scenes'
 port = 48523
 shaper = args.shaper or args.client.parent / 'udp_shaper.exe'
-assert shaper.is_file(), 'build udp_shaper beside the receiver (cargo build -p butterpollo-windows --example udp_shaper)'
+assert shaper.is_file(), 'build udp_shaper beside the receiver (cargo build -p butterpollo-probes --bin udp_shaper)'
 interop = pathlib.Path(__file__).resolve().parents[1] / 'tests' / 'interop.py'
 
 installed_idle()

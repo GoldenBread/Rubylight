@@ -31,7 +31,7 @@ pub(crate) fn same_device(a: &str, b: &str) -> bool {
 /// its injector failed); a superseded or ended stream is stopping or gone. Nothing to do, and
 /// XInput isn't read, when nothing is parked.
 pub(super) fn release_parked_pads(h: &Shared) -> Result<()> {
-    use butterpollo_windows::nucleus::pads;
+    use butterpollo_win_io::nucleus::pads;
     let pending: std::collections::BTreeSet<String> = {
         let sessions = h.sessions.lock().unwrap();
         let running = sessions.active.values().filter(|s| !s.stopping());

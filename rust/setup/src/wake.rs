@@ -10,7 +10,7 @@ use std::{path::Path, time::Duration};
 
 const CHOICE: &str = "wake-on-lan.json";
 /// Reading the adapters and restarting the ones whose settings changed. Later
-/// than the host's own bound (`SETTINGS_TIMEOUT` in butterpollo-windows,
+/// than the host's own bound (`SETTINGS_TIMEOUT` in butterpollo-win-io,
 /// 260 s), which gives up on its NIC changes before this could kill it
 /// mid-restart.
 const APPLY_TIMEOUT: Duration = Duration::from_secs(300);

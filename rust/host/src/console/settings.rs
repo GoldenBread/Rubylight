@@ -643,8 +643,8 @@ mod tests {
         // driver's power profile.
         let source = [
             include_str!("../../../core/media-policy/src/nvenc.rs"),
-            include_str!("../../../windows/src/gpu_priority.rs"),
-            include_str!("../../../windows/src/nvidia_profile.rs"),
+            include_str!("../../../windows/graphics/src/gpu_priority.rs"),
+            include_str!("../../../windows/graphics/src/nvidia_profile.rs"),
         ]
         .concat();
         let keys: std::collections::BTreeSet<&str> = source

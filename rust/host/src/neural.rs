@@ -26,7 +26,7 @@ use butterpollo_session::{
     neural::{self, Download, Gpu, Placed, Release},
     state::App,
 };
-use butterpollo_windows::process::Hold;
+use butterpollo_win_io::process::Hold;
 use folder::{PACKAGE, Package, Request, Response, Writer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -274,7 +274,7 @@ impl Neural {
 /// `butterpollo.exe --neural-probe`: the GPUs the AMD compute runtime
 /// finds, as one line.
 pub fn probe_main() -> i32 {
-    let probe = match butterpollo_windows::hip::gpus() {
+    let probe = match butterpollo_win_io::hip::gpus() {
         Ok(gpus) => Probe { gpus, error: None },
         Err(error) => Probe {
             gpus: Vec::new(),
@@ -660,9 +660,9 @@ fn gpus_with(h: &Shared, setting: &GpuSetting) -> Result<StreamsAmong, String> {
         return Ok((streams, adapters));
     }
     let [display, adapter_name, pnp_id] = setting;
-    let stream_gpu = butterpollo_windows::capture::stream_gpu(display, adapter_name, pnp_id)
+    let stream_gpu = butterpollo_win_graphics::capture::stream_gpu(display, adapter_name, pnp_id)
         .map_err(|e| format!("the GPU Rubylight streams with can't be found: {e:#}"));
-    let gpus = butterpollo_windows::capture::gpus().map_err(|e| {
+    let gpus = butterpollo_win_graphics::capture::gpus().map_err(|e| {
         let listed = format!("the GPUs can't be listed: {e:#}");
         match &stream_gpu {
             Err(unknown) => format!("{unknown}; {listed}"),
@@ -770,14 +770,14 @@ fn run_probe(_: &Shared) -> Result<Probe, String> {
     allow(dead_code, reason = "tests run the folder work in-process")
 )]
 fn run_child(flag: &str, input: &str, timeout: Duration, mut line: impl FnMut(&str)) -> Result<()> {
-    use butterpollo_windows::process::{Process, Target};
+    use butterpollo_win_io::process::{Process, Target};
     enum Child {
         User(Process),
         Own(std::process::Child),
     }
     let program = std::env::current_exe()?;
     let (mut child, stdin, stdout): (Child, Box<dyn Write>, Box<dyn Read + Send>) =
-        if butterpollo_windows::process::is_system() {
+        if butterpollo_win_io::process::is_system() {
             let mut piped = Process::spawn_piped(
                 &program,
                 &[flag.into()],
@@ -847,7 +847,7 @@ fn run_child(flag: &str, input: &str, timeout: Duration, mut line: impl FnMut(&s
 /// this host is SYSTEM (game folders are the user's), here otherwise. A
 /// folder the user may not write goes to [`as_system`].
 fn run_folder(request: Request, progress: &dyn Fn(u64, u64)) -> Result<Response> {
-    let system = butterpollo_windows::process::is_system();
+    let system = butterpollo_win_io::process::is_system();
     let answer = if !system || cfg!(test) {
         folder::handle(request.clone(), Writer::User, progress)
     } else {
@@ -986,7 +986,7 @@ pub fn clear_legacy_cache(h: &Shared) {
     let cleared = trusted_root(
         &root,
         &data_root(h),
-        butterpollo_windows::process::is_system(),
+        butterpollo_win_io::process::is_system(),
     )
     .and_then(|()| std::fs::remove_dir_all(&root).map_err(anyhow::Error::from));
     match cleared {
@@ -1005,8 +1005,8 @@ fn ensure_root(root: &Path) -> Result<()> {
     if root.is_dir() {
         return Ok(());
     }
-    if butterpollo_windows::process::elevated()? {
-        match butterpollo_windows::process::create_folder_administrators_readable(root) {
+    if butterpollo_win_io::process::elevated()? {
+        match butterpollo_win_io::process::create_folder_administrators_readable(root) {
             Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
                 return Err(e).with_context(|| format!("cannot create {}", root.display()));
             }
@@ -1121,7 +1121,7 @@ fn launch_cache(h: &Shared) -> Result<Option<(folder::Cached, Hold)>> {
     // check approves is what is read after it, not a same-named replacement.
     let held = Hold::new([root.as_path(), data_root.as_path()])
         .context("cannot open the Neural Rendering cache")?;
-    trusted_root(&root, &data_root, butterpollo_windows::process::is_system())?;
+    trusted_root(&root, &data_root, butterpollo_win_io::process::is_system())?;
     let pin = pinned(h);
     Ok(cached(&root)
         .filter(|(_, package)| serves(package, &pin))
@@ -1201,7 +1201,7 @@ async fn fetch_locked(
     // verified or downloaded into.
     let held = Hold::new([root.as_path(), data_root.as_path()])
         .context("cannot open the Neural Rendering cache")?;
-    trusted_root(&root, &data_root, butterpollo_windows::process::is_system())?;
+    trusted_root(&root, &data_root, butterpollo_win_io::process::is_system())?;
     let pin = pinned(h);
     // Its files as checked when they came, or it goes and comes again.
     if let Some(have) = cached(&root).filter(|(_, package)| serves(package, &pin)) {
@@ -1550,7 +1550,7 @@ fn steam_roots(h: &Shared) -> Vec<PathBuf> {
         return roots;
     }
     let _ = h;
-    butterpollo_windows::steam::roots()
+    butterpollo_win_io::steam::roots()
 }
 
 /// The game's program as an install places it ([`Request::Find`]), or why
@@ -1576,7 +1576,7 @@ fn find_game(
 
 /// The app's command when it starts a program directly.
 fn command_exe(app: &App) -> Option<PathBuf> {
-    let target = PathBuf::from(butterpollo_windows::process::command_target(&app.cmd));
+    let target = PathBuf::from(butterpollo_win_io::process::command_target(&app.cmd));
     (target.is_absolute()
         && target
             .extension()

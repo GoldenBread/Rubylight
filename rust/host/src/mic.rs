@@ -7,12 +7,8 @@ use crate::state::{Session, Shared};
 use anyhow::{Context, Result, bail};
 use butterpollo_config::config::Config;
 use butterpollo_session::mic::{self, Arrival, Playout, Sequencer};
-use butterpollo_windows::{
-    audio::OpusDecoder,
-    audio_route,
-    capture::{ComGuard, Priority},
-    mic::Render,
-};
+use butterpollo_win_graphics::capture::{ComGuard, Priority};
+use butterpollo_win_io::{audio::OpusDecoder, audio_route, mic::Render};
 use std::{
     net::UdpSocket,
     path::PathBuf,

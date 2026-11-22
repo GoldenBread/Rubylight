@@ -195,7 +195,7 @@ impl Host {
     ) -> Guard {
         // The host's outgoing interface: asked of Windows before any lock is held.
         let interface = if enabled && session.config.codec != 3 {
-            butterpollo_windows::net::routed_link(std::net::SocketAddr::new(session.launch.peer, 0))
+            butterpollo_win_io::net::routed_link(std::net::SocketAddr::new(session.launch.peer, 0))
                 .interface
         } else {
             0

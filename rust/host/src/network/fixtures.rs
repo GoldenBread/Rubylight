@@ -1222,8 +1222,8 @@ fn adapter(
     hyper_v: bool,
     metric: u32,
     gateways: &[&str],
-) -> butterpollo_windows::net::LanInterface {
-    butterpollo_windows::net::LanInterface {
+) -> butterpollo_win_io::net::LanInterface {
+    butterpollo_win_io::net::LanInterface {
         address,
         hardware,
         hyper_v,
@@ -1235,7 +1235,7 @@ fn adapter(
     }
 }
 /// This PC's adapters are `adapters`, and every address it has is theirs.
-fn with_adapters(adapters: Vec<butterpollo_windows::net::LanInterface>) {
+fn with_adapters(adapters: Vec<butterpollo_win_io::net::LanInterface>) {
     TEST_NET.with(|net| {
         *net.borrow_mut() = TestNet {
             gateways: Some(Vec::new()),
@@ -1251,7 +1251,7 @@ fn with_adapters(adapters: Vec<butterpollo_windows::net::LanInterface>) {
     });
 }
 /// Ethernet at metric 25 and Wi-Fi at metric 35, both on the router at 192.0.2.1.
-fn ethernet_and_wifi() -> [butterpollo_windows::net::LanInterface; 2] {
+fn ethernet_and_wifi() -> [butterpollo_win_io::net::LanInterface; 2] {
     [
         adapter([192, 0, 2, 10].into(), true, false, 25, &["192.0.2.1"]),
         adapter([192, 0, 2, 20].into(), true, false, 35, &["192.0.2.1"]),

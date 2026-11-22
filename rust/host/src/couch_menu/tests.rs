@@ -346,7 +346,7 @@ fn couch_menu_worker_draws_the_open_menu_and_closes_on_back() {
     assert!(drawn(true), "the worker drew the main page");
     let mode = s.stream_mode();
     let panel = s.couch_menu.frame().unwrap();
-    Overlay::new(1, &panel)
+    Overlay::new(1, panel.origin, panel.size, panel.scale, panel.rgba.clone())
         .validate([mode.width, mode.height])
         .unwrap();
     // Back on the main page is Back to game.

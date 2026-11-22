@@ -55,13 +55,13 @@ impl Drop for GameWindows {
 fn target(output: &str) -> Option<Rect> {
     // While the stream shows the app's window, its display is the one the
     // window is on.
-    let window = butterpollo_windows::capture::WindowTarget::parse(output)
+    let window = butterpollo_win_graphics::capture::WindowTarget::parse(output)
         .ok()
         .flatten();
     let output = window
         .as_ref()
         .map_or(output, |window| window.display.as_str());
-    butterpollo_windows::capture::displays()
+    butterpollo_win_graphics::capture::displays()
         .ok()?
         .into_iter()
         .find(|display| display.display_name == output)
@@ -74,7 +74,7 @@ fn target(output: &str) -> Option<Rect> {
 }
 
 fn run(h: &Shared, s: &Session, generation: Option<&str>, stop: &AtomicBool) {
-    let mut keeper = butterpollo_windows::window_placement::Keeper::default();
+    let mut keeper = butterpollo_win_io::window_placement::Keeper::default();
     let mut moved_total = 0usize;
     while !stop.load(Ordering::Acquire) && !s.stopping() && !h.stop.load(Ordering::Acquire) {
         let output = s.output.read().unwrap().clone();
@@ -96,7 +96,7 @@ fn run(h: &Shared, s: &Session, generation: Option<&str>, stop: &AtomicBool) {
             (Ok(processes), Some(target)) => {
                 let pass = keeper.pass(&processes, target);
                 if let Some((window, _)) = pass.main {
-                    butterpollo_windows::window_placement::fake_focus(window, &processes, target);
+                    butterpollo_win_io::window_placement::fake_focus(window, &processes, target);
                 }
                 if pass.released_clip {
                     tracing::debug!("released a cursor clip the background game set");

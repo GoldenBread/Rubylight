@@ -93,7 +93,7 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
                 }
             }
             if let Err(error) =
-                butterpollo_windows::vulkan::reconcile(next.boolean("vulkan_hdr_layer", true))
+                butterpollo_win_graphics::vulkan::reconcile(next.boolean("vulkan_hdr_layer", true))
             {
                 warnings.push(error.to_string());
             }
@@ -123,8 +123,8 @@ pub(super) fn handle(h: &Shared, method: &str, path: &str, data: &Value) -> anyh
         }
         ("GET", "/api/meta" | "/api/metadata") => metadata(
             h,
-            butterpollo_windows::capture::gpus,
-            butterpollo_windows::capture::displays,
+            butterpollo_win_graphics::capture::gpus,
+            butterpollo_win_graphics::capture::displays,
         )?,
         ("POST", "/api/warnings/dismiss") => {
             let code = data.get("code").and_then(Value::as_str).unwrap_or_default();
@@ -263,8 +263,8 @@ fn ended_usb(h: &Shared) {
 
 fn metadata(
     shared: &Shared,
-    gpu_inventory: impl FnOnce() -> anyhow::Result<Vec<butterpollo_windows::capture::Gpu>>,
-    display_inventory: impl FnOnce() -> anyhow::Result<Vec<butterpollo_windows::capture::Display>>,
+    gpu_inventory: impl FnOnce() -> anyhow::Result<Vec<butterpollo_win_graphics::capture::Gpu>>,
+    display_inventory: impl FnOnce() -> anyhow::Result<Vec<butterpollo_win_graphics::capture::Display>>,
 ) -> anyhow::Result<Value> {
     let mut cached = shared.metadata.lock().unwrap();
     if let Some((checked, value)) = cached.as_ref()
@@ -272,14 +272,14 @@ fn metadata(
     {
         return Ok(value.clone());
     }
-    let _com = butterpollo_windows::capture::ComGuard::new()?;
+    let _com = butterpollo_win_graphics::capture::ComGuard::new()?;
     let codecs = shared.codecs.load(std::sync::atomic::Ordering::Acquire);
     let probing = shared
         .probing_codecs
         .load(std::sync::atomic::Ordering::Acquire);
-    let virtual_display = butterpollo_windows::display::virtual_display_status();
+    let virtual_display = butterpollo_win_display::display::virtual_display_status();
     let capable = virtual_display["capable"].as_bool().unwrap_or(false);
-    let audio = butterpollo_windows::audio_route::endpoints();
+    let audio = butterpollo_win_io::audio_route::endpoints();
     let gpus = gpu_inventory();
     let displays = display_inventory();
     let config = shared.config.read().unwrap().clone();
@@ -291,7 +291,7 @@ fn metadata(
             format!("{host}:{port}")
         }
     };
-    let addresses = butterpollo_windows::net::lan_addresses()
+    let addresses = butterpollo_win_io::net::lan_addresses()
         .unwrap_or_default()
         .into_iter()
         .map(address)
@@ -301,7 +301,7 @@ fn metadata(
         .cloned()
         .unwrap_or_else(|| address(std::env::var("COMPUTERNAME").unwrap_or_default()));
     let enhancements = crate::nvidia_enhance::status(shared);
-    let value = json!({"status":true,"platform":"windows","version":env!("CARGO_PKG_VERSION"),"branch":"codex/butterpollo-rust","host_name":crate::network::host_name(&config),"pc_address":pc_address,"pc_addresses":addresses,"paired_devices":shared.paired.read().unwrap().clients.len(),"enable_pairing":config.boolean("enable_pairing",true),"qr_pairing":config.qr_pairing(),"warnings":crate::host_warnings::visible(&shared.directory,&shared.warnings),"encoder_status":{"state":if probing {"checking"} else if codecs == 0 {"failed"} else {"ready"},"h264":codecs&1!=0,"hevc":codecs&0x100!=0,"av1":codecs&0x10000!=0,"pyrowave":codecs&0x800000!=0,"yuv444":butterpollo_media_policy::codec_support::native_444_labels(codecs)},"capture_status":{"configured_backend":config.get("capture","auto"),"virtual_display_configured":config.virtual_display_mode(butterpollo_windows::display::virtual_display_os())!="disabled","displays":displays.as_ref().ok(),"error":displays.as_ref().err().map(|e|e.to_string())},"virtual_display":virtual_display,"gpus":gpus.as_ref().ok(),"gpu_error":gpus.as_ref().err().map(|e|e.to_string()),"audio_sinks":audio.as_ref().ok(),"audio_error":audio.as_ref().err().map(|e|e.to_string()),"audio_enabled":config.boolean("stream_audio",true),"features":{"rust_host":true,"hdr":true,"pyrowave":codecs&0x800000!=0,"virtual_display":capable,"virtual_display_os":butterpollo_windows::display::virtual_display_os(),"rtx_hdr":enhancements["rtx_hdr"]==true,"rtx_video":enhancements["rtx_video"]==true},"nvidia_enhancements":enhancements,"credentials_exists":shared.credentials.read().unwrap().is_some(),"webrtc":shared.webrtc.status_json(&config)});
+    let value = json!({"status":true,"platform":"windows","version":env!("CARGO_PKG_VERSION"),"branch":"codex/butterpollo-rust","host_name":crate::network::host_name(&config),"pc_address":pc_address,"pc_addresses":addresses,"paired_devices":shared.paired.read().unwrap().clients.len(),"enable_pairing":config.boolean("enable_pairing",true),"qr_pairing":config.qr_pairing(),"warnings":crate::host_warnings::visible(&shared.directory,&shared.warnings),"encoder_status":{"state":if probing {"checking"} else if codecs == 0 {"failed"} else {"ready"},"h264":codecs&1!=0,"hevc":codecs&0x100!=0,"av1":codecs&0x10000!=0,"pyrowave":codecs&0x800000!=0,"yuv444":butterpollo_media_policy::codec_support::native_444_labels(codecs)},"capture_status":{"configured_backend":config.get("capture","auto"),"virtual_display_configured":config.virtual_display_mode(butterpollo_win_display::display::virtual_display_os())!="disabled","displays":displays.as_ref().ok(),"error":displays.as_ref().err().map(|e|e.to_string())},"virtual_display":virtual_display,"gpus":gpus.as_ref().ok(),"gpu_error":gpus.as_ref().err().map(|e|e.to_string()),"audio_sinks":audio.as_ref().ok(),"audio_error":audio.as_ref().err().map(|e|e.to_string()),"audio_enabled":config.boolean("stream_audio",true),"features":{"rust_host":true,"hdr":true,"pyrowave":codecs&0x800000!=0,"virtual_display":capable,"virtual_display_os":butterpollo_win_display::display::virtual_display_os(),"rtx_hdr":enhancements["rtx_hdr"]==true,"rtx_video":enhancements["rtx_video"]==true},"nvidia_enhancements":enhancements,"credentials_exists":shared.credentials.read().unwrap().is_some(),"webrtc":shared.webrtc.status_json(&config)});
     *cached = Some((Instant::now(), value.clone()));
     Ok(value)
 }

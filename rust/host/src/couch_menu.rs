@@ -28,7 +28,8 @@ use butterpollo_session::{
     session_state::Refusal,
     state::Client,
 };
-use butterpollo_windows::{input::Injector, overlay::Overlay};
+use butterpollo_win_graphics::overlay::Overlay;
+use butterpollo_win_io::input::Injector;
 use rubylight_native_api::error::ErrorCode;
 use std::{
     collections::HashMap,
@@ -564,7 +565,13 @@ impl VideoOverlay {
         }
         self.target = target;
         let overlay = self.frame.as_deref().and_then(|frame| {
-            let overlay = Overlay::new(menu::Shared::revision(state), frame);
+            let overlay = Overlay::new(
+                menu::Shared::revision(state),
+                frame.origin,
+                frame.size,
+                frame.scale,
+                frame.rgba.clone(),
+            );
             match overlay.validate(target) {
                 Ok(()) => Some(overlay),
                 Err(error) if frame.target != target => {

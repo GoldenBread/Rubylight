@@ -1,4 +1,4 @@
-#Requires -Version 7
+﻿#Requires -Version 7
 <#
 .SYNOPSIS
 Stream-test and install a published Rubylight release on the Radeon host.
@@ -122,12 +122,12 @@ try {
     Update-CheckBuildLock $held
     # The fixture profile (Cargo.toml): release optimization without its LTO, incremental, in a
     # target kept with the fixtures, so a version bump rebuilds the probes in seconds.
-    cargo build --profile fixture --locked --manifest-path "$checkout\Cargo.toml" --target-dir "$fixtures\target" -p butterpollo-windows `
-        --example audio_probe --example motion_probe --example udp_shaper *> "$qa\probe-build.log"
+    cargo build --profile fixture --locked --manifest-path "$checkout\Cargo.toml" --target-dir "$fixtures\target" -p butterpollo-probes `
+        --bin audio_probe --bin motion_probe --bin udp_shaper *> "$qa\probe-build.log"
 } finally { Exit-CheckLocks $held }
 # udp_shaper is for bottleneck.py, the slow-link check, which this check does not run.
-Copy-Item "$fixtures\target\fixture\examples\audio_probe.exe", "$fixtures\target\fixture\examples\motion_probe.exe",
-    "$fixtures\target\fixture\examples\udp_shaper.exe" $fixtures
+Copy-Item "$fixtures\target\fixture\audio_probe.exe", "$fixtures\target\fixture\motion_probe.exe",
+    "$fixtures\target\fixture\udp_shaper.exe" $fixtures
 $client = "$fixtures\moonlight-client.exe"
 
 foreach ($case in 'h264', 'hevc', 'av1', 'hevc-vrr', 'hevc-recovery', 'hevc-behind', 'hevc-120', 'hevc-warp', 'pyrowave', 'pyrowave-hdr-444') {

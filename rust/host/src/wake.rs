@@ -9,7 +9,7 @@ use butterpollo_session::wake::{
     grace::WakeGrace,
     idle::{self, IdleSleep, Input, Settings, Snapshot, Status},
 };
-use butterpollo_windows::wake::{IDLE_FAILED, IDLE_READ};
+use butterpollo_win_io::wake::{IDLE_FAILED, IDLE_READ};
 use rubylight_native_api::{session::State as Session, wake as api};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -77,28 +77,28 @@ struct Windows;
 
 impl PowerSystem for Windows {
     fn adapters(&self) -> Result<Vec<Adapter>> {
-        butterpollo_windows::wake::adapters()
+        butterpollo_win_io::wake::adapters()
     }
     fn default_route(&self) -> Result<Option<IpAddr>> {
-        butterpollo_windows::wake::default_route_source()
+        butterpollo_win_io::wake::default_route_source()
     }
     fn read_nics(&self) -> Result<NicReport> {
-        butterpollo_windows::wake::read_nics()
+        butterpollo_win_io::wake::read_nics()
     }
     fn system_facts(&self) -> Result<SystemFacts> {
-        butterpollo_windows::wake::system_facts()
+        butterpollo_win_io::wake::system_facts()
     }
     fn execution_state(&self) -> Result<u32> {
-        butterpollo_windows::wake::execution_state()
+        butterpollo_win_io::wake::execution_state()
     }
     fn slept(&self) -> Result<Duration> {
-        butterpollo_windows::wake::slept_ms().map(Duration::from_millis)
+        butterpollo_win_io::wake::slept_ms().map(Duration::from_millis)
     }
     fn input(&self) -> Input {
-        use butterpollo_windows::process;
+        use butterpollo_win_io::process;
         if !process::is_system() {
             // A portable host runs in the user's own session.
-            return match butterpollo_windows::wake::idle_seconds() {
+            return match butterpollo_win_io::wake::idle_seconds() {
                 Ok(seconds) => Input::Idle(Duration::from_secs(seconds.into())),
                 Err(error) => Input::Failed(format!("{error:#}")),
             };
@@ -112,13 +112,13 @@ impl PowerSystem for Windows {
         }
     }
     fn sleep(&self) -> Result<()> {
-        butterpollo_windows::wake::suspend()
+        butterpollo_win_io::wake::suspend()
     }
     fn apply_nics(&self, plan: &FixPlan) -> Result<ApplyReport> {
-        butterpollo_windows::wake::apply_nics(plan)
+        butterpollo_win_io::wake::apply_nics(plan)
     }
     fn run_fix(&self, plan: &FixPlan) -> Result<Applied> {
-        use butterpollo_windows::wake::{SETTINGS_TIMEOUT, output_within};
+        use butterpollo_win_io::wake::{SETTINGS_TIMEOUT, output_within};
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let program = std::env::current_exe()?;
@@ -141,7 +141,7 @@ impl PowerSystem for Windows {
     }
     fn hold_awake(&self, reason: &str) -> Result<Box<dyn Send>> {
         Ok(Box::new(
-            butterpollo_windows::wake::PowerRequest::system_required(reason)?,
+            butterpollo_win_io::wake::PowerRequest::system_required(reason)?,
         ))
     }
 }
@@ -149,7 +149,7 @@ impl PowerSystem for Windows {
 /// `butterpollo.exe --idle-seconds` in the signed-in user's session, where
 /// `GetLastInputInfo` sees their input; its exit code.
 fn idle_helper() -> Result<u32> {
-    use butterpollo_windows::process::{Process, Target};
+    use butterpollo_win_io::process::{Process, Target};
     let program = std::env::current_exe()?;
     let helper = Process::spawn(
         &program,
@@ -181,7 +181,7 @@ fn helper_input(code: u32) -> Input {
 
 /// `--idle-seconds`: the exit code [`helper_input`] reads.
 pub fn idle_seconds_exit_code() -> i32 {
-    butterpollo_windows::wake::idle_exit_code() as i32
+    butterpollo_win_io::wake::idle_exit_code() as i32
 }
 
 /// `--apply-wake-settings`: apply the host's plan in [`FIX_VARIABLE`], or

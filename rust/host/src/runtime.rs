@@ -4,7 +4,7 @@ use crate::{
     state::{AppStop, Shared},
 };
 use butterpollo_session::session::Role;
-use butterpollo_windows::{process::StopSignal, tray::Action};
+use butterpollo_win_io::{process::StopSignal, tray::Action};
 use rubylight_native_api::session::State;
 use std::{
     sync::{
@@ -28,8 +28,8 @@ fn streaming(h: &Shared) -> bool {
 fn application_finished(h: &Shared) -> bool {
     application_finished_with(
         h,
-        butterpollo_windows::process::processes,
-        butterpollo_windows::process::image_path,
+        butterpollo_win_io::process::processes,
+        butterpollo_win_io::process::image_path,
     )
 }
 /// The process list a Steam game is looked for in, and the program paths of
@@ -168,17 +168,17 @@ fn start_deferred(h: &Shared) {
 fn user_action(h: &Shared, action: Action, web_port: u16) {
     match action {
         Action::Open => {
-            if let Err(error) = butterpollo_windows::tray::open_web(web_port) {
+            if let Err(error) = butterpollo_win_io::tray::open_web(web_port) {
                 tracing::warn!(%error, "could not open the administration console");
             }
         }
         Action::EnterPin | Action::PairDevice | Action::RestoreSettings => {
             let page = match action {
-                Action::EnterPin => butterpollo_windows::tray::PAGE_ENTER_PIN,
-                Action::RestoreSettings => butterpollo_windows::tray::PAGE_BACKUP,
-                _ => butterpollo_windows::tray::PAGE_PAIR_QR,
+                Action::EnterPin => butterpollo_win_io::tray::PAGE_ENTER_PIN,
+                Action::RestoreSettings => butterpollo_win_io::tray::PAGE_BACKUP,
+                _ => butterpollo_win_io::tray::PAGE_PAIR_QR,
             };
-            if let Err(error) = butterpollo_windows::tray::open_web_page(web_port, page) {
+            if let Err(error) = butterpollo_win_io::tray::open_web_page(web_port, page) {
                 tracing::warn!(%error, page, "could not open the administration console");
             }
         }
@@ -209,7 +209,7 @@ fn user_action(h: &Shared, action: Action, web_port: u16) {
                 match crate::settings_backup::export_from_tray(&h) {
                     Ok(path) => {
                         tracing::info!(path = %path.display(), "settings backed up from the tray");
-                        butterpollo_windows::tray::notify(
+                        butterpollo_win_io::tray::notify(
                             "Settings backed up",
                             &format!(
                                 "Saved to {}. Pairing identity and sign-in are not in it.",
@@ -219,7 +219,7 @@ fn user_action(h: &Shared, action: Action, web_port: u16) {
                     }
                     Err(error) => {
                         tracing::warn!(error = %format!("{error:#}"), "the tray settings backup failed");
-                        butterpollo_windows::tray::notify(
+                        butterpollo_win_io::tray::notify(
                             "Settings not backed up",
                             &format!("{error:#}"),
                         );
@@ -253,7 +253,7 @@ fn show_app(h: &Shared, tray: &mut butterpollo_session::tray::Tracker) {
     let Some(_) = tray.update(current) else {
         return;
     };
-    butterpollo_windows::tray::show_app(tray.icon(), tray.app(), tray.summary().as_deref());
+    butterpollo_win_io::tray::show_app(tray.icon(), tray.app(), tray.summary().as_deref());
 }
 /// End every stream and remote monitor and release the displays they held,
 /// which removes the virtual displays and restores the layout.
@@ -271,7 +271,7 @@ pub fn release_displays(h: &Shared) {
 #[derive(Default)]
 struct RestoreHotkey {
     wanted: Option<(u32, u32)>,
-    registered: Option<butterpollo_windows::hotkey::Hotkey>,
+    registered: Option<butterpollo_win_io::hotkey::Hotkey>,
     presses: Option<std::sync::mpsc::Receiver<()>>,
     /// The settings revision the hotkey was last read at: `None` before the
     /// first read. A save wakes the loop, so the revision says whether to
@@ -308,7 +308,7 @@ impl RestoreHotkey {
         let (pressed, presses) = std::sync::mpsc::channel();
         // A press wakes an idle loop.
         let wake = h.maintain_wake().clone();
-        match butterpollo_windows::hotkey::Hotkey::register(key, modifiers, move || {
+        match butterpollo_win_io::hotkey::Hotkey::register(key, modifiers, move || {
             let _ = pressed.send(());
             wake.notify_one();
         }) {
@@ -338,7 +338,7 @@ fn spawn_library_tick(h: &Shared, running: &Arc<AtomicBool>) -> bool {
     spawn_exclusive(running, move || {
         // Where Steam is takes registry reads and the signed-in user's environment: both checks
         // ask, so the answer is looked up once per tick, and only when one of them needs it.
-        let steam = crate::steam::Roots::new(butterpollo_windows::steam::roots);
+        let steam = crate::steam::Roots::new(butterpollo_win_io::steam::roots);
         crate::steam::watch(&h, &steam);
         crate::playnite::watch(&h);
         crate::library::watch(&h, &steam);
@@ -410,8 +410,8 @@ fn wake_on_stop(stop_signal: &Arc<StopSignal>, wake: Arc<Notify>) {
 /// sleeps run on the monotonic clock, which may not count the time the PC slept; Windows's
 /// resume notification does not depend on it. The registration ends when the returned guard
 /// drops.
-fn wake_on_resume(wake: Arc<Notify>) -> Option<butterpollo_windows::power::ResumeWatch> {
-    match butterpollo_windows::power::on_resume(move || wake.notify_one()) {
+fn wake_on_resume(wake: Arc<Notify>) -> Option<butterpollo_win_io::power::ResumeWatch> {
+    match butterpollo_win_io::power::on_resume(move || wake.notify_one()) {
         Ok(watch) => Some(watch),
         Err(error) => {
             tracing::warn!("resume from sleep is not watched: {error:#}");
@@ -614,7 +614,7 @@ pub async fn maintain(
             spawn_exclusive(&updating, move || crate::updater::poll(&h));
         }
         auto_lock.poll(&h);
-        let recovery_pending = butterpollo_windows::display_recovery::has_pending();
+        let recovery_pending = butterpollo_win_display::display_recovery::has_pending();
         display_recovery.poll(
             Instant::now(),
             recovery_pending,
@@ -623,7 +623,7 @@ pub async fn maintain(
             |active, result| {
                 let wake = wake.clone();
                 spawn_exclusive(&active, move || {
-                    let outcome = butterpollo_windows::display_recovery::recover_pending()
+                    let outcome = butterpollo_win_display::display_recovery::recover_pending()
                         .map_err(|error| format!("{error:#}"));
                     *result.lock().unwrap() = Some(outcome);
                     wake.notify_one();
@@ -632,7 +632,7 @@ pub async fn maintain(
         );
         if actions.is_some() {
             show_app(&h, &mut tray);
-            butterpollo_windows::tray::release_overdue_notices();
+            butterpollo_win_io::tray::release_overdue_notices();
         }
         if let Some(actions) = &actions {
             while let Ok(action) = actions.try_recv() {
@@ -652,7 +652,7 @@ pub async fn maintain(
         }
         let notices = actions
             .is_some()
-            .then(butterpollo_windows::tray::notices_due)
+            .then(butterpollo_win_io::tray::notices_due)
             .flatten();
         // Each job's own deadline: the release check, the updater's tidy and
         // report, the pending removals' retry, the library and cover checks,
@@ -666,7 +666,7 @@ pub async fn maintain(
             Some(steam_at),
             notices,
             auto_lock.due(),
-            display_recovery.due(butterpollo_windows::display_recovery::has_pending()),
+            display_recovery.due(butterpollo_win_display::display_recovery::has_pending()),
         ];
         let at = idle_until(Instant::now(), timers.into_iter().flatten());
         tokio::select! {
@@ -677,9 +677,9 @@ pub async fn maintain(
 }
 
 fn recovery_session_ready() -> bool {
-    !butterpollo_windows::input::secure_desktop_shown()
-        && !(butterpollo_windows::process::is_system()
-            && !butterpollo_windows::process::user_signed_in())
+    !butterpollo_win_io::input::secure_desktop_shown()
+        && !(butterpollo_win_io::process::is_system()
+            && !butterpollo_win_io::process::user_signed_in())
 }
 
 /// Retries incomplete startup display recovery once the host is idle, a user

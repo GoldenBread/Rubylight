@@ -56,7 +56,7 @@ pub(crate) struct Pc {
     /// The game's .exe each started session's Nucleus got, in order.
     pub exe_paths: Mutex<Vec<String>>,
     /// What each started session tells the instances it finds, in order.
-    pub instances: Mutex<Vec<Option<butterpollo_windows::nucleus::session::Instances>>>,
+    pub instances: Mutex<Vec<Option<butterpollo_win_io::nucleus::session::Instances>>>,
     /// How often an app's game was looked up for Rubylight's handler.
     pub lookups: AtomicUsize,
     /// Whether the signed-in user has an elevated token, or why not.
@@ -308,7 +308,7 @@ impl super::Pc for Pc {
         }
         // As on the PC: never while Nucleus Co-op runs.
         if let Some(pid) = super::Pc::running(self)? {
-            anyhow::bail!(butterpollo_windows::nucleus::session::already_running(pid));
+            anyhow::bail!(butterpollo_win_io::nucleus::session::already_running(pid));
         }
         self.own.lock().unwrap().push(setup.clone());
         self.own_in
@@ -357,7 +357,7 @@ impl super::Pc for Pc {
         }
         // As the PC's session refuses while Nucleus Co-op runs.
         if let Some(pid) = super::Pc::running(self)? {
-            anyhow::bail!(butterpollo_windows::nucleus::session::already_running(pid));
+            anyhow::bail!(butterpollo_win_io::nucleus::session::already_running(pid));
         }
         let pads: Vec<u8> = (0..start.players as u8).collect();
         let session = coop::Session::new(

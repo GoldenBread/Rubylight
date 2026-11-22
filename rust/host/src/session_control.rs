@@ -484,7 +484,7 @@ impl Host {
     /// returned guard drops, so Quit, End session, Close game and the device's next launch can
     /// stop it (`stop_launch`). The caller holds `launch_transition`.
     pub(crate) fn launch_started(&self, device: &str) -> LaunchStarted<'_> {
-        let cancel = butterpollo_windows::process::CommandCancellation::new()
+        let cancel = butterpollo_win_io::process::CommandCancellation::new()
             .map(std::sync::Arc::new)
             .map_err(|error| tracing::warn!(%error, "this launch cannot be stopped early"))
             .ok();
@@ -499,7 +499,7 @@ impl Host {
     /// What ends the running launch's preparation commands; none outside a launch.
     pub(crate) fn launch_cancellation(
         &self,
-    ) -> Option<std::sync::Arc<butterpollo_windows::process::CommandCancellation>> {
+    ) -> Option<std::sync::Arc<butterpollo_win_io::process::CommandCancellation>> {
         locked(&self.launch_cancel)
             .as_ref()
             .map(|(_, cancel)| cancel.clone())
@@ -748,7 +748,7 @@ impl LaunchSession<'_> {
 /// The running launch named by `Host::launch_started`, until it drops.
 pub(crate) struct LaunchStarted<'a> {
     host: &'a Host,
-    cancel: Option<std::sync::Arc<butterpollo_windows::process::CommandCancellation>>,
+    cancel: Option<std::sync::Arc<butterpollo_win_io::process::CommandCancellation>>,
 }
 impl Drop for LaunchStarted<'_> {
     fn drop(&mut self) {

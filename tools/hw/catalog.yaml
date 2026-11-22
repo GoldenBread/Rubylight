@@ -201,7 +201,7 @@ cases:
   - id: encoder-focus-amf-quality
     device: desktop
     title: Encoder focus, amf_quality --focus static for 60 s
-    command: 'cargo +1.98.1-x86_64-pc-windows-gnu run --release -p butterpollo-windows --example amf_quality -- --codec hevc --width 1920 --height 1080 --fps 120 --bitrate 20000 --frames 7200 --focus static --out {{out}}\amf_quality.json; exit $LASTEXITCODE'
+    command: 'cargo +1.98.1-x86_64-pc-windows-gnu run --release -p butterpollo-probes --bin amf_quality -- --codec hevc --width 1920 --height 1080 --fps 120 --bitrate 20000 --frames 7200 --focus static --out {{out}}\amf_quality.json; exit $LASTEXITCODE'
     preconditions: [idle, gpu-lock]
     pass: exit 0, focus_maps > 0 and the first map under the cap in the amf_quality JSON line and the "encoder focus check:" log
     output: '{{out}}\amf_quality.json'
@@ -294,7 +294,7 @@ cases:
   - id: hlg-gpu-tests
     device: desktop
     title: HLG and Dolby Vision 8.4 GPU tests (shader against the CPU reference, hdr_stats 1000-nit end, AMF bitstream)
-    command: '$env:BUTTERPOLLO_TEST_FFPROBE = (Get-Command ffprobe).Source; cargo +1.98.1-x86_64-pc-windows-gnu test -p butterpollo-windows --lib --locked -- --ignored hlg overlay_matches_the_reference *> {{out}}\hlg-gpu.log; exit $LASTEXITCODE'
+    command: '$env:BUTTERPOLLO_TEST_FFPROBE = (Get-Command ffprobe).Source; cargo +1.98.1-x86_64-pc-windows-gnu test -p butterpollo-win-graphics --lib --locked -- --ignored hlg overlay_matches_the_reference *> {{out}}\hlg-gpu.log; exit $LASTEXITCODE'
     preconditions: [idle, gpu-lock]
     pass: exit 0; gpu_hlg_matches_the_cpu_reference_in_every_converter, hlg_stream_statistics_end_at_the_1000_nit_grading, hlg_and_dolby_vision_8_4_reach_the_bitstream (arib-std-b67, bt2020, NAL 62 only on HEVC 8.4) and the overlay reference test pass
     pass_regex: 'test result: ok\. [1-9]'
@@ -534,7 +534,7 @@ cases:
   - id: clipboard-image-desktop
     device: desktop
     title: Images through this PC's real clipboard (PNG and CF_DIBV5 in, PNG out)
-    command: 'cargo +1.98.1-x86_64-pc-windows-gnu test -p butterpollo-windows --lib clipboard::tests -- --ignored --exact clipboard::tests::images_round_trip_through_the_real_clipboard *> {{out}}\clipboard.log; $code = $LASTEXITCODE; Get-Content {{out}}\clipboard.log -Tail 5; exit $code'
+    command: 'cargo +1.98.1-x86_64-pc-windows-gnu test -p butterpollo-win-io --lib clipboard::tests -- --ignored --exact clipboard::tests::images_round_trip_through_the_real_clipboard *> {{out}}\clipboard.log; $code = $LASTEXITCODE; Get-Content {{out}}\clipboard.log -Tail 5; exit $code'
     preconditions: [idle]
     pass: exit 0, one test passed
     pass_regex: 'test result: ok\. 1 passed'

@@ -1,7 +1,7 @@
 //! Faults for the isolated debug host used by the release soak. Never compiled
 //! into a release binary or enabled without an explicit test-owned directory.
 use anyhow::{Context, Result};
-use butterpollo_windows::encoder::Encoded;
+use butterpollo_win_graphics::encoder::Encoded;
 use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -129,7 +129,7 @@ fn fault(kind: &str, persistent: bool) -> anyhow::Error {
         anyhow::anyhow!("soak injected {kind}")
     };
     if kind == "DXGI_ERROR_DEVICE_REMOVED" {
-        error.context(butterpollo_windows::device_loss::DeviceLost(
+        error.context(butterpollo_win_graphics::device_loss::DeviceLost(
             0x887a0005_u32 as i32,
         ))
     } else {

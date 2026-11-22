@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use butterpollo_media_policy::frame_warp::{Mask, Measurer, Model, Prior, Thumbnail};
-use butterpollo_windows::capture::GpuImage;
-use butterpollo_windows::compute::frame_warp::{FrameWarpGpu, Hud, Pass, hud_grid};
+use butterpollo_win_graphics::capture::GpuImage;
+use butterpollo_win_graphics::compute::frame_warp::{FrameWarpGpu, Hud, Pass, hud_grid};
 use serde::{Deserialize, Serialize};
 
 use crate::state::{Launch, Session, Shared};
@@ -31,7 +31,7 @@ const FILE: &str = "frame_warp.json";
 pub(crate) struct VideoFrameWarp {
     passes: Option<FrameWarpGpu>,
     /// The graphics device the passes last failed on; tried again only on another.
-    failed_on: Option<butterpollo_windows::capture::Device>,
+    failed_on: Option<butterpollo_win_graphics::capture::Device>,
     worker: Option<Worker>,
     /// The worker could not start: no Frame Warp for the rest of this video thread.
     stopped: bool,

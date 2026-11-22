@@ -48,7 +48,7 @@ const ACCESS: game_files::Access = if cfg!(test) {
 
 #[cfg_attr(test, allow(dead_code))]
 fn as_user(work: &mut dyn FnMut()) -> std::io::Result<()> {
-    butterpollo_windows::user_folder::as_user(work)
+    butterpollo_win_io::user_folder::as_user(work)
         .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
@@ -246,7 +246,7 @@ fn next_wait(last: Option<Duration>, nobody_signed_in: bool) -> Duration {
 
 /// Whether the host runs as the service at the sign-in screen, with no user to act as.
 fn nobody_signed_in() -> bool {
-    use butterpollo_windows::process;
+    use butterpollo_win_io::process;
     process::is_system() && !process::user_signed_in()
 }
 
@@ -306,7 +306,7 @@ fn restorer(host: &Weak<Host>, receiver: &Receiver<()>) {
 /// Steam install folder. `$(...)` in the paths must be expanded already.
 pub fn folders(app: &App) -> (Option<PathBuf>, Vec<PathBuf>) {
     let program = {
-        let target = butterpollo_windows::process::command_target(&app.cmd);
+        let target = butterpollo_win_io::process::command_target(&app.cmd);
         let path = Path::new(target);
         (!target.contains("://") && path.is_absolute())
             .then(|| path.parent().map(Path::to_path_buf))

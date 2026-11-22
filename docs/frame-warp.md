@@ -194,7 +194,7 @@ on a 120 Hz screen.
 
 ## Measuring
 
-`rust/windows/examples/look_probe.rs` is a fake mouse-look game whose response is known exactly.
+`rust/probes/src/look_probe.rs` is a fake mouse-look game whose response is known exactly.
 Run it on a display an isolated test host captures (`--injected-only`, so only the host's moves
 turn it), and on the same PC stream that display at its own size with nightjar-cli, setting
 `NIGHTJAR_CLI_FRAME_WARP=<csv>` (ask for Frame Warp and log the shift each decoded picture gets)
@@ -230,7 +230,7 @@ full rules for other hosts. Little-endian throughout.
 |---|---|
 | Wire formats, stick curve | `client/protocol/core/src/frame_warp.rs` |
 | Host history, motion, lens, calibration, tags, mask choice | `rust/core/src/frame_warp/` |
-| Host GPU thumbnail and HUD passes | `rust/windows/src/compute_frame_warp.rs`, `rust/windows/src/shaders/color.hlsl` |
+| Host GPU thumbnail and HUD passes | `rust/windows/graphics/src/compute_frame_warp.rs`, `rust/windows/abi/src/shaders/color.hlsl` |
 | Host wiring, setting and the per-game memory | `rust/host/src/stream/frame_warp.rs`, `rust/core/src/config/overrides.rs` |
 | Client counting and shift | `client/protocol/client/src/frame_warp.rs`, `input/queue.rs`, `control/session.rs` |
 | Desktop presenters | `client/protocol/desktop/src/stream/` |

@@ -327,7 +327,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $repo 'rust\compatibility') -Destination "$distribution\compatibility" -Recurse
         Copy-Item -LiteralPath (Join-Path $repo 'rust\THIRD_PARTY.md') -Destination "$distribution\licenses"
         foreach ($header in @('nvEncodeAPI.h', 'dynlink_cuda.h')) {
-            $text = [IO.File]::ReadAllText((Join-Path $repo "rust\windows\include\$header"))
+            $text = [IO.File]::ReadAllText((Join-Path $repo "rust\windows\abi\include\$header"))
             $notice = $text.Substring(0, $text.IndexOf('*/') + 2)
             $notice | Set-Content -LiteralPath "$distribution\licenses\$header.txt" -Encoding utf8
         }

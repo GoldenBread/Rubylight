@@ -1,7 +1,7 @@
 //! `GET /radeon`, `POST /radeon/settings` and `POST /radeon/restore` (plan item A3, brief 4).
 //! The contract is `docs/native-api.md`, "Radeon state and writes".
 //!
-//! Every driver call goes through the Radeon worker thread (`butterpollo_windows::radeon`), and
+//! Every driver call goes through the Radeon worker thread (`butterpollo_win_graphics::radeon`), and
 //! every handler waits for it on `spawn_blocking`, so neither the async executor nor a stream
 //! thread ever waits for ADLX. Reads are cached for one second.
 use super::{
@@ -22,7 +22,7 @@ use butterpollo_session::{
     session_state::Refusal,
     state::Client,
 };
-use butterpollo_windows::radeon::{
+use butterpollo_win_graphics::radeon::{
     Driver, Entry, ErrorKind, GpuInfo, WriteError,
     model::{self, Value},
     worker::{Panel, Phase, Status},
@@ -175,7 +175,7 @@ fn write_settings(h: &Shared, connection: &Connection, body: &[u8]) -> Reply {
                 .for_setting(&change.id));
             }
         };
-        changes.push(butterpollo_windows::radeon::Change {
+        changes.push(butterpollo_win_graphics::radeon::Change {
             id: change.id,
             value,
         });

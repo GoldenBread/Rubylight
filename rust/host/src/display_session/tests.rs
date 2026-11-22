@@ -1,6 +1,5 @@
 use super::*;
-use std::cell::Cell;
-use std::sync::mpsc;
+use std::{cell::Cell, sync::mpsc};
 
 thread_local! {
     /// How often this thread held off the watch over a woken display.
@@ -1216,7 +1215,8 @@ fn a_window_output_streams_that_window_and_a_display_name_does_not() {
     assert_eq!(
         configured_window(&window).unwrap(),
         Some(
-            butterpollo_windows::capture::WindowTarget::new(0x2056c, r"\\.\DISPLAY1").owned_by(812)
+            butterpollo_win_graphics::capture::WindowTarget::new(0x2056c, r"\\.\DISPLAY1")
+                .owned_by(812)
         )
     );
     for display in ["", r"output_name=\\.\DISPLAY1", "output_name=Dell U2723QE"] {
@@ -1247,8 +1247,8 @@ fn a_window_output_streams_that_window_and_a_display_name_does_not() {
 fn a_closed_configured_window_refuses_the_stream_with_the_reason() {
     // No window has this handle; a minimised, reused or misplaced one is
     // refused the same way (capture::window's tests).
-    let gone =
-        butterpollo_windows::capture::WindowTarget::new(0x7fff_fff0, r"\\.\DISPLAY1").owned_by(9);
+    let gone = butterpollo_win_graphics::capture::WindowTarget::new(0x7fff_fff0, r"\\.\DISPLAY1")
+        .owned_by(9);
     let error = format!("{:#}", configured_window_open(&gone).unwrap_err());
     assert!(
         error.contains(r"output_name names the window window:2147483632/9@\\.\DISPLAY1"),
@@ -1827,7 +1827,7 @@ fn a_retained_display_stops_enforcing_layout_after_the_last_preparation_drops() 
 #[test]
 #[ignore = "creates a virtual display, disables it while paused, and resumes it"]
 fn native_paused_game_leaves_a_disabled_display_off_until_resume() -> Result<()> {
-    use butterpollo_windows::display::{Snapshot, Topology, VirtualOptions, monitors};
+    use butterpollo_win_display::display::{Snapshot, Topology, VirtualOptions, monitors};
 
     let before = Snapshot::capture()?;
     let result = (|| -> Result<()> {

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 pub(super) fn console(h: &Shared, method: &str, data: &Value) -> anyhow::Result<Value> {
     if method == "GET" {
-        let mut recovery = butterpollo_windows::process::console_recovery()?;
+        let mut recovery = butterpollo_win_io::process::console_recovery()?;
         if !h.sessions.lock().unwrap().idle() {
             recovery.can_reattach = false;
             recovery.reason = "Disconnect streams and wait for pending connections to finish before returning to the console.".into();
@@ -27,7 +27,7 @@ pub(super) fn console(h: &Shared, method: &str, data: &Value) -> anyhow::Result<
     if !sessions.idle() {
         anyhow::bail!("disconnect streams and wait for pending connections to finish first");
     }
-    butterpollo_windows::process::reattach_console(session, console)?;
+    butterpollo_win_io::process::reattach_console(session, console)?;
     tracing::info!(
         session,
         console,

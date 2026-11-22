@@ -135,7 +135,7 @@ fn app_processes(
         None => None,
     };
     let names = if named {
-        butterpollo_windows::process::processes()
+        butterpollo_win_io::process::processes()
             .map(|all| all.into_iter().map(|p| (p.pid, p.name)).collect())
             .unwrap_or_default()
     } else {
@@ -197,7 +197,7 @@ impl Watch {
             (self.tree, self.names) = app_processes(h, s, self.named);
             self.tree_read = Some(now);
         }
-        let mut windows = match butterpollo_windows::capture::app_windows() {
+        let mut windows = match butterpollo_win_graphics::capture::app_windows() {
             Ok(windows) => windows,
             Err(error) => {
                 tracing::debug!(%error, "the desktop's windows are unavailable");
@@ -221,7 +221,7 @@ impl Watch {
         let decision = self.follow.step(picked, settings.closed, now);
         let target = match &decision.target {
             Target::Window { id, pid } => {
-                match butterpollo_windows::capture::app_window_target(
+                match butterpollo_win_graphics::capture::app_window_target(
                     *id,
                     *pid,
                     settings.frame == Frame::Client,

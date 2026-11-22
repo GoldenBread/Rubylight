@@ -37,7 +37,7 @@ impl<T> Baseline<T> {
     }
 }
 
-pub(super) type SavedLayout = (butterpollo_windows::display::Snapshot, Vec<String>);
+pub(super) type SavedLayout = (butterpollo_win_display::display::Snapshot, Vec<String>);
 
 pub(super) static BASELINE: Mutex<Baseline<SavedLayout>> = Mutex::new(Baseline::new());
 
@@ -48,13 +48,13 @@ pub(super) struct GoldenLease {
 impl GoldenLease {
     pub(super) fn new(
         h: &Shared,
-        snapshot: butterpollo_windows::display::Snapshot,
+        snapshot: butterpollo_win_display::display::Snapshot,
         config: &Config,
     ) -> Result<Self> {
         let excluded = crate::maintenance::display_exclusions(config)?;
         BASELINE.lock().unwrap().acquire(|| {
             tracing::info!("saved display baseline selected for restoration after streaming");
-            butterpollo_windows::display_recovery::baseline(Some((
+            butterpollo_win_display::display_recovery::baseline(Some((
                 snapshot.clone(),
                 excluded.clone(),
             )))?;
@@ -76,7 +76,7 @@ impl Drop for GoldenLease {
             .release(|(snapshot, mut excluded)| {
                 if let Some(host) = self.host.upgrade() {
                     let outputs = crate::remote_display::outputs(&host);
-                    if let Ok(monitors) = butterpollo_windows::display::monitors() {
+                    if let Ok(monitors) = butterpollo_win_display::display::monitors() {
                         excluded.extend(
                             monitors
                                 .iter()
@@ -87,12 +87,12 @@ impl Drop for GoldenLease {
                 }
                 // Displays still in use stay as they are: a stream without
                 // this lease, a paused game display or a launch being prepared.
-                excluded.extend(butterpollo_windows::display::leased_displays());
+                excluded.extend(butterpollo_win_display::display::leased_displays());
                 tracing::info!("restoring the saved display baseline");
                 if let Err(error) = snapshot.restore_excluding(&excluded) {
                     tracing::warn!(%error,"saved display baseline restoration remains pending");
                 } else {
-                    let _ = butterpollo_windows::display_recovery::baseline(None);
+                    let _ = butterpollo_win_display::display_recovery::baseline(None);
                 }
             });
     }

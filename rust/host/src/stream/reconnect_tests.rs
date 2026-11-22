@@ -101,7 +101,7 @@ async fn a_session_change_during_launch_or_resume_releases_unaccepted_preparatio
                     // CI administrators may have no linked non-elevated
                     // token. Use the existing runner context, as the process
                     // lifecycle fixtures do; never request UAC elevation.
-                    elevated: butterpollo_windows::process::user_environment().is_err(),
+                    elevated: butterpollo_win_io::process::user_environment().is_err(),
                     extra: Default::default(),
                 });
         }

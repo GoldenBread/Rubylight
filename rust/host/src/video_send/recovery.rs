@@ -2,7 +2,7 @@
 use crate::state::Session;
 use butterpollo_config::config::Config;
 use butterpollo_media_policy::{network_pacing, packet::VideoPacketizer};
-use butterpollo_windows::net::Link;
+use butterpollo_win_io::net::Link;
 use std::{net::SocketAddr, time::Duration};
 
 pub(crate) struct Pace {

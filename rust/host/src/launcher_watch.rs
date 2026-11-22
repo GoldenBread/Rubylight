@@ -23,13 +23,13 @@ fn now_ms() -> u64 {
 /// program of each window is looked up and only a launcher's is kept.
 fn launcher_windows() -> Vec<Window> {
     let mut names: HashMap<u32, Option<String>> = HashMap::new();
-    butterpollo_windows::window_list::visible()
+    butterpollo_win_io::window_list::visible()
         .into_iter()
         .filter_map(|window| {
             let program = names
                 .entry(window.pid)
                 .or_insert_with(|| {
-                    butterpollo_windows::process::image_path(window.pid)
+                    butterpollo_win_io::process::image_path(window.pid)
                         .map(|path| path.rsplit(['/', '\\']).next().unwrap_or(&path).to_owned())
                 })
                 .clone()?;

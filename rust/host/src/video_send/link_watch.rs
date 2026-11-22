@@ -2,7 +2,7 @@
 //! (GetBestInterfaceEx, GetIfEntry2Ex, more on a virtual adapter, and the
 //! interface's MTU) took the encode thread before an AMF submit and the paced
 //! sender between frames; they now read the watcher's latest answer.
-use butterpollo_windows::net::Link;
+use butterpollo_win_io::net::Link;
 use std::{
     net::SocketAddr,
     sync::{
@@ -127,9 +127,9 @@ impl Default for LinkWatch {
         Self::new(
             |peer, with_mtu| {
                 (
-                    butterpollo_windows::net::routed_link(peer),
+                    butterpollo_win_io::net::routed_link(peer),
                     if with_mtu {
-                        butterpollo_windows::net::routed_mtu(peer)
+                        butterpollo_win_io::net::routed_mtu(peer)
                     } else {
                         None
                     },

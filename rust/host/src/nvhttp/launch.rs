@@ -269,7 +269,8 @@ pub(super) fn start(h: Shared, connection: Connection, args: Args, resume: bool)
         ms = began.elapsed().as_millis() as u64,
         "launch request timing"
     );
-    let driver_ready = result.is_ok() && butterpollo_windows::display::virtual_display_available();
+    let driver_ready =
+        result.is_ok() && butterpollo_win_display::display::virtual_display_available();
     launch_response(result, requested, reply, resume, driver_ready)
 }
 /// A background stream leaves the PC to whoever uses it, so its game is heard

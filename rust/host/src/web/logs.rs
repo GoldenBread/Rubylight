@@ -201,7 +201,7 @@ mod tests {
             analyze_file(&path, 1 << 20).unwrap()["findings"],
             serde_json::json!([])
         );
-        let hang = "2026-10-20T12:40:20.129623Z  WARN butterpollo_windows::amf: slow encoder call call=\"AMF SubmitInput\" elapsed_ms=34787\n";
+        let hang = "2026-10-20T12:40:20.129623Z  WARN butterpollo_win_graphics::amf: slow encoder call call=\"AMF SubmitInput\" elapsed_ms=34787\n";
         let timeout = "2026-10-20T12:41:00.000000Z  WARN butterpollo::stream: client control stream timed out client=SM-F946B\n";
         std::fs::write(&path, format!("{hang}{hang}{timeout}")).unwrap();
         let all = analyze_file(&path, 1 << 20).unwrap();

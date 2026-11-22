@@ -394,7 +394,9 @@ dependencies = [
  "butterpollo-input-policy",
  "butterpollo-media-policy",
  "butterpollo-session",
- "butterpollo-windows",
+ "butterpollo-win-display",
+ "butterpollo-win-graphics",
+ "butterpollo-win-io",
  "clap",
  "embed-resource",
  "hex",
@@ -513,12 +515,23 @@ dependencies = [
  "anyhow",
  "butterpollo-config",
  "butterpollo-crypto",
+ "butterpollo-input-policy",
  "butterpollo-media-policy",
- "butterpollo-windows",
+ "butterpollo-session",
+ "butterpollo-win-display",
+ "butterpollo-win-graphics",
+ "butterpollo-win-io",
  "embed-resource",
+ "half",
  "hex",
+ "libloading",
+ "rubylight-protocol",
  "serde_json",
+ "socket2 0.6.5",
+ "tracing",
  "tracing-subscriber",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]
@@ -578,20 +591,64 @@ dependencies = [
 ]
 
 [[package]]
-name = "butterpollo-windows"
+name = "butterpollo-win-abi"
+version = "6.3.1"
+dependencies = [
+ "bindgen",
+ "windows",
+]
+
+[[package]]
+name = "butterpollo-win-display"
 version = "6.3.1"
 dependencies = [
  "anyhow",
- "bindgen",
  "butterpollo-config",
  "butterpollo-crypto",
- "butterpollo-input-policy",
  "butterpollo-media-policy",
  "butterpollo-session",
- "embed-resource",
+ "libloading",
+ "rubylight-vdisplay-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "butterpollo-win-graphics"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-media-policy",
+ "butterpollo-win-abi",
  "half",
  "libloading",
  "rayon",
+ "rubylight-protocol",
+ "rubylight-vdisplay-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "butterpollo-win-io"
+version = "6.3.1"
+dependencies = [
+ "anyhow",
+ "butterpollo-config",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
+ "libloading",
  "rubylight-protocol",
  "rubylight-vdisplay-proto",
  "rubylight-vgamepad-proto",
@@ -604,7 +661,6 @@ dependencies = [
  "windows",
  "windows-core",
  "windows-service",
- "zeroize",
 ]
 
 [[package]]
@@ -2764,7 +2820,7 @@ dependencies = [
  "butterpollo-input-policy",
  "butterpollo-media-policy",
  "butterpollo-session",
- "butterpollo-windows",
+ "butterpollo-win-display",
  "nightjar-core",
  "rubylight-native-api",
  "rubylight-protocol",

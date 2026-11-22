@@ -1285,7 +1285,7 @@ fn a_folder_only_administrators_may_write_is_written_only_by_system_and_only_the
 
 /// The Users group as Windows names it here (`BUILTIN\Users` in English).
 fn users() -> String {
-    let name = butterpollo_windows::process::account_name("S-1-5-32-545").unwrap();
+    let name = butterpollo_win_io::process::account_name("S-1-5-32-545").unwrap();
     assert!(name.contains('\\'), "{name}");
     name
 }
@@ -1300,7 +1300,7 @@ fn users() -> String {
 #[ignore = "reads this PC's Program Files"]
 fn program_files_folders_are_left_to_system() {
     assert!(
-        !butterpollo_windows::process::elevated().unwrap(),
+        !butterpollo_win_io::process::elevated().unwrap(),
         "run it as an ordinary user"
     );
     let temp = tempdir();
@@ -1400,8 +1400,8 @@ fn a_folder_above_the_cache_lets_nobody_but_administrators_move_what_it_holds() 
     // The whole DACL is replaced: on CI the temp folder's entry for the
     // runner's account reaches a new folder without being marked inherited,
     // so icacls' /inheritance:r left it in place.
-    let sid = butterpollo_windows::process::own_sid().unwrap();
-    butterpollo_windows::process::restrict(
+    let sid = butterpollo_win_io::process::own_sid().unwrap();
+    butterpollo_win_io::process::restrict(
         &above,
         &format!("O:{sid}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200a9;;;BU)"),
     )

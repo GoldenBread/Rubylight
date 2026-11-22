@@ -35,7 +35,7 @@ fn frame(index: u8) -> Encoded {
     Encoded {
         framing: None,
         bytes: vec![index; if index == 1 { 300_000 } else { 3000 }],
-        unit: butterpollo_windows::encoder::Unit::Whole,
+        unit: butterpollo_win_graphics::encoder::Unit::Whole,
         idr: index == 1,
         after_invalidation: index == 3,
         frame_cap_bytes: None,
@@ -154,7 +154,7 @@ fn sender_handoff_benchmark() -> Result<()> {
             let mut encoded = Encoded {
                 framing: None,
                 bytes: vec![index as u8; (BITRATE / 8 / fps).max(8)],
-                unit: butterpollo_windows::encoder::Unit::Whole,
+                unit: butterpollo_win_graphics::encoder::Unit::Whole,
                 idr: index == 0,
                 after_invalidation: false,
                 frame_cap_bytes: None,
@@ -1405,7 +1405,7 @@ fn reconnect_keeps_packet_order_fec_recovery_and_iv_ownership_identical_to_inlin
 }
 
 /// One unit of a streamed frame.
-fn unit(unit: butterpollo_windows::encoder::Unit, shards: usize, fill: u8) -> Encoded {
+fn unit(unit: butterpollo_win_graphics::encoder::Unit, shards: usize, fill: u8) -> Encoded {
     Encoded {
         framing: None,
         bytes: vec![fill; shards * 1008],
@@ -1422,7 +1422,7 @@ fn unit(unit: butterpollo_windows::encoder::Unit, shards: usize, fill: u8) -> En
 
 fn slice(index: u32, shards: usize, fill: u8) -> Encoded {
     unit(
-        butterpollo_windows::encoder::Unit::Slice { index },
+        butterpollo_win_graphics::encoder::Unit::Slice { index },
         shards,
         fill,
     )
@@ -1430,7 +1430,7 @@ fn slice(index: u32, shards: usize, fill: u8) -> Encoded {
 
 fn last(index: u32, shards: usize, fill: u8) -> Encoded {
     unit(
-        butterpollo_windows::encoder::Unit::Last { index },
+        butterpollo_win_graphics::encoder::Unit::Last { index },
         shards,
         fill,
     )
@@ -1484,7 +1484,7 @@ fn a_streamed_frames_units_wait_in_the_pending_slot_through_a_keyframe_request()
     submit_units(&sender, vec![slice(0, 1, 1)]);
     assert_eq!(
         frames.recv_timeout(WAIT).unwrap(),
-        butterpollo_windows::encoder::Unit::Slice { index: 0 }
+        butterpollo_win_graphics::encoder::Unit::Slice { index: 0 }
     );
     submit_units(&sender, vec![last(1, 1, 2)]);
     // A whole frame waiting is skipped, a unit of a frame being sent is not.
@@ -1493,7 +1493,7 @@ fn a_streamed_frames_units_wait_in_the_pending_slot_through_a_keyframe_request()
     release.send(()).unwrap();
     assert_eq!(
         frames.recv_timeout(WAIT).unwrap(),
-        butterpollo_windows::encoder::Unit::Last { index: 1 }
+        butterpollo_win_graphics::encoder::Unit::Last { index: 1 }
     );
     release.send(()).unwrap();
     assert_eq!(sender.next_wire_frame().unwrap(), 1);
@@ -2178,7 +2178,7 @@ fn early_sender(session: Arc<Session>) -> Sender {
 
 fn keyframe(shards: usize) -> Encoded {
     // Encoded returns its buffer to a pool on drop, so no struct update.
-    let mut frame = unit(butterpollo_windows::encoder::Unit::Whole, shards, 7);
+    let mut frame = unit(butterpollo_win_graphics::encoder::Unit::Whole, shards, 7);
     frame.idr = true;
     frame.frame_cap_bytes = None;
     frame

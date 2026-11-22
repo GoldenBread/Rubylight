@@ -5,10 +5,22 @@
     clippy::undocumented_unsafe_blocks
 )]
 
+/// How long a dropped packet, frame or input stays on the stream card after
+/// it last happened.
+pub const EVENT_PERIOD: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Sink for user-facing session warnings raised by media-policy helpers.
-pub trait WarningSink {
+pub trait WarningSink: Send + Sync {
     fn set(&self, code: &str, message: &str);
+    fn event(&self, code: &str, message: &str, period: std::time::Duration) {
+        let _ = period;
+        self.set(code, message);
+    }
     fn clear(&self, code: &str);
+    fn replay(&self, _target: &dyn WarningSink) {}
+    fn snapshot(&self) -> Vec<RecordedWarning> {
+        Vec::new()
+    }
 }
 
 impl<T: WarningSink + ?Sized> WarningSink for std::sync::Arc<T> {
@@ -16,52 +28,98 @@ impl<T: WarningSink + ?Sized> WarningSink for std::sync::Arc<T> {
         (**self).set(code, message);
     }
 
+    fn event(&self, code: &str, message: &str, period: std::time::Duration) {
+        (**self).event(code, message, period);
+    }
+
     fn clear(&self, code: &str) {
         (**self).clear(code);
     }
+
+    fn replay(&self, target: &dyn WarningSink) {
+        (**self).replay(target);
+    }
+
+    fn snapshot(&self) -> Vec<RecordedWarning> {
+        (**self).snapshot()
+    }
 }
 
-#[cfg(test)]
+/// A warning captured in [`RecordedWarnings`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TestWarning {
-    pub(crate) code: String,
-    pub(crate) message: String,
+pub struct RecordedWarning {
+    pub code: String,
+    pub message: String,
 }
 
-#[cfg(test)]
+/// In-memory [`WarningSink`] for startup probes before a session attaches and for tests.
 #[derive(Default)]
-pub(crate) struct TestWarnings {
-    entries: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+pub struct RecordedWarnings {
+    entries:
+        std::sync::Mutex<std::collections::BTreeMap<String, (String, Option<std::time::Duration>)>>,
 }
 
-#[cfg(test)]
-impl WarningSink for TestWarnings {
+impl WarningSink for RecordedWarnings {
     fn set(&self, code: &str, message: &str) {
         self.entries
             .lock()
             .unwrap()
-            .insert(code.to_owned(), message.to_owned());
+            .insert(code.to_owned(), (message.to_owned(), None));
+    }
+
+    fn event(&self, code: &str, message: &str, period: std::time::Duration) {
+        self.entries
+            .lock()
+            .unwrap()
+            .insert(code.to_owned(), (message.to_owned(), Some(period)));
     }
 
     fn clear(&self, code: &str) {
         self.entries.lock().unwrap().remove(code);
     }
+
+    fn replay(&self, target: &dyn WarningSink) {
+        let entries: Vec<_> = self
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(code, (message, period))| (code.clone(), message.clone(), *period))
+            .collect();
+        for (code, message, period) in entries {
+            match period {
+                Some(period) => target.event(&code, &message, period),
+                None => target.set(&code, &message),
+            }
+        }
+    }
+
+    fn snapshot(&self) -> Vec<RecordedWarning> {
+        self.snapshot()
+    }
 }
 
-#[cfg(test)]
-impl TestWarnings {
-    pub(crate) fn snapshot(&self) -> Vec<TestWarning> {
+/// Shared [`RecordedWarnings`] sink for probes and tests before a session attaches.
+pub fn recorded_warnings() -> std::sync::Arc<dyn WarningSink> {
+    std::sync::Arc::new(RecordedWarnings::default())
+}
+
+impl RecordedWarnings {
+    pub fn snapshot(&self) -> Vec<RecordedWarning> {
         self.entries
             .lock()
             .unwrap()
             .iter()
-            .map(|(code, message)| TestWarning {
+            .map(|(code, (message, _))| RecordedWarning {
                 code: code.clone(),
                 message: message.clone(),
             })
             .collect()
     }
 }
+
+#[cfg(test)]
+pub(crate) type TestWarnings = RecordedWarnings;
 
 pub mod adaptive_bitrate;
 pub mod adaptive_fec;
@@ -106,6 +164,7 @@ pub mod network_path;
 pub mod nvenc;
 pub mod nvidia_component;
 pub mod nvidia_enhance;
+pub mod os_gate;
 pub mod packet;
 pub mod performance;
 pub mod phase_sync;

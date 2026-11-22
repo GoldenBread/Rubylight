@@ -140,7 +140,7 @@ class Repository(unittest.TestCase):
             os.chdir(before)
 
     def test_foreign_and_generated_code_is_left_out(self):
-        self.assertFalse(code_map.ours('rust/windows/include/nvEncodeAPI.h'))
+        self.assertFalse(code_map.ours('rust/windows/abi/include/nvEncodeAPI.h'))
         self.assertFalse(code_map.ours('client/protocol/vendor/x/src/lib.rs'))
         self.assertFalse(code_map.ours('docs/configuration.md'))
         self.assertTrue(code_map.ours('rust/host/src/stream.rs'))

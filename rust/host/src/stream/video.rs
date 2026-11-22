@@ -74,7 +74,7 @@ pub(super) fn poll_fits(
 /// core at the stream thread's priority for as long as the encoder stayed
 /// full. Nothing waits once no frame is pending, such as after a device loss.
 pub(super) fn wait_for_output(
-    timer: &butterpollo_windows::timing::Timer,
+    timer: &butterpollo_win_graphics::timing::Timer,
     recovery: &EncoderRecovery,
     encoder: Option<&impl EncoderOutput>,
 ) -> Result<()> {
@@ -275,7 +275,7 @@ pub(super) fn encoder_progress(
 
 // Keep recovery testable without constructing a GPU or an AMF runtime.
 pub(super) trait EncoderOutput {
-    fn poll(&mut self) -> Result<Vec<butterpollo_windows::encoder::Encoded>>;
+    fn poll(&mut self) -> Result<Vec<butterpollo_win_graphics::encoder::Encoded>>;
     fn pending(&self) -> bool;
     fn backlog(&self) -> usize;
     fn backlog_limit(&self) -> usize;
@@ -288,7 +288,7 @@ pub(super) trait EncoderOutput {
         None
     }
     /// An event that ends a wait for output, armed by this call.
-    fn output_event(&self) -> Option<&butterpollo_windows::timing::Signal> {
+    fn output_event(&self) -> Option<&butterpollo_win_graphics::timing::Signal> {
         None
     }
     /// A poll can wait in the driver.
@@ -298,7 +298,7 @@ pub(super) trait EncoderOutput {
 }
 
 impl EncoderOutput for Encoder {
-    fn poll(&mut self) -> Result<Vec<butterpollo_windows::encoder::Encoded>> {
+    fn poll(&mut self) -> Result<Vec<butterpollo_win_graphics::encoder::Encoded>> {
         self.poll()
     }
     fn pending(&self) -> bool {
@@ -319,7 +319,7 @@ impl EncoderOutput for Encoder {
     fn output_due(&self) -> Option<Instant> {
         self.output_due()
     }
-    fn output_event(&self) -> Option<&butterpollo_windows::timing::Signal> {
+    fn output_event(&self) -> Option<&butterpollo_win_graphics::timing::Signal> {
         self.output_event()
     }
     fn poll_blocks(&self) -> bool {
@@ -403,9 +403,9 @@ impl EncoderRecovery {
     }
     pub(super) fn output(
         &mut self,
-        output: Vec<butterpollo_windows::encoder::Encoded>,
+        output: Vec<butterpollo_win_graphics::encoder::Encoded>,
         now: impl Fn() -> Instant,
-    ) -> Result<Vec<butterpollo_windows::encoder::Encoded>> {
+    ) -> Result<Vec<butterpollo_win_graphics::encoder::Encoded>> {
         #[cfg(any(debug_assertions, test))]
         let output = self.stall.output(output, now())?;
         encoder_progress(&mut self.failing, !output.is_empty(), now())?;
@@ -424,7 +424,7 @@ impl EncoderRecovery {
         encoder: &mut Option<impl EncoderOutput>,
         warnings: &butterpollo_session::session::Warnings,
         now: impl Fn() -> Instant,
-    ) -> Result<Vec<butterpollo_windows::encoder::Encoded>> {
+    ) -> Result<Vec<butterpollo_win_graphics::encoder::Encoded>> {
         let Some(active) = encoder.as_mut() else {
             return Ok(vec![]);
         };
@@ -465,7 +465,7 @@ impl EncoderRecovery {
         encoder: &mut Option<impl EncoderOutput>,
         warnings: &butterpollo_session::session::Warnings,
         now: impl Fn() -> Instant,
-    ) -> Result<Option<Vec<butterpollo_windows::encoder::Encoded>>> {
+    ) -> Result<Option<Vec<butterpollo_win_graphics::encoder::Encoded>>> {
         if self.failing.is_none() {
             self.recreations = 0;
         }
@@ -687,7 +687,7 @@ impl Media {
                     }
                     leases.com = Some(ComGuard::new()?);
                     let _priority = Priority::new();
-                    let _streaming = butterpollo_windows::timing::StreamingScope::enter();
+                    let _streaming = crate::win_bridge::enter_streaming_scope();
                     let Some(config) = session.configure(&mut workers)? else {
                         return Ok(());
                     };

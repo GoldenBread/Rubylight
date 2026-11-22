@@ -307,8 +307,8 @@ fn status(h: &Shared) -> Value {
         "admin_protection": account == Some(Account::Protected),
         // Why Open Nucleus Co-op on this PC would be refused: an account
         // Windows doesn't elevate, in the words
-        // `butterpollo_windows::nucleus::session::open` refuses it with.
-        "open_refusal": refused_account.map(butterpollo_windows::nucleus::session::needs_administrator),
+        // `butterpollo_win_io::nucleus::session::open` refuses it with.
+        "open_refusal": refused_account.map(butterpollo_win_io::nucleus::session::needs_administrator),
         // The Nucleus Co-op window the console opened is still open.
         "opened": h.nucleus.opened(),
         "sessions": sessions,

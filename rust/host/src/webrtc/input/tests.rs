@@ -888,7 +888,7 @@ fn a_co_op_players_input_drives_only_its_slots_pad() {
     use crate::nucleus::{Admission, Game, fake};
     use butterpollo_config::config::Config;
     use butterpollo_session::state::App;
-    use butterpollo_windows::input::PadReport;
+    use butterpollo_win_io::input::PadReport;
     let f = Fixture::new();
     let h = f.host.clone();
     let pc = Arc::new(fake::Pc::installed());

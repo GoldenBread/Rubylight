@@ -117,10 +117,10 @@ impl Drop for Audio {
         }
     }
 }
-impl butterpollo_session::session::AudioPreparation<butterpollo_windows::audio_route::Route>
+impl butterpollo_session::session::AudioPreparation<butterpollo_win_io::audio_route::Route>
     for Audio
 {
-    fn route(&self) -> Arc<butterpollo_windows::audio_route::Route> {
+    fn route(&self) -> Arc<butterpollo_win_io::audio_route::Route> {
         panic!("the fake audio must never enter native audio preparation")
     }
 }
@@ -331,10 +331,10 @@ impl Fixture {
                 let started = Instant::now();
                 sender.submit(
                     s,
-                    vec![butterpollo_windows::encoder::Encoded {
+                    vec![butterpollo_win_graphics::encoder::Encoded {
                         framing: None,
                         bytes: frame,
-                        unit: butterpollo_windows::encoder::Unit::Whole,
+                        unit: butterpollo_win_graphics::encoder::Unit::Whole,
                         idr,
                         after_invalidation: false,
                         frame_cap_bytes: None,

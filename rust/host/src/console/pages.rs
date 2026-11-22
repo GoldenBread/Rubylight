@@ -721,7 +721,7 @@ async fn settings(
         "Virtual display",
         &value(
             "virtual_display_mode",
-            if butterpollo_windows::display::virtual_display_os() {
+            if butterpollo_win_display::display::virtual_display_os() {
                 "per_client"
             } else {
                 "disabled"

@@ -321,7 +321,7 @@ fn this_pcs_check_tells_a_folder_setup_never_made_from_a_file() {
     let file = directory.join(logic::SETUP_FILE);
     std::fs::write(&file, "{}").unwrap();
     for (path, folder) in [(&directory, true), (&file, false)] {
-        let open = butterpollo_windows::process::open_unfollowed(path, folder).unwrap();
+        let open = butterpollo_win_io::process::open_unfollowed(path, folder).unwrap();
         match administrators_own(&open, path) {
             Ok(()) => panic!("{} passed as administrators' own", path.display()),
             Err(error) => {
@@ -333,7 +333,7 @@ fn this_pcs_check_tells_a_folder_setup_never_made_from_a_file() {
     }
     // Checked through a context too.
     let error = administrators_own(
-        &butterpollo_windows::process::open_unfollowed(&directory, true).unwrap(),
+        &butterpollo_win_io::process::open_unfollowed(&directory, true).unwrap(),
         &directory,
     )
     .unwrap_err()
@@ -467,9 +467,9 @@ fn a_data_root_administrators_do_not_own_is_never_saved_into() {
         trusted_root: administrators_own_root,
         ..record_in(&target)
     };
-    let open = butterpollo_windows::process::open_unfollowed(&target, true).unwrap();
-    let owner = butterpollo_windows::process::open_file_owner(&open).unwrap();
-    let writers = butterpollo_windows::process::open_file_writers(&open).unwrap();
+    let open = butterpollo_win_io::process::open_unfollowed(&target, true).unwrap();
+    let owner = butterpollo_win_io::process::open_file_owner(&open).unwrap();
+    let writers = butterpollo_win_io::process::open_file_writers(&open).unwrap();
     drop(open);
     let administrators = |sid: &str| matches!(sid, "S-1-5-18" | "S-1-5-32-544");
     let error = format!("{:#}", own.save(&recorded()).unwrap_err());

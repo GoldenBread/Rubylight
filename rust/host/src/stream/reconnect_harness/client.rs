@@ -49,7 +49,7 @@ impl rusty_enet::Socket for LossySocket {
         // WSAECONNRESET on this receive. rusty_enet would end the client's worker on it.
         self.take_move();
         let packet = match rusty_enet::Socket::receive(&mut self.socket, buffer) {
-            Err(error) if butterpollo_windows::net::datagram_lost(&error) => None,
+            Err(error) if butterpollo_win_io::net::datagram_lost(&error) => None,
             result => result?,
         };
         if self.blocked.load(Ordering::Acquire) {

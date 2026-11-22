@@ -27,9 +27,120 @@
 //! area (its visible frame on the desktop), wherever the window is: the
 //! input injector maps onto the window's rectangle as it does onto a
 //! display's.
+use anyhow::{Context, Result, ensure};
 use butterpollo_config::config::Config;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
+
+pub const WINDOW_TARGET_PREFIX: &str = "window:";
+
+/// One game window as the capture target, for Nucleus Co-op or single-app window
+/// streaming: `window:<hwnd>@<display>`, or `window:<hwnd>/<pid>@<display>`,
+/// optionally followed by `#client`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowTarget {
+    /// The window's handle, as `EnumWindows` gave it.
+    pub window: u64,
+    /// The display the capture opens its GPU on, such as `\\.\DISPLAY1`.
+    pub display: String,
+    /// The process that owns the window, when the target names it: a
+    /// handle Windows gave to another window is then refused.
+    pub process: Option<u32>,
+    /// Stream only the window's client area, without its title bar and
+    /// borders (`capture_window_frame = client`). Only `app_window_target`
+    /// writes this, from the setting; a hand-written target is not a
+    /// supported way to choose it.
+    pub client: bool,
+}
+
+impl WindowTarget {
+    pub fn new(window: u64, display: &str) -> Self {
+        Self {
+            window,
+            display: display.to_string(),
+            process: None,
+            client: false,
+        }
+    }
+
+    pub fn owned_by(self, process: u32) -> Self {
+        Self {
+            process: Some(process),
+            ..self
+        }
+    }
+
+    pub fn only_client(self) -> Self {
+        Self {
+            client: true,
+            ..self
+        }
+    }
+
+    /// `None` for a display name; an error for a malformed window target, so
+    /// it is never opened as a display.
+    pub fn parse(name: &str) -> Result<Option<Self>> {
+        let Some(rest) = name.strip_prefix(WINDOW_TARGET_PREFIX) else {
+            return Ok(None);
+        };
+        let shape = || format!("capture target {name:?} is not window:<hwnd>@<display>");
+        let (handle, display) = rest.split_once('@').with_context(shape)?;
+        let (display, client) = match display.split_once('#') {
+            Some((display, suffix)) if suffix.eq_ignore_ascii_case("client") => (display, true),
+            Some(_) => anyhow::bail!(shape()),
+            None => (display, false),
+        };
+        let (handle, process) = match handle.split_once('/') {
+            Some((handle, process)) => (
+                handle,
+                Some(process.parse::<u32>().ok().with_context(shape)?),
+            ),
+            None => (handle, None),
+        };
+        let window = match handle.strip_prefix("0x") {
+            Some(hex) => u64::from_str_radix(hex, 16),
+            None => handle.parse(),
+        }
+        .ok()
+        .with_context(shape)?;
+        ensure!(window != 0, "capture target {name:?} names no window");
+        ensure!(
+            usize::try_from(window).is_ok(),
+            "capture target {name:?} is not a window handle"
+        );
+        ensure!(
+            !display.is_empty(),
+            "capture target {name:?} names no display"
+        );
+        ensure!(
+            process != Some(0),
+            "capture target {name:?} names no process"
+        );
+        Ok(Some(Self {
+            process,
+            client,
+            ..Self::new(window, display)
+        }))
+    }
+
+    pub fn handle(&self) -> usize {
+        self.window as usize
+    }
+}
+
+impl std::fmt::Display for WindowTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{WINDOW_TARGET_PREFIX}{}", self.window)?;
+        if let Some(process) = self.process {
+            write!(f, "/{process}")?;
+        }
+        write!(f, "@{}", self.display)?;
+        if self.client {
+            write!(f, "#client")?;
+        }
+        Ok(())
+    }
+}
 
 /// `display` (the default) or `window`.
 pub const SETTING: &str = "capture_window";

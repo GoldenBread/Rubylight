@@ -199,7 +199,7 @@ pub(super) async fn do_pair(
                 let mut pins = self.h.pins.lock().unwrap_or_else(|e| e.into_inner());
                 if pins.get(&self.id).is_none_or(|p| p.created == self.created) {
                     pins.remove(&self.id);
-                    butterpollo_windows::tray::pairing_request_ended(&self.id);
+                    butterpollo_win_io::tray::pairing_request_ended(&self.id);
                 }
             }
         }
@@ -210,7 +210,7 @@ pub(super) async fn do_pair(
         };
         tracing::info!(client=%name,%peer,"Pairing PIN required in the web interface");
         let (title, text) = crate::state::pairing_notice(&name, peer);
-        butterpollo_windows::tray::notify_pairing(&id, &title, &text);
+        butterpollo_win_io::tray::notify_pairing(&id, &title, &text);
         let response = tokio::time::timeout(Duration::from_secs(300), receiver).await;
         drop(guard);
         let (pin, name, permission, approver) = response
@@ -333,7 +333,7 @@ pub(super) async fn do_pair(
                         format!("{} can now stream from this PC.", p.name),
                     ),
                 };
-                butterpollo_windows::tray::notify(&title, &text);
+                butterpollo_win_io::tray::notify(&title, &text);
                 Ok(vec![("paired".into(), "1".into())])
             }
         }
@@ -423,7 +423,7 @@ fn finish_invite(
         "pairing.paired",
         serde_json::json!({"device": crate::webhooks::device(&uuid, &p.name), "transport": "invite"}),
     );
-    butterpollo_windows::tray::notify(
+    butterpollo_win_io::tray::notify(
         "Your invite was used",
         &format!("{} can join the game you play when you let it in.", p.name),
     );

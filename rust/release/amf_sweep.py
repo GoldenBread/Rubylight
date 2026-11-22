@@ -79,7 +79,7 @@ def build(work):
     command(['git', '-C', ROOT, 'archive', '--format=zip', '--output', work / 'source.zip', 'HEAD'], work, 'archive')
     with zipfile.ZipFile(work / 'source.zip') as archive:
         archive.extractall(source)
-    patch = source / 'rust/windows/src/amf.rs'
+    patch = source / 'rust/windows/graphics/src/amf.rs'
     original = patch.read_text()
     before, after = 'e.property("QueryTimeout", int(1))', 'e.property("QueryTimeout", int(0))'
     if original.count(before) != 1:
@@ -88,11 +88,11 @@ def build(work):
     for variant in ('default', 'query0'):
         patch.write_text(original if variant == 'default' else original.replace(before, after))
         command(['pwsh', '-NoProfile', '-File', r'C:\src\cargo-one.ps1', 'build', '--release', '--locked',
-                 '--manifest-path', source / 'Cargo.toml', '-p', 'butterpollo-windows', '--example', 'amf_quality',
+                 '--manifest-path', source / 'Cargo.toml', '-p', 'butterpollo-probes', '--bin', 'amf_quality',
                  '-p', 'butterpollo', '--bin', 'butterpollo', '-j', '2'], work, 'build-' + variant, timeout=1200)
         destination = cache / variant
         destination.mkdir(parents=True, exist_ok=True)
-        for name, binary in [('amf_quality.exe', TARGET / 'release/examples/amf_quality.exe'),
+        for name, binary in [('amf_quality.exe', TARGET / 'release/amf_quality.exe'),
                              ('butterpollo.exe', TARGET / 'release/butterpollo.exe')]:
             shutil.copy2(binary, destination / name)
             manifest[f'{variant}/{name}'] = hashlib.sha256(binary.read_bytes()).hexdigest()
@@ -147,7 +147,7 @@ def quality(work, binaries, profile, codec, candidate, changes, arm, request):
     config = directory / 'sunshine.conf'
     config.write_text('\n'.join(f'{k} = {v}' for k, v in settings_now.items() if k != 'QueryTimeout') + '\n')
     env = os.environ.copy()
-    env.update(RUST_LOG='butterpollo_windows::amf=debug', PATH=str(binaries / variant) + ';' + env['PATH'])
+    env.update(RUST_LOG='butterpollo_win_graphics::amf=debug', PATH=str(binaries / variant) + ';' + env['PATH'])
     try:
         reference = prepare_reference(work, profile, hdr)
         bits = directory / 'encoded.bin'

@@ -9,7 +9,7 @@ use super::*;
 /// reverse order of creation: a struct drops its fields in declaration order, so an early
 /// return drops them as it dropped the locals of the single function they came from.
 pub(super) struct Configured {
-    pub(super) timer: butterpollo_windows::timing::Timer,
+    pub(super) timer: butterpollo_win_graphics::timing::Timer,
     pub(super) c: Config,
     pub(super) config_version: u64,
 }
@@ -32,7 +32,7 @@ pub(super) struct Captured<'a> {
 /// The video timeline the session loop continues. Fields in reverse order of creation, as
 /// in [`Configured`].
 pub(super) struct Started {
-    pub(super) present_stamper: Option<butterpollo_windows::present_timing::Stamper>,
+    pub(super) present_stamper: Option<butterpollo_win_graphics::present_timing::Stamper>,
     pub(super) start: Instant,
     pub(super) claims: std::cell::RefCell<butterpollo_media_policy::performance::Claims>,
     pub(super) next_wire_frame: std::cell::Cell<u64>,
@@ -99,7 +99,7 @@ impl SessionThread<'_> {
         if s.config.vrr_low_latency {
             c.values.insert("wgc_slot_aligned_publish".into(), "false".into());
         }
-        let timer = butterpollo_windows::timing::Timer::new()?;
+        let timer = butterpollo_win_graphics::timing::Timer::new()?;
         let output = s
             .launch
             .client
@@ -109,8 +109,8 @@ impl SessionThread<'_> {
             .filter(|s| !s.is_empty())
             .unwrap_or(c.get("output_name", ""));
         if s.launch.role == Role::InputOnly {
-            let monitors = butterpollo_windows::input::on_input_desktop(
-                butterpollo_windows::display::monitors,
+            let monitors = butterpollo_win_io::input::on_input_desktop(
+                butterpollo_win_display::display::monitors,
             )?;
             let monitor = monitors
                 .iter()
@@ -219,7 +219,7 @@ impl SessionThread<'_> {
     pub(super) fn start_capture<'a>(
         &self,
         c: &Config,
-        timer: &butterpollo_windows::timing::Timer,
+        timer: &butterpollo_win_graphics::timing::Timer,
         prepared: &Arc<crate::display_session::Ready>,
         latest: &'a mut Option<Arc<Source>>,
         mut encoder: &mut Option<Encoder>,
@@ -252,7 +252,7 @@ impl SessionThread<'_> {
                         && prepared.display_swap_chain() == Some(false)
                     {
                         woken = true;
-                        if let Err(error) = butterpollo_windows::wake::wake_console("first frame wait") {
+                        if let Err(error) = butterpollo_win_io::wake::wake_console("first frame wait") {
                             tracing::warn!(error = %format!("{error:#}"), "could not wake the console display while waiting for the first frame");
                         }
                     }
@@ -284,7 +284,7 @@ impl SessionThread<'_> {
                 ten_bit: s.config.ten_bit(),
                 pyrowave: s.config.codec == 3,
                 packed_444: s.config.chroma_packing != 0,
-                d3d12: butterpollo_windows::compute::enabled(&c),
+                d3d12: butterpollo_win_graphics::compute::enabled(&c),
                 preanalysis: crate::stream_focus::preanalysis(&c, s.config.ten_bit()),
                 support: h.focus_support(s.config.codec, s.config.ten_bit()),
             },
@@ -360,10 +360,10 @@ impl SessionThread<'_> {
         // New pictures claimed and not yet sent, for the stage timings.
         let claims = std::cell::RefCell::new(butterpollo_media_policy::performance::Claims::default());
         let start = Instant::now();
-        let start_qpc_ms = butterpollo_windows::timing::qpc_ms();
+        let start_qpc_ms = butterpollo_win_graphics::timing::qpc_ms();
         *s.media_epoch.write().unwrap() = Some(start);
         // Present times come from ETW only if the stamper really has a tracker.
-        let mut present_stamper = (prepared.capture() == "wgc").then(butterpollo_windows::present_timing::Stamper::default);
+        let mut present_stamper = (prepared.capture() == "wgc").then(butterpollo_win_graphics::present_timing::Stamper::default);
         let tracks_presents = present_stamper.as_ref().is_some_and(|stamper| stamper.tracks_presents());
         // The opt-in host-side record: off, and no thread or file, unless the
         // environment names a directory.

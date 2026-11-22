@@ -83,15 +83,15 @@ fn backups(directory: &Path) -> PathBuf {
 
 fn ensure_backups_dir(directory: &Path) -> Result<PathBuf> {
     let folder = backups(directory);
-    if butterpollo_windows::process::is_system() {
+    if butterpollo_win_io::process::is_system() {
         match std::fs::symlink_metadata(&folder) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                butterpollo_windows::process::create_folder_administrators_only(&folder)?;
+                butterpollo_win_io::process::create_folder_administrators_only(&folder)?;
             }
             Err(error) => return Err(error.into()),
             Ok(_) => {}
         }
-        butterpollo_windows::process::restrict_to_administrators(&folder)
+        butterpollo_win_io::process::restrict_to_administrators(&folder)
             .with_context(|| format!("securing {}", folder.display()))?;
     } else {
         std::fs::create_dir_all(&folder)?;
@@ -198,7 +198,7 @@ impl std::error::Error for Busy {}
 /// The tray's "Back up settings": an archive without secrets in the signed-in
 /// user's Documents\Rubylight folder.
 pub fn export_from_tray(h: &Shared) -> Result<PathBuf> {
-    let environment = butterpollo_windows::process::user_environment()?;
+    let environment = butterpollo_win_io::process::user_environment()?;
     let profile = environment
         .get("USERPROFILE")
         .context("the signed-in user's profile folder is unknown")?;
@@ -207,7 +207,7 @@ pub fn export_from_tray(h: &Shared) -> Result<PathBuf> {
         .join("Rubylight")
         .join(file_name(false));
     let bytes = export(&h.directory, false)?;
-    butterpollo_windows::user_folder::as_user(|| {
+    butterpollo_win_io::user_folder::as_user(|| {
         butterpollo_session::state::atomic_write(&path, &bytes)
     })
     .map_err(anyhow::Error::from)??;

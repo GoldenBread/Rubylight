@@ -9,7 +9,8 @@ use butterpollo_media_policy::{
     pyrowave::DetailFec,
 };
 use butterpollo_session::session::Warnings;
-use butterpollo_windows::{encoder::Encoded, net::ReplySocket, timing::Signal};
+use butterpollo_win_graphics::{encoder::Encoded, timing::Signal};
+use butterpollo_win_io::net::ReplySocket;
 use std::{
     collections::VecDeque,
     net::SocketAddr,
@@ -225,7 +226,7 @@ impl Sender {
         config: Config,
         host: Shared,
         start: Instant,
-        stamper: Option<butterpollo_windows::present_timing::Stamper>,
+        stamper: Option<butterpollo_win_graphics::present_timing::Stamper>,
     ) -> Result<Self> {
         let mut sender = Self::packetizer(
             session.clone(),
@@ -254,7 +255,7 @@ impl Sender {
         config: Config,
         host: Shared,
         start: Instant,
-        stamper: Option<butterpollo_windows::present_timing::Stamper>,
+        stamper: Option<butterpollo_win_graphics::present_timing::Stamper>,
     ) -> Result<Self> {
         let slot = Arc::new(Slot {
             pending: Mutex::new(None),

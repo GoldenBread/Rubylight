@@ -670,7 +670,7 @@ fn shutdown_releases_the_audio_route_before_the_games_undo_commands() {
     *host.current_app.lock().unwrap() = Some(running);
     setup.retain_display();
     *host.app_audio.lock().unwrap() = Some(Arc::new(
-        butterpollo_windows::audio_route::Route::detached(&host.directory),
+        butterpollo_win_io::audio_route::Route::detached(&host.directory),
     ));
     let stopping = setup.fixture.host.clone();
     let began = Instant::now();
@@ -703,7 +703,7 @@ fn shutdown_releases_the_audio_route_before_the_games_undo_commands() {
 
 #[test]
 fn hold_sink_while_paused_keeps_the_audio_route_while_the_game_runs() {
-    use butterpollo_windows::audio_route::Route;
+    use butterpollo_win_io::audio_route::Route;
     // The game's audio route, as a stream that ended left it: no stream
     // shares it any more.
     let route = |setup: &Setup| {

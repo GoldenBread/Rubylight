@@ -1,9 +1,7 @@
 use super::*;
 use butterpollo_media_policy::network_pacing::{self, ClientPath, Pacer};
-use butterpollo_windows::{
-    net::{Batch, Link},
-    timing::Timer,
-};
+use butterpollo_win_graphics::timing::Timer;
+use butterpollo_win_io::net::{Batch, Link};
 
 pub(super) fn run(
     shared: &Slot,

@@ -7,7 +7,7 @@ use crate::state::Session;
 use crate::webrtc::media::{AudioPacket, AudioSender, Submit};
 use anyhow::Result;
 use butterpollo_media_policy::{audio::HostLoss, packet::AudioPacketizer};
-use butterpollo_windows::{audio::Loopback, net::ReplySocket};
+use butterpollo_win_io::{audio::Loopback, net::ReplySocket};
 use std::{
     net::SocketAddr,
     sync::{
@@ -509,7 +509,7 @@ pub(super) struct GameStreamAudio<'a> {
     /// The last call's packets, handed back to the packetizer next call: no
     /// packet of a stream allocates its own buffer.
     packets: Vec<Vec<u8>>,
-    pass: butterpollo_windows::net::DatagramPass,
+    pass: butterpollo_win_io::net::DatagramPass,
 }
 
 impl<'a> GameStreamAudio<'a> {
@@ -529,8 +529,8 @@ impl<'a> GameStreamAudio<'a> {
             use_qos,
             peer: None,
             packets: Vec::new(),
-            pass: butterpollo_windows::net::DatagramPass::new(
-                butterpollo_windows::net::AUDIO_ENOBUFS_WAIT,
+            pass: butterpollo_win_io::net::DatagramPass::new(
+                butterpollo_win_io::net::AUDIO_ENOBUFS_WAIT,
             ),
         }
     }
@@ -546,9 +546,8 @@ impl AudioSink for GameStreamAudio<'_> {
     }
 
     fn begin_pass(&mut self) {
-        self.pass = butterpollo_windows::net::DatagramPass::new(
-            butterpollo_windows::net::AUDIO_ENOBUFS_WAIT,
-        );
+        self.pass =
+            butterpollo_win_io::net::DatagramPass::new(butterpollo_win_io::net::AUDIO_ENOBUFS_WAIT);
     }
 
     fn send(&mut self, opus: &[u8], _captured: Instant, _position: u64) -> Result<usize> {
@@ -559,7 +558,7 @@ impl AudioSink for GameStreamAudio<'_> {
         self.packetizer.encode_into(opus, &mut self.packets)?;
         // A lost audio packet is concealed by the client; only a broken socket stops the audio.
         for packet in &self.packets {
-            if !butterpollo_windows::net::send_datagram_pass(
+            if !butterpollo_win_io::net::send_datagram_pass(
                 self.socket,
                 packet,
                 peer,
@@ -585,7 +584,7 @@ impl AudioSink for GameStreamAudio<'_> {
             self.packetizer
                 .encode_part_into(part, index + 1 == parts.len(), &mut self.packets)?;
             for packet in &self.packets {
-                if !butterpollo_windows::net::send_datagram_pass(
+                if !butterpollo_win_io::net::send_datagram_pass(
                     self.socket,
                     packet,
                     peer,

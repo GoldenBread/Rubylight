@@ -3,7 +3,7 @@
 use super::*;
 use crate::radeon_session::WorkerRef;
 use butterpollo_config::config::Config;
-use butterpollo_windows::radeon::{
+use butterpollo_win_graphics::radeon::{
     BackendError, Entry, GpuInfo, Journal, RadeonBackend,
     control::JOURNAL_FILE,
     model::{ChoiceOption, Kind, Range, Setting as Driven, State, Value as Raw, Writable},
@@ -1099,7 +1099,7 @@ async fn a_journal_from_a_crashed_run_is_restored_when_the_host_starts() {
             original: Raw::Int(140),
             written: Raw::Int(200),
             side_effect: false,
-            user: butterpollo_windows::process::user_sid().unwrap(),
+            user: butterpollo_win_io::process::user_sid().unwrap(),
         }],
         ..Default::default()
     };
@@ -1305,7 +1305,7 @@ async fn a_write_answers_from_its_own_read_back_without_another_driver_read() {
         .apply(
             "parity-device",
             GPU,
-            vec![butterpollo_windows::radeon::Change {
+            vec![butterpollo_win_graphics::radeon::Change {
                 id: "pacing.limit".into(),
                 value: Raw::Int(200),
             }],
@@ -1371,7 +1371,7 @@ async fn a_write_cannot_slip_between_a_restores_check_and_its_queueing() {
             rig.host().radeon.apply(
                 "parity-device",
                 GPU,
-                vec![butterpollo_windows::radeon::Change {
+                vec![butterpollo_win_graphics::radeon::Change {
                     id: "pacing.limit".into(),
                     value: Raw::Int(210),
                 }],

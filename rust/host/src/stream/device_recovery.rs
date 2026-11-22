@@ -1,5 +1,5 @@
 use anyhow::Result;
-use butterpollo_windows::device_loss::DeviceLost;
+use butterpollo_win_graphics::device_loss::DeviceLost;
 use std::time::{Duration, Instant};
 
 pub(super) const TIMEOUT: Duration = Duration::from_secs(30);

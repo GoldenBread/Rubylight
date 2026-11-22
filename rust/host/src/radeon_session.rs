@@ -1,7 +1,7 @@
 //! The host's side of the Radeon controls (plan item A3, brief 4): which session changed
 //! settings, and when they go back.
 //!
-//! `butterpollo_windows::radeon::worker::Worker` owns the driver, the journal and the restore
+//! `butterpollo_win_graphics::radeon::worker::Worker` owns the driver, the journal and the restore
 //! rules (restore only while the setting still holds the written value, failures stay journaled
 //! and the worker retries them). The host adds the link to the session: a write is made on
 //! behalf of the device that owns the session (the journal's session id is that device's uuid),
@@ -20,7 +20,7 @@
 //!
 //! Restores run on a thread of their own: they take seconds, and `sync` runs under the session
 //! lock.
-use butterpollo_windows::radeon::{
+use butterpollo_win_graphics::radeon::{
     BackendError, Change, Driver, Entry, ErrorKind, RestoreReport, Setting, WriteError,
     control::RestoreResult,
     worker::{RestoreTicket, Worker},
@@ -168,14 +168,14 @@ impl Inner {
         self.driver.get().copied().unwrap_or_default()
     }
     #[cfg(test)]
-    pub fn status(&self) -> Option<butterpollo_windows::radeon::worker::Status> {
+    pub fn status(&self) -> Option<butterpollo_win_graphics::radeon::worker::Status> {
         self.worker().map(Worker::status)
     }
     /// Whether the worker is still putting back what an earlier run left.
     #[cfg(test)]
     pub fn recovering(&self) -> bool {
         self.status().is_some_and(|status| {
-            status.phase == butterpollo_windows::radeon::worker::Phase::Recovering
+            status.phase == butterpollo_win_graphics::radeon::worker::Phase::Recovering
         })
     }
 
@@ -505,7 +505,11 @@ pub fn start(
     directory: &std::path::Path,
     driver: Driver,
 ) -> Result<(), BackendError> {
-    let worker = butterpollo_windows::radeon::worker::start_host(directory, driver)?;
+    let worker = butterpollo_win_graphics::radeon::worker::start_host_with(
+        directory,
+        driver,
+        crate::win_bridge::user_launcher(),
+    )?;
     let _ = radeon.driver.set(driver);
     radeon.attach(WorkerRef::Host(worker));
     Ok(())

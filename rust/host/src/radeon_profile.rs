@@ -17,7 +17,7 @@
 use crate::{radeon_session::READ_WAIT, session_notes::Held, state::Shared};
 use butterpollo_media_policy::radeon_profile::{self, Item, Selected};
 use butterpollo_session::state::App;
-use butterpollo_windows::radeon::{Change, model::Value};
+use butterpollo_win_graphics::radeon::{Change, model::Value};
 use rubylight_native_api::session::{ProfileState, RadeonProfile};
 use std::{sync::PoisonError, time::Duration};
 
@@ -136,7 +136,7 @@ pub fn launched(h: &Shared, device: &str, app: Option<&App>, fps: Option<u32>) {
         }
     };
     // A built-in profile writes only the settings of the driver this host controls.
-    let nvidia = h.radeon.driver() == butterpollo_windows::radeon::Driver::Nvidia;
+    let nvidia = h.radeon.driver() == butterpollo_win_graphics::radeon::Driver::Nvidia;
     let selected = selected.map(|selected| selected.for_driver(nvidia));
     let Some(selected) = selected else {
         if previous.is_some() {

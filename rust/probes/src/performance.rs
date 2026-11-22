@@ -1,6 +1,5 @@
 //! Repeat-frame encoder throughput excludes capture, network, and decoding.
 #[cfg(windows)]
-#[path = "../../windows/examples/support/mod.rs"]
 mod support;
 #[cfg(not(windows))]
 fn main() {
@@ -13,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     }
     use anyhow::{Context, bail};
     use butterpollo_media_policy::rtsp::Negotiated;
-    use butterpollo_windows::{
+    use butterpollo_win_graphics::{
         capture::{Capture, ComGuard, Priority},
         encoder::Encoder,
         timing::Timer,
@@ -120,8 +119,8 @@ Repeat-frame throughput excludes capture, network, decoding and display latency.
     {
         bail!("probe settings outside supported bounds");
     }
-    butterpollo_windows::capture::enable_dpi_awareness();
-    let _scope = butterpollo_windows::timing::StreamingScope::enter();
+    butterpollo_win_graphics::capture::enable_dpi_awareness();
+    let _scope = butterpollo_win_graphics::timing::StreamingScope::enter();
     let _com = ComGuard::new()?;
     let _priority = Priority::new();
     let tuning = if let Some(path) = fields.get("--config") {
@@ -131,18 +130,19 @@ Repeat-frame throughput excludes capture, network, decoding and display latency.
     };
     // --synthetic N: N different moving pictures at the stream size instead
     // of a captured desktop, so every frame has new detail and motion.
-    let synthetic: Vec<butterpollo_windows::capture::GpuImage> =
+    let synthetic: Vec<butterpollo_win_graphics::capture::GpuImage> =
         match fields.get("--synthetic").map(|n| n.parse::<usize>()) {
             Some(count) => {
                 let count = count?.clamp(2, 64);
-                let device = butterpollo_windows::capture::Device::new(&option("--display", ""))?;
+                let device =
+                    butterpollo_win_graphics::capture::Device::new(&option("--display", ""))?;
                 // As a stream's capture device is configured.
                 if fields.contains_key("--priority") {
-                    butterpollo_windows::gpu_priority::configure(&device, &tuning)?;
+                    butterpollo_win_graphics::gpu_priority::configure(&device, &tuning)?;
                 }
                 (0..count)
                     .map(|frame| {
-                        butterpollo_windows::capture::GpuImage::upload(
+                        butterpollo_win_graphics::capture::GpuImage::upload(
                             &device,
                             &moving_picture(config.width, config.height, frame),
                         )
@@ -263,7 +263,7 @@ Repeat-frame throughput excludes capture, network, decoding and display latency.
     // Live capture: from DWM presenting a picture to its bitstream, counted
     // once per presented picture (the paced loop may encode one twice).
     let (mut present, mut last_presented) = (Vec::new(), None);
-    let mut consume = |output: Vec<butterpollo_windows::encoder::Encoded>| {
+    let mut consume = |output: Vec<butterpollo_win_graphics::encoder::Encoded>| {
         for frame in output {
             frames += 1;
             bytes += frame.bytes.len() as u64;
@@ -357,7 +357,11 @@ Repeat-frame throughput excludes capture, network, decoding and display latency.
 /// A picture like a moving game scene: scrolling gradients, edges, and a
 /// noisy patch that moves across the frame.
 #[cfg(windows)]
-fn moving_picture(width: u32, height: u32, frame: usize) -> butterpollo_windows::capture::Image {
+fn moving_picture(
+    width: u32,
+    height: u32,
+    frame: usize,
+) -> butterpollo_win_graphics::capture::Image {
     let (w, h) = (width as usize, height as usize);
     let mut bytes = vec![0u8; w * h * 4];
     let shift = frame * 24;
@@ -387,12 +391,12 @@ fn moving_picture(width: u32, height: u32, frame: usize) -> butterpollo_windows:
             bytes[i..i + 4].copy_from_slice(&[b, g, r, 255]);
         }
     }
-    butterpollo_windows::capture::Image {
+    butterpollo_win_graphics::capture::Image {
         width,
         height,
         stride: w * 4,
         bytes,
         captured: std::time::Instant::now(),
-        pixel: butterpollo_windows::capture::Pixel::Bgra8,
+        pixel: butterpollo_win_graphics::capture::Pixel::Bgra8,
     }
 }

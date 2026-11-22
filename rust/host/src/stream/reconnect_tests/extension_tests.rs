@@ -7,7 +7,7 @@ use super::*;
 /// the largest this version defines.
 fn max_packet(launch: &Launch) -> u16 {
     rubylight_protocol::video_packet::for_mtu(
-        butterpollo_windows::net::routed_mtu(std::net::SocketAddr::new(launch.peer, 0))
+        butterpollo_win_io::net::routed_mtu(std::net::SocketAddr::new(launch.peer, 0))
             .unwrap_or(1500),
     )
 }
@@ -21,7 +21,7 @@ async fn describe_for_a_default_config_is_byte_identical() -> Result<()> {
     let launch = h.launch(0, false).await?;
     let describe = h.rtsp(&launch, 10, "DESCRIBE", "").await?;
     let (_, body) = describe.split_once("\r\n\r\n").unwrap();
-    let flags = butterpollo_windows::input::capabilities(&h.h.config.read().unwrap());
+    let flags = butterpollo_win_io::input::capabilities(&h.h.config.read().unwrap());
     let mic = h.ports.mic;
     // The path's own MTU decides the jumbo offer; loopback carries the largest.
     let max_packet = max_packet(&launch);
@@ -110,7 +110,7 @@ async fn describe_with_packed_444_and_the_microphone_is_byte_identical() -> Resu
     let launch = h.launch(0, false).await?;
     let describe = h.rtsp(&launch, 10, "DESCRIBE", "").await?;
     let (_, body) = describe.split_once("\r\n\r\n").unwrap();
-    let flags = butterpollo_windows::input::capabilities(&h.h.config.read().unwrap());
+    let flags = butterpollo_win_io::input::capabilities(&h.h.config.read().unwrap());
     let mic = h.ports.mic;
     let max_packet = max_packet(&launch);
     assert_eq!(

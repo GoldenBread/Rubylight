@@ -1,6 +1,6 @@
 //! qWAVE setup and removal may wait for the Windows service. Keep both off
 //! the video/audio threads, including when a client changes its UDP port.
-use butterpollo_windows::net::ReplySocket;
+use butterpollo_win_io::net::ReplySocket;
 use std::{
     net::SocketAddr,
     sync::{Arc, Condvar, Mutex},
@@ -86,7 +86,7 @@ pub(super) fn warm_up() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         let _ = thread::Builder::new().name("qos warmup".into()).spawn(|| {
-            butterpollo_windows::net::warm_up_qos();
+            butterpollo_win_io::net::warm_up_qos();
         });
     });
 }
@@ -112,7 +112,7 @@ impl Tagged {
             match Worker::spawn(|request| {
                 let (peer, voice) = (request.peer, request.voice);
                 let class = if voice { "voice" } else { "video" };
-                match butterpollo_windows::net::QosFlow::new(&request.socket, peer, voice) {
+                match butterpollo_win_io::net::QosFlow::new(&request.socket, peer, voice) {
                     Ok(Some(flow)) => {
                         tracing::info!(%peer, class, "stream traffic tagged for QoS");
                         Some(flow)

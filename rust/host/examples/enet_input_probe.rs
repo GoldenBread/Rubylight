@@ -83,7 +83,7 @@ impl rusty_enet::Socket for TimedSocket {
 
 fn main() {
     let defer = std::env::args().any(|a| a == "defer");
-    butterpollo_windows::timing::disable_power_throttling();
+    butterpollo_win_graphics::timing::disable_power_throttling();
     unsafe {
         timeBeginPeriod(1);
         SetPriorityClass(GetCurrentProcess(), 0x80); // HIGH_PRIORITY_CLASS
@@ -95,7 +95,7 @@ fn main() {
     let base = Instant::now();
     let stop = Arc::new(AtomicBool::new(false));
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-    butterpollo_windows::net::configure_udp(&socket).unwrap();
+    butterpollo_win_io::net::configure_udp(&socket).unwrap();
     let server_address = socket.local_addr().unwrap();
     let results = Arc::new(Mutex::new(Vec::<(String, Vec<f64>)>::new()));
     let server = {
@@ -120,7 +120,7 @@ fn main() {
                 },
             )
             .unwrap();
-            let _priority = butterpollo_windows::capture::Priority::input();
+            let _priority = butterpollo_win_graphics::capture::Priority::input();
             let mut woke = Instant::now();
             let (mut total, mut after_wake, mut drain) = (vec![], vec![], vec![]);
             let (mut first, mut sends, mut send_us, mut recvs, mut recv_us) =
@@ -171,7 +171,7 @@ fn main() {
                     }
                 }
                 host.flush();
-                let _ = butterpollo_windows::net::wait_readable(raw, 1);
+                let _ = butterpollo_win_io::net::wait_readable(raw, 1);
                 woke = Instant::now();
             }
             *results.lock().unwrap() = vec![
@@ -208,7 +208,7 @@ fn main() {
         }
         std::thread::sleep(Duration::from_millis(1));
     }
-    let timer = butterpollo_windows::timing::Timer::new().unwrap();
+    let timer = butterpollo_win_graphics::timing::Timer::new().unwrap();
     let mut rng = 0x9e3779b97f4a7c15u64;
     let mut next = Instant::now() + Duration::from_millis(50);
     let mut sent = 0;

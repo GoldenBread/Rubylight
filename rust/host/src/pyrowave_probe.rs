@@ -2,7 +2,7 @@
 //! from the address its HTTPS request reached, to that client's own address.
 use anyhow::{Context, Result, bail};
 use butterpollo_media_policy::pyrowave_probe::{self, DURATION, Request, TOKEN_LEN};
-use butterpollo_windows::net::{Batch, ReplySocket};
+use butterpollo_win_io::net::{Batch, ReplySocket};
 use std::{
     io::ErrorKind,
     net::{IpAddr, SocketAddr, UdpSocket},
@@ -87,7 +87,7 @@ pub fn send(socket: &ReplySocket, peer: SocketAddr, request: &Request) -> Result
     // Pace at the priority the stream's senders use, so calibration measures
     // the path and not this thread's scheduling beside busy threads (the
     // adaptive timer wait gives the CPU up between packets).
-    let _priority = butterpollo_windows::capture::Priority::scoped();
+    let _priority = butterpollo_win_graphics::capture::Priority::scoped();
     let destination = if request.handshake {
         handshake(socket, peer, &request.token)?
     } else {
@@ -97,8 +97,8 @@ pub fn send(socket: &ReplySocket, peer: SocketAddr, request: &Request) -> Result
     // frames, rather than being fragmented and reassembled by the client.
     let jumbo =
         request.packet_size > usize::from(rubylight_protocol::video_packet::STOCK_MAX_VIDEO_PACKET);
-    butterpollo_windows::net::set_dont_fragment(socket, jumbo)?;
-    let timer = butterpollo_windows::timing::Timer::new()?;
+    butterpollo_win_io::net::set_dont_fragment(socket, jumbo)?;
+    let timer = butterpollo_win_graphics::timing::Timer::new()?;
     let ipv6 = destination.ip().to_canonical().is_ipv6();
     let schedule = pyrowave_probe::schedule(request, ipv6);
     let packet = pyrowave_probe::packet(&request.token, request.packet_size);

@@ -74,4 +74,4 @@ The host matches a packet to its session by the client's IP address and the key 
 
 ### Testing
 
-`rust/windows/examples/mic_probe.rs` runs the host half on a real PC: it sends tone bursts through the same packet, decryption, decoding and playback code and records them back from Microphone (Steam Streaming Microphone), reporting the delay from a packet's arrival to the recording app and any dropouts. The RTSP exchange and packet routing have an automated test (`host/src/stream/reconnect_tests.rs::microphone_packets_reach_only_the_session_that_set_them_up`).
+`rust/probes/src/mic_probe.rs` runs the host half on a real PC: it sends tone bursts through the same packet, decryption, decoding and playback code and records them back from Microphone (Steam Streaming Microphone), reporting the delay from a packet's arrival to the recording app and any dropouts. The RTSP exchange and packet routing have an automated test (`host/src/stream/reconnect_tests.rs::microphone_packets_reach_only_the_session_that_set_them_up`).

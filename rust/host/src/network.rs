@@ -58,7 +58,7 @@ pub fn browser_on_this_pc(peer: SocketAddr, local: SocketAddr, headers: &HeaderM
         && !request_names_elsewhere(
             headers,
             local,
-            butterpollo_windows::net::host_name().as_deref(),
+            butterpollo_win_io::net::host_name().as_deref(),
         )
 }
 
@@ -136,7 +136,7 @@ pub fn media_address(
 
 /// This PC's own address on the network, for [`media_address`]; None without a network.
 pub fn this_pc_address() -> Option<IpAddr> {
-    let addresses = butterpollo_windows::net::lan_addresses().unwrap_or_else(|error| {
+    let addresses = butterpollo_win_io::net::lan_addresses().unwrap_or_else(|error| {
         tracing::warn!(error = %format!("{error:#}"), "the LAN addresses for a WebRTC stream could not be read");
         Vec::new()
     });
@@ -241,7 +241,7 @@ pub fn play_refused(peer: SocketAddr, local: SocketAddr) -> Option<String> {
 }
 #[cfg(not(test))]
 fn default_gateways() -> Result<Vec<IpAddr>> {
-    butterpollo_windows::net::default_gateways()
+    butterpollo_win_io::net::default_gateways()
 }
 /// The router of the test fixtures' 192.168.4.0/24, rather than this PC's.
 #[cfg(test)]
@@ -261,7 +261,7 @@ struct TestNet {
     /// The default gateways; None: [`TEST_GATEWAY`].
     gateways: Option<Vec<IpAddr>>,
     /// This PC's Ethernet and Wi-Fi addresses, as `lan_interfaces` lists them.
-    lan: Vec<butterpollo_windows::net::LanInterface>,
+    lan: Vec<butterpollo_win_io::net::LanInterface>,
     /// Every address this PC has; None: every address asked about.
     addresses: Option<Vec<IpAddr>>,
     /// The UPnP routers a search from an address finds there, each found once.
@@ -342,7 +342,7 @@ fn pc_name() -> Option<String> {
     if let Some(name) = NAME.get() {
         return Some(name.clone());
     }
-    let name = butterpollo_windows::net::host_name()?;
+    let name = butterpollo_win_io::net::host_name()?;
     Some(NAME.get_or_init(|| name).clone())
 }
 pub fn bind_address(config: &Config, override_address: Option<IpAddr>) -> Result<IpAddr> {
@@ -433,7 +433,7 @@ const DISCOVERY_SOON: u32 = 1;
 pub struct Discovery {
     /// Windows' interface change notification: `None` when Windows refused it, and the daemon's
     /// own interval is the fallback. Dropped before the daemon, so it wakes nothing shut down.
-    watch: Option<butterpollo_windows::net::InterfaceChanges>,
+    watch: Option<butterpollo_win_io::net::InterfaceChanges>,
     daemon: ServiceDaemon,
 }
 impl Discovery {
@@ -489,7 +489,7 @@ impl Discovery {
         // Windows tells the daemon when an interface or address changed, and it re-reads them
         // within a second of that; the interval set above stays only the fallback. A refused
         // registration leaves the fallback, thirty seconds, as before.
-        let watch = butterpollo_windows::net::InterfaceChanges::register(
+        let watch = butterpollo_win_io::net::InterfaceChanges::register(
             {
                 let daemon = daemon.clone();
                 move || {
@@ -918,7 +918,7 @@ fn local_for(gateway: &Gateway<upnp::Bounded>, bind: IpAddr) -> Result<IpAddr> {
     })
 }
 /// The interfaces to look for this PC's router from, of its Ethernet and Wi-Fi `interfaces`: the
-/// uplinks ([`LanInterface::uplink`](butterpollo_windows::net::LanInterface::uplink): physical
+/// uplinks ([`LanInterface::uplink`](butterpollo_win_io::net::LanInterface::uplink): physical
 /// adapters, and Hyper-V's on an external switch) when there are any, as Hyper-V's Default
 /// Switch, WSL's and some VPN adapters (TAP, ZeroTier) identify as Ethernet too; otherwise all of
 /// them. Lowest IPv4 metric first, as Windows prefers it for its own traffic, so guests' traffic
@@ -926,8 +926,8 @@ fn local_for(gateway: &Gateway<upnp::Bounded>, bind: IpAddr) -> Result<IpAddr> {
 /// first the one whose address Windows routes to its default gateway from, then the lower address.
 /// A tunnel's or a PPP link's are never among them.
 fn search_order(
-    interfaces: &[butterpollo_windows::net::LanInterface],
-) -> Vec<&butterpollo_windows::net::LanInterface> {
+    interfaces: &[butterpollo_win_io::net::LanInterface],
+) -> Vec<&butterpollo_win_io::net::LanInterface> {
     let uplink = interfaces.iter().any(|interface| interface.uplink());
     let mut order: Vec<_> = interfaces
         .iter()
@@ -963,14 +963,14 @@ fn route_source(gateway: std::net::Ipv4Addr) -> Option<IpAddr> {
 }
 /// This PC's Ethernet and Wi-Fi interfaces; none when they cannot be read.
 #[cfg(not(test))]
-fn lan_interfaces() -> Vec<butterpollo_windows::net::LanInterface> {
-    butterpollo_windows::net::lan_interfaces().unwrap_or_else(|error| {
+fn lan_interfaces() -> Vec<butterpollo_win_io::net::LanInterface> {
+    butterpollo_win_io::net::lan_interfaces().unwrap_or_else(|error| {
         tracing::debug!(error = %format!("{error:#}"), "the LAN addresses could not be read");
         Vec::new()
     })
 }
 #[cfg(test)]
-fn lan_interfaces() -> Vec<butterpollo_windows::net::LanInterface> {
+fn lan_interfaces() -> Vec<butterpollo_win_io::net::LanInterface> {
     TEST_NET.with(|net| net.borrow().lan.clone())
 }
 /// The addresses to look for this PC's router from, in [`search_order`].
@@ -985,11 +985,11 @@ fn lan_ipv4() -> Vec<IpAddr> {
 /// [`search_order`] that has one; a VPN's default route may be listed before the LAN router's.
 /// Without such an adapter, the first of the default `gateways`.
 fn pcp_route(
-    interfaces: &[butterpollo_windows::net::LanInterface],
+    interfaces: &[butterpollo_win_io::net::LanInterface],
     gateways: &[IpAddr],
     bind: IpAddr,
 ) -> Option<(std::net::Ipv4Addr, std::net::Ipv4Addr)> {
-    let route = |interface: &butterpollo_windows::net::LanInterface| {
+    let route = |interface: &butterpollo_win_io::net::LanInterface| {
         interface
             .gateways
             .first()

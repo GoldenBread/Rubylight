@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use butterpollo_config::config::{Config, KeyboardLayoutSetting};
 use butterpollo_session::session::Warnings;
-use butterpollo_windows::keylayout::{Layout, Layouts};
+use butterpollo_win_io::keylayout::{Layout, Layouts};
 
 /// The session warning code while the layout keys should follow cannot be read.
 pub(super) const WARNING: &str = "keyboard_layout";

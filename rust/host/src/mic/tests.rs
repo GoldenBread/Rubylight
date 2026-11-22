@@ -7,7 +7,7 @@ fn damaged_microphone_packets_keep_the_playout_clock_running() -> Result<()> {
     let root = PathBuf::from(
         std::env::var_os("BUTTERPOLLO_TEST_OPUS_ROOT").expect("set BUTTERPOLLO_TEST_OPUS_ROOT"),
     );
-    let mut encoder = butterpollo_windows::audio::Opus::new(&root, 2, false)?;
+    let mut encoder = butterpollo_win_io::audio::Opus::new(&root, 2, false)?;
     let valid = encoder.encode(&vec![0.25; 960 * 2])?;
     // Code 3 requires a second framing byte. This cannot contain a valid
     // Opus frame, even though its encrypted transport can be intact.
@@ -56,7 +56,7 @@ fn recovered_microphone_burst_does_not_expand_playout_delay() -> Result<()> {
     let root = PathBuf::from(
         std::env::var_os("BUTTERPOLLO_TEST_OPUS_ROOT").expect("set BUTTERPOLLO_TEST_OPUS_ROOT"),
     );
-    let mut encoder = butterpollo_windows::audio::Opus::new(&root, 2, false)?;
+    let mut encoder = butterpollo_win_io::audio::Opus::new(&root, 2, false)?;
     let valid = encoder.encode(&vec![0.25; 960 * 2])?;
     let mut decoder = OpusDecoder::new(&root)?;
     let mut sequencer = Sequencer::default();
@@ -97,7 +97,7 @@ fn recovered_microphone_burst_does_not_expand_playout_delay() -> Result<()> {
 /// `conceal` (or silence): what the device played.
 fn played_through_opus(root: &std::path::Path, conceal: bool) -> Result<Vec<f32>> {
     let tone = |n: usize| ((n * 437 % 48_000) as f64 * std::f64::consts::TAU / 48_000.).sin();
-    let mut encoder = butterpollo_windows::audio::Opus::new(root, 2, false)?;
+    let mut encoder = butterpollo_win_io::audio::Opus::new(root, 2, false)?;
     let decoder = Mutex::new(Some(OpusDecoder::new(root)?));
     let mut playout = Playout::default();
     let (mut played, mut out, mut pcm) = (Vec::new(), Vec::new(), Vec::new());

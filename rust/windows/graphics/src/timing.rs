@@ -1,0 +1,505 @@
+use anyhow::Result;
+use std::{
+    sync::atomic::{AtomicU32, Ordering},
+    time::{Duration, Instant},
+};
+use windows::{
+    Win32::{
+        Foundation::*,
+        System::{Power::*, Threading::*},
+    },
+    core::PCWSTR,
+};
+
+/// Paced waits start with this wake lead and never exceed the maximum.
+const PACED_LEAD_INITIAL_US: u32 = 300;
+const PACED_LEAD_MAX_US: u32 = 1000;
+/// One high-resolution waitable timer per media worker. Packet pacing must not
+/// pay the coarse scheduler tick for every UDP datagram. The second field is
+/// the measured wake lateness of paced waits, in microseconds.
+pub struct Timer(HANDLE, AtomicU32);
+/// Each capture consumer owns a separate unnamed event. Resetting it cannot
+/// consume another client's notification, and publishing before a wait is safe.
+pub struct Signal(HANDLE);
+/// Keep capture's display awake, as the C++ host does. The request belongs to
+/// this thread and must be restored on the same thread, after capture ends.
+pub struct DisplayAwake {
+    previous: EXECUTION_STATE,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+impl DisplayAwake {
+    pub fn enter() -> Result<Self> {
+        let required = ES_CONTINUOUS | ES_DISPLAY_REQUIRED;
+        // SAFETY: SetThreadExecutionState takes only flags by value and affects only this thread.
+        let previous = unsafe { SetThreadExecutionState(required) };
+        anyhow::ensure!(
+            previous.0 != 0,
+            "Windows rejected the display-awake request"
+        );
+        let guard = Self {
+            previous,
+            _thread: std::marker::PhantomData,
+        };
+        // Preserve any other requirement already owned by this thread, e.g.
+        // a caller keeping the system awake. Drop also handles this error path.
+        if previous & !required != EXECUTION_STATE(0) {
+            anyhow::ensure!(
+                // SAFETY: Flags only, by value; this changes only the calling thread's execution
+                // state.
+                unsafe { SetThreadExecutionState(previous | required) }.0 != 0,
+                "Windows rejected the combined execution-state request"
+            );
+        }
+        Ok(guard)
+    }
+}
+impl Drop for DisplayAwake {
+    fn drop(&mut self) {
+        // SAFETY: Flags only; the guard is !Send, so this restores the state on the thread that set
+        // it.
+        unsafe {
+            SetThreadExecutionState(self.previous | ES_CONTINUOUS);
+        }
+    }
+}
+// Windows event operations are thread-safe; ownership keeps the handle alive.
+// SAFETY: Signal owns its event handle until Drop, and event calls may come from any thread.
+unsafe impl Send for Signal {}
+// SAFETY: SetEvent, ResetEvent and waits are thread-safe kernel calls, and none needs `&mut self`.
+unsafe impl Sync for Signal {}
+impl Signal {
+    pub fn new() -> Result<Self> {
+        // SAFETY: Null attributes and name create a new unnamed event; Signal owns the handle and
+        // closes it only in Drop.
+        Ok(Self(unsafe {
+            CreateEventW(None, true, false, PCWSTR::null())?
+        }))
+    }
+    pub fn set(&self) -> Result<()> {
+        // SAFETY: `self.0` is the event this Signal owns, open until Drop.
+        unsafe {
+            SetEvent(self.0)?;
+        }
+        Ok(())
+    }
+    /// The event, to hand to another process.
+    pub(crate) fn raw(&self) -> HANDLE {
+        self.0
+    }
+    /// Whether the event is set, without waiting.
+    pub(crate) fn is_set(&self) -> bool {
+        // SAFETY: `self.0` is the event this Signal owns, open until Drop; a
+        // zero timeout only reads its state.
+        unsafe { WaitForSingleObject(self.0, 0) == WAIT_OBJECT_0 }
+    }
+    /// Reset while holding the protected capture-image lock, before waiting.
+    pub fn reset(&self) -> Result<()> {
+        // SAFETY: `self.0` is the event this Signal owns, open until Drop.
+        unsafe {
+            ResetEvent(self.0)?;
+        }
+        Ok(())
+    }
+}
+impl Drop for Signal {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is owned by this Signal and closed exactly once, here.
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+impl Timer {
+    pub fn new() -> Result<Self> {
+        // SAFETY: Null attributes and name create a new unnamed timer; Timer owns the handle and
+        // closes it only in Drop.
+        unsafe {
+            let timer = CreateWaitableTimerExW(
+                None,
+                PCWSTR::null(),
+                CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                TIMER_ALL_ACCESS.0,
+            )
+            .or_else(|_| CreateWaitableTimerExW(None, PCWSTR::null(), 0, TIMER_ALL_ACCESS.0))?;
+            Ok(Self(timer, AtomicU32::new(PACED_LEAD_INITIAL_US)))
+        }
+    }
+    pub fn until(&self, deadline: Instant) {
+        if self.wait_until(deadline, &[], arm_timer).is_err() {
+            // A failed kernel wait must not turn a busy media worker into a spin loop.
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        }
+    }
+    /// A deadline wait that never returns early. Packet pacing uses
+    /// `until_paced` instead: a yielding tail measured slower than the timer
+    /// beside CPU-bound threads (`examples/pace_probe.rs`).
+    pub fn until_precise(&self, deadline: Instant) {
+        self.until(deadline);
+    }
+    /// Packet pacing without spinning: arm the timer early by the wake
+    /// lateness this timer has measured (an average, at most 1 ms), so wakes
+    /// land on the deadline on average. Returns up to that lead early; the
+    /// pacer's accumulated deadline keeps the average rate exact, and an early
+    /// send earns no extra credit.
+    pub fn until_paced(&self, deadline: Instant) {
+        let _ = self.wait_paced(deadline, None);
+    }
+    pub fn until_paced_or_signal(&self, deadline: Instant, signal: &Signal) -> Result<bool> {
+        self.wait_paced(deadline, Some(signal))
+    }
+    fn wait_paced(&self, deadline: Instant, signal: Option<&Signal>) -> Result<bool> {
+        let lead = Duration::from_micros(u64::from(self.1.load(Ordering::Relaxed)));
+        let Some(target) = deadline.checked_sub(lead) else {
+            return Ok(false);
+        };
+        if target <= Instant::now() {
+            return Ok(false);
+        }
+        if let Some(signal) = signal {
+            if self.until_or_signal(target, signal)? {
+                return Ok(true);
+            }
+        } else {
+            self.until(target);
+        }
+        let late = Instant::now().saturating_duration_since(target).as_micros() as u32;
+        self.1.store(
+            paced_lead(self.1.load(Ordering::Relaxed), late),
+            Ordering::Relaxed,
+        );
+        Ok(false)
+    }
+    /// Frame claims remain interruptible throughout their timer wait.
+    pub fn until_or_signal_precise(&self, deadline: Instant, signal: &Signal) -> Result<bool> {
+        self.until_or_signal(deadline, signal)
+    }
+    /// Wait for capture or the precise encoder/static-frame deadline, without
+    /// a coarse condition-variable timeout or a polling/spinning thread.
+    pub fn until_or_signal(&self, deadline: Instant, signal: &Signal) -> Result<bool> {
+        self.wait_until(deadline, &[signal], arm_timer)
+    }
+    /// Wait for `signal`, `extra` (such as an encoder's output event) or the
+    /// deadline; true when either event ended the wait.
+    pub fn until_or_signals(
+        &self,
+        deadline: Instant,
+        signal: &Signal,
+        extra: Option<&Signal>,
+    ) -> Result<bool> {
+        match extra {
+            Some(extra) => self.wait_until(deadline, &[signal, extra], arm_timer),
+            None => self.wait_until(deadline, &[signal], arm_timer),
+        }
+    }
+    /// A deadline wait that `event`, when there is one, ends early.
+    pub fn until_or_event(&self, deadline: Instant, event: Option<&Signal>) -> Result<bool> {
+        match event {
+            Some(event) => self.wait_until(deadline, &[event], arm_timer),
+            None => {
+                self.until(deadline);
+                Ok(false)
+            }
+        }
+    }
+    /// Waits for the first of `signals` (lower indices win a tie) or the
+    /// deadline; true when a signal ended the wait.
+    fn wait_until(
+        &self,
+        deadline: Instant,
+        signals: &[&Signal],
+        arm: impl Fn(HANDLE, &i64) -> windows::core::Result<()>,
+    ) -> Result<bool> {
+        let mut handles = [HANDLE::default(); 3];
+        for (handle, signal) in handles.iter_mut().zip(signals) {
+            *handle = signal.0;
+        }
+        anyhow::ensure!(signals.len() < handles.len(), "too many wait signals");
+        let count = signals.len();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(false);
+            }
+            // Round up so converting to Windows' 100 ns units never expires early.
+            let ticks = -(remaining.as_nanos().div_ceil(100).min(i64::MAX as u128) as i64);
+            let timeout = remaining
+                .as_nanos()
+                .div_ceil(1_000_000)
+                .min(u128::from(u32::MAX - 1)) as u32;
+            let armed = arm(self.0, &ticks).is_ok();
+            // SAFETY: Every handle stays open for its owner's borrow. Signals come first so a
+            // simultaneous deadline and recovery notification preserves the notification.
+            let result = unsafe {
+                match (armed, count) {
+                    (true, _) => {
+                        handles[count] = self.0;
+                        WaitForMultipleObjects(&handles[..=count], false, timeout)
+                    }
+                    // A timer unavailable after creation must still allow capture/recovery to
+                    // interrupt its fallback wait; do not replace this with an ordinary sleep.
+                    (false, 1..) => WaitForMultipleObjects(&handles[..count], false, timeout),
+                    (false, 0) => {
+                        std::thread::sleep(remaining);
+                        WAIT_TIMEOUT
+                    }
+                }
+            };
+            // WAIT_OBJECT_0 is 0: the first `count` results are the signals.
+            if result.0 < WAIT_OBJECT_0.0 + count as u32 {
+                return Ok(true);
+            }
+            if result != WAIT_TIMEOUT && !(armed && result.0 == WAIT_OBJECT_0.0 + count as u32) {
+                return Err(windows::core::Error::from_thread().into());
+            }
+            // Recheck the monotonic deadline after an early timer or bounded timeout.
+        }
+    }
+}
+/// One-eighth exponential average of measured lateness. A single long stall
+/// moves the lead by at most 1/8 of the cap.
+fn paced_lead(lead: u32, late_us: u32) -> u32 {
+    let late = late_us.min(PACED_LEAD_MAX_US);
+    ((lead * 7 + late) / 8).min(PACED_LEAD_MAX_US)
+}
+fn arm_timer(handle: HANDLE, ticks: &i64) -> windows::core::Result<()> {
+    // SAFETY: The caller borrows the live timer, ticks outlives the call, and no completion
+    // routine is registered.
+    unsafe { SetWaitableTimer(handle, ticks, 0, None, None, false) }
+}
+impl Drop for Timer {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is owned by this Timer and closed exactly once, here.
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+/// Process-wide scheduling for the lifetime of at least one stream: a 1 ms
+/// system timer, high priority class, and no power throttling. Without the
+/// priority class, media threads (base 9 at normal class) wait behind a busy
+/// game's threads; PyroWave frames that fill most of a period on the wire then
+/// fall to about 58 fps at 144 Hz (issue #42, 2.5.6-2.5.8). Without these,
+/// driver waits (an AMF output query, a DXGI acquire) and Windows 11 timer
+/// coalescing can add a scheduler tick to a frame. Like the C++ host it also
+/// schedules the compositor under MMCSS, puts connected Wi-Fi adapters in
+/// media streaming mode, and turns on Mouse Keys when no mouse is connected,
+/// because Windows otherwise hides the cursor the stream should show.
+/// Restored after the last stream.
+pub struct StreamingScope(());
+#[derive(Default)]
+struct Streams {
+    count: usize,
+    priority: u32,
+    power: Option<PROCESS_POWER_THROTTLING_STATE>,
+    /// Optional Wi-Fi media streaming guard returned by the host on stream start.
+    wlan: Option<Box<dyn Send>>,
+    /// Mouse Keys as they were before the first stream turned them on.
+    mouse_keys: Option<windows::Win32::UI::Accessibility::MOUSEKEYS>,
+}
+static STREAMS: std::sync::Mutex<Streams> = std::sync::Mutex::new(Streams {
+    count: 0,
+    priority: 0,
+    power: None,
+    wlan: None,
+    mouse_keys: None,
+});
+/// Mouse Keys on, when Windows has no mouse and would hide the cursor;
+/// returns the previous settings to restore.
+fn force_cursor() -> Option<windows::Win32::UI::Accessibility::MOUSEKEYS> {
+    use windows::Win32::UI::{Accessibility::*, WindowsAndMessaging::*};
+    // SAFETY: Both MOUSEKEYS are locals with cbSize set, and they outlive the SystemParametersInfoW
+    // calls that read and write them.
+    unsafe {
+        if GetSystemMetrics(SM_MOUSEPRESENT) != 0 {
+            return None;
+        }
+        let mut previous = MOUSEKEYS {
+            cbSize: size_of::<MOUSEKEYS>() as u32,
+            ..Default::default()
+        };
+        let mut enabled = MOUSEKEYS {
+            cbSize: size_of::<MOUSEKEYS>() as u32,
+            dwFlags: MKF_MOUSEKEYSON | MKF_AVAILABLE,
+            iMaxSpeed: 10,
+            iTimeToMaxSpeed: 1000,
+            ..Default::default()
+        };
+        let result = SystemParametersInfoW(
+            SPI_GETMOUSEKEYS,
+            0,
+            Some((&mut previous as *mut MOUSEKEYS).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .and_then(|()| {
+            SystemParametersInfoW(
+                SPI_SETMOUSEKEYS,
+                0,
+                Some((&mut enabled as *mut MOUSEKEYS).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        });
+        match result {
+            Ok(()) => {
+                tracing::info!(
+                    "no mouse connected; Mouse Keys are on while streaming so the cursor shows"
+                );
+                Some(previous)
+            }
+            Err(error) => {
+                tracing::warn!(%error, "no mouse connected and Mouse Keys could not be turned on; the cursor may stay hidden");
+                None
+            }
+        }
+    }
+}
+/// QueryPerformanceCounter in milliseconds, the clock the Windows test receiver reads as
+/// `clock_ms()`. Zero if the counter is unavailable.
+pub fn qpc_ms() -> f64 {
+    let (mut ticks, mut frequency) = (0, 0);
+    // SAFETY: both calls write only to the live locals.
+    let ok = unsafe {
+        windows::Win32::System::Performance::QueryPerformanceCounter(&mut ticks).is_ok()
+            && windows::Win32::System::Performance::QueryPerformanceFrequency(&mut frequency)
+                .is_ok()
+    };
+    if ok && frequency > 0 {
+        ticks as f64 * 1000. / frequency as f64
+    } else {
+        0.
+    }
+}
+/// Windows 11 otherwise ignores timer requests from a process without a
+/// visible window, and may run it on efficiency cores: the host, and the
+/// capture helper in the user's session.
+pub fn disable_power_throttling() {
+    let state = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+            | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+        StateMask: 0,
+    };
+    // SAFETY: `state` is an initialised local that outlives the call, the size passed is its size,
+    // and GetCurrentProcess returns a pseudo handle.
+    if let Err(error) = unsafe {
+        SetProcessInformation(
+            GetCurrentProcess(),
+            ProcessPowerThrottling,
+            (&state as *const PROCESS_POWER_THROTTLING_STATE).cast(),
+            std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        )
+    } {
+        tracing::debug!(%error, "power throttling opt-out unavailable");
+    }
+}
+impl StreamingScope {
+    pub fn enter() -> Self {
+        Self::enter_with(|| None)
+    }
+    /// Enter a streaming scope; `on_first` runs once when the first active stream enters
+    /// and its guard is dropped when the last active stream leaves (used for Wi-Fi scan mode).
+    pub fn enter_with(on_first: impl FnOnce() -> Option<Box<dyn Send>>) -> Self {
+        let mut streams = STREAMS.lock().unwrap();
+        if streams.count == 0 {
+            // A reconnect may reuse capture after the last stream restored the process priority.
+            if let Err(error) = crate::gpu_priority::resume() {
+                tracing::debug!(%error, "resuming GPU process scheduling failed");
+            }
+            // SAFETY: DwmEnableMMCSS takes only a BOOL.
+            unsafe {
+                let _ = windows::Win32::Graphics::Dwm::DwmEnableMMCSS(true);
+            }
+            streams.wlan = on_first();
+            if streams.mouse_keys.is_none() {
+                streams.mouse_keys = force_cursor();
+            }
+            // SAFETY: GetCurrentProcess returns a pseudo handle that needs no closing, and the
+            // other calls take only plain values.
+            unsafe {
+                let process = GetCurrentProcess();
+                let mut power = PROCESS_POWER_THROTTLING_STATE {
+                    Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                    ..Default::default()
+                };
+                if GetProcessInformation(
+                    process,
+                    ProcessPowerThrottling,
+                    (&mut power as *mut PROCESS_POWER_THROTTLING_STATE).cast(),
+                    size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+                )
+                .is_ok()
+                {
+                    streams.power = Some(power);
+                }
+                disable_power_throttling();
+                let _ = windows::Win32::Media::timeBeginPeriod(1);
+                streams.priority = GetPriorityClass(process);
+                if let Err(error) = SetPriorityClass(process, HIGH_PRIORITY_CLASS) {
+                    tracing::debug!(%error, "high process priority unavailable");
+                }
+            }
+        }
+        streams.count += 1;
+        Self(())
+    }
+    /// How many streams hold a scope now.
+    pub fn active() -> usize {
+        STREAMS.lock().unwrap().count
+    }
+}
+impl Drop for StreamingScope {
+    fn drop(&mut self) {
+        let mut streams = STREAMS.lock().unwrap();
+        streams.count -= 1;
+        if streams.count == 0 {
+            // SAFETY: The process pseudo handle needs no closing, the priority and power state were
+            // saved by enter, and the calls take only plain values.
+            unsafe {
+                let process = GetCurrentProcess();
+                if streams.priority != 0 {
+                    let _ = SetPriorityClass(process, PROCESS_CREATION_FLAGS(streams.priority));
+                }
+                let power = streams
+                    .power
+                    .take()
+                    .unwrap_or(PROCESS_POWER_THROTTLING_STATE {
+                        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                        ..Default::default()
+                    });
+                if let Err(error) = SetProcessInformation(
+                    process,
+                    ProcessPowerThrottling,
+                    (&power as *const PROCESS_POWER_THROTTLING_STATE).cast(),
+                    size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+                ) {
+                    tracing::debug!(%error, "restoring process power throttling failed");
+                }
+                if let Err(error) = crate::gpu_priority::restore() {
+                    tracing::debug!(%error, "restoring GPU process scheduling failed");
+                }
+                let _ = windows::Win32::Media::timeEndPeriod(1);
+                let _ = windows::Win32::Graphics::Dwm::DwmEnableMMCSS(false);
+            }
+            drop(streams.wlan.take());
+            // Keep the original settings until they are back, as the C++ host does.
+            if let Some(mut previous) = streams.mouse_keys
+                // SAFETY: `previous` is a local MOUSEKEYS, its cbSize set by force_cursor, that
+                // outlives the call.
+                && unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::SystemParametersInfoW(
+                    windows::Win32::UI::WindowsAndMessaging::SPI_SETMOUSEKEYS,
+                    0,
+                    Some(
+                        (&mut previous as *mut windows::Win32::UI::Accessibility::MOUSEKEYS).cast(),
+                    ),
+                    windows::Win32::UI::WindowsAndMessaging::SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+                )
+                }
+                .is_ok()
+            {
+                streams.mouse_keys = None;
+            }
+        }
+    }
+}
+#[cfg(test)]
+mod tests;

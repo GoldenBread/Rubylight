@@ -1,0 +1,1496 @@
+//! Input event dispatch and shared per-session injection state.
+
+use anyhow::{Context, Result, bail};
+use butterpollo_input_policy::input::Input as Event;
+use butterpollo_input_policy::input_policy::{VHF_AUTO, gamepad_profile};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    mem::size_of,
+    time::{Duration, Instant},
+};
+use windows::{
+    Win32::{
+        Devices::DeviceAndDriverInstallation::*,
+        Foundation::*,
+        Storage::FileSystem::*,
+        System::StationsAndDesktops::*,
+        UI::{
+            Controls::*,
+            Input::{KeyboardAndMouse::*, Pointer::*},
+            WindowsAndMessaging::*,
+        },
+    },
+    core::{GUID, PCWSTR},
+};
+
+mod desktop;
+mod dualsense_pad;
+mod gamepad_backend;
+#[path = "input/gamepad_thread.rs"]
+mod gamepad_thread;
+mod gamepads;
+mod keyboard_mouse;
+mod steam_deck_pad;
+mod switch2_pad;
+mod touch_pen;
+mod usbip_pad;
+mod vigem;
+mod virtual_hid;
+
+pub use desktop::{
+    desktop_refused, follow_input_desktop, input_desktop_name, keep_on_input_desktop,
+    on_input_desktop, secure_desktop_shown,
+};
+/// Gated fake pads for other modules' tests.
+#[cfg(test)]
+pub(crate) use gamepad_thread::tests::fake as fake_pads;
+pub use gamepad_thread::{GamepadThread, PadReport};
+pub use gamepads::{Gamepads, open_interface};
+use keyboard_mouse::{
+    EXPLICIT_EXTENDED_KEY, inject, is_modifier, keyboard_identity, mapped_keyboard_identity,
+};
+use touch_pen::{inject_pointer, refresh_due};
+pub use usbip_pad::UsbipDriver;
+
+static HELD: std::sync::Mutex<BTreeMap<(bool, u32), usize>> =
+    std::sync::Mutex::new(BTreeMap::new());
+/// Separates virtual-mouse button identities from SendInput button identities in [`HELD`]
+/// so mixed-mode multi-client streams never suppress or misroute each other's presses.
+const VIRTUAL_BUTTON_FLAG: u32 = 1 << 16;
+/// Keeps sends in the order of their HELD updates without holding HELD through
+/// SendInput, which another injector's thread waited behind: a delayed send holds it
+/// from its update to its send, and a pass's send waits for it. Taken before HELD.
+static SEND_ORDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn capabilities(config: &butterpollo_config::config::Config) -> u32 {
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    let mut flags = 0;
+    if config.boolean("mouse", true)
+        && config.boolean("native_pen_touch", true)
+        // SAFETY: The module and symbol names are terminated static strings; the returned address is only checked for presence.
+        && unsafe {
+            GetModuleHandleW(windows::core::w!("user32.dll")).is_ok_and(|module| {
+                GetProcAddress(module, windows::core::s!("CreateSyntheticPointerDevice")).is_some()
+            })
+        }
+    {
+        flags |= 1;
+    }
+    if config.boolean("controller", true)
+        && !matches!(
+            config.get("gamepad", "auto"),
+            "vhf_xbox" | "vhf_xbox_one" | "vhf_switch" | "usbip_switch2" | "vigem_x360"
+        )
+    {
+        // Moonlight has one general controller-touch feature bit; there is
+        // no separate host bit for dual touchpads. The virtual DualShock 4 and
+        // DualSense have one touch surface, so a client's second touchpad
+        // (a Steam Deck's right trackpad) is placed on its right half; apply()
+        // ignores any other touchpad.
+        flags |= 2;
+    }
+    if config.boolean("mouse", true)
+        && config.boolean("native_touchpad", true)
+        && usbip_pad::usbip_exe().is_some()
+    {
+        // A tablet's physical touchpad, as Moonlight V+'s and Foundation Sunshine's packets
+        // carry it: one contact (LI_FF_TOUCHPAD_EVENTS) or a whole frame
+        // (LI_FF_TOUCHPAD_FRAME_EVENTS) each. It replays on the virtual Precision Touchpad,
+        // which needs usbip-win2; without it the client keeps its touchpad a mouse.
+        flags |= 0x10 | 0x20;
+    }
+    flags
+}
+pub struct Injector {
+    keys: BTreeSet<u32>,
+    key_sources: BTreeMap<u32, u32>,
+    buttons: BTreeSet<u8>,
+    /// Subset of `buttons` pressed via the virtual mouse, so releases always return
+    /// to the exact route that pressed them even if readiness changes or another client
+    /// uses SendInput.
+    virtual_buttons: BTreeSet<u8>,
+    touches: BTreeMap<u32, POINTER_TOUCH_INFO>,
+    /// The pass's touch moves not yet injected, by client id: they go out in one frame.
+    touch_moves: BTreeMap<u32, POINTER_TOUCH_INFO>,
+    /// Touches on their way to mouse input, with a mouse or trackpad touch profile.
+    touch_profile: butterpollo_input_policy::touch_profile::TouchProfile,
+    touch_device: Option<HSYNTHETICPOINTERDEVICE>,
+    pen_device: Option<HSYNTHETICPOINTERDEVICE>,
+    pen: POINTER_PEN_INFO,
+    /// When touch contacts and the pen were last injected.
+    touch_refreshed: std::time::Instant,
+    pen_refreshed: std::time::Instant,
+    /// The controllers' thread: a controller session's ([`Self::use_gamepads`]), or one of
+    /// its own started with the first controller event.
+    gamepads: Option<std::sync::Arc<GamepadThread>>,
+    /// The `gamepad` profile its own thread opens.
+    gamepad_profile: u16,
+    /// What wakes the control socket wait, for whichever thread the controllers get.
+    feedback_waker: Option<std::sync::Arc<std::net::UdpSocket>>,
+    /// The display's desktop rectangle, None until the display exists.
+    rect: Option<RECT>,
+    policy: butterpollo_input_policy::input_policy::Policy,
+    /// The layout that gives keys the client did not normalize their scan codes (None:
+    /// the host's), and the one asked for since. It takes over once no key is held, so
+    /// a release sends its press's scan code.
+    layout: Option<crate::keylayout::Layout>,
+    next_layout: Option<crate::keylayout::Layout>,
+    key_flags: BTreeMap<u32, u8>,
+    /// Repeating key, its flags, the modifiers pressed around it at key-down
+    /// and when it repeats.
+    repeat: Option<(u32, u8, u8, std::time::Instant)>,
+    scroll: [i32; 2],
+    haptics: bool,
+    /// The display absolute input maps onto, and when its rectangle was read.
+    output: String,
+    /// The stream's size: clients place absolute input on the whole stream,
+    /// including the bars around a display of another shape.
+    stream: Option<(u32, u32)>,
+    rect_read: std::time::Instant,
+    lookup: Option<Lookup>,
+    /// When absolute input was last reported ignored for a missing display.
+    display_warned: Option<std::time::Instant>,
+    /// Whether the client last moved the mouse by absolute position, and a
+    /// left-button release held back meanwhile.
+    absolute: bool,
+    left_release: Option<std::time::Instant>,
+    left_release_virtual: std::cell::Cell<bool>,
+    forced_route: std::cell::Cell<Option<MouseRoute>>,
+    pending: Pending,
+    /// SendInput, or a stand-in in tests.
+    inject: fn(&[INPUT]) -> usize,
+    /// `inject_pointer` for touch frames, or a stand-in in tests.
+    inject_touch: unsafe fn(HSYNTHETICPOINTERDEVICE, &[POINTER_TYPE_INFO]) -> Result<()>,
+    warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
+    /// This stream holds a share of the virtual mouse (`mouse_mode` auto or virtual_mouse):
+    /// mouse input goes to it while it is plugged in.
+    virtual_mouse: bool,
+    /// Whether mouse input last went to the virtual mouse, to log when that changes.
+    virtual_mouse_routed: std::sync::atomic::AtomicBool,
+    /// This stream holds a share of the virtual touchpad (`native_touchpad`).
+    touchpad: bool,
+    /// The touchpad's plugging was reported.
+    touchpad_reported: bool,
+    /// The code of the warning last set for the touchpad, so each packet need not look it up.
+    touchpad_warned: Option<&'static str>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MouseRoute {
+    /// Moves, scrolls, and unowned pairs: virtual mouse when ready, otherwise SendInput.
+    #[default]
+    Auto,
+    /// Pressed via SendInput; must release via SendInput.
+    Injection,
+    /// Pressed via the virtual mouse; must release via the virtual mouse.
+    Virtual,
+}
+
+/// Keyboard and mouse input of one pass of the control loop, sent in one
+/// SendInput call: a call cost 31-36 us whether it carried one input or
+/// eight.
+#[derive(Default)]
+struct Pending {
+    inputs: Vec<INPUT>,
+    /// Parallel to `inputs`: the delivery route each input requires.
+    routes: Vec<MouseRoute>,
+    /// Each event's end in `inputs`, and its press if it is one.
+    events: Vec<(usize, Option<Press>)>,
+    /// Why events of the pass failed.
+    errors: Vec<anyhow::Error>,
+}
+impl Pending {
+    fn sync_routes(&mut self) {
+        if self.inputs.is_empty() {
+            self.routes.clear();
+        }
+    }
+    fn push_auto(&mut self, input: INPUT) {
+        self.sync_routes();
+        self.inputs.push(input);
+        self.routes.push(MouseRoute::Auto);
+    }
+    fn push_routed(&mut self, input: INPUT, route: MouseRoute) {
+        self.sync_routes();
+        self.inputs.push(input);
+        self.routes.push(route);
+    }
+}
+/// A display looked up on its own thread.
+struct Lookup {
+    output: String,
+    started: std::time::Instant,
+    /// None once its result was used.
+    thread: Option<std::thread::JoinHandle<Result<RECT>>>,
+}
+/// A key or button press, recorded as held once Windows takes it.
+struct Press {
+    keyboard: bool,
+    id: u32,
+    /// Unmapped keyboard identity; unused for mouse presses.
+    source: u32,
+    flags: u8,
+    /// Whether it was counted in HELD, to count it out if Windows refuses it.
+    counted: bool,
+    /// The modifiers pressed around a key that repeats.
+    repeat: Option<u8>,
+}
+/// How often a display's rectangle is read again, and a missing display
+/// looked up again: the lookup enumerates every display.
+const RECT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+/// How often a streamed window's rectangle is read again: a window is moved
+/// and resized far more often than a display, and reading it is cheap.
+const WINDOW_RECT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+/// The start of a window capture target (`capture::WindowTarget`).
+const WINDOW_PREFIX: &str = "window:";
+/// How long the rectangle of `output` is used before it is read again.
+fn rect_interval(output: &str) -> std::time::Duration {
+    if output.starts_with(WINDOW_PREFIX) {
+        WINDOW_RECT_INTERVAL
+    } else {
+        RECT_INTERVAL
+    }
+}
+/// How often absolute input ignored for a missing display is reported.
+const MISSING_DISPLAY_WARNING: std::time::Duration = std::time::Duration::from_secs(10);
+#[derive(Clone, Copy)]
+pub struct RectHooks {
+    pub window_rect: fn(&str) -> Option<RECT>,
+    pub display_name_for_id: fn(&str) -> Option<String>,
+}
+static RECT_HOOKS: std::sync::OnceLock<RectHooks> = std::sync::OnceLock::new();
+pub fn set_rect_hooks(hooks: RectHooks) {
+    let _ = RECT_HOOKS.set(hooks);
+}
+
+/// The desktop rectangle of `output`: a GDI name, a device ID, or empty for
+/// the first display.
+fn display_rect(output: &str) -> Result<RECT> {
+    // The app's window streamed in place of a display: input maps onto the
+    // window's captured area, wherever it is (butterpollo_media_policy::app_window).
+    if output.starts_with(WINDOW_PREFIX) {
+        return RECT_HOOKS
+            .get()
+            .and_then(|hooks| (hooks.window_rect)(output))
+            .ok_or_else(|| anyhow::anyhow!("input window missing"));
+    }
+    // Before capture publishes its GDI name, the configured display is
+    // often a device ID ({...}); input arriving then was dropped.
+    let name = RECT_HOOKS
+        .get()
+        .and_then(|hooks| (hooks.display_name_for_id)(output))
+        .unwrap_or_else(|| output.to_owned());
+    crate::os_helpers::active_displays_gdi()
+        .into_iter()
+        .find_map(|(display_name, rect)| {
+            (output.is_empty() || display_name.eq_ignore_ascii_case(&name)).then_some(rect)
+        })
+        .ok_or_else(|| anyhow::anyhow!("input display missing"))
+}
+/// The rectangle after a periodic re-read (`read`): a display that could not be read keeps its
+/// last one (a mode change mid-read), but a streamed window that is closed, minimised or replaced
+/// has none, so absolute input waits instead of landing on whatever is there now. Relative input
+/// needs no rectangle and goes on.
+fn reread_rect(output: &str, last: Option<RECT>, read: Option<RECT>) -> Option<RECT> {
+    match read {
+        Some(rect) => Some(rect),
+        None if output.starts_with(WINDOW_PREFIX) => None,
+        None => last,
+    }
+}
+/// The current rectangle of a display by GDI name, read cheaply from its mode.
+fn current_rect(name: &str) -> Option<RECT> {
+    if name.starts_with(WINDOW_PREFIX) {
+        return RECT_HOOKS.get().and_then(|hooks| (hooks.window_rect)(name));
+    }
+    crate::os_helpers::current_display_rect_gdi(name)
+}
+/// A width and height, and a rectangle (left, top, width, height) in it.
+type Size = (u32, u32);
+type Picture = (u32, u32, u32, u32);
+/// A desktop point as fractions of the stream, when it is on the display at
+/// `rect` whose picture sits at `picture` in the stream (None: it fills it).
+fn cursor_in_stream(
+    point: POINT,
+    rect: RECT,
+    picture: Option<(Size, Picture)>,
+) -> Option<(f32, f32)> {
+    let on = |value: i32, start: i32, end: i32| {
+        (start < end && (start..end).contains(&value))
+            .then(|| f64::from(value - start) / f64::from(end - start))
+    };
+    let (x, y) = (
+        on(point.x, rect.left, rect.right)?,
+        on(point.y, rect.top, rect.bottom)?,
+    );
+    let (x, y) = match picture {
+        Some((stream, (left, top, width, height))) => (
+            (f64::from(left) + x * f64::from(width)) / f64::from(stream.0),
+            (f64::from(top) + y * f64::from(height)) / f64::from(stream.1),
+        ),
+        None => (x, y),
+    };
+    Some((x as f32, y as f32))
+}
+impl Injector {
+    pub fn new(output: &str, profile: &str) -> Result<Self> {
+        Self::new_options(
+            output,
+            profile,
+            &butterpollo_config::config::Config::default(),
+        )
+    }
+    pub fn new_options(
+        output: &str,
+        profile: &str,
+        config: &butterpollo_config::config::Config,
+    ) -> Result<Self> {
+        Self::new_options_reported(output, profile, config, Default::default())
+    }
+    pub fn new_options_reported(
+        output: &str,
+        profile: &str,
+        config: &butterpollo_config::config::Config,
+        warnings: std::sync::Arc<butterpollo_session::session::Warnings>,
+    ) -> Result<Self> {
+        let profile = gamepad_profile(profile);
+        let policy = butterpollo_input_policy::input_policy::Policy::resolve(config)?;
+        // Keyboard, relative mouse and controllers must work before the
+        // stream's display exists: a controller's arrival is sent only once.
+        let mut injector = Self {
+            keys: BTreeSet::new(),
+            key_sources: BTreeMap::new(),
+            buttons: BTreeSet::new(),
+            virtual_buttons: BTreeSet::new(),
+            touches: BTreeMap::new(),
+            touch_moves: BTreeMap::new(),
+            touch_profile: Default::default(),
+            touch_device: None,
+            pen_device: None,
+            pen: Default::default(),
+            touch_refreshed: std::time::Instant::now(),
+            pen_refreshed: std::time::Instant::now(),
+            gamepads: None,
+            gamepad_profile: profile,
+            feedback_waker: None,
+            policy,
+            layout: None,
+            next_layout: None,
+            key_flags: BTreeMap::new(),
+            repeat: None,
+            scroll: [0; 2],
+            haptics: true,
+            rect: None,
+            output: output.to_owned(),
+            stream: None,
+            rect_read: std::time::Instant::now(),
+            lookup: None,
+            display_warned: None,
+            absolute: false,
+            left_release: None,
+            left_release_virtual: std::cell::Cell::new(false),
+            forced_route: std::cell::Cell::new(None),
+            pending: Pending::default(),
+            inject,
+            inject_touch: inject_pointer,
+            warnings,
+            virtual_mouse: false,
+            virtual_mouse_routed: std::sync::atomic::AtomicBool::new(false),
+            touchpad: false,
+            touchpad_reported: false,
+            touchpad_warned: None,
+        };
+        injector.look_up(output);
+        injector.start_virtual_devices();
+        Ok(injector)
+    }
+    /// Plugs in the virtual mouse for `mouse_mode` auto or virtual_mouse, and takes a share of
+    /// the virtual touchpad, which plugs in at the first touchpad packet. Tests use neither.
+    fn start_virtual_devices(&mut self) {
+        if cfg!(test) || !self.policy.mouse {
+            return;
+        }
+        if self.policy.mouse_mode.wants_virtual() {
+            virtual_hid::MOUSE.acquire();
+            self.virtual_mouse = true;
+            let availability = virtual_hid::MOUSE
+                .plug(|| butterpollo_input_policy::virtual_hid::HidMouse::new(virtual_hid::SERIAL));
+            self.report_virtual_mouse(&availability);
+        }
+        if self.policy.native_touchpad {
+            virtual_hid::TOUCHPAD.acquire();
+            self.touchpad = true;
+        }
+    }
+    /// Says why mouse input is injected when the virtual mouse cannot take it: a log line
+    /// for `auto`, and a stream warning too when the setting asked for the virtual mouse.
+    fn report_virtual_mouse(&self, availability: &virtual_hid::Availability) {
+        use butterpollo_input_policy::input_policy::MouseMode;
+        use virtual_hid::Availability;
+        let asked = self.policy.mouse_mode == MouseMode::VirtualMouse;
+        let why = match availability {
+            Availability::Ready | Availability::Plugging => {
+                tracing::info!(
+                    mode = ?self.policy.mouse_mode,
+                    "mouse input goes to the virtual mouse once it is plugged in"
+                );
+                return;
+            }
+            Availability::NoDriver => {
+                "it needs usbip-win2, the USB audio and haptics driver".to_owned()
+            }
+            Availability::Failed(error) => format!("it could not be plugged in: {error}"),
+        };
+        if asked {
+            tracing::warn!(
+                why,
+                "mouse input is injected instead of using the virtual mouse"
+            );
+            self.warnings.set(
+                "mouse_virtual_unavailable",
+                format!(
+                    "Mouse input uses Windows injection instead of the virtual mouse: {why}. Install the USB audio and haptics driver with the setup, or set Mouse input method to Injection."
+                ),
+            );
+        } else {
+            tracing::info!(
+                why,
+                "mouse input is injected: the virtual mouse is unavailable"
+            );
+        }
+    }
+    /// Sends inputs as SendInput would, putting mouse input on the virtual mouse while this
+    /// stream uses it and it is plugged in, while keeping each mouse button press and release
+    /// on the exact route that pressed it. Returns how many of the first inputs went out.
+    fn deliver(&self, inputs: &[INPUT]) -> usize {
+        let routed = self.virtual_mouse && virtual_hid::MOUSE.ready();
+        if self.virtual_mouse
+            && self
+                .virtual_mouse_routed
+                .swap(routed, std::sync::atomic::Ordering::Relaxed)
+                != routed
+        {
+            if routed {
+                tracing::info!("mouse input goes to the virtual mouse");
+            } else {
+                tracing::warn!("mouse input is injected: the virtual mouse is gone");
+            }
+        }
+        let forced = self.forced_route.get();
+        let from_pending = forced.is_none()
+            && !self.pending.inputs.is_empty()
+            && std::ptr::eq(inputs.as_ptr(), self.pending.inputs.as_ptr())
+            && self.pending.routes.len() == inputs.len();
+        let due_virtual =
+            forced.is_none() && !from_pending && self.left_release_virtual.replace(false);
+        let route_of = |i: usize| -> MouseRoute {
+            if let Some(route) = forced {
+                route
+            } else if from_pending {
+                self.pending.routes[i]
+            } else if due_virtual {
+                MouseRoute::Virtual
+            } else {
+                MouseRoute::Auto
+            }
+        };
+        let any_virtual = match forced {
+            Some(MouseRoute::Virtual) => true,
+            Some(MouseRoute::Injection) => false,
+            Some(MouseRoute::Auto) | None => {
+                routed
+                    || due_virtual
+                    || (from_pending && self.pending.routes.contains(&MouseRoute::Virtual))
+            }
+        };
+        if !any_virtual {
+            let sent = (self.inject)(inputs);
+            tracing::trace!(
+                target: "input_timing",
+                qpc = virtual_hid::qpc(),
+                route = "injection",
+                inputs = sent,
+                "delivered"
+            );
+            return sent;
+        }
+        let single_display = virtual_hid::single_display();
+        // One mouse input's steps, on the stack and reused across the pass.
+        let mut ops = [virtual_hid::Op::Motion(0, 0); virtual_hid::MAX_OPS];
+        let mut sent = 0;
+        let mut start = 0;
+        for (i, input) in inputs.iter().enumerate() {
+            if input.r#type != INPUT_MOUSE {
+                continue;
+            }
+            let route = route_of(i);
+            if route == MouseRoute::Injection || (route == MouseRoute::Auto && !routed) {
+                continue;
+            }
+            // SAFETY: a mouse INPUT holds its MOUSEINPUT in the union.
+            let mi = unsafe { input.Anonymous.mi };
+            let Some(len) = virtual_hid::hid_ops(&mi, single_display, &mut ops) else {
+                continue;
+            };
+            // Keys and SendInput-routed mouse inputs before it go first, in order.
+            if start < i {
+                let n = (self.inject)(&inputs[start..i]);
+                sent += n;
+                if n < i - start {
+                    return sent;
+                }
+            }
+            let applied = if route == MouseRoute::Virtual {
+                virtual_hid::apply(&ops[..len])
+                    || ops[..len]
+                        .iter()
+                        .all(|op| matches!(op, virtual_hid::Op::Button(_, false)))
+            } else {
+                virtual_hid::apply(&ops[..len]) || (self.inject)(std::slice::from_ref(input)) == 1
+            };
+            if applied {
+                sent += 1;
+            } else {
+                return sent;
+            }
+            start = i + 1;
+        }
+        if start < inputs.len() {
+            sent += (self.inject)(&inputs[start..]);
+        }
+        tracing::trace!(
+            target: "input_timing",
+            qpc = virtual_hid::qpc(),
+            route = "virtual_mouse",
+            inputs = sent,
+            "delivered"
+        );
+        sent
+    }
+    /// A tablet's physical touchpad: its fingers replay on the virtual Precision Touchpad,
+    /// plugged in at the first packet with the client's size.
+    fn touchpad_packet(
+        &mut self,
+        buttons: u8,
+        width_mm: u16,
+        height_mm: u16,
+        contacts: &[butterpollo_input_policy::virtual_hid::Contact],
+    ) {
+        use virtual_hid::Availability;
+        if !self.touchpad {
+            return;
+        }
+        let now = Instant::now();
+        let applied = virtual_hid::TOUCHPAD.with(|pad| {
+            pad.apply(contacts, buttons, now);
+            (pad.active(), pad.early_contacts)
+        });
+        let (code, why) = match applied {
+            Some((true, _)) => return,
+            // Windows reads the configuration at once; this many contacts without it means it
+            // took the device as something else.
+            Some((false, early)) if early >= 500 => (
+                "touchpad_not_precision",
+                "Windows did not switch the virtual touchpad to precision touchpad input"
+                    .to_owned(),
+            ),
+            Some(_) => return,
+            None => match virtual_hid::TOUCHPAD.plug(move || {
+                butterpollo_input_policy::virtual_hid::PrecisionTouchpad::new(
+                    width_mm,
+                    height_mm,
+                    virtual_hid::SERIAL,
+                    Instant::now(),
+                )
+            }) {
+                Availability::Ready | Availability::Plugging => {
+                    if !self.touchpad_reported {
+                        self.touchpad_reported = true;
+                        tracing::info!(
+                            width_mm,
+                            height_mm,
+                            "plugging in the virtual touchpad for the device's touchpad"
+                        );
+                    }
+                    return;
+                }
+                Availability::NoDriver => (
+                    "touchpad_no_driver",
+                    "the virtual touchpad needs usbip-win2, the USB audio and haptics driver"
+                        .to_owned(),
+                ),
+                Availability::Failed(error) => (
+                    "touchpad_failed",
+                    format!("the virtual touchpad could not be plugged in: {error}"),
+                ),
+            },
+        };
+        self.touchpad_unavailable(code, &why);
+    }
+    /// Says on the stream card, once per `code`, why the device's touchpad gestures do not reach
+    /// Windows.
+    fn touchpad_unavailable(&mut self, code: &'static str, why: &str) {
+        if self.touchpad_warned == Some(code) {
+            return;
+        }
+        self.touchpad_warned = Some(code);
+        tracing::warn!(
+            why,
+            "touchpad gestures from the device do not reach Windows"
+        );
+        self.warnings.set(
+            code,
+            format!(
+                "Touchpad gestures from this device do not reach Windows: {why}. Turn off touchpad gestures on the device to use its touchpad as a mouse."
+            ),
+        );
+    }
+    /// The keyboard layout keys the client did not normalize go with (None: the host's),
+    /// read by the control loop from the device's report (0x553E) and `keyboard_layout`.
+    /// It takes over at [`Self::follow_keyboard_layout`].
+    pub fn set_keyboard_layout(&mut self, layout: Option<crate::keylayout::Layout>) {
+        self.next_layout = layout;
+    }
+    /// Each pass: the layout set last takes over once no key is held, so a release sends
+    /// its press's scan code.
+    pub fn follow_keyboard_layout(&mut self) {
+        let klid = |layout: &Option<crate::keylayout::Layout>| layout.as_ref().map(|l| l.klid());
+        if self.keys.is_empty() && klid(&self.layout) != klid(&self.next_layout) {
+            self.layout = self.next_layout.clone();
+            tracing::info!(layout = ?self.layout, "keys follow a keyboard layout");
+        }
+    }
+    /// The stream's size, so absolute input skips the bars around a display of
+    /// another shape, as the encoder adds them.
+    pub fn set_stream_size(&mut self, width: u32, height: u32) {
+        self.stream = (width > 0 && height > 0).then_some((width, height));
+    }
+    /// Where the display's picture sits in the stream, when it does not fill it.
+    fn picture(&self) -> Option<(Size, Picture)> {
+        let stream = self.stream?;
+        let rect = self.rect?;
+        let display = (
+            u32::try_from(rect.right - rect.left).ok()?,
+            u32::try_from(rect.bottom - rect.top).ok()?,
+        );
+        butterpollo_media_policy::display_policy::picture(display, stream)
+            .map(|picture| (stream, picture))
+    }
+    /// A point on the stream as fractions of the display.
+    fn on_display(&self, x: f32, y: f32) -> (f32, f32) {
+        match self.picture() {
+            Some((stream, picture)) => {
+                let (x, y) = butterpollo_media_policy::display_policy::stream_to_picture(
+                    (f64::from(x), f64::from(y)),
+                    stream,
+                    picture,
+                );
+                (x as f32, y as f32)
+            }
+            None => (x, y),
+        }
+    }
+    /// The host cursor as fractions of the whole stream, bars included, or
+    /// None off the stream's display or before it is known. The couch menu
+    /// reads it only when a relative mouse's hold or click needs a position
+    /// (docs/couch-menu-design.md 3.2).
+    pub fn pointer_in_stream(&mut self) -> Option<(f32, f32)> {
+        self.settle_lookup(false);
+        let rect = self.rect?;
+        let mut point = POINT::default();
+        // SAFETY: `point` is a live POINT for the call to write.
+        if let Err(error) = unsafe { GetCursorPos(&mut point) } {
+            tracing::warn!(%error, "couch menu: the cursor position is unavailable");
+            return None;
+        }
+        cursor_in_stream(point, rect, self.picture())
+    }
+    /// Map absolute input onto `output` from now on: the stream's display can
+    /// be created, recreated or renamed after input began.
+    pub fn set_output(&mut self, output: &str) {
+        if output.is_empty() {
+            return;
+        }
+        if self
+            .lookup
+            .as_ref()
+            .is_some_and(|lookup| !lookup.output.eq_ignore_ascii_case(output))
+        {
+            self.lookup = None;
+        }
+        self.settle_lookup(false);
+        let renamed = !output.eq_ignore_ascii_case(&self.output);
+        if self.rect.is_none() {
+            // Until the display exists, follow the session's name, and look
+            // the same name up again only every RECT_INTERVAL.
+            if renamed || self.rect_read.elapsed() >= RECT_INTERVAL {
+                self.output = output.to_owned();
+                self.resolve_rect();
+            }
+            return;
+        }
+        // The rectangle and the name change together once it is found; a
+        // name not found is looked up again every RECT_INTERVAL.
+        if renamed
+            && self.lookup.as_ref().is_none_or(|lookup| {
+                !lookup.output.eq_ignore_ascii_case(output)
+                    || lookup.started.elapsed() >= RECT_INTERVAL
+            })
+        {
+            self.look_up(output);
+        }
+    }
+    /// Look up a display that did not exist yet.
+    fn resolve_rect(&mut self) {
+        self.rect_read = std::time::Instant::now();
+        let output = self.output.clone();
+        self.look_up(&output);
+    }
+    /// Look `output` up on another thread, unless it is being looked up: the
+    /// lookup enumerates every display, which took 1.5-2.5 ms and once 18 ms
+    /// on the input thread.
+    fn look_up(&mut self, output: &str) {
+        if self.lookup.as_ref().is_some_and(|lookup| {
+            lookup.thread.is_some() && lookup.output.eq_ignore_ascii_case(output)
+        }) {
+            return;
+        }
+        let name = output.to_owned();
+        let thread = std::thread::Builder::new()
+            .name("display lookup".into())
+            .spawn(move || display_rect(&name));
+        self.lookup = Some(Lookup {
+            output: output.to_owned(),
+            started: std::time::Instant::now(),
+            thread: None,
+        });
+        match thread {
+            Ok(thread) => self.lookup.as_mut().unwrap().thread = Some(thread),
+            Err(_) => self.found(output.to_owned(), display_rect(output)),
+        }
+    }
+    /// Use the result of a lookup that finished; with `wait`, of one still
+    /// running.
+    fn settle_lookup(&mut self, wait: bool) {
+        let Some(lookup) = &mut self.lookup else {
+            return;
+        };
+        let Some(thread) = lookup.thread.take_if(|thread| wait || thread.is_finished()) else {
+            return;
+        };
+        let output = lookup.output.clone();
+        if let Ok(rect) = thread.join() {
+            self.found(output, rect);
+        }
+    }
+    fn found(&mut self, output: String, rect: Result<RECT>) {
+        match rect {
+            Ok(rect) => {
+                tracing::debug!(output, "input display found");
+                self.rect = Some(rect);
+                self.output = output;
+                self.rect_read = std::time::Instant::now();
+            }
+            Err(error) => tracing::debug!(%error, output, "input display unavailable"),
+        }
+    }
+    /// The display's rectangle. Until the display exists, absolute mouse,
+    /// touch and pen input is ignored, and that is reported now and then.
+    fn display(&mut self) -> Option<RECT> {
+        // Wait only for the initial display lookup; once a display rectangle is
+        // known, rename/refresh lookups settle asynchronously so they never block
+        // the ENet control thread.
+        self.settle_lookup(self.rect.is_none());
+        if self.rect.is_none()
+            && self
+                .display_warned
+                .is_none_or(|at| at.elapsed() >= MISSING_DISPLAY_WARNING)
+        {
+            self.display_warned = Some(std::time::Instant::now());
+            tracing::warn!(
+                output = %self.output,
+                "input display not found yet; absolute mouse, touch and pen input is ignored"
+            );
+        }
+        self.rect
+    }
+    pub fn flush_virtual_left_release(&mut self) -> Result<()> {
+        if self.left_release_virtual.get()
+            && self
+                .left_release
+                .is_some_and(|due| std::time::Instant::now() >= due)
+        {
+            return self.release_deferred_left(false);
+        }
+        Ok(())
+    }
+    pub fn refresh(&mut self) -> Result<()> {
+        // Every step runs even when an earlier one fails; the first error is
+        // reported. A failed step is not retried before its next due time.
+        let mut first = None;
+        let mut keep = |result: Result<()>| {
+            if let Err(error) = result {
+                first.get_or_insert(error);
+            }
+        };
+        keep(self.flush_virtual_left_release());
+        keep(self.due());
+        let now = std::time::Instant::now();
+        // A game can change its display's resolution or position mid-stream,
+        // and the stream's display can appear after input began.
+        self.settle_lookup(false);
+        if self.rect_read.elapsed() >= rect_interval(&self.output) {
+            if self.rect.is_none() {
+                self.resolve_rect();
+            } else {
+                self.rect_read = now;
+                self.rect = reread_rect(&self.output, self.rect, current_rect(&self.output));
+            }
+        }
+        if refresh_due(&mut self.touch_refreshed, now) {
+            keep(self.inject_touches());
+        }
+        if refresh_due(&mut self.pen_refreshed, now)
+            && self.pen.pointerInfo.pointerFlags != POINTER_FLAG_NONE
+            && let Some(device) = self.pen_device
+        {
+            // SAFETY: The injector still owns the pen device and the borrowed frame is initialized as pen input.
+            keep(unsafe {
+                inject_pointer(
+                    device,
+                    &[POINTER_TYPE_INFO {
+                        r#type: PT_PEN,
+                        Anonymous: POINTER_TYPE_INFO_0 { penInfo: self.pen },
+                    }],
+                )
+            });
+        }
+        first.map_or(Ok(()), Err)
+    }
+    fn flush_and_sync(&mut self) {
+        self.flush();
+        self.pending.sync_routes();
+        self.virtual_buttons
+            .retain(|button| self.buttons.contains(button));
+    }
+    fn release_button_on_route(&self, button: u8, was_virtual: bool, teardown: bool) -> Result<()> {
+        struct ForcedRouteReset<'a>(&'a std::cell::Cell<Option<MouseRoute>>);
+        impl Drop for ForcedRouteReset<'_> {
+            fn drop(&mut self) {
+                self.0.set(None);
+            }
+        }
+        let held_id = u32::from(button) | if was_virtual { VIRTUAL_BUTTON_FLAG } else { 0 };
+        let route = if was_virtual {
+            MouseRoute::Virtual
+        } else {
+            MouseRoute::Injection
+        };
+        self.forced_route.set(Some(route));
+        let _reset = ForcedRouteReset(&self.forced_route);
+        if teardown {
+            self.release_owned(false, held_id, Self::button(button, false))
+        } else {
+            self.held(false, held_id, false, true, Self::button(button, false))
+        }
+    }
+    fn release_deferred_left(&mut self, teardown: bool) -> Result<()> {
+        if self.left_release.take().is_none() {
+            return Ok(());
+        }
+        let was_virtual = self.left_release_virtual.replace(false);
+        self.release_button_on_route(1, was_virtual, teardown)
+    }
+    pub fn apply(&mut self, e: &Event) -> Result<()> {
+        let mut errors = self.apply_all(std::slice::from_ref(e));
+        errors.pop().map_or(Ok(()), Err)
+    }
+    /// Apply a pass of events in order, with one SendInput call where the
+    /// order allows; returns why events failed.
+    pub fn apply_all(&mut self, events: &[Event]) -> Vec<anyhow::Error> {
+        if tracing::enabled!(target: "input_timing", tracing::Level::TRACE) {
+            for e in events {
+                if let Event::Relative { x, y } = e {
+                    tracing::trace!(
+                        target: "input_timing",
+                        qpc = virtual_hid::qpc(),
+                        x,
+                        y,
+                        "arrived"
+                    );
+                }
+            }
+        }
+        for e in events {
+            if let Err(error) = self.stage(e) {
+                self.pending.errors.push(error);
+            }
+        }
+        if let Err(error) = self.flush_touch_moves() {
+            self.pending.errors.push(error);
+        }
+        self.flush_and_sync();
+        std::mem::take(&mut self.pending.errors)
+    }
+    /// Add an event's keyboard and mouse input to the pass, or apply it.
+    fn stage(&mut self, e: &Event) -> Result<()> {
+        if !self.policy.allows(e) {
+            return Ok(());
+        }
+        use Event::*;
+        // Touch moves held back go out before anything that follows them.
+        if !matches!(e, Touch { event: 3, .. })
+            && let Err(error) = self.flush_touch_moves()
+        {
+            self.pending.errors.push(error);
+        }
+        if let Touch {
+            event, id, x, y, ..
+        } = *e
+            && self.policy.touch.translates()
+        {
+            // Relative movement and scrolling are measured in stream pixels; the stream sets
+            // its size before input, so 1080p stands in only for a touch that comes earlier.
+            // Under a host resolution cap those are the coded picture's pixels, not the
+            // larger display's, so tap slop and scroll distance feel slightly finer (absolute
+            // positions still map onto the whole display).
+            let size = self.stream.or_else(|| {
+                let rect = self.rect?;
+                Some((
+                    u32::try_from(rect.right - rect.left).ok()?,
+                    u32::try_from(rect.bottom - rect.top).ok()?,
+                ))
+            });
+            let inputs = self.touch_profile.translate(
+                &self.policy.touch,
+                event,
+                id,
+                [x, y],
+                size.unwrap_or((1920, 1080)),
+                std::time::Instant::now(),
+            );
+            for input in &inputs {
+                if let Err(error) = self.stage(input) {
+                    self.pending.errors.push(error);
+                }
+            }
+            return Ok(());
+        }
+        match e {
+            // How a key or button is sent depends on the keys or buttons held,
+            // including those pressed earlier in the pass.
+            Keyboard { .. } if self.press_pending(true) => self.flush_and_sync(),
+            MouseButton { .. } if self.press_pending(false) => self.flush_and_sync(),
+            // Finish the absolute-mode click before relative input can press again.
+            Relative { .. } if self.left_release.is_some() => {
+                self.flush_and_sync();
+                if let Err(error) = self.release_deferred_left(false) {
+                    self.pending.errors.push(error);
+                }
+            }
+            // Touch and pen go through another call: keep them in order.
+            Touch { .. } | Pen { .. } => self.flush_and_sync(),
+            _ => {}
+        }
+        let start = self.pending.inputs.len();
+        let press = self.stage_event(e)?;
+        let end = self.pending.inputs.len();
+        if end > start {
+            self.pending.events.push((end, press));
+        } else if let Some(press) = press {
+            // Nothing to send, such as a key another client holds.
+            self.hold(press);
+        }
+        Ok(())
+    }
+    fn stage_event(&mut self, e: &Event) -> Result<Option<Press>> {
+        use Event::*;
+        match e {
+            Relative { x, y } => {
+                self.absolute = false;
+                self.pending.push_auto(Self::mouse(
+                    i32::from(*x),
+                    i32::from(*y),
+                    0,
+                    MOUSEEVENTF_MOVE,
+                ));
+            }
+            Absolute {
+                x,
+                y,
+                width,
+                height,
+                // SAFETY: GetSystemMetrics uses valid metric constants and does not borrow any pointers.
+            } => unsafe {
+                self.absolute = true;
+                let Some(rect) = self.display() else {
+                    return Ok(None);
+                };
+                let left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+                let top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+                let w = GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1);
+                let h = GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1);
+                // The client's far edge is the display's last pixel, not the
+                // first pixel of its neighbour.
+                let (width, height) = (i64::from(*width).max(1), i64::from(*height).max(1));
+                let (span_x, span_y) = (
+                    i64::from((rect.right - rect.left - 1).max(0)),
+                    i64::from((rect.bottom - rect.top - 1).max(0)),
+                );
+                let (px, py) = match self.picture() {
+                    // The client's size is the stream's picture with its bars.
+                    Some((stream, picture)) => {
+                        let (fx, fy) = butterpollo_media_policy::display_policy::stream_to_picture(
+                            (
+                                i64::from(*x).clamp(0, width) as f64 / width as f64,
+                                i64::from(*y).clamp(0, height) as f64 / height as f64,
+                            ),
+                            stream,
+                            picture,
+                        );
+                        (
+                            rect.left + (fx * span_x as f64) as i32,
+                            rect.top + (fy * span_y as f64) as i32,
+                        )
+                    }
+                    None => (
+                        rect.left + (i64::from(*x).clamp(0, width) * span_x / width) as i32,
+                        rect.top + (i64::from(*y).clamp(0, height) * span_y / height) as i32,
+                    ),
+                };
+                self.pending.push_auto(Self::mouse(
+                    ((i64::from(px - left) * 65535) / i64::from((w - 1).max(1))) as i32,
+                    ((i64::from(py - top) * 65535) / i64::from((h - 1).max(1))) as i32,
+                    0,
+                    MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                ));
+            },
+            MouseButton { button, down } => {
+                // With absolute input (touch, pen, a tablet), Moonlight sends a
+                // right press right after a left release for a long press: the
+                // left click would land first and open a link. Hold the left
+                // release back briefly and click right meanwhile, as Sunshine does.
+                // `absolute_left_release_delay` = 0 sends it at once.
+                if *button == 1 && self.absolute && !self.policy.left_release_delay.is_zero() {
+                    if !*down && self.buttons.contains(button) {
+                        self.buttons.remove(button);
+                        self.left_release_virtual
+                            .set(self.virtual_buttons.remove(button));
+                        self.left_release =
+                            Some(std::time::Instant::now() + self.policy.left_release_delay);
+                        return Ok(None);
+                    }
+                    if *down && self.left_release.take().is_some() {
+                        // Still down in Windows: its release never went out.
+                        self.buttons.insert(*button);
+                        if self.left_release_virtual.replace(false) {
+                            self.virtual_buttons.insert(*button);
+                        }
+                        return Ok(None);
+                    }
+                }
+                if *button == 3 && *down && self.left_release.is_some() {
+                    let route = if self.virtual_mouse && virtual_hid::MOUSE.ready() {
+                        MouseRoute::Virtual
+                    } else {
+                        MouseRoute::Injection
+                    };
+                    self.pending.push_routed(Self::button(3, true), route);
+                    self.pending.push_routed(Self::button(3, false), route);
+                    return Ok(None);
+                }
+                let owned = self.buttons.contains(button);
+                let virtual_route = if *down {
+                    !owned && self.virtual_mouse && virtual_hid::MOUSE.ready()
+                } else {
+                    owned && self.virtual_buttons.remove(button)
+                };
+                let held_id = u32::from(*button)
+                    | if virtual_route {
+                        VIRTUAL_BUTTON_FLAG
+                    } else {
+                        0
+                    };
+                let route = if virtual_route {
+                    MouseRoute::Virtual
+                } else {
+                    MouseRoute::Injection
+                };
+                let pending = &mut self.pending;
+                Self::update_held(
+                    &mut HELD.lock().unwrap(),
+                    (false, held_id),
+                    *down,
+                    owned,
+                    Self::button(*button, *down),
+                    |input| {
+                        for &item in input {
+                            pending.push_routed(item, route);
+                        }
+                        Ok(())
+                    },
+                )?;
+                if *down {
+                    if virtual_route {
+                        self.virtual_buttons.insert(*button);
+                    }
+                    return Ok(Some(Press {
+                        keyboard: false,
+                        id: held_id,
+                        source: 0,
+                        flags: 0,
+                        counted: !owned,
+                        repeat: None,
+                    }));
+                }
+                // A release is recorded even when Windows refuses it.
+                self.buttons.remove(button);
+            }
+            Scroll { amount, horizontal } => {
+                let index = usize::from(*horizontal);
+                let amount = if self.policy.high_resolution_scrolling {
+                    i32::from(*amount)
+                } else {
+                    self.scroll[index] += i32::from(*amount);
+                    let amount = self.scroll[index] / 120 * 120;
+                    self.scroll[index] -= amount;
+                    amount
+                };
+                if amount == 0 {
+                    return Ok(None);
+                }
+                self.pending.push_auto(Self::mouse(
+                    0,
+                    0,
+                    amount as u32,
+                    if *horizontal {
+                        MOUSEEVENTF_HWHEEL
+                    } else {
+                        MOUSEEVENTF_WHEEL
+                    },
+                ));
+            }
+            Keyboard {
+                key,
+                down,
+                flags,
+                modifiers,
+            } => {
+                let mut source = keyboard_identity(*key, *modifiers);
+                // A client can set the extended-key bit on the press but not
+                // on the release: release the key that is held, or it stays
+                // down and keeps repeating.
+                if !*down
+                    && !self.key_sources.contains_key(&source)
+                    && self
+                        .key_sources
+                        .contains_key(&(source ^ EXPLICIT_EXTENDED_KEY))
+                {
+                    source ^= EXPLICIT_EXTENDED_KEY;
+                }
+                let key = if *down {
+                    if self.key_sources.contains_key(&source) {
+                        return Ok(None);
+                    }
+                    let key = mapped_keyboard_identity(&self.policy, *key, *modifiers);
+                    if self.keys.contains(&key) {
+                        self.key_sources.insert(source, key);
+                        return Ok(None);
+                    }
+                    key
+                } else {
+                    let Some(key) = self.key_sources.remove(&source) else {
+                        return Ok(None);
+                    };
+                    // Two client keys may map to one host key. It stays down
+                    // until the last source lets go, without restarting repeat.
+                    if self.key_sources.values().any(|mapped| *mapped == key) {
+                        return Ok(None);
+                    }
+                    key
+                };
+                let owned = self.keys.contains(&key);
+                let flags = if *down {
+                    *flags
+                } else {
+                    self.key_flags.get(&key).copied().unwrap_or(*flags)
+                };
+                let input = self.key_scan(key, *down, flags);
+                let always_send_scancodes = self.policy.always_send_scancodes;
+                // HELD is taken once for the whole event: the modifiers to press
+                // around the key are decided under it, and the press or release
+                // updates it.
+                let mut held = HELD.lock().unwrap();
+                let modifiers = if *down && !owned {
+                    self.synthetic_modifiers(key, *modifiers, &held)
+                } else {
+                    0
+                };
+                let pending = &mut self.pending;
+                if modifiers == 0 {
+                    Self::update_held(&mut held, (true, key), *down, owned, input, |input| {
+                        for &item in input {
+                            pending.push_auto(item);
+                        }
+                        Ok(())
+                    })?;
+                } else {
+                    // The client reported a modifier it never pressed as a
+                    // key: press it around this key only, as Vibepollo does.
+                    let count = held.get(&(true, key)).copied().unwrap_or(0);
+                    if count == 0 {
+                        for item in Self::with_modifiers(input, modifiers, always_send_scancodes) {
+                            pending.push_auto(item);
+                        }
+                    }
+                    held.insert((true, key), count + 1);
+                }
+                // A press Windows refuses is not held; a release is recorded
+                // even when Windows refuses it, or the key keeps repeating.
+                if *down {
+                    return Ok(Some(Press {
+                        keyboard: true,
+                        id: key,
+                        source,
+                        flags,
+                        counted: !owned,
+                        repeat: (!owned && !is_modifier(key)).then_some(modifiers),
+                    }));
+                }
+                self.keys.remove(&key);
+                self.key_flags.remove(&key);
+                if self.repeat.is_some_and(|(repeating, ..)| repeating == key) {
+                    self.repeat = None;
+                }
+            }
+            Text(s) => {
+                for v in s.encode_utf16() {
+                    self.pending.push_auto(Self::key(v, true, true));
+                    self.pending.push_auto(Self::key(v, false, true));
+                }
+            }
+            Touch {
+                event,
+                id,
+                x,
+                y,
+                pressure,
+                major,
+                minor,
+                rotation,
+            } => self.touch(*event, *id, *x, *y, *pressure, *major, *minor, *rotation)?,
+            Pen {
+                event,
+                tool,
+                buttons,
+                x,
+                y,
+                pressure,
+                rotation,
+                tilt,
+                roll,
+            } => self.pen(
+                *event, *tool, *buttons, *x, *y, *pressure, *rotation, *tilt, *roll,
+            )?,
+            Haptics(enabled) => {
+                self.haptics = *enabled;
+                if let Some(gamepads) = &self.gamepads {
+                    gamepads.set_haptics(*enabled);
+                }
+            }
+            Touchpad {
+                buttons,
+                width_mm,
+                height_mm,
+                contacts,
+                contacts_len,
+                ..
+            } => self.touchpad_packet(
+                *buttons,
+                *width_mm,
+                *height_mm,
+                &contacts[..usize::from(*contacts_len)],
+            ),
+            // Only the VHF Steam Controller profile takes them.
+            Controller { .. }
+            | SteamAttributes(_)
+            | ControllerIdentity(_)
+            | Arrival { .. }
+            | ControllerTouch { .. }
+            | Motion { .. }
+            | Battery { .. } => self.gamepads()?.send(e.clone()),
+        }
+        Ok(None)
+    }
+    /// The controllers' thread, started here when the injector has none yet: making an
+    /// injector starts no thread a controller session's would replace at once.
+    fn gamepads(&mut self) -> std::io::Result<&std::sync::Arc<GamepadThread>> {
+        if self.gamepads.is_none() {
+            let gamepads = GamepadThread::new(
+                self.gamepad_profile,
+                self.policy.clone(),
+                self.warnings.clone(),
+            )?;
+            if let Some(waker) = &self.feedback_waker {
+                gamepads.set_feedback_waker(waker.clone());
+            }
+            if !self.haptics {
+                gamepads.set_haptics(false);
+            }
+            self.gamepads = Some(std::sync::Arc::new(gamepads));
+        }
+        Ok(self.gamepads.as_ref().expect("started above"))
+    }
+    /// Feedback and motion-sensor requests from the virtual gamepads for the
+    /// client, collected since the last call.
+    pub fn controller_audio(&self, id: u16, kind: u16, payload: &[u8]) {
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.audio(id, kind, payload);
+        }
+    }
+    pub fn controller_audio_ready(&self, id: u16) -> bool {
+        self.gamepads
+            .as_ref()
+            .is_some_and(|gamepads| gamepads.controller_audio_ready(id))
+    }
+    pub fn gamepad_reports(&self) -> impl Iterator<Item = PadReport> + '_ {
+        self.gamepads.iter().flat_map(|gamepads| gamepads.reports())
+    }
+    /// Whether the controllers have their thread: a controller session's, or the injector's own.
+    pub fn has_gamepads(&self) -> bool {
+        self.gamepads.is_some()
+    }
+    /// Wake the control socket wait when the driver posts feedback. The socket
+    /// must be connected and nonblocking before accepting controller input.
+    pub fn set_feedback_waker(&mut self, waker: std::sync::Arc<std::net::UdpSocket>) {
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.set_feedback_waker(waker.clone());
+        }
+        self.feedback_waker = Some(waker);
+    }
+    pub fn feedback_allowed(&self, kind: u16) -> bool {
+        // 0x5504: Steam Controller haptics, withheld like rumble; its
+        // settings (0x5505) are not feedback a player feels.
+        !matches!(kind, 0x010b | 0x5500 | 0x5503 | 0x5504 | 0x5601)
+            || (self.policy.forward_rumble && self.haptics)
+    }
+    /// The driver worker keeps ownership of its slots until unplug completes.
+    /// Disconnecting a peer must not wait for that driver on the control thread.
+    pub fn use_gamepads(&mut self, gamepads: std::sync::Arc<GamepadThread>) {
+        if let Some(own) = self.gamepads.take() {
+            drop(own.stop());
+        }
+        gamepads.activate();
+        if let Some(waker) = &self.feedback_waker {
+            gamepads.set_feedback_waker(waker.clone());
+        }
+        if !self.haptics {
+            gamepads.set_haptics(false);
+        }
+        self.gamepads = Some(gamepads);
+    }
+    pub fn detach_gamepads(&mut self) {
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.park();
+            if std::sync::Arc::strong_count(gamepads) == 1 {
+                drop(gamepads.stop());
+            }
+        }
+    }
+    /// Lets go of the keys, mouse buttons and touches this injector holds and keeps its
+    /// controllers: a guest's stream that lost the keyboard and mouse to another holder
+    /// (`butterpollo_session::multiclient::Kbm`).
+    pub fn release_keyboard_mouse(&mut self) {
+        if let Err(error) = self.release_pointers() {
+            tracing::warn!(%error, "keyboard and mouse release incomplete");
+        }
+    }
+    pub fn release_all(&mut self) {
+        if let Some(gamepads) = &self.gamepads {
+            gamepads.release_all();
+        }
+        if let Err(error) = self.release_pointers() {
+            tracing::warn!(%error, "input cleanup incomplete");
+        }
+    }
+    fn release_pointers(&mut self) -> Result<()> {
+        self.flush_and_sync();
+        let mut failures: Vec<_> = std::mem::take(&mut self.pending.errors)
+            .into_iter()
+            .map(|error| format!("pending input: {error:#}"))
+            .collect();
+        let mut keep = |what: &str, result: Result<()>| {
+            if let Err(error) = result {
+                failures.push(format!("{what}: {error:#}"));
+            }
+        };
+        self.repeat = None;
+        self.scroll = [0; 2];
+        // The buttons a touch held are released below with the rest.
+        self.touch_profile = Default::default();
+        if self.left_release.is_some() {
+            keep("deferred left button", self.release_deferred_left(true));
+        }
+        for key in &self.keys {
+            keep(
+                &format!("key {key}"),
+                self.release_owned(
+                    true,
+                    *key,
+                    self.key_scan(*key, false, self.key_flags.get(key).copied().unwrap_or(0)),
+                ),
+            );
+        }
+        for &button in &self.buttons {
+            let was_virtual = self.virtual_buttons.contains(&button);
+            keep(
+                &format!("mouse button {button}"),
+                self.release_button_on_route(button, was_virtual, true),
+            );
+        }
+        // Lift contacts that are still down before their devices go away,
+        // attempting every release even if an earlier device refused it.
+        keep("touch contacts", self.cancel_touches());
+        keep("pen", self.cancel_pen());
+        if self.touchpad {
+            virtual_hid::TOUCHPAD.with(|pad| pad.release_all(Instant::now()));
+        }
+        self.keys.clear();
+        self.key_sources.clear();
+        self.buttons.clear();
+        self.virtual_buttons.clear();
+        self.key_flags.clear();
+        if !failures.is_empty() {
+            bail!("{}", failures.join("; "));
+        }
+        Ok(())
+    }
+}
+impl Drop for Injector {
+    fn drop(&mut self) {
+        if let Err(error) = self.release_pointers() {
+            tracing::warn!(%error, "input cleanup incomplete during teardown");
+        }
+        // SAFETY: These synthetic device handles are owned by the injector and taken so each is destroyed exactly once.
+        unsafe {
+            if let Some(device) = self.touch_device.take() {
+                DestroySyntheticPointerDevice(device);
+            }
+            if let Some(device) = self.pen_device.take() {
+                DestroySyntheticPointerDevice(device);
+            }
+        }
+        // After the buttons above were released through it.
+        if self.virtual_mouse {
+            virtual_hid::MOUSE.release();
+        }
+        if self.touchpad {
+            virtual_hid::TOUCHPAD.release();
+        }
+    }
+}
+#[cfg(test)]
+#[path = "input/native_touch_tests.rs"]
+mod native_touch_tests;
+
+#[cfg(test)]
+mod tests;

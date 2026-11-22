@@ -135,7 +135,9 @@ pub(super) fn physical_calibration() -> Option<String> {
     // until one is found again: every HDR stream asks, and nothing changes
     // until they calibrate.
     static WARNED: AtomicBool = AtomicBool::new(false);
-    match hdr_profile::calibration() {
+    match hdr_profile::calibration_with(|work| {
+        butterpollo_win_io::user_folder::as_session_user(work)
+    }) {
         Ok(Some(calibration)) => {
             warn_again(&WARNED);
             tracing::info!(

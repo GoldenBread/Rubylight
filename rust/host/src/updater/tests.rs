@@ -944,7 +944,7 @@ impl Drop for Temporary {
     }
 }
 fn elevated() -> bool {
-    butterpollo_windows::process::elevated().unwrap_or(false)
+    butterpollo_win_io::process::elevated().unwrap_or(false)
 }
 /// The host downloaded setup.exe into ProgramData\Butterpollo\config\
 /// updates and ran it elevated from there, which Defender scores as

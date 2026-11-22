@@ -1,7 +1,7 @@
 //! Latest-frame ownership and notifications shared by capture consumers.
 use anyhow::{Result, bail};
-use butterpollo_windows::device_loss::DeviceLost;
-use butterpollo_windows::timing::{Signal, Timer};
+use butterpollo_win_graphics::device_loss::DeviceLost;
+use butterpollo_win_graphics::timing::{Signal, Timer};
 use std::{
     sync::{
         Arc, Mutex, Weak,

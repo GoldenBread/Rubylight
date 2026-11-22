@@ -66,7 +66,7 @@ use butterpollo_media_policy::{
     packet::{AudioPacketizer, VideoPacketizer},
 };
 use butterpollo_session::session::Role;
-use butterpollo_windows::device_loss::DeviceLost;
+use butterpollo_win_graphics::device_loss::DeviceLost;
 /// A WebRTC HDR stream carries the display's HDR or nothing: SDR content labelled HDR, or HDR
 /// tone-mapped to SDR, is not what the client asked for, so the session ends with an error.
 /// `display_in_hdr` is the capture's reading of the output's colour space (HDR10 or not); the
@@ -218,7 +218,7 @@ const WINDOW_OPEN_MARGIN: Duration = Duration::from_secs(1);
 /// Whether a game window's first capture, whose stream began waiting for it
 /// at `started`, is tried again at `now`: not once the stream stops, and only
 /// while the wait before the try and the try itself, with a WGC helper's
-/// start of up to [`butterpollo_windows::capture::WGC_START_TIMEOUT`], end
+/// start of up to [`butterpollo_win_graphics::capture::WGC_START_TIMEOUT`], end
 /// before the stream stops waiting, which is [`CAPTURE_START_WAIT`] when the
 /// game has `replaced` the window just tried and [`SAME_WINDOW_WAIT`] when it
 /// has not. A try that ran past it would end the stream with a timeout
@@ -232,7 +232,7 @@ fn window_open_again(started: Instant, stop: &AtomicBool, now: Instant, replaced
     !stop.load(Ordering::Acquire)
         && now
             + RECOVERY_RETRY
-            + butterpollo_windows::capture::WGC_START_TIMEOUT
+            + butterpollo_win_graphics::capture::WGC_START_TIMEOUT
             + WINDOW_OPEN_MARGIN
             <= started + wait
 }
@@ -261,7 +261,7 @@ fn open_first<T>(
             Ok(capture) => return Ok((capture, next)),
             Err(error) => error,
         };
-        let window = butterpollo_windows::capture::WindowTarget::parse(&next.0)
+        let window = butterpollo_win_graphics::capture::WindowTarget::parse(&next.0)
             .is_ok_and(|window| window.is_some());
         if !window || !again(&next) {
             return Err(error);
@@ -270,10 +270,13 @@ fn open_first<T>(
     }
 }
 
-use butterpollo_windows::{
-    audio::{Loopback, Opus},
+use crate::win_bridge as wb;
+use butterpollo_win_graphics::{
     capture::{Capture, ComGuard, GpuImage, Priority},
     encoder::Encoder,
+};
+use butterpollo_win_io::{
+    audio::{Loopback, Opus},
     input::{Injector, PadReport},
     net::ReplySocket,
 };
@@ -297,7 +300,7 @@ struct Source {
     /// as WGC, so the plan cannot say whether frames come from WGC or the
     /// display driver.
     backend: Arc<Mutex<&'static str>>,
-    grid: Arc<Mutex<butterpollo_windows::capture::ClaimGrid>>,
+    grid: Arc<Mutex<butterpollo_win_graphics::capture::ClaimGrid>>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -659,8 +662,8 @@ impl Media {
         let ports = h.config.read().unwrap().ports()?;
         let video = ReplySocket::new(crate::network::udp((bind, ports.video).into())?)?;
         let audio = ReplySocket::new(crate::network::udp((bind, ports.audio).into())?)?;
-        butterpollo_windows::net::configure_udp(&video)?;
-        butterpollo_windows::net::configure_udp(&audio)?;
+        butterpollo_win_io::net::configure_udp(&video)?;
+        butterpollo_win_io::net::configure_udp(&audio)?;
         video.set_nonblocking(true)?;
         audio.set_nonblocking(true)?;
         let control_wake_receiver = UdpSocket::bind("127.0.0.1:0")?;
@@ -706,7 +709,7 @@ impl Media {
                     let mut b = [0; 2048];
                     let raw_socket = std::os::windows::io::AsRawSocket::as_raw_socket(&*socket);
                     while !h.stop.load(Ordering::Acquire) {
-                        match butterpollo_windows::net::wait_readable(raw_socket, 250) {
+                        match butterpollo_win_io::net::wait_readable(raw_socket, 250) {
                             Ok(true) => {}
                             Ok(false) => continue,
                             Err(e) => {
@@ -789,7 +792,7 @@ impl Media {
         let worker = latest.clone();
         let warnings = Arc::new(butterpollo_session::session::Warnings::default());
         let capture_warnings = warnings.clone();
-        let grid = Arc::new(Mutex::new(butterpollo_windows::capture::ClaimGrid {
+        let grid = Arc::new(Mutex::new(butterpollo_win_graphics::capture::ClaimGrid {
             anchor: Instant::now(),
             period: rate.period(),
         }));
@@ -805,16 +808,16 @@ impl Media {
                 let result = (|| -> Result<()> {
                     let _com = ComGuard::new()?;
                     let _priority = Priority::new();
-                    let _display_awake = butterpollo_windows::timing::DisplayAwake::enter()
+                    let _display_awake = butterpollo_win_graphics::timing::DisplayAwake::enter()
                         .inspect_err(|error| tracing::warn!(%error, "capture cannot keep the display awake"))
                         .ok();
-                    let timer = butterpollo_windows::timing::Timer::new()?;
+                    let timer = butterpollo_win_graphics::timing::Timer::new()?;
                     // Duplicate the desktop that is showing, including the secure
                     // desktop of a UAC prompt or the lock screen.
-                    butterpollo_windows::input::follow_input_desktop();
+                    butterpollo_win_io::input::follow_input_desktop();
                     let opened = open_first(
                         || prepared.capture_target(),
-                        |target| Capture::open_for_stream_reported(&target.0, &kind, hdr, &capture_config, capture_warnings.clone()),
+                        |target| wb::open_capture(&target.0, &kind, hdr, &capture_config, capture_warnings.clone()),
                         |tried| {
                             let replaced = prepared.capture_target() != *tried;
                             wait_to_open_again(started, &worker_stop, replaced)
@@ -873,9 +876,9 @@ impl Media {
                             let next = prepared.capture_target();
                             // A UAC prompt or the lock screen switches the input
                             // desktop; duplication must be made on that desktop.
-                            butterpollo_windows::input::follow_input_desktop();
+                            butterpollo_win_io::input::follow_input_desktop();
                             let background = butterpollo_session::background::enabled(&capture_config);
-                            let on = reopen_on(butterpollo_windows::capture::display_present(&next.0), background, &mut missing_since, Instant::now());
+                            let on = reopen_on(butterpollo_win_graphics::capture::display_present(&next.0), background, &mut missing_since, Instant::now());
                             let opened = match on {
                                 ReopenOn::Wait => {
                                     if background {
@@ -884,7 +887,7 @@ impl Media {
                                     thread::sleep(RECOVERY_RETRY);
                                     continue;
                                 }
-                                ReopenOn::Stream => match Capture::open_for_stream_reported(&next.0, chosen, hdr, &capture_config, capture_warnings.clone()) {
+                                ReopenOn::Stream => match wb::open_capture(&next.0, chosen, hdr, &capture_config, capture_warnings.clone()) {
                                     Ok(opened) => Ok(opened),
                                     // Keep the backend that was working: Desktop
                                     // Duplication cannot capture this display (another
@@ -893,7 +896,7 @@ impl Media {
                                     // warning says so after the reopen: opening the
                                     // stream's own backend clears it otherwise.
                                     Err(error) if chosen != kind.as_str() => {
-                                        match Capture::open_for_stream_reported(&next.0, &kind, hdr, &capture_config, capture_warnings.clone()) {
+                                        match wb::open_capture(&next.0, &kind, hdr, &capture_config, capture_warnings.clone()) {
                                             Ok(opened) => {
                                                 if opened.backend() == "wgc" {
                                                     capture_warnings.set("capture_backend", format!("Capturing with Windows Graphics Capture: Desktop Duplication cannot capture this display ({error:#})."));
@@ -906,9 +909,9 @@ impl Media {
                                     Err(error) => Err(error),
                                 },
                                 // By name: the WGC helper checks it opened the display asked for.
-                                ReopenOn::Primary => butterpollo_windows::capture::primary_display()
+                                ReopenOn::Primary => butterpollo_win_graphics::capture::primary_display()
                                     .context("no display is on the desktop")
-                                    .and_then(|primary| Capture::open_for_stream_reported(&primary, &kind, hdr, &capture_config, capture_warnings.clone())),
+                                    .and_then(|primary| wb::open_capture(&primary, &kind, hdr, &capture_config, capture_warnings.clone())),
                             };
                             match opened {
                                 Ok(mut recovered) => {
@@ -940,7 +943,7 @@ impl Media {
                     let progress = crate::stall_watch::register("capture", &output, None);
                     let mut check_target = Instant::now();
                     let mut user_desktop = kind == "wgc"
-                        && butterpollo_windows::capture::wgc_desktop_available();
+                        && butterpollo_win_graphics::capture::wgc_desktop_available();
                     let mut on_primary = false;
                     let poll_interval = Duration::from_micros(
                         capture_config.integer("capture_poll_interval_us", 500).clamp(100, 1000) as u64,
@@ -965,11 +968,11 @@ impl Media {
                             check_target = Instant::now() + Duration::from_millis(100);
                             let next = prepared.capture_target();
                             let available = kind == "wgc"
-                                && butterpollo_windows::capture::wgc_desktop_available();
+                                && butterpollo_win_graphics::capture::wgc_desktop_available();
                             let return_to_wgc = returns_to_wgc(available, user_desktop, capture.backend(), &kind, switched_to_duplication);
                             user_desktop = available;
                             // Back from the primary display once the stream's returns.
-                            let returned = on_primary && butterpollo_windows::capture::display_present(&next.0);
+                            let returned = on_primary && butterpollo_win_graphics::capture::display_present(&next.0);
                             let restart = worker.take_device_restart()?;
                             // The app's window found, minimised or restored on the same display
                             // and not recreated: the new target opens on the capture's own device
@@ -977,9 +980,7 @@ impl Media {
                             // backend reopens on a new device below, releasing the encoder.
                             let in_place = !restart && !return_to_wgc && !returned && next != target
                                 && prepared.display_target() == opened_display;
-                            if in_place
-                                && let Some(switched) = capture.switch_on_device(&next.0, &kind, hdr, &capture_config, capture_warnings.clone())
-                            {
+                            if in_place && let Some(switched) = wb::switch_capture(&mut capture, &next.0, &kind, hdr, &capture_config, capture_warnings.clone()) {
                                 match switched {
                                     Ok(switched) => {
                                         drop(std::mem::replace(&mut capture, switched));
@@ -1050,7 +1051,7 @@ impl Media {
                                 // including for the one-reconnect comparison.
                                 let now = Instant::now();
                                 let idle = now.saturating_duration_since(last_frame);
-                                let display = butterpollo_windows::capture::WindowTarget::parse(&target.0).ok().flatten().is_none();
+                                let display = butterpollo_win_graphics::capture::WindowTarget::parse(&target.0).ok().flatten().is_none();
                                 // The shell's own answer first, at most twice a second: enumerating
                                 // the windows and the displays behind it is the expensive part of
                                 // the probe, and most still pictures have no exclusive-fullscreen
@@ -1061,12 +1062,12 @@ impl Media {
                                     && display
                                     && idle >= butterpollo_media_policy::capture_policy::FULLSCREEN_STALL
                                     && fullscreen_probe_due(now, &mut stall_check)
-                                    && butterpollo_windows::foreground::exclusive_fullscreen()
+                                    && butterpollo_win_graphics::foreground::exclusive_fullscreen()
                                 {
                                     // The display's rectangle as it is now: a game that
                                     // changed its mode after the capture opened (issue #123)
                                     // would not match the rectangle the capture opened on.
-                                    let in_front = butterpollo_windows::foreground::in_front(&target.0);
+                                    let in_front = butterpollo_win_graphics::foreground::in_front(&target.0);
                                     if butterpollo_media_policy::capture_policy::duplication_for_fullscreen(
                                         automatic,
                                         capture.backend(),
@@ -1169,7 +1170,7 @@ impl Media {
                                 // the encoder. Any other failure reopens on a new device.
                                 if DeviceLost::from_error(&e).is_none()
                                     && target != prepared.display_target()
-                                    && butterpollo_windows::capture::WindowTarget::parse(&target.0).ok().flatten().is_some()
+                                    && butterpollo_win_graphics::capture::WindowTarget::parse(&target.0).ok().flatten().is_some()
                                 {
                                     let deadline = Instant::now() + WINDOW_TARGET_WAIT;
                                     while prepared.capture_target() == target
@@ -1293,7 +1294,7 @@ impl Media {
         if !should_fallback_hdr_to_sdr(
             s.launch.transport,
             stream.hdr,
-            image.pixel == butterpollo_windows::capture::Pixel::Bgra8,
+            image.pixel == butterpollo_win_graphics::capture::Pixel::Bgra8,
             display_in_hdr,
             rtx_hdr_active,
         ) {
@@ -1324,16 +1325,12 @@ impl Media {
         encoder: &mut Option<Encoder>,
     ) -> Result<()> {
         let stream = s.effective_config();
-        *encoder = Some(Encoder::new_gpu_reported(
-            &stream,
-            first,
-            c,
-            &s.launch.warnings,
-        )?);
+        *encoder = Some(wb::new_encoder_gpu(&stream, first, c, &s.launch.warnings)?);
         *s.encoder.write().unwrap() = encoder.as_ref().unwrap().backend().into();
-        let source_refresh_hz = butterpollo_windows::display::mode(&first.gpu.display.display_name)
-            .ok()
-            .map(|mode| mode.dmDisplayFrequency);
+        let source_refresh_hz =
+            butterpollo_win_display::display::mode(&first.gpu.display.display_name)
+                .ok()
+                .map(|mode| mode.dmDisplayFrequency);
         let (requested_capture, constant_rate) = prepared.capture_method();
         tracing::info!(width=stream.width,height=stream.height,display_width=stream.display_size().0,display_height=stream.display_size().1,capped=stream.capped(),fps=f64::from(stream.fps_millihz())/1000.,requested_fps=stream.fps,bitrate_kbps=s.bitrate.load(Ordering::Relaxed),configured_bitrate_kbps=stream.configured_bitrate_kbps,codec=stream.codec,hdr=stream.hdr,ten_bit=stream.ten_bit(),full_range=stream.full_range(),color_matrix=stream.color_matrix(),vrr=stream.vrr_low_latency,packet_size=stream.packet_size,pyrowave_records=stream.pyrowave_records,pyrowave_row_order=stream.pyrowave_row_order,requested_capture=%requested_capture,constant_rate=constant_rate,requested_encoder=c.get("encoder","auto"),encoder=encoder.as_ref().unwrap().backend(),adapter=%first.gpu.display.adapter,source_width=first.width,source_height=first.height,source_refresh_hz,source_pixel=?first.pixel,"stream configured");
         if stream.chroma_packing != 0 {

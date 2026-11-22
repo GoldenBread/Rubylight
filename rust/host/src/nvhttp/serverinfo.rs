@@ -129,9 +129,9 @@ pub(super) async fn serverinfo(
                     || ("00:00:00:00:00:00".into(), 0),
                     |(local, peer)| {
                         (
-                            butterpollo_windows::net::local_mac(local)
+                            butterpollo_win_io::net::local_mac(local)
                                 .unwrap_or_else(|_| "00:00:00:00:00:00".into()),
-                            butterpollo_windows::net::routed_link_bps(peer) / 1_000_000,
+                            butterpollo_win_io::net::routed_link_bps(peer) / 1_000_000,
                         )
                     },
                 );
@@ -147,7 +147,7 @@ pub(super) async fn serverinfo(
             .unwrap_or_else(|_| ("00:00:00:00:00:00".into(), 0, false))
         }
     };
-    let windows_11 = butterpollo_windows::display::virtual_display_os();
+    let windows_11 = butterpollo_win_display::display::virtual_display_os();
     if let Err(error) = crate::extensions::probe_serverinfo_audio(&config).await {
         tracing::warn!(error = %format!("{error:#}"), "Dolby Digital audio is not offered: FFmpeg was not probed");
     }

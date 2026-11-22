@@ -114,16 +114,16 @@ pub struct Args {
 }
 
 pub fn run() -> Result<()> {
-    butterpollo_windows::capture::enable_dpi_awareness();
+    butterpollo_win_graphics::capture::enable_dpi_awareness();
     let args = Args::parse();
     if args.crash_reporter {
-        return butterpollo_windows::crash::reporter();
+        return butterpollo_win_io::crash::reporter();
     }
     if let Some(profile) = &args.nvidia_probe {
         std::process::exit(nvidia_enhance::probe_main(profile));
     }
     if args.radeon_helper {
-        std::process::exit(butterpollo_windows::radeon::helper::run());
+        std::process::exit(butterpollo_win_graphics::radeon::helper::run());
     }
     if args.neural_probe {
         std::process::exit(neural::probe_main());
@@ -157,10 +157,18 @@ pub fn run() -> Result<()> {
         )));
     }
     if let Some(pipe) = &args.codec_probe_worker {
-        return butterpollo_windows::codec_probe::worker(pipe, args.codec_probe_parent.unwrap());
+        return butterpollo_win_graphics::codec_probe::worker_with(
+            pipe,
+            args.codec_probe_parent.unwrap(),
+            &crate::win_bridge::HostUserLauncher,
+        );
     }
     if let Some(pipe) = &args.wgc_worker {
-        return butterpollo_windows::capture::run_wgc_worker(pipe, args.wgc_parent.unwrap());
+        return butterpollo_win_graphics::capture::run_wgc_worker_with(
+            pipe,
+            args.wgc_parent.unwrap(),
+            &crate::win_bridge::HostUserLauncher,
+        );
     }
     if let Some(source) = &args.import_config {
         // Setup keeps this output in its log: what was left out, and why.
@@ -172,34 +180,36 @@ pub fn run() -> Result<()> {
         return butterpollo_session::migration::import(source, args.config_dir.as_ref().unwrap());
     }
     if let Some(pipe) = &args.rtss_worker {
-        return butterpollo_windows::rtss::worker(pipe, args.rtss_parent.unwrap());
+        return butterpollo_win_io::rtss::worker(pipe, args.rtss_parent.unwrap());
     }
     if let Some(port) = args.open_web {
-        return butterpollo_windows::tray::open_web_page(
+        return butterpollo_win_io::tray::open_web_page(
             port,
             args.open_web_page.as_deref().unwrap_or("/"),
         );
     }
     if let Some(pid) = args.display_watch {
-        return butterpollo_windows::display_recovery::wait_and_recover(
+        crate::win_bridge::install_hooks();
+        return butterpollo_win_display::display_recovery::wait_and_recover_with(
             pid,
             &args
                 .config_dir
                 .context("display watcher requires a config directory")?,
+            crate::win_bridge::recovery_hooks(),
         );
     }
     if args.diagnostics {
-        let _com = butterpollo_windows::capture::ComGuard::new()?;
+        let _com = butterpollo_win_graphics::capture::ComGuard::new()?;
         println!(
             "{}",
             serde_json::to_string_pretty(
-                &serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"displays":butterpollo_windows::capture::displays()?,"monitors":butterpollo_windows::display::monitors()?,"virtual_display_driver":butterpollo_windows::display::virtual_display_available(),"virtual_display_status":butterpollo_windows::display::virtual_display_status(),"firewall":std::env::current_exe().map_err(anyhow::Error::from).and_then(|exe| butterpollo_windows::firewall::problems(&exe)).unwrap_or_else(|error| vec![format!("firewall rules could not be read: {error:#}")]),"wake":wake::diagnostics()})
+                &serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"displays":butterpollo_win_graphics::capture::displays()?,"monitors":butterpollo_win_display::display::monitors()?,"virtual_display_driver":butterpollo_win_display::display::virtual_display_available(),"virtual_display_status":butterpollo_win_display::display::virtual_display_status(),"firewall":std::env::current_exe().map_err(anyhow::Error::from).and_then(|exe| butterpollo_win_io::firewall::problems(&exe)).unwrap_or_else(|error| vec![format!("firewall rules could not be read: {error:#}")]),"wake":wake::diagnostics()})
             )?
         );
         return Ok(());
     }
     if let Some(report) = &args.display_self_test {
-        let _com = butterpollo_windows::capture::ComGuard::new()?;
+        let _com = butterpollo_win_graphics::capture::ComGuard::new()?;
         // The host log is not open in this process: keep what the checks log
         // (why Windows refused a layout) beside the report.
         if let Ok(log) = std::fs::File::create(report.with_extension("log")) {
@@ -209,12 +219,12 @@ pub fn run() -> Result<()> {
                 .with_max_level(tracing::Level::INFO)
                 .try_init();
         }
-        let passed = butterpollo_windows::display::self_test::run(report)?;
+        let passed = butterpollo_win_display::display::self_test::run(report)?;
         std::process::exit(if passed { 0 } else { 1 });
     }
     if args.virtual_display_smoke {
-        let _com = butterpollo_windows::capture::ComGuard::new()?;
-        let display = butterpollo_windows::display::VirtualDisplay::create(
+        let _com = butterpollo_win_graphics::capture::ComGuard::new()?;
+        let display = butterpollo_win_display::display::VirtualDisplay::create(
             &uuid::Uuid::new_v4().to_string(),
             640,
             480,
@@ -269,11 +279,11 @@ pub fn run() -> Result<()> {
 }
 
 fn smoke(args: &Args) -> Result<()> {
-    let _com = butterpollo_windows::capture::ComGuard::new()?;
-    let _priority = butterpollo_windows::capture::Priority::new();
+    let _com = butterpollo_win_graphics::capture::ComGuard::new()?;
+    let _priority = butterpollo_win_graphics::capture::Priority::new();
     let image = if args.capture_smoke {
         let mut capture =
-            butterpollo_windows::capture::Capture::new_format("", &args.capture, args.hdr)?;
+            butterpollo_win_graphics::capture::Capture::new_format("", &args.capture, args.hdr)?;
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(image) = capture.next_frame()? {
@@ -285,13 +295,13 @@ fn smoke(args: &Args) -> Result<()> {
             std::thread::sleep(Duration::from_millis(1));
         }
     } else {
-        butterpollo_windows::capture::Image {
+        butterpollo_win_graphics::capture::Image {
             width: 128,
             height: 128,
             stride: 512,
             bytes: vec![128; 128 * 128 * 4],
             captured: Instant::now(),
-            pixel: butterpollo_windows::capture::Pixel::Bgra8,
+            pixel: butterpollo_win_graphics::capture::Pixel::Bgra8,
         }
     };
     let mut output = serde_json::json!({"capture":args.capture,"width":image.width,"height":image.height,"bytes":image.bytes.len()});
@@ -308,7 +318,7 @@ fn smoke(args: &Args) -> Result<()> {
             },
             ..Default::default()
         };
-        let mut encoder = butterpollo_windows::encoder::Encoder::new(&cfg, "")?;
+        let mut encoder = butterpollo_win_graphics::encoder::Encoder::new(&cfg, "")?;
         let mut packets = 0;
         let mut bytes = 0;
         for i in 0..31 {

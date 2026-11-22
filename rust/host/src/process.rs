@@ -3,7 +3,7 @@ use anyhow::{Context, Result, bail};
 mod parity_tests;
 use butterpollo_session::connection_commands::ConnectionCommand as ClientCommand;
 use butterpollo_session::state::{App, PrepCommand};
-use butterpollo_windows::process::{CommandCancellation, Process};
+use butterpollo_win_io::process::{CommandCancellation, Process};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
@@ -56,7 +56,7 @@ impl ClientCommands {
             .map(|app| app.environment.clone());
         let mut environment = match environment {
             Some(environment) => environment,
-            None => match butterpollo_windows::process::user_environment() {
+            None => match butterpollo_win_io::process::user_environment() {
                 Ok(environment) => environment,
                 Err(error) => {
                     tracing::info!(%error, "no signed-in user; client commands skipped");
@@ -330,7 +330,7 @@ pub struct RunningApp {
 /// The folder of the program an app starts, as Vibepollo uses when the app
 /// has no working directory: games often load files relative to it.
 fn inferred_working_dir(command: &str) -> String {
-    let target = butterpollo_windows::process::command_target(command);
+    let target = butterpollo_win_io::process::command_target(command);
     if target.contains("://") {
         return String::new();
     }
@@ -346,12 +346,11 @@ fn inferred_working_dir(command: &str) -> String {
 /// game processes are found. Listing them takes milliseconds: list them
 /// before locking `current_app`, which console and launch requests wait on.
 pub fn session_processes() -> Result<Vec<butterpollo_session::steam::Process>> {
-    let session = butterpollo_windows::process::current_session()?;
-    let mut processes = butterpollo_windows::process::processes()?;
+    let session = butterpollo_win_io::process::current_session()?;
+    let mut processes = butterpollo_win_io::process::processes()?;
     // A launcher may report the same executable in several signed-in
     // sessions. Game ownership never crosses this host's user session.
-    processes
-        .retain(|p| butterpollo_windows::process::process_session(p.pid).ok() == Some(session));
+    processes.retain(|p| butterpollo_win_io::process::process_session(p.pid).ok() == Some(session));
     Ok(processes)
 }
 fn directory(s: &str) -> Option<&Path> {
@@ -559,7 +558,7 @@ impl RunningApp {
                     .get("detached")
                     .and_then(serde_json::Value::as_array)
                     .is_some_and(|commands| !commands.is_empty()),
-            launched_at: butterpollo_windows::process::now(),
+            launched_at: butterpollo_win_io::process::now(),
             foreign: BTreeMap::new(),
             not_foreign: BTreeMap::new(),
             foreground_check: None,
@@ -658,7 +657,7 @@ impl RunningApp {
         }
         // A program the preparation commands left running is never taken for a game another
         // program started.
-        running.launched_at = butterpollo_windows::process::now();
+        running.launched_at = butterpollo_win_io::process::now();
         let imported = app
             .extra
             .get("launcher-launch")
@@ -687,7 +686,7 @@ impl RunningApp {
                     || imported.is_some()
             })
         {
-            match butterpollo_windows::process::processes() {
+            match butterpollo_win_io::process::processes() {
                 Ok(before) => {
                     running.steam = Some(butterpollo_session::steam::Tracker::new(
                         &before,
@@ -716,20 +715,20 @@ impl RunningApp {
             }
         }
         if let Some(action) = imported {
-            butterpollo_windows::library::launch(
+            butterpollo_win_io::library::launch(
                 &action,
                 directory(&running.working),
                 app_bool(app, "elevated", false),
                 &running.environment,
             )?;
         } else if !app.cmd.is_empty() {
-            let target = butterpollo_windows::process::command_target(&app.cmd);
+            let target = butterpollo_win_io::process::command_target(&app.cmd);
             // The app starts with the user's token; a SYSTEM host cannot
             // judge a mapped drive or network share the user can open.
             if target.to_ascii_lowercase().ends_with(".exe")
                 && !target.contains(['%', '!', '^'])
                 && Path::new(target).is_absolute()
-                && butterpollo_windows::files::local_volume(Path::new(target))
+                && butterpollo_win_io::files::local_volume(Path::new(target))
                 && !Path::new(target).is_file()
             {
                 bail!("application executable not found: {target}");
@@ -791,8 +790,8 @@ impl RunningApp {
         let mut processes: Vec<butterpollo_session::game_settings::Watched> = pids
             .into_iter()
             .filter_map(|pid| {
-                let program = butterpollo_windows::process::image_path(pid)?;
-                let started = butterpollo_windows::process::creation_time(pid);
+                let program = butterpollo_win_io::process::image_path(pid)?;
+                let started = butterpollo_win_io::process::creation_time(pid);
                 (started != 0 && watches_program(&program)).then_some(
                     butterpollo_session::game_settings::Watched {
                         pid,
@@ -830,11 +829,11 @@ impl RunningApp {
             lossless.stop();
         }
         if let Some(tracker) = self.steam.take() {
-            butterpollo_windows::process::stop_processes(&tracker.tracked, self.exit_timeout);
+            butterpollo_win_io::process::stop_processes(&tracker.tracked, self.exit_timeout);
         }
         let foreign = std::mem::take(&mut self.foreign);
         if !foreign.is_empty() {
-            butterpollo_windows::process::stop_processes(&foreign, self.exit_timeout);
+            butterpollo_win_io::process::stop_processes(&foreign, self.exit_timeout);
         }
         if let Some(launch) = self.playnite.take() {
             launch.stop(self.exit_timeout);
@@ -930,7 +929,7 @@ impl RunningApp {
             return None;
         }
         self.deferred_check = std::time::Instant::now();
-        butterpollo_windows::process::user_signed_in()
+        butterpollo_win_io::process::user_signed_in()
             .then(|| self.deferred.take())
             .flatten()
     }
@@ -1007,13 +1006,13 @@ impl RunningApp {
                 self.detached = true;
                 tracing::info!(app=%self.name,"application launcher exited; retaining its streaming session");
                 if let Some(code) = error {
-                    butterpollo_windows::tray::launch_error(&self.name, code);
+                    butterpollo_win_io::tray::launch_error(&self.name, code);
                 }
                 Ok(false)
             }
             ExitAction::Finished => {
                 if code == Some(9009) {
-                    butterpollo_windows::tray::launch_error(&self.name, 9009);
+                    butterpollo_win_io::tray::launch_error(&self.name, 9009);
                 }
                 Ok(true)
             }
@@ -1287,8 +1286,8 @@ pub enum ForegroundVerdict {
 impl ForegroundCheck {
     pub fn run(&self) -> ForegroundVerdict {
         self.run_with(
-            butterpollo_windows::process::creation_time,
-            butterpollo_windows::process::processes,
+            butterpollo_win_io::process::creation_time,
+            butterpollo_win_io::process::processes,
         )
     }
     /// The process is looked at only as the program the window showed: by the
@@ -1668,7 +1667,7 @@ pub fn launch(
         h,
         app,
         args,
-        butterpollo_windows::process::user_environment(),
+        butterpollo_win_io::process::user_environment(),
     )
 }
 fn launch_with_environment(
@@ -1962,7 +1961,7 @@ fn launch_with_environment(
     // after this.
     let baseline = lossless
         .as_ref()
-        .map(|_| butterpollo_windows::process::processes().unwrap_or_default());
+        .map(|_| butterpollo_win_io::process::processes().unwrap_or_default());
     // The game reads its own settings files as it starts: the device's own go in first (a
     // launch they cannot be swapped for fails), then the stream's keys.
     let settings_swap = crate::game_settings::launching(h, &app, args, &environment)?;

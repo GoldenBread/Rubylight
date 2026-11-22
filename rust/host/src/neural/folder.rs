@@ -284,7 +284,7 @@ pub fn handle(request: Request, writer: Writer, progress: &dyn Fn(u64, u64)) -> 
 /// line on stdin, progress and one answer line on stdout.
 pub fn helper() -> i32 {
     let mut line = String::new();
-    let response = if butterpollo_windows::process::is_system() {
+    let response = if butterpollo_win_io::process::is_system() {
         Response::Error {
             message: "the Neural Rendering helper must run as the signed-in user".into(),
         }
@@ -873,7 +873,7 @@ pub(super) enum Rights {
 }
 
 pub(super) fn security(path: &Path, rights: Rights) -> anyhow::Result<Security> {
-    use butterpollo_windows::process::{
+    use butterpollo_win_io::process::{
         open_file_child_movers, open_file_movers, open_file_owner, open_file_writers,
         open_unfollowed,
     };
@@ -892,7 +892,7 @@ pub(super) fn security(path: &Path, rights: Rights) -> anyhow::Result<Security> 
 /// An account as the console names it: `DOMAIN\name`, or "another account"
 /// for one Windows doesn't know or a permission entry naming none.
 fn account(sid: &str) -> String {
-    butterpollo_windows::process::account_name(sid).unwrap_or_else(|| "another account".into())
+    butterpollo_win_io::process::account_name(sid).unwrap_or_else(|| "another account".into())
 }
 
 /// Whether only administrators may change `path`.
@@ -2015,7 +2015,7 @@ fn remove_by(folder: &Path, name: &str, writer: Writer, keep_record: bool) -> Ou
         guard(folder, path, writer)?;
     }
     let dlls: Vec<PathBuf> = dlls.iter().map(|path| folder.join(path)).collect();
-    butterpollo_windows::files::delete_all(&dlls).map_err(|(file, e)| {
+    butterpollo_win_io::files::delete_all(&dlls).map_err(|(file, e)| {
         let held = matches!(e.raw_os_error(), Some(5 | 32));
         Failure::Error(if held {
             format!(

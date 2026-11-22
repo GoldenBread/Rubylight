@@ -13,8 +13,8 @@ use std::{
 
 fn log_encoder_gpu_check() {
     use butterpollo_media_policy::encoder_gpu::{Refusal, Runtimes, check};
-    let adapters = butterpollo_windows::capture::gpus()
-        .map(|gpus| butterpollo_windows::capture::gpu_adapters(&gpus))
+    let adapters = butterpollo_win_graphics::capture::gpus()
+        .map(|gpus| butterpollo_win_graphics::capture::gpu_adapters(&gpus))
         .unwrap_or_default();
     match check(&adapters, Runtimes::ALL) {
         Ok(()) => {}
@@ -150,7 +150,7 @@ enum ExitAction {
 pub(crate) async fn run(args: crate::cli::Args, assets: PathBuf) -> Result<()> {
     let supervised = args.service_stop_source.is_some();
     let stop_signal =
-        butterpollo_windows::process::StopSignal::new(args.service_stop_source.as_deref())?;
+        butterpollo_win_io::process::StopSignal::new(args.service_stop_source.as_deref())?;
     let directory = match &args.config_dir {
         Some(directory) => directory.clone(),
         None => butterpollo_session::paths::portable_profile()?,
@@ -158,8 +158,12 @@ pub(crate) async fn run(args: crate::cli::Args, assets: PathBuf) -> Result<()> {
     let h = state::Host::load(directory, assets, args.port)?;
     // Crash reporting must not keep the host from starting, e.g. when the
     // reporter process is blocked.
-    let crash_reporting = butterpollo_windows::crash::initialize(&h.directory).err();
-    let display_recovery = butterpollo_windows::display_recovery::initialize(&h.directory)?;
+    let crash_reporting = butterpollo_win_io::crash::initialize(&h.directory).err();
+    crate::win_bridge::install_hooks();
+    let display_recovery = butterpollo_win_display::display_recovery::initialize_with(
+        &h.directory,
+        crate::win_bridge::recovery_hooks(),
+    )?;
     let log_path = h
         .config
         .read()
@@ -234,7 +238,7 @@ async fn run_logged(
     args: &crate::cli::Args,
     h: state::Shared,
     supervised: bool,
-    stop_signal: butterpollo_windows::process::StopSignal,
+    stop_signal: butterpollo_win_io::process::StopSignal,
     unusable_log: Option<(PathBuf, anyhow::Error)>,
     crash_reporting: Option<anyhow::Error>,
     display_recovery: Option<anyhow::Error>,
@@ -259,8 +263,8 @@ async fn run_logged(
         );
     }
     // Once logging runs: an unreadable file says so.
-    butterpollo_windows::display_arrangement::initialize_remembered(&h.directory);
-    if let Err(error) = butterpollo_windows::audio_app_route::recover(&h.directory) {
+    butterpollo_win_display::display_arrangement::initialize_remembered(&h.directory);
+    if let Err(error) = butterpollo_win_io::audio_app_route::recover(&h.directory) {
         tracing::warn!(
             error = format!("{error:#}"),
             "game audio devices from an interrupted stream were not all restored; retrying"
@@ -283,8 +287,8 @@ async fn run_logged(
     // The driver panel controls the settings of the GPU the host streams from: Radeon's or
     // NVIDIA's. It is chosen once per host start.
     let panel_driver = tokio::task::spawn_blocking(move || {
-        butterpollo_windows::nvidia_profile::apply_configured(&nvidia_config);
-        butterpollo_windows::capture::panel_driver(&nvidia_config)
+        butterpollo_win_graphics::nvidia_profile::apply_configured(&nvidia_config);
+        butterpollo_win_graphics::capture::panel_driver(&nvidia_config)
     })
     .await
     .unwrap_or_default();
@@ -324,15 +328,15 @@ async fn run_logged(
     service_tasks::restore_nucleus_at_start(
         supervised,
         &h.directory,
-        butterpollo_windows::service::restore_nucleus_layers,
+        butterpollo_win_io::service::restore_nucleus_layers,
     );
     // The service's keys and backups: SYSTEM and Administrators only, also after a
     // profile was copied in or restored from a backup.
     for folder in ["credentials", butterpollo_session::settings_backup::BACKUPS] {
         let path = h.directory.join(folder);
-        if butterpollo_windows::process::is_system()
+        if butterpollo_win_io::process::is_system()
             && path.is_dir()
-            && let Err(error) = butterpollo_windows::process::restrict_to_administrators(&path)
+            && let Err(error) = butterpollo_win_io::process::restrict_to_administrators(&path)
         {
             tracing::warn!(%error, folder, "the folder permissions could not be repaired");
         }
@@ -340,7 +344,7 @@ async fn run_logged(
     // A SteamGridDB key typed into sunshine.conf, which every local user reads, moves there too.
     steamgriddb::migrate_key(&h);
     let ports = h.config.read().unwrap().ports()?;
-    if let Err(error) = butterpollo_windows::vulkan::reconcile(
+    if let Err(error) = butterpollo_win_graphics::vulkan::reconcile(
         h.config.read().unwrap().boolean("vulkan_hdr_layer", true),
     ) {
         tracing::warn!(%error, "Vulkan HDR registration could not be reconciled");
@@ -372,7 +376,7 @@ async fn run_logged(
         } else {
             h.assets.join("images/apollo.ico")
         };
-        match butterpollo_windows::tray::Tray::new_options(
+        match butterpollo_win_io::tray::Tray::new_options(
             icon,
             ports.web,
             h.config
@@ -457,7 +461,7 @@ async fn run_logged(
             let Ok(program) = std::env::current_exe() else {
                 return;
             };
-            match butterpollo_windows::firewall::problems(&program) {
+            match butterpollo_win_io::firewall::problems(&program) {
                 Ok(problems) => match host_warnings::firewall(&problems) {
                     Some(warning) => h.warnings.set(host_warnings::FIREWALL, warning),
                     None => h.warnings.clear(host_warnings::FIREWALL),
@@ -473,7 +477,7 @@ async fn run_logged(
     let session_end = std::sync::Arc::new(session_end::SessionEnd::default());
     let session_end_watch = {
         let session_end = session_end.clone();
-        butterpollo_windows::session_end::SessionEndWatch::start(move |ending| {
+        butterpollo_win_io::session_end::SessionEndWatch::start(move |ending| {
             tracing::info!(
                 logoff = ending.logoff,
                 critical = ending.critical,
@@ -561,7 +565,7 @@ async fn run_logged(
         port_forward.stop();
     }
     // Nothing waits on a monitor's wake on the way out; the next start puts back what is left.
-    butterpollo_windows::display_arrangement::close_wake_watch();
+    butterpollo_win_display::display_arrangement::close_wake_watch();
     let canceled = h.sessions.lock().unwrap().request_stop(None);
     drop(canceled);
     // The clients know, and the session's end, if it waits, may go on.
@@ -646,7 +650,7 @@ async fn run_logged(
     }
     if h.restart.load(Ordering::Acquire) {
         let exit_code = if supervised {
-            butterpollo_windows::service::RESTART_EXIT_CODE
+            butterpollo_win_io::service::RESTART_EXIT_CODE
         } else {
             0
         };

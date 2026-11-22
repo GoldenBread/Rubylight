@@ -53,7 +53,7 @@ Keep development profiles and ports distinct from the installed service. See [mu
 
 ## Implementation
 
-The [architecture guide's component table](../docs/architecture.md#components) lists the crates: `butterpollo-core` ([core](core)), `butterpollo-windows` ([windows](windows)), `butterpollo` ([host](host)), [setup](setup), [vulkan-layer](vulkan-layer), [probes](probes), the [native API types](core/native-api) and the display driver's [ring protocol](drivers/rubylight-vdisplay-proto). The display driver ([drivers/rubylight-vdisplay](drivers/rubylight-vdisplay)) builds outside the workspace with the MSVC toolchain, as does the NVIDIA component's NGX adapter ([truehdr-runtime](truehdr-runtime)), which only `build.ps1 -Nvidia` builds.
+The [architecture guide's component table](../docs/architecture.md#components) lists the crates: `butterpollo-core` ([core](core)), the split Windows crates `butterpollo-win-{abi,graphics,display,io}` ([windows](windows)), `butterpollo` ([host](host)), [setup](setup), [vulkan-layer](vulkan-layer), [probes](probes), the [native API types](core/native-api) and the display driver's [ring protocol](drivers/rubylight-vdisplay-proto). The display driver ([drivers/rubylight-vdisplay](drivers/rubylight-vdisplay)) builds outside the workspace with the MSVC toolchain, as does the NVIDIA component's NGX adapter ([truehdr-runtime](truehdr-runtime)), which only `build.ps1 -Nvidia` builds.
 
 The Windows service, [service](service), is a workspace of its own with its own version, so `butterpollo-service.exe` stays the same file across releases while that version is unchanged ([the rule](release/README.md#the-service-executable)). It starts and supervises the host, rolls back interrupted updates and runs the rest as `butterpollo.exe` tasks.
 
@@ -61,10 +61,10 @@ The [Svelte console](web) is packaged with the host; server-rendered pages remai
 
 Useful implementation entry points:
 
-- [compute.rs](windows/src/compute.rs): capture copies and RGB-to-YUV conversion on D3D12 compute queues, handed to the encoder.
-- [amf.rs](windows/src/amf.rs) and [nvenc.rs](windows/src/nvenc.rs): the AMD AMF and NVIDIA NVENC encoders.
-- [compute_frame_warp.rs](windows/src/compute_frame_warp.rs) and [core/src/frame_warp](core/src/frame_warp): Frame Warp's GPU passes and its per-game model ([Frame Warp](../docs/frame-warp.md)).
-- [Windows source](windows/src): capture, encoders, virtual displays and native integration.
+- [compute.rs](windows/graphics/src/compute.rs): capture copies and RGB-to-YUV conversion on D3D12 compute queues, handed to the encoder.
+- [amf.rs](windows/graphics/src/amf.rs) and [nvenc.rs](windows/graphics/src/nvenc.rs): the AMD AMF and NVIDIA NVENC encoders.
+- [compute_frame_warp.rs](windows/graphics/src/compute_frame_warp.rs) and [core/src/frame_warp](core/src/frame_warp): Frame Warp's GPU passes and its per-game model ([Frame Warp](../docs/frame-warp.md)).
+- [Windows crates](windows): ABI ([abi](windows/abi)), capture/encoders ([graphics](windows/graphics)), virtual displays/recovery ([display](windows/display)) and audio/input/net ([io](windows/io)).
 - [Host source](host/src): session scheduling, configuration, administration and media transport.
 - [Core source](core/src): protocol and durable-state primitives.
 
@@ -90,7 +90,7 @@ Native fixtures may require an active moving desktop, codec DLLs, compatible dri
 After the ordinary checks, in the same SDK environment:
 
 ```powershell
-cargo test -p butterpollo-windows --locked -- --ignored --skip native_av1_geometry_and_hdr_are_preserved --skip primary_multitouch_and_secondary_isolation_match_native_hid_reports --skip two_announced_touchpads_share_one_native_surface_side_by_side --skip crash::tests::reporter_process --skip crash::tests::crashing_process --test-threads=1 --nocapture
+cargo test -p butterpollo-win-graphics -p butterpollo-win-display -p butterpollo-win-io --locked -- --ignored --skip native_av1_geometry_and_hdr_are_preserved --skip primary_multitouch_and_secondary_isolation_match_native_hid_reports --skip two_announced_touchpads_share_one_native_surface_side_by_side --skip crash::tests::reporter_process --skip crash::tests::crashing_process --test-threads=1 --nocapture
 ```
 
 The native command needs the packaged codec DLLs on `PATH` and `libpyrowave-shared-1.dll` beside the test executable (`target\debug\deps`), an AMD D3D11/AMF adapter, working interactive WGC, a moving desktop and a local network route; it does not change display modes, audio defaults or the installed service. `motion_probe DISPLAY SECONDS REPORT.json current 128` can provide movement on an explicitly selected active output without changing its mode. Set `BUTTERPOLLO_TEST_OPUS_ROOT` to the packaged runtime directory, `BUTTERPOLLO_TEST_FFMPEG` and `BUTTERPOLLO_TEST_FFPROBE` to an independent FFmpeg decoder and its ffprobe, and `BUTTERPOLLO_TEST_RFI_REPORT`, `BUTTERPOLLO_TEST_GPU_REPORT`, `BUTTERPOLLO_TEST_REFERENCE_BUDGET_REPORT` and `BUTTERPOLLO_TEST_AUDIO_REPORT` to report files. The two `crash::tests` entry points are skipped because the crash tests start them as child processes; run directly, `reporter_process` ends the test run. `native_virtual_display_recovery_restores_the_requested_mode_and_mode_list` creates a virtual display, which the driver allows only to SYSTEM: run it on its own as SYSTEM (a one-shot `schtasks /RU SYSTEM` task in the signed-in session).

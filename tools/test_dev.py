@@ -19,17 +19,19 @@ class Plan(unittest.TestCase):
         crates = set(planned['host'].items)
         self.assertTrue({
             'butterpollo-config', 'butterpollo-media-policy', 'butterpollo-input-policy',
-            'butterpollo-session', 'butterpollo-windows', 'butterpollo',
+            'butterpollo-session', 'butterpollo-win-display', 'butterpollo-win-graphics',
+            'butterpollo-win-io', 'butterpollo',
         } <= crates, crates)
         self.assertNotIn('butterpollo-crypto', crates)
+        self.assertNotIn('butterpollo-win-abi', crates)
         self.assertNotIn('butterpollo-vulkan-layer', crates)
         self.assertNotIn('client-protocol', planned)
 
     def test_host_crate_change_skips_the_crates_below_it(self):
-        planned, _ = checks('rust/windows/src/lib.rs')
+        planned, _ = checks('rust/windows/display/src/lib.rs')
         self.assertEqual(
             planned['host'].items,
-            ['butterpollo', 'butterpollo-probes', 'butterpollo-windows', 'rubylight-interop'],
+            ['butterpollo', 'butterpollo-probes', 'butterpollo-win-display', 'rubylight-interop'],
         )
         planned, _ = checks('rust/host/src/main.rs')
         self.assertEqual(planned['host'].items, ['butterpollo', 'rubylight-interop'])

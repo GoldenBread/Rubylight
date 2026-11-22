@@ -22,13 +22,13 @@ pub(super) fn command(app: &App) -> Option<&str> {
     [Some(app.cmd.as_str()), detached]
         .into_iter()
         .flatten()
-        .find(|line| !butterpollo_windows::process::command_target(line).is_empty())
+        .find(|line| !butterpollo_win_io::process::command_target(line).is_empty())
 }
 
 /// The program an app starts: its command's, else its first detached
 /// command's.
 pub(super) fn executable(app: &App) -> Option<&str> {
-    command(app).map(butterpollo_windows::process::command_target)
+    command(app).map(butterpollo_win_io::process::command_target)
 }
 
 /// What a Steam game started from an app's link gets: its launch option's
@@ -48,7 +48,7 @@ pub(super) fn steam_arguments(launch: &str, command: &str) -> String {
 /// What an app passes its program, for Rubylight's handler.
 pub(super) fn arguments(app: &App) -> String {
     command(app)
-        .map(butterpollo_windows::process::command_arguments)
+        .map(butterpollo_win_io::process::command_arguments)
         .unwrap_or_default()
         .to_string()
 }

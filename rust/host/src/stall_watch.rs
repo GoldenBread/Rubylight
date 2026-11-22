@@ -203,7 +203,7 @@ impl GpuProbe {
         let weak = Arc::downgrade(&probe);
         let (display, stream) = (display.to_owned(), stream.to_owned());
         let started = thread::Builder::new().name("gpu probe".into()).spawn(move || {
-            let query = match butterpollo_windows::gpu_probe::Probe::new(&display) {
+            let query = match butterpollo_win_graphics::gpu_probe::Probe::new(&display) {
                 Ok(query) => query,
                 Err(error) => {
                     let output = &display;

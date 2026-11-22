@@ -29,7 +29,7 @@ pub(crate) fn open_audio_encoder(
     Ok((opus, layout))
 }
 
-type Route = butterpollo_windows::audio_route::Route;
+type Route = butterpollo_win_io::audio_route::Route;
 
 /// The `audio_cadence_trace` ring, written to `logs\audio-cadence-<unix seconds>.csv` when the
 /// audio thread ends, however it ends.
@@ -286,7 +286,7 @@ impl Media {
         let mut last_loss = None;
         let mut ping = audio_sink::PingWait::default();
         let mut upkeep: Option<RouteUpkeep> = None;
-        let timer = butterpollo_windows::timing::Timer::new()?;
+        let timer = butterpollo_win_graphics::timing::Timer::new()?;
         let silence = couch.silence(frames);
         // Each pass's packets, in room kept from pass to pass.
         let mut packets = audio_sink::Packets::default();
@@ -329,7 +329,7 @@ impl Media {
             if !muted && !game_audio && Instant::now() >= audio_check {
                 audio_check = Instant::now() + Duration::from_secs(1);
                 if route.is_none() {
-                    match butterpollo_windows::audio_route::Route::acquire(
+                    match butterpollo_win_io::audio_route::Route::acquire(
                         &config,
                         &h.directory,
                         s.launch.host_audio,
@@ -475,7 +475,7 @@ impl Media {
                         cadence
                             .trace
                             .send(butterpollo_media_policy::audio_cadence::Sent {
-                                send_ms: butterpollo_windows::timing::qpc_ms(),
+                                send_ms: butterpollo_win_graphics::timing::qpc_ms(),
                                 position: at,
                             });
                     }

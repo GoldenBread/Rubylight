@@ -13,7 +13,7 @@ fn only(line: &str) -> Option<&'static str> {
 const LINES: &[(&str, &str)] = &[
     (
         "encoder_hang",
-        "2026-10-10T12:00:47.149150Z  WARN butterpollo_windows::amf: slow encoder call call=\"AMF SubmitInput\" elapsed_ms=34160",
+        "2026-10-10T12:00:47.149150Z  WARN butterpollo_win_graphics::amf: slow encoder call call=\"AMF SubmitInput\" elapsed_ms=34160",
     ),
     (
         "encoder_stall",
@@ -33,7 +33,7 @@ const LINES: &[(&str, &str)] = &[
     ),
     (
         "amd_driver_old",
-        "2026-10-12T19:20:02.000000Z  WARN butterpollo_windows::amf: AMF setting unavailable; retaining driver default. Check the named setting and update the AMD driver if quality or cadence differs property=HevcEnableVBAQ",
+        "2026-10-12T19:20:02.000000Z  WARN butterpollo_win_graphics::amf: AMF setting unavailable; retaining driver default. Check the named setting and update the AMD driver if quality or cadence differs property=HevcEnableVBAQ",
     ),
     (
         "no_display",
@@ -101,7 +101,7 @@ const LINES: &[(&str, &str)] = &[
     ),
     (
         "send_failed",
-        "2026-10-07T12:37:06.661614Z  WARN butterpollo_windows::net: UDP send failed; packets dropped and the client may stutter. Lower bitrate and check the network adapter code=10035 dropped=45",
+        "2026-10-07T12:37:06.661614Z  WARN butterpollo_win_io::net: UDP send failed; packets dropped and the client may stutter. Lower bitrate and check the network adapter code=10035 dropped=45",
     ),
     (
         "network_loss",
@@ -117,7 +117,7 @@ const LINES: &[(&str, &str)] = &[
     ),
     (
         "virtual_display_driver",
-        "2026-10-17T10:00:00.000000Z  WARN butterpollo_windows::service: the virtual display driver is missing; setting it up again",
+        "2026-10-17T10:00:00.000000Z  WARN butterpollo_win_io::service: the virtual display driver is missing; setting it up again",
     ),
     (
         "virtual_display_driver",
@@ -125,7 +125,7 @@ const LINES: &[(&str, &str)] = &[
     ),
     (
         "virtual_display_mode",
-        "2026-10-17T10:00:02.000000Z  WARN butterpollo_windows::display::virtual_display: virtual display mode not applied requested=3840x2160@240 actual=3840x2160@120 error=Windows refused the requested display mode (-2)",
+        "2026-10-17T10:00:02.000000Z  WARN butterpollo_win_display::display::virtual_display: virtual display mode not applied requested=3840x2160@240 actual=3840x2160@120 error=Windows refused the requested display mode (-2)",
     ),
     (
         "virtual_display_mode",
@@ -282,9 +282,9 @@ fn every_fix_names_a_settings_tab_the_console_has() {
 fn ordinary_and_unrelated_lines_find_nothing() {
     for line in [
         // Too short to be the hang.
-        "2026-10-10T14:37:07.355876Z  WARN butterpollo_windows::amf: slow encoder call call=\"compute conversion\" elapsed_ms=63",
+        "2026-10-10T14:37:07.355876Z  WARN butterpollo_win_graphics::amf: slow encoder call call=\"compute conversion\" elapsed_ms=63",
         // A conversion shader is no AMF call, and a PC that slept reports hours.
-        "2026-10-21T00:48:41.605829Z  WARN butterpollo_windows::amf: slow encoder call call=\"compute conversion\" elapsed_ms=6860818",
+        "2026-10-21T00:48:41.605829Z  WARN butterpollo_win_graphics::amf: slow encoder call call=\"compute conversion\" elapsed_ms=6860818",
         // A half-second encoding stall is a busy GPU, not a hang.
         "2026-10-26T23:32:21.229472Z  WARN butterpollo::stall_watch: stream thread stopped making progress thread=\"session\" stream_id=9f986184 phase=\"encoding\" stalled_ms=509 gpu_query_last_ms=1",
         "2026-10-26T23:40:00.000000Z  WARN butterpollo::stall_watch: stream thread resumed after a stall thread=\"session\" stream_id=9f986184 phase=\"encoding\" stalled_ms=1138 gpu_query_last_ms=1",
@@ -293,14 +293,14 @@ fn ordinary_and_unrelated_lines_find_nothing() {
         // Reopening capture after a mode change stalls by design.
         "2026-10-09T21:02:10.551000Z  WARN butterpollo::stall_watch: stream thread resumed after a stall thread=\"capture\" stream_id=\\\\.\\DISPLAY28 phase=\"reopening capture\" stalled_ms=2040",
         // Tearing the encoder down after a GPU reset is slow, not a second hang.
-        "2026-10-20T12:40:26.000000Z  WARN butterpollo_windows::amf: slow encoder call call=\"AMF Terminate\" elapsed_ms=6002",
-        "2026-10-20T12:40:34.000000Z  WARN butterpollo_windows::amf: slow encoder call call=\"AMF context Terminate\" elapsed_ms=8043",
+        "2026-10-20T12:40:26.000000Z  WARN butterpollo_win_graphics::amf: slow encoder call call=\"AMF Terminate\" elapsed_ms=6002",
+        "2026-10-20T12:40:34.000000Z  WARN butterpollo_win_graphics::amf: slow encoder call call=\"AMF context Terminate\" elapsed_ms=8043",
         // Restoring a physical monitor's layout is no virtual display problem.
         "2026-10-20T12:41:00.000000Z  WARN butterpollo::display_arrangement: display layout restored except Odyssey G93SC (\\\\.\\DISPLAY29) mode 5120x1440@64.000: Windows refused the requested display mode",
         // A matching message at INFO is not a failure.
         "2026-10-10T14:37:07.355876Z  INFO butterpollo::stream: client control stream timed out client=x",
         "2026-10-02T05:37:03.588446Z  INFO butterpollo::tls: HTTP listener ready address=0.0.0.0:47989 tls=false",
-        "2026-10-07T12:37:06.661614Z  WARN butterpollo_windows::limiter: frame limiter has no available provider",
+        "2026-10-07T12:37:06.661614Z  WARN butterpollo_win_io::limiter: frame limiter has no available provider",
         // Not a log line.
         "  UDP send failed continued on a wrapped line",
         "",
@@ -361,11 +361,11 @@ fn a_line_counts_for_its_first_rule_only() {
     assert_eq!(only(&line), Some("codec_unsupported"));
     // The hang rule needs the field as a number at the threshold.
     let at = format!(
-        "{T}  WARN butterpollo_windows::amf: slow encoder call call=\"AMF Init\" elapsed_ms=2000"
+        "{T}  WARN butterpollo_win_graphics::amf: slow encoder call call=\"AMF Init\" elapsed_ms=2000"
     );
     assert_eq!(only(&at), Some("encoder_hang"));
     let text = format!(
-        "{T}  WARN butterpollo_windows::amf: slow encoder call call=\"AMF Init\" elapsed_ms=fast"
+        "{T}  WARN butterpollo_win_graphics::amf: slow encoder call call=\"AMF Init\" elapsed_ms=fast"
     );
     assert_eq!(only(&text), None);
 }

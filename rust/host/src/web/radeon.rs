@@ -43,7 +43,7 @@ mod tests {
         extract::Request,
         http::{Method, StatusCode},
     };
-    use butterpollo_windows::radeon::{
+    use butterpollo_win_graphics::radeon::{
         BackendError, GpuInfo, RadeonBackend,
         control::JOURNAL_FILE,
         model::{Kind, Range, Setting, State, Value as Raw, Writable},

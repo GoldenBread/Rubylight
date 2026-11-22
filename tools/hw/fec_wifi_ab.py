@@ -307,7 +307,7 @@ def run(args):
         link_before = wifi_link()
         host = start_host(tag)
         if args.motion:
-            # The test-owned moving desktop (rust/windows/examples/motion_probe.rs): a timestamp strip and, above it,
+            # The test-owned moving desktop (rust/probes/src/motion_probe.rs): a timestamp strip and, above it,
             # fresh noise every frame, so the encoder fills the bitrate as a busy game does. It covers the monitor.
             strip = [str(args.motion), 'noise'] if args.motion > 128 else ['128']
             motion = subprocess.Popen([str(MOTION_PROBE), primary_monitor()['display_name'], str(args.seconds + 40),

@@ -127,5 +127,5 @@ See also [Privacy](privacy.md#your-own-devices).
 - **Code:**
   - The join policy, the guest list and the keyboard-and-mouse holder are pure state machines in `rust/core/src/multiclient.rs`, tested in `rust/core/src/multiclient/tests.rs`.
   - The host side is in `rust/host/src/multiclient.rs`, with its join gate in `nvhttp.rs` and input gating in `stream/control.rs`.
-  - The PC's local input watcher is in `rust/windows/src/local_input.rs`.
+  - The PC's local input watcher is in `rust/windows/io/src/local_input.rs`.
   - The launch option `rlGuest` marks a guest's launch. The host sets it and removes it from every client request.

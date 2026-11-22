@@ -4,10 +4,9 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 #[cfg(not(any(test, feature = "test-harness")))]
-use butterpollo_windows::{
-    display::virtual_display_available,
-    process::ensure_streaming_session as ensure_windows_streaming_session,
-};
+use butterpollo_win_display::display::virtual_display_available;
+#[cfg(not(any(test, feature = "test-harness")))]
+use butterpollo_win_io::process::ensure_streaming_session as ensure_windows_streaming_session;
 #[cfg(any(test, feature = "test-harness"))]
 use test_support::ensure_streaming_session as ensure_windows_streaming_session;
 #[cfg(any(test, feature = "test-harness"))]
@@ -32,7 +31,7 @@ use butterpollo_session::{
     state::{App, Client, device_uuid},
 };
 #[cfg(not(any(test, feature = "test-harness")))]
-use butterpollo_windows::clipboard;
+use butterpollo_win_io::clipboard;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},

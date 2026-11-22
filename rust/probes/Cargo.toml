@@ -6,10 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
-# The diagnostic probes the package ships. They are bins, not examples of
-# core and windows: building examples brings every member's
-# dev-dependencies into feature resolution, which rebuilt
-# butterpollo-windows with test-only features for the package.
+# The diagnostic probes the package ships and the internal development probes.
+# They are bins, not examples of core and windows: building examples brings
+# every member's dev-dependencies into feature resolution, which rebuilt
+# Windows crates with test-only features for the package.
 [[bin]]
 name = "butterpollo-performance"
 path = "src/performance.rs"
@@ -25,15 +25,304 @@ name = "butterpollo-video-packet-performance"
 path = "src/video_packet_performance.rs"
 test = false
 
+[[bin]]
+name = "afmf_capture"
+path = "src/afmf_capture.rs"
+test = true
+
+[[bin]]
+name = "afmf_scene"
+path = "src/afmf_scene.rs"
+test = false
+
+[[bin]]
+name = "amf_quality"
+path = "src/amf_quality.rs"
+test = false
+
+[[bin]]
+name = "amf_unit_probe"
+path = "src/amf_unit_probe.rs"
+test = false
+
+[[bin]]
+name = "app_route_probe"
+path = "src/app_route_probe.rs"
+test = false
+
+[[bin]]
+name = "audio_probe"
+path = "src/audio_probe.rs"
+test = false
+
+[[bin]]
+name = "capture_phase_probe"
+path = "src/capture_phase_probe.rs"
+test = false
+
+[[bin]]
+name = "copy_probe"
+path = "src/copy_probe.rs"
+test = false
+
+[[bin]]
+name = "d3d12_probe"
+path = "src/d3d12_probe.rs"
+test = false
+
+[[bin]]
+name = "ddx_arrival_probe"
+path = "src/ddx_arrival_probe.rs"
+test = false
+
+[[bin]]
+name = "ddx_startup_probe"
+path = "src/ddx_startup_probe.rs"
+test = false
+
+[[bin]]
+name = "ddx_sync_probe"
+path = "src/ddx_sync_probe.rs"
+test = false
+
+[[bin]]
+name = "ddx_wait_probe"
+path = "src/ddx_wait_probe.rs"
+test = false
+
+[[bin]]
+name = "display_color_info"
+path = "src/display_color_info.rs"
+test = false
+
+[[bin]]
+name = "display_cost"
+path = "src/display_cost.rs"
+test = false
+
+[[bin]]
+name = "display_poke"
+path = "src/display_poke.rs"
+test = false
+
+[[bin]]
+name = "fullscreen_probe"
+path = "src/fullscreen_probe.rs"
+test = false
+
+[[bin]]
+name = "gpu_load"
+path = "src/gpu_load.rs"
+test = false
+
+[[bin]]
+name = "hdr_scope"
+path = "src/hdr_scope.rs"
+test = false
+
+[[bin]]
+name = "hdr_snapshot"
+path = "src/hdr_snapshot.rs"
+test = false
+
+[[bin]]
+name = "input_latency_probe"
+path = "src/input_latency_probe.rs"
+test = true
+
+[[bin]]
+name = "input_path_probe"
+path = "src/input_path_probe.rs"
+test = false
+
+[[bin]]
+name = "look_probe"
+path = "src/look_probe.rs"
+test = true
+
+[[bin]]
+name = "mic_probe"
+path = "src/mic_probe.rs"
+test = false
+
+[[bin]]
+name = "mic_quality"
+path = "src/mic_quality.rs"
+test = false
+
+[[bin]]
+name = "motion_probe"
+path = "src/motion_probe.rs"
+test = true
+
+[[bin]]
+name = "multi_ddx_probe"
+path = "src/multi_ddx_probe.rs"
+test = false
+
+[[bin]]
+name = "pace_probe"
+path = "src/pace_probe.rs"
+test = false
+
+[[bin]]
+name = "pacing_link_probe"
+path = "src/pacing_link_probe.rs"
+test = false
+
+[[bin]]
+name = "pad_feedback_probe"
+path = "src/pad_feedback_probe.rs"
+test = false
+
+[[bin]]
+name = "pyrowave_compatibility"
+path = "src/pyrowave_compatibility.rs"
+test = false
+
+[[bin]]
+name = "radeon_probe"
+path = "src/radeon_probe.rs"
+test = false
+
+[[bin]]
+name = "radeon_set"
+path = "src/radeon_set.rs"
+test = false
+
+[[bin]]
+name = "restore_probe"
+path = "src/restore_probe.rs"
+test = false
+
+[[bin]]
+name = "rtss_probe"
+path = "src/rtss_probe.rs"
+test = false
+
+[[bin]]
+name = "service_shutdown"
+path = "src/service_shutdown.rs"
+test = false
+
+[[bin]]
+name = "session_command"
+path = "src/session_command.rs"
+test = false
+
+[[bin]]
+name = "session_command_long"
+path = "src/session_command_long.rs"
+test = false
+
+[[bin]]
+name = "steam_deck_probe"
+path = "src/steam_deck_probe.rs"
+test = false
+
+[[bin]]
+name = "system_launch"
+path = "src/system_launch.rs"
+test = true
+
+[[bin]]
+name = "timer_probe"
+path = "src/timer_probe.rs"
+test = false
+
+[[bin]]
+name = "udp_pacing_probe"
+path = "src/udp_pacing_probe.rs"
+test = false
+
+[[bin]]
+name = "udp_shaper"
+path = "src/udp_shaper.rs"
+test = true
+
+[[bin]]
+name = "wait_performance"
+path = "src/wait_performance.rs"
+test = false
+
+[[bin]]
+name = "webrtc_tone"
+path = "src/webrtc_tone.rs"
+test = false
+
+[[bin]]
+name = "wgc_arrival_probe"
+path = "src/wgc_arrival_probe.rs"
+test = false
+
+[[bin]]
+name = "wgc_cadence_probe"
+path = "src/wgc_cadence_probe.rs"
+test = false
+
+[[bin]]
+name = "wgc_stamp_probe"
+path = "src/wgc_stamp_probe.rs"
+test = false
+
 [dependencies]
 anyhow.workspace = true
 butterpollo-crypto = { path = "../core/crypto" }
 butterpollo-config = { path = "../core/config" }
 butterpollo-media-policy = { path = "../core/media-policy" }
-butterpollo-windows = { path = "../windows" }
+butterpollo-input-policy = { path = "../core/input-policy" }
+butterpollo-session = { path = "../core/session" }
+rubylight-protocol = { path = "../../client/protocol/core" }
+half = "2"
 hex = "0.4"
+libloading = "0.8"
 serde_json.workspace = true
+socket2 = "0.6"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[target.'cfg(windows)'.dependencies]
+butterpollo-win-display = { path = "../windows/display" }
+butterpollo-win-graphics = { path = "../windows/graphics" }
+butterpollo-win-io = { path = "../windows/io" }
+windows-core = "0.62.2"
+windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Display",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Media_Multimedia",
+    "Win32_Networking_WinSock",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Performance",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [build-dependencies]
 embed-resource = "3.0.12"

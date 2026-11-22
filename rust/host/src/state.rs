@@ -28,15 +28,15 @@ pub(crate) mod loss_memory;
 pub(crate) mod test_support;
 pub type Launch = butterpollo_session::session::Launch<
     crate::display_session::StreamPreparation,
-    butterpollo_windows::audio_route::Route,
+    butterpollo_win_io::audio_route::Route,
 >;
 pub type Session = butterpollo_session::session::Session<
     crate::display_session::StreamPreparation,
-    butterpollo_windows::audio_route::Route,
+    butterpollo_win_io::audio_route::Route,
 >;
 pub type Sessions = butterpollo_session::session::Sessions<
     crate::display_session::StreamPreparation,
-    butterpollo_windows::audio_route::Route,
+    butterpollo_win_io::audio_route::Route,
 >;
 use crate::web_sessions::{self, WebSession};
 
@@ -419,7 +419,7 @@ pub struct Host {
     pub(crate) launch_cancel: Mutex<
         Option<(
             String,
-            Arc<butterpollo_windows::process::CommandCancellation>,
+            Arc<butterpollo_win_io::process::CommandCancellation>,
         )>,
     >,
     /// Sleep PC tokens and the suspend backend.
@@ -435,10 +435,10 @@ pub struct Host {
     /// Ended streams for the console's Sessions page, saved in the profile directory.
     pub session_history: crate::session_history::History,
     pub confirmations: Mutex<butterpollo_session::remote::Confirmations>,
-    pub app_audio: Mutex<Option<Arc<butterpollo_windows::audio_route::Route>>>,
+    pub app_audio: Mutex<Option<Arc<butterpollo_win_io::audio_route::Route>>>,
     /// Each client's game display, kept between its streams while the app runs.
     pub app_display: Mutex<BTreeMap<String, RetainedDisplay>>,
-    pub monitors: Mutex<BTreeMap<String, Arc<butterpollo_windows::display::Retained>>>,
+    pub monitors: Mutex<BTreeMap<String, Arc<butterpollo_win_display::display::Retained>>>,
     /// The remote monitors still being made, outside the `monitors` lock.
     pub monitors_creating: crate::remote_display::Creating,
     pub updates: Mutex<Value>,
@@ -857,7 +857,7 @@ impl Host {
             }
             crate::host_warnings::notice(&directory, &warnings, "settings_retired", &warning);
         }
-        if let Some(warning) = butterpollo_windows::limiter::take_stale_nvidia(&directory) {
+        if let Some(warning) = butterpollo_win_io::limiter::take_stale_nvidia(&directory) {
             crate::host_warnings::notice(&directory, &warnings, "nvidia_limiter_retired", &warning);
         }
         if let Some(port) = port {
@@ -1180,7 +1180,7 @@ impl Host {
                 // Probe the driver's ability independently of the stream's
                 // opt-in: the default asks for long-term references in AV1.
                 config.values.remove("amd_ltr_frames");
-                let result = butterpollo_windows::input::on_input_desktop(|| {
+                let result = butterpollo_win_io::input::on_input_desktop(|| {
                     h.probe_codecs_once(&config, retrying)
                 });
                 retrying = true;
@@ -1220,15 +1220,11 @@ impl Host {
                 // A stream stopped the pass's packed probe: probe those modes
                 // once it has ended, not every codec again.
                 if h.packed_probe_pending.load(Ordering::Acquire) != 0 {
-                    h.start_packed_probe(butterpollo_windows::codec_probe::packed);
+                    h.start_packed_probe(crate::win_bridge::probe_packed);
                 }
                 if !again {
                     if let Some(delay) = retry_pyrowave {
-                        h.retry_pyrowave_probe(
-                            &config,
-                            delay,
-                            butterpollo_windows::codec_probe::pyrowave,
-                        );
+                        h.retry_pyrowave_probe(&config, delay, crate::win_bridge::probe_pyrowave);
                     }
                     return;
                 }
@@ -1251,7 +1247,7 @@ impl Host {
     }
     /// Keeps the throughput the encoder reports for its codec, for the WebRTC frame-rate
     /// offer. A driver that reports none leaves it 0, which limits the codec to 60 fps.
-    fn record_throughput(&self, codec: u8, encoder: &butterpollo_windows::encoder::Encoder) {
+    fn record_throughput(&self, codec: u8, encoder: &butterpollo_win_graphics::encoder::Encoder) {
         static WARNED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
         let name = match codec {
             0 => "MaxThroughput",
@@ -1288,19 +1284,19 @@ impl Host {
         config: &Config,
         yield_to_streams: bool,
     ) -> Result<Option<ProbePass>> {
-        let _com = butterpollo_windows::capture::ComGuard::new()?;
+        let _com = butterpollo_win_graphics::capture::ComGuard::new()?;
         let busy = || yield_to_streams && !self.sessions.lock().unwrap().idle();
         // Until this pass publishes its result, keep advertising what the
         // separate PyroWave probe found last time.
         let pyrowave = self.codecs.load(std::sync::atomic::Ordering::Acquire) & PYROWAVE_CODECS;
         let mut first_error = None;
-        let image = butterpollo_windows::capture::Image {
+        let image = butterpollo_win_graphics::capture::Image {
             width: 640,
             height: 480,
             stride: 2560,
             bytes: vec![128; 640 * 480 * 4],
             captured: Instant::now(),
-            pixel: butterpollo_windows::capture::Pixel::Bgra8,
+            pixel: butterpollo_win_graphics::capture::Pixel::Bgra8,
         };
         let mut flags = 0u32;
         let mut outcomes: Vec<(
@@ -1356,7 +1352,7 @@ impl Host {
                 yuv444: probed.yuv444,
                 ..Default::default()
             };
-            match butterpollo_windows::encoder::Encoder::new_options(
+            match butterpollo_win_graphics::encoder::Encoder::new_options(
                 &negotiated,
                 config.get("output_name", ""),
                 config,
@@ -1428,14 +1424,14 @@ impl Host {
         // probe. A driver/overlay failure in that child cannot kill them.
         self.codecs
             .store(flags | pyrowave, std::sync::atomic::Ordering::Release);
-        self.publish_standard_codecs(config, flags, butterpollo_windows::codec_probe::packed);
+        self.publish_standard_codecs(config, flags, crate::win_bridge::probe_packed);
         let mut retry_pyrowave = None;
         if config.boolean("pyrowave", true) && !self.stop.load(std::sync::atomic::Ordering::Acquire)
         {
             let result = if busy() {
-                Err(butterpollo_windows::codec_probe::Interrupted.into())
+                Err(butterpollo_win_graphics::codec_probe::Interrupted.into())
             } else {
-                butterpollo_windows::codec_probe::pyrowave(config, &busy)
+                crate::win_bridge::probe_pyrowave(config, &busy)
             };
             let (optional, retry) = pyrowave_pass(result, pyrowave, flags & STANDARD_CODECS != 0);
             flags |= optional;
@@ -1564,7 +1560,7 @@ impl Host {
     /// probed once no stream runs or starts. Until then the startup probe was
     /// the only one, so turning full chroma on took a host restart.
     pub fn packed_settings_saved(self: &Arc<Self>, before: &Config) {
-        self.packed_settings_saved_with(before, butterpollo_windows::codec_probe::packed);
+        self.packed_settings_saved_with(before, crate::win_bridge::probe_packed);
     }
     pub(crate) fn packed_settings_saved_with(
         self: &Arc<Self>,
@@ -1742,8 +1738,8 @@ impl Host {
     /// A user is signed in, and no stream runs or is being launched: a
     /// launch asks for a probe, which must wait until its stream has ended.
     fn probe_session_ready(&self) -> bool {
-        !(butterpollo_windows::process::is_system()
-            && !butterpollo_windows::process::user_signed_in())
+        !(butterpollo_win_io::process::is_system()
+            && !butterpollo_win_io::process::user_signed_in())
             && self.sessions.lock().unwrap().idle()
     }
     /// Wait `delay`, then until a user is signed in and no stream has run or
@@ -1768,7 +1764,7 @@ impl Host {
     /// `delay`; a timeout is not tried again, and a stream that starts stops the probe until it has
     /// ended, which counts as no attempt. Returns the attempts made.
     fn retry_pyrowave_probe(&self, config: &Config, delay: Duration, probe: PyroWaveProbe) -> u32 {
-        use butterpollo_windows::codec_probe;
+        use butterpollo_win_graphics::codec_probe;
         use std::sync::atomic::Ordering;
         let mut delay = delay;
         let mut attempts = 0;
@@ -2061,7 +2057,7 @@ const CRASH_ATTEMPTS: u32 = 3;
 /// (issue #94), and each crash had left it off until a restart. Any other
 /// failure, such as a missing DLL, stays one.
 fn pyrowave_retry_delay(error: &anyhow::Error) -> Option<Duration> {
-    use butterpollo_windows::codec_probe::{Crashed, SessionNotReady, TimedOut};
+    use butterpollo_win_graphics::codec_probe::{Crashed, SessionNotReady, TimedOut};
     if error.is::<SessionNotReady>() || error.is::<Crashed>() {
         Some(Duration::from_secs(5))
     } else if error.is::<TimedOut>() {
@@ -2077,7 +2073,7 @@ fn pyrowave_retry_delay(error: &anyhow::Error) -> Option<Duration> {
 fn pyrowave_pass(result: Result<u32>, previous: u32, standard: bool) -> (u32, Option<Duration>) {
     match result {
         Ok(optional) => (optional, None),
-        Err(error) if error.is::<butterpollo_windows::codec_probe::Interrupted>() => {
+        Err(error) if error.is::<butterpollo_win_graphics::codec_probe::Interrupted>() => {
             tracing::debug!(
                 "optional PyroWave probe stopped for a stream; it runs again once no stream runs"
             );
@@ -2169,7 +2165,7 @@ fn probe_packed_modes(
         let probing = std::time::Instant::now();
         match probe(config, &negotiated, &|| busy() || live() & bit == 0) {
             Ok(()) => packed_modes |= bit,
-            Err(error) if error.is::<butterpollo_windows::codec_probe::Interrupted>() => {
+            Err(error) if error.is::<butterpollo_win_graphics::codec_probe::Interrupted>() => {
                 if live() & bit != 0 {
                     return None;
                 }
@@ -2178,7 +2174,7 @@ fn probe_packed_modes(
                     "packed 4:4:4 probe stopped: the mode was turned off"
                 );
             }
-            Err(error) if error.is::<butterpollo_windows::codec_probe::SessionNotReady>() => {
+            Err(error) if error.is::<butterpollo_win_graphics::codec_probe::SessionNotReady>() => {
                 tracing::debug!(
                     error = %format!("{error:#}"),
                     mode = packed_mode_names(bit),

@@ -1,4 +1,4 @@
-use butterpollo_windows::process::{Process, Target};
+use butterpollo_win_io::process::{Process, Target};
 use std::{collections::BTreeMap, ffi::OsStr, path::Path, time::Duration};
 
 fn helper(args: &[&OsStr]) -> u32 {
@@ -6,7 +6,7 @@ fn helper(args: &[&OsStr]) -> u32 {
     let args: Vec<_> = args.iter().map(|&arg| arg.to_owned()).collect();
     // CI has an administrator service session without a linked user token;
     // this test exercises the worker's file operations in its temporary folder.
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     // A non-elevated helper gets the user's default environment. A dev build
     // finds its MinGW runtime DLLs only through this build's PATH; a package
     // ships them beside the executable.

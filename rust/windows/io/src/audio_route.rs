@@ -1,0 +1,1314 @@
+//! Endpoint routing is shared by stream owners and restored after the last
+//! owner, including host crashes. Capture-only sinks never alter defaults.
+
+use anyhow::{Context, Result, bail};
+use butterpollo_config::config::Config;
+use butterpollo_session::session::AudioPreparation;
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::BTreeMap,
+    ffi::c_void,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
+use windows::{
+    Win32::{
+        Foundation::PROPERTYKEY,
+        Media::Audio::*,
+        System::Com::{StructuredStorage::*, *},
+    },
+    core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface, PCWSTR},
+};
+
+const ROLES: [ERole; 3] = [eConsole, eMultimedia, eCommunications];
+pub mod hooks;
+const FRIENDLY: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0),
+    pid: 14,
+};
+/// PKEY_Device_DeviceDesc: the endpoint's own name, e.g. "Speakers".
+const DESCRIPTION: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0),
+    pid: 2,
+};
+/// PKEY_DeviceInterface_FriendlyName: the adapter, e.g. "Steam Streaming Speakers".
+const ADAPTER: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0x026e516e_b814_414b_83cd_856d6fef4822),
+    pid: 2,
+};
+#[derive(Clone, Serialize)]
+pub struct Endpoint {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub adapter: String,
+    pub default: bool,
+    pub virtual_sink: bool,
+}
+pub(crate) unsafe fn device_id(device: &IMMDevice) -> Result<String> {
+    // SAFETY: `device` is a live IMMDevice borrowed for the call.
+    let id = unsafe { device.GetId()? };
+    // SAFETY: GetId returned a NUL-terminated string that is not freed until below.
+    let value = unsafe { id.to_string() };
+    // SAFETY: `id` came from CoTaskMemAlloc in GetId and is freed once, after its last use.
+    unsafe {
+        CoTaskMemFree(Some(id.0.cast()));
+    }
+    Ok(value?)
+}
+fn enumerator() -> Result<IMMDeviceEnumerator> {
+    // SAFETY: CoCreateInstance only reads the static CLSID, and fails cleanly when COM is not
+    // initialised.
+    Ok(unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)? })
+}
+pub fn endpoints() -> Result<Vec<Endpoint>> {
+    endpoints_for(eRender)
+}
+/// Active endpoints of one direction; `default` is the console default.
+fn endpoints_for(flow: EDataFlow) -> Result<Vec<Endpoint>> {
+    let _com = crate::os_helpers::ComGuard::new()?;
+    let enumerator = enumerator()?;
+    // SAFETY: COM is initialised on this thread by `_com`, every interface used is live, and each
+    // string from PropVariantToStringAlloc is freed once after it is copied.
+    unsafe {
+        let default = enumerator
+            .GetDefaultAudioEndpoint(flow, eConsole)
+            .ok()
+            .and_then(|d| device_id(&d).ok());
+        let list = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)?;
+        let mut endpoints = Vec::new();
+        for index in 0..list.GetCount()? {
+            let device = list.Item(index)?;
+            let id = device_id(&device)?;
+            let store = device.OpenPropertyStore(STGM_READ).ok();
+            let text = |key: &PROPERTYKEY| {
+                store.as_ref().and_then(|store| {
+                    let mut property = store.GetValue(key).ok()?;
+                    let text = PropVariantToStringAlloc(&property).ok().and_then(|text| {
+                        let result = text.to_string().ok();
+                        CoTaskMemFree(Some(text.0.cast()));
+                        result
+                    });
+                    let _ = PropVariantClear(&mut property);
+                    text
+                })
+            };
+            let name = text(&FRIENDLY).unwrap_or_else(|| id.clone());
+            let description = text(&DESCRIPTION).unwrap_or_default();
+            let adapter = text(&ADAPTER).unwrap_or_default();
+            let virtual_sink = [&name, &adapter]
+                .iter()
+                .any(|n| n.to_ascii_lowercase().contains("steam streaming speakers"));
+            endpoints.push(Endpoint {
+                default: default.as_ref() == Some(&id),
+                id,
+                name,
+                description,
+                adapter,
+                virtual_sink,
+            });
+        }
+        Ok(endpoints)
+    }
+}
+
+// PolicyConfig is the Windows interface used by the retained host. Keep its
+// actual COM slot layout, including the unused methods before SetDefault.
+#[repr(transparent)]
+#[derive(Clone)]
+struct Policy(IUnknown);
+#[repr(C)]
+struct PolicyVtbl {
+    unknown: IUnknown_Vtbl,
+    mix: usize,
+    device_format:
+        unsafe extern "system" fn(*mut c_void, PCWSTR, i32, *mut *mut WAVEFORMATEX) -> HRESULT,
+    reset_format: usize,
+    set_format: unsafe extern "system" fn(
+        *mut c_void,
+        PCWSTR,
+        *const WAVEFORMATEX,
+        *const WAVEFORMATEX,
+    ) -> HRESULT,
+    unused: [usize; 6],
+    default: unsafe extern "system" fn(*mut c_void, PCWSTR, ERole) -> HRESULT,
+    visibility: usize,
+}
+// SAFETY: PolicyVtbl mirrors IPolicyConfig's slot layout (the offset test checks it) and Policy is
+// a transparent IUnknown, so the IID names an interface with exactly this vtable.
+unsafe impl Interface for Policy {
+    type Vtable = PolicyVtbl;
+    const IID: GUID = GUID::from_u128(0xf8679f50_850a_41cf_9c72_430f290290c8);
+}
+impl Policy {
+    fn new() -> Result<Self> {
+        // SAFETY: CoCreateInstance only reads the static CLSID and returns an owned interface or an
+        // error.
+        Ok(unsafe {
+            CoCreateInstance(
+                &GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9),
+                None,
+                CLSCTX_ALL,
+            )?
+        })
+    }
+    fn set_default(&self, id: &str, role: ERole) -> Result<()> {
+        let id = crate::text::to_wide(id);
+        // SAFETY: `self` is a live IPolicyConfig whose slot matches PolicyVtbl, and `id` is
+        // NUL-terminated and outlives the call.
+        unsafe {
+            (self.vtable().default)(self.as_raw(), PCWSTR(id.as_ptr()), role).ok()?;
+        }
+        Ok(())
+    }
+    fn format(&self, id: &str) -> Result<Vec<u8>> {
+        let id = crate::text::to_wide(id);
+        let mut format = std::ptr::null_mut();
+        // SAFETY: `format` receives a CoTaskMemAlloc'd WAVEFORMATEX that is read only within its
+        // header plus cbSize bytes and freed once.
+        unsafe {
+            (self.vtable().device_format)(self.as_raw(), PCWSTR(id.as_ptr()), 0, &mut format)
+                .ok()?;
+            if format.is_null() {
+                bail!("audio endpoint returned no format");
+            }
+            let size = size_of::<WAVEFORMATEX>() + usize::from((*format).cbSize);
+            let result = if size > 4096 {
+                Err(anyhow::anyhow!("invalid audio endpoint format"))
+            } else {
+                Ok(std::slice::from_raw_parts(format.cast::<u8>(), size).to_vec())
+            };
+            CoTaskMemFree(Some(format.cast()));
+            result
+        }
+    }
+    fn set_format(&self, id: &str, bytes: &[u8]) -> Result<()> {
+        if bytes.len() < size_of::<WAVEFORMATEX>() || bytes.len() > 4096 {
+            bail!("invalid saved audio format");
+        }
+        let id = crate::text::to_wide(id);
+        // Stored format bytes need native alignment when passed back to COM.
+        let mut storage = vec![0u64; bytes.len().div_ceil(8)];
+        // SAFETY: `storage` is u64-aligned and at least `bytes.len()` long, and `id` and `empty`
+        // outlive the call, whose slot matches PolicyVtbl.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), storage.as_mut_ptr().cast(), bytes.len());
+            let empty = WAVEFORMATEXTENSIBLE::default();
+            (self.vtable().set_format)(
+                self.as_raw(),
+                PCWSTR(id.as_ptr()),
+                storage.as_ptr().cast(),
+                (&empty as *const WAVEFORMATEXTENSIBLE).cast(),
+            )
+            .ok()?;
+        }
+        Ok(())
+    }
+}
+/// The default playback endpoints for console, multimedia and
+/// communications.
+pub(crate) fn defaults() -> Result<[Option<String>; 3]> {
+    defaults_for(eRender)
+}
+fn defaults_for(flow: EDataFlow) -> Result<[Option<String>; 3]> {
+    let enumerator = enumerator()?;
+    // SAFETY: `enumerator` is a live interface and device_id only needs a live IMMDevice.
+    Ok(ROLES.map(|role| unsafe {
+        enumerator
+            .GetDefaultAudioEndpoint(flow, role)
+            .ok()
+            .and_then(|d| device_id(&d).ok())
+    }))
+}
+/// Playback and recording endpoints, to tell the host's own apart and to name
+/// devices in the log. Empty where they cannot be listed: a restore still runs.
+fn all_endpoints() -> Vec<Endpoint> {
+    let mut all = endpoints_for(eRender).unwrap_or_default();
+    all.extend(endpoints_for(eCapture).unwrap_or_default());
+    all
+}
+/// Steam Streaming Speakers and both sides of Steam Streaming Microphone: never
+/// a device to restore, for any role or direction.
+fn host_owned(all: &[Endpoint], id: &str) -> bool {
+    all.iter().any(|endpoint| {
+        endpoint.id.eq_ignore_ascii_case(id)
+            && butterpollo_media_policy::audio_defaults::host_owned(
+                &endpoint.name,
+                &endpoint.adapter,
+            )
+    })
+}
+fn device_name(all: &[Endpoint], id: Option<&str>) -> String {
+    let Some(id) = id else {
+        return "none".into();
+    };
+    all.iter()
+        .find(|endpoint| endpoint.id.eq_ignore_ascii_case(id))
+        .map_or_else(|| id.to_string(), |endpoint| endpoint.name.clone())
+}
+fn device_names(all: &[Endpoint], defaults: &[Option<String>; 3]) -> String {
+    defaults
+        .iter()
+        .map(|id| device_name(all, id.as_deref()))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct FormatChange {
+    id: String,
+    before: Vec<u8>,
+    applied: Vec<u8>,
+}
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct Journal {
+    before: [Option<String>; 3],
+    applied: String,
+    format: Option<FormatChange>,
+    /// The recording defaults at stream start, put back for roles that a host
+    /// endpoint (Steam Streaming Microphone) took during the stream.
+    #[serde(default)]
+    capture_before: [Option<String>; 3],
+}
+impl Journal {
+    fn pending(&self) -> bool {
+        !self.applied.is_empty()
+            || self.format.is_some()
+            || self.capture_before.iter().any(Option::is_some)
+    }
+}
+struct Active {
+    directory: PathBuf,
+    sink: String,
+    virtual_sink: bool,
+    users: usize,
+    /// The channels each stream asked for; the sink gets the most.
+    channels: BTreeMap<u64, usize>,
+}
+/// The speaker layout for streams sharing the sink: the most channels any of
+/// them asked for. Capture mixes down for the others; following the last
+/// stream instead made two clients reformat the sink in turn, and each
+/// reformat interrupted the other's audio.
+fn shared_channels(requests: &BTreeMap<u64, usize>) -> Option<usize> {
+    requests.values().copied().max()
+}
+static ACTIVE: Mutex<Option<Active>> = Mutex::new(None);
+pub struct Route {
+    pub sink: String,
+    directory: PathBuf,
+    keep_default: bool,
+    capture_only: bool,
+    virtual_sink: bool,
+    /// This stream's place among the users of the shared sink.
+    id: u64,
+}
+static NEXT_ROUTE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+/// The id of a route that owns no device ([`Route::detached`]); real routes
+/// start at 1.
+const DETACHED: u64 = 0;
+fn path(directory: &Path) -> PathBuf {
+    directory.join("audio-recovery.json")
+}
+fn save(directory: &Path, journal: &Journal) -> Result<()> {
+    butterpollo_session::state::write_json(&path(directory), journal)
+}
+fn restore(directory: &Path) -> Result<()> {
+    let file = path(directory);
+    if !file.exists() {
+        return Ok(());
+    }
+    let _com = crate::os_helpers::ComGuard::new()?;
+    let journal: Journal = serde_json::from_slice(&std::fs::read(&file)?)?;
+    if !journal.pending() {
+        return Ok(());
+    }
+    let policy = Policy::new()?;
+    let all = all_endpoints();
+    // A role on the endpoint this host set, or on a Steam endpoint, goes back to
+    // the user's device. A Steam endpoint is never restored to. (`applied` is
+    // the user's own device when the stream plays on the host, so it only
+    // marks the roles to switch.)
+    let steam = |id: &str| host_owned(&all, id);
+    let switchable = |id: &str| id.eq_ignore_ascii_case(&journal.applied) || host_owned(&all, id);
+    // Every role and the format are tried: one device that is unavailable
+    // (Bluetooth off, a TV's audio not back yet) must not leave the others.
+    // On failure the journal stays; a retry only changes roles still on a
+    // host endpoint.
+    let mut failed = None;
+    let mut restored = 0;
+    for (flow, direction, saved) in [
+        (eRender, "playback", &journal.before),
+        (eCapture, "recording", &journal.capture_before),
+    ] {
+        if flow == eCapture && microphone_owns_recording(directory) {
+            continue;
+        }
+        let current = match defaults_for(flow) {
+            Ok(current) => current,
+            Err(error) => {
+                failed.get_or_insert(error);
+                continue;
+            }
+        };
+        let targets = butterpollo_media_policy::audio_defaults::restore_targets(saved, steam);
+        for (index, target) in
+            butterpollo_media_policy::audio_defaults::switches(&current, &targets, switchable)
+        {
+            let role = butterpollo_media_policy::audio_defaults::ROLE_NAMES[index];
+            match policy.set_default(&target, ROLES[index]) {
+                Ok(()) => {
+                    restored += 1;
+                    tracing::info!(
+                        direction,
+                        role,
+                        device = %device_name(&all, Some(&target)),
+                        from = %device_name(&all, current[index].as_deref()),
+                        "audio default restored"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        direction,
+                        role,
+                        device = %device_name(&all, Some(&target)),
+                        error = %format!("{error:#}"),
+                        "audio default could not be restored"
+                    );
+                    failed.get_or_insert(error.context("restoring the previous audio endpoint"));
+                }
+            }
+        }
+    }
+    let playback = defaults_for(eRender)
+        .map(|d| device_names(&all, &d))
+        .unwrap_or_default();
+    let recording = defaults_for(eCapture)
+        .map(|d| device_names(&all, &d))
+        .unwrap_or_default();
+    tracing::info!(
+        restored,
+        playback = %playback,
+        recording = %recording,
+        "audio defaults after the stream (console | multimedia | communications)"
+    );
+    if let Some(format) = &journal.format {
+        match policy.format(&format.id) {
+            Ok(current) if current == format.applied => {
+                if let Err(error) = policy.set_format(&format.id, &format.before) {
+                    failed.get_or_insert(error);
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                failed.get_or_insert(error);
+            }
+        }
+    }
+    if let Some(error) = failed {
+        return Err(error);
+    }
+    save(directory, &Journal::default())
+}
+/// The journal of a restore that has not completed yet, if any.
+fn pending(directory: &Path) -> Option<Journal> {
+    let journal: Journal = serde_json::from_slice(&std::fs::read(path(directory)).ok()?).ok()?;
+    journal.pending().then_some(journal)
+}
+/// The defaults to restore after this stream. When a restore is still
+/// pending (the speakers were off when the last stream ended), a role that
+/// is still on the endpoint this host set keeps the original from then: the
+/// current default would be the virtual sink, and the user's speakers would
+/// be lost for good.
+fn originals(
+    current: [Option<String>; 3],
+    pending: Option<&Journal>,
+    owned: impl Fn(&str) -> bool,
+) -> [Option<String>; 3] {
+    let Some(pending) = pending.filter(|journal| !journal.applied.is_empty()) else {
+        return current;
+    };
+    butterpollo_media_policy::audio_defaults::with_pending(current, Some(&pending.before), |id| {
+        id.eq_ignore_ascii_case(&pending.applied) || owned(id)
+    })
+}
+pub fn recover(directory: &Path) -> Result<()> {
+    let active = ACTIVE
+        .try_lock()
+        .map_err(|_| anyhow::anyhow!("audio routing is busy"))?;
+    if active.is_some() {
+        bail!("audio routing is in use");
+    }
+    restore(directory)
+}
+/// An endpoint by ID, friendly name, description or adapter name, in that
+/// order, as Vibepollo matches audio_sink and virtual_sink.
+pub(crate) fn find<'a>(endpoints: &'a [Endpoint], requested: &str) -> Option<&'a Endpoint> {
+    let requested = requested.trim();
+    let fields: [fn(&Endpoint) -> &str; 4] =
+        [|e| &e.id, |e| &e.name, |e| &e.description, |e| &e.adapter];
+    fields.iter().find_map(|field| {
+        endpoints
+            .iter()
+            .find(|endpoint| field(endpoint).eq_ignore_ascii_case(requested))
+    })
+}
+/// Install Steam Streaming Speakers when Steam provides them and none exist.
+/// Best effort: streaming continues on another endpoint if this fails.
+fn install_steam(config: &Config, endpoints: &[Endpoint]) -> bool {
+    match try_install_steam(config, endpoints) {
+        Ok(installed) => installed,
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "Steam Streaming Speakers could not be installed");
+            false
+        }
+    }
+}
+fn try_install_steam(config: &Config, endpoints: &[Endpoint]) -> Result<bool> {
+    if endpoints.iter().any(|endpoint| endpoint.virtual_sink)
+        || !config.boolean("install_steam_audio_drivers", true)
+    {
+        return Ok(false);
+    }
+    let Some(directory) = std::env::var_os("CommonProgramFiles(x86)") else {
+        return Ok(false);
+    };
+    let inf =
+        PathBuf::from(directory).join("Steam/drivers/Windows10/x64/SteamStreamingSpeakers.inf");
+    if !inf.is_file() {
+        return Ok(false);
+    }
+    let file = crate::text::to_wide(&inf.to_string_lossy());
+    // SAFETY: `file` is NUL-terminated and outlives the call.
+    unsafe {
+        use windows::Win32::Devices::DeviceAndDriverInstallation::{
+            DIIRFLAG_FORCE_INF, DiInstallDriverW,
+        };
+        DiInstallDriverW(None, PCWSTR(file.as_ptr()), DIIRFLAG_FORCE_INF, None)?;
+    }
+    Ok(true)
+}
+/// The playback side of Steam Streaming Microphone: what is played there,
+/// apps record from "Microphone (Steam Streaming Microphone)".
+pub fn steam_microphone(endpoints: &[Endpoint]) -> Option<&Endpoint> {
+    endpoints.iter().find(|endpoint| {
+        [&endpoint.name, &endpoint.adapter].iter().any(|n| {
+            n.to_ascii_lowercase()
+                .contains("steam streaming microphone")
+        })
+    })
+}
+
+// Serialize microphone changes with playback routing and driver installation.
+// The flag is only read/written while ACTIVE is locked. The separate journal
+// outlives the playback route and is restored even if playback ends first.
+static MICROPHONE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn microphone_path(directory: &Path) -> PathBuf {
+    directory.join("microphone-recovery.json")
+}
+fn microphone_pending(
+    directory: &Path,
+) -> Result<Option<butterpollo_media_policy::audio_defaults::MicrophoneDefaults>> {
+    match std::fs::read(microphone_path(directory)) {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+fn microphone_owns_recording(directory: &Path) -> bool {
+    MICROPHONE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+        || microphone_pending(directory)
+            .map(|pending| pending.is_some())
+            .unwrap_or(true)
+}
+fn restore_microphone(directory: &Path) -> Result<()> {
+    use butterpollo_media_policy::audio_defaults::MicrophoneDefaults;
+    let Some(journal) = microphone_pending(directory)? else {
+        return Ok(());
+    };
+    let policy = Policy::new()?;
+    let current = defaults_for(eCapture)?;
+    let mut failed = None;
+    for (index, target) in journal.restore(&current) {
+        match policy.set_default(&target, ROLES[index]) {
+            Ok(()) => {
+                tracing::info!(role = butterpollo_media_policy::audio_defaults::ROLE_NAMES[index], device = %target, "microphone default restored")
+            }
+            Err(error) => {
+                failed.get_or_insert(error);
+            }
+        }
+    }
+    // Keep the original journal on any failure. Successful roles no longer
+    // point to our endpoint and are therefore left alone on the next retry.
+    if let Some(error) = failed {
+        return Err(error.context("restoring the previous microphone"));
+    }
+    butterpollo_session::state::write_json(
+        &microphone_path(directory),
+        &Option::<MicrophoneDefaults>::None,
+    )
+}
+
+/// Temporary defaults for a successfully opened client microphone renderer.
+/// Dropped on mute/idle, disconnect, handover, output failure or host shutdown.
+pub struct MicrophoneRoute {
+    directory: PathBuf,
+}
+impl MicrophoneRoute {
+    pub fn acquire(directory: &Path) -> Result<Self> {
+        use butterpollo_media_policy::audio_defaults::MicrophoneDefaults;
+        let _com = crate::os_helpers::ComGuard::new()?;
+        let active = ACTIVE.lock().unwrap();
+        if MICROPHONE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("a client microphone already owns the recording defaults");
+        }
+        if active
+            .as_ref()
+            .is_some_and(|route| route.directory != directory)
+        {
+            bail!("audio is owned by another host configuration");
+        }
+        let available = endpoints_for(eCapture)?;
+        let selected = steam_microphone(&available)
+            .context("Steam Streaming Microphone recording endpoint is unavailable")?;
+        let policy = Policy::new()?;
+        let current = defaults_for(eCapture)?;
+        let pending = microphone_pending(directory)?;
+        let journal =
+            MicrophoneDefaults::new(current.clone(), selected.id.clone(), pending.as_ref());
+        // Persist and arm crash recovery before the first Windows mutation.
+        butterpollo_session::state::write_json(&microphone_path(directory), &Some(&journal))?;
+        hooks::mark_microphone(true)?;
+        let result = (|| -> Result<()> {
+            // Once forwarding owns recording restoration, the older playback
+            // snapshot must not undo the choices saved at microphone start.
+            if let Some(mut playback) = self::pending(directory) {
+                playback.capture_before = Default::default();
+                save(directory, &playback)?;
+            }
+            for index in journal.apply(&current) {
+                policy.set_default(&selected.id, ROLES[index])?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            if restore_microphone(directory).is_ok() {
+                let _ = hooks::mark_microphone(false);
+            }
+            return Err(error);
+        }
+        MICROPHONE_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!(device = %selected.name, "client microphone selected as the Windows recording default");
+        Ok(Self {
+            directory: directory.into(),
+        })
+    }
+}
+impl Drop for MicrophoneRoute {
+    fn drop(&mut self) {
+        let _active = ACTIVE.lock().unwrap();
+        MICROPHONE_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+        let result =
+            crate::os_helpers::ComGuard::new().and_then(|_| restore_microphone(&self.directory));
+        if let Err(error) = result {
+            tracing::warn!(%error, "microphone defaults will be retried by crash recovery");
+        } else {
+            let _ = hooks::mark_microphone(false);
+        }
+    }
+}
+pub fn recover_microphone(directory: &Path) -> Result<()> {
+    let _active = ACTIVE
+        .try_lock()
+        .map_err(|_| anyhow::anyhow!("audio routing is busy"))?;
+    if MICROPHONE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        bail!("microphone routing is in use");
+    }
+    let _com = crate::os_helpers::ComGuard::new()?;
+    restore_microphone(directory)
+}
+/// The default playback and recording devices before a driver install.
+pub struct SavedDefaults {
+    defaults: [[Option<String>; 3]; 2],
+    // A stream must not restore its defaults before driver arrival is undone.
+    _active: std::sync::MutexGuard<'static, Option<Active>>,
+}
+impl SavedDefaults {
+    /// Puts back defaults Windows moved to a device that arrived since.
+    pub fn restore(&self) -> Result<()> {
+        let policy = Policy::new()?;
+        for (flow, saved) in [eRender, eCapture].into_iter().zip(&self.defaults) {
+            for ((role, now), before) in ROLES.into_iter().zip(defaults_for(flow)?).zip(saved) {
+                if let Some(before) = before
+                    && now.as_ref() != Some(before)
+                {
+                    policy.set_default(before, role)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+/// Install Steam Streaming Microphone when Steam provides it, as with the
+/// speakers. Returns the defaults from before, to put back once its
+/// endpoints arrive: Windows can make a new device the default, and the
+/// install must not choose the PC's microphone or speakers. None when the
+/// driver was not installed.
+pub fn install_steam_microphone(config: &Config) -> Result<Option<SavedDefaults>> {
+    if !config.boolean("install_steam_audio_drivers", true) {
+        return Ok(None);
+    }
+    let Some(directory) = std::env::var_os("CommonProgramFiles(x86)") else {
+        return Ok(None);
+    };
+    let inf =
+        PathBuf::from(directory).join("Steam/drivers/Windows10/x64/SteamStreamingMicrophone.inf");
+    if !inf.is_file() {
+        return Ok(None);
+    }
+    let active = ACTIVE.lock().unwrap();
+    let saved = SavedDefaults {
+        defaults: [defaults_for(eRender)?, defaults_for(eCapture)?],
+        _active: active,
+    };
+    let file = crate::text::to_wide(&inf.to_string_lossy());
+    // SAFETY: `file` is NUL-terminated and outlives the call.
+    unsafe {
+        use windows::Win32::Devices::DeviceAndDriverInstallation::{
+            DIIRFLAG_FORCE_INF, DiInstallDriverW,
+        };
+        DiInstallDriverW(None, PCWSTR(file.as_ptr()), DIIRFLAG_FORCE_INF, None)?;
+    }
+    Ok(Some(saved))
+}
+/// What Steam Streaming Microphone's driver copies between its pins as it is:
+/// channels, rate, container and valid bits, and whether samples are float.
+fn sample_layout(bytes: &[u8]) -> (u16, u32, u16, u16, bool) {
+    assert!(
+        bytes.len() >= size_of::<WAVEFORMATEX>(),
+        "audio format shorter than WAVEFORMATEX"
+    );
+    // SAFETY: `bytes` was just checked to hold a whole WAVEFORMATEX, and the read is unaligned.
+    let format = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<WAVEFORMATEX>()) };
+    let float = format.wFormatTag == 3
+        || (format.wFormatTag == 65534
+            && bytes.len() >= size_of::<WAVEFORMATEXTENSIBLE>()
+            // SAFETY: `bytes` was just checked to hold a whole WAVEFORMATEXTENSIBLE, and the read
+            // is unaligned.
+            && unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<WAVEFORMATEXTENSIBLE>()) }
+                .SubFormat
+                .data1
+                == 3);
+    (
+        format.nChannels,
+        format.nSamplesPerSec,
+        format.wBitsPerSample,
+        valid_bits(bytes),
+        float,
+    )
+}
+/// "2 ch 48000 Hz 32-bit PCM", for the log.
+fn describe_format(bytes: &[u8]) -> String {
+    let (channels, rate, bits, valid, float) = sample_layout(bytes);
+    let depth = if valid == bits {
+        format!("{bits}-bit")
+    } else {
+        format!("{valid}-in-{bits}-bit")
+    };
+    format!(
+        "{channels} ch {rate} Hz {depth} {}",
+        if float { "float" } else { "PCM" }
+    )
+}
+/// Steam Streaming Microphone hands what plays on "Speakers (Steam Streaming
+/// Microphone)" to "Microphone (Steam Streaming Microphone)" sample for
+/// sample, without converting. With its own defaults (stereo 48 kHz playback,
+/// mono 44.1 kHz recording) a voice reached apps at 0.46 times its pitch and
+/// in pieces (issue 56). The playback format to set, the
+/// recording side's, or None when the two already agree.
+fn matching_playback_format(playback: &[u8], recording: &[u8]) -> Option<Vec<u8>> {
+    (sample_layout(playback) != sample_layout(recording)).then(|| recording.to_vec())
+}
+/// Steam Streaming Microphone's endpoint formats around
+/// `match_steam_microphone_format`, for the log: the playback side before and
+/// after, and the recording side it has to match.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MicrophoneFormats {
+    pub before: String,
+    pub after: String,
+    pub recording: String,
+}
+impl MicrophoneFormats {
+    fn new(before: &[u8], after: &[u8], recording: &[u8]) -> Self {
+        Self {
+            before: describe_format(before),
+            after: describe_format(after),
+            recording: describe_format(recording),
+        }
+    }
+    /// Whether the playback format had to change.
+    pub fn changed(&self) -> bool {
+        self.before != self.after
+    }
+}
+/// The playback format read back after setting it: an error unless it now
+/// matches the recording side, since Windows can accept a format and keep
+/// the old one.
+fn check_matched(after: &[u8], recording: &[u8]) -> Result<()> {
+    if matching_playback_format(after, recording).is_some() {
+        bail!(
+            "its playback format is still {} after setting it to the recording format {}",
+            describe_format(after),
+            describe_format(recording)
+        );
+    }
+    Ok(())
+}
+/// Gives Steam Streaming Microphone's playback endpoint `playback` the format
+/// of its recording endpoint (`matching_playback_format`); Windows converts the
+/// host's stream to it. Returns the formats before and after, read back from
+/// Windows, whether or not one changed.
+pub fn match_steam_microphone_format(playback: &str) -> Result<MicrophoneFormats> {
+    let recording = steam_microphone(&endpoints_for(eCapture)?)
+        .context("Microphone (Steam Streaming Microphone) is not present")?
+        .id
+        .clone();
+    let policy = Policy::new()?;
+    let before = policy.format(playback)?;
+    let recording = policy.format(&recording)?;
+    let Some(desired) = matching_playback_format(&before, &recording) else {
+        return Ok(MicrophoneFormats::new(&before, &before, &recording));
+    };
+    policy.set_format(playback, &desired).with_context(|| {
+        format!(
+            "setting its playback format to {}",
+            describe_format(&desired)
+        )
+    })?;
+    let after = policy.format(playback)?;
+    check_matched(&after, &recording)?;
+    Ok(MicrophoneFormats::new(&before, &after, &recording))
+}
+/// The recording level, in dB, to put "Microphone (Steam Streaming
+/// Microphone)" back to, or None to leave it. Its slider runs from -96 to
+/// +30 dB with 0 dB at about 54%: at 100%, or where an app's automatic gain
+/// pushed it, a client's voice came out 30 dB too loud and clipped into
+/// noise (issue 56). The client sets the voice's level; the host never adds
+/// gain on top, while a lower level stays the user's choice.
+fn unity_cap(level_db: f32) -> Option<f32> {
+    // Above half a slider step: the endpoint rounds levels to 1.5 dB steps.
+    (level_db > 0.75).then_some(0.0)
+}
+/// The recording level of "Microphone (Steam Streaming Microphone)", opened
+/// once so that checking it again costs the render thread one call.
+pub struct SteamMicrophoneGain {
+    volume: windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume,
+}
+impl SteamMicrophoneGain {
+    /// COM must be initialised on the calling thread, as for `limit`.
+    pub fn open() -> Result<Self> {
+        let recording = steam_microphone(&endpoints_for(eCapture)?)
+            .context("Microphone (Steam Streaming Microphone) is not present")?
+            .id
+            .clone();
+        let wide = crate::text::to_wide(&recording);
+        // SAFETY: the caller initialised COM, and `wide` is NUL-terminated and outlives the call.
+        unsafe {
+            let device = enumerator()?.GetDevice(PCWSTR(wide.as_ptr()))?;
+            Ok(Self {
+                volume: device.Activate(CLSCTX_ALL, None)?,
+            })
+        }
+    }
+    /// Takes the gain off when the recording level is above 0 dB
+    /// (`unity_cap`). The level it had, in dB, when it changed it.
+    pub fn limit(&self) -> Result<Option<f32>> {
+        // SAFETY: `self.volume` is a live endpoint volume on a thread with COM initialised.
+        unsafe {
+            let level = self.volume.GetMasterVolumeLevel()?;
+            let Some(target) = unity_cap(level) else {
+                return Ok(None);
+            };
+            self.volume
+                .SetMasterVolumeLevel(target, std::ptr::null())
+                .with_context(|| {
+                    format!("lowering its recording level from {level:.1} dB to {target} dB")
+                })?;
+            Ok(Some(level))
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sample {
+    Float32,
+    Pcm32,
+    Pcm24In32,
+    Pcm24,
+    Pcm16,
+}
+impl Sample {
+    fn bits(self) -> (u16, u16) {
+        match self {
+            Self::Float32 | Self::Pcm32 => (32, 32),
+            Self::Pcm24In32 => (32, 24),
+            Self::Pcm24 => (24, 24),
+            Self::Pcm16 => (16, 16),
+        }
+    }
+}
+fn virtual_format(channels: usize, sample: Sample, side: bool) -> Vec<u8> {
+    let (bits, valid_bits) = sample.bits();
+    let format = WAVEFORMATEXTENSIBLE {
+        Format: WAVEFORMATEX {
+            wFormatTag: 65534,
+            nChannels: channels as u16,
+            nSamplesPerSec: 48000,
+            nAvgBytesPerSec: 48000 * channels as u32 * u32::from(bits / 8),
+            nBlockAlign: channels as u16 * (bits / 8),
+            wBitsPerSample: bits,
+            cbSize: 22,
+        },
+        Samples: WAVEFORMATEXTENSIBLE_0 {
+            wValidBitsPerSample: valid_bits,
+        },
+        dwChannelMask: match channels {
+            6 if side => 0x60f,
+            6 => 0x3f,
+            8 => 0x63f,
+            // 7.1.4: 7.1 and TFL TFR TBL TBR (`audio_ext::CHANNEL_MASK_714`).
+            12 => 0x2d63f,
+            _ => 3,
+        },
+        SubFormat: GUID::from_u128(if sample == Sample::Float32 {
+            0x00000003_0000_0010_8000_00aa00389b71
+        } else {
+            0x00000001_0000_0010_8000_00aa00389b71
+        }),
+    };
+    // SAFETY: `format` is a live packed WAVEFORMATEXTENSIBLE with no padding, so all its bytes are
+    // initialised.
+    unsafe {
+        std::slice::from_raw_parts(
+            (&format as *const WAVEFORMATEXTENSIBLE).cast(),
+            size_of::<WAVEFORMATEXTENSIBLE>(),
+        )
+        .to_vec()
+    }
+}
+fn valid_bits(bytes: &[u8]) -> u16 {
+    // Policy::format has already checked the native format's allocation size.
+    // SAFETY: callers pass bytes from Policy::format or virtual_format, which hold at least a whole
+    // WAVEFORMATEX, and the read is unaligned.
+    let format = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<WAVEFORMATEX>()) };
+    if format.wFormatTag == 65534 && bytes.len() >= size_of::<WAVEFORMATEXTENSIBLE>() {
+        // SAFETY: `bytes` was just checked to hold a whole WAVEFORMATEXTENSIBLE, and the read is
+        // unaligned.
+        let extended =
+            unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<WAVEFORMATEXTENSIBLE>()) };
+        // SAFETY: both fields of the union are u16, so any bits are a valid value.
+        let bits = unsafe { extended.Samples.wValidBitsPerSample };
+        if bits > 0 && bits <= format.wBitsPerSample {
+            return bits;
+        }
+    }
+    format.wBitsPerSample
+}
+fn virtual_formats(channels: usize, preferred_bits: u16) -> Result<Vec<Vec<u8>>> {
+    if !matches!(channels, 2 | 6 | 8 | 12) {
+        bail!("virtual audio requires stereo, 5.1, 7.1 or 7.1.4");
+    }
+    let samples = if channels == 2 {
+        // Retain the old host's stereo preference, including spatial audio.
+        [
+            Sample::Pcm24In32,
+            Sample::Pcm24,
+            Sample::Pcm16,
+            Sample::Float32,
+            Sample::Pcm32,
+        ]
+    } else {
+        [
+            Sample::Float32,
+            Sample::Pcm32,
+            Sample::Pcm24In32,
+            Sample::Pcm24,
+            Sample::Pcm16,
+        ]
+    };
+    let mut output = Vec::new();
+    // Match the playback device's valid depth first. A rejected format must
+    // not prevent capturing an otherwise usable virtual speaker endpoint.
+    for preferred in [true, false] {
+        for sample in samples {
+            if (sample.bits().1 == preferred_bits) != preferred {
+                continue;
+            }
+            output.push(virtual_format(channels, sample, false));
+            if channels == 6 {
+                output.push(virtual_format(channels, sample, true));
+            }
+        }
+    }
+    Ok(output)
+}
+fn apply_virtual_format(
+    policy: &Policy,
+    id: &str,
+    channels: usize,
+    bits: u16,
+    directory: &Path,
+    journal: &mut Journal,
+) -> Result<()> {
+    let mut last_error = None;
+    for desired in virtual_formats(channels, bits)? {
+        journal
+            .format
+            .as_mut()
+            .context("virtual audio format is not owned")?
+            .applied = desired.clone();
+        save(directory, journal)?;
+        hooks::mark_audio(true)?;
+        match policy.set_format(id, &desired) {
+            Ok(()) => {
+                journal.format.as_mut().unwrap().applied = policy.format(id)?;
+                save(directory, journal)?;
+                return Ok(());
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.context("no usable virtual audio format")?)
+        .with_context(|| format!("setting {channels}-channel virtual speaker format"))
+}
+/// Gives the virtual sink `id` a `channels`-channel shared-mode format without touching any
+/// default device, and returns the format it had, for `restore_sink_format`. For test tooling:
+/// a stream's own route does this for itself, but it also takes over the defaults.
+pub fn set_sink_channels(id: &str, channels: usize) -> Result<Vec<u8>> {
+    let policy = Policy::new()?;
+    let before = policy.format(id)?;
+    let mut last_error = None;
+    for desired in virtual_formats(channels, valid_bits(&before))? {
+        match policy.set_format(id, &desired) {
+            Ok(()) => return Ok(before),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.context("no usable virtual audio format")?)
+        .with_context(|| format!("setting {channels}-channel virtual speaker format"))
+}
+/// Puts back what `set_sink_channels` returned.
+pub fn restore_sink_format(id: &str, format: &[u8]) -> Result<()> {
+    Policy::new()?.set_format(id, format)
+}
+fn virtual_sink_warning(
+    host_audio: bool,
+    capture_only: bool,
+    virtual_sink: bool,
+) -> Option<&'static str> {
+    (!host_audio && !capture_only && !virtual_sink).then_some("Virtual audio sink unavailable; capturing a physical playback device. Sound may play on the host and surround channels may be lost. Select an installed virtual sink in Audio settings or enable host audio intentionally.")
+}
+impl AudioPreparation<Route> for Arc<Route> {
+    fn route(&self) -> Arc<Route> {
+        self.clone()
+    }
+}
+impl Route {
+    /// A route that owns no device and restores nothing when dropped. Only
+    /// for tests of how long the host keeps a route (the `test-route`
+    /// feature).
+    #[cfg(feature = "test-route")]
+    pub fn detached(directory: &Path) -> Self {
+        Self {
+            sink: String::new(),
+            directory: directory.into(),
+            keep_default: false,
+            capture_only: true,
+            virtual_sink: false,
+            id: DETACHED,
+        }
+    }
+    pub fn warning(&self, host_audio: bool) -> Option<&'static str> {
+        virtual_sink_warning(host_audio, self.capture_only, self.virtual_sink)
+    }
+    pub fn acquire(
+        config: &Config,
+        directory: &Path,
+        host_audio: bool,
+        channels: usize,
+    ) -> Result<Self> {
+        let _com = crate::os_helpers::ComGuard::new()?;
+        let mut active = ACTIVE.lock().unwrap();
+        let capture_only = config.boolean("audio_sink_capture_only", false)
+            && !config.get("audio_sink", "").is_empty()
+            && config.get("virtual_sink", "").is_empty();
+        if let Some(shared) = active.as_mut() {
+            if shared.directory != directory {
+                bail!("audio is owned by another host configuration");
+            }
+            shared.users += 1;
+            return Ok(Self {
+                sink: shared.sink.clone(),
+                directory: directory.into(),
+                keep_default: config.boolean("keep_sink_default", true),
+                capture_only,
+                virtual_sink: shared.virtual_sink,
+                id: NEXT_ROUTE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            });
+        }
+        let mut available = endpoints()?;
+        // Taken before any driver installation, which can move the defaults.
+        // Recording roles already on a host endpoint keep the user's choice.
+        let pending = pending(directory);
+        let all = all_endpoints();
+        let owned = |id: &str| host_owned(&all, id);
+        let before = butterpollo_media_policy::audio_defaults::restore_targets(
+            &originals(defaults()?, pending.as_ref(), owned),
+            owned,
+        );
+        let capture_before = if microphone_owns_recording(directory) {
+            Default::default()
+        } else {
+            butterpollo_media_policy::audio_defaults::recording_targets(
+                butterpollo_media_policy::audio_defaults::with_pending(
+                    defaults_for(eCapture)?,
+                    pending.as_ref().map(|journal| &journal.capture_before),
+                    owned,
+                ),
+                owned,
+            )
+        };
+        if !host_audio && !capture_only && install_steam(config, &available) {
+            // The new endpoint appears shortly after installation.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                available = endpoints()?;
+                if available.iter().any(|endpoint| endpoint.virtual_sink)
+                    || std::time::Instant::now() >= deadline
+                {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            let moved = defaults()?;
+            if moved != before
+                && let Ok(policy) = Policy::new()
+            {
+                for (index, role) in ROLES.into_iter().enumerate() {
+                    if let Some(previous) = &before[index]
+                        && moved[index].as_ref() != Some(previous)
+                    {
+                        let _ = policy.set_default(previous, role);
+                    }
+                }
+                available = endpoints()?;
+            }
+        }
+        let configured = config.get("virtual_sink", "");
+        let configured = if configured.is_empty() {
+            config.get("audio_sink", "")
+        } else {
+            configured
+        };
+        let default = available
+            .iter()
+            .find(|endpoint| endpoint.default)
+            .context("no default playback endpoint")?;
+        let selected = if capture_only {
+            find(&available, configured)
+                .context("configured capture-only audio sink is unavailable")?
+        } else if !host_audio || !config.get("virtual_sink", "").is_empty() {
+            if !config.get("virtual_sink", "").is_empty() {
+                find(&available, configured)
+                    .context("configured virtual audio sink is unavailable")?
+            } else {
+                available
+                    .iter()
+                    .find(|endpoint| endpoint.virtual_sink)
+                    .or_else(|| find(&available, configured))
+                    .unwrap_or(default)
+            }
+        } else if configured.is_empty() {
+            default
+        } else {
+            find(&available, configured).context("configured audio sink is unavailable")?
+        };
+        let mut journal = Journal {
+            before,
+            applied: if capture_only {
+                String::new()
+            } else {
+                selected.id.clone()
+            },
+            format: None,
+            capture_before,
+        };
+        let managed_virtual = selected.virtual_sink || !config.get("virtual_sink", "").is_empty();
+        if let Some(message) = virtual_sink_warning(host_audio, capture_only, managed_virtual) {
+            tracing::warn!("{message}");
+        }
+        let policy = if capture_only {
+            None
+        } else {
+            Some(Policy::new()?)
+        };
+        let result = (|| -> Result<()> {
+            if managed_virtual && !capture_only {
+                let policy = policy.as_ref().unwrap();
+                let current = policy.format(&selected.id)?;
+                // A pending restore's original format wins over the one this
+                // host left, as for the default devices.
+                let before = match pending.as_ref().and_then(|j| j.format.as_ref()) {
+                    Some(format) if format.id == selected.id && format.applied == current => {
+                        format.before.clone()
+                    }
+                    _ => current,
+                };
+                let default_format = policy.format(&default.id)?;
+                let bits = valid_bits(&default_format);
+                journal.format = Some(FormatChange {
+                    id: selected.id.clone(),
+                    before,
+                    applied: Vec::new(),
+                });
+                apply_virtual_format(
+                    policy,
+                    &selected.id,
+                    channels,
+                    bits,
+                    directory,
+                    &mut journal,
+                )?;
+            }
+            if !capture_only
+                && journal
+                    .before
+                    .iter()
+                    .any(|id| id.as_deref() != Some(&selected.id))
+            {
+                save(directory, &journal)?;
+                hooks::mark_audio(true)?;
+                for role in ROLES {
+                    policy.as_ref().unwrap().set_default(&selected.id, role)?;
+                }
+            }
+            save(directory, &journal)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            if restore(directory).is_ok() {
+                let _ = hooks::mark_audio(false);
+            }
+            return Err(error);
+        }
+        let id = NEXT_ROUTE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *active = Some(Active {
+            directory: directory.into(),
+            sink: selected.id.clone(),
+            virtual_sink: managed_virtual,
+            users: 1,
+            channels: BTreeMap::from([(id, channels)]),
+        });
+        Ok(Self {
+            sink: selected.id.clone(),
+            directory: directory.into(),
+            keep_default: config.boolean("keep_sink_default", true),
+            capture_only,
+            virtual_sink: managed_virtual,
+            id,
+        })
+    }
+    /// Re-pin managed virtual speakers when keep_sink_default is enabled. Save
+    /// the user's newly selected endpoint so teardown restores that choice.
+    pub fn maintain_default(&self) -> Result<()> {
+        let _active = ACTIVE.lock().unwrap();
+        if !self.keep_default || self.capture_only || !self.virtual_sink {
+            return Ok(());
+        }
+        let current = defaults()?;
+        if current.iter().all(|id| id.as_deref() == Some(&self.sink)) {
+            return Ok(());
+        }
+        let mut journal: Journal = serde_json::from_slice(&std::fs::read(path(&self.directory))?)?;
+        // A device the user picked is restored after the stream. One Windows
+        // made default on its own, such as Steam Streaming Microphone when its
+        // driver arrives, is the host's and is not.
+        let all = all_endpoints();
+        let owned = |id: &str| id.eq_ignore_ascii_case(&self.sink) || host_owned(&all, id);
+        if butterpollo_media_policy::audio_defaults::adopt(&mut journal.before, &current, owned) {
+            tracing::info!(
+                devices = %device_names(&all, &journal.before),
+                "audio defaults to restore after the stream (console | multimedia | communications)"
+            );
+        }
+        save(&self.directory, &journal)?;
+        let policy = Policy::new()?;
+        for role in ROLES {
+            policy.set_default(&self.sink, role)?;
+        }
+        Ok(())
+    }
+    pub fn capture_sink(&self, config: &Config) -> Result<String> {
+        if self.capture_only || self.virtual_sink || !config.boolean("auto_capture_sink", true) {
+            return Ok(self.sink.clone());
+        }
+        let current = defaults()?;
+        Ok(current[0].clone().unwrap_or_else(|| self.sink.clone()))
+    }
+    pub fn set_channels(&self, channels: usize) -> Result<()> {
+        let mut active = ACTIVE.lock().unwrap();
+        if !self.virtual_sink || self.capture_only {
+            return Ok(());
+        }
+        let channels = match active.as_mut() {
+            Some(shared) => {
+                shared.channels.insert(self.id, channels);
+                shared_channels(&shared.channels).unwrap_or(channels)
+            }
+            None => channels,
+        };
+        let policy = Policy::new()?;
+        let current = policy.format(&self.sink)?;
+        // SAFETY: `current` came from Policy::format, which returns at least a whole WAVEFORMATEX.
+        let format = unsafe { std::ptr::read_unaligned(current.as_ptr().cast::<WAVEFORMATEX>()) };
+        if usize::from(format.nChannels) == channels {
+            return Ok(());
+        }
+        let mut journal: Journal = serde_json::from_slice(&std::fs::read(path(&self.directory))?)?;
+        if journal.format.is_none() {
+            bail!("virtual audio format is not owned");
+        }
+        apply_virtual_format(
+            &policy,
+            &self.sink,
+            channels,
+            valid_bits(&current),
+            &self.directory,
+            &mut journal,
+        )
+    }
+}
+impl Drop for Route {
+    fn drop(&mut self) {
+        if self.id == DETACHED {
+            return;
+        }
+        let mut active = ACTIVE.lock().unwrap();
+        let Some(shared) = active.as_mut() else {
+            return;
+        };
+        shared.users -= 1;
+        // The sink keeps its layout for the streams still on it.
+        shared.channels.remove(&self.id);
+        if shared.users != 0 {
+            return;
+        }
+        if let Err(error) = restore(&shared.directory) {
+            tracing::error!(%error, "audio defaults will be restored by crash recovery");
+        } else {
+            let _ = hooks::mark_audio(false);
+        }
+        active.take();
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,6 +1,6 @@
 //! Audio passthrough of the 3.0 audio extension: the codec a client's ANNOUNCE picked, PCM's
 //! s16le packets and the RTP pieces of an AC3 or E-AC3 frame. `rubylight_protocol::audio_ext`
-//! defines the wire; the AC3 and E-AC3 encoder is FFmpeg's (`butterpollo_windows::ffmpeg`).
+//! defines the wire; the AC3 and E-AC3 encoder is FFmpeg's (`butterpollo_win_graphics::ffmpeg`).
 use anyhow::{Result, bail};
 use rubylight_protocol::audio_ext::{self, CHUNK_BYTES, ChunkHeader};
 

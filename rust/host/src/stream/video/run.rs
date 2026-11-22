@@ -140,7 +140,7 @@ impl SessionThread<'_> {
             .map(|_| Instant::now() + Duration::from_secs(30));
         // The fullscreen game on this display, for quitting a game
         // that a store client started outside the app's processes.
-        let mut quit_scan: Option<butterpollo_windows::foreground::Tracker> = None;
+        let mut quit_scan: Option<butterpollo_win_graphics::foreground::Tracker> = None;
         let mut quit_scan_due = Instant::now() + Duration::from_secs(1);
         let _background_windows = if s.launch.role == Role::Stream
             && butterpollo_session::background::enabled(&c)
@@ -210,7 +210,7 @@ impl SessionThread<'_> {
         // for the per-claim trace.
         let mut first_seen: Option<(usize, Instant, Option<Duration>, Option<Instant>)> = None;
         let mut video_qos = crate::stream::qos::Tagged::default();
-        let mut batch = butterpollo_windows::net::Batch::default();
+        let mut batch = butterpollo_win_io::net::Batch::default();
         batch.dont_fragment = crate::stream::video_refuses_fragmentation();
         let mut packets = Vec::new();
         let trace_send = tracing::enabled!(target: "pacing", tracing::Level::TRACE);
@@ -286,7 +286,7 @@ impl SessionThread<'_> {
             32 => 32,
             _ => 64,
         };
-        let mut send_frames = |output: Vec<butterpollo_windows::encoder::Encoded>,
+        let mut send_frames = |output: Vec<butterpollo_win_graphics::encoder::Encoded>,
                                peer: std::net::SocketAddr,
                                call_latency: Duration,
                                source: &Source,
@@ -339,7 +339,7 @@ impl SessionThread<'_> {
             }
             // Units of a sliced frame: stream them here, or join them
             // into the whole frame the other paths send.
-            let output = if output.iter().any(|frame| frame.unit != butterpollo_windows::encoder::Unit::Whole) || slice_route.streaming() {
+            let output = if output.iter().any(|frame| frame.unit != butterpollo_win_graphics::encoder::Unit::Whole) || slice_route.streaming() {
                 let threaded = video_sender.get().is_some();
                 delivery.sync(&s.stats);
                 packetizer.fec_percent = s.frame_fec_percent(false);
@@ -372,10 +372,10 @@ impl SessionThread<'_> {
             let polled = Instant::now();
             let micros = |d: Duration| d.as_micros().min(u128::from(u64::MAX)) as u64;
             'frames: for mut frame in output {
-                if frame.unit != butterpollo_windows::encoder::Unit::Whole {
+                if frame.unit != butterpollo_win_graphics::encoder::Unit::Whole {
                     // One unit of a P-frame sent block by block.
-                    let last = matches!(frame.unit, butterpollo_windows::encoder::Unit::Last { .. });
-                    if matches!(frame.unit, butterpollo_windows::encoder::Unit::Slice { index: 0 } | butterpollo_windows::encoder::Unit::Last { index: 0 }) {
+                    let last = matches!(frame.unit, butterpollo_win_graphics::encoder::Unit::Last { .. });
+                    if matches!(frame.unit, butterpollo_win_graphics::encoder::Unit::Slice { index: 0 } | butterpollo_win_graphics::encoder::Unit::Last { index: 0 }) {
                         let started = Instant::now();
                         let encode = frame.latency.unwrap_or(call_latency);
                         let claimed = polled.checked_sub(encode).unwrap_or(polled);
@@ -453,7 +453,7 @@ impl SessionThread<'_> {
                                 let budget = butterpollo_media_policy::network_pacing::startup_batch_payload_limit(
                                     wire_frame, bps, remaining[0].len(), peer.ip().to_canonical().is_ipv6(), batch_kb * 1024,
                                 );
-                                let count = butterpollo_windows::net::Batch::count(remaining, budget);
+                                let count = butterpollo_win_io::net::Batch::count(remaining, budget);
                                 let refused = batch.dropped;
                                 let result = match send_outage.filter(|outage| outage.active(start, Instant::now())) {
                                     Some(outage) if outage.in_air() => Ok(remaining[..count].iter().map(Vec::len).sum()),
@@ -707,7 +707,7 @@ impl SessionThread<'_> {
                             wire_frame, bps, remaining[0].len(), peer.ip().to_canonical().is_ipv6(), batch_kb * 1024,
                         );
                         let count =
-                            butterpollo_windows::net::Batch::count(remaining, budget);
+                            butterpollo_win_io::net::Batch::count(remaining, budget);
                         let send_started = Instant::now();
                         let refused = batch.dropped;
                         let bytes = match send_outage.filter(|outage| outage.active(start, Instant::now())) {
@@ -850,13 +850,13 @@ impl SessionThread<'_> {
                     // no display, so the display it is laid over is asked instead.
                     let window_due = Instant::now() >= timing_due;
                     let mut display_mhz = None;
-                    if butterpollo_windows::limiter::display_read_due(
+                    if butterpollo_win_io::limiter::display_read_due(
                         window_due,
-                        butterpollo_windows::limiter::following(),
+                        butterpollo_win_io::limiter::following(),
                     ) {
                         let shown = prepared.output();
-                        display_mhz = butterpollo_windows::display::mode(&shown)
-                            .or_else(|_| butterpollo_windows::display::mode(&output))
+                        display_mhz = butterpollo_win_display::display::mode(&shown)
+                            .or_else(|_| butterpollo_win_display::display::mode(&output))
                             .ok()
                             .map(|mode| mode.dmDisplayFrequency)
                             .filter(|hz| *hz > 1)
@@ -878,7 +878,7 @@ impl SessionThread<'_> {
                             }
                             display_refresh_mhz = Some(now_mhz);
                         }
-                        butterpollo_windows::limiter::follow_display(display_mhz.map(butterpollo_media_policy::framegen::Rate));
+                        butterpollo_win_io::limiter::follow_display(display_mhz.map(butterpollo_media_policy::framegen::Rate));
                     }
                     if window_due {
                         let now = Instant::now();
@@ -1449,7 +1449,7 @@ impl SessionThread<'_> {
                     quit_scan_due = Instant::now() + Duration::from_secs(1);
                     // The scan runs on its own thread; this reads its last result.
                     if let Some((program, pid)) = quit_scan
-                        .get_or_insert_with(butterpollo_windows::foreground::Tracker::default)
+                        .get_or_insert_with(butterpollo_win_graphics::foreground::Tracker::default)
                         .poll_process(&[], &raw_image.gpu.display)
                     {
                         progress.mark(crate::stall_watch::Phase::AppTracking);
@@ -1509,7 +1509,7 @@ impl SessionThread<'_> {
                     }
                     if compute_demotion.demoted() {
                         tuning.values.insert("gpu_compute_conversion".into(), "false".into());
-                        if butterpollo_windows::compute::enabled(&c) {
+                        if butterpollo_win_graphics::compute::enabled(&c) {
                             let retry = if compute_demotion.sticky() {
                                 "Compute is not tried again for this stream."
                             } else {
@@ -1519,12 +1519,7 @@ impl SessionThread<'_> {
                         }
                     }
                     progress.mark(crate::stall_watch::Phase::EncoderCreate);
-                    match Encoder::new_gpu_reported(
-                        &stream,
-                        &image,
-                        &tuning,
-                        &s.launch.warnings,
-                    ) {
+                    match crate::win_bridge::new_encoder_gpu(&stream, &image, &tuning, &s.launch.warnings) {
                         Ok(mut created) => {
                             if created.compute_fell_back() {
                                 compute_demotion.demote_sticky(Instant::now());
@@ -1797,7 +1792,7 @@ impl SessionThread<'_> {
                     focus.failed(&error, &s.encoder_focus_state, &s.launch.warnings);
                 }
                 focus.update(&s.encoder_focus, &s.encoder_focus_state, &s.launch.warnings);
-                let wanted = focus.settings(|| butterpollo_windows::encoder::focus_cursor(&image, (stream.width, stream.height)));
+                let wanted = focus.settings(|| butterpollo_win_graphics::encoder::focus_cursor(&image, (stream.width, stream.height)));
                 if let Err(error) = focus.apply(wanted, |settings| {
                     active.set_focus_verify(focus_verify);
                     active.set_focus(settings)
@@ -1810,7 +1805,7 @@ impl SessionThread<'_> {
                 if leave_pointer_out { presented_image.leave_pointer_out(); }
                 progress.mark(crate::stall_watch::Phase::Encode);
                 let encode_trace_started = trace_send.then(Instant::now);
-                let encoded = (|| -> Result<Vec<butterpollo_windows::encoder::Encoded>> {
+                let encoded = (|| -> Result<Vec<butterpollo_win_graphics::encoder::Encoded>> {
                     #[cfg(debug_assertions)]
                     crate::soak_fault::check("encoder failure")?;
                     #[cfg(debug_assertions)]

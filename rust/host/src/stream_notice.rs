@@ -63,7 +63,7 @@ pub fn started(device_id: &str, device: &str, app: &str, background: bool, seat:
         return;
     }
     let (title, text) = notice(background, device, app);
-    if let Err(error) = butterpollo_windows::tray::try_notify(title, &text) {
+    if let Err(error) = butterpollo_win_io::tray::try_notify(title, &text) {
         let error = format!("{error:#}");
         if NOTICES.first_failure() {
             tracing::warn!(%error, client = %device, "the stream notice could not be shown on the PC");

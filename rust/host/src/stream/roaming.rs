@@ -5,7 +5,7 @@
 use butterpollo_session::roaming::{
     Action, DATAGRAM_BYTES, Refusal, RoamTable, SeqMemory, is_roaming,
 };
-use butterpollo_windows::net::ReplySocket;
+use butterpollo_win_io::net::ReplySocket;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
@@ -253,7 +253,7 @@ fn is_enet_connect(data: &[u8]) -> bool {
 pub(super) fn send(socket: &ReplySocket, datagram: &[u8], to: SocketAddr) {
     match socket.send_to(datagram, to) {
         Ok(_) => {}
-        Err(error) if butterpollo_windows::net::datagram_lost(&error) => {
+        Err(error) if butterpollo_win_io::net::datagram_lost(&error) => {
             tracing::debug!(%error, %to, "roaming reply dropped");
         }
         Err(error) => tracing::warn!(%error, %to, "roaming reply not sent"),

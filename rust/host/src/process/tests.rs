@@ -205,11 +205,11 @@ fn a_slow_steam_launch_keeps_its_process_tracker() {
     ));
     app.steam_check = std::time::Instant::now() - Duration::from_secs(2);
     assert!(app.wants_processes());
-    let processes = butterpollo_windows::process::processes().unwrap();
+    let processes = butterpollo_win_io::process::processes().unwrap();
     let paths = app
         .unlooked(&processes)
         .into_iter()
-        .map(|pid| (pid, butterpollo_windows::process::image_path(pid)))
+        .map(|pid| (pid, butterpollo_win_io::process::image_path(pid)))
         .collect();
     assert!(!app.exited(Some(&ProcessScan { processes, paths })).unwrap());
     assert!(app.steam.is_some());
@@ -425,7 +425,7 @@ fn a_display_leaving_brings_back_only_a_game_with_processes_to_name() {
     // windows may come back, but not a background game's. It is never dropped:
     // stopping the app would end this test's own process.
     let me = std::process::id();
-    let started = butterpollo_windows::process::processes()
+    let started = butterpollo_win_io::process::processes()
         .unwrap()
         .into_iter()
         .find(|process| process.pid == me)
@@ -765,7 +765,7 @@ fn a_foreground_check_records_nothing_for_a_program_gone_or_replaced_under_its_i
 }
 #[test]
 fn client_hooks_use_the_saved_environment_on_disconnect() {
-    let elevated = butterpollo_windows::process::user_environment().is_err();
+    let elevated = butterpollo_win_io::process::user_environment().is_err();
     let path = std::env::temp_dir().join(format!(
         "butterpollo-client-hooks-{}.txt",
         uuid::Uuid::new_v4()

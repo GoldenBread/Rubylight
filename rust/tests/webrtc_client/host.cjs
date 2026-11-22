@@ -67,7 +67,7 @@ const ELEVATION = {
   installed: 'C:\\ProgramData\\ButterpolloRelease',
   requests: 'C:\\src\\butterpollo-release\\webrtc-e2e',
   // Starts the test host as SYSTEM in the console session (`system: true`), which the virtual
-  // display driver requires: the system_launch example of butterpollo-windows, installed by
+  // display driver requires: the system_launch binary of butterpollo-probes, installed by
   // elevation.ps1 where the user cannot replace it. The staged host it starts is the user's.
   launcher: 'C:\\ProgramData\\ButterpolloRelease\\system_launch.exe',
   // Installed name, checkout copy.
@@ -215,7 +215,7 @@ class TestHost {
 
   async start() {
     if (this.o.system && !fs.existsSync(ELEVATION.launcher)) {
-      throw new Error(`a SYSTEM test host needs ${ELEVATION.launcher}: build it (cargo build --release -p butterpollo-windows --example system_launch) and run \`pwsh -File rust/release/elevation.ps1 -SystemLaunch <path to system_launch.exe>\` from an elevated PowerShell`);
+      throw new Error(`a SYSTEM test host needs ${ELEVATION.launcher}: build it (cargo build --release -p butterpollo-probes --bin system_launch) and run \`pwsh -File rust/release/elevation.ps1 -SystemLaunch <path to system_launch.exe>\` from an elevated PowerShell`);
     }
     const exe = stage(this.o);
     fs.writeFileSync(this.log, '');

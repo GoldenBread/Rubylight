@@ -117,7 +117,7 @@ impl ApiVersion {
 /// Why NVENC as this host builds it cannot encode `codec` in native 4:4:4,
 /// before any driver is asked; None for H.264 (High 4:4:4) and HEVC (Rext),
 /// which the GPU's `NV_ENC_CAPS_SUPPORT_YUV444_ENCODE` then decides. The SDK
-/// headers this host uses (13.0, `rust/windows/include/nvEncodeAPI.h`) say
+/// headers this host uses (13.0, `rust/windows/abi/include/nvEncodeAPI.h`) say
 /// of `NV_ENC_CONFIG_AV1::chromaFormatIDC` "yuv444 input currently not
 /// supported" and define no AV1 profile beyond Main, so AV1 4:4:4 is refused
 /// rather than configured from a guess.

@@ -178,7 +178,7 @@ fn valid_address(address: &str) -> bool {
 /// This PC's LAN addresses, for a link made on a console opened at `localhost`, which no guest
 /// can open. Empty, and logged, when Windows does not list them.
 fn addresses() -> Vec<String> {
-    butterpollo_windows::net::lan_addresses().unwrap_or_else(|error| {
+    butterpollo_win_io::net::lan_addresses().unwrap_or_else(|error| {
         tracing::warn!(error = %format!("{error:#}"), "the LAN addresses for a guest link could not be read");
         Vec::new()
     })

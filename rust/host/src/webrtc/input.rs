@@ -40,7 +40,7 @@ use butterpollo_session::{
         input::InputChannel,
     },
 };
-use butterpollo_windows::input::{Injector, PadReport};
+use butterpollo_win_io::input::{Injector, PadReport};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque, hash_map::Entry},
     sync::{
@@ -1451,7 +1451,7 @@ pub fn spawn(h: Shared) -> Result<InputHandle> {
             // The control thread's priority: it injects every input. Test
             // workers must not boost their priority or register a Windows task.
             #[cfg(not(any(test, feature = "test-harness")))]
-            let _priority = butterpollo_windows::capture::Priority::input();
+            let _priority = butterpollo_win_graphics::capture::Priority::input();
             run(queues, make)
         })
         .context("starting the WebRTC input worker")?;

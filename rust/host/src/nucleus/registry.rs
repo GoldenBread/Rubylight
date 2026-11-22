@@ -833,7 +833,7 @@ impl Registry {
                     instances: request
                         .instances
                         .clone()
-                        .map(|routes| routes as butterpollo_windows::nucleus::session::Instances),
+                        .map(|routes| routes as butterpollo_win_io::nucleus::session::Instances),
                 };
                 let instance: Arc<dyn Instance> = pc
                     .start(&start, policy, request.warnings)

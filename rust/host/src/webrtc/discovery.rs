@@ -90,7 +90,7 @@ fn local_address_towards(peer: IpAddr) -> Option<IpAddr> {
 
 /// The Wake-on-LAN address of the interface that owns `local`.
 pub fn mac_address(local: IpAddr) -> Option<String> {
-    let mac = butterpollo_windows::net::local_mac(local).ok()?;
+    let mac = butterpollo_win_io::net::local_mac(local).ok()?;
     (mac != "00:00:00:00:00:00").then_some(mac)
 }
 

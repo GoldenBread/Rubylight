@@ -390,7 +390,7 @@ async function consoleSession(host) {
 // ---- our own client -------------------------------------------------------------
 
 const MIME = {h264: 'video/H264', hevc: 'video/H265', av1: 'video/AV1'};
-const TONE_EXE = process.env.BUTTERPOLLO_TEST_TONE || 'C:\\src\\butterpollo-release\\wr\\target\\release\\examples\\webrtc_tone.exe';
+const TONE_EXE = process.env.BUTTERPOLLO_TEST_TONE || 'C:\\src\\butterpollo-release\\wr\\target\\release\\webrtc_tone.exe';
 
 // The sink's mix format, from the tone player: surround needs a sink that
 // already has 6 or 8 channels (the harness never changes system audio).

@@ -1,6 +1,6 @@
 //! What AMF's video converter (`AMFVideoConverter`, which a driver runs on the
 //! Video Processing Engine where the GPU has one) may convert for an AMF
-//! stream, and how. The Windows encoder (`butterpollo_windows::amf::vpe`)
+//! stream, and how. The Windows encoder (`butterpollo_win_graphics::amf::vpe`)
 //! applies the plan; everything a plan refuses keeps the shader conversion
 //! (`gpu_color`), with the refusal's code in the log.
 //!

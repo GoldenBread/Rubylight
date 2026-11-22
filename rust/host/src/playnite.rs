@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail, ensure};
 use butterpollo_session::game_settings::Watched;
 use butterpollo_session::playnite::{self, Artwork, Game, Message, Settings};
 use butterpollo_session::version;
-use butterpollo_windows::playnite::Pipe;
+use butterpollo_win_io::playnite::Pipe;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -39,7 +39,7 @@ fn version(folder: &Path) -> Option<String> {
     playnite::plugin_version(&std::fs::read_to_string(folder.join("extension.yaml")).ok()?)
 }
 fn installed_plugin() -> Option<PathBuf> {
-    butterpollo_windows::playnite::extensions_dir().map(|dir| dir.join("SunshinePlaynite"))
+    butterpollo_win_io::playnite::extensions_dir().map(|dir| dir.join("SunshinePlaynite"))
 }
 fn needs_update(packaged: &str, target: &Path) -> bool {
     match version(target) {
@@ -78,7 +78,7 @@ fn copy_plugin_as_user(source: &Path, target: &Path) -> Result<()> {
 /// Both paths can come from user-writable locations. Resolve junctions and
 /// perform every write with the user's token, never the service's.
 fn run_as_user(mode: &str, paths: &[PathBuf]) -> Result<()> {
-    use butterpollo_windows::process::{Process, Target};
+    use butterpollo_win_io::process::{Process, Target};
     let program = std::env::current_exe()?;
     let args: Vec<std::ffi::OsString> = std::iter::once(mode.into())
         .chain(paths.iter().map(|path| path.as_os_str().to_owned()))
@@ -112,7 +112,7 @@ pub fn helper_exit_code(result: &Result<()>) -> i32 {
 }
 pub fn install_worker(source: &Path, target: &Path) -> Result<()> {
     ensure!(
-        !butterpollo_windows::process::is_system(),
+        !butterpollo_win_io::process::is_system(),
         "the Playnite plugin installer must run as the signed-in user"
     );
     if !plugin_present(source) {
@@ -154,7 +154,7 @@ fn update_plugin(h: &Shared) -> bool {
     let present = plugin_present(&target);
     let installed = version(&target);
     let packaged = version(&source);
-    let running = butterpollo_windows::playnite::running().is_some();
+    let running = butterpollo_win_io::playnite::running().is_some();
     tracing::debug!(folder = %target.display(), ?installed, ?packaged, present, running, "Playnite plugin check");
     let Some(packaged) = packaged else {
         tracing::warn!(folder = %source.display(), "packaged Playnite plugin is unavailable");
@@ -209,7 +209,7 @@ fn snapshot() -> Result<()> {
         match pipe.lines.recv_timeout(Duration::from_millis(250)) {
             Ok(line) => {
                 last = Instant::now();
-                match playnite::parse_with(&line, &butterpollo_windows::playnite::local_to_utc) {
+                match playnite::parse_with(&line, &butterpollo_win_io::playnite::local_to_utc) {
                     Message::SnapshotStart => {
                         started = true;
                         games.clear();
@@ -324,10 +324,10 @@ pub fn set_cover(h: &Shared, id: &str, key: &str) -> Result<PathBuf> {
 /// Start Playnite, closing it first if it runs, as Vibepollo's
 /// `/api/playnite/launch`.
 pub fn restart() -> Result<()> {
-    let program = butterpollo_windows::playnite::install_dir()
-        .and_then(|dir| butterpollo_windows::playnite::executable(&dir))
+    let program = butterpollo_win_io::playnite::install_dir()
+        .and_then(|dir| butterpollo_win_io::playnite::executable(&dir))
         .context("no Playnite executable found; open Playnite once or repair its installation")?;
-    let running: BTreeMap<u32, u64> = butterpollo_windows::playnite::session_processes()?
+    let running: BTreeMap<u32, u64> = butterpollo_win_io::playnite::session_processes()?
         .iter()
         .filter(|p| {
             p.name.eq_ignore_ascii_case("Playnite.DesktopApp.exe")
@@ -335,8 +335,8 @@ pub fn restart() -> Result<()> {
         })
         .map(|p| (p.pid, p.started))
         .collect();
-    butterpollo_windows::process::stop_processes(&running, Duration::from_secs(10));
-    butterpollo_windows::playnite::launch(&program, &[], &BTreeMap::new())?;
+    butterpollo_win_io::process::stop_processes(&running, Duration::from_secs(10));
+    butterpollo_win_io::playnite::launch(&program, &[], &BTreeMap::new())?;
     tracing::info!(executable = %program.display(), restarted = !running.is_empty(), "Playnite started from the console");
     Ok(())
 }
@@ -357,7 +357,7 @@ fn png(h: &Shared, source: &str, name: &str) -> Option<PathBuf> {
     if png.is_file() && std::fs::read_to_string(&record).is_ok_and(|saved| saved == stamp) {
         return Some(png);
     }
-    match butterpollo_windows::image::to_png(source, &png) {
+    match butterpollo_win_graphics::image::to_png(source, &png) {
         Ok(_) => {
             let _ = butterpollo_session::state::atomic_write(&record, stamp.as_bytes());
             Some(png)
@@ -378,7 +378,7 @@ pub fn sync(h: &Shared) -> Result<Outcome> {
     if !settings.enabled {
         bail!("Playnite integration is disabled");
     }
-    if butterpollo_windows::playnite::running().is_none() {
+    if butterpollo_win_io::playnite::running().is_none() {
         bail!("Playnite is not running");
     }
     snapshot()?;
@@ -472,7 +472,7 @@ pub fn watch(h: &Shared) {
     }
     if settings.enabled
         && settings.auto_sync
-        && let Some((pid, _)) = butterpollo_windows::playnite::running()
+        && let Some((pid, _)) = butterpollo_win_io::playnite::running()
         && let Err(error) = sync_if_due(
             &mut WATCH.lock().unwrap(),
             pid,
@@ -507,8 +507,8 @@ pub fn status(h: &Shared) -> Value {
     json!({
         "status": true,
         "enabled": settings.enabled,
-        "active": butterpollo_windows::playnite::running().is_some(),
-        "available": butterpollo_windows::playnite::install_dir().is_some(),
+        "active": butterpollo_win_io::playnite::running().is_some(),
+        "available": butterpollo_win_io::playnite::install_dir().is_some(),
         "installed": installed,
         "extensions_dir": target.as_ref().and_then(|t| t.parent()),
         "installed_version": installed_version,
@@ -528,7 +528,7 @@ fn catalog_ready() -> Result<()> {
         .unwrap()
         .at
         .is_none_or(|at| at.elapsed() > Duration::from_secs(60));
-    if stale && butterpollo_windows::playnite::running().is_some() {
+    if stale && butterpollo_win_io::playnite::running().is_some() {
         snapshot()?;
     }
     Ok(())
@@ -630,7 +630,7 @@ pub fn uninstall_plugin() -> Result<()> {
 /// from the user's registry and profile, as for installs.
 pub fn uninstall_worker(target: &Path) -> Result<()> {
     ensure!(
-        !butterpollo_windows::process::is_system(),
+        !butterpollo_win_io::process::is_system(),
         "the Playnite plugin helper must run as the signed-in user"
     );
     match std::fs::remove_dir_all(target) {
@@ -981,16 +981,16 @@ impl Launch {
             .context("Playnite launch failed: invalid game ID")?
             .map(|id| id.to_string())
             .unwrap_or_default();
-        let program = butterpollo_windows::playnite::install_dir()
-            .and_then(|dir| butterpollo_windows::playnite::executable(&dir))
+        let program = butterpollo_win_io::playnite::install_dir()
+            .and_then(|dir| butterpollo_win_io::playnite::executable(&dir))
             .context("Playnite launch failed: no Desktop or Fullscreen executable found; open Playnite once or repair its installation")?;
-        tracing::info!(id, fullscreen, executable = %program.display(), running = butterpollo_windows::playnite::running().is_some(), "Playnite launch prepared");
+        tracing::info!(id, fullscreen, executable = %program.display(), running = butterpollo_win_io::playnite::running().is_some(), "Playnite launch prepared");
         let plugin_ready = update_plugin(h);
         let mut settings = Settings::from_config(&h.config.read().unwrap());
         if background {
             settings.focus_attempts = 0;
         }
-        let baseline = butterpollo_windows::playnite::session_processes().unwrap_or_default();
+        let baseline = butterpollo_win_io::playnite::session_processes().unwrap_or_default();
         let state = Arc::new(Mutex::new(LaunchState {
             fullscreen,
             exit_grace: ExitGrace(settings.exit_wait),
@@ -1063,7 +1063,7 @@ impl Launch {
                         .any(|old| old.pid == p.pid && old.started == p.started)
             })
             .filter(|p| {
-                butterpollo_windows::process::image_path(p.pid)
+                butterpollo_win_io::process::image_path(p.pid)
                     .is_some_and(|path| playnite::game_process(&path, &folder, &exe))
             })
             .map(|p| (p.pid, p.started))
@@ -1112,9 +1112,9 @@ impl Launch {
             &state.install_dir,
             Duration::ZERO,
         );
-        if let Ok(now) = butterpollo_windows::playnite::session_processes() {
-            tracker.update(&now, butterpollo_windows::process::image_path);
-            butterpollo_windows::process::stop_processes(&tracker.tracked, timeout);
+        if let Ok(now) = butterpollo_win_io::playnite::session_processes() {
+            tracker.update(&now, butterpollo_win_io::process::image_path);
+            butterpollo_win_io::process::stop_processes(&tracker.tracked, timeout);
         }
     }
 }
@@ -1133,8 +1133,8 @@ fn run(
         fallback(program, id, environment, state);
         return;
     }
-    if (fullscreen || butterpollo_windows::playnite::running().is_none())
-        && let Err(error) = butterpollo_windows::playnite::launch(
+    if (fullscreen || butterpollo_win_io::playnite::running().is_none())
+        && let Err(error) = butterpollo_win_io::playnite::launch(
             program,
             if fullscreen {
                 &["--startfullscreen"]
@@ -1242,11 +1242,11 @@ fn run(
         if (state.verifying() || fullscreen) && checked.elapsed() >= Duration::from_secs(1) {
             checked = Instant::now();
             let previous = state.phase.clone();
-            match butterpollo_windows::playnite::session_processes() {
+            match butterpollo_win_io::playnite::session_processes() {
                 Ok(processes) => {
                     let alive = (state.verifying() && state.has_process_hint()).then(|| {
                         processes.iter().any(|p| {
-                            butterpollo_windows::process::image_path(p.pid).is_some_and(|path| {
+                            butterpollo_win_io::process::image_path(p.pid).is_some_and(|path| {
                                 playnite::game_process(&path, &state.install_dir, &state.exe)
                             })
                         })
@@ -1296,13 +1296,13 @@ fn run(
             && let Some(watch) = &mut watch
             && watch.due(Instant::now())
         {
-            match butterpollo_windows::playnite::session_processes() {
+            match butterpollo_win_io::playnite::session_processes() {
                 Ok(processes) => {
                     let found = watch.scan(
                         Instant::now(),
                         (&install_dir, &exe),
                         &processes,
-                        butterpollo_windows::process::image_path,
+                        butterpollo_win_io::process::image_path,
                     );
                     if !found.is_empty() {
                         tracing::info!(id, processes = ?found, "Playnite game processes recorded for its settings files");
@@ -1317,7 +1317,7 @@ fn run(
         }
         if relaunch
             && let Err(error) =
-                butterpollo_windows::playnite::launch(program, &["--startfullscreen"], environment)
+                butterpollo_win_io::playnite::launch(program, &["--startfullscreen"], environment)
         {
             tracing::error!(error = %format!("{error:#}"), "Playnite fullscreen mode could not start again; ending the stream");
             shared.lock().unwrap().phase = Phase::Exited;
@@ -1349,7 +1349,7 @@ fn run(
 /// Bring the game's window, or Playnite's fullscreen menu, to the front;
 /// true when it is in front.
 fn bring_forward(menu: bool, install_dir: &str, exe: &str) -> bool {
-    let Ok(processes) = butterpollo_windows::playnite::session_processes() else {
+    let Ok(processes) = butterpollo_win_io::playnite::session_processes() else {
         return false;
     };
     let candidates: Vec<u32> = processes
@@ -1358,18 +1358,18 @@ fn bring_forward(menu: bool, install_dir: &str, exe: &str) -> bool {
             if menu {
                 p.name.eq_ignore_ascii_case("Playnite.FullscreenApp.exe")
             } else {
-                butterpollo_windows::process::image_path(p.pid)
+                butterpollo_win_io::process::image_path(p.pid)
                     .is_some_and(|path| playnite::game_process(&path, install_dir, exe))
             }
         })
         .map(|p| p.pid)
         .collect();
-    if butterpollo_windows::foreground::process().is_some_and(|pid| candidates.contains(&pid)) {
+    if butterpollo_win_graphics::foreground::process().is_some_and(|p| candidates.contains(&p)) {
         return true;
     }
     candidates
         .into_iter()
-        .any(butterpollo_windows::lossless::focus)
+        .any(butterpollo_win_io::lossless::focus)
 }
 fn launch_command(id: &str, environment: &BTreeMap<String, String>) -> Value {
     if id.is_empty() {
@@ -1385,7 +1385,7 @@ fn fallback(
     state: &Mutex<LaunchState>,
 ) {
     let game_args = ["--start", id];
-    match butterpollo_windows::playnite::launch(
+    match butterpollo_win_io::playnite::launch(
         program,
         if id.is_empty() {
             &["--startfullscreen"]
@@ -1409,7 +1409,7 @@ fn fallback(
 }
 /// Close Playnite's fullscreen mode after its stream.
 pub fn close_fullscreen(timeout: Duration) {
-    let Ok(processes) = butterpollo_windows::playnite::session_processes() else {
+    let Ok(processes) = butterpollo_win_io::playnite::session_processes() else {
         return;
     };
     let fullscreen: BTreeMap<u32, u64> = processes
@@ -1417,7 +1417,7 @@ pub fn close_fullscreen(timeout: Duration) {
         .filter(|p| p.name.eq_ignore_ascii_case("Playnite.FullscreenApp.exe"))
         .map(|p| (p.pid, p.started))
         .collect();
-    butterpollo_windows::process::stop_processes(&fullscreen, timeout);
+    butterpollo_win_io::process::stop_processes(&fullscreen, timeout);
 }
 
 #[cfg(test)]

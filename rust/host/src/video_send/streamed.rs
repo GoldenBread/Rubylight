@@ -7,7 +7,7 @@
 use super::*;
 use crate::stream::slices;
 use butterpollo_media_policy::packet::StreamedFrame;
-use butterpollo_windows::encoder::Unit;
+use butterpollo_win_graphics::encoder::Unit;
 
 /// The first unit of a frame, which a streamed frame is built from.
 pub(super) fn begins(unit: Unit) -> bool {

@@ -221,7 +221,7 @@ async fn connection(
                     let flags = h.codecs.load(std::sync::atomic::Ordering::Acquire);
                     let config = crate::stream::effective_config(&h, &launch)?;
                     let encryption_mode = crate::network::encryption_mode(&config, peer);
-                    let input_capabilities = butterpollo_windows::input::capabilities(&config);
+                    let input_capabilities = butterpollo_win_io::input::capabilities(&config);
                     if config.boolean("mouse", true)
                         && config.boolean("native_pen_touch", true)
                         && input_capabilities & 1 == 0
@@ -411,10 +411,11 @@ async fn connection(
                         let probe_config = config.clone();
                         let probe_negotiated = negotiated.clone();
                         tokio::task::spawn_blocking(move || {
-                            butterpollo_windows::codec_probe::packed(
+                            butterpollo_win_graphics::codec_probe::packed_with(
                                 &probe_config,
                                 &probe_negotiated,
                                 &|| false,
+                                &crate::win_bridge::HostUserLauncher,
                             )
                         })
                         .await

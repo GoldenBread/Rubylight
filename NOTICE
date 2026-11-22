@@ -57,16 +57,16 @@ statistics and scene-cut thresholds, and the HEVC SEI and AV1 metadata OBU splic
 (rust/core/media-policy/src/hdr_dynamic.rs) are ported in part from Foundation Sunshine commit
 880f1ef: video_hdr_metadata.h, video_hdr_metadata.cpp and video_hdr_bitstream.cpp.
 The GPU luminance statistics those writers take, the hdr_stats_cs compute shader
-(rust/windows/src/shaders/color.hlsl) and its dispatch and readback
-(rust/windows/src/compute_hdr_stats.rs), follow Foundation Sunshine's
+(rust/windows/abi/src/shaders/color.hlsl) and its dispatch and readback
+(rust/windows/graphics/src/compute_hdr_stats.rs), follow Foundation Sunshine's
 hdr_luminance_analysis_cs.hlsl from the same commit. The HLG encoding curve, hlg in
-rust/windows/src/shaders/color.hlsl, follows scRGBTo2100HLG, DisplayLinearToHLGScene
+rust/windows/abi/src/shaders/color.hlsl, follows scRGBTo2100HLG, DisplayLinearToHLGScene
 and LinearToHLG in that commit's src_assets/windows/assets/shaders/directx/include/common.hlsl.
 
 The NVIDIA encoder's frame budget guard and its per-preset encode-time calibration
 (src/nvenc/frame_budget.cpp), its VBR rate control and bounds, the fixed split-encode
 strip counts and the slice-mode rule that keeps split encoding available, the codec
-check and spatial AQ by default (rust/core/media-policy/src/nvenc.rs, rust/windows/src/nvenc.rs)
+check and spatial AQ by default (rust/core/media-policy/src/nvenc.rs, rust/windows/graphics/src/nvenc.rs)
 follow Foundation Sunshine's src/nvenc/. Its native YUV 4:4:4 path for NVENC (commit
 79423092eda6ccd011e58d04236c8f16e02765c5, src/nvenc/common_impl/ and the
 convert_yuv444_* shaders) was compared with LizardByte Sunshine's, where that path
@@ -80,18 +80,18 @@ Foundation Sunshine v2025.1011.143611's tray export, import and restore (pull
 request 248); the archive format and its checks are Rubylight's.
 
 The AMF video converter option (amd_vpe: rust/core/media-policy/src/amf_vpe.rs,
-rust/windows/src/amf/vpe.rs) and its scene-linear HLG prepass (hlg_scene_cs in
-rust/windows/src/shaders/color.hlsl, rust/windows/src/gpu_color/hlg_scene.rs) are
+rust/windows/graphics/src/amf/vpe.rs) and its scene-linear HLG prepass (hlg_scene_cs in
+rust/windows/abi/src/shaders/color.hlsl, rust/windows/graphics/src/gpu_color/hlg_scene.rs) are
 ported from Foundation Sunshine's amd_vpe (src/amf/amf_vpe_d3d11.cpp and
 prepare_hlg_scene_cs.hlsl, AlkaidLab/foundation-sunshine PR #1216, commit 1add1ed).
-AMD Direct Capture (capture = amd, rust/windows/src/capture/amd_direct.rs) follows
+AMD Direct Capture (capture = amd, rust/windows/graphics/src/capture/amd_direct.rs) follows
 its src/platform/windows/display_amd.cpp and the AFMF capture fixes in commits
 02d41dc (#151) and 804ad30 (#175): waiting for each present, the frame rate and the
 duplicated output.
 
 The virtual mouse with its choice of Automatic, Virtual mouse and Injection
 (mouse_mode, rust/core/input-policy/src/input_policy.rs; rust/core/input-policy/src/virtual_hid.rs and
-rust/windows/src/input/virtual_hid.rs) follows Foundation Sunshine's virtual mouse,
+rust/windows/io/src/input/virtual_hid.rs) follows Foundation Sunshine's virtual mouse,
 which is a driver of its own; Rubylight's is a USB device on its USB/IP server. The
 touchpad input packets 0x55000009 and 0x5500000A and their feature flags
 (client/protocol/wire/src/input.rs) are Foundation Sunshine's, as Moonlight V+ sends them.
@@ -99,10 +99,10 @@ touchpad input packets 0x55000009 and 0x5500000A and their feature flags
 The per-application design of the NVIDIA image enhancements, the single pre-encode
 slot that RTX HDR takes first, and the HDR proxy through which RTX Video enhancement
 treats an HDR picture (rust/core/media-policy/src/nvidia_enhance.rs, rust/host/src/nvidia_enhance.rs,
-rust/windows/src/rtx_video.rs and rust/windows/src/shaders/rtx_video.hlsl) follow
+rust/windows/graphics/src/rtx_video.rs and rust/windows/abi/src/shaders/rtx_video.hlsl) follow
 Foundation Sunshine's src/platform/windows/image_enhancement/, including
 dlss_nr/hdr_filter.cpp. The NVIDIA component's design (rust/core/media-policy/src/nvidia_component.rs,
-rust/host/src/nvidia_component.rs and rust/windows/src/nvidia_enhance.rs: NVIDIA's files
+rust/host/src/nvidia_component.rs and rust/windows/graphics/src/nvidia_enhance.rs: NVIDIA's files
 trusted by digests in the host and kept apart from the adapter's build, fixed file roles
 in a fixed folder, a check before each load, installed only at the user's request)
 follows its docs/native_sideload_components.md, and the NGX adapter's set-up in rust/truehdr-runtime (NGX's
@@ -127,11 +127,11 @@ ec2676b60bb8220a1807fc761bc2157e5e6dba63: the input formats, 8-bit AYUV written
 through an R8G8B8A8_UINT view and 10-bit as three R16_UINT planes stacked in one
 texture and copied through CUDA (src/nvenc/nvenc_utils.cpp, nvenc_d3d11_native.cpp,
 nvenc_d3d11_on_cuda.cpp, src/platform/windows/display_vram.cpp; rust/core/media-policy/src/nvenc.rs,
-rust/windows/src/gpu_color.rs), the conversion shaders' output layout
+rust/windows/graphics/src/gpu_color.rs), the conversion shaders' output layout
 (src_assets/windows/assets/shaders/directx/include/convert_yuv444_ps_base.hlsl and
-convert_yuv444_planar_vs.hlsl; yuv444_* in rust/windows/src/shaders/color.hlsl), and
+convert_yuv444_planar_vs.hlsl; yuv444_* in rust/windows/abi/src/shaders/color.hlsl), and
 the YUV 4:4:4 capability check (validate_encoder_capabilities in src/nvenc/nvenc_base.cpp;
-rust/windows/src/nvenc.rs). The dscp_tagging switch, on by default, that turns off the
+rust/windows/graphics/src/nvenc.rs). The dscp_tagging switch, on by default, that turns off the
 DSCP marks on video and audio (rust/core/media-policy/src/stream_policy.rs) follows LizardByte
 Sunshine pull request 6067. Copyright (c) LizardByte and the Sunshine contributors, GPL-3.0.
 
@@ -143,7 +143,7 @@ quietvoid, MIT. The MIT terms are included in rust/THIRD_PARTY.md.
 Annex
 
 Restoring the Windows settings that the removed background child-session
-feature changed (rust/core/session/src/child_session.rs, rust/windows/src/child_session.rs,
+feature changed (rust/core/session/src/child_session.rs, rust/windows/io/src/child_session.rs,
 rust/host/src/child_session.rs) is ported from Annex
 (https://github.com/mattxslv/annex), Copyright (c) 2026 mattxslv, MIT licensed,
 with ocr1n's launcher rework (mattxslv/annex#2). The MIT license text is in
@@ -151,7 +151,7 @@ third-party/licenses/annex-LICENSE.txt.
 
 Nucleus Co-op
 
-Background streaming and co-op (rust/core/session/src/nucleus/, rust/windows/src/nucleus/)
+Background streaming and co-op (rust/core/session/src/nucleus/, rust/windows/io/src/nucleus/)
 launch games through Nucleus Co-op (https://github.com/SplitScreen-Me/splitscreenme-nucleus)
 by SplitScreen.Me, GPL-3.0 licensed, which includes ProtoInput by Ilyaki, MIT
 licensed. Rubylight neither bundles nor downloads them: the user downloads
@@ -293,17 +293,17 @@ Steam Controller (2026)
 The virtual Steam Controller is jlobue10's profile in libvirtualgamepad v0.1.0-beta.10
 (https://github.com/Nonary/libvirtualgamepad, MIT), which Rubylight ships as signed in
 Vibepollo 2.0.6. How the host maps a client onto it (rust/core/input-policy/src/steam_pad.rs and the
-Steam Controller paths in rust/windows/src/input/gamepads.rs: the explicit-click flag,
+Steam Controller paths in rust/windows/io/src/input/gamepads.rs: the explicit-click flag,
 split trackpads, haptic and settings forwarding, firmware attributes) follows
 Nonary/Vibepollo 2.0.6's docs/steam_controller.md (GPL-3.0). The wire format is the one
 rubylight_protocol::steam_controller already credits.
 
 DualShock 4 on ViGEmBus
 
-The DualShock 4 on ViGEmBus (rust/windows/src/input/vigem.rs: the report and its
+The DualShock 4 on ViGEmBus (rust/windows/io/src/input/vigem.rs: the report and its
 button, stick, motion, touch and battery conversions, the 100 ms keepalive, the stale
 gyro, the motion re-request and lightbar forwarding without repeats; Back as a touchpad
-click in rust/windows/src/input/gamepads.rs) was ported for Rubylight on 2026-11-14 from
+click in rust/windows/io/src/input/gamepads.rs) was ported for Rubylight on 2026-11-14 from
 Nonary/Vibepollo commit 5e6ed8594184212d429bb093d7fd47904c9a6fa6
 src/platform/windows/input.cpp (GPL-3.0), which carries LizardByte Sunshine's DualShock 4
 emulation (GPL-3.0). Rubylight drives ViGEmBus through its own port of ViGEmClient's
@@ -312,7 +312,7 @@ protocol, credited in rust/THIRD_PARTY.md.
 NVIDIA driver settings
 
 The driver settings keys of NVIDIA's Low Latency Mode and Smooth Motion in
-rust/windows/src/nvidia_settings.rs, which NVIDIA's NvApiDriverSettings.h does not list,
+rust/windows/graphics/src/nvidia_settings.rs, which NVIDIA's NvApiDriverSettings.h does not list,
 are the ones Nonary/Vibepollo (GPL-3.0) writes for them.
 
 NVIDIA RTX Video SDK

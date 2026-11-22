@@ -15,11 +15,11 @@ use butterpollo_media_policy::{
     stream_policy::{SendDrop, SendLoss},
 };
 use butterpollo_session::session::Stats;
-use butterpollo_windows::{
+use butterpollo_win_graphics::{
     encoder::{Encoded, Unit},
     frame_pool,
-    net::{Batch, ReplySocket},
 };
+use butterpollo_win_io::net::{Batch, ReplySocket};
 use std::{cell::Cell, net::SocketAddr, sync::atomic::Ordering, time::Instant};
 
 /// Whether slice delivery is still on for the stream. A frame past its byte

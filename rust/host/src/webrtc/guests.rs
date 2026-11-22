@@ -1150,7 +1150,7 @@ fn start(
             "This browser answered with another sound layout than the host's stream has.".into(),
         ));
     }
-    let link = butterpollo_windows::net::routed_link(peer);
+    let link = butterpollo_win_io::net::routed_link(peer);
     let (configured_kbps, paced, loss_permille) = {
         let config = h.config.read().unwrap();
         (

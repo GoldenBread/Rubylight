@@ -9,15 +9,19 @@ use butterpollo_media_policy::{
     rtsp::Negotiated,
 };
 use butterpollo_session::session::{Preparation, Role, Transport, Warnings};
-use butterpollo_windows::{
-    display::{Guard, Retained},
-    display_arrangement, hdr_profile, limiter, vulkan,
+use butterpollo_win_display::{
+    display::{self, Guard, Retained},
+    display_arrangement, hdr_profile,
 };
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+use butterpollo_win_graphics::{capture::WindowTarget, vulkan};
+use butterpollo_win_io::limiter;
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
-use std::time::Duration;
 mod baseline;
 mod remembered;
 mod scale;
@@ -123,19 +127,17 @@ fn is_second_screen(client: &str) -> bool {
 fn pick_second_monitor<'a>(active: &[(&'a str, bool)], first: Option<&str>) -> Option<&'a str> {
     active
         .iter()
-        .find(|(name, rubylight)| {
-            !rubylight && first.is_none_or(|first| !first.eq_ignore_ascii_case(name))
-        })
-        .map(|(name, _)| *name)
+        .find(|(n, r)| !r && first.is_none_or(|f| !f.eq_ignore_ascii_case(n)))
+        .map(|(n, _)| *n)
 }
 /// [`pick_second_monitor`] on this PC, for the stream whose first screen shows
 /// `configured` (the output setting; empty for the primary monitor, as a physical
 /// stream's display is chosen).
 fn second_monitor(configured: &str) -> Option<String> {
-    let monitors = butterpollo_windows::display::monitors()
+    let monitors = butterpollo_win_display::display::monitors()
         .inspect_err(|error| tracing::warn!(error = %format!("{error:#}"), "the PC's monitors could not be read for the second screen"))
         .ok()?;
-    let active: Vec<String> = butterpollo_windows::capture::displays()
+    let active: Vec<String> = butterpollo_win_graphics::capture::displays()
         .ok()?
         .into_iter()
         .map(|d| d.display_name)
@@ -203,7 +205,7 @@ pub(crate) fn take_retained_display(
         config,
         &launch.client,
         app,
-        butterpollo_windows::display::virtual_display_os(),
+        butterpollo_win_display::display::virtual_display_os(),
     );
     let identity = virtual_display_identity(config, launch, app);
     let game = asked_game_display(h, launch, app, true, mode, &identity).filter(|id| live(id));
@@ -299,7 +301,7 @@ pub(crate) fn record_game_display(h: &Shared, launch: &Launch, display: &Ready) 
     // busy with Windows.
     let current_live = current
         .as_deref()
-        .is_some_and(|id| butterpollo_windows::display::joinable_mode(id).is_some());
+        .is_some_and(|id| butterpollo_win_display::display::joinable_mode(id).is_some());
     if let Some(app) = h
         .current_app
         .lock()
@@ -580,13 +582,13 @@ type AppliedMode = (u32, u32, u32, bool);
 type SizeChange = ((u32, u32), (u32, u32));
 
 fn applied_mode(output: &str) -> Result<AppliedMode> {
-    let topology = butterpollo_windows::display::Topology::query()?;
+    let topology = butterpollo_win_display::display::Topology::query()?;
     let monitor = topology
         .monitors()
         .into_iter()
         .find(|m| m.matches(output))
         .context("selected display missing after preparation")?;
-    let mode = butterpollo_windows::display::mode(output)?;
+    let mode = butterpollo_win_display::display::mode(output)?;
     let refresh = topology.refresh(&monitor.device_id)?;
     Ok((
         mode.dmPelsWidth,
@@ -991,8 +993,8 @@ impl Prepared {
     /// Log what the display layer and Windows report, with the console state
     /// and idle time that explain a display Windows switched off.
     fn log_display_diagnostics(&mut self, stage: &str) {
-        let secure = butterpollo_windows::input::secure_desktop_shown();
-        let idle = butterpollo_windows::wake::idle_seconds().ok();
+        let secure = butterpollo_win_io::input::secure_desktop_shown();
+        let idle = butterpollo_win_io::wake::idle_seconds().ok();
         match self
             .display
             .as_mut()
@@ -1059,7 +1061,7 @@ impl Ready {
                 while !worker_stop.load(Ordering::Acquire) {
                     // Windows refuses display configuration from the normal
                     // desktop while it is locked (issue #6).
-                    butterpollo_windows::input::keep_on_input_desktop();
+                    butterpollo_win_io::input::keep_on_input_desktop();
                     let mut prepared = worker_state.lock().unwrap();
                     let active = worker_active.load(Ordering::Acquire) != 0;
                     let result = prepared.feed(active);
@@ -1217,7 +1219,7 @@ impl Ready {
         let limiter = limiter::Lease::acquire(directory, config, &framegen)?;
         // Windows can refuse the layout after the PC sat idle as it does a launch's.
         retry_refused_layout(|| {
-            butterpollo_windows::input::on_input_desktop(|| -> Result<()> {
+            butterpollo_win_io::input::on_input_desktop(|| -> Result<()> {
                 let mut prepared = self._state.lock().unwrap();
                 // A paused stream leaves local display changes alone. Resuming
                 // must reactivate its target and restore the layout before capture.
@@ -1291,7 +1293,7 @@ impl Ready {
         let state: &mut Prepared = &mut prepared;
         // The new profile is applied before the old one is let go; a refusal keeps the old
         // lease and fails the resume, which a stream without its profile would not.
-        let applied = butterpollo_windows::input::on_input_desktop(|| {
+        let applied = butterpollo_win_io::input::on_input_desktop(|| {
             take_profile(
                 &mut state._profile,
                 profile.as_deref(),
@@ -1694,12 +1696,12 @@ fn frame_policy(
     // provider it would apply nothing and say so on every launch, so it stays off and the
     // display's refresh paces the game (Virtual display refresh); the host says once per
     // run what to install. A cap the user asked for stays and fails visibly on the card.
-    let provider = butterpollo_windows::limiter::provider_usable(config);
+    let provider = butterpollo_win_io::limiter::provider_usable(config);
     if !provider
         && framegen.follows_display
         && framegen.provider != butterpollo_media_policy::framegen::Provider::Rtss
     {
-        butterpollo_windows::limiter::warn_automatic_cap_needs_rtss_once(config);
+        butterpollo_win_io::limiter::warn_automatic_cap_needs_rtss_once(config);
     }
     framegen = framegen.with_provider_available(provider);
     if framegen.enabled {
@@ -1711,7 +1713,7 @@ fn frame_policy(
 /// Whether the GPU this host streams with is NVIDIA's, for RTSS's Reflex mode.
 #[cfg(not(any(test, feature = "test-harness")))]
 fn streams_on_nvidia(config: &Config) -> bool {
-    butterpollo_windows::capture::stream_gpu_vendor(config)
+    butterpollo_win_graphics::capture::stream_gpu_vendor(config)
         .is_some_and(butterpollo_media_policy::encoder_gpu::is_nvidia)
 }
 /// Tests stream on no NVIDIA GPU.
@@ -1795,7 +1797,7 @@ impl Prepared {
             return Ok(());
         };
         let Some(size) = follow_turn(display, follow, to, || {
-            butterpollo_windows::display::stream_display_rotation(&output)
+            butterpollo_win_display::display::stream_display_rotation(&output)
         })?
         else {
             return Ok(());
@@ -1852,7 +1854,7 @@ impl Prepared {
                 &self.output,
                 self.recovery_scale,
                 self.recovery_dimensions,
-                butterpollo_windows::display::virtual_scale,
+                butterpollo_win_display::display::virtual_scale,
             )?;
             if let Some(arrangement) = &self._arrangement {
                 self.lay_out_again(arrangement)?;
@@ -1900,7 +1902,7 @@ impl Prepared {
             match processes {
                 Ok(processes) => {
                     for pid in processes {
-                        if butterpollo_windows::lossless::restore_minimized(pid, &before) {
+                        if butterpollo_win_io::lossless::restore_minimized(pid, &before) {
                             tracing::info!(
                                 pid,
                                 "brought back the game's window Windows minimised when a display left"
@@ -1992,8 +1994,8 @@ impl Prepared {
         }
         // Windows recalls its own layout after the lock screen, a UAC prompt
         // or a session switch: a display back on then is not coming back.
-        let secure = butterpollo_windows::input::secure_desktop_shown();
-        let session = butterpollo_windows::process::console_session();
+        let secure = butterpollo_win_io::input::secure_desktop_shown();
+        let session = butterpollo_win_io::process::console_session();
         let session_changed = self
             .console_session
             .replace(session)
@@ -2145,7 +2147,7 @@ impl Prepared {
         }
         // A display that arrived or left changes the count: Windows rearranges the desktop
         // then, and the primary can follow its choice rather than this stream's.
-        let displays_changed = match butterpollo_windows::display::active_displays() {
+        let displays_changed = match butterpollo_win_display::display::active_displays() {
             Ok(count) => self
                 .displays_seen
                 .replace(count)
@@ -2160,7 +2162,7 @@ impl Prepared {
         {
             self.primary_watch.changed(PrimaryChange::Display, now);
         }
-        let shown = match butterpollo_windows::display::shown_primary(&self.output) {
+        let shown = match butterpollo_win_display::display::shown_primary(&self.output) {
             Ok(shown) => shown,
             Err(error) => {
                 tracing::debug!(error = %format!("{error:#}"), "the primary display could not be read");
@@ -2204,7 +2206,7 @@ impl Prepared {
             Ok(()) => {
                 // Windows accepted the layout; whether it moved the primary is the look after
                 // it. A layout that changed nothing is a failure, not a restore.
-                let after = butterpollo_windows::display::shown_primary(&self.output);
+                let after = butterpollo_win_display::display::shown_primary(&self.output);
                 if Self::primary_taken_back(&after) {
                     self.shown_primary = Some(true);
                     let stopped = self.primary_watch.restored(now);
@@ -2259,7 +2261,7 @@ impl Prepared {
         // An off console display makes an IddCx path commit inactive and
         // assign no swap chain, so the first frame never comes. Wake it when
         // the user has been idle, as a client's first mouse move does.
-        butterpollo_windows::wake::wake_console_if_idle("launch");
+        butterpollo_win_io::wake::wake_console_if_idle("launch");
         let app = crate::stream::launch_app(h, launch);
         let output_override = app
             .as_ref()
@@ -2299,7 +2301,7 @@ impl Prepared {
             config,
             &launch.client,
             app.as_ref(),
-            butterpollo_windows::display::virtual_display_os(),
+            butterpollo_win_display::display::virtual_display_os(),
         );
         let client_virtual = launch
             .options
@@ -2331,8 +2333,8 @@ impl Prepared {
             headless: false,
         };
         if !physical_only && !display_request.requested() {
-            display_request.headless =
-                butterpollo_windows::capture::displays().is_ok_and(|displays| displays.is_empty());
+            display_request.headless = butterpollo_win_graphics::capture::displays()
+                .is_ok_and(|displays| displays.is_empty());
             if display_request.headless {
                 tracing::info!(
                     "no display is active; this stream uses a virtual display although the settings or the client turn it off"
@@ -2341,7 +2343,7 @@ impl Prepared {
         }
         let virtual_mode = display_request.uses_virtual(
             physical_only,
-            butterpollo_windows::display::ensure_virtual_display_available,
+            butterpollo_win_display::display::ensure_virtual_display_available,
         );
         // A device's second screen shows another monitor than its first one, which
         // would otherwise show both screens the same picture.
@@ -2376,9 +2378,9 @@ impl Prepared {
             launch.warnings.set("display_virtual", "Windows was locked and the virtual display could not be set up there, so this stream shows the physical display. Start the stream again after signing in to use the virtual display.");
         } else if display_request.requested()
             && !virtual_mode
-            && let Some(reason) = butterpollo_session::os_gate::missing(
-                butterpollo_windows::display::windows_build(),
-                butterpollo_session::os_gate::Feature::VirtualDisplay,
+            && let Some(reason) = butterpollo_media_policy::os_gate::missing(
+                butterpollo_win_display::display::windows_build(),
+                butterpollo_media_policy::os_gate::Feature::VirtualDisplay,
             )
         {
             launch.warnings.set("display_virtual", format!("Using the physical display because this Windows cannot load the virtual display driver. {reason} Update to Windows 11 23H2 or later to use a virtual display."));
@@ -2417,8 +2419,7 @@ impl Prepared {
         // own would show this device an empty desktop.
         let joined_id = asked_game_display(h, launch, app.as_ref(), virtual_mode, mode, &shared_id);
         // Gone with its last stream: this stream makes its own, as usual.
-        let joined = joined_id
-            .and_then(|id| butterpollo_windows::display::joinable_mode(&id).map(|mode| (id, mode)));
+        let joined = joined_id.and_then(|id| display::joinable_mode(&id).map(|mode| (id, mode)));
         let joined_mode = joined.as_ref().map(|(_, mode)| *mode);
         let shares = mode == "shared" || joined.is_some();
         let shared_id = joined.map_or(shared_id, |(id, _)| id);
@@ -2533,7 +2534,7 @@ impl Prepared {
                 config,
                 (display_width, display_height),
                 request.resolution,
-                || butterpollo_windows::display::stream_display_rotation(output),
+                || butterpollo_win_display::display::stream_display_rotation(output),
             )?
         } else {
             PhysicalTurn {
@@ -2544,12 +2545,12 @@ impl Prepared {
         };
         if request.prefer_highest && !virtual_mode {
             request.refresh =
-                Some(butterpollo_windows::display::highest_refresh(output, turn.before)?.0);
+                Some(butterpollo_win_display::display::highest_refresh(output, turn.before)?.0);
         }
-        let virtual_options = butterpollo_windows::display::VirtualOptions {
+        let virtual_options = butterpollo_win_display::display::VirtualOptions {
             peak_nits: config.integer("hdr_peak_brightness", 1000).clamp(400, 2000) as u32,
             render_adapter: if virtual_mode {
-                butterpollo_windows::display::configured_render_adapter(config)
+                crate::win_bridge::configured_render_adapter(config)
             } else {
                 None
             },
@@ -2559,7 +2560,7 @@ impl Prepared {
         // display exists: Windows can switch other displays on or off, change
         // the primary or retime one when it arrives.
         let original = if virtual_mode && retained.is_none() && launch.role == Role::Stream {
-            butterpollo_windows::display::Snapshot::capture()
+            butterpollo_win_display::display::Snapshot::capture()
                 .inspect_err(|error| {
                     tracing::warn!(error = %format!("{error:#}"), "display layout before the virtual display could not be read")
                 })
@@ -2625,7 +2626,7 @@ impl Prepared {
             &launch.options,
             changes.scale,
             remember && display.is_some(),
-            || butterpollo_windows::display::largest_scale(&output),
+            || butterpollo_win_display::display::largest_scale(&output),
         )?;
         // Without a configured scale, the one the device kept from Windows.
         let remembered = kept_scale(remember, &launch.client.extra);
@@ -2636,8 +2637,8 @@ impl Prepared {
             remembered,
             (width, height),
             setup.learns,
-            butterpollo_windows::display::virtual_scale,
-            butterpollo_windows::display::output_scale,
+            butterpollo_win_display::display::virtual_scale,
+            butterpollo_win_display::display::output_scale,
         )?;
         match setup.warning(scale) {
             Some(warning) => launch.warnings.set("display_scale", warning),
@@ -2746,7 +2747,7 @@ impl Prepared {
         {
             true
         } else {
-            match butterpollo_windows::display::monitors() {
+            match butterpollo_win_display::display::monitors() {
                 Ok(monitors) => {
                     let active: Vec<_> = monitors
                         .into_iter()
@@ -2915,7 +2916,7 @@ impl Prepared {
 impl Drop for Prepared {
     fn drop(&mut self) {
         // A stream ending while Windows is locked restores the layout too.
-        butterpollo_windows::input::on_input_desktop(|| {
+        butterpollo_win_io::input::on_input_desktop(|| {
             self._profile.take();
             // In this order, after the layout: the display can outlast the end
             // for as long as a monitor it woke needs it, and the rest with it.
@@ -2972,7 +2973,7 @@ pub fn retime(
     let app = crate::stream::launch_app(h, launch);
     let (framegen, device_mode) =
         frame_policy(app.as_ref(), launch, stream, config, virtual_mode || joined)?;
-    let raised = butterpollo_windows::input::on_input_desktop(|| -> Result<Raise> {
+    let raised = butterpollo_win_io::input::on_input_desktop(|| -> Result<Raise> {
         let mut prepared = display._state.lock().unwrap();
         if !prepared.joined
             && (!prepared.virtual_mode
@@ -3137,13 +3138,13 @@ pub fn prepare_stream(
         );
     }
     let prepare = |physical_only: bool| {
-        butterpollo_windows::input::on_input_desktop(|| {
+        butterpollo_win_io::input::on_input_desktop(|| {
             Ready::prepare(Prepared::create(h, launch, stream, config, physical_only)?)
         })
     };
     let prepared = retry_refused_layout(|| prepare(false));
     match prepared {
-        Err(error) if butterpollo_windows::input::secure_desktop_shown() => {
+        Err(error) if butterpollo_win_io::input::secure_desktop_shown() => {
             tracing::warn!(error = %format!("{error:#}"), "stream display could not be prepared while Windows is locked; trying the physical display");
             prepare(true).map_err(|fallback| {
                 tracing::warn!(error = %format!("{fallback:#}"), "physical display could not be prepared either");
@@ -3172,7 +3173,7 @@ fn retry_refused<T>(
         Err(error) if refused(&error) && !secure() => {
             tracing::warn!(
                 error = %format!("{error:#}"),
-                input_desktop = ?butterpollo_windows::input::input_desktop_name(),
+                input_desktop = ?butterpollo_win_io::input::input_desktop_name(),
                 "Windows refused the stream display's layout to this desktop; trying again"
             );
             wait();
@@ -3187,8 +3188,8 @@ fn retry_refused<T>(
 fn retry_refused_layout<T>(attempt: impl FnMut() -> Result<T>) -> Result<T> {
     retry_refused(
         attempt,
-        butterpollo_windows::input::desktop_refused,
-        butterpollo_windows::input::secure_desktop_shown,
+        butterpollo_win_io::input::desktop_refused,
+        butterpollo_win_io::input::secure_desktop_shown,
         || std::thread::sleep(DESKTOP_REFUSED_RETRY),
     )
 }
@@ -3200,11 +3201,9 @@ fn retry_refused_layout<T>(attempt: impl FnMut() -> Result<T>) -> Result<T> {
 /// a display, and a window that closes fails the capture loudly. The target
 /// must name the window's process: a handle written into the settings outlives
 /// its window, and Windows gives it to the next one.
-fn configured_window(
-    config: &Config,
-) -> Result<Option<butterpollo_windows::capture::WindowTarget>> {
+fn configured_window(config: &Config) -> Result<Option<WindowTarget>> {
     let output = config.get("output_name", "").trim();
-    let target = butterpollo_windows::capture::WindowTarget::parse(output)
+    let target = WindowTarget::parse(output)
         .context("output_name is neither a display nor a window:<hwnd>/<pid>@<display> target")?;
     if let Some(target) = &target {
         anyhow::ensure!(
@@ -3217,8 +3216,8 @@ fn configured_window(
 
 /// A closed, minimised, reused or misplaced configured window refuses the
 /// stream with the reason.
-fn configured_window_open(target: &butterpollo_windows::capture::WindowTarget) -> Result<()> {
-    butterpollo_windows::capture::check_window(target)
+fn configured_window_open(target: &WindowTarget) -> Result<()> {
+    butterpollo_win_graphics::capture::check_window(target)
         .with_context(|| format!("output_name names the window {target}, which cannot be streamed"))
 }
 

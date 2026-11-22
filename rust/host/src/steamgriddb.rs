@@ -201,8 +201,8 @@ pub fn store_key(h: &Shared, key: Option<&str>) -> Result<()> {
             let created = !folder.is_dir();
             std::fs::create_dir_all(folder)?;
             if created
-                && butterpollo_windows::process::is_system()
-                && let Err(error) = butterpollo_windows::process::restrict_to_administrators(folder)
+                && butterpollo_win_io::process::is_system()
+                && let Err(error) = butterpollo_win_io::process::restrict_to_administrators(folder)
             {
                 tracing::warn!(%error, "the credentials folder could not be kept to administrators");
             }
@@ -227,7 +227,7 @@ fn as_system() -> bool {
     #[cfg(test)]
     return AS_SYSTEM.with(std::cell::Cell::get);
     #[cfg(not(test))]
-    butterpollo_windows::process::is_system()
+    butterpollo_win_io::process::is_system()
 }
 
 /// When the host runs as SYSTEM, a key typed into `sunshine.conf` by hand (`config`) moves to the
@@ -601,8 +601,10 @@ fn save(http: &dyn Http, folder: &Path, uuid: &str, url: &str) -> Result<()> {
     std::fs::create_dir_all(folder)?;
     let download = folder.join(format!("sgdb_{uuid}.download"));
     butterpollo_session::state::atomic_write(&download, &reply.body)?;
-    let converted =
-        butterpollo_windows::image::to_png(&download, &folder.join(format!("sgdb_{uuid}.png")));
+    let converted = butterpollo_win_graphics::image::to_png(
+        &download,
+        &folder.join(format!("sgdb_{uuid}.png")),
+    );
     let _ = std::fs::remove_file(&download);
     converted?;
     let _ = std::fs::remove_file(folder.join(format!("sgdb_{uuid}.failed")));

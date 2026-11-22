@@ -7,7 +7,8 @@ use butterpollo_media_policy::{
     audio_passthrough::{self, Codec},
     rtsp::Negotiated,
 };
-use butterpollo_windows::{audio::Opus, ffmpeg::Ac3Encoder};
+use butterpollo_win_graphics::ffmpeg::Ac3Encoder;
+use butterpollo_win_io::audio::Opus;
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},

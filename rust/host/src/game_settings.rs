@@ -59,7 +59,7 @@ const ACCESS: game_files::Access = if cfg!(test) {
 
 #[cfg_attr(test, allow(dead_code))]
 fn as_user(work: &mut dyn FnMut()) -> std::io::Result<()> {
-    butterpollo_windows::user_folder::as_user(work)
+    butterpollo_win_io::user_folder::as_user(work)
         .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
@@ -123,7 +123,7 @@ fn still_running(processes: &[Watched]) -> Option<String> {
     }
     #[cfg(not(test))]
     {
-        use butterpollo_windows::process;
+        use butterpollo_win_io::process;
         // Read once, only when a process cannot be opened (anti-cheat denies the query).
         let mut listed: Option<Option<BTreeSet<u32>>> = None;
         processes
@@ -362,7 +362,7 @@ pub fn launching(
 
 /// Whether the host runs as the service at the sign-in screen, with no user to act as.
 fn nobody_signed_in() -> bool {
-    use butterpollo_windows::process;
+    use butterpollo_win_io::process;
     process::is_system() && !process::user_signed_in()
 }
 
@@ -460,7 +460,7 @@ pub fn expanded(app: &App) -> Vec<PathBuf> {
     #[cfg(test)]
     let environment: BTreeMap<String, String> = std::env::vars().collect();
     #[cfg(not(test))]
-    let environment = butterpollo_windows::process::user_environment().unwrap_or_default();
+    let environment = butterpollo_win_io::process::user_environment().unwrap_or_default();
     written
         .iter()
         .filter_map(|path| {

@@ -9,7 +9,7 @@
 //! files in it against the digests compiled into the host. Staged files
 //! become the component only after every check, and the record naming them
 //! is written last. Before each load the host checks them all again
-//! ([`butterpollo_windows::nvidia_enhance::load`]).
+//! ([`butterpollo_win_graphics::nvidia_enhance::load`]).
 //!
 //! A host update finds the earlier version's adapter: it keeps using it (the
 //! ABI check refuses one it cannot speak) and fetches its own in the
@@ -22,8 +22,8 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use butterpollo_media_policy::nvidia_component::{
     self as pins, ADAPTER, NGX_DATA, Pinned, RECORD, Record,
 };
-use butterpollo_windows::nvidia_enhance::{self as loader, Component};
-use butterpollo_windows::process::Hold;
+use butterpollo_win_graphics::nvidia_enhance::{self as loader, Component};
+use butterpollo_win_io::process::Hold;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -81,7 +81,7 @@ fn elevated() -> bool {
     if cfg!(test) {
         return false;
     }
-    butterpollo_windows::process::elevated().unwrap_or(true)
+    butterpollo_win_io::process::elevated().unwrap_or(true)
 }
 
 /// The host's own folder above the component root: `%ProgramData%\Butterpollo`
@@ -158,7 +158,7 @@ fn ensure_root(root: &Path) -> Result<()> {
         return Ok(());
     }
     if elevated() {
-        match butterpollo_windows::process::create_folder_administrators_readable(root) {
+        match butterpollo_win_io::process::create_folder_administrators_readable(root) {
             Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
                 return Err(e).with_context(|| format!("cannot create {}", root.display()));
             }
@@ -198,7 +198,7 @@ pub fn component_for(profile: &Path) -> Result<Component> {
         folder,
         adapter_sha256: record.adapter_sha256,
         data: root.join(NGX_DATA),
-        hold,
+        hold: std::sync::Arc::new(hold),
     })
 }
 
