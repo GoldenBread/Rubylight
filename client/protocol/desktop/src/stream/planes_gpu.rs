@@ -380,17 +380,16 @@ impl PlanesPass {
             return Err("the plane pass was made for the decoder's images, not CPU planes".into());
         }
         let bytes = [0, 1, 2].map(|plane| self.plane_bytes(plane));
+        let fill = |mapped: *mut u8, offsets: [usize; 3]| {
+            lease.with_buffers(|buffers| {
+                for (plane, buffer) in buffers.iter().enumerate() {
+                    // SAFETY: `mapped` holds at least `offsets[plane] + bytes[plane]` bytes and `buffer` holds `bytes[plane]`.
+                    unsafe { ptr::copy_nonoverlapping(buffer.as_ptr(), mapped.add(offsets[plane]), bytes[plane]); }
+                }
+            });
+        };
         // SAFETY: Caller guarantees `renderer` and `target` are live; `draw_with` maps `transfer` for `bytes`.
-        unsafe {
-            self.draw_with(renderer, target, parameters, Some(stages), |mapped, offsets| {
-                lease.with_buffers(|buffers| {
-                    for (plane, buffer) in buffers.iter().enumerate() {
-                        // SAFETY: `mapped` holds at least `offsets[plane] + bytes[plane]` bytes and `buffer` holds `bytes[plane]`.
-                        unsafe { ptr::copy_nonoverlapping(buffer.as_ptr(), mapped.add(offsets[plane]), bytes[plane]); }
-                    }
-                });
-            })
-        }
+        unsafe { self.draw_with(renderer, target, parameters, Some(stages), fill) }
     }
 
     /// `draw` for a set in the decoder's images: copies it into the plane textures on the GPU,
@@ -479,7 +478,7 @@ impl PlanesPass {
                     };
                     match state {
                         Ok(state) if !failed => {
-                            if sampled { if let Some(wrapped) = self.wrapped.as_mut() { wrapped.states.push(state); } }
+                            if sampled && let Some(wrapped) = self.wrapped.as_mut() { wrapped.states.push(state); }
                         }
                         outcome => {
                             let error = outcome.err().unwrap_or_else(crate::sdl::error);
@@ -536,13 +535,12 @@ impl PlanesPass {
             return Err(format!("plane {plane} of the picture is missing"));
         }
         let (sizes, sample_bytes) = (self.sizes, self.sample_bytes);
+        let fill = |mapped, offsets| {
+            // SAFETY: `info` matches `sizes` and `mapped` holds the packed planes at `offsets`.
+            unsafe { fill_planes(info, sizes, sample_bytes, mapped, offsets); }
+        };
         // SAFETY: Caller guarantees `renderer`, `target`, and `info` are live and match `sizes`.
-        unsafe {
-            self.draw_with(renderer, target, parameters, None, |mapped, offsets| {
-                // SAFETY: `info` matches `sizes` and `mapped` holds the packed planes at `offsets`.
-                unsafe { fill_planes(info, sizes, sample_bytes, mapped, offsets); }
-            })
-        }
+        unsafe { self.draw_with(renderer, target, parameters, None, fill) }
     }
 
     /// The bytes of plane `plane` in the transfer buffer (tightly packed rows).

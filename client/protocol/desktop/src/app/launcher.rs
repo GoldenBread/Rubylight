@@ -161,11 +161,11 @@ impl App {
             if SDL_EventType(event.r#type) != SDL_EVENT_DROP_FILE || event.drop.data.is_null() {
                 return false;
             }
-            if let Ok(url) = std::ffi::CStr::from_ptr(event.drop.data).to_str() {
-                if cli::is_link(url) {
-                    self.links.put(url.to_owned());
-                    return true;
-                }
+            if let Ok(url) = std::ffi::CStr::from_ptr(event.drop.data).to_str()
+                && cli::is_link(url)
+            {
+                self.links.put(url.to_owned());
+                return true;
             }
         }
         false

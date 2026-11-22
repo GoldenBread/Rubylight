@@ -495,15 +495,15 @@ mod linux {
             }
             let device = device as *mut c_void;
             let extensions = owned(query_device(device, EGL_EXTENSIONS));
-            if listed(&extensions, "EGL_EXT_device_drm_render_node") {
-                if let Some(path) = owned(query_device(device, EGL_DRM_RENDER_NODE_FILE_EXT)) {
-                    return render_node_minor(&path).ok_or_else(|| format!("EGL names {path}, not a render node"));
-                }
+            if listed(&extensions, "EGL_EXT_device_drm_render_node")
+                && let Some(path) = owned(query_device(device, EGL_DRM_RENDER_NODE_FILE_EXT))
+            {
+                return render_node_minor(&path).ok_or_else(|| format!("EGL names {path}, not a render node"));
             }
-            if listed(&extensions, "EGL_EXT_device_drm") {
-                if let Some(card) = owned(query_device(device, EGL_DRM_DEVICE_FILE_EXT)) {
-                    return card_render_node(&card);
-                }
+            if listed(&extensions, "EGL_EXT_device_drm")
+                && let Some(card) = owned(query_device(device, EGL_DRM_DEVICE_FILE_EXT))
+            {
+                return card_render_node(&card);
             }
             Err(format!("the display's EGL device names no DRM node ({})", extensions.as_deref().unwrap_or("no device extensions")))
         }

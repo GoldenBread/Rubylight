@@ -87,10 +87,10 @@ fn decode(hardware: media::Hardware, codec: media::Codec, data: &[u8], ten_bit: 
     let pictures = media::Pictures { ten_bit, chroma444: false, packed: true, waiting: 0, vaapi_node: media::vaapi_node(hardware), width: 128, height: 128 };
     let mut decoder = media::VideoDecoder::open_first(codec, pictures, hardware, true, |_, _| {})?;
     #[cfg(target_os = "linux")]
-    if let media::Hardware::Auto(gpu, _) = hardware {
-        if !gpu.is_null() {
-            decoder.map_to_vulkan(gpu);
-        }
+    if let media::Hardware::Auto(gpu, _) = hardware
+        && !gpu.is_null()
+    {
+        decoder.map_to_vulkan(gpu);
     }
     let status = decoder.send(data, 0);
     if status < 0 {

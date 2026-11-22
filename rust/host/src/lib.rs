@@ -28,6 +28,9 @@ pub mod native_api;
 mod native_api;
 mod network;
 mod network_path;
+#[cfg(any(test, feature = "test-harness"))]
+pub mod neural;
+#[cfg(not(any(test, feature = "test-harness")))]
 mod neural;
 mod nucleus;
 #[cfg(any(test, feature = "test-harness"))]

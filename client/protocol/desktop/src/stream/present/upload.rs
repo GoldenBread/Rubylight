@@ -388,13 +388,12 @@ impl VideoTexture {
                         // FFmpeg keeps the CVPixelBufferRef in AVFrame.data[3]. Keep the
                         // frame (and thus its pool slot) alive for the displayed texture.
                         let buffer: *mut c_void = frame.raw.as_ref().data[3].cast();
-                        if !buffer.is_null() {
-                            if let Some(held) = frame.reference() {
-                                if self.ensure_with(renderer, format, w, h, space, white_level, None, buffer) {
-                                    self.held = Some(held);
-                                    return true;
-                                }
-                            }
+                        if !buffer.is_null()
+                            && let Some(held) = frame.reference()
+                            && self.ensure_with(renderer, format, w, h, space, white_level, None, buffer)
+                        {
+                            self.held = Some(held);
+                            return true;
                         }
                     }
                     // An SDL renderer without IOSurface import can still display the frame.

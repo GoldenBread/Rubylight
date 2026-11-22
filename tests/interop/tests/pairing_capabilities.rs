@@ -421,6 +421,13 @@ fn expected(feature: Feature) -> Availability {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nightjar_knows_every_capability_the_host_advertises() -> Result<()> {
     let h = Harness::new(10_000, 1).await?;
+    // Seed an AMD GPU so GPU-less CI runners exercise host neural frame generation advertisement.
+    *h.h.neural.adapters.lock().unwrap() = Some(vec![butterpollo_core::neural::Adapter {
+        name: "AMD Radeon 780M Graphics".into(),
+        luid: 1,
+        vendor: butterpollo_core::neural::AMD,
+        device: 0x1900,
+    }]);
     let suspends = Arc::new(Suspends::default());
     h.h.power.set_backend(suspends.clone());
     let client = device(&h, u32::MAX, &[("allow_sleep", true)])?;

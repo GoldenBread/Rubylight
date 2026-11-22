@@ -88,7 +88,7 @@ pub struct Neural {
     #[cfg(test)]
     pub streams: Mutex<Option<neural::Adapter>>,
     /// A test's GPUs in place of this PC's; the streaming GPU alone if none.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub adapters: Mutex<Option<Vec<neural::Adapter>>>,
     /// A test's missing Visual C++ runtime files in place of this PC's.
     #[cfg(test)]
@@ -650,7 +650,15 @@ fn game_folder_with(app: &App, command: Option<PathBuf>) -> Option<PathBuf> {
 /// setting's, or the one that drives the display it streams), or why it
 /// can't be found, and every hardware GPU of the PC, that one among them.
 #[cfg(not(test))]
-fn gpus_with(_: &Shared, setting: &GpuSetting) -> Result<StreamsAmong, String> {
+fn gpus_with(h: &Shared, setting: &GpuSetting) -> Result<StreamsAmong, String> {
+    #[cfg(feature = "test-harness")]
+    if let Some(adapters) = h.neural.adapters.lock().unwrap().clone() {
+        let streams = adapters
+            .first()
+            .cloned()
+            .ok_or_else(|| "no GPU in this test".to_string());
+        return Ok((streams, adapters));
+    }
     let [display, adapter_name, pnp_id] = setting;
     let stream_gpu = butterpollo_windows::capture::stream_gpu(display, adapter_name, pnp_id)
         .map_err(|e| format!("the GPU Rubylight streams with can't be found: {e:#}"));

@@ -606,12 +606,12 @@ unsafe extern "C" fn select_format(
                         eprintln!("nightjar: the decoder's textures cannot be made readable ({reason}); its pictures are copied instead");
                     }
                 #[cfg(unix)]
-                if let Some(pictures) = wanted.vulkan {
-                    if let Err(reason) = crate::vulkan_video::frames_context(context, pictures) {
-                        // The decoder then says it was refused, and the stream opens the next backend.
-                        eprintln!("nightjar: Vulkan video cannot decode into the presenter's format: {reason}");
-                        break;
-                    }
+                if let Some(pictures) = wanted.vulkan
+                    && let Err(reason) = crate::vulkan_video::frames_context(context, pictures)
+                {
+                    // The decoder then says it was refused, and the stream opens the next backend.
+                    eprintln!("nightjar: Vulkan video cannot decode into the presenter's format: {reason}");
+                    break;
                 }
                 return *next;
             }

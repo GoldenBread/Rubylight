@@ -1768,14 +1768,14 @@ mod wayland {
             // SAFETY: objects of our connection, destroyed in Drop.
             unsafe {
                 probe.seen.preferred = probe.read_preferred();
-                if probe.seen.globals.dmabuf >= 4 {
-                    if let Some(dmabuf) = probe.conn.bind(&DMABUF_IF.0, 4) {
-                        probe.dmabuf = dmabuf;
-                        probe.conn.listen(dmabuf, &DMABUF_LISTENER, null_mut());
-                        let proxy = (probe.conn.api.marshal_flags)(dmabuf, DMABUF_GET_SURFACE_FEEDBACK, &DMABUF_FEEDBACK_IF.0, 4, 0, null_mut::<c_void>(), probe.conn.surface);
-                        probe.feedback = Object::new(&probe.conn, proxy, &DMABUF_FEEDBACK_LISTENER);
-                        probe.conn.roundtrip();
-                    }
+                if probe.seen.globals.dmabuf >= 4
+                    && let Some(dmabuf) = probe.conn.bind(&DMABUF_IF.0, 4)
+                {
+                    probe.dmabuf = dmabuf;
+                    probe.conn.listen(dmabuf, &DMABUF_LISTENER, null_mut());
+                    let proxy = (probe.conn.api.marshal_flags)(dmabuf, DMABUF_GET_SURFACE_FEEDBACK, &DMABUF_FEEDBACK_IF.0, 4, 0, null_mut::<c_void>(), probe.conn.surface);
+                    probe.feedback = Object::new(&probe.conn, proxy, &DMABUF_FEEDBACK_LISTENER);
+                    probe.conn.roundtrip();
                 }
             }
             probe.sync();

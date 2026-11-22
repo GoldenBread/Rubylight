@@ -552,8 +552,10 @@ pub(crate) mod wayland {
         pub fn request(&mut self, frame: u32, ready_us: u64, now_us: u64) {
             // The poll before the present read what had arrived; only a full queue reads again.
             if self.pending.len() >= MAX_PENDING { self.pump(now_us); }
-            if self.pending.len() >= MAX_PENDING {
-                if let Some(oldest) = self.pending.pop_front() { self.finish(oldest, Some(Outcome::Unanswered)); }
+            if self.pending.len() >= MAX_PENDING
+                && let Some(oldest) = self.pending.pop_front()
+            {
+                self.finish(oldest, Some(Outcome::Unanswered));
             }
             let Some(requested_ns) = clock_ns(self.clock) else { return };
             // The slots are as many as the requests allowed in flight, so one is free here.

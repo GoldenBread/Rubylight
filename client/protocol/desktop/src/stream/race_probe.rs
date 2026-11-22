@@ -703,10 +703,10 @@ impl RaceProbe {
             let reading = reader(&display);
             if let Ok(mut slot) = slot.lock() { *slot = Some((generation, reading)); }
         });
-        if let Err(error) = spawned {
-            if let Ok(mut slot) = self.drm_slot.lock() {
-                *slot = Some((generation, super::drm_vrr::Reading::Unknown(format!("could not start the read: {error}"))));
-            }
+        if let Err(error) = spawned
+            && let Ok(mut slot) = self.drm_slot.lock()
+        {
+            *slot = Some((generation, super::drm_vrr::Reading::Unknown(format!("could not start the read: {error}"))));
         }
     }
 

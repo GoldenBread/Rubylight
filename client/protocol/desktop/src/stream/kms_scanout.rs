@@ -815,10 +815,10 @@ impl Scanout {
         }
         let Some(mut engaged) = self.engaged.take() else { return };
         let sets: Vec<(u32, u32, u64)> = std::mem::take(&mut engaged.restore);
-        if !sets.is_empty() {
-            if let Err(e) = self.card.commit(&sets, drm::ATOMIC_ALLOW_MODESET) {
-                eprintln!("nightjar: kms: the display's state before the stream could not be put back: {e}");
-            }
+        if !sets.is_empty()
+            && let Err(e) = self.card.commit(&sets, drm::ATOMIC_ALLOW_MODESET)
+        {
+            eprintln!("nightjar: kms: the display's state before the stream could not be put back: {e}");
         }
         // Off the screen now: the decoder may have its surface back.
         engaged.on_screen = None;

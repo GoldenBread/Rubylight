@@ -975,10 +975,10 @@ pub fn dll_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     // In Nightjar.app the libraries sit in Contents/Frameworks, beside the executable's folder.
     #[cfg(target_os = "macos")]
-    if let Some(frameworks) = exe.parent().and_then(Path::parent).map(|contents| contents.join("Frameworks").join(DLL_NAME)) {
-        if frameworks.is_file() {
-            return Some(frameworks);
-        }
+    if let Some(frameworks) = exe.parent().and_then(Path::parent).map(|contents| contents.join("Frameworks").join(DLL_NAME))
+        && frameworks.is_file()
+    {
+        return Some(frameworks);
     }
     Some(exe.parent()?.join(DLL_NAME))
 }

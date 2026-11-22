@@ -294,10 +294,10 @@ fn panel_pixels(id: SDL_DisplayID) -> Option<(u32, u32)> {
     type Read = Option<(SDL_DisplayID, Option<(u32, u32)>)>;
     static PANEL: std::sync::Mutex<Read> = std::sync::Mutex::new(None);
     let mut panel = PANEL.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((known, pixels)) = *panel {
-        if known == id {
-            return pixels;
-        }
+    if let Some((known, pixels)) = *panel
+        && known == id
+    {
+        return pixels;
     }
     let mut bounds = SDL_Rect { x: 0, y: 0, w: 0, h: 0 };
     // SAFETY: a display query with a valid out-pointer.

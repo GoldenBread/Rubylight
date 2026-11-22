@@ -220,10 +220,10 @@ fn system_boot() -> (i64, bool) {
             let mut uuid = [0u8; 37];
             let mut len = uuid.len();
             // kern.bootsessionuuid is a NUL-terminated UUID that changes at boot.
-            if unsafe { libc::sysctlbyname(c"kern.bootsessionuuid".as_ptr(), uuid.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } == 0 {
-                if let Some(id) = std::ffi::CStr::from_bytes_until_nul(&uuid).ok().and_then(|s| s.to_str().ok()).filter(|s| !s.is_empty()) {
-                    return (boot_id_number(id), true);
-                }
+            if unsafe { libc::sysctlbyname(c"kern.bootsessionuuid".as_ptr(), uuid.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } == 0
+                && let Some(id) = std::ffi::CStr::from_bytes_until_nul(&uuid).ok().and_then(|s| s.to_str().ok()).filter(|s| !s.is_empty())
+            {
+                return (boot_id_number(id), true);
             }
         }
         #[cfg(target_os = "linux")]
