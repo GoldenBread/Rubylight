@@ -3,6 +3,7 @@ package com.limelight.preferences;
 import androidx.annotation.VisibleForTesting;
 
 import com.limelight.LimeLog;
+import com.limelight.nvstream.jni.NightjarJni;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -14,40 +15,6 @@ import org.json.JSONObject;
  */
 public final class SimpleProfileModel {
     private SimpleProfileModel() { }
-
-    /** One JSON request in, one JSON answer out: {@code {"ok": …}} or {@code {"error": code, "detail": …}}. */
-    public interface Calls {
-        String call(String request);
-    }
-
-    private static Calls calls;
-    /** The engine could not be loaded: every row reads as Custom without logging on each bind. */
-    private static boolean unavailable;
-
-    private static synchronized Calls calls() {
-        if (calls == null) {
-            try {
-                System.loadLibrary("nightjar_core");
-                calls = SimpleProfileModel::call;
-            } catch (LinkageError e) {
-                // A JVM test, or a build without the engine: every row reads as Custom and changes
-                // nothing, rather than retrying the load on each bind.
-                LimeLog.warning("Simple settings: the engine is not available: " + e);
-                unavailable = true;
-                calls = request -> "{\"error\":\"unavailable\"}";
-            }
-        }
-        return calls;
-    }
-
-    /** JVM tests cannot load the library. */
-    @VisibleForTesting
-    public static synchronized void use(Calls replacement) {
-        calls = replacement;
-        unavailable = false;
-    }
-
-    private static native String call(String request);
 
     /** What this device and PC measured: the mapping's whole input. */
     public static final class Capabilities {
@@ -189,16 +156,25 @@ public final class SimpleProfileModel {
         }
     }
 
-    /** The answer's {@code ok} object, null (and a log line) when the model refused or could not be reached. */
-    private static JSONObject ask(JSONObject request) {
-        if (unavailable) return null;
+    @VisibleForTesting
+    static JSONObject parseAnswer(String answer) {
+        if (answer == null) return null;
         try {
-            String answer = calls().call(request.toString());
             JSONObject json = new JSONObject(answer);
             JSONObject ok = json.optJSONObject("ok");
             if (ok == null) LimeLog.warning("Simple settings: model answered " + answer);
             return ok;
-        } catch (JSONException | LinkageError | RuntimeException e) {
+        } catch (JSONException e) {
+            LimeLog.warning("Simple settings: model unavailable: " + e);
+            return null;
+        }
+    }
+
+    /** The answer's {@code ok} object, null (and a log line) when the model refused or could not be reached. */
+    private static JSONObject ask(JSONObject request) {
+        try {
+            return parseAnswer(NightjarJni.simpleProfileCall(request.toString()));
+        } catch (LinkageError | RuntimeException e) {
             LimeLog.warning("Simple settings: model unavailable: " + e);
             return null;
         }

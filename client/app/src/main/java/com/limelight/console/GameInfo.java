@@ -82,7 +82,7 @@ public final class GameInfo {
     public static synchronized GameInfo get(Context context) {
         if (instance == null) {
             Context app = context.getApplicationContext();
-            instance = new GameInfo(new File(app.getCacheDir(), "game-info"), null, null, () -> keys(app), true);
+            instance = new GameInfo(new File(app.getCacheDir(), "game-info"), null, () -> keys(app), true);
         }
         return instance;
     }
@@ -126,7 +126,6 @@ public final class GameInfo {
     }
 
     private final File dir;
-    private final GameInfoModel.Calls fixedCalls;
     private final GameInfoModel.Transport transport;
     private GameInfoModel.Sleeper sleeper;
     private final Supplier<GameInfoModel.Keys> keys;
@@ -149,9 +148,8 @@ public final class GameInfo {
     private final AtomicInteger downloads = new AtomicInteger();
 
     @VisibleForTesting
-    GameInfo(File dir, GameInfoModel.Calls calls, GameInfoModel.Transport transport, Supplier<GameInfoModel.Keys> keys, boolean background) {
+    GameInfo(File dir, GameInfoModel.Transport transport, Supplier<GameInfoModel.Keys> keys, boolean background) {
         this.dir = dir;
-        this.fixedCalls = calls;
         this.keys = keys;
         this.client = new OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
                 .callTimeout(40, TimeUnit.SECONDS).build();
@@ -176,10 +174,6 @@ public final class GameInfo {
     @VisibleForTesting
     int downloads() {
         return downloads.get();
-    }
-
-    private GameInfoModel.Calls calls() {
-        return fixedCalls != null ? fixedCalls : GameInfoModel.library();
     }
 
     private static long wallSecs() {
@@ -307,9 +301,8 @@ public final class GameInfo {
     /** The cover image a record on disk points at, without any request (nothing is downloaded); null when none is kept. */
     public File cachedCover(Game game) {
         try {
-            GameInfoModel.Calls calls = calls();
-            GameInfoModel.Cleaned c = GameInfoModel.clean(calls, game.name, game.gameId, game.storeSource, game.storeId);
-            JSONObject record = read(c.key, new File(dir, GameInfoModel.files(calls, c.key, null)[0]));
+            GameInfoModel.Cleaned c = GameInfoModel.clean(game.name, game.gameId, game.storeSource, game.storeId);
+            JSONObject record = read(c.key, new File(dir, GameInfoModel.files(c.key, null)[0]));
             return record == null ? null : imageFile(c.key, record, false);
         } catch (JSONException | RuntimeException | LinkageError e) {
             return null;
@@ -318,9 +311,8 @@ public final class GameInfo {
 
     private JSONObject cachedRecord(Game game) {
         try {
-            GameInfoModel.Calls calls = calls();
-            GameInfoModel.Cleaned c = GameInfoModel.clean(calls, game.name, game.gameId, game.storeSource, game.storeId);
-            return read(c.key, new File(dir, GameInfoModel.files(calls, c.key, null)[0]));
+            GameInfoModel.Cleaned c = GameInfoModel.clean(game.name, game.gameId, game.storeSource, game.storeId);
+            return read(c.key, new File(dir, GameInfoModel.files(c.key, null)[0]));
         } catch (JSONException | RuntimeException | LinkageError e) {
             return null;
         }
@@ -345,18 +337,17 @@ public final class GameInfo {
                 session = null;
                 sessionKeys = signature;
             }
-            GameInfoModel.Calls calls = calls();
-            GameInfoModel.Cleaned c = GameInfoModel.clean(calls, game.name, game.gameId, game.storeSource, game.storeId);
-            File file = new File(dir, GameInfoModel.files(calls, c.key, null)[0]);
+            GameInfoModel.Cleaned c = GameInfoModel.clean(game.name, game.gameId, game.storeSource, game.storeId);
+            File file = new File(dir, GameInfoModel.files(c.key, null)[0]);
             JSONObject record = read(c.key, file);
-            if (record == null || !GameInfoModel.fresh(calls, record, wallSecs(), k, art, info)) {
+            if (record == null || !GameInfoModel.fresh(record, wallSecs(), k, art, info)) {
                 JSONObject lookedUp = new JSONObject().put("name", c.clean).put("steam", c.steam == null ? JSONObject.NULL : c.steam);
-                GameInfoModel.Finished finished = GameInfoModel.lookup(calls, transport, sleeper, GameInfo::wallSecs,
+                GameInfoModel.Finished finished = GameInfoModel.lookup(transport, sleeper, GameInfo::wallSecs,
                         SystemClock::elapsedRealtime, lookedUp, k, art, info, session);
                 if (finished != null) {
                     session = finished.session;
                     for (String line : finished.log) LimeLog.warning("Game info: " + line);
-                    record = GameInfoModel.merge(calls, finished.record, record);
+                    record = GameInfoModel.merge(finished.record, record);
                     write(file, record);
                     records.put(c.key, record);
                 }
@@ -376,7 +367,7 @@ public final class GameInfo {
     private File imageFile(String key, JSONObject record, boolean fetch) throws JSONException {
         String url = record.isNull("cover") ? null : record.optString("cover", null);
         if (url == null || url.isEmpty()) return null;
-        File image = new File(new File(dir, "img"), GameInfoModel.files(calls(), key, url)[1]);
+        File image = new File(new File(dir, "img"), GameInfoModel.files(key, url)[1]);
         if (image.isFile() && image.length() > 0) return image;
         if (!fetch || imagesFailed.contains(url)) return null;
         if (!download(url, image)) {
@@ -477,10 +468,6 @@ public final class GameInfo {
      * 90 h"), each only when there is something to say. Empty when there is nothing.
      */
     public static List<String> describe(Context context, JSONObject facts) {
-        return describe(context, GameInfoModel.library(), facts);
-    }
-
-    static List<String> describe(Context context, GameInfoModel.Calls calls, JSONObject facts) {
         List<String> lines = new ArrayList<>();
         if (facts == null) return lines;
         String genres = joined(facts, "genres");
@@ -488,7 +475,7 @@ public final class GameInfo {
         String themes = joined(facts, "themes");
         if (!themes.isEmpty()) lines.add(context.getString(com.limelight.R.string.game_info_themes) + ": " + themes);
         try {
-            GameInfoModel.TimeToBeat t = GameInfoModel.timeToBeat(calls, facts);
+            GameInfoModel.TimeToBeat t = GameInfoModel.timeToBeat(facts);
             StringBuilder time = new StringBuilder();
             String[] hours = {t.hastily, t.normally, t.completely};
             int[] labels = {com.limelight.R.string.game_info_story, com.limelight.R.string.game_info_extras,

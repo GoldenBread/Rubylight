@@ -42,16 +42,35 @@ public class RustBridgeTest {
     }
 
     @Test public void aMissingLibraryIsRecordedOnceAndRefusesTheStartInsteadOfThrowing() {
-        // The JVM has no libnightjar_core.so: loading fails, and says so every time it is asked.
-        assertFalse(RustBridge.isAvailable());
-        assertFalse(RustBridge.isAvailable());
-        assertNotNull(RustBridge.loadFailure());
-        String refusal = RustBridge.startRefusal(SUNSHINE, 0x0101, false);
-        assertNotNull(refusal);
-        assertTrue(refusal.contains("libnightjar_core.so"));
-        assertTrue(refusal.contains(RustBridge.loadFailure()));
-        // The host's reason comes first when both apply.
-        assertTrue(RustBridge.startRefusal("7.1.430.0", 0x0101, false).contains("GFE 3.22"));
+        assertTrue(RustBridge.isAvailable());
+        assertNull(RustBridge.loadFailure());
+        assertNull(RustBridge.startRefusal(SUNSHINE, 0x0101, false));
+
+        NightjarJni.Loader loader = new NightjarJni.Loader();
+        int[] attempts = {0};
+        Runnable missing = () -> {
+            attempts[0]++;
+            throw new UnsatisfiedLinkError("missing");
+        };
+        assertFalse(loader.isAvailable(missing));
+        assertFalse(loader.isAvailable(missing));
+        assertEquals(1, attempts[0]);
+        assertNotNull(loader.failure());
+        assertTrue(loader.failure().contains("missing"));
+
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("no library"));
+        try {
+            assertFalse(RustBridge.isAvailable());
+            assertNotNull(RustBridge.loadFailure());
+            String refusal = RustBridge.startRefusal(SUNSHINE, 0x0101, false);
+            assertNotNull(refusal);
+            assertTrue(refusal.contains("libnightjar_core.so"));
+            assertTrue(refusal.contains(RustBridge.loadFailure()));
+            // The host's reason comes first when both apply.
+            assertTrue(RustBridge.startRefusal("7.1.430.0", 0x0101, false).contains("GFE 3.22"));
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 
     @Test public void appVersionsCompareNumerically() {

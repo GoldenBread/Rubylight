@@ -459,7 +459,7 @@ pub(crate) fn endpoint(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NativeApiBridge_setSecondScreen(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_nativeApiSetSecondScreen(
     _: JNIEnv,
     _: JClass,
     second_screen: jboolean,
@@ -469,7 +469,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NativeApiBridge_setSecond
 
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NativeApiBridge_request(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_nativeApiRequest(
     mut env: JNIEnv,
     _: JClass,
     op: JString,

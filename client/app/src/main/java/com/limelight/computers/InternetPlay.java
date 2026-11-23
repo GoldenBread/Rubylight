@@ -3,11 +3,10 @@ package com.limelight.computers;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-import androidx.annotation.VisibleForTesting;
-
 import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.NightjarJni;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -33,35 +32,12 @@ public final class InternetPlay {
     private InternetPlay() {
     }
 
-    /** One JSON request in, one JSON answer out: {@code {"ok": ...}} or {@code {"error": words}}. */
-    public interface Calls {
-        String call(String request);
-    }
-
-    private static Calls calls;
-
-    private static synchronized Calls calls() {
-        if (calls == null) {
-            System.loadLibrary("nightjar_core");
-            calls = InternetPlay::call;
-        }
-        return calls;
-    }
-
-    /** JVM tests cannot load the library. */
-    @VisibleForTesting
-    public static synchronized void use(Calls replacement) {
-        calls = replacement;
-    }
-
-    private static native String call(String request);
-
     /** The answer's "ok" value, or an exception with its words. */
     private static Object ask(JSONObject request) throws JSONException, Unreachable {
         String answer;
         try {
-            answer = calls().call(request.toString());
-        } catch (UnsatisfiedLinkError e) {
+            answer = NightjarJni.internetPlayCall(request.toString());
+        } catch (LinkageError e) {
             throw new Unreachable("Play over the internet is not available on this device");
         }
         if (answer == null) throw new Unreachable("Play over the internet did not answer");

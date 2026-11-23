@@ -2,6 +2,8 @@ package com.limelight.console;
 
 import androidx.annotation.VisibleForTesting;
 
+import com.limelight.nvstream.jni.NightjarJni;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -16,11 +18,6 @@ import java.util.Locale;
 public final class LibraryOrder {
     private LibraryOrder() { }
 
-    /** One JSON request in, one JSON answer out: {@code {"ok": ...}} or {@code {"error": code, "detail": ...}}. */
-    public interface Calls {
-        String call(String request);
-    }
-
     /** What the order reads of one game: its title, and when and how long its PCs say it was played (null: none says). */
     public static final class Facts {
         final String title;
@@ -34,23 +31,22 @@ public final class LibraryOrder {
         }
     }
 
-    private static Calls calls;
-
-    private static synchronized Calls calls() {
-        if (calls == null) {
-            System.loadLibrary("nightjar_core");
-            calls = LibraryOrder::call;
-        }
-        return calls;
-    }
-
-    /** JVM tests cannot load the library. */
     @VisibleForTesting
-    public static synchronized void use(Calls replacement) {
-        calls = replacement;
+    static int[] parseOrder(String answer, int count) {
+        try {
+            JSONObject root = new JSONObject(answer);
+            JSONObject ok = root.optJSONObject("ok");
+            if (ok == null) throw new JSONException(root.toString());
+            JSONArray places = ok.getJSONArray("order");
+            if (places.length() != count) throw new JSONException("an order of " + places.length() + " for " + count);
+            int[] at = new int[places.length()];
+            for (int i = 0; i < at.length; i++) at[i] = places.getInt(i);
+            return at;
+        } catch (JSONException | RuntimeException e) {
+            com.limelight.LimeLog.warning("The library could not be sorted: " + e);
+            return null;
+        }
     }
-
-    private static native String call(String request);
 
     /**
      * The places of these games in the chosen order. Null when the library cannot answer: the caller keeps the order it
@@ -67,14 +63,7 @@ public final class LibraryOrder {
             }
             JSONObject request = new JSONObject().put("key", sort.name().toLowerCase(Locale.ROOT))
                     .put("direction", order.name().toLowerCase(Locale.ROOT)).put("games", list);
-            JSONObject answer = new JSONObject(calls().call(request.toString()));
-            JSONObject ok = answer.optJSONObject("ok");
-            if (ok == null) throw new JSONException(answer.toString());
-            JSONArray places = ok.getJSONArray("order");
-            if (places.length() != games.size()) throw new JSONException("an order of " + places.length() + " for " + games.size());
-            int[] at = new int[places.length()];
-            for (int i = 0; i < at.length; i++) at[i] = places.getInt(i);
-            return at;
+            return parseOrder(NightjarJni.libraryOrderCall(request.toString()), games.size());
         } catch (JSONException | LinkageError | RuntimeException e) {
             com.limelight.LimeLog.warning("The library could not be sorted: " + e);
             return null;

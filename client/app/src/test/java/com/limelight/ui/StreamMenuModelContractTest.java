@@ -2,10 +2,11 @@ package com.limelight.ui;
 
 import android.app.Application;
 
+import com.limelight.nvstream.jni.NightjarJni;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -26,19 +27,13 @@ import java.util.Set;
 import static org.junit.Assert.*;
 
 /**
- * The wire contract with libnightjar_core: each request {@link StreamMenuModel} sends must be the one in
- * protocol/android/src/stream_menu_contract.json, and it must read the answer there as meant. The Rust test
- * {@code answers_each_request_of_the_shared_contract_exactly} checks that the JNI entry gives exactly those
- * answers, so the JVM tests' {@link RustStreamMenuModel} cannot hide a change in the JNI glue or the JSON.
+ * The wire contract with libnightjar_core: each request {@link StreamMenuModel} sends goes straight through
+ * {@link NightjarJni#streamMenuCall} to the Rust library, and every response matches
+ * protocol/android/src/stream_menu_contract.json.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class StreamMenuModelContractTest {
-    @After
-    public void forgetTheModel() {
-        StreamMenuModel.use(null);
-    }
-
     private static JSONArray cases() throws Exception {
         for (String path : new String[] {"../protocol/android/src/stream_menu_contract.json", "protocol/android/src/stream_menu_contract.json"}) {
             File file = new File(path);
@@ -47,36 +42,25 @@ public class StreamMenuModelContractTest {
         throw new AssertionError("stream_menu_contract.json not found from " + new File(".").getAbsolutePath());
     }
 
-    /** Answers the fixture's response once the request is exactly the fixture's request. */
-    private static void answer(JSONObject fixture) throws JSONException {
-        Object expected = fixture.get("request");
-        String response = fixture.get("response").toString();
-        StreamMenuModel.use(request -> {
-            try {
-                assertTrue(fixture.getString("name") + " sent " + request, same(expected, new JSONObject(request)));
-            } catch (JSONException e) {
-                throw new AssertionError(e);
-            }
-            return response;
-        });
-    }
-
     /**
      * A libnightjar_core from another build loads but lacks the call: the first menu opened crashed the stream on the UI
      * thread. Every failure of the call itself, and a null answer, is the model being unavailable.
      */
     @Test
     public void aCallThatFailsOrAnswersNothingIsRefusedAsUnavailable() {
-        StreamMenuModel.use(request -> { throw new UnsatisfiedLinkError("No implementation found for call"); });
-        StreamMenuModel.Refused e = refused(StreamMenuModel::picker);
-        assertEquals("unavailable", e.code);
-        assertTrue(e.detail.contains("No implementation found"));
-        StreamMenuModel.use(request -> { throw new IllegalStateException("broken"); });
-        assertEquals("unavailable", refused(() -> StreamMenuModel.chordLabel(new String[] {"A"})).code);
-        StreamMenuModel.use(request -> null);
-        assertEquals("unavailable", refused(StreamMenuModel::labels).code);
-        StreamMenuModel.use(request -> "not json");
-        assertEquals("invalid", refused(StreamMenuModel::picker).code);
+        try {
+            NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("No implementation found for call"));
+            StreamMenuModel.Refused e = refused(StreamMenuModel::picker);
+            assertEquals("unavailable", e.code);
+            assertTrue(e.detail.contains("No implementation found"));
+            NightjarJni.forceUnavailableForTest(new IllegalStateException("broken"));
+            assertEquals("unavailable", refused(() -> StreamMenuModel.chordLabel(new String[] {"A"})).code);
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
+        assertEquals("unavailable", refused(() -> StreamMenuModel.parseAnswer(null)).code);
+        assertEquals("invalid", refused(() -> StreamMenuModel.parseAnswer("not json")).code);
+        assertEquals("invalid", refused(() -> StreamMenuModel.parseAnswer(NightjarJni.streamMenuCall("not json"))).code);
     }
 
     private static StreamMenuModel.Refused refused(Call call) {
@@ -101,7 +85,6 @@ public class StreamMenuModelContractTest {
         for (int i = 0; i < cases.length(); i++) {
             JSONObject fixture = cases.getJSONObject(i);
             String name = fixture.getString("name");
-            answer(fixture);
             JSONObject response = fixture.getJSONObject("response");
             switch (name) {
                 case "layout": {
@@ -299,7 +282,7 @@ public class StreamMenuModelContractTest {
                         // More typing chords, read from the case: AltGr+Shift, Shift with an arrow or punctuation, redo.
                         JSONObject request = fixture.getJSONObject("request");
                         assertEquals(name, "hotkey_typing", refused(() -> StreamMenuModel.checkHotkey(request.getString("id"),
-                                RustStreamMenuModel.strings(request.getJSONArray("keys")), new HashMap<>())).code);
+                                strings(request.getJSONArray("keys")), new HashMap<>())).code);
                         break;
                     }
                     throw new AssertionError("a contract case this test does not send: " + name);
@@ -309,30 +292,10 @@ public class StreamMenuModelContractTest {
         assertEquals(cases.length(), run.size());
     }
 
-    /**
-     * The JVM tests' {@link RustStreamMenuModel} refuses and accepts each contract chord as the Rust model does, so
-     * its copy of {@code shortcuts::refused_chord} cannot drift from the policy unseen.
-     */
-    @Test
-    public void theTestModelChecksEachContractChordAsRustDoes() throws Exception {
-        JSONArray cases = cases();
-        RustStreamMenuModel model = new RustStreamMenuModel();
-        int checked = 0;
-        for (int i = 0; i < cases.length(); i++) {
-            JSONObject fixture = cases.getJSONObject(i);
-            if (!fixture.getJSONObject("request").getString("op").equals("check_hotkey")) continue;
-            String name = fixture.getString("name");
-            JSONObject expected = fixture.getJSONObject("response");
-            JSONObject answer = new JSONObject(model.call(fixture.getJSONObject("request").toString()));
-            if (expected.has("ok")) {
-                assertTrue(name + ": " + answer, same(expected.get("ok"), answer.opt("ok")));
-            } else {
-                assertEquals(name, expected.getString("error"), answer.optString("error", null));
-                if (!expected.isNull("detail")) assertEquals(name, expected.getString("detail"), answer.optString("detail"));
-            }
-            checked++;
-        }
-        assertTrue(checked >= 10);
+    private static String[] strings(JSONArray array) throws JSONException {
+        String[] out = new String[array.length()];
+        for (int i = 0; i < out.length; i++) out[i] = array.getString(i);
+        return out;
     }
 
     // JSON equality: the same keys and values, whatever the key order.

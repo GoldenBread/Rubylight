@@ -10,11 +10,14 @@ public final class NativeApiBridge {
 
     /** Whether libnightjar_core.so is loaded; false on a device or build without the Rust library. */
     public static boolean isAvailable() {
-        return RustBridge.isAvailable();
+        return NightjarJni.isAvailable();
     }
 
     /** Marks every later request of this process as the second screen's (Dual screen mode; rlSecondScreen=1). */
-    public static native void setSecondScreen(boolean secondScreen);
+    public static void setSecondScreen(boolean secondScreen) {
+        NightjarJni.ensureLoaded();
+        NightjarJni.nativeApiSetSecondScreen(secondScreen);
+    }
 
     /**
      * @param op capabilities, library, session, session_action, radeon, radeon_write or radeon_restore
@@ -24,8 +27,12 @@ public final class NativeApiBridge {
      * @param clientPrivateKeyPkcs8 the client key, PKCS#8 DER
      * @param argument the session action (disconnect, end, close_game) or the radeon_write JSON; "" otherwise
      */
-    public static native String request(String op, String address, int httpPort, int httpsPort,
-                                        String serverCertificatePem, String uniqueId,
-                                        byte[] clientCertificateDer, byte[] clientPrivateKeyPkcs8,
-                                        String argument);
+    public static String request(String op, String address, int httpPort, int httpsPort,
+                                 String serverCertificatePem, String uniqueId,
+                                 byte[] clientCertificateDer, byte[] clientPrivateKeyPkcs8,
+                                 String argument) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.nativeApiRequest(op, address, httpPort, httpsPort,
+                serverCertificatePem, uniqueId, clientCertificateDer, clientPrivateKeyPkcs8, argument);
+    }
 }

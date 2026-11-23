@@ -7,7 +7,6 @@ import android.content.Intent;
 import com.limelight.Game;
 import com.limelight.PcViewLifecycleTest;
 import com.limelight.R;
-import com.limelight.console.OpenPlayModel;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.LimelightCryptoProvider;
 import com.limelight.nvstream.http.NvApp;
@@ -15,7 +14,6 @@ import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.utils.LaunchSource;
 
-import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -46,11 +44,6 @@ public class NvConnectionNeverReplaceTest {
     private final AtomicInteger stopped = new AtomicInteger();
     private final List<String> messages = new ArrayList<>();
     private final List<String> errors = new ArrayList<>();
-
-    @After
-    public void forgetTheModel() {
-        OpenPlayModel.use(null);
-    }
 
     private NvHTTP pcRunning(int game) throws Exception {
         return new NvHTTP(new ComputerDetails.AddressTuple("192.0.2.1", 47989), 47984, "device", null,
@@ -146,7 +139,6 @@ public class NvConnectionNeverReplaceTest {
 
     @Test
     public void theStreamScreenShowsThatOneMessageAndClosesWithTheGuardOff() throws Exception {
-        OpenPlayModel.use(request -> "{\"ok\":{\"disarm\":true}}");
         context.getSharedPreferences("open_play", Context.MODE_PRIVATE).edit().putBoolean("armed", true).commit();
         Intent intent = new Intent(context, Game.class);
         LaunchSource.put(intent, LaunchSource.OPEN_PLAY);

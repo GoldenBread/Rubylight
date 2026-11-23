@@ -6,9 +6,10 @@ import static org.junit.Assert.assertNull;
 
 import android.app.Application;
 
+import com.limelight.nvstream.jni.NightjarJni;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -22,17 +23,12 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * The wire contract with libnightjar_core: each request {@link LibraryOrder} sends must be the one in
- * protocol/android/src/library_order_contract.json, whose answers the Rust side's test checks too.
+ * The wire contract with libnightjar_core: {@link LibraryOrder} sends its requests through
+ * {@link NightjarJni#libraryOrderCall} and reads the answers matching protocol/android/src/library_order_contract.json.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class LibraryOrderTest {
-    @After
-    public void forget() {
-        LibraryOrder.use(null);
-    }
-
     private static JSONArray cases() throws Exception {
         for (String path : new String[] {"../protocol/android/src/library_order_contract.json", "protocol/android/src/library_order_contract.json"}) {
             File file = new File(path);
@@ -64,13 +60,10 @@ public class LibraryOrderTest {
     public void sendsEachContractRequestAndReadsItsAnswer() throws Exception {
         List<Object[]> sorts = Arrays.asList(
                 new Object[] {HomeView.Sort.LAST_PLAYED, HomeView.Order.DESCENDING},
-                new Object[] {HomeView.Sort.PLAYTIME, HomeView.Order.ASCENDING});
+                new Object[] {HomeView.Sort.PLAYTIME, HomeView.Order.ASCENDING},
+                new Object[] {HomeView.Sort.TITLE, HomeView.Order.ASCENDING});
         for (int i = 0; i < sorts.size(); i++) {
             JSONObject contract = cases().getJSONObject(i);
-            LibraryOrder.use(request -> {
-                assertEquals(contract.optString("name"), contract.optJSONObject("request").toString(), request);
-                return contract.optJSONObject("response").toString();
-            });
             int[] order = LibraryOrder.of(gamesOf(contract.getJSONObject("request")), (HomeView.Sort) sorts.get(i)[0],
                     (HomeView.Order) sorts.get(i)[1]);
             assertArrayEquals(contract.getString("name"), orderOf(contract.getJSONObject("response")), order);
@@ -80,9 +73,13 @@ public class LibraryOrderTest {
     @Test
     public void aRefusalOrAWrongLengthKeepsTheOrderItHas() throws Exception {
         List<LibraryOrder.Facts> two = gamesOf(cases().getJSONObject(2).getJSONObject("request"));
-        LibraryOrder.use(request -> "{\"error\":\"invalid\",\"detail\":\"no\"}");
-        assertNull(LibraryOrder.of(two, HomeView.Sort.TITLE, HomeView.Order.DESCENDING));
-        LibraryOrder.use(request -> "{\"ok\":{\"order\":[0]}}");
-        assertNull(LibraryOrder.of(two, HomeView.Sort.TITLE, HomeView.Order.DESCENDING));
+        assertNull(LibraryOrder.parseOrder("{\"error\":\"invalid\",\"detail\":\"no\"}", two.size()));
+        assertNull(LibraryOrder.parseOrder("{\"ok\":{\"order\":[0]}}", two.size()));
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("no library"));
+        try {
+            assertNull(LibraryOrder.of(two, HomeView.Sort.TITLE, HomeView.Order.DESCENDING));
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 }

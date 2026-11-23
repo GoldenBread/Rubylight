@@ -1,5 +1,7 @@
 package com.limelight.console;
 
+import androidx.annotation.VisibleForTesting;
+
 import com.limelight.R;
 
 import org.json.JSONException;
@@ -24,16 +26,25 @@ final class GameInfoFilter {
         }
     }
 
+    @VisibleForTesting
+    static GameInfoModel.Library parseLibrary(String answer) {
+        try {
+            return GameInfoModel.readLibrary(GameInfoModel.parseAnswer(answer));
+        } catch (JSONException | RuntimeException e) {
+            return null;
+        }
+    }
+
     /**
      * {@code games} are the ones the source filter shows; {@code factsOf} gives a game's facts or null. The result
      * keeps the games {@code genre} and {@code length} (either may be null) let through, so the choices combine with
      * the source filter; null when the library cannot answer, and then the games stay as they are.
      */
-    static <T> Result<T> apply(GameInfoModel.Calls calls, List<T> games, Function<T, JSONObject> factsOf, String genre, String length) {
+    static <T> Result<T> apply(List<T> games, Function<T, JSONObject> factsOf, String genre, String length) {
         try {
             List<JSONObject> facts = new ArrayList<>(games.size());
             for (T game : games) facts.add(factsOf.apply(game));
-            GameInfoModel.Library library = GameInfoModel.library(calls, facts, genre, length);
+            GameInfoModel.Library library = GameInfoModel.library(facts, genre, length);
             List<T> shown = new ArrayList<>(library.shown.length);
             for (int at : library.shown) shown.add(games.get(at));
             return new Result<>(shown, library);

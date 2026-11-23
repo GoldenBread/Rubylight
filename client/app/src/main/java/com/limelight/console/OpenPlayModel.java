@@ -1,8 +1,7 @@
 package com.limelight.console;
 
-import androidx.annotation.VisibleForTesting;
-
 import com.limelight.LimeLog;
+import com.limelight.nvstream.jni.NightjarJni;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -13,29 +12,6 @@ import org.json.JSONObject;
  */
 public final class OpenPlayModel {
     private OpenPlayModel() { }
-
-    /** One JSON request in, one JSON answer out: {@code {"ok": …}} or {@code {"error": code, "detail": …}}. */
-    public interface Calls {
-        String call(String request);
-    }
-
-    private static Calls calls;
-
-    private static synchronized Calls calls() {
-        if (calls == null) {
-            System.loadLibrary("nightjar_core");
-            calls = OpenPlayModel::call;
-        }
-        return calls;
-    }
-
-    /** JVM tests cannot load the library. */
-    @VisibleForTesting
-    public static synchronized void use(Calls replacement) {
-        calls = replacement;
-    }
-
-    private static native String call(String request);
 
     /** What this start of the app does. */
     static final class Decision {
@@ -58,7 +34,7 @@ public final class OpenPlayModel {
     /** The answer's {@code ok} object, null (and a log line) when the model refused or could not be reached. */
     private static JSONObject ask(JSONObject request) {
         try {
-            String answer = calls().call(request.toString());
+            String answer = NightjarJni.openPlayCall(request.toString());
             JSONObject json = new JSONObject(answer);
             JSONObject ok = json.optJSONObject("ok");
             if (ok == null) LimeLog.warning("Automatic start: model answered " + answer);

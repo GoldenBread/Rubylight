@@ -1,0 +1,26 @@
+package com.limelight.nvstream.jni;
+
+import javax.annotation.Priority;
+
+import org.robolectric.config.AndroidConfigurer;
+import org.robolectric.internal.bytecode.InstrumentationConfiguration;
+import org.robolectric.internal.bytecode.Interceptors;
+import org.robolectric.internal.bytecode.ShadowProviders;
+
+/**
+ * Keeps {@link NightjarJni} on the parent JVM application classloader across all Robolectric
+ * {@code SandboxClassLoader} instances so {@code nightjar_core} loads once per test worker and
+ * avoids {@code UnsatisfiedLinkError: already loaded in another classloader}.
+ */
+@Priority(1)
+public final class NightjarAndroidConfigurer extends AndroidConfigurer {
+    public NightjarAndroidConfigurer(ShadowProviders shadowProviders) {
+        super(shadowProviders);
+    }
+
+    @Override
+    public void configure(InstrumentationConfiguration.Builder builder, Interceptors interceptors) {
+        super.configure(builder, interceptors);
+        builder.doNotAcquireClass(NightjarJni.class.getName());
+    }
+}

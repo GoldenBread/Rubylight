@@ -12,54 +12,40 @@ import android.content.Context;
 import org.robolectric.RuntimeEnvironment;
 
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.NightjarJni;
 
-import org.json.JSONObject;
-import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
- * What {@link InternetPlay} asks libnightjar_core (nightjar-core internet.rs `json::call`, whose answers the Rust
- * tests check) and how it reads the answers.
+ * {@link InternetPlay} backed directly by {@code libnightjar_core} via {@link NightjarJni#internetCall}.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class InternetPlayTest {
-    private final List<JSONObject> asked = new ArrayList<>();
-
-    @After
-    public void forget() {
-        InternetPlay.use(null);
-    }
-
-    private void answer(String answer) {
-        InternetPlay.use(request -> {
-            try {
-                asked.add(new JSONObject(request));
-            } catch (Exception e) {
-                throw new AssertionError(e);
-            }
-            return answer;
-        });
-    }
+    private static final String REPLY = "{\"version\":1,\"enabled\":true,\"portMapping\":true,"
+            + "\"externalIpv4\":\"203.0.113.5\",\"mappedPorts\":true,\"ipv6\":[\"2001:db8::5\"],"
+            + "\"ports\":{\"http\":47989,\"https\":47984,\"rtsp\":48010,\"video\":47998,"
+            + "\"audio\":48000,\"control\":47999,\"mic\":48002}}";
+    private static final String REPLY_DISABLED = "{\"version\":1,\"enabled\":false,\"portMapping\":false,"
+            + "\"externalIpv4\":null,\"mappedPorts\":false,\"ipv6\":[],"
+            + "\"ports\":{\"http\":47989,\"https\":47984,\"rtsp\":48010,\"video\":47998,"
+            + "\"audio\":48000,\"control\":47999,\"mic\":48002}}";
 
     @Test
     public void theInternetAddressesComeAfterThePcsOwnInOrder() throws Exception {
-        answer("{\"ok\":{\"ipv6\":[\"2001:db8::5\"],\"mapped\":\"203.0.113.5\",\"port\":47989}}");
-        InternetPlay.Addresses addresses = InternetPlay.addresses("{\"version\":1}");
-        assertEquals("addresses", asked.get(0).getString("op"));
-        assertEquals("{\"version\":1}", asked.get(0).getString("reply"));
+        InternetPlay.Addresses addresses = InternetPlay.addresses(REPLY);
         assertEquals(new ComputerDetails.AddressTuple("2001:db8::5", 47989), addresses.ipv6.get(0));
         assertEquals(new ComputerDetails.AddressTuple("203.0.113.5", 47989), addresses.mapped);
         // A PC that never gave a reply has no internet addresses, and nothing is asked.
-        asked.clear();
-        assertTrue(InternetPlay.addresses(null).ipv6.isEmpty());
-        assertTrue(asked.isEmpty());
+        NightjarJni.forceUnavailableForTest(new AssertionError("asked"));
+        try {
+            assertTrue(InternetPlay.addresses(null).ipv6.isEmpty());
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 
     @Test
@@ -67,21 +53,13 @@ public class InternetPlayTest {
         InternetPlay.Tried tried = new InternetPlay.Tried();
         tried.lan = true;
         tried.mapped = true;
-        answer("{\"ok\":{\"address\":\"127.78.10.20\",\"port\":47989}}");
-        ComputerDetails.AddressTuple tunnel = InternetPlay.connect("uuid", "{}", tried);
-        assertEquals("127.78.10.20", tunnel.address);
-        assertTrue(InternetPlay.isTunnelAddress(tunnel.address));
-        JSONObject request = asked.get(0);
-        assertEquals("connect", request.getString("op"));
-        assertEquals("uuid", request.getString("host"));
-        assertTrue(request.getJSONObject("tried").getBoolean("lan"));
-        assertFalse(request.getJSONObject("tried").getBoolean("ipv6"));
-        answer("{\"error\":\"The PC could not be reached. Tried the local network: no answer.\"}");
+        assertTrue(InternetPlay.isTunnelAddress("127.78.10.20"));
         try {
-            InternetPlay.connect("uuid", "{}", tried);
+            InternetPlay.connect("uuid", REPLY_DISABLED, tried);
             fail("no tunnel came up");
         } catch (InternetPlay.Unreachable e) {
-            assertTrue(e.getMessage().startsWith("The PC could not be reached."));
+            assertTrue(e.getMessage(), e.getMessage().startsWith("The PC could not be reached."));
+            assertTrue(e.getMessage(), e.getMessage().contains("local network"));
         }
     }
 
@@ -93,9 +71,11 @@ public class InternetPlayTest {
         details.remoteAddress = new ComputerDetails.AddressTuple("203.0.113.5", 47989);
         details.activeAddress = details.remoteAddress;
         // Without a reply naming it, the remote address is still a forwarded port.
-        answer("{\"ok\":\"lan\"}");
         assertEquals("mapped", InternetPlay.path(details, null));
-        assertEquals("192.168.1.10", asked.get(0).getJSONArray("lan").getString(0));
+        details.activeAddress = details.localAddress;
+        assertEquals("lan", InternetPlay.path(details, REPLY));
+        details.activeAddress = new ComputerDetails.AddressTuple("127.78.10.20", 47989);
+        assertEquals("punched", InternetPlay.path(details, REPLY));
         assertEquals("Internet (forwarded port)", InternetPlay.pathLabel(context, "mapped"));
         assertEquals("Internet (direct path)", InternetPlay.pathLabel(context, "punched"));
         assertNull(InternetPlay.pathLabel(context, "lan"));
@@ -105,9 +85,8 @@ public class InternetPlayTest {
     @Test
     public void theKeptReplyIsPerPcAndGoesWithIt() {
         Context context = RuntimeEnvironment.getApplication();
-        answer("{\"ok\":null}");
-        InternetPlay.save(context, "a", "{\"version\":1}");
-        assertEquals("{\"version\":1}", InternetPlay.reply(context, "a"));
+        InternetPlay.save(context, "a", REPLY);
+        assertEquals(REPLY, InternetPlay.reply(context, "a"));
         assertNull(InternetPlay.reply(context, "b"));
         InternetPlay.forget(context, "a");
         assertNull(InternetPlay.reply(context, "a"));

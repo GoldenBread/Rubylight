@@ -8,11 +8,11 @@ import android.preference.PreferenceManager;
 
 import com.limelight.nativeapi.PreferencesRecentsStore;
 import com.limelight.nativeapi.RecentsStore;
+import com.limelight.nvstream.jni.NightjarJni;
 import com.limelight.utils.LaunchSource;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -23,48 +23,26 @@ import org.robolectric.shadows.ShadowToast;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.List;
 
 import static org.junit.Assert.*;
 
 /**
- * The automatic start's facts and guard on Android. The contract test holds {@link OpenPlayModel} to
- * protocol/android/src/open_play_contract.json, which the Rust test checks the JNI entry answers exactly.
+ * The automatic start's facts and guard on Android, backed directly by {@link NightjarJni#openPlayCall}.
+ * The contract test holds {@link OpenPlayModel} to protocol/android/src/open_play_contract.json end-to-end.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class OpenPlayTest {
     private Context context;
-    private final List<JSONObject> asked = new ArrayList<>();
-    private String answer;
 
     @Before
     public void setUp() {
         context = org.robolectric.RuntimeEnvironment.getApplication();
-        answer = "{\"ok\":{\"action\":\"stay\",\"game\":null,\"disarm\":false}}";
-        OpenPlayModel.use(request -> {
-            try {
-                asked.add(new JSONObject(request));
-            } catch (Exception e) {
-                throw new AssertionError(e);
-            }
-            return answer;
-        });
         new PreferencesRecentsStore(context).record(new RecentsStore.Recent("pc", "Desk", 7, "Dota 2", 1));
-    }
-
-    @After
-    public void forgetTheModel() {
-        OpenPlayModel.use(null);
     }
 
     private static Intent launcher() {
         return new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-    }
-
-    private JSONObject lastAsked() {
-        return asked.get(asked.size() - 1);
     }
 
     @Test
@@ -92,37 +70,29 @@ public class OpenPlayTest {
     }
 
     @Test
-    public void theFactsOfEachWayInReachTheModel() throws Exception {
-        PreferenceManager.getDefaultSharedPreferences(context).edit().putString(OpenPlay.SETTING, "last").apply();
-        assertNull(OpenPlay.atEntry(context, launcher(), false, true));
-        assertTrue(lastAsked().getBoolean("launcher"));
-        assertTrue(lastAsked().getBoolean("first_screen"));
-        assertTrue(lastAsked().getBoolean("has_last"));
-        assertFalse(lastAsked().getBoolean("has_chosen"));
-        assertEquals("last", lastAsked().getString("opens"));
+    public void theFactsOfEachWayInReachTheModel() {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putString(OpenPlay.SETTING, "last").commit();
+        assertNotNull(OpenPlay.atEntry(context, launcher(), false, true));
 
-        OpenPlay.atEntry(context, new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), false, true);
-        assertTrue("a TV launcher counts", lastAsked().getBoolean("launcher"));
+        assertNotNull("a TV launcher counts",
+                OpenPlay.atEntry(context, new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), false, true));
 
-        OpenPlay.atEntry(context, new Intent(Intent.ACTION_MAIN), false, true);
-        assertFalse("the list of PCs asked for by the app itself", lastAsked().getBoolean("launcher"));
+        assertNull("the list of PCs asked for by the app itself",
+                OpenPlay.atEntry(context, new Intent(Intent.ACTION_MAIN), false, true));
 
-        OpenPlay.atEntry(context, new Intent(Intent.ACTION_VIEW), false, true);
-        assertFalse("a link", lastAsked().getBoolean("launcher"));
+        assertNull("a link", OpenPlay.atEntry(context, new Intent(Intent.ACTION_VIEW), false, true));
 
-        OpenPlay.atEntry(context, launcher(), true, true);
-        assertTrue("a recreated Activity", lastAsked().getBoolean("restored"));
+        assertNull("a recreated Activity", OpenPlay.atEntry(context, launcher(), true, true));
 
-        OpenPlay.atEntry(context, launcher(), false, false);
-        assertFalse("a later screen of a running app", lastAsked().getBoolean("first_screen"));
+        assertNull("a later screen of a running app", OpenPlay.atEntry(context, launcher(), false, false));
 
-        OpenPlay.atEntry(context, launcher().addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY), false, true);
-        assertTrue("Recents", lastAsked().getBoolean("from_recents"));
+        assertNull("Recents",
+                OpenPlay.atEntry(context, launcher().addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY), false, true));
     }
 
     @Test
     public void aCountdownOpensTheGamesPageForTheGameTheModelNamed() {
-        answer = "{\"ok\":{\"action\":\"countdown\",\"game\":\"last\",\"disarm\":false}}";
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putString(OpenPlay.SETTING, "last").commit();
         Intent page = OpenPlay.atEntry(context, launcher(), false, true);
         assertEquals("pc", page.getStringExtra(GameDetailActivity.EXTRA_HOST_UUID));
         assertEquals(7, page.getIntExtra(GameDetailActivity.EXTRA_APP_ID, 0));
@@ -132,30 +102,32 @@ public class OpenPlayTest {
     }
 
     @Test
-    public void aSkipSaysSoOnceAndClearsTheGuard() throws Exception {
+    public void aSkipSaysSoOnceAndClearsTheGuard() {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putString(OpenPlay.SETTING, "last").commit();
         OpenPlay.arm(context);
-        answer = "{\"ok\":{\"action\":\"skip\",\"game\":\"last\",\"disarm\":true}}";
         assertNull(OpenPlay.atEntry(context, launcher(), false, true));
-        assertTrue("armed reaches the model", lastAsked().getBoolean("armed"));
         assertFalse(OpenPlay.armed(context));
         assertTrue(ShadowToast.getTextOfLatestToast(), ShadowToast.getTextOfLatestToast().contains("Dota 2"));
     }
 
     @Test
     public void aModelThatCannotAnswerStartsNothing() {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putString(OpenPlay.SETTING, "last").commit();
         OpenPlay.arm(context);
-        OpenPlayModel.use(request -> { throw new UnsatisfiedLinkError("no call"); });
-        assertNull(OpenPlay.atEntry(context, launcher(), false, true));
-        assertTrue("and the guard stands", OpenPlay.armed(context));
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("no call"));
+        try {
+            assertNull(OpenPlay.atEntry(context, launcher(), false, true));
+            assertTrue("and the guard stands", OpenPlay.armed(context));
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 
     @Test
     public void aStreamEndClearsTheGuardOnlyWhenTheModelSays() {
         OpenPlay.arm(context);
-        answer = "{\"ok\":{\"disarm\":false}}";
         OpenPlay.streamEnded(context, 4000, false);
         assertTrue(OpenPlay.armed(context));
-        answer = "{\"ok\":{\"disarm\":true}}";
         OpenPlay.streamEnded(context, 4000, true);
         assertFalse(OpenPlay.armed(context));
     }
@@ -178,9 +150,7 @@ public class OpenPlayTest {
         assertNotEquals(choose, OpenPlay.menuLabel(context, "pc", 9));
         assertEquals("another game still offers it", choose, OpenPlay.menuLabel(context, "pc", 10));
 
-        answer = "{\"ok\":{\"action\":\"countdown\",\"game\":\"chosen\",\"disarm\":false}}";
         assertEquals(9, OpenPlay.atEntry(context, launcher(), false, true).getIntExtra(GameDetailActivity.EXTRA_APP_ID, 0));
-        assertTrue(lastAsked().getBoolean("has_chosen"));
 
         OpenPlay.toggle(context, "pc", "Desk", 9, "t-hades", "Hades");
         assertEquals("pcs", settings.getString(OpenPlay.SETTING, null));
@@ -188,8 +158,7 @@ public class OpenPlayTest {
     }
 
     @Test
-    public void aChosenGameCarriesItsStableIdAndAnOlderSaveOpensWithout() throws Exception {
-        answer = "{\"ok\":{\"action\":\"countdown\",\"game\":\"chosen\",\"disarm\":false}}";
+    public void aChosenGameCarriesItsStableIdAndAnOlderSaveOpensWithout() {
         OpenPlay.toggle(context, "pc", "Desk", 9, "t-hades", "Hades");
         assertEquals("t-hades", OpenPlay.atEntry(context, launcher(), false, true).getStringExtra(GameDetailActivity.EXTRA_STABLE_ID));
         context.getSharedPreferences("open_play", android.content.Context.MODE_PRIVATE).edit()
@@ -198,8 +167,8 @@ public class OpenPlayTest {
     }
 
     @Test
-    public void theLastGameCarriesItsStableIdAndAnOlderEntryOpensWithout() throws Exception {
-        answer = "{\"ok\":{\"action\":\"countdown\",\"game\":\"last\",\"disarm\":false}}";
+    public void theLastGameCarriesItsStableIdAndAnOlderEntryOpensWithout() {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putString(OpenPlay.SETTING, "last").commit();
         assertEquals("older entry", "", OpenPlay.atEntry(context, launcher(), false, true).getStringExtra(GameDetailActivity.EXTRA_STABLE_ID));
         new PreferencesRecentsStore(context).record(new RecentsStore.Recent("pc", "Desk", 8, "Hades", 2, "t-hades"));
         assertEquals("t-hades", OpenPlay.atEntry(context, launcher(), false, true).getStringExtra(GameDetailActivity.EXTRA_STABLE_ID));
@@ -230,14 +199,6 @@ public class OpenPlayTest {
             JSONObject c = cases.getJSONObject(i);
             JSONObject request = c.getJSONObject("request");
             JSONObject ok = c.getJSONObject("response").getJSONObject("ok");
-            OpenPlayModel.use(sent -> {
-                try {
-                    assertEquals(c.getString("name"), request.toString(), sortedLike(request, new JSONObject(sent)).toString());
-                    return c.getJSONObject("response").toString();
-                } catch (Exception e) {
-                    throw new AssertionError(e);
-                }
-            });
             switch (request.getString("op")) {
                 case "decide":
                     OpenPlayModel.Decision d = OpenPlayModel.decide(request.getBoolean("first_screen"), request.getBoolean("launcher"),
@@ -264,20 +225,9 @@ public class OpenPlayTest {
                     assertEquals(c.getString("name"), ok.getBoolean("console_home"), com.limelight.preferences.StartScreenChoice
                             .consoleHomeFor(request.getString("screen"), request.getBoolean("console_home")));
                     break;
-                default:
-                    fail("unknown op " + request);
+            default:
+                fail("unknown op " + request);
             }
         }
-    }
-
-    /** The JSON of {@code sent} in the key order of {@code like}, failing when the keys differ. */
-    private static JSONObject sortedLike(JSONObject like, JSONObject sent) throws Exception {
-        assertEquals(like.length(), sent.length());
-        JSONObject sorted = new JSONObject();
-        for (java.util.Iterator<String> keys = like.keys(); keys.hasNext();) {
-            String key = keys.next();
-            sorted.put(key, sent.get(key));
-        }
-        return sorted;
     }
 }

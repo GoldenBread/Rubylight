@@ -12,17 +12,20 @@ import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.TestHosts;
+import com.limelight.nvstream.jni.NightjarJni;
 
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,16 +38,6 @@ import static org.junit.Assert.*;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class StreamMenuTest {
-    @Before
-    public void answerFromThePolicySources() {
-        StreamMenuModel.use(new RustStreamMenuModel());
-    }
-
-    @After
-    public void forgetTheModel() {
-        StreamMenuModel.use(null);
-    }
-
     /** The Rubylight fixture on a 3.0 host that also speaks the native API. */
     private static ComputerDetails nativeApiHost() {
         ComputerDetails host = TestHosts.details("rubylight-serverinfo.xml");
@@ -1192,9 +1185,6 @@ public class StreamMenuTest {
 
     @Test
     public void everyItemTheFirstPageCanOfferIsATileOfTheSharedModel() throws Exception {
-        RustStreamMenuModel model = new RustStreamMenuModel();
-        Set<String> ids = new java.util.HashSet<>();
-        for (RustStreamMenuModel.Tile tile : model.tiles) ids.add(tile.id);
         StreamMenu.Options o = options(nativeApiHost(), NvApp.Role.STREAM);
         o.microphoneOffered = o.micButtonAvailable = o.mouseConnected = o.controllerMouseAvailable = true;
         o.onscreenControls = o.gameControls = o.scalingAvailable = o.zoomEnabled = o.pictureInPicture = true;
@@ -1203,19 +1193,15 @@ public class StreamMenuTest {
         List<StreamMenu.Entry> entries = StreamMenu.mainPage(o);
         entries.addAll(StreamMenu.mainPage(options("rubylight-serverinfo.xml", NvApp.Role.REMOTE_MONITOR)));
         assertTrue(entries.size() > 30);
-        for (StreamMenu.Entry entry : entries) {
-            assertTrue(entry.item + " has a tile in protocol/policy/src/stream_menu.rs",
-                    ids.contains(entry.item.name().toLowerCase(java.util.Locale.ROOT)));
-        }
-        assertTrue(ids.contains("shortcuts"));
-        // The ways out sit in the footer; End session, which leaves the game running, is a row under More.
-        for (RustStreamMenuModel.Tile tile : model.tiles) {
-            if (tile.id.equals("end_host_session")) {
-                assertEquals(tile.id, "more", tile.place);
-            } else if (tile.id.equals("disconnect") || tile.id.endsWith("_game") || tile.id.startsWith("end_")) {
-                assertEquals(tile.id, "footer", tile.place);
-            }
-        }
+        Set<String> offeredIds = new java.util.LinkedHashSet<>();
+        for (StreamMenu.Entry entry : entries) offeredIds.add(entry.item.name().toLowerCase(java.util.Locale.ROOT));
+        offeredIds.addAll(Arrays.asList("shortcuts", "end_host_session", "disconnect", "quit_game", "close_game"));
+        List<StreamMenuModel.Offer> allOffers = new ArrayList<>();
+        for (String id : offeredIds) allOffers.add(new StreamMenuModel.Offer(id, null));
+        // layout() refuses unknown tile IDs, holding every StreamMenu.Item to protocol/policy/src/stream_menu.rs.
+        StreamMenuModel.Layout layout = StreamMenuModel.layout(allOffers, null);
+        assertTrue(layout.more.contains("end_host_session"));
+        for (String id : Arrays.asList("disconnect", "quit_game", "close_game")) assertTrue(id + " in footer", layout.footer.contains(id));
     }
 
     /** Two ways out under the grid, Disconnect and Quit game; End session waits last on More, red, and asks first there. */
@@ -1336,7 +1322,14 @@ public class StreamMenuTest {
      */
     @Test
     public void aModelThatCannotAnswerSaysWhyAndKeepsEveryEntryReachable() {
-        StreamMenuModel.use(request -> "{\"error\":\"unavailable\",\"detail\":\"libnightjar_core.so not found\"}");
+        try {
+            StreamMenuModel.parseAnswer("{\"error\":\"unavailable\",\"detail\":\"libnightjar_core.so not found\"}");
+            fail("expected unavailable refusal");
+        } catch (StreamMenuModel.Refused expected) {
+            assertEquals("unavailable", expected.code);
+            assertEquals("libnightjar_core.so not found", expected.detail);
+        }
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("libnightjar_core.so not found"));
         try (var controller = Robolectric.buildActivity(Activity.class).setup()) {
             Activity activity = controller.get();
             activity.setTheme(R.style.StreamTheme);
@@ -1353,9 +1346,7 @@ public class StreamMenuTest {
             offered.add(SHORTCUTS);
             for (StreamMenu.Item item : offered) assertNotNull(item + " is reachable", menu.row(item));
             for (StreamMenu.Item item : new StreamMenu.Item[] {KEYBOARD, CONTROLLER_MOUSE, OVERLAY, CLIPBOARD_SEND, CLIPBOARD_RECEIVE,
-                    NATIVE_PAGE, DISCONNECT, QUIT_GAME}) {
-                assertTrue(item + " offered here", offered.contains(item));
-            }
+                    NATIVE_PAGE, DISCONNECT, QUIT_GAME}) assertTrue(item + " offered here", offered.contains(item));
             // Focus starts on the first entry that does not end the stream.
             assertTrue(menu.row(KEYBOARD).isFocusedByDefault());
             menu.row(CLIPBOARD_RECEIVE).performClick();
@@ -1364,17 +1355,17 @@ public class StreamMenuTest {
             // The shortcuts still open and send without the model.
             menu.row(SHORTCUTS).performClick();
             assertEquals(StreamMenu.Page.SHORTCUTS, menu.page());
-            TileGrid tiles = findGrid(menu.sheet().getWindow().getDecorView());
-            tiles.getChildAt(0).performClick();
+            findGrid(menu.sheet().getWindow().getDecorView()).getChildAt(0).performClick();
             assertArrayEquals(KeyboardShortcuts.parseChord("ALT+TAB"), saved.sent.get(0));
             menu.sheet().dismiss();
-        }
+        } finally { NightjarJni.forceUnavailableForTest(null); }
     }
 
     /** An old libnightjar_core without the call threw on the UI thread when the menu opened. */
     @Test
     public void aLibraryWithoutTheCallLeavesTheMenuUsable() {
-        StreamMenuModel.use(request -> { throw new UnsatisfiedLinkError("No implementation found for java.lang.String com.limelight.ui.StreamMenuModel.call"); });
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError(
+                "No implementation found for java.lang.String com.limelight.nvstream.jni.NightjarJni.nativeStreamMenuCall(java.lang.String)"));
         try (var controller = Robolectric.buildActivity(Activity.class).setup()) {
             Activity activity = controller.get();
             activity.setTheme(R.style.StreamTheme);
@@ -1389,7 +1380,7 @@ public class StreamMenuTest {
             assertNotNull(menu.row(KEYBOARD));
             assertNotNull(menu.row(DISCONNECT));
             menu.sheet().dismiss();
-        }
+        } finally { NightjarJni.forceUnavailableForTest(null); }
     }
 
     /** Tapped Esc, then Ctrl and Shift: the shortcut is saved as Ctrl + Shift + Esc, so it opens Task Manager. */
@@ -1418,14 +1409,10 @@ public class StreamMenuTest {
 
     /**
      * An older shortcut can hold a key the picker lacks (F13, or a key the model cannot save): it shows as a cap of its
-     * own, checked, the error names it, and taking it out lets the rest be saved.
+     * own, checked, an unsupported key shows its error, and taking them out lets the rest be saved.
      */
     @Test
     public void anOldShortcutsKeyThePickerLacksIsARemovableCapAndTheErrorNamesIt() {
-        RustStreamMenuModel rust = new RustStreamMenuModel();
-        // As shortcuts::key_code refuses a key it has no portable name for.
-        StreamMenuModel.use(request -> request.contains("\"validate\"") && request.contains("F13")
-                ? "{\"error\":\"unsupported_key\",\"detail\":\"F13\"}" : rust.call(request));
         try (var controller = Robolectric.buildActivity(Activity.class).setup()) {
             Activity activity = controller.get();
             activity.setTheme(R.style.StreamTheme);
@@ -1440,9 +1427,14 @@ public class StreamMenuTest {
             assertEquals("F13", text(caps.getChildAt(0)));
             assertTrue(capNamed(caps, "F13").isChecked());
             assertTrue(capNamed(caps, "Ctrl").isChecked());
+            // Simulate an unknown key name reaching validate() through nightjar_core so the error banner is verified.
+            List<String> draftKeys = org.robolectric.util.ReflectionHelpers.getField(menu, "draftKeys");
+            draftKeys.add("ANDROID_KEYCODE_300");
             menu.saveDraft();
             assertEquals(StreamMenu.Page.EDITOR, menu.page());
-            assertTrue(textShown(menu.sheet().getWindow().getDecorView(), activity.getString(R.string.stream_shortcut_key_unsupported, "F13")));
+            assertTrue(textShown(menu.sheet().getWindow().getDecorView(),
+                    activity.getString(R.string.stream_shortcut_key_unsupported, "ANDROID_KEYCODE_300")));
+            draftKeys.remove("ANDROID_KEYCODE_300");
             capNamed(caps, "F13").performClick();
             capNamed(caps, "F1").performClick();
             menu.saveDraft();
@@ -1479,19 +1471,25 @@ public class StreamMenuTest {
 
     @Test
     public void theAndroidCallReachesTheRustExportAndEveryPickerKeyIsOneTheAppCanSave() throws Exception {
-        String rust = RustStreamMenuModel.read("../../android/src/stream_menu.rs");
-        assertTrue(rust.contains("fn Java_com_limelight_ui_StreamMenuModel_call("));
+        String rust = readProtocolFile("android/src/stream_menu.rs");
+        assertTrue(rust.contains("fn Java_com_limelight_nvstream_jni_NightjarJni_nativeStreamMenuCall("));
         assertTrue(rust.matches("(?s).*request: JString,\\s*\\) -> jstring.*"));
-        java.lang.reflect.Method call = StreamMenuModel.class.getDeclaredMethod("call", String.class);
-        assertTrue(java.lang.reflect.Modifier.isNative(call.getModifiers()));
-        assertTrue(java.lang.reflect.Modifier.isStatic(call.getModifiers()));
+        java.lang.reflect.Method call = NightjarJni.class.getDeclaredMethod("nativeStreamMenuCall", String.class);
+        assertTrue(java.lang.reflect.Modifier.isNative(call.getModifiers()) && java.lang.reflect.Modifier.isStatic(call.getModifiers()));
         assertEquals(String.class, call.getReturnType());
         for (StreamMenuModel.Key key : StreamMenuModel.picker()) {
             assertEquals(key.name, 1, KeyboardShortcuts.parseChord(key.name).length);
             // Saved under the picker's own name, so the model can label it and match it against a built-in.
             assertEquals(key.name, KeyboardShortcuts.format(KeyboardShortcuts.parseChord(key.name)));
         }
-        for (String id : new RustStreamMenuModel().builtIns.keySet()) assertNotEquals(0, StreamMenu.builtInLabel(id));
+        for (StreamMenuModel.BuiltIn b : StreamMenuModel.builtIns(Collections.emptyList())) assertNotEquals(b.id, 0, StreamMenu.builtInLabel(b.id));
+    }
+
+    private static String readProtocolFile(String relative) throws Exception {
+        for (String p : new String[] {"../protocol/", "protocol/"}) if (new File(p + relative).isFile()) {
+            return new String(Files.readAllBytes(new File(p + relative).toPath()), StandardCharsets.UTF_8);
+        }
+        throw new AssertionError(relative + " not found from " + new File(".").getAbsolutePath());
     }
 
     private static TileGrid findGrid(View view) {

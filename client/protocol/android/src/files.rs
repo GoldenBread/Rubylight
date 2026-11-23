@@ -380,7 +380,7 @@ fn owned_file(_fd: jint) -> Option<File> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_create(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferCreate(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -388,7 +388,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_create
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_destroy(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferDestroy(
     _: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -397,7 +397,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_destro
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_queueUpload(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferQueueUpload(
     mut env: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -414,7 +414,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_queueU
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_queueDownload(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferQueueDownload(
     mut env: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -433,7 +433,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_queueD
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_cancel(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferCancel(
     _: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -443,7 +443,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_cancel
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_cancelAll(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferCancelAll(
     _: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -452,7 +452,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_cancel
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_retry(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferRetry(
     _: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -462,7 +462,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_retry(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_clearFinished(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferClearFinished(
     _: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -471,7 +471,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_clearF
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_snapshot(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferSnapshot(
     mut env: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -481,7 +481,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_snapsh
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_startNext(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferStartNext(
     mut env: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -492,7 +492,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_startN
 
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_list(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferList(
     mut env: JNIEnv,
     _: JClass,
     address: JString,
@@ -519,7 +519,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_list(
 
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_FileTransferBridge_run(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_fileTransferRun(
     mut env: JNIEnv,
     _: JClass,
     handle: jlong,

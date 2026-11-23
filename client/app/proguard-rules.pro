@@ -17,6 +17,10 @@
     void onFrameRendered(long, long);
     void discard(long, java.lang.String);
 }
+# Looked up by name from protocol/android/src/files.rs.
+-keepclassmembers interface com.limelight.nvstream.jni.FileTransferBridge$Progress {
+    void onProgress(long, long, long);
+}
 
 # The default Android rules retain native method names and descriptor classes.
 # BouncyCastle discovers mappings and JCA services by name. AndroidCryptoProvider

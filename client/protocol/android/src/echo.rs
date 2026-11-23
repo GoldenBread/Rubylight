@@ -169,7 +169,7 @@ unsafe fn canceller<'a>(handle: jlong) -> Option<&'a Canceller> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeCreate(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_echoCreate(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -177,7 +177,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeCrea
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeReference(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_echoReference(
     env: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -206,7 +206,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeRefe
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeProcess(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_echoProcess(
     env: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -234,7 +234,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeProc
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeRestart(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_echoRestart(
     _: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -247,7 +247,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeRest
 
 /// `{ERLE in tenths of a dB, delay in ms}`, -1 for what AEC3 has not estimated yet.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeStats(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_echoStats(
     env: JNIEnv,
     _: JClass,
     handle: jlong,
@@ -273,7 +273,7 @@ pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeStat
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_binding_audio_EchoCanceller_nativeDestroy(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_echoDestroy(
     _: JNIEnv,
     _: JClass,
     handle: jlong,

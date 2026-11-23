@@ -355,8 +355,6 @@ public class DemoModeTest {
 
     @Test public void streamMenuOffersTheMicrophoneAndTogglesItWithoutRecording() {
         Intent intent = new Intent(RuntimeEnvironment.getApplication(), DemoGameActivity.class).putExtra("state", "compact");
-        // The menu's grid comes from the shared model, which JVM tests read from nightjar-policy's sources.
-        com.limelight.ui.StreamMenuModel.use(new com.limelight.ui.RustStreamMenuModel());
         var stream = Robolectric.buildActivity(DemoGameActivity.class, intent).create();
         try {
             stream.get().onBackPressed();
@@ -369,7 +367,6 @@ public class DemoModeTest {
             assertTrue(menu.sheet().isShowing());
         } finally {
             stream.destroy();
-            com.limelight.ui.StreamMenuModel.use(null);
         }
     }
 }

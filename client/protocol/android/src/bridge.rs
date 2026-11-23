@@ -2,7 +2,7 @@
 //! ones `callbacks.c` calls, so the renderers and the connection listener serve both engines
 //! unchanged. Session threads attach to the VM on first use and detach when they end.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JStaticMethodID, JValue};
 use jni::signature::{Primitive, ReturnType};
@@ -20,13 +20,16 @@ pub struct Methods {
     pub dr_cleanup: JStaticMethodID,
     pub dr_submit: JStaticMethodID,
     pub dr_submit_direct: JStaticMethodID,
+    pub dr_submit_raw: JStaticMethodID,
     pub dr_chunks: JStaticMethodID,
     pub dr_chunks_direct: JStaticMethodID,
+    pub dr_chunks_raw: JStaticMethodID,
     pub ar_init: JStaticMethodID,
     pub ar_start: JStaticMethodID,
     pub ar_stop: JStaticMethodID,
     pub ar_cleanup: JStaticMethodID,
-    pub ar_play: JStaticMethodID,
+    pub ar_play_direct: JStaticMethodID,
+    pub ar_play_pending: JStaticMethodID,
     pub ar_init_encoded: JStaticMethodID,
     pub ar_play_encoded: JStaticMethodID,
     pub stage_starting: JStaticMethodID,
@@ -61,16 +64,24 @@ pub struct Bridge {
     pub m: Methods,
 }
 
-static BRIDGE: OnceLock<Bridge> = OnceLock::new();
+static BRIDGE: Mutex<Option<Arc<Bridge>>> = Mutex::new(None);
 
-/// Looks up MoonBridge and its callbacks; called from `RustBridge.init()` on a Java thread,
-/// where the app's class loader can find MoonBridge.
-pub fn init(env: &mut JNIEnv) -> jni::errors::Result<()> {
-    if BRIDGE.get().is_some() {
-        return Ok(());
+/// Looks up MoonBridge's callbacks on the caller's class; called from `NightjarJni.rustBridgeInit()`
+/// when a stream starts so Robolectric sandboxes bind their own `MoonBridge` classloader without
+/// triggering `MoonBridge.<clinit>` during `System.loadLibrary`.
+pub fn init(env: &mut JNIEnv, class: &JClass) -> jni::errors::Result<()> {
+    if class.is_null() {
+        return Err(jni::errors::Error::NullPtr("MoonBridge class"));
     }
-    let class = env.find_class("com/limelight/nvstream/jni/MoonBridge")?;
-    let mut id = |name: &str, signature: &str| env.get_static_method_id(&class, name, signature);
+    {
+        let guard = BRIDGE.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(existing) = guard.as_ref()
+            && env.is_same_object(existing.class.as_obj(), class).unwrap_or(false)
+        {
+            return Ok(());
+        }
+    }
+    let mut id = |name: &str, signature: &str| env.get_static_method_id(class, name, signature);
     let m = Methods {
         dr_setup: id("bridgeDrSetup", "(IIII)I")?,
         dr_setup_packing: id("bridgeDrSetupPacking", "(IIIII)I")?,
@@ -83,13 +94,16 @@ pub fn init(env: &mut JNIEnv) -> jni::errors::Result<()> {
             "bridgeDrSubmitDirectDecodeUnit",
             "(Ljava/nio/ByteBuffer;IIIICJJJJ)I",
         )?,
+        dr_submit_raw: id("drSubmitRawDecodeUnit", "(JIIIICJJJJ)I")?,
         dr_chunks: id("bridgeDrSubmitChunks", "([BIZ)V")?,
         dr_chunks_direct: id("bridgeDrSubmitChunksDirect", "(Ljava/nio/ByteBuffer;IZ)V")?,
+        dr_chunks_raw: id("drSubmitChunksRaw", "(JIZ)V")?,
         ar_init: id("bridgeArInit", "(III)I")?,
         ar_start: id("bridgeArStart", "()V")?,
         ar_stop: id("bridgeArStop", "()V")?,
         ar_cleanup: id("bridgeArCleanup", "()V")?,
-        ar_play: id("bridgeArPlaySample", "([SI)V")?,
+        ar_play_direct: id("arPlaySampleDirect", "(JII)I")?,
+        ar_play_pending: id("arPlaySamplePending", "([SII)V")?,
         ar_init_encoded: id("bridgeArInitEncoded", "(II)I")?,
         ar_play_encoded: id("bridgeArPlayEncoded", "([BI)V")?,
         stage_starting: id("bridgeClStageStarting", "(I)V")?,
@@ -117,17 +131,17 @@ pub fn init(env: &mut JNIEnv) -> jni::errors::Result<()> {
         clipboard_sync: id("bridgeClClipboardSync", "(Ljava/lang/String;)V")?,
         clipboard_sync_refused: id("bridgeClClipboardSyncRefused", "(I)V")?,
     };
-    let bridge = Bridge {
+    let bridge = Arc::new(Bridge {
         vm: env.get_java_vm()?,
-        class: env.new_global_ref(&class)?,
+        class: env.new_global_ref(class)?,
         m,
-    };
-    let _ = BRIDGE.set(bridge);
+    });
+    *BRIDGE.lock().unwrap_or_else(|p| p.into_inner()) = Some(bridge);
     Ok(())
 }
 
-pub fn get() -> Option<&'static Bridge> {
-    BRIDGE.get()
+pub fn get() -> Option<Arc<Bridge>> {
+    BRIDGE.lock().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
 pub fn int(value: i32) -> jvalue {

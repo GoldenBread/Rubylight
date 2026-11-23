@@ -12,40 +12,36 @@ import com.limelight.LimeLog;
 final class RustBridge {
     private RustBridge() {}
 
-    private static volatile Boolean available;
-    private static String loadFailure;
+    private static volatile boolean initFailed;
 
     /**
-     * Loads the library once; false when it is missing or broken ({@link #loadFailure} says why).
-     * MoonBridge's guarded forwarders and the stream start call it on first use, so input and
-     * queries made without the library are no-ops and the start refuses, never an UnsatisfiedLinkError.
-     * Never call it from MoonBridge's static initialiser: init() initialises MoonBridge (lock order).
+     * Loads the library once via {@link NightjarJni}; false when missing or broken ({@link #loadFailure} says why).
+     * Never touches {@link MoonBridge} here; {@link #initStream()} binds {@code MoonBridge.class} lazily on stream start.
      */
     static boolean isAvailable() {
-        Boolean known = available;
-        return known != null ? known : load();
+        return NightjarJni.isAvailable();
     }
 
-    private static synchronized boolean load() {
-        if (available == null) {
-            boolean loaded;
-            try {
-                System.loadLibrary("nightjar_core");
-                loaded = init(BuildConfig.VERSION_NAME);
-                if (!loaded) loadFailure = "its initialisation failed";
-            } catch (UnsatisfiedLinkError e) {
-                LimeLog.warning("Streaming engine unavailable: " + e.getMessage());
-                loadFailure = "the library did not load (" + e.getMessage() + ")";
-                loaded = false;
-            }
-            available = loaded;
+    /** Why {@link #isAvailable} is false or stream bridge init failed, or null while available. */
+    static String loadFailure() {
+        String failure = NightjarJni.loadFailure();
+        if (failure != null) {
+            return failure;
         }
-        return available;
+        return initFailed ? "its initialisation failed" : null;
     }
 
-    /** Why {@link #isAvailable} is false, or null while it is true. */
-    static synchronized String loadFailure() {
-        return available != null && !available ? loadFailure : null;
+    private static synchronized boolean initStream() {
+        if (!NightjarJni.isAvailable()) {
+            return false;
+        }
+        if (!NightjarJni.rustBridgeInit(BuildConfig.VERSION_NAME, MoonBridge.class)) {
+            initFailed = true;
+            LimeLog.warning("Streaming engine bridge initialisation failed");
+            return false;
+        }
+        initFailed = false;
+        return true;
     }
 
     // GFE 3.22 (app version 7.1.431) introduced the encrypted control stream; the engine
@@ -99,112 +95,159 @@ final class RustBridge {
         return true;
     }
 
-    /** Loads the engine; {@code appVersion} names this app in the User-Agent of requests to the host. */
-    private static native boolean init(String appVersion);
+    static int startConnection(String address, String appVersion, String rtspSessionUrl,
+                               int serverCodecModeSupport, int width, int height, int fps,
+                               int bitrate, int packetSize, int streamingRemotely,
+                               int audioConfiguration, int supportedVideoFormats,
+                               int clientRefreshRateX100, byte[] riAesKey, byte[] riAesIv,
+                               int videoCapabilities, int colorSpace, int colorRange,
+                               int hostFeatures, boolean inputOnly, boolean enableMic,
+                               boolean hapticsPcm, int pyrowaveLinkMbps, int pyrowavePaceMbps,
+                               boolean clientWireless, int networkGracePeriodMs, boolean packed444,
+                               int packed444Modes, boolean remoteMonitor, boolean unbatchedInput,
+                               boolean networkPriority, boolean roaming, boolean roamingMetered,
+                               int audioPassthrough, int hdrFormat, int videoFecPercentage,
+                               boolean pyrowaveEarly, boolean codecDirect,
+                               boolean receiveDecodePriority, boolean frameWarpRequested,
+                               boolean receiveCoalescing, int decodeQueueBound) {
+        if (!initStream()) return -1;
+        return NightjarJni.startConnection(address, appVersion, rtspSessionUrl,
+                serverCodecModeSupport, width, height, fps, bitrate, packetSize, streamingRemotely,
+                audioConfiguration, supportedVideoFormats, clientRefreshRateX100, riAesKey, riAesIv,
+                videoCapabilities, colorSpace, colorRange, hostFeatures, inputOnly, enableMic,
+                hapticsPcm, pyrowaveLinkMbps, pyrowavePaceMbps, clientWireless, networkGracePeriodMs,
+                packed444, packed444Modes, remoteMonitor, unbatchedInput, networkPriority, roaming,
+                roamingMetered, audioPassthrough, hdrFormat, videoFecPercentage, pyrowaveEarly,
+                codecDirect, receiveDecodePriority, frameWarpRequested, receiveCoalescing,
+                decodeQueueBound);
+    }
 
-    static native int startConnection(String address, String appVersion, String rtspSessionUrl,
-                                      int serverCodecModeSupport, int width, int height, int fps,
-                                      int bitrate, int packetSize, int streamingRemotely,
-                                      int audioConfiguration, int supportedVideoFormats,
-                                      int clientRefreshRateX100, byte[] riAesKey, byte[] riAesIv,
-                                      int videoCapabilities, int colorSpace, int colorRange,
-                                      int hostFeatures, boolean inputOnly, boolean enableMic,
-                                      boolean hapticsPcm, int pyrowaveLinkMbps, int pyrowavePaceMbps,
-                                      boolean clientWireless, int networkGracePeriodMs, boolean packed444,
-                                      int packed444Modes, boolean remoteMonitor, boolean unbatchedInput,
-                                      boolean networkPriority, boolean roaming, boolean roamingMetered,
-                                      int audioPassthrough, int hdrFormat, int videoFecPercentage,
-                                      boolean pyrowaveEarly, boolean codecDirect,
-                                      boolean receiveDecodePriority, boolean frameWarpRequested,
-                                      boolean receiveCoalescing, int decodeQueueBound);
-    static native void stopConnection();
-    static native void interruptConnection();
-    static native int networkChanged(boolean metered);
-    static native boolean hostSaidGoodbye();
-    static native String getHostAddress();
-    static native int hostLossRound(String host, int port, String gateway);
-    static native int hostLossAfterGoodbye(boolean onLink, int round, long waitedMs);
-    static native void sendMouseMove(short deltaX, short deltaY);
-    static native void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight);
-    static native void sendMouseMoveAsMousePosition(short deltaX, short deltaY, short referenceWidth, short referenceHeight);
-    static native void sendMouseButton(byte buttonEvent, byte mouseButton);
-    static native void sendMultiControllerInput(short controllerNumber, short activeGamepadMask, int buttonFlags, byte leftTrigger, byte rightTrigger, short leftStickX, short leftStickY, short rightStickX, short rightStickY);
-    static native int sendTouchEvent(byte eventType, int pointerId, float x, float y, float pressure, float contactAreaMajor, float contactAreaMinor, short rotation);
-    static native int sendPenEvent(byte eventType, byte toolType, byte penButtons, float x, float y, float pressure, float contactAreaMajor, float contactAreaMinor, short rotation, byte tilt);
-    static native int sendControllerIdentityEvent(byte controllerNumber, int vendorId, int productId);
+    static void stopConnection() { NightjarJni.stopConnection(); }
+    static void interruptConnection() { NightjarJni.interruptConnection(); }
+    static int networkChanged(boolean metered) { return NightjarJni.networkChanged(metered); }
+    static boolean hostSaidGoodbye() { return NightjarJni.hostSaidGoodbye(); }
+    static String getHostAddress() { return NightjarJni.getHostAddress(); }
+    static int hostLossRound(String host, int port, String gateway) { return NightjarJni.hostLossRound(host, port, gateway); }
+    static int hostLossAfterGoodbye(boolean onLink, int round, long waitedMs) { return NightjarJni.hostLossAfterGoodbye(onLink, round, waitedMs); }
+    static void sendMouseMove(short deltaX, short deltaY) { NightjarJni.sendMouseMove(deltaX, deltaY); }
+    static void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight) { NightjarJni.sendMousePosition(x, y, referenceWidth, referenceHeight); }
+    static void sendMouseMoveAsMousePosition(short deltaX, short deltaY, short referenceWidth, short referenceHeight) { NightjarJni.sendMouseMoveAsMousePosition(deltaX, deltaY, referenceWidth, referenceHeight); }
+    static void sendMouseButton(byte buttonEvent, byte mouseButton) { NightjarJni.sendMouseButton(buttonEvent, mouseButton); }
+    static void sendMultiControllerInput(short controllerNumber, short activeGamepadMask, int buttonFlags, byte leftTrigger, byte rightTrigger, short leftStickX, short leftStickY, short rightStickX, short rightStickY) {
+        NightjarJni.sendMultiControllerInput(controllerNumber, activeGamepadMask, buttonFlags, leftTrigger, rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
+    }
+    static int sendTouchEvent(byte eventType, int pointerId, float x, float y, float pressure, float contactAreaMajor, float contactAreaMinor, short rotation) {
+        return NightjarJni.sendTouchEvent(eventType, pointerId, x, y, pressure, contactAreaMajor, contactAreaMinor, rotation);
+    }
+    static int sendPenEvent(byte eventType, byte toolType, byte penButtons, float x, float y, float pressure, float contactAreaMajor, float contactAreaMinor, short rotation, byte tilt) {
+        return NightjarJni.sendPenEvent(eventType, toolType, penButtons, x, y, pressure, contactAreaMajor, contactAreaMinor, rotation, tilt);
+    }
+    static int sendControllerIdentityEvent(byte controllerNumber, int vendorId, int productId) {
+        return NightjarJni.sendControllerIdentityEvent(controllerNumber, vendorId, productId);
+    }
     /** How the host takes a physical touchpad's fingers: {@link MoonBridge#TOUCHPAD_NONE}, _INDIVIDUAL or _FRAME. */
-    static native int touchpadTransport();
+    static int touchpadTransport() { return NightjarJni.touchpadTransport(); }
     /** One motion event of a physical touchpad: the first {@code count} fingers on it, positions 0-1 on its surface. */
-    static native int touchpadFrame(int device, int[] ids, float[] xs, float[] ys, float[] pressures, int count,
-                                    boolean button, short widthMm, short heightMm);
-    static native int touchpadCancel();
-    static native int sendControllerArrivalEvent(byte controllerNumber, short activeGamepadMask, byte type, int supportedButtonFlags, short capabilities);
-    static native int sendControllerTouchEvent(byte controllerNumber, byte eventType, int pointerId, float x, float y, float pressure);
-    static native int sendControllerMotionEvent(byte controllerNumber, byte motionType, float x, float y, float z);
-    static native int sendControllerBatteryEvent(byte controllerNumber, byte batteryState, byte batteryPercentage);
-    static native void sendKeyboardInput(short keyMap, byte keyDirection, byte modifier, byte flags);
-    static native void sendMouseHighResScroll(short scrollAmount);
-    static native void sendMouseHighResHScroll(short scrollAmount);
-    static native void sendUtf8Text(byte[] text);
-    static native boolean sendServerCommand(byte[] payload);
-    static native int getPendingAudioDuration();
+    static int touchpadFrame(int device, int[] ids, float[] xs, float[] ys, float[] pressures, int count,
+                             boolean button, short widthMm, short heightMm) {
+        return NightjarJni.touchpadFrame(device, ids, xs, ys, pressures, count, button, widthMm, heightMm);
+    }
+    static int touchpadCancel() { return NightjarJni.touchpadCancel(); }
+    static int sendControllerArrivalEvent(byte controllerNumber, short activeGamepadMask, byte type, int supportedButtonFlags, short capabilities) {
+        return NightjarJni.sendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, supportedButtonFlags, capabilities);
+    }
+    static int sendControllerTouchEvent(byte controllerNumber, byte eventType, int pointerId, float x, float y, float pressure) {
+        return NightjarJni.sendControllerTouchEvent(controllerNumber, eventType, pointerId, x, y, pressure);
+    }
+    static int sendControllerMotionEvent(byte controllerNumber, byte motionType, float x, float y, float z) {
+        return NightjarJni.sendControllerMotionEvent(controllerNumber, motionType, x, y, z);
+    }
+    static int sendControllerBatteryEvent(byte controllerNumber, byte batteryState, byte batteryPercentage) {
+        return NightjarJni.sendControllerBatteryEvent(controllerNumber, batteryState, batteryPercentage);
+    }
+    static void sendKeyboardInput(short keyMap, byte keyDirection, byte modifier, byte flags) {
+        NightjarJni.sendKeyboardInput(keyMap, keyDirection, modifier, flags);
+    }
+    static void sendMouseHighResScroll(short scrollAmount) { NightjarJni.sendMouseHighResScroll(scrollAmount); }
+    static void sendMouseHighResHScroll(short scrollAmount) { NightjarJni.sendMouseHighResHScroll(scrollAmount); }
+    static void sendUtf8Text(byte[] text) { NightjarJni.sendUtf8Text(text); }
+    static boolean sendServerCommand(byte[] payload) { return NightjarJni.sendServerCommand(payload); }
+    static int getPendingAudioDuration() { return NightjarJni.getPendingAudioDuration(); }
 
     // nightjar-core's connectivity test and STUN lookup (protocol/android/src/lib.rs).
-    static native int testClientConnectivity(String testServerHostName, int referencePort, int testFlags);
-    static native String findExternalAddressIP4(String stunHostName, int stunPort);
-    static native long audioConcealer();
-    static native int getPendingVideoFrames();
-    static native long getDecoderDrops();
-    static native long getEstimatedRttInfo();
-    static native long getWireBytesReceived();
-    static native long getVideoReceiveBufferInfo();
-    static native boolean reportFrameSlack(long slackNs, long periodNs);
-    static native void flushPhaseLockReport();
-    static native int getPhaseLockLeadUs();
+    static int testClientConnectivity(String testServerHostName, int referencePort, int testFlags) {
+        return NightjarJni.testClientConnectivity(testServerHostName, referencePort, testFlags);
+    }
+    static String findExternalAddressIP4(String stunHostName, int stunPort) {
+        return NightjarJni.findExternalAddressIP4(stunHostName, stunPort);
+    }
+    static long audioConcealer() { return NightjarJni.audioConcealer(); }
+    static int getPendingVideoFrames() { return NightjarJni.getPendingVideoFrames(); }
+    static long getDecoderDrops() { return NightjarJni.getDecoderDrops(); }
+    static long getEstimatedRttInfo() { return NightjarJni.getEstimatedRttInfo(); }
+    static long getWireBytesReceived() { return NightjarJni.getWireBytesReceived(); }
+    static long getVideoReceiveBufferInfo() { return NightjarJni.getVideoReceiveBufferInfo(); }
+    static boolean reportFrameSlack(long slackNs, long periodNs) { return NightjarJni.reportFrameSlack(slackNs, periodNs); }
+    static void flushPhaseLockReport() { NightjarJni.flushPhaseLockReport(); }
+    static int getPhaseLockLeadUs() { return NightjarJni.getPhaseLockLeadUs(); }
     /** The session clock's microseconds now: what frame receive and enqueue times are measured on. */
-    static native long sessionNowUs();
-    static native boolean hostSupportsControlMessage(int messageType);
+    static long sessionNowUs() { return NightjarJni.sessionNowUs(); }
+    static boolean hostSupportsControlMessage(int messageType) { return NightjarJni.hostSupportsControlMessage(messageType); }
     // Frame Warp (protocol/android/src/frame_warp.rs); MoonBridge has what they mean.
-    static native boolean frameWarpOffered();
-    static native long frameWarpApi();
-    static native void frameWarpNoteFrame(long ptsUs, int frame);
-    static native int frameWarpForPts(long ptsUs, float[] out);
-    static native int frameWarpPeekForPts(long ptsUs, float[] out);
-    static native long frameWarpInputState();
-    static native int frameWarpMask(int known, int[] size, byte[] cells);
-    static native void frameWarpDecline();
-    static native int frameWarpStatus(float[] out);
-    static native boolean sendDisplayCaps(boolean hdr, float maxNits, float maxAverageNits, float minNits);
-    static native int getMicrophoneState();
-    static native int getHostPacked444Modes();
-    static native int getAnnouncedHdrFormat();
-    static native int sendMicrophonePcm(short[] pcm, int samples);
-    static native boolean requestReconfigure(int width, int height, int fpsMillihz);
-    static native boolean sendHostTimingRequest(boolean enabled);
-    static native boolean sendLinkNoticeRequest(boolean enabled);
-    static native boolean sendClockSyncProbe();
-    static native void presentClockStart(int minIntervalUs, boolean adaptive);
-    static native void presentClockStop();
-    static native void presentClockReset();
-    static native boolean presentClockSchedule(long hostUs, long readyNs, long[] out);
-    static native boolean presentClockStats(long[] out);
-    static native boolean presentClockOffset(long[] out);
-    static native boolean presentClockScheduleOnGrid(long hostUs, long readyNs, long anchorNs, long intervalNs,
-            long leadNs, long slackNs, long[] out);
-    static native void presentClockObserve(long hostUs);
-    static native int presentClockContentRate();
-    static native boolean sendCursorShapeRequest(boolean enabled);
-    static native boolean sendControllerAudio(int kind, byte[] payload);
-    static native boolean sendTextInputRequest(boolean enabled);
-    static native boolean sendRateChange(int serial, int bitrateKbps, int fpsMillihz);
-    static native boolean sendKeyboardLayout(String bcp47Tag);
+    static boolean frameWarpOffered() { return NightjarJni.frameWarpOffered(); }
+    static long frameWarpApi() { return NightjarJni.frameWarpApi(); }
+    static void frameWarpNoteFrame(long ptsUs, int frame) { NightjarJni.frameWarpNoteFrame(ptsUs, frame); }
+    static int frameWarpForPts(long ptsUs, float[] out) { return NightjarJni.frameWarpForPts(ptsUs, out); }
+    static int frameWarpPeekForPts(long ptsUs, float[] out) { return NightjarJni.frameWarpPeekForPts(ptsUs, out); }
+    static long frameWarpInputState() { return NightjarJni.frameWarpInputState(); }
+    static int frameWarpMask(int known, int[] size, byte[] cells) { return NightjarJni.frameWarpMask(known, size, cells); }
+    static void frameWarpDecline() { NightjarJni.frameWarpDecline(); }
+    static int frameWarpStatus(float[] out) { return NightjarJni.frameWarpStatus(out); }
+    static boolean sendDisplayCaps(boolean hdr, float maxNits, float maxAverageNits, float minNits) {
+        return NightjarJni.sendDisplayCaps(hdr, maxNits, maxAverageNits, minNits);
+    }
+    static int getMicrophoneState() { return NightjarJni.getMicrophoneState(); }
+    static int getHostPacked444Modes() { return NightjarJni.getHostPacked444Modes(); }
+    static int getAnnouncedHdrFormat() { return NightjarJni.getAnnouncedHdrFormat(); }
+    static int sendMicrophonePcm(short[] pcm, int samples) { return NightjarJni.sendMicrophonePcm(pcm, samples); }
+    static boolean requestReconfigure(int width, int height, int fpsMillihz) {
+        return NightjarJni.requestReconfigure(width, height, fpsMillihz);
+    }
+    static boolean sendHostTimingRequest(boolean enabled) { return NightjarJni.sendHostTimingRequest(enabled); }
+    static boolean sendLinkNoticeRequest(boolean enabled) { return NightjarJni.sendLinkNoticeRequest(enabled); }
+    static boolean sendClockSyncProbe() { return NightjarJni.sendClockSyncProbe(); }
+    static void presentClockStart(int minIntervalUs, boolean adaptive) { NightjarJni.presentClockStart(minIntervalUs, adaptive); }
+    static void presentClockStop() { NightjarJni.presentClockStop(); }
+    static void presentClockReset() { NightjarJni.presentClockReset(); }
+    static boolean presentClockSchedule(long hostUs, long readyNs, long[] out) {
+        return NightjarJni.presentClockSchedule(hostUs, readyNs, out);
+    }
+    static boolean presentClockStats(long[] out) { return NightjarJni.presentClockStats(out); }
+    static boolean presentClockOffset(long[] out) { return NightjarJni.presentClockOffset(out); }
+    static boolean presentClockScheduleOnGrid(long hostUs, long readyNs, long anchorNs, long intervalNs,
+            long leadNs, long slackNs, long[] out) {
+        return NightjarJni.presentClockScheduleOnGrid(hostUs, readyNs, anchorNs, intervalNs, leadNs, slackNs, out);
+    }
+    static void presentClockObserve(long hostUs) { NightjarJni.presentClockObserve(hostUs); }
+    static int presentClockContentRate() { return NightjarJni.presentClockContentRate(); }
+    static boolean sendCursorShapeRequest(boolean enabled) { return NightjarJni.sendCursorShapeRequest(enabled); }
+    static boolean sendControllerAudio(int kind, byte[] payload) { return NightjarJni.sendControllerAudio(kind, payload); }
+    static boolean sendTextInputRequest(boolean enabled) { return NightjarJni.sendTextInputRequest(enabled); }
+    static boolean sendRateChange(int serial, int bitrateKbps, int fpsMillihz) {
+        return NightjarJni.sendRateChange(serial, bitrateKbps, fpsMillihz);
+    }
+    static boolean sendKeyboardLayout(String bcp47Tag) { return NightjarJni.sendKeyboardLayout(bcp47Tag); }
     // Clipboard sync (0x5508): MoonBridge.CLIPBOARD_SYNC_* and MoonBridge.CLIPBOARD_COPY_*.
-    static native int clipboardSyncStart(String current);
-    static native int clipboardSyncLocal(String text);
+    static int clipboardSyncStart(String current) { return NightjarJni.clipboardSyncStart(current); }
+    static int clipboardSyncLocal(String text) { return NightjarJni.clipboardSyncLocal(text); }
     // USB forwarding (0x553A): a request id, or one of MoonBridge.USB_*.
-    static native int usbAttach(int fd, String path, String name, String address, int httpPort,
-                                int httpsPort, String serverCertificatePem, String uniqueId,
-                                byte[] clientCertificateDer, byte[] clientPrivateKeyPkcs8);
-    static native boolean usbDetach(int requestId);
-    static native String usbList();
+    static int usbAttach(int fd, String path, String name, String address, int httpPort,
+                         int httpsPort, String serverCertificatePem, String uniqueId,
+                         byte[] clientCertificateDer, byte[] clientPrivateKeyPkcs8) {
+        if (!initStream()) return MoonBridge.USB_NO_STREAM;
+        return NightjarJni.usbAttach(fd, path, name, address, httpPort, httpsPort,
+                serverCertificatePem, uniqueId, clientCertificateDer, clientPrivateKeyPkcs8);
+    }
+    static boolean usbDetach(int requestId) { return NightjarJni.usbDetach(requestId); }
+    static String usbList() { return NightjarJni.usbList(); }
 }

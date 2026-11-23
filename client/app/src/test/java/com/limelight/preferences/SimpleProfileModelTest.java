@@ -4,9 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import com.limelight.nvstream.jni.NightjarJni;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -15,52 +16,24 @@ import org.robolectric.annotation.Config;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
- * The simple settings layer's mapping on Android. The contract test holds {@link SimpleProfileModel} to
- * protocol/android/src/simple_profile_contract.json, which the Rust test checks the JNI entry answers
- * exactly; the rest reads the model's answers the way the settings rows do.
+ * The simple settings layer's mapping on Android, backed directly by {@link NightjarJni#simpleProfileCall}.
+ * The contract test holds {@link SimpleProfileModel} to protocol/android/src/simple_profile_contract.json end-to-end.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29)
 public class SimpleProfileModelTest {
-    private final List<JSONObject> asked = new ArrayList<>();
-    private String answer;
-
     private static SimpleProfileModel.Capabilities hdrCapabilities() {
         return new SimpleProfileModel.Capabilities(1920, 1080, 120, true, true,
                 true, true, true, true, true, true, true);
     }
 
-    @Before
-    public void setUp() {
-        asked.clear();
-        answer = "{\"ok\":{}}";
-        SimpleProfileModel.use(request -> {
-            try {
-                asked.add(new JSONObject(request));
-            } catch (Exception e) {
-                throw new AssertionError(e);
-            }
-            return answer;
-        });
-    }
-
     @Test
-    public void valuesAreReadFromTheModel() throws Exception {
-        answer = "{\"ok\":{\"native_resolution\":true,\"fps\":null,\"pacing\":\"smoothest\",\"vrr\":false,"
-                + "\"latency_switches\":true,\"drop_late_frames\":true,\"host_frame_times\":false,"
-                + "\"real_vrr\":null,\"reduce_refresh\":false,\"content_rate\":false,"
-                + "\"bitrate\":{\"mode\":\"factor\",\"milli\":1500},"
-                + "\"codec\":\"av1\",\"hdr\":true,\"adaptive_bitrate\":false,\"adaptive_quality\":\"off\"}}";
+    public void valuesAreReadFromTheModel() {
         SimpleProfileModel.Values values = SimpleProfileModel.values("smoothest", "best", "auto", hdrCapabilities());
-        assertEquals("smoothest", asked.get(0).getString("smoothness"));
-        assertEquals("best", asked.get(0).getString("picture"));
-        assertEquals("auto", asked.get(0).getString("hdr"));
         assertEquals(1500, values.bitrateMilli);
-        assertEquals("av1", values.codec);
+        assertEquals("auto", values.codec);
         assertEquals("smoothest", values.pacing);
         assertNull(values.fps);
         assertTrue(values.nativeResolution);
@@ -69,29 +42,36 @@ public class SimpleProfileModelTest {
 
     @Test
     public void aModelThatCannotAnswerChangesNothing() {
-        SimpleProfileModel.use(request -> {
-            throw new LinkageError("the library is not there in a JVM test");
-        });
-        assertNull(SimpleProfileModel.values("balanced", "auto", "auto", hdrCapabilities()));
-        assertNull(SimpleProfileModel.recommended(hdrCapabilities()));
-        assertNull(SimpleProfileModel.chosen(hdrCapabilities(), current()));
+        NightjarJni.forceUnavailableForTest(new LinkageError("the library is not there in a JVM test"));
+        try {
+            assertNull(SimpleProfileModel.values("balanced", "auto", "auto", hdrCapabilities()));
+            assertNull(SimpleProfileModel.recommended(hdrCapabilities()));
+            assertNull(SimpleProfileModel.chosen(hdrCapabilities(), current()));
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
+        assertNull(SimpleProfileModel.parseAnswer("{\"error\":\"invalid\"}"));
     }
 
     @Test
     public void recommendedAndChosenReadTheModelsAnswers() {
-        answer = "{\"ok\":{\"smoothness\":\"balanced\",\"picture\":\"auto\",\"hdr\":\"auto\"}}";
         String[] recommended = SimpleProfileModel.recommended(hdrCapabilities());
-        assertEquals("balanced", recommended[0]);
+        assertEquals("auto", recommended[0]);
         assertEquals("auto", recommended[1]);
         assertEquals("auto", recommended[2]);
 
-        answer = "{\"ok\":{\"choices\":null}}";
-        assertNull(SimpleProfileModel.chosen(hdrCapabilities(), current()));
-        answer = "{\"ok\":{\"choices\":{\"smoothness\":\"lowest-delay\",\"picture\":\"save-data\",\"hdr\":\"off\"}}}";
-        String[] chosen = SimpleProfileModel.chosen(hdrCapabilities(), current());
-        assertEquals("lowest-delay", chosen[0]);
-        assertEquals("save-data", chosen[1]);
-        assertEquals("off", chosen[2]);
+        SimpleProfileModel.Current vrrAuto = new SimpleProfileModel.Current(true, null, "balanced", true, true,
+                true, false, true, false, false, null, "auto", true, false, "off",
+                "balanced", "auto", "auto");
+        String[] chosen = SimpleProfileModel.chosen(hdrCapabilities(), vrrAuto);
+        assertEquals("balanced", chosen[0]);
+        assertEquals("auto", chosen[1]);
+        assertEquals("auto", chosen[2]);
+
+        SimpleProfileModel.Current custom = new SimpleProfileModel.Current(true, 60, "balanced", true, true,
+                true, false, true, false, false, null, "auto", true, false, "off",
+                "balanced", "auto", "auto");
+        assertNull(SimpleProfileModel.chosen(hdrCapabilities(), custom));
     }
 
     private static SimpleProfileModel.Current current() {
@@ -116,15 +96,6 @@ public class SimpleProfileModelTest {
         for (int i = 0; i < cases.length(); i++) {
             JSONObject c = cases.getJSONObject(i);
             JSONObject request = c.getJSONObject("request");
-            SimpleProfileModel.use(sent -> {
-                try {
-                    assertEquals(c.getString("name"), request.toString(),
-                            sortedLike(request, new JSONObject(sent)).toString());
-                    return c.getJSONObject("response").toString();
-                } catch (Exception e) {
-                    throw new AssertionError(e);
-                }
-            });
             JSONObject ok = c.getJSONObject("response").getJSONObject("ok");
             switch (request.getString("op")) {
                 case "values": {
@@ -177,6 +148,7 @@ public class SimpleProfileModelTest {
                     throw new AssertionError("unexpected op " + request.getString("op"));
             }
         }
+        assertTrue(cases.length() > 0);
     }
 
     private static SimpleProfileModel.Capabilities capabilitiesOf(JSONObject request) throws Exception {

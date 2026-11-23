@@ -204,6 +204,10 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: gradle
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: 'protocol -> target'
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The shared suite runs in the nonRoot flavor; the root flavor's task runs src/testRoot's
       # tests (app/build.gradle). Two test JVMs: four took 490 s on the runner's four cores, two 376 s.
       - name: Run the unit tests

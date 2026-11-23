@@ -2,15 +2,16 @@ package com.limelight.console;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 import android.app.Application;
 
+import com.limelight.nvstream.jni.NightjarJni;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -25,17 +26,12 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * The wire contract with libnightjar_core: each request {@link CollectionGroups} sends must be the one in
- * protocol/android/src/collections_contract.json, whose answers the Rust side's test checks too.
+ * The wire contract with libnightjar_core: {@link CollectionGroups} sends its requests through
+ * {@link NightjarJni#collectionsCall} and reads the answers matching protocol/android/src/collections_contract.json.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class CollectionGroupsTest {
-    @After
-    public void forget() {
-        CollectionGroups.use(null);
-    }
-
     private static JSONArray cases() throws Exception {
         for (String path : new String[] {"../protocol/android/src/collections_contract.json", "protocol/android/src/collections_contract.json"}) {
             File file = new File(path);
@@ -58,10 +54,6 @@ public class CollectionGroupsTest {
     @Test
     public void sendsTheContractsRequestAndReadsItsAnswer() throws Exception {
         JSONObject several = cases().getJSONObject(0);
-        CollectionGroups.use(request -> {
-            assertEquals(several.optJSONObject("request").toString(), request);
-            return several.optJSONObject("response").toString();
-        });
         List<CollectionGroups.Group> groups = CollectionGroups.of(gamesOf(several.getJSONObject("request")));
         assertEquals(3, groups.size());
         assertEquals("Couch", groups.get(0).name);
@@ -73,21 +65,25 @@ public class CollectionGroupsTest {
 
     @Test
     public void noCollectionsAsksNothing() throws Exception {
-        CollectionGroups.use(request -> {
-            fail("asked: " + request);
-            return "";
-        });
-        assertTrue(CollectionGroups.of(gamesOf(cases().getJSONObject(1).getJSONObject("request"))).isEmpty());
+        List<List<String>> games = gamesOf(cases().getJSONObject(1).getJSONObject("request"));
+        assertFalse(CollectionGroups.needsGrouping(games));
+        NightjarJni.forceUnavailableForTest(new AssertionError("asked"));
+        try {
+            assertTrue(CollectionGroups.of(games).isEmpty());
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 
     @Test
     public void aRefusalOrAMissingLibraryIsNoGroups() {
         List<List<String>> games = Collections.singletonList(Arrays.asList("VR"));
-        CollectionGroups.use(request -> "{\"error\":\"invalid\",\"detail\":\"x\"}");
-        assertTrue(CollectionGroups.of(games).isEmpty());
-        CollectionGroups.use(request -> {
-            throw new UnsatisfiedLinkError("no library");
-        });
-        assertTrue(CollectionGroups.of(games).isEmpty());
+        assertTrue(CollectionGroups.parseGroups("{\"error\":\"invalid\",\"detail\":\"x\"}").isEmpty());
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("no library"));
+        try {
+            assertTrue(CollectionGroups.of(games).isEmpty());
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 }

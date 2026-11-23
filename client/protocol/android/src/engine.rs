@@ -193,7 +193,7 @@ pub fn stream_config(
 }
 
 /// `LiStartConnection`: blocks until the stream runs (0) or a stage failed (its code).
-pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
+pub fn start(bridge: Arc<Bridge>, params: StartParams) -> i32 {
     // A stream still stored here was never stopped; stop it first like a new C start would
     // find a stopped core.
     stop();
@@ -213,7 +213,7 @@ pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
     let microphone_requested = params.config.stream.microphone;
     let controller_identity = params.controller_identity;
     let audio_passthrough = params.config.stream.audio_passthrough;
-    let events = Arc::new(Events::new(bridge));
+    let events = Arc::new(Events::new(Arc::clone(&bridge)));
     platform::info(&format!(
         "Starting a stream with the Rust engine: {}x{}@{} formats=0x{:x} input_only={}",
         params.config.stream.width,
@@ -226,11 +226,11 @@ pub fn start(bridge: &'static Bridge, params: StartParams) -> i32 {
         &params.host,
         params.config,
         Box::new(Video::new(
-            bridge,
+            Arc::clone(&bridge),
             params.early_records,
             params.codec_direct,
         )),
-        Box::new(Audio::new(bridge, audio_passthrough)),
+        Box::new(Audio::new(Arc::clone(&bridge), audio_passthrough)),
         events.clone(),
         &interrupt,
     ) {

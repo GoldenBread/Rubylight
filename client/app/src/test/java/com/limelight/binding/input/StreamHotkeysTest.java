@@ -5,10 +5,8 @@ import android.content.SharedPreferences;
 import android.preference.PreferenceManager;
 import android.view.KeyEvent;
 
-import com.limelight.ui.RustStreamMenuModel;
 import com.limelight.ui.StreamMenuModel;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -27,14 +25,8 @@ public class StreamHotkeysTest {
 
     @Before
     public void model() {
-        StreamMenuModel.use(new RustStreamMenuModel());
         prefs = PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication());
         prefs.edit().clear().commit();
-    }
-
-    @After
-    public void forgetTheModel() {
-        StreamMenuModel.use(null);
     }
 
     private StreamHotkeys.Table table() throws StreamMenuModel.Refused {

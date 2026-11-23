@@ -4,10 +4,9 @@
 //! in one buffer, and Opus is decoded here so Java receives PCM. Passthrough PCM goes on as
 //! shorts the same way; AC3 and E-AC3 frames go to `bridgeArPlayEncoded` as bytes.
 
-use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
-use jni::objects::{GlobalRef, JShortArray, JStaticMethodID};
-use jni::JNIEnv;
+use jni::objects::{GlobalRef, JShortArray};
 
 use nightjar_core::sdp::VIDEO_FORMAT_MASK_PYROWAVE;
 use nightjar_core::session::{
@@ -23,34 +22,8 @@ use crate::{opus, platform};
 const DR_OK: i32 = 0;
 const BUFFER_TYPE_PICDATA: i32 = 0;
 
-struct FastMethods {
-    dr_submit_raw: JStaticMethodID,
-    dr_chunks_raw: JStaticMethodID,
-    ar_play_direct: JStaticMethodID,
-    ar_play_pending: JStaticMethodID,
-}
-
-static FAST_METHODS: OnceLock<FastMethods> = OnceLock::new();
-
-/// Caches the raw-pointer / direct-audio fast callbacks on `MoonBridge` during `RustBridge.init`.
-pub(crate) fn init(env: &mut JNIEnv) -> jni::errors::Result<()> {
-    if FAST_METHODS.get().is_some() {
-        return Ok(());
-    }
-    let class = env.find_class("com/limelight/nvstream/jni/MoonBridge")?;
-    let mut id = |name: &str, sig: &str| env.get_static_method_id(&class, name, sig);
-    let methods = FastMethods {
-        dr_submit_raw: id("drSubmitRawDecodeUnit", "(JIIIICJJJJ)I")?,
-        dr_chunks_raw: id("drSubmitChunksRaw", "(JIZ)V")?,
-        ar_play_direct: id("arPlaySampleDirect", "(JII)I")?,
-        ar_play_pending: id("arPlaySamplePending", "([SII)V")?,
-    };
-    let _ = FAST_METHODS.set(methods);
-    Ok(())
-}
-
 pub struct Video {
-    bridge: &'static Bridge,
+    bridge: Arc<Bridge>,
     buffer: Option<GlobalRef>,
     capacity: usize,
     /// PyroWave records frames reach the renderer as their packets arrive (early record push).
@@ -65,7 +38,7 @@ pub struct Video {
 }
 
 impl Video {
-    pub fn new(bridge: &'static Bridge, early: bool, codec_direct: bool) -> Self {
+    pub fn new(bridge: Arc<Bridge>, early: bool, codec_direct: bool) -> Self {
         Self {
             bridge,
             buffer: None,
@@ -88,7 +61,7 @@ impl Video {
             self.flush_chunks_in_place();
             return;
         }
-        let b = self.bridge;
+        let b = Arc::clone(&self.bridge);
         let needed = self.chunks.bytes.len();
         let (chunks, buffer, capacity) = (&self.chunks, &mut self.buffer, &mut self.capacity);
         b.with_env(|env| {
@@ -115,19 +88,19 @@ impl Video {
     /// own memory (`debug.nightjar.pyro_direct`, as for frames): Java's renderer reads it during
     /// the call, and `self.chunks` is not touched until the call returns, so the bytes stay put.
     fn flush_chunks_in_place(&mut self) {
-        let b = self.bridge;
-        let (bytes, first) = (&self.chunks.bytes, self.chunks.first);
+        let b = Arc::clone(&self.bridge);
+        let (bytes, first, pyrowave) = (&self.chunks.bytes, self.chunks.first, self.pyrowave);
         let length = bytes.len();
         b.with_env(|env| {
             // SAFETY: Native PyroWave reads `bytes` synchronously during this call only;
             // `self.chunks` is neither moved nor cleared until after the call returns.
-            if let Some(fast) = FAST_METHODS.get() {
+            if pyrowave {
                 let args = [
                     bridge::long(bytes.as_ptr() as usize as i64),
                     bridge::int(length as i32),
                     jni::objects::JValue::Bool(first.into()).as_jni(),
                 ];
-                b.void(env, fast.dr_chunks_raw, &args);
+                b.void(env, b.m.dr_chunks_raw, &args);
                 return Ok(());
             }
             let direct = unsafe { env.new_direct_byte_buffer(bytes.as_ptr().cast_mut(), length)? };
@@ -249,7 +222,7 @@ fn monotonic_ns_of(session_us: u64) -> i64 {
 
 impl VideoDecoder for Video {
     fn setup(&mut self, setup: &VideoSetup) -> Result<(), i32> {
-        let b = self.bridge;
+        let b = Arc::clone(&self.bridge);
         let args = [
             bridge::int(setup.format as i32),
             bridge::int(setup.width),
@@ -309,7 +282,7 @@ impl VideoDecoder for Video {
     fn submit(&mut self, frame: &Frame) -> DecodeStatus {
         // Chunks still collected go first: the frame's end packet, which sends a batch, was lost.
         self.flush_chunks();
-        let b = self.bridge;
+        let b = Arc::clone(&self.bridge);
         let receive_ns = monotonic_ns_of(frame.receive_time_us);
         // Picture data in one piece goes to Java in place, as a direct buffer over the frame
         // that is only valid during the call; split picture data takes the array as before.
@@ -365,9 +338,7 @@ impl VideoDecoder for Video {
             let bytes = &frame.data()[picture];
             // SAFETY: Native PyroWave reads `bytes` synchronously during this call only;
             // `frame` outlives the call, skipping NewDirectByteBuffer JNI upcalls.
-            if self.pyrowave
-                && let Some(fast) = FAST_METHODS.get()
-            {
+            if self.pyrowave {
                 let args = [
                     bridge::long(bytes.as_ptr() as usize as i64),
                     bridge::int(bytes.len() as i32),
@@ -380,7 +351,7 @@ impl VideoDecoder for Video {
                     bridge::long(receive_ns),
                     bridge::long(frame.presentation_time_us as i64),
                 ];
-                return Ok(b.int(env, fast.dr_submit_raw, &args));
+                return Ok(b.int(env, b.m.dr_submit_raw, &args));
             }
             // SAFETY: Java only reads the buffer, and only until the call returns (the
             // contract of bridgeDrSubmitDirectDecodeUnit); `frame` outlives the call, and the
@@ -470,7 +441,7 @@ pub unsafe extern "C" fn conceal(pcm: *mut i16, frames: i32) -> i32 {
 }
 
 pub struct Audio {
-    bridge: &'static Bridge,
+    bridge: Arc<Bridge>,
     mode: AudioMode,
     /// The passthrough codecs this stream asked for, to say so when the stream plays Opus.
     passthrough: u8,
@@ -485,7 +456,7 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn new(bridge: &'static Bridge, passthrough: u8) -> Self {
+    pub fn new(bridge: Arc<Bridge>, passthrough: u8) -> Self {
         Self {
             bridge,
             mode: AudioMode::Opus,
@@ -538,7 +509,7 @@ pub fn pcm_s16le(packet: Option<&[u8]>, pcm: &mut [i16]) -> usize {
 impl AudioRenderer for Audio {
     fn init(&mut self, setup: &AudioSetup) -> Result<(), i32> {
         use rubylight_protocol::audio_ext::{CODEC_AC3, CODEC_EAC3, CODEC_OPUS, CODEC_PCM};
-        let b = self.bridge;
+        let b = Arc::clone(&self.bridge);
         *shared_decoder() = None;
         let configuration = bridge::int(audio_configuration_to_int(setup.configuration));
         self.mode = match setup.codec {
@@ -636,7 +607,7 @@ impl AudioRenderer for Audio {
         let Some(array) = self.array.as_ref() else {
             return;
         };
-        let b = self.bridge;
+        let b = Arc::clone(&self.bridge);
         let samples = match self.mode {
             AudioMode::Encoded => {
                 // A lost frame writes nothing: the sink hears a gap, never a broken frame.
@@ -675,45 +646,35 @@ impl AudioRenderer for Audio {
         let pending_ms = crate::engine::pending_audio_ms() as i32;
         let try_direct = &mut self.try_direct_audio;
         b.with_env(|env| {
-            if let Some(fast) = FAST_METHODS.get() {
-                if *try_direct
-                    && crate::engine::microphone_state() != crate::engine::MIC_STATE_READY
-                {
-                    let status = b.int(
-                        env,
-                        fast.ar_play_direct,
-                        &[
-                            bridge::long(pcm.as_ptr() as usize as i64),
-                            bridge::int(samples as i32),
-                            bridge::int(pending_ms),
-                        ],
-                    );
-                    if status == Some(1) {
-                        return Ok(());
-                    }
-                    if status == Some(-1) {
-                        *try_direct = false;
-                    }
-                }
-                let shorts = <&JShortArray>::from(array.as_obj());
-                env.set_short_array_region(shorts, 0, pcm)?;
-                b.void(
+            if *try_direct
+                && crate::engine::microphone_state() != crate::engine::MIC_STATE_READY
+            {
+                let status = b.int(
                     env,
-                    fast.ar_play_pending,
+                    b.m.ar_play_direct,
                     &[
-                        bridge::object(array.as_obj()),
+                        bridge::long(pcm.as_ptr() as usize as i64),
                         bridge::int(samples as i32),
                         bridge::int(pending_ms),
                     ],
                 );
-                return Ok(());
+                if status == Some(1) {
+                    return Ok(());
+                }
+                if status == Some(-1) {
+                    *try_direct = false;
+                }
             }
             let shorts = <&JShortArray>::from(array.as_obj());
             env.set_short_array_region(shorts, 0, pcm)?;
             b.void(
                 env,
-                b.m.ar_play,
-                &[bridge::object(array.as_obj()), bridge::int(samples as i32)],
+                b.m.ar_play_pending,
+                &[
+                    bridge::object(array.as_obj()),
+                    bridge::int(samples as i32),
+                    bridge::int(pending_ms),
+                ],
             );
             Ok(())
         });

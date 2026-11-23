@@ -14,42 +14,80 @@ public final class FileTransferBridge {
     }
 
     public static boolean isAvailable() {
-        return RustBridge.isAvailable();
+        return NightjarJni.isAvailable();
     }
 
-    public static native long create();
+    public static long create() {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferCreate();
+    }
 
     /** Cancels what has not finished and forgets the list; workers still running finish on their own. */
-    public static native void destroy(long handle);
+    public static void destroy(long handle) {
+        NightjarJni.ensureLoaded();
+        NightjarJni.fileTransferDestroy(handle);
+    }
 
     /** The new transfer's id, or -1 for a list that is gone. */
-    public static native long queueUpload(long handle, String localName, long size);
+    public static long queueUpload(long handle, String localName, long size) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferQueueUpload(handle, localName, size);
+    }
 
-    public static native long queueDownload(long handle, String name, String localName, long size);
+    public static long queueDownload(long handle, String name, String localName, long size) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferQueueDownload(handle, name, localName, size);
+    }
 
-    public static native boolean cancel(long handle, long id);
+    public static boolean cancel(long handle, long id) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferCancel(handle, id);
+    }
 
-    public static native void cancelAll(long handle);
+    public static void cancelAll(long handle) {
+        NightjarJni.ensureLoaded();
+        NightjarJni.fileTransferCancelAll(handle);
+    }
 
-    public static native boolean retry(long handle, long id);
+    public static boolean retry(long handle, long id) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferRetry(handle, id);
+    }
 
-    public static native void clearFinished(long handle);
+    public static void clearFinished(long handle) {
+        NightjarJni.ensureLoaded();
+        NightjarJni.fileTransferClearFinished(handle);
+    }
 
     /** Every transfer, oldest first: a JSON array of rows. */
-    public static native String snapshot(long handle);
+    public static String snapshot(long handle) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferSnapshot(handle);
+    }
 
     /** Starts what the host's limits allow: a JSON array of {id, direction, name, local_name, size}. */
-    public static native String startNext(long handle);
+    public static String startNext(long handle) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferStartNext(handle);
+    }
 
     /** The PC's files: {"ok": {folder, free_bytes, max_file_bytes, files}} or {"error": {problem, message, ...}}. */
-    public static native String list(String address, int httpPort, int httpsPort, String serverCertificatePem,
-                                     String uniqueId, byte[] clientCertificateDer, byte[] clientPrivateKeyPkcs8);
+    public static String list(String address, int httpPort, int httpsPort, String serverCertificatePem,
+                              String uniqueId, byte[] clientCertificateDer, byte[] clientPrivateKeyPkcs8) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferList(address, httpPort, httpsPort, serverCertificatePem,
+                uniqueId, clientCertificateDer, clientPrivateKeyPkcs8);
+    }
 
     /**
      * Runs a started transfer on {@code fd}, which the call takes over and closes (detached, -1 when the file
      * would not open): {"ok": row} or {"error": {problem, message}} when the list or the start is gone.
      */
-    public static native String run(long handle, long id, String address, int httpPort, int httpsPort,
-                                    String serverCertificatePem, String uniqueId, byte[] clientCertificateDer,
-                                    byte[] clientPrivateKeyPkcs8, int fd, Progress progress);
+    public static String run(long handle, long id, String address, int httpPort, int httpsPort,
+                             String serverCertificatePem, String uniqueId, byte[] clientCertificateDer,
+                             byte[] clientPrivateKeyPkcs8, int fd, Progress progress) {
+        NightjarJni.ensureLoaded();
+        return NightjarJni.fileTransferRun(handle, id, address, httpPort, httpsPort,
+                serverCertificatePem, uniqueId, clientCertificateDer, clientPrivateKeyPkcs8, fd, progress);
+    }
 }

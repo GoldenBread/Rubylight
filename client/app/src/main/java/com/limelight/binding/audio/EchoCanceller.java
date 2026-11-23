@@ -1,6 +1,7 @@
 package com.limelight.binding.audio;
 
 import com.limelight.LimeLog;
+import com.limelight.nvstream.jni.NightjarJni;
 
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -17,8 +18,7 @@ public final class EchoCanceller {
     /** AEC3 takes whole 10 ms frames at 48 kHz. */
     public static final int RATE = 48000, FRAME_SAMPLES = RATE / 100;
 
-    // Loaded on the microphone's first open, never on the renderer's thread.
-    private static Boolean available;
+    private static volatile boolean loggedUnavailable;
     // Cleared only by the canceller it holds: a capture that outlived its stop() cannot
     // unhook the next one's.
     private static final AtomicReference<EchoCanceller> active = new AtomicReference<>();
@@ -28,37 +28,24 @@ public final class EchoCanceller {
     private final Object referenceLock = new Object(), captureLock = new Object();
     private long handle;
 
-    private static native long nativeCreate();
-    private static native void nativeReference(long handle, short[] pcm, int length, int channels, int outputMs);
-    private static native boolean nativeProcess(long handle, short[] pcm, int samples);
-    private static native void nativeRestart(long handle);
-    private static native int[] nativeStats(long handle);
-    private static native void nativeDestroy(long handle);
-
-    private static boolean load() {
-        try {
-            System.loadLibrary("nightjar_core");
-            return true;
-        } catch (UnsatisfiedLinkError e) {
-            LimeLog.warning("Microphone: Nightjar's echo canceller is unavailable: " + e.getMessage());
-            return false;
-        }
-    }
-
     private EchoCanceller(long handle) {
         this.handle = handle;
     }
 
     /** Whether the library with the canceller loads. */
-    public static synchronized boolean isAvailable() {
-        if (available == null) available = load();
-        return available;
+    public static boolean isAvailable() {
+        boolean ok = NightjarJni.isAvailable();
+        if (!ok && !loggedUnavailable) {
+            loggedUnavailable = true;
+            LimeLog.warning("Microphone: Nightjar's echo canceller is unavailable: " + NightjarJni.loadFailure());
+        }
+        return ok;
     }
 
     /** Opens a canceller and makes it the one the renderer feeds; null when the library is missing. */
     public static EchoCanceller open() {
         if (!isAvailable()) return null;
-        long handle = nativeCreate();
+        long handle = NightjarJni.echoCreate();
         if (handle == 0) return null;
         EchoCanceller canceller = new EchoCanceller(handle);
         active.set(canceller);
@@ -74,21 +61,21 @@ public final class EchoCanceller {
         EchoCanceller canceller = active.get();
         if (canceller == null) return;
         synchronized (canceller.referenceLock) {
-            if (canceller.handle != 0) nativeReference(canceller.handle, pcm, length, channels, outputMs);
+            if (canceller.handle != 0) NightjarJni.echoReference(canceller.handle, pcm, length, channels, outputMs);
         }
     }
 
     /** Takes the stream's sound out of a frame of whole 10 ms blocks in place; false leaves it as it was. */
     public boolean process(short[] pcm, int samples) {
         synchronized (captureLock) {
-            return handle != 0 && nativeProcess(handle, pcm, samples);
+            return handle != 0 && NightjarJni.echoProcess(handle, pcm, samples);
         }
     }
 
     /** The microphone reads again after a pause: what played meanwhile is in none of its frames. */
     public void restart() {
         synchronized (captureLock) {
-            if (handle != 0) nativeRestart(handle);
+            if (handle != 0) NightjarJni.echoRestart(handle);
         }
     }
 
@@ -96,7 +83,7 @@ public final class EchoCanceller {
     public String stats() {
         int[] stats;
         synchronized (captureLock) {
-            stats = handle != 0 ? nativeStats(handle) : null;
+            stats = handle != 0 ? NightjarJni.echoStats(handle) : null;
         }
         return describe(stats);
     }
@@ -115,7 +102,7 @@ public final class EchoCanceller {
         synchronized (referenceLock) {
             synchronized (captureLock) {
                 if (handle != 0) {
-                    nativeDestroy(handle);
+                    NightjarJni.echoDestroy(handle);
                     handle = 0;
                 }
             }

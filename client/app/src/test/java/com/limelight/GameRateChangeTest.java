@@ -18,8 +18,6 @@ import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.TestHosts;
 import com.limelight.preferences.PreferenceConfiguration;
-import com.limelight.ui.RustStreamMenuModel;
-import com.limelight.ui.StreamMenuModel;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -337,28 +335,23 @@ public class GameRateChangeTest {
     @Test
     public void anAppliedBitrateFromTheOpenMenusSliderShowsNoToastOverTheMenu() {
         // A real stream on the Retroid: "Bitrate: 32.0 Mbps" lay over the menu's Disconnect while the slider showed 32 already.
-        StreamMenuModel.use(new RustStreamMenuModel());
-        try {
-            startStream(recording());
-            game.showStreamMenu();
-            assertNotNull("the menu is open", ReflectionHelpers.getField(game.menuActions, "streamMenuSheet"));
-            int toasts = ShadowToast.shownToastCount();
-            assertEquals(32_000, game.adaptation.applyBitrateFromMenu(32_000));
-            game.rateChange(new RateChangeResult(sent.get(0)[0], 32_000, 0, STATUS_APPLIED, REASON_NONE,
-                    STATUS_UNCHANGED, REASON_NONE));
-            ShadowLooper.idleMainLooper();
-            assertEquals("the slider shows it", toasts, ShadowToast.shownToastCount());
-            assertEquals(32_000, (int) ReflectionHelpers.getField(game, "currentBitrate"));
+        startStream(recording());
+        game.showStreamMenu();
+        assertNotNull("the menu is open", ReflectionHelpers.getField(game.menuActions, "streamMenuSheet"));
+        int toasts = ShadowToast.shownToastCount();
+        assertEquals(32_000, game.adaptation.applyBitrateFromMenu(32_000));
+        game.rateChange(new RateChangeResult(sent.get(0)[0], 32_000, 0, STATUS_APPLIED, REASON_NONE,
+                STATUS_UNCHANGED, REASON_NONE));
+        ShadowLooper.idleMainLooper();
+        assertEquals("the slider shows it", toasts, ShadowToast.shownToastCount());
+        assertEquals(32_000, (int) ReflectionHelpers.getField(game, "currentBitrate"));
 
-            // A clamp is news the slider cannot show.
-            game.adaptation.applyBitrateFromMenu(90_000);
-            game.rateChange(new RateChangeResult(sent.get(1)[0], 80_000, 0, STATUS_CLAMPED, REASON_ENCODER_LIMIT,
-                    STATUS_UNCHANGED, REASON_NONE));
-            ShadowLooper.idleMainLooper();
-            assertEquals(toasts + 1, ShadowToast.shownToastCount());
-        } finally {
-            StreamMenuModel.use(null);
-        }
+        // A clamp is news the slider cannot show.
+        game.adaptation.applyBitrateFromMenu(90_000);
+        game.rateChange(new RateChangeResult(sent.get(1)[0], 80_000, 0, STATUS_CLAMPED, REASON_ENCODER_LIMIT,
+                STATUS_UNCHANGED, REASON_NONE));
+        ShadowLooper.idleMainLooper();
+        assertEquals(toasts + 1, ShadowToast.shownToastCount());
     }
 
     /** A host without the stream's rate changes takes the menu's bitrate over HTTP: the same rule for its toast. */
@@ -372,24 +365,19 @@ public class GameRateChangeTest {
         };
         ReflectionHelpers.setField(connection, "hostDetails", TestHosts.details("rubylight-serverinfo.xml"));
         ReflectionHelpers.setField(game, "conn", connection);
-        StreamMenuModel.use(new RustStreamMenuModel());
-        try {
-            game.showStreamMenu();
-            assertNotNull("the menu is open", ReflectionHelpers.getField(game.menuActions, "streamMenuSheet"));
-            int toasts = ShadowToast.shownToastCount();
-            assertEquals(32_000, game.adaptation.applyBitrateFromMenu(32_000));
-            awaitHostAction();
-            assertEquals("the slider shows it", toasts, ShadowToast.shownToastCount());
-            assertEquals(32_000, (int) ReflectionHelpers.getField(game, "currentBitrate"));
+        game.showStreamMenu();
+        assertNotNull("the menu is open", ReflectionHelpers.getField(game.menuActions, "streamMenuSheet"));
+        int toasts = ShadowToast.shownToastCount();
+        assertEquals(32_000, game.adaptation.applyBitrateFromMenu(32_000));
+        awaitHostAction();
+        assertEquals("the slider shows it", toasts, ShadowToast.shownToastCount());
+        assertEquals(32_000, (int) ReflectionHelpers.getField(game, "currentBitrate"));
 
-            // A rate the host lowered is news the slider cannot show.
-            answer[0] = 20_000;
-            game.adaptation.applyBitrateFromMenu(90_000);
-            awaitHostAction();
-            assertEquals(toasts + 1, ShadowToast.shownToastCount());
-        } finally {
-            StreamMenuModel.use(null);
-        }
+        // A rate the host lowered is news the slider cannot show.
+        answer[0] = 20_000;
+        game.adaptation.applyBitrateFromMenu(90_000);
+        awaitHostAction();
+        assertEquals(toasts + 1, ShadowToast.shownToastCount());
     }
 
     // The legacy bitrate goes out on its own thread; its answer comes back to the UI thread.
@@ -945,43 +933,38 @@ public class GameRateChangeTest {
 
     @Test
     public void anOpenMenusSliderWaitsForTheAnswerAndShowsTheStreamsNumber() {
-        StreamMenuModel.use(new RustStreamMenuModel());
-        try {
-            // A clean answer: usable at the PC's number.
-            startStreamAsking(recording());
-            game.showStreamMenu();
-            Object sheet = ReflectionHelpers.getField(game.menuActions, "streamMenuSheet");
-            com.limelight.ui.StepSlider slider = ReflectionHelpers.callInstanceMethod(sheet, "bitrateSlider");
-            assertFalse("disabled while the query waits", slider.isEnabled());
-            assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
-            answerQuery(OLDER_PC_KBPS);
-            assertTrue(slider.isEnabled());
-            assertEquals(com.limelight.ui.BitrateSlider.progress(OLDER_PC_KBPS), slider.getPosition());
+        // A clean answer: usable at the PC's number.
+        startStreamAsking(recording());
+        game.showStreamMenu();
+        Object sheet = ReflectionHelpers.getField(game.menuActions, "streamMenuSheet");
+        com.limelight.ui.StepSlider slider = ReflectionHelpers.callInstanceMethod(sheet, "bitrateSlider");
+        assertFalse("disabled while the query waits", slider.isEnabled());
+        assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
+        answerQuery(OLDER_PC_KBPS);
+        assertTrue(slider.isEnabled());
+        assertEquals(com.limelight.ui.BitrateSlider.progress(OLDER_PC_KBPS), slider.getPosition());
 
-            // A reconnect with the menu open: a new wait, disabled again, and no pick left over.
-            ReflectionHelpers.setField(game, "currentBitrate", 50_000);
-            startStreamAsking(recording());
-            assertFalse(slider.isEnabled());
-            assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
-            assertEquals(50_000, game.adaptation.applyBitrateFromMenu(30_000));
-            assertTrue(sent.isEmpty());
-            // An answer that is not used: usable at the stream's own number.
-            game.linkNotice(1, 50_000, 30_000);
-            ShadowLooper.idleMainLooper();
-            answerQuery(30_000);
-            assertTrue(slider.isEnabled());
-            assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
+        // A reconnect with the menu open: a new wait, disabled again, and no pick left over.
+        ReflectionHelpers.setField(game, "currentBitrate", 50_000);
+        startStreamAsking(recording());
+        assertFalse(slider.isEnabled());
+        assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
+        assertEquals(50_000, game.adaptation.applyBitrateFromMenu(30_000));
+        assertTrue(sent.isEmpty());
+        // An answer that is not used: usable at the stream's own number.
+        game.linkNotice(1, 50_000, 30_000);
+        ShadowLooper.idleMainLooper();
+        answerQuery(30_000);
+        assertTrue(slider.isEnabled());
+        assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
 
-            // No answer: usable after the timeout, at the stream's own number.
-            startStreamAsking(recording());
-            assertFalse(slider.isEnabled());
-            runFor((int) (StreamRateChanges.ANSWER_MS / 1000));
-            assertTrue(slider.isEnabled());
-            assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
-            assertTrue("no pick went out", sent.isEmpty());
-        } finally {
-            StreamMenuModel.use(null);
-        }
+        // No answer: usable after the timeout, at the stream's own number.
+        startStreamAsking(recording());
+        assertFalse(slider.isEnabled());
+        runFor((int) (StreamRateChanges.ANSWER_MS / 1000));
+        assertTrue(slider.isEnabled());
+        assertEquals(com.limelight.ui.BitrateSlider.progress(50_000), slider.getPosition());
+        assertTrue("no pick went out", sent.isEmpty());
     }
 
     /**
@@ -991,27 +974,22 @@ public class GameRateChangeTest {
     @Test
     public void aSliderLetGoJustBeforeTheWaitSendsNothingAfterTheAnswer() {
         prefs.rateChangeBitrate = true;
-        StreamMenuModel.use(new RustStreamMenuModel());
-        try {
-            startStream(recording());
-            game.showStreamMenu();
-            Object sheet = ReflectionHelpers.getField(game.menuActions, "streamMenuSheet");
-            com.limelight.ui.StepSlider slider = ReflectionHelpers.callInstanceMethod(sheet, "bitrateSlider");
-            // A D-pad step: the settle goes out SETTLE_MS later.
-            slider.setPosition(com.limelight.ui.BitrateSlider.progress(30_000));
-            com.limelight.ui.StepSlider.OnPositionChangeListener listener = ReflectionHelpers.getField(slider, "listener");
-            listener.onPositionChanged(slider, slider.getPosition());
-            // A reconnect starts the stream's bitrate wait within that time, and the PC answers at once.
-            sent.clear();
-            startStreamAsking(recording());
-            answerQuery(OLDER_PC_KBPS);
-            runFor(1);
-            assertTrue("nothing goes out as the player's bitrate: " + sent.size(), sent.isEmpty());
-            assertTrue((boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
-            assertEquals(com.limelight.ui.BitrateSlider.progress(OLDER_PC_KBPS), slider.getPosition());
-        } finally {
-            StreamMenuModel.use(null);
-        }
+        startStream(recording());
+        game.showStreamMenu();
+        Object sheet = ReflectionHelpers.getField(game.menuActions, "streamMenuSheet");
+        com.limelight.ui.StepSlider slider = ReflectionHelpers.callInstanceMethod(sheet, "bitrateSlider");
+        // A D-pad step: the settle goes out SETTLE_MS later.
+        slider.setPosition(com.limelight.ui.BitrateSlider.progress(30_000));
+        com.limelight.ui.StepSlider.OnPositionChangeListener listener = ReflectionHelpers.getField(slider, "listener");
+        listener.onPositionChanged(slider, slider.getPosition());
+        // A reconnect starts the stream's bitrate wait within that time, and the PC answers at once.
+        sent.clear();
+        startStreamAsking(recording());
+        answerQuery(OLDER_PC_KBPS);
+        runFor(1);
+        assertTrue("nothing goes out as the player's bitrate: " + sent.size(), sent.isEmpty());
+        assertTrue((boolean) ReflectionHelpers.callInstanceMethod(game.adaptation, "isRateChangeBitrateOn"));
+        assertEquals(com.limelight.ui.BitrateSlider.progress(OLDER_PC_KBPS), slider.getPosition());
     }
 
     @Test

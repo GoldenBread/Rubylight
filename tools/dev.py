@@ -691,6 +691,11 @@ def gradle_env(fast=False, lock_directory=None):
     env = {k: v for k, v in env.items() if k.upper() != 'CARGO_TARGET_DIR'}
     # Its Rust engine builds beside the Cargo stages: at most a stage's share of the CPU.
     env['CARGO_BUILD_JOBS'] = str(build_lock.CARGO_STAGE_THREADS)
+    if os.name == 'nt':
+        extra = [str(p) for p in (_cargo_bin_dir(env), _msys_ucrt_dir(env) / 'bin') if p.is_dir()]
+        if extra:
+            env['PATH'] = prepend_path(env.get('PATH', ''), extra)
+        apply_gnu_lld(env)
     short = short_windows_temp(env)
     if short:
         for key in [k for k in env if k.upper() in ('TEMP', 'TMP')]:

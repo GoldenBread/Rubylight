@@ -194,6 +194,11 @@ android {
             // The suite takes about 5 minutes; a test that hangs fails the task here instead of
             // running into CI's 60-minute job limit.
             timeout = java.time.Duration.ofMinutes(20)
+            def hostNativeLibsPath = layout.buildDirectory.dir('hostNativeLibs').get().asFile.absolutePath
+            def existingLibraryPath = System.getProperty('java.library.path')
+            systemProperty 'java.library.path',
+                    existingLibraryPath ? "${hostNativeLibsPath}${File.pathSeparator}${existingLibraryPath}" : hostNativeLibsPath
+            it.dependsOn('buildHostNightjarCore')
             watchForHungTests(it)
         }
     }
@@ -409,18 +414,145 @@ abstract class CargoAndroidBuild extends DefaultTask {
 def rustAbis = project.hasProperty('abiFilters') ?
         project.property('abiFilters').toString().split(',').collect { it.trim() }.findAll { CargoAndroidBuild.TARGETS.containsKey(it) } :
         CargoAndroidBuild.TARGETS.keySet().toList()
+def protocolRoot = rootProject.file('protocol')
+def toolchainFile = rootProject.file('../rust-toolchain.toml')
 def buildRustEngine = tasks.register('buildRustEngine', CargoAndroidBuild) {
-    def protocol = rootProject.file('protocol')
-    sources.from(fileTree(protocol) {
+    sources.from(fileTree(protocolRoot) {
         include '**/*.rs', '**/Cargo.toml', 'Cargo.lock', '.cargo/config.toml'
         exclude '**/target/**'
     })
     sources.from(fileTree('src/main/jni/moonlight-core/opus') { include '*/libopus.a' })
-    sources.from(rootProject.file('../rust-toolchain.toml'))
+    if (toolchainFile.exists()) {
+        sources.from(toolchainFile)
+    }
     abis.set(rustAbis)
     ndkPath.set(androidComponents.sdkComponents.ndkDirectory.map { it.asFile.absolutePath })
-    protocolDir.set(protocol)
+    protocolDir.set(protocolRoot)
     outputDir.set(layout.buildDirectory.dir('rustJniLibs'))
+}
+
+@CacheableTask
+abstract class CargoHostBuild extends DefaultTask {
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getSources()
+
+    @Input
+    abstract Property<String> getHostOs()
+
+    @Input
+    abstract Property<String> getHostArch()
+
+    @Internal
+    abstract DirectoryProperty getProtocolDir()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutputDir()
+
+    @javax.inject.Inject
+    abstract org.gradle.process.ExecOperations getExecOperations()
+
+    @TaskAction
+    void build() {
+        String osLower = hostOs.get().toLowerCase(java.util.Locale.ROOT)
+        boolean windows = osLower.contains('win')
+        boolean mac = osLower.contains('mac')
+        String libName = windows ? 'nightjar_core.dll' : (mac ? 'libnightjar_core.dylib' : 'libnightjar_core.so')
+
+        String cargo = System.getenv('CARGO') ?: 'cargo'
+        File homeCargoDir = new File(System.getProperty('user.home'), '.cargo/bin')
+        File homeCargo = new File(homeCargoDir, windows ? 'cargo.exe' : 'cargo')
+        if (!System.getenv('CARGO') && homeCargo.isFile()) {
+            cargo = homeCargo.absolutePath
+        }
+
+        File protocol = protocolDir.get().asFile
+        Map<String, String> extraEnv = [:]
+        if (windows) {
+            String currentPath = System.getenv('PATH') ?: ''
+            List<String> pathEntries = currentPath.split(java.util.regex.Pattern.quote(File.pathSeparator)).findAll { it } as List<String>
+            List<String> prepended = []
+            if (homeCargoDir.isDirectory() && !pathEntries.any { new File(it).absolutePath.equalsIgnoreCase(homeCargoDir.absolutePath) }) {
+                prepended.add(homeCargoDir.absolutePath)
+            }
+            File cargoParent = new File(cargo).parentFile
+            String rustc = cargoParent && new File(cargoParent, 'rustc.exe').isFile() ? new File(cargoParent, 'rustc.exe').absolutePath : 'rustc'
+            ByteArrayOutputStream version = new ByteArrayOutputStream()
+            try {
+                execOperations.exec {
+                    workingDir protocol
+                    if (prepended) environment('PATH', (prepended + pathEntries).join(File.pathSeparator))
+                    commandLine rustc, '-vV'
+                    standardOutput = version
+                }
+            } catch (Exception e) {
+                throw new GradleException("The Rust host build needs rustup's rustc ($rustc -vV failed: ${e.message}): install Rust with rustup, or set CARGO to its cargo.exe, then build again.", e)
+            }
+            String host = version.toString('UTF-8').readLines().find { it.startsWith('host: ') }?.substring(6)?.trim()
+            if (host?.endsWith('-gnu')) {
+                String upperHost = host.toUpperCase(java.util.Locale.ROOT).replace('-', '_')
+                String linkerVar = "CARGO_TARGET_${upperHost}_LINKER"
+                List<String> effectivePath = prepended + pathEntries
+                if (!effectivePath.any { new File(it, 'gcc.exe').isFile() }) {
+                    String msysRoot = System.getenv('RUBYLIGHT_MSYS_ROOT') ?: 'C:\\msys64'
+                    File ucrtBin = new File(msysRoot, 'ucrt64\\bin')
+                    File rootBin = new File(msysRoot, 'bin')
+                    File msysBin = new File(ucrtBin, 'gcc.exe').isFile() ? ucrtBin : (new File(rootBin, 'gcc.exe').isFile() ? rootBin : null)
+                    if (msysBin != null) {
+                        prepended.add(msysBin.absolutePath)
+                        effectivePath = prepended + pathEntries
+                    } else if (!System.getenv(linkerVar)) {
+                        String selfContained = "lib\\rustlib\\$host\\bin\\self-contained\\${host.split('-')[0]}-w64-mingw32-gcc.exe"
+                        throw new GradleException("The Rust host build links with gcc.exe, which is not on PATH: put C:\\msys64\\ucrt64\\bin on PATH, or set $linkerVar to the toolchain's $selfContained, then build again.")
+                    }
+                }
+                if (effectivePath.any { new File(it, 'ld.lld.exe').isFile() }) {
+                    String rustflagsVar = "CARGO_TARGET_${upperHost}_RUSTFLAGS"
+                    String currentFlags = (System.getenv(rustflagsVar) ?: '').trim()
+                    if (!currentFlags.contains('-fuse-ld=')) {
+                        extraEnv[rustflagsVar] = currentFlags ? "$currentFlags -Clink-arg=-fuse-ld=lld" : '-Clink-arg=-fuse-ld=lld'
+                    }
+                }
+            }
+            if (prepended) {
+                extraEnv['PATH'] = (prepended + pathEntries).join(File.pathSeparator)
+            }
+        }
+
+        execOperations.exec {
+            workingDir protocol
+            if (extraEnv) environment(extraEnv)
+            commandLine cargo, 'build', '--locked', '-p', 'nightjar-android'
+        }
+
+        String targetDirRaw = System.getenv('CARGO_TARGET_DIR')?.trim()
+        File targetRoot = targetDirRaw ?
+                (new File(targetDirRaw).isAbsolute() ? new File(targetDirRaw) : new File(protocol, targetDirRaw)) :
+                new File(protocol, 'target')
+        String buildTarget = System.getenv('CARGO_BUILD_TARGET')?.trim()
+        File profileDir = buildTarget ? new File(new File(targetRoot, buildTarget), 'debug') : new File(targetRoot, 'debug')
+        File lib = new File(profileDir, libName)
+        if (!lib.isFile()) {
+            throw new GradleException("Host nightjar_core library not found at ${lib.absolutePath}")
+        }
+        File out = outputDir.get().asFile
+        out.deleteDir()
+        out.mkdirs()
+        java.nio.file.Files.copy(lib.toPath(), new File(out, libName).toPath())
+    }
+}
+
+def buildHostNightjarCore = tasks.register('buildHostNightjarCore', CargoHostBuild) {
+    sources.from(fileTree(protocolRoot) {
+        include '**/*.rs', '**/Cargo.toml', 'Cargo.lock', '.cargo/config.toml'
+        exclude '**/target/**'
+    })
+    if (toolchainFile.exists()) {
+        sources.from(toolchainFile)
+    }
+    hostOs.set(System.getProperty('os.name'))
+    hostArch.set(System.getProperty('os.arch'))
+    protocolDir.set(protocolRoot)
+    outputDir.set(layout.buildDirectory.dir('hostNativeLibs'))
 }
 
 // The in-app updater installs with REQUEST_INSTALL_PACKAGES; Google Play rejects that permission for

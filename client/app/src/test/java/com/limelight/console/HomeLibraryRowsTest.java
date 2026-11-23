@@ -15,6 +15,7 @@ import android.app.Application;
 import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
+import com.limelight.nvstream.jni.NightjarJni;
 
 import org.junit.After;
 import org.junit.Before;
@@ -70,22 +71,12 @@ public class HomeLibraryRowsTest {
         return game.substring(0, game.length() - 1) + ",\"collections\":[\"" + String.join("\",\"", collections) + "\"]}";
     }
 
-    @After
-    public void forgetTheGroups() {
-        CollectionGroups.use(null);
-    }
-
     @Test
     public void rowsByCollectionShowAGameInEachAndTheRestLast() throws Exception {
         tower(Collections.emptyList(),
                 in(game(1, "Alpha", "steam", true, null), "VR", "Couch"),
                 game(2, "Beta", "steam", true, null),
                 in(game(3, "Gamma", "steam", true, null), "couch"));
-        CollectionGroups.use(request -> {
-            assertEquals("{\"games\":[[\"VR\",\"Couch\"],[],[\"couch\"]]}", request);
-            return "{\"ok\":{\"groups\":[{\"name\":\"Couch\",\"games\":[0,2]},{\"name\":\"VR\",\"games\":[0]},"
-                    + "{\"name\":null,\"games\":[1]}]}}";
-        });
         HomeModel model = model();
         assertTrue(model.hasCollections());
         List<HomeModel.Row> rows = model.rows(HomeView.Group.COLLECTION);
@@ -109,12 +100,14 @@ public class HomeLibraryRowsTest {
     @Test
     public void withNoCollectionsGroupingByThemShowsStoresAndIsNotOffered() throws Exception {
         tower(Collections.emptyList(), game(1, "Alpha", "steam", true, null));
-        CollectionGroups.use(request -> {
-            throw new AssertionError("asked: " + request);
-        });
-        HomeModel model = model();
-        assertFalse(model.hasCollections());
-        assertEquals(model.rows(HomeView.Group.STORE), model.rows(HomeView.Group.COLLECTION));
+        NightjarJni.forceUnavailableForTest(new AssertionError("asked"));
+        try {
+            HomeModel model = model();
+            assertFalse(model.hasCollections());
+            assertEquals(model.rows(HomeView.Group.STORE), model.rows(HomeView.Group.COLLECTION));
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 
     @Test
@@ -506,7 +499,6 @@ public class HomeLibraryRowsTest {
     @Test
     public void aCollectionRowsCardStillKnowsItsLibraryCardForWhichPc() throws Exception {
         tower(Collections.emptyList(), in(game(1, "Alpha", "steam", true, null), "VR"));
-        CollectionGroups.use(request -> "{\"ok\":{\"groups\":[{\"name\":\"VR\",\"games\":[0]}]}}");
         HomeModel model = model();
         HomeModel.GameCard card = model.rows(HomeView.Group.COLLECTION).get(0).cards.get(0);
         assertFalse(card.key.startsWith("game:"));
@@ -515,16 +507,14 @@ public class HomeLibraryRowsTest {
 
     @Test
     public void aCollectionsChipHoldsTheCardsItsGroupPlacesOnItNotAComparisonOfNames() throws Exception {
-        // The shared code groups these two; Java's trim and ignore-case would not.
+        // The shared code trims and folds case; Java's plain equalsIgnoreCase would miss surrounding spaces.
         tower(Collections.emptyList(),
-                in(game(1, "Alpha", "steam", true, null), "Straße"),
-                in(game(2, "Beta", "steam", true, null), "STRASSE"),
+                in(game(1, "Alpha", "steam", true, null), "  VR  "),
+                in(game(2, "Beta", "steam", true, null), "vr"),
                 game(3, "Gamma", "steam", true, null));
-        CollectionGroups.use(request -> "{\"ok\":{\"groups\":[{\"name\":\"Straße\",\"games\":[0,1]},"
-                + "{\"name\":null,\"games\":[2]}]}}");
         HomeModel model = model();
         assertEquals(Arrays.asList("Alpha", "Beta"),
-                titles(AllGamesActivity.cardsOf(model, HomeModel.COLLECTION_FILTER + "Straße")));
+                titles(AllGamesActivity.cardsOf(model, HomeModel.COLLECTION_FILTER + "VR")));
         assertEquals(Collections.singletonList("Gamma"),
                 titles(AllGamesActivity.cardsOf(model, HomeModel.FILTER_NO_COLLECTION)));
         assertEquals(Collections.emptyList(), AllGamesActivity.cardsOf(model, HomeModel.COLLECTION_FILTER + "Gone"));
@@ -569,37 +559,8 @@ public class HomeLibraryRowsTest {
         assertTrue("the place goes to the next one", recent.contains("Game 11"));
     }
 
-    @After
-    public void forgetTheOrder() {
-        LibraryOrder.use(null);
-    }
-
     private static String playedFor(String game, long minutes) {
         return game.substring(0, game.length() - 1) + ",\"playtime_minutes\":" + minutes + "}";
-    }
-
-    /** The shared rule for last played, newest first, as libnightjar_core answers it: never played last, ties A to Z. */
-    private static void newestFirst() {
-        LibraryOrder.use(request -> {
-            try {
-                org.json.JSONObject asked = new org.json.JSONObject(request);
-                assertEquals("last_played", asked.getString("key"));
-                assertEquals("descending", asked.getString("direction"));
-                org.json.JSONArray games = asked.getJSONArray("games");
-                long[] played = new long[games.length()];
-                String[] titles = new String[games.length()];
-                List<Integer> order = new ArrayList<>();
-                for (int i = 0; i < games.length(); i++) {
-                    played[i] = games.getJSONObject(i).optLong("last_played", 0);
-                    titles[i] = games.getJSONObject(i).getString("title").toLowerCase(java.util.Locale.ROOT);
-                    order.add(i);
-                }
-                order.sort((a, b) -> played[a] != played[b] ? Long.compare(played[b], played[a]) : titles[a].compareTo(titles[b]));
-                return "{\"ok\":{\"order\":" + new org.json.JSONArray(order) + "}}";
-            } catch (org.json.JSONException e) {
-                throw new AssertionError(e);
-            }
-        });
     }
 
     private void fourGames() {
@@ -614,7 +575,6 @@ public class HomeLibraryRowsTest {
     @Test
     public void rowsAndAllGamesFollowTheChosenSortWithTheInstalledFirst() throws Exception {
         fourGames();
-        newestFirst();
         HomeModel model = model();
         assertEquals(Long.valueOf(40), model.row("shelf:store:steam").cards.get(1).playtimeMinutes());
         HomeModel sorted = model.sorted(NEWEST);
@@ -629,7 +589,6 @@ public class HomeLibraryRowsTest {
     @Test
     public void groupedByInstallationTheInstalledComeInARowOfTheirOwn() throws Exception {
         fourGames();
-        newestFirst();
         HomeModel model = model().sorted(NEWEST);
         assertTrue(model.hasInstallationSplit());
         List<HomeModel.Row> rows = model.rows(HomeView.Group.INSTALLATION);
@@ -656,9 +615,14 @@ public class HomeLibraryRowsTest {
     @Test
     public void aLibraryThatCannotSortKeepsTheTitles() throws Exception {
         fourGames();
-        LibraryOrder.use(request -> "{\"error\":\"invalid\",\"detail\":\"no\"}");
         HomeModel model = model();
-        assertEquals(titles(model.allGames), titles(model.sorted(NEWEST).allGames));
+        assertNull(LibraryOrder.parseOrder("{\"error\":\"invalid\",\"detail\":\"no\"}", model.allGames.size()));
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("no library"));
+        try {
+            assertEquals(titles(model.allGames), titles(model.sorted(NEWEST).allGames));
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 
     @Test
@@ -666,7 +630,6 @@ public class HomeLibraryRowsTest {
         String[] games = new String[HomeModel.ROW_CAP + 5];
         for (int i = 0; i < games.length; i++) games[i] = game(i + 1, "Game " + (100 + i), "steam", true, 1000L + i);
         tower(Collections.emptyList(), games);
-        newestFirst();
         HomeModel.Row steam = model().sorted(NEWEST).row("shelf:store:steam");
         assertTrue(steam.hasMore());
         assertEquals(HomeModel.ROW_CAP, steam.cards.size());
@@ -677,13 +640,15 @@ public class HomeLibraryRowsTest {
     @Test
     public void playTimeSortsOnlyWhenSomePcSendsIt() throws Exception {
         tower(Collections.emptyList(), game(1, "Beta", "steam", true, null), game(2, "Alpha", "steam", true, null));
-        LibraryOrder.use(request -> {
-            throw new AssertionError("asked: " + request);
-        });
         HomeModel model = model();
         assertFalse(model.hasPlaytime());
         HomeView byPlaytime = new HomeView(HomeView.Layout.ROWS, HomeView.Group.STORE, HomeView.Size.MEDIUM,
                 HomeView.Sort.PLAYTIME, HomeView.Order.ASCENDING);
-        assertTrue("by title, A to Z, without asking", model == model.sorted(byPlaytime));
+        NightjarJni.forceUnavailableForTest(new AssertionError("asked"));
+        try {
+            assertTrue("by title, A to Z, without asking", model == model.sorted(byPlaytime));
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
     }
 }

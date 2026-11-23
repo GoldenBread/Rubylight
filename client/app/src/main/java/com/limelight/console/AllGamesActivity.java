@@ -706,7 +706,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             return cards;
         }
         List<HomeModel.GameCard> sourceCards = cardsOf(model, filter);
-        GameInfoFilter.Result<HomeModel.GameCard> result = GameInfoFilter.apply(GameInfoModel.library(), sourceCards,
+        GameInfoFilter.Result<HomeModel.GameCard> result = GameInfoFilter.apply(sourceCards,
                 card -> facts.get(card.key), genreChoice, lengthChoice);
         if (result == null) {
             bindFactChips();
@@ -723,7 +723,7 @@ public class AllGamesActivity extends NightjarActivity implements HostFeed.Liste
             stale = true;
         }
         if (stale) {
-            result = GameInfoFilter.apply(GameInfoModel.library(), sourceCards, card -> facts.get(card.key), genreChoice, lengthChoice);
+            result = GameInfoFilter.apply(sourceCards, card -> facts.get(card.key), genreChoice, lengthChoice);
             if (result == null) {
                 bindFactChips();
                 return cards;

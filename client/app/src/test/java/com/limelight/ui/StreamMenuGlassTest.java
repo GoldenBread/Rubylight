@@ -18,7 +18,6 @@ import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.TestHosts;
 
 import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -42,14 +41,8 @@ import static org.junit.Assert.*;
 @Config(sdk = 34, application = Application.class, qualifiers = "w960dp-h540dp-land-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class StreamMenuGlassTest {
-    @Before
-    public void answerFromThePolicySources() {
-        StreamMenuModel.use(new RustStreamMenuModel());
-    }
-
     @After
     public void forget() {
-        StreamMenuModel.use(null);
         MenuBlurWindow.enabledForTest = null;
     }
 

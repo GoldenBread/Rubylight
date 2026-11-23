@@ -43,11 +43,7 @@ use rubylight_protocol::control::{HostTimingRequest, LinkNoticeRequest, Reconfig
 use crate::extras::input_result;
 
 fn jbool(value: bool) -> jboolean {
-    if value {
-        JNI_TRUE
-    } else {
-        JNI_FALSE
-    }
+    jboolean::from(value)
 }
 
 /// Runs an input call on the session: 0 or the C API's error code (-2 without a stream).
@@ -72,20 +68,21 @@ fn string(env: &mut JNIEnv, value: &JString) -> Option<String> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_init(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_rustBridgeInit(
     mut env: JNIEnv,
     _: JClass,
     app_version: JString,
+    moon_bridge_class: JClass,
 ) -> jboolean {
     // Requests to the host send `User-Agent: Nightjar/<versionName>`.
     if let Some(version) = string(&mut env, &app_version) {
         nightjar_core::http::set_app_version(&version);
     }
-    match bridge::init(&mut env).and_then(|()| renderers::init(&mut env)) {
+    match bridge::init(&mut env, &moon_bridge_class) {
         Ok(()) => JNI_TRUE,
         Err(e) => {
             let _ = env.exception_clear();
-            platform::error(&format!("RustBridge.init failed: {e}"));
+            platform::error(&format!("NightjarJni.rustBridgeInit failed: {e}"));
             JNI_FALSE
         }
     }
@@ -93,7 +90,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_init(
 
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_startConnection(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_startConnection(
     mut env: JNIEnv,
     _: JClass,
     address: JString,
@@ -216,7 +213,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_startConnectio
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_stopConnection(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_stopConnection(
     _: JNIEnv,
     _: JClass,
 ) {
@@ -224,7 +221,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_stopConnection
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_interruptConnection(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_interruptConnection(
     _: JNIEnv,
     _: JClass,
 ) {
@@ -234,7 +231,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_interruptConne
 /// The session clock in microseconds, the one the engine stamps packets with: the Vulkan
 /// renderer maps its frames' receive times to the local clock with it.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sessionNowUs(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sessionNowUs(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -244,7 +241,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sessionNowUs(
 /// Whether the Rust engine's connection ended with this session's host's disconnect, not a
 /// silence.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_hostSaidGoodbye(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostSaidGoodbye(
     _: JNIEnv,
     _: JClass,
 ) -> jboolean {
@@ -263,7 +260,7 @@ fn java_address(env: &mut JNIEnv, text: &JString) -> Option<std::net::IpAddr> {
 /// the flags of the ports that did not answer, 0 for none, -1 (`ML_TEST_RESULT_INCONCLUSIVE`)
 /// when the test could not run. Blocks for up to three seconds.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_testClientConnectivity(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_testClientConnectivity(
     mut env: JNIEnv,
     _: JClass,
     test_server: JString,
@@ -279,7 +276,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_testClientConn
 /// [`nightjar_core::stun::find_external_ipv4`]: this device's WAN IPv4 address as text, or null
 /// when the STUN server did not answer in three seconds.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_findExternalAddressIP4(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_findExternalAddressIP4(
     mut env: JNIEnv,
     _: JClass,
     stun_host_name: JString,
@@ -302,7 +299,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_findExternalAd
 /// blocks for about 750 ms. Returns [`nightjar_core::host_loss::Round::code`]. `gateway` may be
 /// null; a host that does not parse proves nothing.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_hostLossRound(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostLossRound(
     mut env: JNIEnv,
     _: JClass,
     host: JString,
@@ -320,7 +317,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_hostLossRound(
 /// The address the running session connected to, as text (`HostLossWatch` asks it, never DNS);
 /// null without a session.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getHostAddress(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getHostAddress(
     env: JNIEnv,
     _: JClass,
 ) -> jstring {
@@ -333,7 +330,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getHostAddress
 /// [`nightjar_core::host_loss::after_goodbye`] for `HostLossWatch`: one round's verdict after
 /// the host's goodbye, as [`nightjar_core::host_loss::Goodbye::code`].
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_hostLossAfterGoodbye(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostLossAfterGoodbye(
     _: JNIEnv,
     _: JClass,
     on_link: jboolean,
@@ -352,7 +349,7 @@ fn host_loss_after_goodbye(on_link: bool, round: jint, waited_ms: jlong) -> jint
 /// The default network changed while a stream runs (`NvConnection`'s network callback):
 /// `MoonBridge.NETWORK_CARRIES_ON` (0), `NETWORK_ROAMED` (1) or `NETWORK_CANNOT_CONTINUE` (2).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_networkChanged(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_networkChanged(
     _: JNIEnv,
     _: JClass,
     metered: jboolean,
@@ -369,7 +366,7 @@ fn network_change_code(change: NetworkChange) -> jint {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseMove(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendMouseMove(
     _: JNIEnv,
     _: JClass,
     dx: jshort,
@@ -379,7 +376,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseMove(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMousePosition(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendMousePosition(
     _: JNIEnv,
     _: JClass,
     x: jshort,
@@ -391,7 +388,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMousePosit
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseMoveAsMousePosition(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendMouseMoveAsMousePosition(
     _: JNIEnv,
     _: JClass,
     dx: jshort,
@@ -404,7 +401,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseMoveA
 
 /// `BUTTON_ACTION_PRESS` (0x07) or `BUTTON_ACTION_RELEASE` (0x08).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseButton(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendMouseButton(
     _: JNIEnv,
     _: JClass,
     action: jbyte,
@@ -415,7 +412,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseButto
 
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMultiControllerInput(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendMultiControllerInput(
     _: JNIEnv,
     _: JClass,
     controller: jshort,
@@ -443,7 +440,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMultiContr
 
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendTouchEvent(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendTouchEvent(
     _: JNIEnv,
     _: JClass,
     event: jbyte,
@@ -472,7 +469,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendTouchEvent
 /// How the host takes a physical touchpad's fingers: `RustBridge.TOUCHPAD_NONE`, `_INDIVIDUAL`
 /// or `_FRAME`; none without a session.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_touchpadTransport(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_touchpadTransport(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -486,7 +483,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_touchpadTransp
 /// unknown). Returns 0, or the input error code.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_touchpadFrame(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_touchpadFrame(
     env: JNIEnv,
     _: JClass,
     device: jint,
@@ -527,7 +524,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_touchpadFrame(
 
 /// Lifts the touchpad's fingers on the host (capture or focus lost).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_touchpadCancel(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_touchpadCancel(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -538,7 +535,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_touchpadCancel
 
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendPenEvent(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendPenEvent(
     _: JNIEnv,
     _: JClass,
     event: jbyte,
@@ -573,7 +570,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendPenEvent(
 /// Which controller `controller` is, by its USB vendor and product: send it before the arrival.
 /// The queue drops it for a host without `ControllerIdentityVersion`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendControllerIdentityEvent(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendControllerIdentityEvent(
     _: JNIEnv,
     _: JClass,
     controller: jbyte,
@@ -584,7 +581,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendController
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendControllerArrivalEvent(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendControllerArrivalEvent(
     _: JNIEnv,
     _: JClass,
     controller: jbyte,
@@ -606,7 +603,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendController
 
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendControllerTouchEvent(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendControllerTouchEvent(
     _: JNIEnv,
     _: JClass,
     controller: jbyte,
@@ -631,7 +628,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendController
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendControllerMotionEvent(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendControllerMotionEvent(
     _: JNIEnv,
     _: JClass,
     controller: jbyte,
@@ -644,7 +641,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendController
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendControllerBatteryEvent(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendControllerBatteryEvent(
     _: JNIEnv,
     _: JClass,
     controller: jbyte,
@@ -656,7 +653,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendController
 
 /// `KEY_ACTION_DOWN` (0x03) or `KEY_ACTION_UP` (0x04).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendKeyboardInput(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendKeyboardInput(
     _: JNIEnv,
     _: JClass,
     key: jshort,
@@ -668,7 +665,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendKeyboardIn
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseHighResScroll(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendMouseHighResScroll(
     _: JNIEnv,
     _: JClass,
     amount: jshort,
@@ -677,7 +674,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseHighR
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseHighResHScroll(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendMouseHighResHScroll(
     _: JNIEnv,
     _: JClass,
     amount: jshort,
@@ -686,7 +683,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMouseHighR
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendUtf8Text(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendUtf8Text(
     env: JNIEnv,
     _: JClass,
     text: JByteArray,
@@ -700,7 +697,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendUtf8Text(
 
 /// Apollo's server command (0x3000): one or four bytes, Sunshine hosts only.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendServerCommand(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendServerCommand(
     env: JNIEnv,
     _: JClass,
     payload: JByteArray,
@@ -712,7 +709,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendServerComm
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getPendingAudioDuration(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getPendingAudioDuration(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -721,7 +718,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getPendingAudi
 
 /// The Opus concealer for the AAudio callback (`aaudio_output.c`), as a C function pointer.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_audioConcealer(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_audioConcealer(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -730,7 +727,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_audioConcealer
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getPendingVideoFrames(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getPendingVideoFrames(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -740,7 +737,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getPendingVide
 /// Frames dropped over a full decode queue since the stream started (`VideoStats::decoder_drops`);
 /// 0 without a session.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getDecoderDrops(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getDecoderDrops(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -749,7 +746,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getDecoderDrop
 
 /// Bytes of video and audio datagrams received, FEC parity included; 0 without a session.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getWireBytesReceived(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getWireBytesReceived(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -758,7 +755,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getWireBytesRe
 
 /// The video socket's receive buffer, asked over granted (`extras::receive_buffer_info`); -1 without a session.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getVideoReceiveBufferInfo(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getVideoReceiveBufferInfo(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -766,7 +763,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getVideoReceiv
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getEstimatedRttInfo(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getEstimatedRttInfo(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -774,7 +771,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getEstimatedRt
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_reportFrameSlack(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_reportFrameSlack(
     _: JNIEnv,
     _: JClass,
     slack_ns: jlong,
@@ -784,7 +781,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_reportFrameSla
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_flushPhaseLockReport(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_flushPhaseLockReport(
     _: JNIEnv,
     _: JClass,
 ) {
@@ -792,7 +789,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_flushPhaseLock
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getPhaseLockLeadUs(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getPhaseLockLeadUs(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -800,7 +797,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getPhaseLockLe
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_hostSupportsControlMessage(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostSupportsControlMessage(
     _: JNIEnv,
     _: JClass,
     message_type: jint,
@@ -811,7 +808,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_hostSupportsCo
 /// Whether this stream draws with Frame Warp (`frame_warp::offered`), unless a renderer declined
 /// it: a renderer set up again later (a decoder reset) keeps to that.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpOffered(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpOffered(
     _: JNIEnv,
     _: JClass,
 ) -> jboolean {
@@ -820,7 +817,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpOffer
 
 /// The address of the C table the native renderers call (`frame_warp_api.h`).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpApi(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpApi(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -829,7 +826,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpApi(
 
 /// The decoder queued `frame` with presentation time `pts_us`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpNoteFrame(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpNoteFrame(
     _: JNIEnv,
     _: JClass,
     pts_us: jlong,
@@ -842,7 +839,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpNoteF
 /// and the lens terms k.x, k.y, n.x, n.y (`frame_warp::WARP_FLOATS` floats), and the return is the
 /// HUD mask generation, -1 without a mask or -2 to draw it as it is (also when `out` is shorter).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpForPts(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpForPts(
     env: JNIEnv,
     _: JClass,
     pts_us: jlong,
@@ -860,7 +857,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpForPt
 /// As `frameWarpForPts`, without counting it in the statistics: whether the GLES presenter
 /// should draw the picture on screen again (`frame_warp::peek_for`).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpPeekForPts(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpPeekForPts(
     env: JNIEnv,
     _: JClass,
     pts_us: jlong,
@@ -879,7 +876,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpPeekF
 /// (`frame_warp::input_state`): the count of inputs noted in the low 32 bits, bit 32 while the
 /// tracked right stick is deflected.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpInputState(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpInputState(
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
@@ -890,7 +887,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpInput
 /// and `cells`, when it has room, one byte per cell (0 or 255, rows from the top). Returns the
 /// generation, -1 unchanged, -2 cleared, or -3 when `cells` is too small.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpMask(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpMask(
     env: JNIEnv,
     _: JClass,
     known: jint,
@@ -925,7 +922,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpMask(
 
 /// The renderer cannot draw Frame Warp for this stream: the host stops its work for it.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpDecline(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpDecline(
     _: JNIEnv,
     _: JClass,
 ) {
@@ -935,7 +932,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpDecli
 /// The overlay's Frame Warp line: returns `RustBridge.FRAME_WARP_*` and writes gain, lag ms,
 /// shift px and peak px to `out`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpStatus(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpStatus(
     env: JNIEnv,
     _: JClass,
     out: JFloatArray,
@@ -949,7 +946,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_frameWarpStatu
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendDisplayCaps(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendDisplayCaps(
     _: JNIEnv,
     _: JClass,
     hdr: jboolean,
@@ -962,7 +959,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendDisplayCap
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getMicrophoneState(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getMicrophoneState(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -970,7 +967,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getMicrophoneS
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getHostPacked444Modes(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getHostPacked444Modes(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -978,7 +975,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getHostPacked4
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getAnnouncedHdrFormat(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getAnnouncedHdrFormat(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -986,7 +983,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_getAnnouncedHd
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMicrophonePcm(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendMicrophonePcm(
     env: JNIEnv,
     _: JClass,
     pcm: JShortArray,
@@ -1007,7 +1004,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendMicrophone
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_requestReconfigure(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_requestReconfigure(
     _: JNIEnv,
     _: JClass,
     width: jint,
@@ -1028,7 +1025,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_requestReconfi
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendHostTimingRequest(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendHostTimingRequest(
     _: JNIEnv,
     _: JClass,
     enabled: jboolean,
@@ -1041,7 +1038,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendHostTiming
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendLinkNoticeRequest(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendLinkNoticeRequest(
     _: JNIEnv,
     _: JClass,
     enabled: jboolean,
@@ -1054,7 +1051,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendLinkNotice
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendClockSyncProbe(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendClockSyncProbe(
     _: JNIEnv,
     _: JClass,
 ) -> jboolean {
@@ -1065,7 +1062,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendClockSyncP
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockStart(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockStart(
     _: JNIEnv,
     _: JClass,
     min_interval_us: jint,
@@ -1075,7 +1072,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockSt
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockStop(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockStop(
     _: JNIEnv,
     _: JClass,
 ) {
@@ -1083,7 +1080,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockSt
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockReset(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockReset(
     _: JNIEnv,
     _: JClass,
 ) {
@@ -1093,7 +1090,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockRe
 /// out: present time (ns), hold (us), host-to-present latency (us, -1 without clock sync),
 /// late (0/1), as `android_present_clock.c`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockSchedule(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockSchedule(
     env: JNIEnv,
     _: JClass,
     host_us: jlong,
@@ -1128,7 +1125,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockSc
 /// vsync), hold (us), host-to-vsync latency (us, -1 without clock sync), how late (us); see
 /// `extras::grid_schedule_to_ns`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockScheduleOnGrid(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockScheduleOnGrid(
     env: JNIEnv,
     _: JClass,
     host_us: jlong,
@@ -1156,7 +1153,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockSc
 
 /// A frame's host time (us) for the content rate.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockObserve(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockObserve(
     _: JNIEnv,
     _: JClass,
     host_us: jlong,
@@ -1168,7 +1165,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockOb
 
 /// The content rate in millihertz, 0 until it held steady for two seconds.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockContentRate(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockContentRate(
     _: JNIEnv,
     _: JClass,
 ) -> jint {
@@ -1177,7 +1174,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockCo
 
 /// out: frames scheduled, frames late, clock sync round trip (us, -1 without).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockStats(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockStats(
     env: JNIEnv,
     _: JClass,
     out: JLongArray,
@@ -1197,7 +1194,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockSt
 /// out: host-to-client clock offset (us, `client = host + offset`) now and the round trip (us) of
 /// the exchange it comes from, as `android_present_clock.c`. False before the first exchange.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockOffset(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockOffset(
     env: JNIEnv,
     _: JClass,
     out: JLongArray,
@@ -1212,7 +1209,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_presentClockOf
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendCursorShapeRequest(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendCursorShapeRequest(
     _: JNIEnv,
     _: JClass,
     enabled: jboolean,
@@ -1224,7 +1221,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendCursorShap
 
 /// Text field notices (0x553B) on or off; false without a host that announced them.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendTextInputRequest(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendTextInputRequest(
     _: JNIEnv,
     _: JClass,
     enabled: jboolean,
@@ -1238,7 +1235,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendTextInputR
 /// with `bridgeClRateChange` and the same serial. False for a negative or invalid value, or
 /// without a host that announced it.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendRateChange(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendRateChange(
     _: JNIEnv,
     _: JClass,
     serial: jint,
@@ -1251,7 +1248,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendRateChange
 /// The device's keyboard layout as a BCP-47 tag (0x553E); false for a tag the wire cannot
 /// carry or without a host that announced it.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendKeyboardLayout(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendKeyboardLayout(
     mut env: JNIEnv,
     _: JClass,
     tag: JString,
@@ -1265,7 +1262,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendKeyboardLa
 /// Starts clipboard sync (0x5508) with a host that offered it: `MoonBridge.CLIPBOARD_SYNC_*`.
 /// `current` is the clipboard here as it is, null when it could not be read; it stays here.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_clipboardSyncStart(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_clipboardSyncStart(
     mut env: JNIEnv,
     _: JClass,
     current: JString,
@@ -1275,7 +1272,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_clipboardSyncS
 
 /// Text copied here, for clipboard sync: `MoonBridge.CLIPBOARD_COPY_*`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_clipboardSyncLocal(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_clipboardSyncLocal(
     mut env: JNIEnv,
     _: JClass,
     text: JString,
@@ -1288,7 +1285,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_clipboardSyncL
 
 /// DualSense microphone PCM (0x5534) or USB audio endpoint status (0x5535).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendControllerAudio(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_sendControllerAudio(
     env: JNIEnv,
     _: JClass,
     kind: jint,
@@ -1313,7 +1310,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_sendController
 /// kernel lets go of the device once both are closed.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_usbAttach(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_usbAttach(
     mut env: JNIEnv,
     _: JClass,
     fd: jint,
@@ -1383,7 +1380,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_usbAttach(
 
 /// Detaches an attachment `usbAttach` made; false when it is not attached.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_usbDetach(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_usbDetach(
     _: JNIEnv,
     _: JClass,
     request_id: jint,
@@ -1393,7 +1390,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_usbDetach(
 
 /// This stream's attachments as JSON, oldest first: `[]` without any.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_RustBridge_usbList(
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_usbList(
     env: JNIEnv,
     _: JClass,
 ) -> jstring {

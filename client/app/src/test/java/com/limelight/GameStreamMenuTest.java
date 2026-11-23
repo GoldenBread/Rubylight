@@ -9,12 +9,8 @@ import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.TestHosts;
 import com.limelight.preferences.PreferenceConfiguration;
-import com.limelight.ui.RustStreamMenuModel;
 import com.limelight.ui.StreamMenu;
-import com.limelight.ui.StreamMenuModel;
 
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -29,16 +25,6 @@ import static org.junit.Assert.*;
         shadows = PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class GameStreamMenuTest {
-    @Before
-    public void answerFromThePolicySources() {
-        StreamMenuModel.use(new RustStreamMenuModel());
-    }
-
-    @After
-    public void forgetTheModel() {
-        StreamMenuModel.use(null);
-    }
-
     private static Game streamingGame(String fixture) {
         return streamingGame(Game.class, fixture);
     }

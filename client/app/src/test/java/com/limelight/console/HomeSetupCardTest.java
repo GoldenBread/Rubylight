@@ -16,8 +16,10 @@ import android.widget.TextView;
 import com.limelight.PcViewLifecycleTest;
 import com.limelight.R;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.NightjarJni;
 import com.limelight.preferences.GlPreferences;
 import com.limelight.preferences.PreferenceConfiguration;
+import com.limelight.preferences.SimpleProfile;
 import com.limelight.preferences.SimpleProfileModel;
 
 import org.junit.After;
@@ -55,22 +57,18 @@ public class HomeSetupCardTest {
         File directory = new File(context.getFilesDir(), "console-library");
         assertTrue(directory.isDirectory() || directory.mkdirs());
         assertTrue(new File(directory, "tower.json").createNewFile());
-        settingsAre("auto", "auto", "auto");
+        ReflectionHelpers.setStaticField(SimpleProfile.class, "cachedCapabilities", null);
+        ReflectionHelpers.setStaticField(SimpleProfile.class, "cachedCodecs", null);
+        assertTrue(SimpleProfile.applyRecommended(context));
     }
 
     @After
     public void tearDown() {
-        // Back to the engine a JVM test does not have: every row reads as Custom again.
-        SimpleProfileModel.use(null);
+        NightjarJni.forceUnavailableForTest(null);
+        ReflectionHelpers.setStaticField(SimpleProfile.class, "cachedCapabilities", null);
+        ReflectionHelpers.setStaticField(SimpleProfile.class, "cachedCodecs", null);
         PreferenceManager.getDefaultSharedPreferences(context).edit().clear().commit();
         context.getSharedPreferences("home_setup_card", Context.MODE_PRIVATE).edit().clear().commit();
-    }
-
-    /** What the simple layer's model says the stream's settings are; null for Custom. */
-    private static void settingsAre(String smoothness, String picture, String hdr) {
-        String choices = smoothness == null ? "null" : "{\"smoothness\":\"" + smoothness + "\",\"picture\":\"" + picture
-                + "\",\"hdr\":\"" + hdr + "\"}";
-        SimpleProfileModel.use(request -> "{\"ok\":{\"choices\":" + choices + "}}");
     }
 
     private ActivityController<HomeShellTest.Home> home() {
@@ -162,17 +160,26 @@ public class HomeSetupCardTest {
     @Test
     public void theCardSpeaksForAutoOnlyAndComesBackWhenTheSettingsAreAutoAgain() {
         SetupCard.offer(context, "tower", 0);
-        settingsAre(null, null, null);
+        PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .putString("frame_pacing", "cap-fps").commit();
         ActivityController<HomeShellTest.Home> controller = home();
         try {
             HomeShellTest.Home home = controller.get();
             View card = cardAfter(home, nativeHost("tower", "Tower", true));
             assertEquals("Custom settings are the player's own: the card would claim them for Auto", View.GONE, card.getVisibility());
-            settingsAre("auto", "best", "auto");
+            int baseBitrate = PreferenceConfiguration.getDefaultBitrate(
+                    PreferenceConfiguration.nativeResolution(context),
+                    PreferenceManager.getDefaultSharedPreferences(context).getString("list_fps", "60"));
+            PreferenceManager.getDefaultSharedPreferences(context).edit()
+                    .putString("frame_pacing", "latency")
+                    .putString("simple_picture", "best")
+                    .putBoolean("bitrate_user_set", true)
+                    .putInt("seekbar_bitrate_kbps", baseBitrate * 1500 / 1000)
+                    .commit();
             controller.pause().resume();
             assertEquals("a choice other than Auto is the player's as well", View.GONE, card.getVisibility());
             assertEquals("hidden, not closed", "tower", SetupCard.host(context));
-            settingsAre("auto", "auto", "auto");
+            assertTrue(SimpleProfile.applyRecommended(context));
             controller.pause().resume();
             assertEquals(View.VISIBLE, card.getVisibility());
         } finally {
@@ -322,22 +329,22 @@ public class HomeSetupCardTest {
     @Test
     public void aPollDoesNotReadTheSettingsAgainWhileTheCardIsHidden() {
         SetupCard.offer(context, "tower", 0);
-        int[] asked = {0};
-        SimpleProfileModel.use(request -> {
-            asked[0]++;
-            return "{\"ok\":{\"choices\":null}}";
-        });
+        PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .putString("frame_pacing", "cap-fps").commit();
         ActivityController<HomeShellTest.Home> controller = home();
         try {
             HomeShellTest.Home home = controller.get();
             View card = cardAfter(home, nativeHost("tower", "Tower", true));
             assertEquals(View.GONE, card.getVisibility());
-            int before = asked[0];
-            assertTrue("the PC's arrival read them once", before > 0);
-            for (int i = 0; i < 5; i++) home.onHostsChanged();
-            assertEquals(before, asked[0]);
+            NightjarJni.forceUnavailableForTest(new AssertionError("poll asked SimpleProfileModel"));
+            try {
+                for (int i = 0; i < 5; i++) home.onHostsChanged();
+            } finally {
+                NightjarJni.forceUnavailableForTest(null);
+            }
+            assertTrue(SimpleProfile.applyRecommended(context));
             controller.pause().resume();
-            assertTrue("a resume reads them: they are changed on other screens", asked[0] > before);
+            assertEquals("a resume reads them: they may have changed on other screens", View.VISIBLE, card.getVisibility());
         } finally {
             controller.pause().stop().destroy();
         }
@@ -349,10 +356,12 @@ public class HomeSetupCardTest {
         ComputerDetails tower = nativeHost("tower", "Tower", true);
         try {
             ReflectionHelpers.setStaticField(com.limelight.preferences.SimpleProfile.class, "cachedCapabilities",
-                    new SimpleProfileModel.Capabilities(1920, 1080, 60, true, false, true, true, false, true, null, null, null));
+                    new SimpleProfileModel.Capabilities(1920, 1080, 60, true, false, true, true, false, false, null, null, null));
             assertTrue(SetupCard.text(context, tower).values, SetupCard.text(context, tower).values.contains(" · SDR · "));
             PreferenceManager.getDefaultSharedPreferences(context).edit()
                     .putBoolean("checkbox_enable_hdr", true).commit();
+            ReflectionHelpers.setStaticField(com.limelight.preferences.SimpleProfile.class, "cachedCapabilities",
+                    new SimpleProfileModel.Capabilities(1920, 1080, 60, true, false, true, true, false, true, null, null, null));
             PreferenceConfiguration config = PreferenceConfiguration.readPreferences(context, "tower", tower.caps, null, 0, null);
             assertEquals(config.enableHdr, SetupCard.text(context, tower).values.contains(" · HDR · "));
         } finally {

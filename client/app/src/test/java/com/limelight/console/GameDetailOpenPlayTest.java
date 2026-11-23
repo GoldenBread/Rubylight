@@ -75,7 +75,6 @@ public class GameDetailOpenPlayTest {
     public void setUp() throws Exception {
         context = RuntimeEnvironment.getApplication();
         PreferenceManager.getDefaultSharedPreferences(context).edit().clear().commit();
-        OpenPlayModel.use(request -> "{\"ok\":{\"countdown_ms\":3000,\"settled_ms\":10000}}");
         OpenPlay.disarm(context);
         GameDetailWakeTest.Detail.woken.clear();
         GameDetailWakeTest.Detail.played.clear();
@@ -88,7 +87,6 @@ public class GameDetailOpenPlayTest {
         for (ActivityController<GameDetailWakeTest.Detail> page : opened) {
             if (!page.get().isDestroyed()) page.destroy();
         }
-        OpenPlayModel.use(null);
         GameDetailWakeTest.Detail.repository = null;
     }
 
@@ -289,8 +287,6 @@ public class GameDetailOpenPlayTest {
 
     @Test
     public void onlyAStreamThatLastedClearsTheGuard() {
-        OpenPlayModel.use(request -> request.contains("stream_end")
-                ? "{\"ok\":{\"disarm\":true}}" : "{\"ok\":{\"countdown_ms\":3000,\"settled_ms\":10000}}");
         android.os.Handler handler = new android.os.Handler(Looper.getMainLooper());
         OpenPlay.arm(context);
         OpenPlay.settleAfter(context, handler);

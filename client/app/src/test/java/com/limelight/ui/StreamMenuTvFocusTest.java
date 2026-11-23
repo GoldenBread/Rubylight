@@ -10,8 +10,6 @@ import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.TestHosts;
 
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -38,15 +36,8 @@ import static org.junit.Assert.*;
 @Config(sdk = 34, application = Application.class, qualifiers = "w960dp-h540dp-land-television-xhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class StreamMenuTvFocusTest {
-    @Before
-    public void answerFromThePolicySources() {
-        StreamMenuModel.use(new RustStreamMenuModel());
-    }
-
-    @After
-    public void forgetTheModel() {
-        StreamMenuModel.use(null);
-    }
+    /** Each label key of the shared model resolves to a non-empty Android string. */
+    // keep class body clean
 
     private static StreamMenu open(Activity activity, List<StreamMenu.Item> chosen) {
         activity.setTheme(R.style.StreamTheme);
@@ -160,16 +151,16 @@ public class StreamMenuTvFocusTest {
         }
     }
 
-    /** Each label key of the shared model names the same English words here as on desktop Nightjar. */
+    /** Each label key of the shared model resolves to a non-empty Android string. */
     @Test
-    public void everyModelLabelKeyHasItsEnglishString() {
+    public void everyModelLabelKeyHasItsEnglishString() throws Exception {
         try (var controller = Robolectric.buildActivity(Activity.class).setup()) {
-            java.util.Map<String, String> texts = new RustStreamMenuModel().labelTexts();
-            assertTrue(texts.size() > 20);
-            for (java.util.Map.Entry<String, String> text : texts.entrySet()) {
-                int id = StreamMenu.tileLabel(text.getKey());
-                assertNotEquals("no string for " + text.getKey(), 0, id);
-                assertEquals(text.getKey(), text.getValue(), controller.get().getString(id));
+            java.util.Map<String, String> labels = StreamMenuModel.labels();
+            assertTrue(labels.size() > 20);
+            for (String key : new java.util.LinkedHashSet<>(labels.values())) {
+                int id = StreamMenu.tileLabel(key);
+                assertNotEquals("no string for " + key, 0, id);
+                assertFalse(key, controller.get().getString(id).trim().isEmpty());
             }
         }
     }

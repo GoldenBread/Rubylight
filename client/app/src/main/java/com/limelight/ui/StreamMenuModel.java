@@ -2,6 +2,8 @@ package com.limelight.ui;
 
 import androidx.annotation.VisibleForTesting;
 
+import com.limelight.nvstream.jni.NightjarJni;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -19,43 +21,6 @@ import java.util.List;
 public final class StreamMenuModel {
     private StreamMenuModel() { }
 
-    /** One JSON request in, one JSON answer out: {@code {"ok": …}} or {@code {"error": code, "detail": …}}. */
-    public interface Calls {
-        String call(String request);
-    }
-
-    private static Calls calls;
-
-    private static synchronized Calls calls() {
-        if (calls == null) calls = load();
-        return calls;
-    }
-
-    /** JVM tests cannot load the library; they answer from the Rust sources instead. */
-    @VisibleForTesting
-    public static synchronized void use(Calls replacement) {
-        calls = replacement;
-    }
-
-    private static Calls load() {
-        try {
-            System.loadLibrary("nightjar_core");
-            return StreamMenuModel::call;
-        } catch (UnsatisfiedLinkError e) {
-            String detail = String.valueOf(e.getMessage());
-            // Every call then says why, and the menu shows it with the ways out of the stream.
-            return request -> {
-                try {
-                    return new JSONObject().put("error", "unavailable").put("detail", detail).toString();
-                } catch (JSONException impossible) {
-                    throw new IllegalStateException(impossible);
-                }
-            };
-        }
-    }
-
-    private static native String call(String request);
-
     /** The model refused a request or could not answer it; {@code code} names why. */
     public static final class Refused extends Exception {
         public final String code;
@@ -68,16 +33,8 @@ public final class StreamMenuModel {
         }
     }
 
-    private static Object ask(JSONObject request) throws Refused {
-        String answer;
-        try {
-            answer = calls().call(request.toString());
-        } catch (UnsatisfiedLinkError e) {
-            // A library from another build that lacks the call: the menu says so instead of crashing the stream.
-            throw new Refused("unavailable", String.valueOf(e.getMessage()));
-        } catch (RuntimeException e) {
-            throw new Refused("unavailable", String.valueOf(e));
-        }
+    @VisibleForTesting
+    static Object parseAnswer(String answer) throws Refused {
         // JNI answers null when it could not make the answer's string.
         if (answer == null) throw new Refused("unavailable", "no answer");
         try {
@@ -88,6 +45,19 @@ public final class StreamMenuModel {
         } catch (JSONException e) {
             throw new Refused("invalid", "unreadable answer: " + e.getMessage());
         }
+    }
+
+    private static Object ask(JSONObject request) throws Refused {
+        String answer;
+        try {
+            answer = NightjarJni.streamMenuCall(request.toString());
+        } catch (UnsatisfiedLinkError e) {
+            // A library from another build that lacks the call: the menu says so instead of crashing the stream.
+            throw new Refused("unavailable", String.valueOf(e.getMessage()));
+        } catch (LinkageError | RuntimeException e) {
+            throw new Refused("unavailable", String.valueOf(e));
+        }
+        return parseAnswer(answer);
     }
 
     private static JSONObject op(String name) {

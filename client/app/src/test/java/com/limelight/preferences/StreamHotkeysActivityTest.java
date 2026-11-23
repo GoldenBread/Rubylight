@@ -12,8 +12,6 @@ import androidx.appcompat.app.AlertDialog;
 
 import com.limelight.R;
 import com.limelight.binding.input.StreamHotkeys;
-import com.limelight.ui.RustStreamMenuModel;
-import com.limelight.ui.StreamMenuModel;
 
 import org.junit.After;
 import org.junit.Before;
@@ -39,7 +37,6 @@ public class StreamHotkeysActivityTest {
 
     @Before
     public void page() {
-        StreamMenuModel.use(new RustStreamMenuModel());
         prefs = PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication());
         prefs.edit().clear().commit();
         controller = Robolectric.buildActivity(StreamHotkeysActivity.class).setup();
@@ -48,7 +45,6 @@ public class StreamHotkeysActivityTest {
     @After
     public void close() {
         controller.close();
-        StreamMenuModel.use(null);
     }
 
     /** The row of an action: its title, its chord, then Change, Off and Reset. */

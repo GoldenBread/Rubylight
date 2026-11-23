@@ -3,6 +3,7 @@ package com.limelight.binding.video;
 import androidx.annotation.VisibleForTesting;
 
 import com.limelight.LimeLog;
+import com.limelight.nvstream.jni.NightjarJni;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -20,29 +21,6 @@ import java.util.function.IntSupplier;
  */
 public final class SharpColor {
     private SharpColor() { }
-
-    /** One JSON request in, one JSON answer out: {@code {"ok": …}} or {@code {"error": code, "detail": …}}. */
-    public interface Calls {
-        String call(String request);
-    }
-
-    private static Calls calls;
-
-    private static synchronized Calls calls() {
-        if (calls == null) {
-            System.loadLibrary("nightjar_core");
-            calls = SharpColor::call;
-        }
-        return calls;
-    }
-
-    /** JVM tests cannot load the library. */
-    @VisibleForTesting
-    public static synchronized void use(Calls replacement) {
-        calls = replacement;
-    }
-
-    private static native String call(String request);
 
     /** What the decision reads. Formats are MoonBridge VIDEO_FORMAT bits, PC support ServerCodecModeSupport bits. */
     public static final class Request {
@@ -150,11 +128,27 @@ public final class SharpColor {
     }
 
     private static JSONObject ask(JSONObject request) throws JSONException {
-        String answer = calls().call(request.toString());
+        String answer = NightjarJni.sharpColorCall(request.toString());
         JSONObject json = new JSONObject(answer);
         JSONObject ok = json.optJSONObject("ok");
         if (ok == null) LimeLog.warning("Sharper colored text: model answered " + answer);
         return ok;
+    }
+
+    @VisibleForTesting
+    static Pick parseAnswer(String answer) {
+        try {
+            JSONObject json = new JSONObject(answer);
+            JSONObject ok = json.optJSONObject("ok");
+            if (ok == null) {
+                LimeLog.warning("Sharper colored text: model answered " + answer);
+                return Pick.without(Pick.UNANSWERED);
+            }
+            return read(ok);
+        } catch (JSONException | RuntimeException e) {
+            LimeLog.warning("Sharper colored text: model unavailable: " + e);
+            return Pick.without(Pick.UNANSWERED);
+        }
     }
 
     /** The pick an answer's {@code ok} object names. */

@@ -2,6 +2,7 @@
 //! to MoonBridge's `bridgeCl*` callbacks with the arguments `callbacks.c` passes.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use nightjar_core::control::clipboard_sync::{ClipboardItem, Received, Refused};
 use nightjar_core::control::{haptics, ConnectionStatus, ControlEvent};
@@ -17,14 +18,14 @@ use crate::extras::{cursor_shape_message, hdr_metadata_bytes};
 use crate::{engine, platform};
 
 pub struct Events {
-    bridge: &'static Bridge,
+    bridge: Arc<Bridge>,
     /// `connection_started` arrived; forwarded once the session is stored, so Java can use
     /// it from the callback as the former C engine did.
     pub started: AtomicBool,
 }
 
 impl Events {
-    pub fn new(bridge: &'static Bridge) -> Self {
+    pub fn new(bridge: Arc<Bridge>) -> Self {
         Self {
             bridge,
             started: AtomicBool::new(false),
@@ -37,7 +38,7 @@ impl Events {
         lead: Option<jni::sys::jvalue>,
         bytes: &[u8],
     ) {
-        let b = self.bridge;
+        let b = &self.bridge;
         b.with_env(|env| {
             let array = env.byte_array_from_slice(bytes)?;
             let mut args = Vec::with_capacity(2);
@@ -191,7 +192,7 @@ impl Listener for Events {
     }
 
     fn control_event(&self, event: ControlEvent) {
-        let b = self.bridge;
+        let b = &self.bridge;
         let m = &b.m;
         match event {
             ControlEvent::Rumble {

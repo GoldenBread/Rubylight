@@ -18,8 +18,6 @@ import com.limelight.binding.video.DecoderBenchmark;
 import com.limelight.console.HomeSettings;
 import com.limelight.console.OpenPlay;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -34,8 +32,7 @@ import java.lang.reflect.Method;
 
 /**
  * The simple layer on Android: a choice writes the existing settings, a changed advanced setting reads as
- * Custom, Back to recommended restores it, and console mode reuses Home. The mapping itself is held by
- * SimpleProfileModelTest and nightjar-policy's tests; this class uses a stand-in model so it runs in a JVM.
+ * Custom, Back to recommended restores it, and console mode reuses Home. Uses real {@code nightjar_core} via JNI.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = android.app.Application.class,
@@ -52,7 +49,6 @@ public class SimpleProfileTest {
         prefs.edit().clear().commit();
         SimpleProfile.forgetCapabilities();
         SimpleProfile.forgetCodecs();
-        SimpleProfileModel.use(SimpleProfileTest::fake);
     }
 
     @After
@@ -66,68 +62,6 @@ public class SimpleProfileTest {
         ShadowMediaCodecList.reset();
         SimpleProfile.forgetCapabilities();
         SimpleProfile.forgetCodecs();
-        SimpleProfileModel.use(null);
-    }
-
-    /** A small stand-in for the policy: the choices' headline values, enough for the app-side wiring. */
-    private static String fake(String request) {
-        try {
-            JSONObject ask = new JSONObject(request);
-            String op = ask.getString("op");
-            if ("recommended".equals(op)) {
-                return "{\"ok\":{\"smoothness\":\"auto\",\"picture\":\"auto\",\"hdr\":\"auto\"}}";
-            }
-            if ("chosen".equals(op)) {
-                JSONObject current = ask.getJSONObject("current");
-                String pacing = current.isNull("pacing") ? null : current.getString("pacing");
-                // The HDR row shows what the stream does: Auto while the switch asks for HDR, Off
-                // while it does not. An Off row still matches the profile (a fresh install's HDR
-                // switch is off); only the advanced settings decide Custom.
-                String hdr = current.getBoolean("hdr") ? "auto" : "off";
-                boolean restOfBalanced = !current.getBoolean("vrr")
-                        && current.isNull("bitrate_milli") && "auto".equals(current.getString("codec"))
-                        && !current.getBoolean("adaptive_bitrate")
-                        && "off".equals(current.isNull("adaptive_quality") ? null : current.getString("adaptive_quality"));
-                if ("latency".equals(pacing) && restOfBalanced) {
-                    return new JSONObject().put("ok", new JSONObject().put("choices", new JSONObject()
-                            .put("smoothness", "auto").put("picture", "auto").put("hdr", hdr))).toString();
-                }
-                if ("smoothest".equals(pacing) && restOfBalanced) {
-                    return new JSONObject().put("ok", new JSONObject().put("choices", new JSONObject()
-                            .put("smoothness", "smoothest").put("picture", "auto").put("hdr", hdr))).toString();
-                }
-                return "{\"ok\":{\"choices\":null}}";
-            }
-            String smoothness = ask.optString("smoothness", "auto");
-            String picture = ask.optString("picture", "auto");
-            String hdr = ask.optString("hdr", "auto");
-            // The real mapping capped the stream at a measured benchmark below the screen's rate;
-            // the stand-in keeps that, so a seeded benchmark would show up as a lower rate.
-            JSONObject decoder = ask.optJSONObject("decoder");
-            JSONObject display = ask.optJSONObject("display");
-            Integer benchmark = decoder != null && decoder.has("max_fps_at_native")
-                    && !decoder.isNull("max_fps_at_native") ? decoder.getInt("max_fps_at_native") : null;
-            Object fps = benchmark != null && display != null && benchmark < display.getInt("refresh_hz")
-                    ? benchmark : JSONObject.NULL;
-            JSONObject values = new JSONObject().put("native_resolution", true)
-                    .put("fps", fps)
-                    .put("pacing", "smoothest".equals(smoothness) ? "smoothest" : "latency")
-                    .put("vrr", "balanced".equals(smoothness) && ask.optJSONObject("display") != null
-                            && ask.getJSONObject("display").getBoolean("vrr"))
-                    .put("latency_switches", true)
-                    .put("drop_late_frames", true).put("host_frame_times", false)
-                    .put("real_vrr", JSONObject.NULL).put("reduce_refresh", false).put("content_rate", false)
-                    .put("bitrate", "best".equals(picture) ? new JSONObject().put("mode", "factor").put("milli", 1500)
-                            : "save-data".equals(picture) ? new JSONObject().put("mode", "factor").put("milli", 600)
-                            : new JSONObject().put("mode", "default"))
-                    .put("codec", "auto")
-                    .put("hdr", !"off".equals(hdr))
-                    .put("adaptive_bitrate", "save-data".equals(picture))
-                    .put("adaptive_quality", "save-data".equals(picture) ? "save-power" : "off");
-            return new JSONObject().put("ok", values).toString();
-        } catch (JSONException e) {
-            throw new AssertionError(e);
-        }
     }
 
     @Test
@@ -195,6 +129,7 @@ public class SimpleProfileTest {
 
     @Test
     public void aRowFollowsSettingsThatChangedUnderIt() {
+        hdrDisplay();
         assertTrue(SimpleProfile.apply(context, SimpleProfile.SMOOTHNESS, "smoothest"));
         SimpleProfilePreference row = openSmoothnessRow();
         assertEquals("Smoothest", row.getEntry().toString());
@@ -249,23 +184,36 @@ public class SimpleProfileTest {
         assertEquals("off", current.adaptiveQuality);
     }
 
-    /** An HDR10 screen, as the TCL TV or the Fold7 reports one. */
+    /** An HDR10 screen and 10-bit HEVC decoder, as an HDR TV or phone reports. */
     private void hdrDisplay() {
         android.view.Display display = PreferenceConfiguration.defaultDisplay(context);
         assertNotNull(display);
         org.robolectric.Shadows.shadowOf(display).setDisplayHdrCapabilities(display.getDisplayId(),
                 1000f, 500f, 0.0001f, android.view.Display.HdrCapabilities.HDR_TYPE_HDR10);
+        MediaFormat format = MediaFormat.createVideoFormat("video/hevc", 1920, 1080);
+        MediaCodecInfo.CodecProfileLevel main10 = new MediaCodecInfo.CodecProfileLevel();
+        main10.profile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10;
+        main10.level = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
+        ShadowMediaCodecList.addCodec(MediaCodecInfoBuilder.newBuilder()
+                .setName("OMX.rubylight.hevc.hdr.decoder")
+                .setIsEncoder(false)
+                .setIsHardwareAccelerated(true)
+                .setCapabilities(MediaCodecInfoBuilder.CodecCapabilitiesBuilder.newBuilder()
+                        .setMediaFormat(format)
+                        .setColorFormats(new int[] {MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface})
+                        .setProfileLevels(new MediaCodecInfo.CodecProfileLevel[] {main10})
+                        .build())
+                .build());
+        SimpleProfile.forgetCodecs();
         SimpleProfile.forgetCapabilities();
     }
 
     @Test
     public void aFreshHdrInstallShowsTheHdrRowOffBecauseTheStreamIsSdr() {
         hdrDisplay();
+        PreferenceConfiguration.migrateToNativeDefaults(context);
         assertTrue("the screen offers HDR10", SimpleProfile.hdrOffered(context));
         assertFalse("a fresh install leaves the HDR switch off", SimpleProfile.current(context).hdr);
-        // The mapping answers Off for a stream in SDR (nightjar-policy's simple_profile; the Rust
-        // test and the shared contract hold that rule, this stand-in feeds its answer to the row).
-        SimpleProfileModel.use(SimpleProfileTest::policyForHdr);
         // The HDR row renders SimpleProfile.chosen()'s HDR entry: it must be what the stream does.
         assertFalse(SimpleProfile.custom(context, SimpleProfile.HDR));
         String[] shown = SimpleProfile.chosen(context);
@@ -286,21 +234,6 @@ public class SimpleProfileTest {
                 prefs.getBoolean(PreferenceConfiguration.ENABLE_HDR_PREF_STRING, false));
         assertNotNull(SimpleProfile.chosen(context));
         assertEquals("auto", SimpleProfile.chosen(context)[2]);
-    }
-
-    /** The policy's HDR answer for the row: Auto while the stream asks for HDR, Off while it is SDR. */
-    private static String policyForHdr(String request) {
-        try {
-            JSONObject ask = new JSONObject(request);
-            if ("chosen".equals(ask.getString("op"))) {
-                String hdr = ask.getJSONObject("current").getBoolean("hdr") ? "auto" : "off";
-                return new JSONObject().put("ok", new JSONObject().put("choices", new JSONObject()
-                        .put("smoothness", "auto").put("picture", "auto").put("hdr", hdr))).toString();
-            }
-        } catch (JSONException e) {
-            throw new AssertionError(e);
-        }
-        return fake(request);
     }
 
     @Test

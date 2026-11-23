@@ -53,11 +53,6 @@ import static org.robolectric.Shadows.shadowOf;
         shadows = PcViewLifecycleTest.NoNativeMoonBridge.class,
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class GameKeyboardOverlayTest {
-    @After
-    public void forgetTheModel() {
-        com.limelight.ui.StreamMenuModel.use(null);
-    }
-
     @Test
     @Config(sdk = {29, 36}, qualifiers = "sw800dp-land")
     public void tabletStreamDoesNotAutomaticallyOpenSoftwareKeyboard() throws Exception {
@@ -248,8 +243,6 @@ public class GameKeyboardOverlayTest {
 
     @Test
     public void aLocalChordKeepsItsModifierTapsFromBeingLoneTapsOnTheHost() {
-        // The stream hotkeys come from the table desktop Nightjar shares.
-        com.limelight.ui.StreamMenuModel.use(new com.limelight.ui.RustStreamMenuModel());
         RecordingConnection connection = new RecordingConnection();
         Game game = pcKeyboardGame(connection);
         int neutral = 0x8000 | com.limelight.binding.input.keyboard.PcKeyboardEngine.NEUTRAL_VK;
@@ -271,7 +264,6 @@ public class GameKeyboardOverlayTest {
     /** An old chord runs its action and says once, in the app's words, which chord it moved to. */
     @Test
     public void anOldChordSaysOnceWhereItMoved() {
-        com.limelight.ui.StreamMenuModel.use(new com.limelight.ui.RustStreamMenuModel());
         Game game = pcKeyboardGame(new RecordingConnection());
         int[] chord = {KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_C};
         for (int press = 0; press < 2; press++) {

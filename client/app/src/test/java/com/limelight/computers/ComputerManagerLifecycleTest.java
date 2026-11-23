@@ -28,6 +28,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.net.InetAddress;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -709,26 +711,29 @@ public class ComputerManagerLifecycleTest {
 
     @Test
     public void playOverTheInternetIsTakenInAtStartAndTurningItOffEndsTheTunnelsAtOnce() throws Exception {
-        List<String> asked = java.util.Collections.synchronizedList(new ArrayList<>());
-        CountDownLatch on = new CountDownLatch(1);
-        CountDownLatch off = new CountDownLatch(1);
-        InternetPlay.use(request -> {
-            asked.add(request);
-            if (request.contains("\"on\":true")) on.countDown();
-            if (request.contains("\"on\":false")) off.countDown();
-            return "{\"ok\":null}";
-        });
+        String enabledReply = "{\"version\":1,\"enabled\":true,\"portMapping\":false,\"externalIpv4\":null,"
+                + "\"mappedPorts\":false,\"ipv6\":[],\"ports\":{\"http\":47989,\"https\":47984,\"rtsp\":48010,"
+                + "\"video\":47998,\"audio\":48000,\"control\":47999,\"mic\":48002}}";
         ServiceController<Manager> controller = Robolectric.buildService(Manager.class).create();
         try {
-            // Without a poll: the service takes the setting in when it starts.
-            assertTrue(on.await(5, TimeUnit.SECONDS));
+            ExecutorService executor = ReflectionHelpers.getField(controller.get(), "internetPlayCalls");
+            Future<?> startDone = executor.submit(() -> {});
+            startDone.get(5, TimeUnit.SECONDS);
+            String before = InternetPlay.unreachable(enabledReply, new InternetPlay.Tried());
+            assertFalse("service start enables internet play: " + before,
+                    before.contains("off in Nightjar's settings"));
+
             android.preference.PreferenceManager.getDefaultSharedPreferences(controller.get()).edit()
                     .putBoolean(com.limelight.preferences.PreferenceConfiguration.INTERNET_PLAY_PREF_STRING, false).commit();
             org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
-            assertTrue("switching the setting off reaches the tunnels: " + asked, off.await(5, TimeUnit.SECONDS));
+            Future<?> offDone = executor.submit(() -> {});
+            offDone.get(5, TimeUnit.SECONDS);
+            String after = InternetPlay.unreachable(enabledReply, new InternetPlay.Tried());
+            assertTrue("switching the setting off reaches the tunnels: " + after,
+                    after.contains("off in Nightjar's settings"));
         } finally {
+            InternetPlay.setEnabled(true);
             controller.destroy();
-            InternetPlay.use(null);
         }
     }
 

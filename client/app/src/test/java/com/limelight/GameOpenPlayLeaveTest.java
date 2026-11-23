@@ -4,7 +4,6 @@ import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 
-import com.limelight.console.OpenPlayModel;
 import com.limelight.nvstream.StreamConfiguration;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.utils.LaunchSource;
@@ -31,14 +30,11 @@ public class GameOpenPlayLeaveTest {
     @Before
     public void setUp() {
         context = RuntimeEnvironment.getApplication();
-        // As the model answers: a stream the player left clears the guard, one that merely ended early does not.
-        OpenPlayModel.use(request -> "{\"ok\":{\"disarm\":" + request.contains("\"left_by_player\":true") + "}}");
         armed(true);
     }
 
     @After
     public void tearDown() {
-        OpenPlayModel.use(null);
         armed(false);
     }
 

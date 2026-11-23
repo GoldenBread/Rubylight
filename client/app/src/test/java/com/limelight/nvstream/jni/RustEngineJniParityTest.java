@@ -36,7 +36,7 @@ import static org.junit.Assert.*;
  * </ul>
  */
 public class RustEngineJniParityTest {
-    private static final String CLASS_PREFIX = "Java_com_limelight_nvstream_jni_RustBridge_";
+    private static final String CLASS_PREFIX = "Java_com_limelight_nvstream_jni_NightjarJni_";
 
     /** A Rust name that differs from the Java one for the same startConnection parameter. */
     private static final Map<String, String> RENAMED = new TreeMap<>();
@@ -77,6 +77,7 @@ public class RustEngineJniParityTest {
             case "jdouble": return "D";
             case "jchar": return "C";
             case "JString": case "jstring": return "Ljava/lang/String;";
+            case "JClass": case "jclass": return "Ljava/lang/Class;";
             case "JByteArray": case "jbyteArray": return "[B";
             case "JShortArray": case "jshortArray": return "[S";
             case "JIntArray": case "jintArray": return "[I";
@@ -187,29 +188,68 @@ public class RustEngineJniParityTest {
         return null;
     }
 
-    @Test public void everyRustBridgeNativeMatchesItsRustExportParameterByParameter() throws IOException {
+    @Test public void everyNightjarJniNativeMatchesItsRustExportParameterByParameter() throws Exception {
         Map<String, Export> exports = rustExports();
         TreeSet<String> natives = new TreeSet<>();
-        for (Method method : RustBridge.class.getDeclaredMethods()) {
+        for (Method method : NightjarJni.class.getDeclaredMethods()) {
             if (!Modifier.isNative(method.getModifiers())) {
                 continue;
             }
             natives.add(method.getName());
             Export export = exports.get(method.getName());
-            assertNotNull("no Rust export for RustBridge." + method.getName(), export);
+            assertNotNull("no Rust export for NightjarJni." + method.getName(), export);
             assertNull(mismatch(method, export), mismatch(method, export));
         }
         TreeSet<String> orphans = new TreeSet<>(exports.keySet());
         orphans.removeAll(natives);
-        assertTrue("Rust exports without a RustBridge native: " + orphans, orphans.isEmpty());
+        assertTrue("Rust exports without a NightjarJni native: " + orphans, orphans.isEmpty());
         assertTrue(natives.contains("startConnection"));
+        assertTrue(natives.contains("rustBridgeInit"));
+
+        // Every nightjar_core JNI export must live under NightjarJni, and no delegating class may keep
+        // native declarations or System.loadLibrary("nightjar_core").
+        Pattern anyExport = Pattern.compile("fn (Java_com_limelight_\\w+)\\s*\\(");
+        for (File file : rustFiles(rustSources())) {
+            String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            Matcher m = anyExport.matcher(text);
+            while (m.find()) {
+                assertTrue("unexpected JNI export " + m.group(1) + " in " + file.getName(),
+                        m.group(1).startsWith(CLASS_PREFIX));
+            }
+        }
+        String[] delegating = {
+                "com/limelight/nvstream/jni/RustBridge",
+                "com/limelight/nvstream/jni/NativeApiBridge",
+                "com/limelight/nvstream/jni/FileTransferBridge",
+                "com/limelight/binding/audio/EchoCanceller",
+                "com/limelight/ui/StreamMenuModel",
+                "com/limelight/preferences/SimpleProfileModel",
+                "com/limelight/console/CollectionGroups",
+                "com/limelight/console/LibraryOrder",
+                "com/limelight/binding/video/SharpColor",
+                "com/limelight/computers/InternetPlay",
+                "com/limelight/console/OpenPlayModel",
+                "com/limelight/console/GameInfoModel",
+        };
+        for (String rel : delegating) {
+            Class<?> cls = Class.forName(rel.replace('/', '.'), false,
+                    RustEngineJniParityTest.class.getClassLoader());
+            for (Method method : cls.getDeclaredMethods()) {
+                assertFalse("unexpected native method " + rel + "." + method.getName(),
+                        Modifier.isNative(method.getModifiers()));
+            }
+            String src = new String(Files.readAllBytes(new File("src/main/java/" + rel + ".java").toPath()),
+                    StandardCharsets.UTF_8);
+            assertFalse("unexpected loadLibrary(\"nightjar_core\") in " + rel,
+                    src.contains("loadLibrary(\"nightjar_core\")"));
+        }
     }
 
     @Test public void startConnectionHasTheSameParameterNamesInTheSameOrder() throws IOException {
         // Many of its parameters share a type, so a swap of two ints passes the type check.
         String source = new String(Files.readAllBytes(new File(
-                "src/main/java/com/limelight/nvstream/jni/RustBridge.java").toPath()), StandardCharsets.UTF_8);
-        Matcher declaration = Pattern.compile("static native int startConnection\\((.*?)\\);", Pattern.DOTALL)
+                "src/main/java/com/limelight/nvstream/jni/NightjarJni.java").toPath()), StandardCharsets.UTF_8);
+        Matcher declaration = Pattern.compile("public static native int startConnection\\((.*?)\\);", Pattern.DOTALL)
                 .matcher(source);
         assertTrue(declaration.find());
         List<String> javaNames = new ArrayList<>();
@@ -226,16 +266,25 @@ public class RustEngineJniParityTest {
 
     @Test public void moonBridgePassesRustBridgeItsArgumentsInTheDeclaredOrder() throws IOException {
         // The same swap that the types cannot catch, one call up: MoonBridge.startConnection hands
-        // its parameters to RustBridge.startConnection by position.
+        // its parameters to RustBridge.startConnection, which forwards them to NightjarJni.startConnection.
+        String nightjarJni = new String(Files.readAllBytes(new File(
+                "src/main/java/com/limelight/nvstream/jni/NightjarJni.java").toPath()), StandardCharsets.UTF_8);
         String rustBridge = new String(Files.readAllBytes(new File(
                 "src/main/java/com/limelight/nvstream/jni/RustBridge.java").toPath()), StandardCharsets.UTF_8);
         String moonBridge = new String(Files.readAllBytes(new File(
                 "src/main/java/com/limelight/nvstream/jni/MoonBridge.java").toPath()), StandardCharsets.UTF_8);
-        Matcher declaration = Pattern.compile("static native int startConnection\\((.*?)\\);", Pattern.DOTALL)
+        Matcher jniDecl = Pattern.compile("public static native int startConnection\\((.*?)\\);", Pattern.DOTALL)
+                .matcher(nightjarJni);
+        Matcher rustDecl = Pattern.compile("static int startConnection\\((.*?)\\)", Pattern.DOTALL)
                 .matcher(rustBridge);
-        Matcher call = Pattern.compile("RustBridge\\.startConnection\\((.*?)\\);", Pattern.DOTALL).matcher(moonBridge);
-        assertTrue(declaration.find());
-        assertTrue(call.find());
+        Matcher rustCall = Pattern.compile("NightjarJni\\.startConnection\\((.*?)\\);", Pattern.DOTALL)
+                .matcher(rustBridge);
+        Matcher moonCall = Pattern.compile("RustBridge\\.startConnection\\((.*?)\\);", Pattern.DOTALL)
+                .matcher(moonBridge);
+        assertTrue(jniDecl.find());
+        assertTrue(rustDecl.find());
+        assertTrue(rustCall.find());
+        assertTrue(moonCall.find());
         // Passed under another name than RustBridge declares it.
         Map<String, String> passedAs = new TreeMap<>();
         passedAs.put("packed444Requested", "packed444");
@@ -249,17 +298,28 @@ public class RustEngineJniParityTest {
         passedAs.put("codecDirectRequested", "codecDirect");
         passedAs.put("receiveDecodePriorityRequested", "receiveDecodePriority");
         passedAs.put("receiveCoalescingRequested", "receiveCoalescing");
-        List<String> declared = new ArrayList<>();
-        for (String parameter : splitParameters(declaration.group(1))) {
+        List<String> jniDeclared = new ArrayList<>();
+        for (String parameter : splitParameters(jniDecl.group(1))) {
             String[] words = parameter.trim().split("\\s+");
-            declared.add(words[words.length - 1]);
+            jniDeclared.add(words[words.length - 1]);
         }
-        List<String> passed = new ArrayList<>();
-        for (String argument : splitParameters(call.group(1))) {
+        List<String> rustDeclared = new ArrayList<>();
+        for (String parameter : splitParameters(rustDecl.group(1))) {
+            String[] words = parameter.trim().split("\\s+");
+            rustDeclared.add(words[words.length - 1]);
+        }
+        List<String> rustPassed = new ArrayList<>();
+        for (String argument : splitParameters(rustCall.group(1))) {
+            rustPassed.add(argument.trim());
+        }
+        List<String> moonPassed = new ArrayList<>();
+        for (String argument : splitParameters(moonCall.group(1))) {
             String name = argument.trim();
-            passed.add(passedAs.containsKey(name) ? passedAs.get(name) : name);
+            moonPassed.add(passedAs.containsKey(name) ? passedAs.get(name) : name);
         }
-        assertEquals(declared, passed);
+        assertEquals(jniDeclared, rustDeclared);
+        assertEquals(jniDeclared, rustPassed);
+        assertEquals(rustDeclared, moonPassed);
     }
 
     /** The natives of the slim C library (libmoonlight-core): everything else streaming is RustBridge's. */
@@ -421,20 +481,20 @@ public class RustEngineJniParityTest {
 
     @Test public void aSwappedOrReorderedParameterIsReported() throws Exception {
         String prefix = "Java_x_RustBridge_";
-        Method button = RustBridge.class.getDeclaredMethod("sendMouseButton", byte.class, byte.class);
+        Method button = NightjarJni.class.getDeclaredMethod("sendMouseButton", byte.class, byte.class);
         Export fine = parseExports(
                 "fn Java_x_RustBridge_sendMouseButton(_: JNIEnv, _: JClass, a: jbyte, b: jbyte) {}", prefix)
                 .get("sendMouseButton");
         assertNull(mismatch(button, fine));
 
-        Method position = RustBridge.class.getDeclaredMethod("sendMousePosition",
+        Method position = NightjarJni.class.getDeclaredMethod("sendMousePosition",
                 short.class, short.class, short.class, short.class);
         Export wrong = parseExports("fn Java_x_RustBridge_sendMousePosition("
                 + "_: JNIEnv, _: JClass, x: jshort, y: jshort, w: jint, h: jshort) {}", prefix)
                 .get("sendMousePosition");
         assertTrue(mismatch(position, wrong).contains("parameter 3"));
 
-        Method touch = RustBridge.class.getDeclaredMethod("sendTouchEvent", byte.class, int.class, float.class,
+        Method touch = NightjarJni.class.getDeclaredMethod("sendTouchEvent", byte.class, int.class, float.class,
                 float.class, float.class, float.class, float.class, short.class);
         Export swapped = parseExports("fn Java_x_RustBridge_sendTouchEvent(_: JNIEnv, _: JClass, e: jbyte, "
                 + "p: jfloat, id: jint, x: jfloat, y: jfloat, pr: jfloat, m: jfloat, r: jshort) -> jint {}", prefix)

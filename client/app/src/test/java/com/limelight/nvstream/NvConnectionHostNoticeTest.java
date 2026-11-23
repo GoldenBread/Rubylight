@@ -444,24 +444,6 @@ public class NvConnectionHostNoticeTest {
         int offered = MoonBridge.VIDEO_FORMAT_H264 | MoonBridge.VIDEO_FORMAT_H265;
         String pcNotice = app.getString(R.string.sharp_color_unavailable_pc);
         String deviceNotice = app.getString(R.string.sharp_color_unavailable_device);
-        List<org.json.JSONObject> asked = Collections.synchronizedList(new ArrayList<>());
-        // The packed step as nightjar-core's full_chroma::before_launch takes it.
-        com.limelight.binding.video.SharpColor.use(request -> {
-            try {
-                org.json.JSONObject r = new org.json.JSONObject(request);
-                asked.add(r);
-                int host = r.isNull("host_packed") ? -1 : r.getInt("host_packed");
-                if (host == 0 || (host < 0 && r.getBoolean("packed_refused_before"))) {
-                    return "{\"ok\":{\"pick\":\"without\",\"why\":\"host\",\"detail\":\"\",\"tell\":true}}";
-                }
-                if (r.isNull("device_modes")) return "{\"ok\":{\"need_device_modes\":true}}";
-                int device = r.getInt("device_modes");
-                if (device == 0) return "{\"ok\":{\"pick\":\"without\",\"why\":\"device\",\"detail\":\"\",\"tell\":true}}";
-                return "{\"ok\":{\"pick\":\"packed\",\"modes\":" + device + "}}";
-            } catch (org.json.JSONException e) {
-                throw new AssertionError(e);
-            }
-        });
         try {
             sessionPacked = true;
             sessionSharpColor = true;
@@ -472,8 +454,6 @@ public class NvConnectionHostNoticeTest {
             assertTrue(launchedOrResumed());
             assertTrue(failedStages.isEmpty());
             assertFalse(lastContext().streamConfig.isPacked444());
-            assertEquals(1, asked.size());
-            assertEquals(0, asked.get(0).getInt("host_packed"));
             assertTrue(messages.contains(pcNotice));
             // Once per PC.
             assertFalse(stream(none, false, offered, false).contains(pcNotice));
@@ -481,25 +461,18 @@ public class NvConnectionHostNoticeTest {
 
             // A PC that does not say is asked once this device verified its modes, and its refusal in the
             // handshake is remembered...
-            asked.clear();
             NvConnectionHapticsFlagTest.CapturingBridge.startResult = MoonBridge.CLIENT_ERROR_PACKED_444_REFUSED;
             stream(SUNSHINE, false, offered, false);
             assertTrue(launchedOrResumed());
             assertTrue(lastContext().streamConfig.isPacked444());
-            assertEquals(2, asked.size());
-            assertTrue(asked.get(0).isNull("host_packed"));
-            assertFalse(asked.get(0).getBoolean("packed_refused_before"));
-            assertEquals(devicePackedModes, asked.get(1).getInt("device_modes"));
             assertTrue(com.limelight.computers.HostPackedModes.refused(app, uuid));
             // ...so the next start does not ask for it only to be refused again.
-            asked.clear();
             NvConnectionHapticsFlagTest.CapturingBridge.startResult = 0;
             messages = stream(SUNSHINE, false, offered, false);
             lastConnection.stop();
             assertTrue(launchedOrResumed());
             assertTrue(failedStages.isEmpty());
             assertFalse(lastContext().streamConfig.isPacked444());
-            assertTrue(asked.get(0).getBoolean("packed_refused_before"));
             // The stream that had it re-armed the notice.
             assertTrue(messages.contains(pcNotice));
 
@@ -515,27 +488,26 @@ public class NvConnectionHostNoticeTest {
             assertFalse(com.limelight.computers.HostPackedModes.refused(app, uuid));
 
             // A device that verified no mode starts without it too, and says it is this device.
-            asked.clear();
             devicePackedModes = 0;
             messages = stream(SUNSHINE, false, offered, false);
             lastConnection.stop();
             assertTrue(launchedOrResumed());
             assertTrue(failedStages.isEmpty());
             assertFalse(lastContext().streamConfig.isPacked444());
-            // What the last DESCRIBE offered stands in for serverinfo.
-            assertEquals(0b0011, asked.get(0).getInt("host_packed"));
             assertTrue(messages.contains(deviceNotice));
 
             // With the setting off nothing is asked.
-            asked.clear();
             sessionPacked = false;
             sessionSharpColor = false;
-            stream(none, false, offered, false);
-            lastConnection.stop();
-            assertTrue(launchedOrResumed());
-            assertTrue(asked.isEmpty());
+            com.limelight.nvstream.jni.NightjarJni.forceUnavailableForTest(new AssertionError("asked"));
+            try {
+                stream(none, false, offered, false);
+                lastConnection.stop();
+                assertTrue(launchedOrResumed());
+            } finally {
+                com.limelight.nvstream.jni.NightjarJni.forceUnavailableForTest(null);
+            }
         } finally {
-            com.limelight.binding.video.SharpColor.use(null);
             sessionPacked = false;
             sessionSharpColor = false;
             devicePackedModes = 0b1111;

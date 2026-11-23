@@ -67,23 +67,18 @@ public class StreamMenuHintTest {
     /** The keyboard's way is the stream menu's hotkey as the user bound it, in the app's language; none while it is off. */
     @Test
     public void theKeyboardWayIsTheStreamMenusHotkeyAsBound() throws Exception {
-        StreamMenuModel.use(new RustStreamMenuModel());
-        try {
-            android.content.SharedPreferences prefs =
-                    android.preference.PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication());
-            prefs.edit().clear().commit();
-            Context en = context(Locale.US);
-            assertEquals("Strg + Alt + Umschalt + Tab", StreamHotkeys.streamMenuLabel(context(Locale.GERMANY), prefs));
-            StreamHotkeys.record(prefs, StreamHotkeys.STREAM_MENU, new String[] {"CTRL", "F2"});
-            assertEquals("To open the stream menu, press Back or press Ctrl + F2.",
-                    StreamMenuHint.text(en, StreamMenuHint.Back.REMOTE, false, StreamHotkeys.streamMenuLabel(en, prefs)));
-            StreamHotkeys.turnOff(prefs, StreamHotkeys.STREAM_MENU);
-            assertNull(StreamHotkeys.streamMenuLabel(en, prefs));
-            assertEquals("To open the stream menu, press Back.",
-                    StreamMenuHint.text(en, StreamMenuHint.Back.REMOTE, false, StreamHotkeys.streamMenuLabel(en, prefs)));
-        } finally {
-            StreamMenuModel.use(null);
-        }
+        android.content.SharedPreferences prefs =
+                android.preference.PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication());
+        prefs.edit().clear().commit();
+        Context en = context(Locale.US);
+        assertEquals("Strg + Alt + Umschalt + Tab", StreamHotkeys.streamMenuLabel(context(Locale.GERMANY), prefs));
+        StreamHotkeys.record(prefs, StreamHotkeys.STREAM_MENU, new String[] {"CTRL", "F2"});
+        assertEquals("To open the stream menu, press Back or press Ctrl + F2.",
+                StreamMenuHint.text(en, StreamMenuHint.Back.REMOTE, false, StreamHotkeys.streamMenuLabel(en, prefs)));
+        StreamHotkeys.turnOff(prefs, StreamHotkeys.STREAM_MENU);
+        assertNull(StreamHotkeys.streamMenuLabel(en, prefs));
+        assertEquals("To open the stream menu, press Back.",
+                StreamMenuHint.text(en, StreamMenuHint.Back.REMOTE, false, StreamHotkeys.streamMenuLabel(en, prefs)));
     }
 
     @Test

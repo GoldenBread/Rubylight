@@ -2,6 +2,8 @@ package com.limelight.console;
 
 import androidx.annotation.VisibleForTesting;
 
+import com.limelight.nvstream.jni.NightjarJni;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -17,11 +19,6 @@ import java.util.function.LongSupplier;
  */
 public final class GameInfoModel {
     private GameInfoModel() { }
-
-    /** One JSON request in, one JSON answer out: {@code {"ok": ...}} or {@code {"error": code, "detail": ...}}. */
-    public interface Calls {
-        String call(String request);
-    }
 
     /** What came back from one HTTPS request: status 0 when no answer came. */
     public static final class Reply {
@@ -91,35 +88,18 @@ public final class GameInfoModel {
         }
     }
 
-    private static Calls calls;
-
-    private static synchronized Calls calls() {
-        if (calls == null) {
-            System.loadLibrary("nightjar_core");
-            calls = GameInfoModel::call;
-        }
-        return calls;
-    }
-
-    /** JVM tests cannot load the library. */
     @VisibleForTesting
-    public static synchronized void use(Calls replacement) {
-        calls = replacement;
-    }
-
-    /** The library's calls: the native one, or a test's. */
-    static Calls library() {
-        return calls();
-    }
-
-    private static native String call(String request);
-
-    /** The {@code ok} object of one call; throws when the library cannot answer. */
-    static JSONObject ask(Calls calls, JSONObject request) throws JSONException {
-        JSONObject answer = new JSONObject(calls.call(request.toString()));
+    static JSONObject parseAnswer(String raw) throws JSONException {
+        if (raw == null) throw new JSONException("game info call failed: null");
+        JSONObject answer = new JSONObject(raw);
         JSONObject ok = answer.optJSONObject("ok");
         if (ok == null) throw new JSONException("game info call failed: " + answer.optString("error"));
         return ok;
+    }
+
+    /** The {@code ok} object of one call; throws when the library cannot answer. */
+    static JSONObject ask(JSONObject request) throws JSONException {
+        return parseAnswer(NightjarJni.gameInfoCall(request.toString()));
     }
 
     /** A game's cleaned name and key. */
@@ -137,30 +117,30 @@ public final class GameInfoModel {
     }
 
     /** {@code storeSource} and {@code storeId} are the library's store entry; a "steam" one gives the Steam app id. */
-    static Cleaned clean(Calls calls, String name, String gameId, String storeSource, String storeId) throws JSONException {
+    static Cleaned clean(String name, String gameId, String storeSource, String storeId) throws JSONException {
         JSONObject request = new JSONObject().put("op", "clean").put("name", name)
                 .put("game_id", gameId == null ? JSONObject.NULL : gameId);
         if (storeSource != null && storeId != null) {
             request.put("store", new JSONObject().put("source", storeSource).put("id", storeId));
         }
-        JSONObject ok = ask(calls, request);
+        JSONObject ok = ask(request);
         return new Cleaned(ok.getString("clean"), ok.getString("key"), ok.isNull("steam") ? null : ok.getLong("steam"));
     }
 
-    static boolean fresh(Calls calls, JSONObject record, long nowSecs, Keys keys, boolean wantArt, boolean wantInfo) throws JSONException {
-        return ask(calls, new JSONObject().put("op", "fresh").put("record", record).put("now_secs", nowSecs)
+    static boolean fresh(JSONObject record, long nowSecs, Keys keys, boolean wantArt, boolean wantInfo) throws JSONException {
+        return ask(new JSONObject().put("op", "fresh").put("record", record).put("now_secs", nowSecs)
                 .put("keys", keys.json(wantArt, wantInfo))).getBoolean("fresh");
     }
 
     /** The new record with what the older one held that the new lookup did not ask for or could not repeat. */
-    static JSONObject merge(Calls calls, JSONObject record, JSONObject older) throws JSONException {
-        return ask(calls, new JSONObject().put("op", "merge").put("record", record)
+    static JSONObject merge(JSONObject record, JSONObject older) throws JSONException {
+        return ask(new JSONObject().put("op", "merge").put("record", record)
                 .put("older", older == null ? JSONObject.NULL : older)).getJSONObject("record");
     }
 
     /** The record's file name and, for a URL, the image's (null without a URL). */
-    static String[] files(Calls calls, String key, String url) throws JSONException {
-        JSONObject ok = ask(calls, new JSONObject().put("op", "files").put("key", key).put("url", url == null ? JSONObject.NULL : url));
+    static String[] files(String key, String url) throws JSONException {
+        JSONObject ok = ask(new JSONObject().put("op", "files").put("key", key).put("url", url == null ? JSONObject.NULL : url));
         return new String[] {ok.getString("record"), ok.isNull("image") ? null : ok.getString("image")};
     }
 
@@ -185,10 +165,10 @@ public final class GameInfoModel {
      * {@code sleeper}, until {@code done}. Returns null when the library cannot answer, the thread is interrupted or the
      * steps run out.
      */
-    static Finished lookup(Calls calls, Transport transport, Sleeper sleeper, LongSupplier wallSecs, LongSupplier nowMs,
+    static Finished lookup(Transport transport, Sleeper sleeper, LongSupplier wallSecs, LongSupplier nowMs,
                            JSONObject game, Keys keys, boolean cover, boolean facts, JSONObject session) {
         try {
-            JSONObject step = ask(calls, new JSONObject().put("op", "start").put("game", game).put("keys", keys.json(true, true))
+            JSONObject step = ask(new JSONObject().put("op", "start").put("game", game).put("keys", keys.json(true, true))
                     .put("wants", new JSONObject().put("cover", cover).put("hero", false).put("logo", false).put("facts", facts))
                     .put("session", session == null ? JSONObject.NULL : session)
                     .put("wall_secs", wallSecs.getAsLong()).put("now_ms", nowMs.getAsLong()));
@@ -211,10 +191,10 @@ public final class GameInfoModel {
                 } else {
                     return null;
                 }
-                step = ask(calls, new JSONObject().put("op", "next").put("job", job).put("reply", reply).put("now_ms", nowMs.getAsLong()));
+                step = ask(new JSONObject().put("op", "next").put("job", job).put("reply", reply).put("now_ms", nowMs.getAsLong()));
             }
             return null;
-        } catch (JSONException | RuntimeException e) {
+        } catch (JSONException | LinkageError | RuntimeException e) {
             return null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -237,8 +217,8 @@ public final class GameInfoModel {
         }
     }
 
-    static TimeToBeat timeToBeat(Calls calls, JSONObject facts) throws JSONException {
-        JSONObject ok = ask(calls, new JSONObject().put("op", "facts").put("facts", facts));
+    static TimeToBeat timeToBeat(JSONObject facts) throws JSONException {
+        JSONObject ok = ask(new JSONObject().put("op", "facts").put("facts", facts));
         return new TimeToBeat(ok.isNull("length") ? null : ok.getString("length"),
                 ok.isNull("hastily") ? null : ok.getString("hastily"),
                 ok.isNull("normally") ? null : ok.getString("normally"),
@@ -275,11 +255,15 @@ public final class GameInfoModel {
     }
 
     /** {@code facts} holds one entry per game, null for a game without facts. */
-    static Library library(Calls calls, List<JSONObject> facts, String genre, String length) throws JSONException {
+    static Library library(List<JSONObject> facts, String genre, String length) throws JSONException {
         JSONArray games = new JSONArray();
         for (JSONObject f : facts) games.put(f == null ? JSONObject.NULL : f);
-        JSONObject ok = ask(calls, new JSONObject().put("op", "library").put("games", games)
+        JSONObject ok = ask(new JSONObject().put("op", "library").put("games", games)
                 .put("genre", genre == null ? JSONObject.NULL : genre).put("length", length == null ? JSONObject.NULL : length));
+        return readLibrary(ok);
+    }
+
+    static Library readLibrary(JSONObject ok) throws JSONException {
         JSONArray shown = ok.getJSONArray("shown");
         int[] at = new int[shown.length()];
         for (int i = 0; i < at.length; i++) at[i] = shown.getInt(i);
