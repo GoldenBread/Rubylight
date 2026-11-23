@@ -380,6 +380,32 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHttpJni_supportsF
     new_jstring(&env, &reply)
 }
 
+fn parse_abr_request(raw: &str) -> Result<AbrRequest, Error> {
+    let v = serde_json::from_str::<Value>(raw)
+        .map_err(|_| Error::InvalidArgument("bad ABR config json".into()))?;
+    let mode = v["mode"].as_str().map(|m| match m {
+        "quality" => AbrMode::Quality,
+        "lowLatency" | "low_latency" => AbrMode::LowLatency,
+        _ => AbrMode::Balanced,
+    });
+    let min_bitrate = v
+        .get("min_bitrate")
+        .or_else(|| v.get("minBitrate"))
+        .and_then(Value::as_u64)
+        .map(|n| n as u32);
+    let max_bitrate = v
+        .get("max_bitrate")
+        .or_else(|| v.get("maxBitrate"))
+        .and_then(Value::as_u64)
+        .map(|n| n as u32);
+    Ok(AbrRequest {
+        enabled: v["enabled"].as_bool().unwrap_or(false),
+        mode,
+        min_bitrate,
+        max_bitrate,
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHttpJni_configureFoundationAbr(
     mut env: JNIEnv,
@@ -392,19 +418,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHttpJni_configure
         let Some(client) = CLIENTS.get(handle) else {
             return invalid_client();
         };
-        let Ok(v) = serde_json::from_str::<Value>(&raw) else {
-            return error_json(&Error::InvalidArgument("bad ABR config json".into()));
-        };
-        let mode = v["mode"].as_str().map(|m| match m {
-            "quality" => AbrMode::Quality,
-            "lowLatency" => AbrMode::LowLatency,
-            _ => AbrMode::Balanced,
-        });
-        let req = AbrRequest {
-            enabled: v["enabled"].as_bool().unwrap_or(false),
-            mode,
-            min_bitrate: v["min_bitrate"].as_u64().map(|n| n as u32),
-            max_bitrate: v["max_bitrate"].as_u64().map(|n| n as u32),
+        let req = match parse_abr_request(&raw) {
+            Ok(req) => req,
+            Err(e) => return error_json(&e),
         };
         match client.configure_abr(&req) {
             Ok(c) => {
@@ -631,4 +647,35 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHttpJni_probeServ
         None => invalid_client(),
     };
     new_jstring(&env, &reply)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_abr_request_accepts_camel_and_snake_case() {
+        let camel = parse_abr_request(
+            r#"{"enabled":true,"mode":"balanced","minBitrate":0,"maxBitrate":40000}"#,
+        )
+        .unwrap();
+        assert_eq!(camel, AbrRequest::balanced_up_to(40000));
+
+        let snake = parse_abr_request(
+            r#"{"enabled":true,"mode":"low_latency","min_bitrate":1500,"max_bitrate":60000}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            snake,
+            AbrRequest {
+                enabled: true,
+                mode: Some(AbrMode::LowLatency),
+                min_bitrate: Some(1500),
+                max_bitrate: Some(60000),
+            }
+        );
+
+        let off = parse_abr_request(r#"{"enabled":false}"#).unwrap();
+        assert_eq!(off, AbrRequest::off());
+    }
 }

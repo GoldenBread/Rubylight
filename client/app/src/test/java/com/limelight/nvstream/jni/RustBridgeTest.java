@@ -81,4 +81,43 @@ public class RustBridgeTest {
         assertFalse(RustBridge.appVersionAtLeast("7.1", min));
         assertFalse(RustBridge.appVersionAtLeast("7.1.-1", min));
     }
+
+    @Test public void forceUnavailableDoesNotPoisonPolicyOrHttpStaticInit() throws Exception {
+        ClassLoader parent = NightjarJni.class.getClassLoader();
+        ClassLoader isolated = new ClassLoader(parent) {
+            @Override
+            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                if (NightjarPolicyJni.class.getName().equals(name)
+                        || NightjarHttpJni.class.getName().equals(name)) {
+                    Class<?> loaded = findLoadedClass(name);
+                    if (loaded == null) {
+                        String res = "/" + name.replace('.', '/') + ".class";
+                        try (java.io.InputStream in = parent.getResourceAsStream(res.substring(1))) {
+                            if (in == null) throw new ClassNotFoundException(name);
+                            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+                            byte[] tmp = new byte[4096];
+                            int n;
+                            while ((n = in.read(tmp)) != -1) buf.write(tmp, 0, n);
+                            byte[] bytes = buf.toByteArray();
+                            loaded = defineClass(name, bytes, 0, bytes.length);
+                        } catch (java.io.IOException e) {
+                            throw new ClassNotFoundException(name, e);
+                        }
+                    }
+                    if (resolve) resolveClass(loaded);
+                    return loaded;
+                }
+                return super.loadClass(name, resolve);
+            }
+        };
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("no library"));
+        try {
+            Class.forName(NightjarPolicyJni.class.getName(), true, isolated);
+            Class.forName(NightjarHttpJni.class.getName(), true, isolated);
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
+        assertTrue(NightjarPolicyJni.abrBuiltInFloorKbps(1920, 1080, 60, 0) > 0);
+        NightjarHttpJni.setSecondScreen(false);
+    }
 }

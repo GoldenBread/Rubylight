@@ -100,56 +100,6 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_nativeUriCall
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_nativeUriFields(
-    mut env: JNIEnv,
-    _: JClass,
-    op: JString,
-    text: JString,
-) -> jstring {
-    let op = native_api::string(&mut env, &op).unwrap_or_default();
-    let text = native_api::string(&mut env, &text).unwrap_or_default();
-    let out: Option<String> = match op.as_str() {
-        "pairing_is_link" => Some(if PairingUri::is_link(&text) { "1" } else { "0" }.to_owned()),
-        "pairing_parse" => PairingUri::parse(&text).map(|p| {
-            let shown_name = p.shown_name();
-            let shown_address = p.shown_address();
-            [
-                p.host,
-                p.port.to_string(),
-                p.otp,
-                p.passphrase,
-                p.unique_id,
-                hex(&p.cert_sha256),
-                p.name,
-                shown_name,
-                shown_address,
-            ]
-            .join("\0")
-        }),
-        "invite_is_link" => Some(if InviteUri::is_link(&text) { "1" } else { "0" }.to_owned()),
-        "invite_parse" => InviteUri::parse(&text).map(|inv| {
-            [
-                inv.name.clone(),
-                inv.shown_name(),
-                inv.expires.to_string(),
-                inv.permission.clone(),
-                inv.unique_id.clone(),
-                hex(&inv.cert_sha256),
-            ]
-            .join("\0")
-        }),
-        _ => None,
-    };
-    let Some(s) = out else {
-        return std::ptr::null_mut();
-    };
-    match env.new_string(s) {
-        Ok(js) => js.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +118,33 @@ mod tests {
         .unwrap();
         assert_eq!(parsed["ok"]["shown_name"], "My PC");
         assert_eq!(parsed["ok"]["port"], 47989);
+    }
+
+    #[test]
+    fn percent_nul_in_pairing_and_invite_fields_round_trips_over_json() {
+        let fp = "ab".repeat(32);
+        let pairing = format!(
+            "rubylight://pair?v=1&host=192.168.1.10&port=47989&otp=12%0034&pass=a%00b&id=id%001&fp={fp}&name=My%00PC"
+        );
+        let parsed_pair: Value = serde_json::from_str(&call(Some(
+            &json!({"op": "pairing_parse", "text": pairing}).to_string(),
+        )))
+        .unwrap();
+        assert_eq!(parsed_pair["ok"]["otp"], "12\u{0}34");
+        assert_eq!(parsed_pair["ok"]["passphrase"], "a\u{0}b");
+        assert_eq!(parsed_pair["ok"]["unique_id"], "id\u{0}1");
+        assert_eq!(parsed_pair["ok"]["name"], "My\u{0}PC");
+        assert_eq!(parsed_pair["ok"]["shown_name"], "MyPC");
+
+        let invite = format!(
+            "rubylight://invite#v=1&k={}&id=pc-1&fp={fp}&name=Room%00PC&exp=1800000000&perm=view&ports=47989,47984,48010,47998,48000,47999,0",
+            "01".repeat(32)
+        );
+        let parsed_inv: Value = serde_json::from_str(&call(Some(
+            &json!({"op": "invite_parse", "text": invite}).to_string(),
+        )))
+        .unwrap();
+        assert_eq!(parsed_inv["ok"]["name"], "Room\u{0}PC");
+        assert_eq!(parsed_inv["ok"]["shown_name"], "RoomPC");
     }
 }

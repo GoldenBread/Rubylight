@@ -3,6 +3,7 @@
  */
 package com.limelight.nvstream.http;
 
+import com.limelight.nvstream.jni.Json;
 import com.limelight.nvstream.jni.NightjarJni;
 
 import java.security.cert.X509Certificate;
@@ -21,26 +22,28 @@ public final class InviteLink {
     private final byte[] certSha256;
     private final String shownName;
 
-    private InviteLink(String[] f, String text) {
+    private InviteLink(Json.Obj o, String text) {
         this.text = text;
-        this.name = f[0];
-        this.shownName = f[1];
-        this.expires = Long.parseLong(f[2]);
-        this.permission = f[3];
-        this.uniqueId = f[4];
-        this.certSha256 = PairingLink.hexBytes(f[5]);
+        this.name = o.getString("name");
+        this.shownName = o.getString("shown_name");
+        this.expires = o.getLong("expires");
+        this.permission = o.getString("permission");
+        this.uniqueId = o.getString("unique_id");
+        this.certSha256 = PairingLink.hexBytes(o.getString("cert_sha256_hex"));
     }
 
     public static boolean looksLikeLink(String text) {
-        return text != null && "1".equals(NightjarJni.uriFields("invite_is_link", text));
+        if (text == null) return false;
+        String raw = NightjarJni.uriCall(Json.obj().put("op", "invite_is_link").put("text", text).toString());
+        return Json.parseObject(raw).optBoolean("ok", false);
     }
 
     public static InviteLink parse(String text) {
         if (text == null) return null;
-        String raw = NightjarJni.uriFields("invite_parse", text);
-        if (raw == null) return null;
-        String[] f = raw.split("\0", -1);
-        return f.length == 6 ? new InviteLink(f, text.trim()) : null;
+        String raw = NightjarJni.uriCall(Json.obj().put("op", "invite_parse").put("text", text).toString());
+        Json.Obj reply = Json.parseObject(raw);
+        if (reply.isNull("ok")) return null;
+        return new InviteLink(reply.getObject("ok"), text.trim());
     }
 
     public String shownName() { return shownName; }

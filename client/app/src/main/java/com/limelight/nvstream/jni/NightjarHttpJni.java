@@ -1,7 +1,7 @@
 /**
  * Pure-JDK JNI declarations for {@code nightjar-core::http} (`protocol/android/src/http.rs` and
  * `http_folders.rs`). Imports only {@code java.*} so Robolectric loads it without Android shadow
- * acquisition; loads {@code nightjar_core} via {@link NightjarJni#ensureLoaded()}.
+ * acquisition; loads {@code nightjar_core} via {@link NightjarJni#ensureLibraryLoaded()}.
  */
 package com.limelight.nvstream.jni;
 
@@ -9,7 +9,7 @@ import java.io.IOException;
 
 public final class NightjarHttpJni {
     static {
-        NightjarJni.ensureLoaded();
+        NightjarJni.ensureLibraryLoaded();
     }
 
     private NightjarHttpJni() {

@@ -3,6 +3,7 @@
  */
 package com.limelight.nvstream.http;
 
+import com.limelight.nvstream.jni.Json;
 import com.limelight.nvstream.jni.NightjarJni;
 
 import java.security.MessageDigest;
@@ -26,29 +27,31 @@ public final class PairingLink {
     private final String shownName;
     private final String shownAddress;
 
-    private PairingLink(String[] f, String text) {
-        this.host = f[0];
-        this.port = Integer.parseInt(f[1]);
-        this.otp = f[2];
-        this.passphrase = f[3];
-        this.uniqueId = f[4];
-        this.certSha256 = hexBytes(f[5]);
-        this.name = f[6];
-        this.shownName = f[7];
-        this.shownAddress = f[8];
+    private PairingLink(Json.Obj o, String text) {
+        this.host = o.getString("host");
+        this.port = o.getInt("port");
+        this.otp = o.getString("otp");
+        this.passphrase = o.getString("passphrase");
+        this.uniqueId = o.getString("unique_id");
+        this.certSha256 = hexBytes(o.getString("cert_sha256_hex"));
+        this.name = o.getString("name");
+        this.shownName = o.getString("shown_name");
+        this.shownAddress = o.getString("shown_address");
         this.text = text;
     }
 
     public static boolean looksLikeLink(String text) {
-        return text != null && "1".equals(NightjarJni.uriFields("pairing_is_link", text));
+        if (text == null) return false;
+        String raw = NightjarJni.uriCall(Json.obj().put("op", "pairing_is_link").put("text", text).toString());
+        return Json.parseObject(raw).optBoolean("ok", false);
     }
 
     public static PairingLink parse(String text) {
         if (text == null) return null;
-        String raw = NightjarJni.uriFields("pairing_parse", text);
-        if (raw == null) return null;
-        String[] f = raw.split("\0", -1);
-        return f.length == 9 ? new PairingLink(f, text.trim()) : null;
+        String raw = NightjarJni.uriCall(Json.obj().put("op", "pairing_parse").put("text", text).toString());
+        Json.Obj reply = Json.parseObject(raw);
+        if (reply.isNull("ok")) return null;
+        return new PairingLink(reply.getObject("ok"), text.trim());
     }
 
     public String shownName() { return shownName; }

@@ -50,6 +50,19 @@ public class PairingLinkTest {
     }
 
     @Test
+    public void percentEncodedNulBytesRoundTripThroughJni() {
+        PairingLink link = PairingLink.parse(
+                "rubylight://pair?v=1&host=192.168.1.10&port=47989&otp=48%0021&pass=a%00b&id=id%001&fp="
+                        + FP + "&name=My%00PC");
+        assertNotNull(link);
+        assertEquals("48\u000021", link.otp);
+        assertEquals("a\u0000b", link.passphrase);
+        assertEquals("id\u00001", link.uniqueId);
+        assertEquals("My\u0000PC", link.name);
+        assertEquals("MyPC", link.shownName());
+    }
+
+    @Test
     public void optionalKeysMayBeMissingAndUnknownOnesAreIgnored() {
         PairingLink link = PairingLink.parse("rubylight://pair?v=1&host=pc&port=1&otp=1234&fp=" + "AB".repeat(32)
                 + "&extra=x");

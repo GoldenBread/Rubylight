@@ -80,7 +80,8 @@ public final class NightjarJni {
         }
     }
 
-    private static void ensureLibraryLoaded() {
+    /** Loads {@code nightjar_core} without consulting {@link #forceUnavailableForTest(Throwable)}. */
+    public static void ensureLibraryLoaded() {
         if (!LOADER.isAvailable(() -> System.loadLibrary("nightjar_core"))) {
             throw new UnsatisfiedLinkError(LOADER.failure());
         }
@@ -408,14 +409,7 @@ public final class NightjarJni {
         return nativeUriCall(request);
     }
 
-    public static String uriFields(String op, String text) {
-        ensureLibraryLoaded();
-        return nativeUriFields(op, text);
-    }
-
     private static native String nativeCapabilitiesCall(String request);
 
     private static native String nativeUriCall(String request);
-
-    private static native String nativeUriFields(String op, String text);
 }

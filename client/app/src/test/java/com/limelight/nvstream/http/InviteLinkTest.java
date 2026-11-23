@@ -70,4 +70,12 @@ public class InviteLinkTest {
             assertEquals(permission, invite.permission);
         }
     }
+
+    @Test
+    public void percentEncodedNulInNameRoundTripsThroughJni() {
+        InviteLink invite = InviteLink.parse(LINK.replace("Wohnzimmer-PC%20%C3%A4", "Room%00PC"));
+        assertNotNull(invite);
+        assertEquals("Room\u0000PC", invite.name);
+        assertEquals("RoomPC", invite.shownName());
+    }
 }

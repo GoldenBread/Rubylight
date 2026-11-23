@@ -165,7 +165,19 @@ public final class Json {
 
     private static void writeValue(StringBuilder sb, Object v) {
         if (v == null) { sb.append("null"); }
-        else if (v instanceof Boolean || v instanceof Number || v instanceof Obj || v instanceof Arr) {
+        else if (v instanceof Double) {
+            double d = (Double) v;
+            if (Double.isNaN(d) || Double.isInfinite(d)) {
+                throw new SyntaxException("Non-finite JSON number: " + v);
+            }
+            sb.append(v);
+        } else if (v instanceof Float) {
+            float f = (Float) v;
+            if (Float.isNaN(f) || Float.isInfinite(f)) {
+                throw new SyntaxException("Non-finite JSON number: " + v);
+            }
+            sb.append(v);
+        } else if (v instanceof Boolean || v instanceof Number || v instanceof Obj || v instanceof Arr) {
             sb.append(v);
         } else {
             writeString(sb, String.valueOf(v));
@@ -279,11 +291,18 @@ public final class Json {
                         case 'n': sb.append('\n'); break;
                         case 'r': sb.append('\r'); break;
                         case 't': sb.append('\t'); break;
-                        case 'u':
+                        case 'u': {
                             if (p + 4 > s.length()) throw new SyntaxException("Bad unicode escape");
-                            sb.append((char) Integer.parseInt(s.substring(p, p + 4), 16));
+                            int code = 0;
+                            for (int i = 0; i < 4; i++) {
+                                int digit = hexDigit(s.charAt(p + i));
+                                if (digit < 0) throw new SyntaxException("Bad unicode escape");
+                                code = (code << 4) | digit;
+                            }
+                            sb.append((char) code);
                             p += 4;
                             break;
+                        }
                         default: throw new SyntaxException("Unknown escape: " + e);
                     }
                 } else {
@@ -293,20 +312,53 @@ public final class Json {
             throw new SyntaxException("Unterminated string");
         }
 
+        private static int hexDigit(char c) {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+            if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+            return -1;
+        }
+
         private Number num() {
             int start = p;
             boolean fp = false;
             if (s.charAt(p) == '-') p++;
-            while (p < s.length()) {
-                char c = s.charAt(p);
-                if (c >= '0' && c <= '9') { p++; }
-                else if (c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-') { fp = true; p++; }
-                else break;
+            if (p >= s.length()) throw new SyntaxException("Bad number: -");
+            char first = s.charAt(p);
+            if (first == '0') {
+                p++;
+                if (p < s.length() && s.charAt(p) >= '0' && s.charAt(p) <= '9') {
+                    throw new SyntaxException("Leading zero in number");
+                }
+            } else if (first >= '1' && first <= '9') {
+                p++;
+                while (p < s.length() && s.charAt(p) >= '0' && s.charAt(p) <= '9') p++;
+            } else {
+                throw new SyntaxException("Bad number at " + p);
+            }
+            if (p < s.length() && s.charAt(p) == '.') {
+                fp = true;
+                p++;
+                if (p >= s.length() || s.charAt(p) < '0' || s.charAt(p) > '9') {
+                    throw new SyntaxException("Bad fraction in number");
+                }
+                while (p < s.length() && s.charAt(p) >= '0' && s.charAt(p) <= '9') p++;
+            }
+            if (p < s.length() && (s.charAt(p) == 'e' || s.charAt(p) == 'E')) {
+                fp = true;
+                p++;
+                if (p < s.length() && (s.charAt(p) == '+' || s.charAt(p) == '-')) p++;
+                if (p >= s.length() || s.charAt(p) < '0' || s.charAt(p) > '9') {
+                    throw new SyntaxException("Bad exponent in number");
+                }
+                while (p < s.length() && s.charAt(p) >= '0' && s.charAt(p) <= '9') p++;
             }
             String raw = s.substring(start, p);
             try {
                 if (!fp) return Long.parseLong(raw);
-                return Double.parseDouble(raw);
+                double d = Double.parseDouble(raw);
+                if (!Double.isFinite(d)) throw new SyntaxException("Non-finite number: " + raw);
+                return d;
             } catch (NumberFormatException e) {
                 throw new SyntaxException("Bad number: " + raw);
             }

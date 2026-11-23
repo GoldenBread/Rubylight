@@ -1,13 +1,13 @@
 /**
  * Pure-JDK JNI declarations for {@code nightjar-policy} and {@code nightjar-core} policy
  * controllers (`protocol/android/src/policy.rs`). Loads {@code nightjar_core} via
- * {@link NightjarJni#ensureLoaded()}.
+ * {@link NightjarJni#ensureLibraryLoaded()}.
  */
 package com.limelight.nvstream.jni;
 
 public final class NightjarPolicyJni {
     static {
-        NightjarJni.ensureLoaded();
+        NightjarJni.ensureLibraryLoaded();
     }
 
     private NightjarPolicyJni() {

@@ -334,12 +334,26 @@ public class NvHTTP implements AutoCloseable {
 
     public int configureFoundationAbr(org.json.JSONObject request) throws IOException {
         try {
-            Json.Obj reply = unwrapOkObj(NightjarHttpJni.configureFoundationAbr(handle, request.toString()), false);
+            Json.Obj req = Json.obj().put("enabled", request.optBoolean("enabled", false));
+            if (request.has("mode") && !request.isNull("mode")) {
+                req.put("mode", request.optString("mode", "balanced"));
+            }
+            if (request.has("minBitrate") && !request.isNull("minBitrate")) {
+                req.put("min_bitrate", request.optInt("minBitrate", 0));
+            } else if (request.has("min_bitrate") && !request.isNull("min_bitrate")) {
+                req.put("min_bitrate", request.optInt("min_bitrate", 0));
+            }
+            if (request.has("maxBitrate") && !request.isNull("maxBitrate")) {
+                req.put("max_bitrate", request.optInt("maxBitrate", 0));
+            } else if (request.has("max_bitrate") && !request.isNull("max_bitrate")) {
+                req.put("max_bitrate", request.optInt("max_bitrate", 0));
+            }
+            Json.Obj reply = unwrapOkObj(NightjarHttpJni.configureFoundationAbr(handle, req.toString()), false);
             if (!reply.optBoolean("success", false)) {
                 throw new IOException(reply.optString("error", "ABR configuration rejected"));
             }
             return Math.max(0, reply.optInt("initial_bitrate", 0));
-        } catch (XmlPullParserException e) {
+        } catch (XmlPullParserException | Json.SyntaxException e) {
             throw new IOException(e.getMessage(), e);
         }
     }

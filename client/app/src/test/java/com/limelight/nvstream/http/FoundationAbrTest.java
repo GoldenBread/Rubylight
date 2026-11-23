@@ -116,4 +116,41 @@ public class FoundationAbrTest {
             assertEquals(28000, abr.currentKbps());
         }
     }
+
+    @Test
+    public void configureFoundationAbrSendsMinAndMaxBitrateOnWire() throws Exception {
+        AtomicReference<String> lastBody = new AtomicReference<>();
+        AtomicReference<String> responseBody = new AtomicReference<>(
+                "{\"success\":true,\"enabled\":true,\"mode\":\"balanced\",\"minBitrate\":0,"
+                        + "\"maxBitrate\":40000,\"initialBitrate\":35000,\"bitrateApplied\":true}");
+        try (TestHttpServer server = new TestHttpServer(req -> {
+            if ("POST".equals(req.method) && "/api/abr".equals(req.path)) {
+                lastBody.set(req.bodyUtf8());
+                return TestHttpServer.Response.json(200, responseBody.get());
+            }
+            return TestHttpServer.Response.text(404, "not found");
+        })) {
+            try (NvHTTP http = server.newClient()) {
+                int initial = http.configureFoundationAbr(FoundationAbr.enableRequest(40000));
+                assertEquals(35000, initial);
+                JSONObject sent = new JSONObject(lastBody.get());
+                assertTrue(sent.getBoolean("enabled"));
+                assertEquals("balanced", sent.getString("mode"));
+                assertEquals(0, sent.getInt("minBitrate"));
+                assertEquals(40000, sent.getInt("maxBitrate"));
+
+                responseBody.set("{\"success\":true,\"enabled\":false}");
+                assertEquals(0, http.configureFoundationAbr(FoundationAbr.disableRequest()));
+                JSONObject off = new JSONObject(lastBody.get());
+                assertFalse(off.getBoolean("enabled"));
+                assertFalse(off.has("minBitrate"));
+                assertFalse(off.has("maxBitrate"));
+
+                responseBody.set("{\"success\":false,\"error\":\"No active streaming session for this client\"}");
+                IOException refused = assertThrows(IOException.class,
+                        () -> http.configureFoundationAbr(FoundationAbr.enableRequest(40000)));
+                assertTrue(refused.getMessage().contains("No active streaming session"));
+            }
+        }
+    }
 }

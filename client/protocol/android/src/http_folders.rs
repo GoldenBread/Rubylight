@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
-use jni::sys::{jlong, jstring};
+use jni::sys::{jint, jlong, jstring};
 use nightjar_core::http::{EntryKind, Error, FileError, FileRefusal, TransferCancel};
 use serde_json::{Value, json};
 
@@ -179,6 +179,21 @@ struct JniUploadSource<'local, 'env, 'obj> {
     checked_eof: bool,
 }
 
+fn slice_java_read(mut out: Vec<u8>, n: jint) -> Result<Option<Vec<u8>>, jni::errors::Error> {
+    if n <= 0 {
+        return Ok(None);
+    }
+    let len =
+        usize::try_from(n)
+            .ok()
+            .filter(|&n| n <= out.len())
+            .ok_or(jni::errors::Error::JniCall(
+                jni::errors::JniError::InvalidArguments,
+            ))?;
+    out.truncate(len);
+    Ok(Some(out))
+}
+
 impl JniUploadSource<'_, '_, '_> {
     fn java_read(&mut self, max_len: usize) -> std::io::Result<Option<Vec<u8>>> {
         let len = i32::try_from(max_len).unwrap_or(i32::MAX);
@@ -197,7 +212,7 @@ impl JniUploadSource<'_, '_, '_> {
                 return Ok::<Option<Vec<u8>>, jni::errors::Error>(None);
             }
             let out = env.convert_byte_array(JByteArray::from(buf_obj))?;
-            Ok(Some(out[..n as usize].to_vec()))
+            slice_java_read(out, n)
         });
         match res {
             Ok(opt) => Ok(opt),
@@ -446,4 +461,25 @@ fn folder_upload_impl<'local>(
         None => error_json(&Error::InvalidArgument("unknown HTTP client handle".into())),
     };
     new_jstring(&env, &reply)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slice_java_read_guards_bounds() {
+        assert_eq!(slice_java_read(vec![1, 2, 3], 0).unwrap(), None);
+        assert_eq!(slice_java_read(vec![1, 2, 3], -1).unwrap(), None);
+        assert_eq!(
+            slice_java_read(vec![1, 2, 3, 4], 3).unwrap(),
+            Some(vec![1, 2, 3])
+        );
+        assert_eq!(
+            slice_java_read(vec![1, 2, 3, 4], 4).unwrap(),
+            Some(vec![1, 2, 3, 4])
+        );
+        assert!(slice_java_read(vec![1, 2, 3, 4], 5).is_err());
+        assert!(slice_java_read(vec![1, 2], i32::MAX).is_err());
+    }
 }
