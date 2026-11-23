@@ -17,6 +17,17 @@ pub const DEVICE_NOTICE: &str = en("Sharper colored text isn’t available on th
 /// The decoder's reason, for the log, when Linux has no GPU renderer to draw either way with.
 const NO_GPU_RENDERER: &str = "no GPU renderer";
 
+/// Why native 4:4:4 was skipped when packed full chroma was picked, formatted for the stream log.
+fn native_refusal_summary(why: &Why) -> String {
+    match why {
+        Why::Decoder(reason) if !reason.is_empty() => format!("decoder ({reason})"),
+        Why::Decoder(_) => "decoder".to_owned(),
+        Why::Host => "PC does not advertise native 4:4:4 for this codec".to_owned(),
+        Why::Hdr => "HDR is on".to_owned(),
+        other => format!("{other:?}"),
+    }
+}
+
 /// The notice for `why`, untranslated; None for the player's own choices (Off, PyroWave, HDR),
 /// which go without a word.
 pub fn notice(why: &Why) -> Option<&'static str> {
@@ -125,13 +136,21 @@ pub fn decide(settings: &mut Settings, record: &mut HostRecord, known: &Known, r
     let mut record_changed = false;
     let (native, packed, modes, note) = match &pick {
         Pick::Native { formats } => {
-            eprintln!("nightjar: sharper colored text: the codec's own 4:4:4, offering {formats:#x}");
+            eprintln!(
+                "nightjar: sharper colored text: the codec's own 4:4:4, offering {formats:#x} (host_scm={:#x}, decodable={:#x})",
+                input.host_scm, input.decodable
+            );
             // It works on this PC again: should it stop, the start says so again.
             record_changed = record.reset_notice(NOTICE_PACKED_UNAVAILABLE);
             (true, false, 0, None)
         }
-        Pick::Packed { modes } => {
-            eprintln!("nightjar: sharper colored text: packed full chroma, modes {modes:#x}");
+        Pick::Packed { modes, native_refusal } => {
+            eprintln!(
+                "nightjar: sharper colored text: packed full chroma, modes {modes:#x} (native 4:4:4 skipped: {}; host_scm={:#x}, decodable={:#x})",
+                native_refusal_summary(native_refusal),
+                input.host_scm,
+                input.decodable,
+            );
             (false, true, *modes, None)
         }
         Pick::Without(Why::Off) => (false, false, 0, None),
@@ -254,13 +273,78 @@ mod tests {
 
     #[test]
     fn packed_runs_where_the_codecs_own_444_does_not() {
-        // This device decodes no 4:4:4 format, or the PC encodes none: packed, with the device's modes.
-        for native_refused in [known(SCM_444, Some(HEVC8 | HEVC10), &DECODES_NONE), packed_pc(Some(HEVC8 | HEVC10))] {
+        // This device decodes no 4:4:4 format, or the PC encodes none: packed, with the device's
+        // modes and the reason native 4:4:4 was skipped.
+        for (native_refused, expected_refusal) in [
+            (known(SCM_444, Some(HEVC8 | HEVC10), &DECODES_NONE), Why::Decoder(String::new())),
+            (packed_pc(Some(HEVC8 | HEVC10)), Why::Host),
+        ] {
             let (mut settings, mut record) = (on(), HostRecord::default());
             let decision = decide(&mut settings, &mut record, &native_refused, false, || (HEVC8, None));
-            assert_eq!(decision, Decision { pick: Pick::Packed { modes: HEVC8 }, modes: HEVC8, note: None, record_changed: false });
+            assert_eq!(
+                decision,
+                Decision {
+                    pick: Pick::Packed { modes: HEVC8, native_refusal: expected_refusal },
+                    modes: HEVC8,
+                    note: None,
+                    record_changed: false,
+                }
+            );
             assert!(settings.experimental_packed_444 && !settings.prefer_yuv444, "the launch asks for packing and offers no 4:4:4");
         }
+    }
+
+    /// Issue #169: against an NVIDIA RTX-style host that advertises native H.264/HEVC 4:4:4
+    /// (8-bit and 10-bit), AV1 4:2:0, and all four packed modes, a client whose decoder handles
+    /// native HEVC 4:4:4 picks native HEVC 4:4:4 over packed across Auto, HEVC, and AV1 codec
+    /// choices; when the decoder lacks native 4:4:4, packed fallback runs and names the decoder
+    /// failure reason.
+    #[test]
+    fn nvidia_host_with_native_hevc_444_and_packed_picks_native_when_decoder_supports_it() {
+        use crate::config::CodecPreference;
+        use nightjar_core::sdp::{
+            SCM_AV1_MAIN10, SCM_AV1_MAIN8, SCM_H264_HIGH8_444, SCM_HEVC_MAIN10, SCM_HEVC_REXT10_444,
+            VIDEO_FORMAT_AV1_MAIN8, VIDEO_FORMAT_H265_REXT10_444,
+        };
+        let nvidia_scm = SCM_H264 | SCM_HEVC | SCM_HEVC_MAIN10 | SCM_AV1_MAIN8 | SCM_AV1_MAIN10
+            | SCM_H264_HIGH8_444 | SCM_HEVC_REXT8_444 | SCM_HEVC_REXT10_444;
+        let all_packed = Some(HEVC8 | HEVC10 | AV1_8 | 8);
+        let decodes_hevc_444 = (VIDEO_FORMAT_H265_REXT8_444 | VIDEO_FORMAT_H265_REXT10_444, String::new());
+        let known_native = Known {
+            serverinfo_modes: all_packed,
+            host_scm: nvidia_scm,
+            color_decodable: &decodes_hevc_444,
+            hardware_decodable: BASE_FORMATS,
+            renderer_missing: false,
+        };
+        for codec in [CodecPreference::Auto, CodecPreference::Hevc, CodecPreference::Av1] {
+            let (mut settings, mut record) = (Settings { codec, ..on() }, HostRecord::default());
+            let decision = decide(&mut settings, &mut record, &known_native, false, || panic!("packed check must not run"));
+            let &Pick::Native { formats } = &decision.pick else { panic!("{codec:?}: {decision:?}") };
+            assert_ne!(formats & VIDEO_FORMAT_H265_REXT8_444, 0, "{codec:?}: {formats:#x}");
+            assert_eq!(formats & VIDEO_FORMAT_AV1_MAIN8, 0, "{codec:?}: AV1 4:2:0 must yield to HEVC 4:4:4");
+            assert!(settings.prefer_yuv444 && !settings.experimental_packed_444);
+            assert_eq!(decision.modes, 0);
+        }
+        // With 10-bit SDR on as well, native HEVC 4:4:4 10-bit wins over packed.
+        let (mut settings, mut record) = (Settings { sdr_10bit: true, ..on() }, HostRecord::default());
+        let decision = decide(&mut settings, &mut record, &known_native, false, || panic!("packed check must not run"));
+        let &Pick::Native { formats } = &decision.pick else { panic!("{decision:?}") };
+        assert_ne!(formats & VIDEO_FORMAT_H265_REXT10_444, 0, "{formats:#x}");
+
+        // Without a native 4:4:4 decoder, packed fallback still works and explains why native was skipped.
+        let failed_probe = (0, "HEVC 4:4:4: VideoToolbox: unsupported".to_owned());
+        let known_fallback = Known { color_decodable: &failed_probe, ..known_native };
+        let (mut settings, mut record) = (on(), HostRecord::default());
+        let decision = decide(&mut settings, &mut record, &known_fallback, false, || (HEVC8 | HEVC10, None));
+        assert_eq!(
+            decision.pick,
+            Pick::Packed {
+                modes: HEVC8 | HEVC10,
+                native_refusal: Why::Decoder("HEVC 4:4:4: VideoToolbox: unsupported".to_owned()),
+            }
+        );
+        assert!(settings.experimental_packed_444 && !settings.prefer_yuv444);
     }
 
     /// A launch starts the packed decode on a worker only where `decide` would run it; deciding
@@ -307,7 +391,7 @@ mod tests {
         // A 10-bit mode both have: packed, in HDR.
         let mut settings = hdr();
         let decision = decide(&mut settings, &mut record, &known(SCM_444, Some(HEVC8 | HEVC10), &DECODES_444), false, || (HEVC8 | HEVC10, None));
-        assert_eq!((decision.pick, decision.modes), (Pick::Packed { modes: HEVC10 }, HEVC10));
+        assert_eq!((decision.pick, decision.modes), (Pick::Packed { modes: HEVC10, native_refusal: Why::Hdr }, HEVC10));
         assert!(settings.hdr && settings.experimental_packed_444 && !settings.prefer_yuv444);
     }
 

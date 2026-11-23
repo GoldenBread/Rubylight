@@ -250,8 +250,17 @@ final class DecoderSelection {
             for (int i = 0; i < profiles.length; i++) {
                 profiles[i] = caps.profileLevels[i].profile;
             }
-            return videoFormatsForProfiles(mime, profiles, hdr, sdr10, yuv444 &&
-                    caps.getVideoCapabilities().areSizeAndRateSupported(prefs.width, prefs.height, prefs.fps));
+            boolean sizeAndRate = !yuv444 ||
+                    caps.getVideoCapabilities().areSizeAndRateSupported(prefs.width, prefs.height, prefs.fps);
+            int formats = videoFormatsForProfiles(mime, profiles, hdr, sdr10, yuv444 && sizeAndRate);
+            if (yuv444 && "video/hevc".equals(mime) && (formats & MoonBridge.VIDEO_FORMAT_H265_REXT8_444) == 0) {
+                boolean hasProfile = (videoFormatsForProfiles(mime, profiles, false, false, true) &
+                        MoonBridge.VIDEO_FORMAT_H265_REXT8_444) != 0;
+                LimeLog.info("HEVC decoder " + decoder.getName() + " cannot offer native HEVC 4:4:4: " +
+                        (hasProfile ? prefs.width + "x" + prefs.height + "@" + prefs.fps + " exceeds declared size/rate"
+                                : "does not advertise HEVCProfileMain444"));
+            }
+            return formats;
         } catch (RuntimeException e) {
             LimeLog.warning("Cannot query decoder profiles; using SDR 4:2:0: " + e);
             return baseFormat;

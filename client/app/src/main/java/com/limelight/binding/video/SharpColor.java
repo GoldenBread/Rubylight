@@ -94,6 +94,10 @@ public final class SharpColor {
         public final int formats;
         /** PACKED: the modes the handshake can use. */
         public final int modes;
+        /** PACKED: why native 4:4:4 was not used ({@code decoder}, {@code host}, or {@code hdr}), else null. */
+        public final String nativeWhy;
+        /** PACKED for the decoder: why this device's decoder refused native 4:4:4, else null. */
+        public final String nativeDetail;
         /** WITHOUT: why. */
         public final String why;
         /** WITHOUT for the decoder: the decoder check's reason, else null. */
@@ -101,17 +105,20 @@ public final class SharpColor {
         /** WITHOUT: the model's word on whether the player hears it, else null. */
         private final Boolean tell;
 
-        private Pick(Kind kind, int formats, int modes, String why, String detail, Boolean tell) {
+        private Pick(Kind kind, int formats, int modes, String nativeWhy, String nativeDetail,
+                     String why, String detail, Boolean tell) {
             this.kind = kind;
             this.formats = formats;
             this.modes = modes;
+            this.nativeWhy = nativeWhy;
+            this.nativeDetail = nativeDetail;
             this.why = why;
             this.detail = detail;
             this.tell = tell;
         }
 
         static Pick without(String why) {
-            return new Pick(Kind.WITHOUT, 0, 0, why, null, null);
+            return new Pick(Kind.WITHOUT, 0, 0, null, null, why, null, null);
         }
 
         /** Whether the player hears that the stream starts without it: the setting, PyroWave and HDR are silent. */
@@ -130,7 +137,13 @@ public final class SharpColor {
         public String toString() {
             switch (kind) {
                 case NATIVE: return "native 4:4:4, formats 0x" + Integer.toHexString(formats);
-                case PACKED: return "packed full chroma, modes 0x" + Integer.toHexString(modes);
+                case PACKED:
+                    if (nativeWhy == null) {
+                        return "packed full chroma, modes 0x" + Integer.toHexString(modes);
+                    }
+                    return "packed full chroma, modes 0x" + Integer.toHexString(modes) +
+                            " (native 4:4:4 skipped: " + nativeWhy +
+                            (nativeDetail != null && !nativeDetail.isEmpty() ? ": " + nativeDetail : "") + ")";
                 default: return "neither (" + why + (detail != null && !detail.isEmpty() ? ": " + detail : "") + ")";
             }
         }
@@ -147,11 +160,19 @@ public final class SharpColor {
     /** The pick an answer's {@code ok} object names. */
     public static Pick read(JSONObject ok) throws JSONException {
         switch (ok.getString("pick")) {
-            case "native": return new Pick(Pick.Kind.NATIVE, ok.getInt("formats"), 0, null, null, null);
-            case "packed": return new Pick(Pick.Kind.PACKED, 0, ok.getInt("modes"), null, null, null);
+            case "native": return new Pick(Pick.Kind.NATIVE, ok.getInt("formats"), 0, null, null, null, null, null);
+            case "packed": {
+                String nativeWhy = ok.optString("native_why", "");
+                String nativeDetail = ok.optString("native_detail", "");
+                return new Pick(Pick.Kind.PACKED, 0, ok.getInt("modes"),
+                        nativeWhy.isEmpty() ? null : nativeWhy,
+                        nativeDetail.isEmpty() ? null : nativeDetail,
+                        null, null, null);
+            }
             case "without": {
                 String detail = ok.optString("detail", "");
-                return new Pick(Pick.Kind.WITHOUT, 0, 0, ok.getString("why"), detail.isEmpty() ? null : detail,
+                return new Pick(Pick.Kind.WITHOUT, 0, 0, null, null, ok.getString("why"),
+                        detail.isEmpty() ? null : detail,
                         ok.has("tell") ? ok.getBoolean("tell") : null);
             }
             default: throw new JSONException("unknown pick " + ok);

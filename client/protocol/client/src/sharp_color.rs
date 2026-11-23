@@ -49,8 +49,10 @@ pub enum Pick {
     /// The codec's own 4:4:4: offer `formats` (the base formats with the 4:4:4 ones, and with
     /// 10-bit SDR on the 10-bit 4:4:4 format where both sides have it).
     Native { formats: u32 },
-    /// Packed full chroma with these modes (`rubylight_protocol::packed444::mode_bit` bits).
-    Packed { modes: u8 },
+    /// Packed full chroma with these modes (`rubylight_protocol::packed444::mode_bit` bits), and
+    /// why the codec's own 4:4:4 was not used (`Why::Decoder`, `Why::Host`, or `Why::Hdr`), so
+    /// stream logs can explain the choice.
+    Packed { modes: u8, native_refusal: Why },
     /// Without it, and why.
     Without(Why),
 }
@@ -144,12 +146,21 @@ pub fn decide(input: &Input, device_packed: impl FnOnce() -> u8) -> Pick {
     let mut packed_refusal = None;
     if input.packed_engine {
         match full_chroma::before_launch(input.host_packed, input.packed_refused_before, device_packed) {
-            Ok(modes) if !input.hdr => return Pick::Packed { modes },
+            Ok(modes) if !input.hdr => {
+                return Pick::Packed {
+                    modes,
+                    native_refusal: native_refusal.unwrap_or(Why::Host),
+                };
+            }
             // With HDR only a 10-bit mode both sides have: a PC whose modes are not known before
             // the launch is not asked for packed with HDR on.
             Ok(modes) => {
                 let ten_bit = modes & input.host_packed.unwrap_or(0) & LAYERED_MODES;
-                return if ten_bit != 0 { Pick::Packed { modes: ten_bit } } else { Pick::Without(Why::Hdr) };
+                return if ten_bit != 0 {
+                    Pick::Packed { modes: ten_bit, native_refusal: Why::Hdr }
+                } else {
+                    Pick::Without(Why::Hdr)
+                };
             }
             Err(unavailable) => packed_refusal = Some(Why::from(unavailable)),
         }
@@ -191,9 +202,10 @@ fn limit(native: Option<Why>, packed: Option<Why>) -> Why {
 /// `device_modes`: null until the app has verified them. When the packed step needs them and they
 /// are null, the answer is `{"need_device_modes": true}`; the app verifies and asks again with them.
 /// Otherwise the answer is one of `{"pick": "native", "formats": n}`, `{"pick": "packed",
-/// "modes": n}` and `{"pick": "without", "why": "off" | "pyrowave" | "hdr" | "decoder" | "host" |
-/// "device" | "no_common_mode", "detail": text, "tell": bool}`, where `detail` is the decoder's
-/// reason (empty for the others) and `tell` says whether the player hears about it.
+/// "modes": n, "native_why": "hdr" | "decoder" | "host", "native_detail": text}` and
+/// `{"pick": "without", "why": "off" | "pyrowave" | "hdr" | "decoder" | "host" | "device" |
+/// "no_common_mode", "detail": text, "tell": bool}`, where `detail` / `native_detail` is the
+/// decoder's reason (empty for the others) and `tell` says whether the player hears about it.
 pub mod json {
     use super::*;
     use serde_json::{json, Value};
@@ -221,7 +233,18 @@ pub mod json {
     fn answer(pick: Pick) -> Value {
         match pick {
             Pick::Native { formats } => json!({"pick": "native", "formats": formats}),
-            Pick::Packed { modes } => json!({"pick": "packed", "modes": modes}),
+            Pick::Packed { modes, native_refusal } => {
+                let native_detail = match &native_refusal {
+                    Why::Decoder(reason) => reason.clone(),
+                    _ => String::new(),
+                };
+                json!({
+                    "pick": "packed",
+                    "modes": modes,
+                    "native_why": native_refusal.key(),
+                    "native_detail": native_detail,
+                })
+            }
             Pick::Without(why) => {
                 let detail = match &why {
                     Why::Decoder(reason) => reason.clone(),
@@ -315,7 +338,14 @@ mod tests {
                 "native refused by the decoder, then packed",
                 Input { decodable: SDR10_FORMATS, decoder_reason: "no 4:4:4 profile".into(), ..auto() },
                 HEVC_8,
-                Pick::Packed { modes: HEVC_8 },
+                Pick::Packed { modes: HEVC_8, native_refusal: Why::Decoder("no 4:4:4 profile".into()) },
+                true,
+            ),
+            (
+                "native refused by the host, then packed",
+                Input { host_scm: SCM_420, ..auto() },
+                HEVC_8,
+                Pick::Packed { modes: HEVC_8, native_refusal: Why::Host },
                 true,
             ),
             (
@@ -329,8 +359,21 @@ mod tests {
                 "HDR with a 10-bit packed mode on both sides",
                 Input { hdr: true, ..auto() },
                 HEVC_8 | HEVC_10,
-                Pick::Packed { modes: HEVC_10 },
+                Pick::Packed { modes: HEVC_10, native_refusal: Why::Hdr },
                 true,
+            ),
+            (
+                "NVIDIA-style host with AV1 4:2:0, HEVC 4:4:4 and all packed modes picks native HEVC 4:4:4",
+                Input {
+                    base: AV1,
+                    host_scm: SCM_444 | SCM_AV1_MAIN8 | SCM_AV1_MAIN10,
+                    host_packed: Some(0x0f),
+                    decodable: VIDEO_FORMAT_H265_REXT8_444,
+                    ..auto()
+                },
+                0x0f,
+                Pick::Native { formats: HEVC | VIDEO_FORMAT_H265_REXT8_444 },
+                false,
             ),
             (
                 "HDR without a 10-bit packed mode in common: HDR wins",

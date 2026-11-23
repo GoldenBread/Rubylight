@@ -751,7 +751,7 @@ public class NvConnection {
         // Verifying costs a decode: only when the decision reaches packed.
         SharpColor.Pick pick = SharpColor.decide(request, () -> renderer.preparePacked444Modes(probeFormats,
                 context.negotiatedWidth, context.negotiatedHeight, context.streamConfig.getRefreshRate()));
-        LimeLog.info("Sharper colored text: " + pick);
+        LimeLog.info("Sharper colored text: " + pick + " (hostScm=0x" + Integer.toHexString(request.hostScm) + ", decodable=0x" + Integer.toHexString(request.decodable) + ")");
         boolean packed = pick.kind == SharpColor.Pick.Kind.PACKED;
         int formats = formatsAfter(pick, offered, request.hdr);
         // Packed streams 8-bit unless it carries HDR: 10-bit SDR gives way, as it did to full chroma before.

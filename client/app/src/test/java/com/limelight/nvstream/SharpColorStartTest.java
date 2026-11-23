@@ -62,13 +62,33 @@ public class SharpColorStartTest {
         SharpColor.Pick nativePick = SharpColor.read(new JSONObject().put("pick", "native").put("formats", 0x501));
         assertEquals(0x501, NvConnection.formatsAfter(nativePick, offered, false));
         // Packed streams HEVC or AV1 4:2:0; 10-bit only for HDR.
-        SharpColor.Pick packed = SharpColor.read(new JSONObject().put("pick", "packed").put("modes", 1));
+        SharpColor.Pick packed = SharpColor.read(new JSONObject().put("pick", "packed").put("modes", 1)
+                .put("native_why", "decoder").put("native_detail", "no 4:4:4 decoder on this device"));
         assertEquals(MoonBridge.VIDEO_FORMAT_H265, NvConnection.formatsAfter(packed, offered, false));
         assertEquals(MoonBridge.VIDEO_FORMAT_H265 | MoonBridge.VIDEO_FORMAT_H265_MAIN10,
                 NvConnection.formatsAfter(packed, offered, true));
+        assertEquals("decoder", packed.nativeWhy);
+        assertEquals("no 4:4:4 decoder on this device", packed.nativeDetail);
+        assertTrue(packed.toString().contains("no 4:4:4 decoder on this device"));
         // Neither: the native 4:4:4 formats go, everything else (HDR, PyroWave 4:4:4) stays.
         SharpColor.Pick without = SharpColor.read(new JSONObject().put("pick", "without").put("why", "hdr"));
         assertEquals(offered & ~(MoonBridge.VIDEO_FORMAT_H264_HIGH8_444 | MoonBridge.VIDEO_FORMAT_H265_REXT8_444),
                 NvConnection.formatsAfter(without, offered, true));
+    }
+
+    @Test
+    public void nvidiaHostWithAv1AndHevc444AndPackedBuildsNativeCapableRequest() {
+        int offered = MoonBridge.VIDEO_FORMAT_H264 | MoonBridge.VIDEO_FORMAT_H265 |
+                MoonBridge.VIDEO_FORMAT_H265_REXT8_444 | MoonBridge.VIDEO_FORMAT_AV1_MAIN8;
+        // RTX 5090-style ServerCodecModeSupport: H.264/HEVC/AV1 4:2:0 + H.264/HEVC 4:4:4 (8/10-bit).
+        int nvidiaScm = 0x1f0301;
+        SharpColor.Request request = NvConnection.sharpColorRequest(offered, false, false, true, nvidiaScm, 0x0f, false);
+        assertFalse(request.hdr);
+        assertEquals(MoonBridge.VIDEO_FORMAT_H264 | MoonBridge.VIDEO_FORMAT_H265 | MoonBridge.VIDEO_FORMAT_AV1_MAIN8,
+                request.base);
+        assertEquals(MoonBridge.VIDEO_FORMAT_H265_REXT8_444, request.decodable);
+        assertEquals("", request.decoderReason);
+        assertEquals(nvidiaScm, request.hostScm);
+        assertEquals(0x0f, request.hostPacked);
     }
 }

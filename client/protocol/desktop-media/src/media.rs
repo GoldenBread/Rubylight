@@ -50,7 +50,7 @@ pub const FRAME_NV12: c_int = 0;
 pub const FRAME_P010: c_int = 1;
 pub const FRAME_YUV420P: c_int = 2;
 /// A VideoToolbox CVPixelBuffer whose NV12 or P010 planes SDL Metal can import.
-pub const FRAME_VIDEOTOOLBOX: c_int = 13;
+pub const FRAME_VIDEOTOOLBOX: c_int = 15;
 pub const FRAME_D3D11: c_int = 3;
 pub const FRAME_WAVELET: c_int = 5;
 /// Software-decoded planar pictures: 8-bit 4:4:4, and 10-bit 4:2:0 and 4:4:4 with the samples in
@@ -2094,7 +2094,8 @@ mod pcm_tests {
 /// The codes of `tests/fixtures/hevc-444-10.bin`, a 256x256 HEVC RExt 4:4:4 10-bit picture
 /// (limited range, no colour description) of 4x4 flat 64x64 blocks: block i (row * 4 + column)
 /// has Y 65 + 53i, Cb 66 + 57 (5i mod 16) and Cr 67 + 59 (11i mod 16). libx265 (main444-10,
-/// lossless, bframes=0) encoded it from exactly these codes.
+/// level-idc=2.1, crf=4, lossless=0, bframes=0, ref=1) encoded it from these codes so hardware
+/// HEVC RExt decoders accept it without lossless transquant bypass or Level 8.5.
 #[cfg(test)]
 pub(crate) fn hevc_444_10_fixture_code(plane: usize, x: usize, y: usize) -> u16 {
     let i = (y / 64 * 4 + x / 64) as u16;

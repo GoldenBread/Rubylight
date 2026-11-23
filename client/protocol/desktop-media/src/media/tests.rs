@@ -11,6 +11,8 @@ fn a_d3d11_444_surface_has_a_full_chroma_layout_of_its_depth() {
         assert_eq!(PlanarLayout::of(&info(FRAME_D3D11_444, ten_bit)), None, "no planes in memory");
     }
     assert_eq!(PlanarLayout::of_d3d11(&info(FRAME_D3D11, 1)), None);
+    assert_eq!(PlanarLayout::of_d3d11(&info(FRAME_VIDEOTOOLBOX, 0)), None, "VideoToolbox NV12 is not a D3D11 4:4:4 surface");
+    assert_eq!(PlanarLayout::of_d3d11(&info(FRAME_VIDEOTOOLBOX, 1)), None, "VideoToolbox P010 is not a D3D11 4:4:4 surface");
     assert_eq!(PlanarLayout::of_d3d11(&FrameInfo { width: 0, ..info(FRAME_D3D11_444, 0) }), None);
     // NVDEC's high-bit 10-bit 4:4:4 is a planar 10-bit 4:4:4 picture on Linux.
     #[cfg(unix)]
@@ -18,6 +20,44 @@ fn a_d3d11_444_surface_has_a_full_chroma_layout_of_its_depth() {
         Some(PlanarLayout { width: 64, height: 32, chroma444: true, ten_bit: true }));
     #[cfg(not(unix))]
     assert_eq!(PlanarLayout::of(&info(FRAME_YUV444P16, 1)), None);
+}
+
+/// Every `FRAME_*` constant must be distinct (and never equal to kind 4, which means an
+/// undrawable picture): `FRAME_VIDEOTOOLBOX` previously shared `13` with `FRAME_D3D11_444`,
+/// causing `PlanarLayout::of_d3d11` and packed readbacks to confuse the two.
+#[test]
+fn frame_kind_constants_are_all_distinct() {
+    let base: &[(&str, c_int)] = &[
+        ("FRAME_NV12", FRAME_NV12),
+        ("FRAME_P010", FRAME_P010),
+        ("FRAME_YUV420P", FRAME_YUV420P),
+        ("FRAME_D3D11", FRAME_D3D11),
+        ("UNDRAWABLE(4)", 4),
+        ("FRAME_WAVELET", FRAME_WAVELET),
+        ("FRAME_YUV444P", FRAME_YUV444P),
+        ("FRAME_YUV420P10", FRAME_YUV420P10),
+        ("FRAME_YUV444P10", FRAME_YUV444P10),
+        ("FRAME_D3D11_444", FRAME_D3D11_444),
+        ("FRAME_YUV444P16", FRAME_YUV444P16),
+        ("FRAME_VIDEOTOOLBOX", FRAME_VIDEOTOOLBOX),
+    ];
+    // Linux DMA-BUF and Vulkan video frame kinds are compiled on Unix only.
+    #[cfg(unix)]
+    let extra: &[(&str, c_int)] = &[
+        ("FRAME_DMABUF", FRAME_DMABUF),
+        ("FRAME_VULKAN", FRAME_VULKAN),
+        ("FRAME_VULKAN444", FRAME_VULKAN444),
+        ("FRAME_VULKAN_INTERLEAVED444", FRAME_VULKAN_INTERLEAVED444),
+    ];
+    // Non-Unix platforms do not compile the Linux DMA-BUF or Vulkan frame kinds.
+    #[cfg(not(unix))]
+    let extra: &[(&str, c_int)] = &[];
+    let kinds: Vec<_> = base.iter().chain(extra).copied().collect();
+    for (i, &(name_a, val_a)) in kinds.iter().enumerate() {
+        for &(name_b, val_b) in &kinds[i + 1..] {
+            assert_ne!(val_a, val_b, "{name_a} and {name_b} share frame kind {val_a}");
+        }
+    }
 }
 
 /// Opened without a packet timebase, V4L2 M2M rescaled each pts through the unset 0/1
@@ -200,16 +240,20 @@ fn software_decodes_444_fixtures_with_full_chroma_and_10_bit_as_planar_kinds() {
         let info = frame.info();
         // 256x256: a 64x64 probe was under NVDEC's minimum size and never offered NVIDIA 4:4:4.
         assert_eq!((info.kind, info.ten_bit, info.width, info.height), (FRAME_YUV444P, 0, 256, 256), "{codec:?}");
-        // The fixtures are lossless: every plane is the full-size 64x64 source plane, each
-        // sample scaled up to 4x4.
+        // The fixtures are low-QP lossy (hardware-decodable, never lossless Level 8.5): every
+        // sample stays close to the 4x4-scaled 64x64 source plane, preserving full 4:4:4 chroma.
+        let mut max_diff = 0u8;
         for plane in 0..3 {
             for y in 0..256 {
                 // SAFETY: a 256x256 4:4:4 picture's planes hold 256 bytes per row.
                 let row = unsafe { std::slice::from_raw_parts(info.data[plane].add(y * info.linesize[plane] as usize), 256) };
-                let expected: Vec<u8> = (0..256).map(|x| source[(plane * 64 + y / 4) * 64 + x / 4]).collect();
-                assert_eq!(row, &expected[..], "{codec:?} plane {plane} row {y}");
+                for (x, &sample) in row.iter().enumerate() {
+                    let expected = source[(plane * 64 + y / 4) * 64 + x / 4];
+                    max_diff = max_diff.max(sample.abs_diff(expected));
+                }
             }
         }
+        assert!(max_diff <= 6, "{codec:?}: decoded 4:4:4 fixture drifted by {max_diff}");
     }
     // 10-bit 4:4:4: every sample is the fixture's code, in the low bits of its word.
     let mut decoder = VideoDecoder::open(Codec::Hevc, Hardware::None, 1, false).unwrap();

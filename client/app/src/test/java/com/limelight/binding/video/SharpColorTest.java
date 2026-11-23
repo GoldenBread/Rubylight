@@ -112,10 +112,17 @@ public class SharpColorTest {
                     assertEquals(name, SharpColor.Pick.Kind.NATIVE, pick.kind);
                     assertEquals(name, ok.getInt("formats"), pick.formats);
                     break;
-                case "packed":
+                case "packed": {
                     assertEquals(name, SharpColor.Pick.Kind.PACKED, pick.kind);
                     assertEquals(name, ok.getInt("modes"), pick.modes);
+                    String nativeWhy = ok.optString("native_why", "");
+                    String nativeDetail = ok.optString("native_detail", "");
+                    assertEquals(name, nativeWhy.isEmpty() ? null : nativeWhy, pick.nativeWhy);
+                    assertEquals(name, nativeDetail.isEmpty() ? null : nativeDetail, pick.nativeDetail);
+                    assertTrue(name + ": toString should explain why native was skipped: " + pick,
+                            pick.toString().contains("native 4:4:4 skipped: " + nativeWhy));
                     break;
+                }
                 default:
                     assertEquals(name, SharpColor.Pick.Kind.WITHOUT, pick.kind);
                     assertEquals(name, ok.getString("why"), pick.why);

@@ -22,12 +22,22 @@
   {
     "name": "native refused by the decoder, then packed with the verified modes",
     "request": {"op": "decide", "auto": true, "hdr": false, "sdr10": false, "pyrowave": false, "packed_engine": true, "base": 257, "decodable": 8704, "decoder_reason": "no 4:4:4 profile", "host_scm": 1835777, "host_packed": 3, "packed_refused_before": false, "device_modes": 1},
-    "response": {"ok": {"pick": "packed", "modes": 1}}
+    "response": {"ok": {"pick": "packed", "modes": 1, "native_why": "decoder", "native_detail": "no 4:4:4 profile"}}
+  },
+  {
+    "name": "native refused by the host, then packed with the verified modes",
+    "request": {"op": "decide", "auto": true, "hdr": false, "sdr10": false, "pyrowave": false, "packed_engine": true, "base": 257, "decodable": 28164, "decoder_reason": "", "host_scm": 769, "host_packed": 3, "packed_refused_before": false, "device_modes": 1},
+    "response": {"ok": {"pick": "packed", "modes": 1, "native_why": "host", "native_detail": ""}}
+  },
+  {
+    "name": "NVIDIA-style host with AV1 4:2:0, HEVC 4:4:4 and packed modes picks native HEVC 4:4:4",
+    "request": {"op": "decide", "auto": true, "hdr": false, "sdr10": false, "pyrowave": false, "packed_engine": true, "base": 4353, "decodable": 1024, "decoder_reason": "", "host_scm": 2032385, "host_packed": 15, "packed_refused_before": false, "device_modes": null},
+    "response": {"ok": {"pick": "native", "formats": 1281}}
   },
   {
     "name": "HDR packs with a 10-bit mode both sides have",
     "request": {"op": "decide", "auto": true, "hdr": true, "sdr10": false, "pyrowave": false, "packed_engine": true, "base": 257, "decodable": 28164, "decoder_reason": "", "host_scm": 1835777, "host_packed": 3, "packed_refused_before": false, "device_modes": 3},
-    "response": {"ok": {"pick": "packed", "modes": 2}}
+    "response": {"ok": {"pick": "packed", "modes": 2, "native_why": "hdr", "native_detail": ""}}
   },
   {
     "name": "HDR without a 10-bit mode in common keeps HDR",
