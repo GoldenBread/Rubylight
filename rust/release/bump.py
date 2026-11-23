@@ -16,7 +16,7 @@ The label is the version, except that 2.0.0 release candidates were "rc.N".
 Alpha and beta versions keep their full version so that 3.0.0-alpha.1 and
 3.1.0-alpha.1 get different sections.
 """
-import argparse, pathlib, re, sys
+import argparse, pathlib, re, sys, tomllib
 
 import fragments
 
@@ -48,12 +48,17 @@ assert old != new, f'already {new}'
 cargo.write_text(text.replace(f'version = "{old}"', f'version = "{new}"', 1), encoding='utf-8', newline='')
 
 # Cargo.lock: only the workspace's own crates carry the workspace version.
-members = set(re.findall(r'(?m)^name = "([^"]+)"', ''.join(
-    p.read_text(encoding='utf-8') for p in root.glob('rust/*/Cargo.toml'))))
+workspace_members = tomllib.loads(text)['workspace']['members']
+members = {
+    pkg['name']
+    for rel in workspace_members
+    for pkg in [tomllib.loads((root / rel / 'Cargo.toml').read_text(encoding='utf-8'))['package']]
+    if pkg.get('version') == {'workspace': True}
+}
 lock = root / 'Cargo.lock'
 text, count = re.subn(r'(?m)^(name = "(?:%s)"\nversion = )"%s"$' % ('|'.join(map(re.escape, members)), re.escape(old)),
                       lambda m: f'{m[1]}"{new}"', lock.read_text(encoding='utf-8'))
-assert count, 'no workspace crate in Cargo.lock'
+assert count == len(members), f'updated {count} of {len(members)} workspace crates in Cargo.lock'
 lock.write_text(text, encoding='utf-8', newline='')
 
 short = re.compile(r'(?<![\w.])%s(?![\w])' % re.escape(label(old)))

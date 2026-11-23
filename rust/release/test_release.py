@@ -1,4 +1,4 @@
-import contextlib, hashlib, importlib.util, io, json, os, pathlib, re, shutil, subprocess, sys, tempfile, textwrap, unittest
+import contextlib, hashlib, importlib.util, io, json, os, pathlib, re, shutil, subprocess, sys, tempfile, textwrap, tomllib, unittest
 import urllib.error, urllib.request, zipfile
 import xml.etree.ElementTree as ET
 from unittest import mock
@@ -21,8 +21,10 @@ class ReleaseVersions(unittest.TestCase):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
-        for source in ROOT.glob('rust/*/Cargo.toml'):
-            target = self.root / source.relative_to(ROOT)
+        ws = tomllib.loads((ROOT / 'Cargo.toml').read_text(encoding='utf-8'))['workspace']['members']
+        for rel in (*ws, 'rust/service'):
+            source = ROOT / rel / 'Cargo.toml'
+            target = self.root / rel / 'Cargo.toml'
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
         self.version = re.search(r'(?m)^version = "([^"]+)"', (self.root / 'Cargo.toml').read_text(encoding='utf-8'))[1]
@@ -79,6 +81,25 @@ class ReleaseVersions(unittest.TestCase):
         # The service keeps its own version (rust/service).
         service = self.root / 'rust/service/Cargo.toml'
         self.assertEqual(service.read_bytes(), (ROOT / 'rust/service/Cargo.toml').read_bytes())
+
+    def test_bump_updates_all_workspace_crates_in_cargo_lock_and_keeps_fixed_versions(self):
+        major, minor, patch = map(int, self.version.split('-')[0].split('.'))
+        new = f'{major}.{minor}.{patch + 1}'
+        result = self.run_tool('bump.py', f'v{new}')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lock = (self.root / 'Cargo.lock').read_text(encoding='utf-8')
+        versions = dict(re.findall(r'(?m)^name = "([^"]+)"\nversion = "([^"]+)"$', lock))
+        for crate in ('butterpollo', 'butterpollo-crypto', 'butterpollo-config',
+                      'butterpollo-media-policy', 'butterpollo-input-policy', 'butterpollo-session',
+                      'butterpollo-win-abi', 'butterpollo-win-graphics', 'butterpollo-win-display',
+                      'butterpollo-win-io', 'butterpollo-stream', 'butterpollo-webrtc',
+                      'butterpollo-web', 'butterpollo-probes', 'butterpollo-setup',
+                      'butterpollo-vulkan-layer'):
+            self.assertEqual(versions.get(crate), new, crate)
+        self.assertEqual(versions.get('rubylight-vdisplay-proto'), '0.1.0')
+        self.assertEqual(versions.get('rubylight-vgamepad-proto'), '0.1.0')
+        self.assertEqual(versions.get('butterpollo-host-tests'), '0.0.0')
+        self.assertEqual(versions.get('rubylight-interop'), '0.0.0')
 
     def test_prerelease_keeps_its_full_version_as_label(self):
         readme = self.root / 'README.md'

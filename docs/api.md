@@ -4,7 +4,7 @@
 
 The host serves its administration API at `https://localhost:47990/api`; the web console is built on the same API. Changing the base `port` setting moves the console to `port + 1`.
 
-Routing, authentication and token scopes are implemented in [web.rs](../rust/host/src/web.rs), and the handlers for each area in [web/](../rust/host/src/web). The [C++ host's API guide](https://github.com/RamazanKara/Rubylight/blob/2.0.0-rc.23/docs/legacy/api-cpp.md) is kept at the 2.0.0-rc.23 tag as a migration reference.
+Routing, authentication and token scopes are implemented in [web.rs](../rust/host/web/src/web.rs), and the handlers for each area in [web/](../rust/host/web/src/web). The [C++ host's API guide](https://github.com/RamazanKara/Rubylight/blob/2.0.0-rc.23/docs/legacy/api-cpp.md) is kept at the 2.0.0-rc.23 tag as a migration reference.
 
 Paired clients use other routes, on the streaming HTTPS port (`HttpsPort` from `/serverinfo`, normally 47984), authenticated by the certificate the device paired with. None of the authentication methods on this page apply to them:
 
@@ -15,7 +15,7 @@ Paired clients use other routes, on the streaming HTTPS port (`HttpsPort` from `
 | `/api/network-path` | [Remote connection route](network-path.md): the requesting peer's current Tailscale route category (`NetworkPathVersion`). |
 | `/internet-play/v1` | [Play over the internet](internet-play.md): this device's rendezvous secret, the host's session, public endpoints, IPv6 addresses, forwarded ports and port numbers (`RustHostInternetPlayVersion`). |
 
-Moonlight pairing, app discovery and streaming use the GameStream endpoints in [nvhttp.rs](../rust/host/src/nvhttp.rs).
+Moonlight pairing, app discovery and streaming use the GameStream endpoints in [nvhttp.rs](../rust/host/stream/src/nvhttp.rs).
 
 ## Authentication
 
@@ -150,7 +150,7 @@ These routes back console pages. They take Basic or web-session authentication l
 
 Authentication failures return HTTP `401`; denied origins or network reach return `403`; invalid requests commonly return `400` with `{"status":false,"error":"..."}`. Login rate limiting returns `429` for the sign-in endpoint and `401` for HTTP Basic authentication. Check the HTTP status and response body together.
 
-For exact request fields beyond this overview, follow [the API router](../rust/host/src/web.rs) and [its area handlers](../rust/host/src/web), [token scope validation](../rust/core/src/auth.rs) and [administration checks](../rust/tests/web_api.py).
+For exact request fields beyond this overview, follow [the API router](../rust/host/web/src/web.rs) and [its area handlers](../rust/host/web/src/web), [token scope validation](../rust/core/crypto/src/auth.rs) and [administration checks](../rust/tests/web_api.py).
 
 ## Native API v1 (paired clients)
 
