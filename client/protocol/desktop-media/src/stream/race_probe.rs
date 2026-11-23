@@ -429,7 +429,7 @@ mod win {
 
     use windows::Win32::Foundation::HWND;
 
-    use super::super::scanline::{calibrate, collect, restart, Beam, CalibrationError, Follow, Restart, Sample, Scanline, RESTART_WINDOW_NS};
+    use super::super::scanline::{calibrate_scan, restart, restart_delay_ns, sleep_restart_poll, Beam, CalibrationError, Follow, Restart, Sample, Scanline, RESTART_WINDOW_NS};
     use super::{RaceProbe, Surroundings};
 
     /// How long the calibration reads the scan line, and how often.
@@ -490,12 +490,12 @@ mod win {
                 let mut after = Vec::with_capacity(64);
                 while (clock.elapsed().as_nanos() as u64) < end {
                     if let Some(sample) = scan.sample() {
-                        let active = !sample.vblank;
                         after.push(sample);
-                        if active { break; }
+                        if !sample.vblank { break; }
                     }
+                    sleep_restart_poll(clock.elapsed().as_nanos() as u64, end);
                 }
-                outcome.delay_ns = after.iter().find(|s| !s.vblank).map(|first| first.at_ns.saturating_sub(job.before.at_ns));
+                outcome.delay_ns = restart_delay_ns(&after, &job.beam, job.before.at_ns);
                 outcome.restart = restart(&job.before, &after, &job.beam, job.longest_idle_ns);
             }
             if results.send(outcome).is_err() { return; }
@@ -532,10 +532,7 @@ mod win {
             let handle = window.0 as usize;
             let spawned = std::thread::Builder::new().name("beam-calibration".into()).spawn(move || {
                 let outcome = match Scanline::open(HWND(handle as *mut _), Instant::now()) {
-                    Some(scan) => {
-                        let samples = collect(&scan, CALIBRATION, EVERY);
-                        calibrate(&samples, scan.rows())
-                    }
+                    Some(scan) => calibrate_scan(&scan, CALIBRATION, EVERY),
                     None => Err(CalibrationError::NoScan),
                 };
                 if let Ok(mut slot) = result.lock() { *slot = Some((generation, outcome)); }

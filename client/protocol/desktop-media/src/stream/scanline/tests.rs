@@ -52,6 +52,17 @@ fn a_fixed_refresh_display_scanning_all_the_time_calibrates_too() {
 }
 
 #[test]
+fn coarse_sleep_paced_readings_bracket_short_blanking_accurately() {
+    // 1800p @ 120 Hz panel with 34 lines (~0.155 ms) of blanking, sampled every ~0.53 ms as
+    // Windows' high-resolution waitable timer does when `collect` sleeps via `SDL_DelayNS`.
+    let starts: Vec<u64> = (0..144).map(|i| 1_000_000 + i * 8_380_000).collect();
+    let samples = display(&starts, 34, 1800, 218.9, 530_000, 1_200_000_000);
+    let beam = calibrate(&samples, 1800).unwrap();
+    assert!((i64::from(beam.blank_rows) - 34).abs() <= 10, "blank_rows={}", beam.blank_rows);
+    assert!((beam.refresh_hz - 119.3).abs() < 0.8, "refresh_hz={}", beam.refresh_hz);
+}
+
+#[test]
 fn the_rows_come_from_the_readings_when_the_height_is_not_given() {
     let starts: Vec<u64> = (0..40).map(|i| 1_000_000 + i * 16_667_000).collect();
     let samples = display(&starts, 150, 1080, 394.0, 100_000, 600_000_000);
@@ -128,6 +139,13 @@ fn a_present_whose_scan_starts_late_or_far_down_misses() {
     assert_eq!(restart(&before, &[], &beam, 0), Restart::Missed);
     // A scan already well down when first seen: it began before the present, so it is not the present's.
     assert_eq!(restart(&before, &[at(1_000, 600, false)], &beam, 0), Restart::Missed);
+    // Sleeping briefly across the vblank-to-active transition on a fast panel (240 Hz, 400 lines/ms):
+    // still idling at 100 us, active at row 120 (line 320, >5% of 1440) at 900 us -> scan started at
+    // 900 us - 800 us = +100 us (after `before`), so it counts as Began.
+    let slept_across = [at(100_000, 2440, true), at(900_000, 320, false)];
+    assert_eq!(restart(&before, &slept_across, &beam, 0), Restart::Began);
+    // Delay extrapolates back from row 120 (300 us at 400 lines/ms) to active row 0: 900 - 300 = 600 us.
+    assert_eq!(restart_delay_ns(&slept_across, &beam, 0), Some(600_000));
 }
 
 #[test]

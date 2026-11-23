@@ -94,9 +94,11 @@ fn the_log_says_what_the_presents_met() {
 fn a_scan_under_way_is_waited_out_to_its_end() {
     let limit = SCAN_NS + SCAN_WAIT_SLACK_NS;
     // A picture that meets the scan just begun sleeps most of it, not 2 ms (Nightjar 5.4.1).
-    assert_eq!(scan_step(Some(SCAN_NS), true, 0, limit), ScanStep::Sleep(SCAN_NS - 1_000_000));
-    // The last millisecond and a half is spun, reading the beam.
-    assert_eq!(scan_step(Some(1_400_000), true, 6_600_000, limit), ScanStep::Spin);
+    assert_eq!(scan_step(Some(SCAN_NS), true, 0, limit), ScanStep::Sleep(SCAN_NS - 600_000));
+    // With high-res SDL_DelayNS, 1.4 ms left still sleeps instead of spinning.
+    assert_eq!(scan_step(Some(1_400_000), true, 6_600_000, limit), ScanStep::Sleep(800_000));
+    // Only the last 0.9 ms is spun, reading the beam.
+    assert_eq!(scan_step(Some(800_000), true, 7_200_000, limit), ScanStep::Spin);
     assert_eq!(scan_step(Some(200_000), true, 7_800_000, limit), ScanStep::Spin);
     // The beam has left the last row: present.
     assert_eq!(scan_step(None, true, 8_000_000, limit), ScanStep::Go);

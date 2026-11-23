@@ -13,6 +13,7 @@ mod launcher;
 mod overlay;
 mod renderer;
 mod session;
+mod win_renderer;
 
 pub(crate) use launch::*;
 pub(crate) use launch_probe::*;
@@ -304,3 +305,218 @@ pub(crate) fn remove_host(
     hosts.remove(id);
     save_hosts(store, hosts)
 }
+
+/// Whether `kind` is controller input (or connection) that should switch streaming polling into
+/// its fast active cadence.
+pub(crate) fn is_gamepad_activity(kind: SDL_EventType) -> bool {
+    matches!(
+        kind,
+        SDL_EVENT_GAMEPAD_BUTTON_DOWN
+            | SDL_EVENT_GAMEPAD_BUTTON_UP
+            | SDL_EVENT_GAMEPAD_AXIS_MOTION
+            | SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN
+            | SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION
+            | SDL_EVENT_GAMEPAD_TOUCHPAD_UP
+            | SDL_EVENT_GAMEPAD_SENSOR_UPDATE
+            | SDL_EVENT_GAMEPAD_ADDED
+    )
+}
+
+/// Adaptive polling cadence for `SDL_UpdateJoysticks()` with `SDL_HINT_AUTO_UPDATE_JOYSTICKS=0`.
+///
+/// SDL3's automatic joystick update forces `SDL_WaitEventTimeout` to wake every 1 ms whenever
+/// any controller is open (always true on Steam Deck and Windows handhelds), even in an idle
+/// launcher or while streaming with keyboard and mouse. Polling explicitly keeps active gameplay
+/// responsive while cutting idle wakeups dramatically.
+#[derive(Debug, Default)]
+pub(crate) struct PadPoll {
+    last_poll: Option<Instant>,
+    last_activity: Option<Instant>,
+    /// Last monotonic µs timestamp observed from `DirectMotion::last_pad_activity_us()`.
+    last_direct_us: u64,
+}
+
+impl PadPoll {
+    /// Hotplug check when no controllers are open (or controllers are disabled for a stream).
+    pub(crate) const ENUM_INTERVAL: Duration = Duration::from_secs(2);
+    /// Launcher UI cadence when a controller is connected and the window is visible.
+    pub(crate) const LAUNCHER_INTERVAL: Duration = Duration::from_millis(16);
+    /// Launcher cadence while minimized or hidden.
+    pub(crate) const LAUNCHER_HIDDEN_INTERVAL: Duration = Duration::from_millis(250);
+    /// Stream cadence while a controller was used recently (500 Hz; 2x fewer wakeups than SDL's
+    /// 1000 Hz poll with <= 1 ms average poll delay).
+    pub(crate) const STREAM_ACTIVE_INTERVAL: Duration = Duration::from_millis(2);
+    /// Stream cadence while open controllers have been idle (mouse/keyboard play, cutscenes).
+    pub(crate) const STREAM_IDLE_INTERVAL: Duration = Duration::from_millis(16);
+    /// How long after the last controller input the stream stays on `STREAM_ACTIVE_INTERVAL`.
+    pub(crate) const ACTIVE_HOLD: Duration = Duration::from_secs(1);
+
+    /// Target polling interval for the current state.
+    pub(crate) fn interval(&self, now: Instant, pads_open: bool, streaming: bool, sends_to_stream: bool, window_seen: bool) -> Duration {
+        if !pads_open {
+            return Self::ENUM_INTERVAL;
+        }
+        if !streaming {
+            return if window_seen { Self::LAUNCHER_INTERVAL } else { Self::LAUNCHER_HIDDEN_INTERVAL };
+        }
+        if !sends_to_stream {
+            return Self::ENUM_INTERVAL;
+        }
+        if self.last_activity.is_some_and(|at| now.saturating_duration_since(at) < Self::ACTIVE_HOLD) {
+            Self::STREAM_ACTIVE_INTERVAL
+        } else {
+            Self::STREAM_IDLE_INTERVAL
+        }
+    }
+
+    /// How long until the next `SDL_UpdateJoysticks()` call is due (`Duration::ZERO` when due now).
+    pub(crate) fn next_in(&self, now: Instant, pads_open: bool, streaming: bool, sends_to_stream: bool, window_seen: bool) -> Duration {
+        let Some(last) = self.last_poll else {
+            return Duration::ZERO;
+        };
+        let interval = self.interval(now, pads_open, streaming, sends_to_stream, window_seen);
+        interval.saturating_sub(now.saturating_duration_since(last))
+    }
+
+    /// Marks that `SDL_UpdateJoysticks()` just ran.
+    pub(crate) fn polled(&mut self, now: Instant) {
+        self.last_poll = Some(now);
+    }
+
+    /// Records controller input (or a controller connect) so streaming uses the active cadence.
+    pub(crate) fn note_activity(&mut self, now: Instant) {
+        self.last_activity = Some(now);
+    }
+
+    /// Syncs controller events handled directly by `DirectMotion`'s event filter during present
+    /// (those events are consumed by the filter and never reach the main loop).
+    pub(crate) fn sync_direct(&mut self, direct_pad_us: u64, now: Instant) {
+        if direct_pad_us != 0 && direct_pad_us != self.last_direct_us {
+            self.last_direct_us = direct_pad_us;
+            self.note_activity(now);
+        }
+    }
+}
+
+/// How `stream_frame` waits out a short duration: `SDL_WaitEventTimeout` above 1.5 ms,
+/// `SDL_DelayNS` (kernel high-resolution timer, no CPU busy-spin) for normal sub-1.5 ms tails,
+/// and `SDL_DelayPrecise` only for Beam Race slices (`precise`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StreamSleep {
+    /// Wait for SDL events up to this many milliseconds.
+    EventTimeoutMs(i32),
+    /// Kernel timer sleep for this many nanoseconds (clamped >= 1 us so Windows' waitable timer
+    /// never rounds a positive sub-microsecond wait to zero).
+    DelayNs(u64),
+    /// High-precision spin-sleep for this many nanoseconds (Beam Race only).
+    DelayPreciseNs(u64),
+}
+
+pub(crate) fn stream_sleep(duration: Duration, precise: bool, pad_wait: Option<Duration>) -> StreamSleep {
+    if duration > Duration::from_micros(1500) {
+        let frame_ms = (duration.as_micros() / 1000).saturating_sub(1).max(1).min(i32::MAX as u128) as i32;
+        let ms = match pad_wait {
+            Some(pad) => frame_ms.min(pad.as_millis().max(1).min(i32::MAX as u128) as i32),
+            None => frame_ms,
+        };
+        StreamSleep::EventTimeoutMs(ms)
+    } else if precise {
+        StreamSleep::DelayPreciseNs(duration.as_nanos() as u64)
+    } else {
+        StreamSleep::DelayNs((duration.as_nanos() as u64).max(1_000))
+    }
+}
+
+impl App {
+    /// Polls launcher events with adaptive joystick cadence instead of SDL's 1000 Hz wakeup.
+    pub(super) fn wait_launcher_events(&mut self, timeout: i32, seen: bool) {
+        let now = Instant::now();
+        let pads_open = !self.pads.pads.is_empty();
+        if self.pad_poll.next_in(now, pads_open, false, false, seen).is_zero() {
+            // SAFETY: SDL joystick update on the main thread.
+            unsafe { SDL_UpdateJoysticks() };
+            self.pad_poll.polled(now);
+        }
+        let pad_wait = self.pad_poll.next_in(now, pads_open, false, false, seen);
+        let timeout = timeout.min(pad_wait.as_millis().min(i32::MAX as u128) as i32);
+        // SAFETY: event polling on the main thread.
+        unsafe {
+            let mut event: SDL_Event = std::mem::zeroed();
+            if if timeout > 0 { SDL_WaitEventTimeout(&mut event, timeout) } else { SDL_PollEvent(&mut event) } {
+                self.latency_input(&event);
+                self.handle_launcher_event(&event);
+            }
+            let after = Instant::now();
+            if self.pad_poll.next_in(after, !self.pads.pads.is_empty(), false, false, seen).is_zero() {
+                SDL_UpdateJoysticks();
+                self.pad_poll.polled(after);
+            }
+            while SDL_PollEvent(&mut event) {
+                self.latency_input(&event);
+                self.handle_launcher_event(&event);
+            }
+        }
+    }
+
+    /// Waits for stream events or the next present time, using `SDL_DelayNS` for sub-1.5 ms tails
+    /// (and `SDL_DelayPrecise` only for Beam Race) with adaptive joystick polling.
+    pub(super) fn wait_stream_events(
+        &mut self,
+        wait: stream::Wait,
+        menu_frame: Duration,
+        menu_visible: bool,
+        pad_active: bool,
+        direct_pad_us: u64,
+    ) {
+        let now = Instant::now();
+        self.pad_poll.sync_direct(direct_pad_us, now);
+        let pads_open = !self.pads.pads.is_empty();
+        if self.pad_poll.next_in(now, pads_open, true, pad_active, true).is_zero() {
+            // SAFETY: SDL joystick update on the main thread.
+            unsafe { SDL_UpdateJoysticks() };
+            self.pad_poll.polled(now);
+        }
+        let pad_wait = (pads_open && pad_active)
+            .then(|| self.pad_poll.next_in(now, pads_open, true, pad_active, true));
+        // SAFETY: event calls on the main thread.
+        unsafe {
+            let mut event: SDL_Event = std::mem::zeroed();
+            match wait {
+                stream::Wait::Now => {}
+                stream::Wait::For(duration) | stream::Wait::Precise(duration) => {
+                    let precise = matches!(wait, stream::Wait::Precise(_));
+                    // A held direction in the stream menu wakes the loop for its next step.
+                    let duration = self.nav_repeat.next(now).map_or(duration, |next| duration.min(next + Duration::from_millis(1)));
+                    // An animating menu wakes it for egui's next frame, at most once per refresh.
+                    let duration = match self.gui.repaint_in(menu_frame) {
+                        Some(wait) if menu_visible => duration.min(wait),
+                        _ => duration,
+                    };
+                    match stream_sleep(duration, precise, pad_wait) {
+                        StreamSleep::EventTimeoutMs(ms) => {
+                            if SDL_WaitEventTimeout(&mut event, ms) {
+                                self.dispatch_stream_event(&event);
+                            }
+                        }
+                        StreamSleep::DelayNs(ns) => SDL_DelayNS(ns),
+                        StreamSleep::DelayPreciseNs(ns) => SDL_DelayPrecise(ns),
+                    }
+                }
+            }
+            let after = Instant::now();
+            if self.pad_poll.next_in(after, !self.pads.pads.is_empty(), true, pad_active, true).is_zero() {
+                SDL_UpdateJoysticks();
+                self.pad_poll.polled(after);
+            }
+            while SDL_PollEvent(&mut event) {
+                self.dispatch_stream_event(&event);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) use win_renderer::windows_needs_linear;
+
+#[cfg(test)]
+mod tests;

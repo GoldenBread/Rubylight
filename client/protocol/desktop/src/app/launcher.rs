@@ -172,7 +172,7 @@ impl App {
         false
     }
 
-    fn handle_launcher_event(&mut self, event: &SDL_Event) {
+    pub(super) fn handle_launcher_event(&mut self, event: &SDL_Event) {
         #[cfg(target_os = "macos")]
         if self.take_pairing_url(event) { return; }
         log_window_hdr(event);
@@ -187,6 +187,9 @@ impl App {
         }
         // SAFETY: reading the event type.
         let kind = SDL_EventType(unsafe { event.r#type });
+        if is_gamepad_activity(kind) {
+            self.pad_poll.note_activity(Instant::now());
+        }
         self.note_render_device(kind);
         if kind == SDL_EVENT_SYSTEM_THEME_CHANGED {
             // The System theme follows at once: the next frame has the other look.
@@ -271,18 +274,7 @@ impl App {
         // SAFETY: a live window, read on the main thread.
         let seen = animations_seen(unsafe { SDL_GetWindowFlags(self.window) });
         let timeout = if self.is_renderer_lost() { 0 } else if seen { self.gui.repaint_in(frame).map_or(timeout, |wait| timeout.min(wait.as_millis() as i32)) } else { timeout };
-        // SAFETY: event polling on the main thread.
-        unsafe {
-            let mut event: SDL_Event = std::mem::zeroed();
-            if if timeout > 0 { SDL_WaitEventTimeout(&mut event, timeout) } else { SDL_PollEvent(&mut event) } {
-                self.latency_input(&event);
-                self.handle_launcher_event(&event);
-                while SDL_PollEvent(&mut event) {
-                    self.latency_input(&event);
-                    self.handle_launcher_event(&event);
-                }
-            }
-        }
+        self.wait_launcher_events(timeout, seen);
         if !self.running {
             return;
         }
@@ -816,7 +808,7 @@ impl App {
 
     /// An input event's age for the latency benchmark while its test runs: SDL stamps events in
     /// `SDL_GetTicksNS` time.
-    fn latency_input(&mut self, event: &SDL_Event) {
+    pub(super) fn latency_input(&mut self, event: &SDL_Event) {
         if !self.latency_bench.timing() {
             return;
         }

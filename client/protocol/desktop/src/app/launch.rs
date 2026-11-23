@@ -404,9 +404,9 @@ impl App {
         // Sharper colored text without the GPU renderer starts without it (`full_chroma::decide`), as
         // on a decoder without it; anything else that needs the renderer refuses the stream.
         self.kms_notes.clear();
+        self.switch_for_stream(&settings);
         #[cfg(unix)]
         let packed_without_gpu = {
-            self.switch_for_stream(&settings);
             // Straight to the display the GPU renderer could not be made: what needs it plays
             // without it and the start says so, instead of a refused stream.
             if kms::active() && self.gpu_failure.is_some() && sdl::renderer_name(self.renderer) != "gpu" {

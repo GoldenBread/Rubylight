@@ -304,11 +304,14 @@ impl Streaming {
             (Some(due), Some(keep)) => Some(due.min(keep)),
             (due, keep) => due.or(keep),
         };
+        let racing_due = racing.is_some() && due == racing;
         let wait = match due {
             Some(due) => {
                 let now = session::now_us();
                 if due <= now {
                     Wait::Now
+                } else if racing_due {
+                    Wait::Precise(Duration::from_micros(due - now))
                 } else {
                     Wait::For(Duration::from_micros(due - now))
                 }
@@ -323,6 +326,7 @@ impl Streaming {
         };
         match (wait, wake) {
             (Wait::For(wait), Some(wake)) => Wait::For(wait.min(wake)),
+            (Wait::Precise(wait), Some(wake)) => Wait::Precise(wait.min(wake)),
             (wait, _) => wait,
         }
     }
@@ -429,8 +433,10 @@ impl Streaming {
         };
         self.held_wait_us = Some(wait_us);
         if wait_us > 0 {
+            // Kernel high-resolution timer sleep (no CPU busy-spin): fractional V-Sync still has
+            // the rest of the opening refresh minus HELD_LATCH_GUARD_US to latch the flip.
             // SAFETY: a plain wait.
-            unsafe { SDL_DelayPrecise(wait_us * 1000) };
+            unsafe { SDL_DelayNS(wait_us * 1000) };
         }
     }
 
@@ -584,8 +590,9 @@ impl Streaming {
         // plus `SCAN_WAIT_SLACK_NS`, since a reading can be wrong (`scan_sync::wait_out`).
         let begun = Instant::now();
         let probe = self.race_probe.as_ref();
+        // SAFETY: SDL_DelayNS is a plain high-resolution timer sleep (0.5 ms granularity on Windows).
         let Some(waited) = scan_sync::wait_out(&beam, sample, || probe.and_then(race_probe::RaceProbe::before),
-            |ns| std::thread::sleep(Duration::from_nanos(ns)), || begun.elapsed().as_nanos() as u64) else { return false };
+            |ns| unsafe { SDL_DelayNS(ns) }, || begun.elapsed().as_nanos() as u64) else { return false };
         if waited.cut_short { self.scan_tally.cut_short += 1; }
         if waited.wrapped { self.scan_tally.wrapped += 1; }
         self.scan_waits.0 += 1;
@@ -623,19 +630,10 @@ impl Streaming {
         self.scan_tally.behind += 1;
         if !self.scan_settles || !self.scan_tally.waits() { return sample; }
         let Some(probe) = &self.race_probe else { return sample };
-        // Spinning, as the wait for the scan's end does: a flip lands within a millisecond or so.
-        let begun = Instant::now();
-        let limit = Duration::from_nanos(scan_sync::LANDING_LIMIT_NS - since_present_ns);
-        let mut last = sample;
-        let landed = loop {
-            if let Some(reading) = probe.before() {
-                last = reading;
-                if beam.scan_left_ns(&last).is_some() { break true; }
-            }
-            if begun.elapsed() >= limit { break false; }
-            std::hint::spin_loop();
-        };
-        let waited = begun.elapsed().as_nanos() as u64;
+        // SAFETY: SDL_DelayNS is a plain high-resolution timer sleep.
+        let (last, waited, landed) = scan_sync::wait_landing(beam, sample,
+            Duration::from_nanos(scan_sync::LANDING_LIMIT_NS - since_present_ns),
+            || probe.before(), |ns| unsafe { SDL_DelayNS(ns) });
         if landed {
             let took = scan_sync::landing_ns(beam.since_scan_ns(&last), since_present_ns + waited);
             self.scan_tally.landing_measured(took, latched_before);
@@ -1176,7 +1174,7 @@ impl Streaming {
         // SAFETY: a live renderer.
         let mut latched = false;
         let (refused, present_failed) = unsafe {
-            let done = if skips { present::present_without_waiting(renderer, self.skipped.hold()) } else { present::NoWait::Failed };
+            let done = if skips { present::present_without_waiting(renderer, self.skipped.hold(), self.plan.display.refresh_hz) } else { present::NoWait::Failed };
             if skips { self.no_wait_present = done != present::NoWait::Failed; }
             let failed = if let Some(ok) = blank { !ok } else if done != present::NoWait::Failed { false } else {
                 // Sync interval 1 shows the picture whole at the next refresh when the wait for

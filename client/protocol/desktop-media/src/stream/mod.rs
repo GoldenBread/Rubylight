@@ -89,7 +89,6 @@ mod d3d11;
 pub(crate) mod direct_planes;
 #[cfg(windows)]
 mod wasapi;
-#[cfg(windows)]
 mod wlan;
 pub mod gpu_planes;
 pub mod pyrowave_sdk;
@@ -392,6 +391,7 @@ pub struct Facts {
     pub frame_warp: Option<Arc<nightjar_core::frame_warp::FrameWarp>>,
     /// The setting is on for a played stream and the PC does not offer Frame Warp.
     pub frame_warp_refused: bool,
+    #[cfg_attr(not(windows), allow(dead_code))] pub wlan_streaming: bool,
 }
 
 /// The timing CSV when `NIGHTJAR_TIMING_CSV` names a file or folder.
@@ -857,13 +857,8 @@ pub struct Streaming {
     frame_warp: Option<frame_warp::Presenter>,
 }
 
-/// What the main loop should do next.
-pub enum Wait {
-    /// Present now.
-    Now,
-    /// Wait for events up to this long.
-    For(Duration),
-}
+/// What the main loop should do next (`Precise` is Beam Race only).
+pub enum Wait { Now, For(Duration), Precise(Duration) }
 
 /// Why the stream ends after SDL's render device event `kind`.
 fn render_device_ended(kind: SDL_EventType) -> Option<&'static str> { crate::render_device::ended_reason(kind) }
@@ -1103,7 +1098,7 @@ impl Streaming {
             usb_refused,
             direct_motion,
             #[cfg(windows)]
-            _wlan: wlan::StreamingMode::begin(),
+            _wlan: facts.wlan_streaming.then(wlan::StreamingMode::begin).flatten(),
             session,
             shared: connecting.shared,
             facts,
@@ -1631,7 +1626,7 @@ impl Streaming {
 
     /// Whether this session tells the host about controllers: not with Controllers off, and never
     /// from a view-only remote monitor.
-    fn sends_controllers(&self) -> bool {
+    pub fn sends_controllers(&self) -> bool {
         sends_controllers(&self.settings, self.facts.role)
     }
 

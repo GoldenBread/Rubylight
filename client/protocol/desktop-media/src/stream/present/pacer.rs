@@ -542,57 +542,9 @@ pub fn skips_instead_of_waiting(mode: PacingMode, frame_pacing: FramePacing, fra
         && frame_us as f64 <= 1_020_000.0 / f64::from(refresh_hz)
 }
 
-/// What a present that never waits behind the last picture did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(windows), allow(dead_code))] // Only Windows has this present.
-pub enum NoWait {
-    Shown,
-    /// The last picture has not reached the display: this one was not presented, and the back
-    /// buffer still holds it.
-    Refused,
-    /// Something else went wrong. SDL's own present recovers from what can be recovered from.
-    Failed,
-}
-
-/// Presents at the next refresh unless the last picture still waits for one, trying again for
-/// `hold`.
-///
-/// # Safety
-/// `renderer` is the live D3D11 renderer of this thread.
-#[cfg(windows)]
-pub unsafe fn present_without_waiting(renderer: *mut SDL_Renderer, hold: std::time::Duration) -> NoWait {
-    use windows::core::Interface;
-    use windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_ERROR_WAS_STILL_DRAWING, DXGI_PRESENT_DO_NOT_WAIT};
-    // SAFETY: caller guarantees `renderer` is the live D3D11 renderer of this thread.
-    unsafe {
-        let chain = crate::render_device::live_renderer_pointer(renderer, SDL_PROP_RENDERER_D3D11_SWAPCHAIN_POINTER);
-        let Some(chain) = IDXGISwapChain::from_raw_borrowed(&chain) else { return NoWait::Failed };
-        if !SDL_FlushRenderer(renderer) { return NoWait::Failed; }
-        let begun = std::time::Instant::now();
-        let result = loop {
-            let result = chain.Present(1, DXGI_PRESENT_DO_NOT_WAIT);
-            if result != DXGI_ERROR_WAS_STILL_DRAWING || begun.elapsed() >= hold { break result; }
-            // It waits for a refresh anyway, and has until the next deadline: a sleep costs nothing.
-            SDL_DelayNS(500_000);
-        };
-        // A present unbinds the back buffer's view: this makes SDL's next draw bind it again.
-        SDL_FlushRenderer(renderer);
-        if result == DXGI_ERROR_WAS_STILL_DRAWING {
-            NoWait::Refused
-        } else if result.is_ok() {
-            NoWait::Shown
-        } else {
-            NoWait::Failed
-        }
-    }
-}
-
-/// Only Windows has this present: SDL's own takes over elsewhere.
-///
-/// # Safety
-/// Nothing to uphold here; the signature is the Windows one's.
-#[cfg(not(windows))]
-pub unsafe fn present_without_waiting(_renderer: *mut SDL_Renderer, _hold: std::time::Duration) -> NoWait { NoWait::Failed }
+#[path = "no_wait.rs"]
+mod no_wait;
+pub use no_wait::{present_without_waiting, NoWait};
 
 /// Presents with sync interval 1 when `latched` (the scan wait would cost the next picture its
 /// turn, `scan_sync::ScanWait::Latch`), else with tearing. Returns whether the present succeeded.

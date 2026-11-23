@@ -495,35 +495,11 @@ impl App {
         if streaming.export_statistics {
             streaming.save_statistics(&self.store.dir().join("statistics"));
         }
+        let pad_active = streaming.sends_controllers() || streaming.menu_visible;
+        let direct_pad_us = streaming.direct_motion.last_pad_activity_us();
+        let menu_visible = streaming.menu_visible;
         let wait = if renderer_lost || streaming.exit.is_some() { stream::Wait::Now } else { streaming.wait() };
-        // Wait for input, a decoded picture or the next present time.
-        // SAFETY: event calls on the main thread.
-        unsafe {
-            let mut event: SDL_Event = std::mem::zeroed();
-            match wait {
-                stream::Wait::Now => {}
-                stream::Wait::For(duration) => {
-                    // A held direction in the stream menu wakes the loop for its next step.
-                    let duration = self.nav_repeat.next(Instant::now()).map_or(duration, |next| duration.min(next + Duration::from_millis(1)));
-                    // An animating menu wakes it for egui's next frame, at most once per refresh.
-                    let duration = match self.gui.repaint_in(menu_frame) {
-                        Some(wait) if self.streaming.as_ref().is_some_and(|(s, _)| s.menu_visible) => duration.min(wait),
-                        _ => duration,
-                    };
-                    if duration > Duration::from_micros(1500) {
-                        let ms = (duration.as_micros() / 1000).saturating_sub(1).max(1) as i32;
-                        if SDL_WaitEventTimeout(&mut event, ms) {
-                            self.dispatch_stream_event(&event);
-                        }
-                    } else {
-                        SDL_DelayPrecise(duration.as_nanos() as u64);
-                    }
-                }
-            }
-            while SDL_PollEvent(&mut event) {
-                self.dispatch_stream_event(&event);
-            }
-        }
+        self.wait_stream_events(wait, menu_frame, menu_visible, pad_active, direct_pad_us);
         // A held D-pad or stick steps the stream menu again, as in the launcher.
         if self.streaming.as_ref().is_some_and(|(s, _)| s.menu_visible) {
             if self.repeat_navigation()
@@ -658,7 +634,7 @@ impl App {
         if let Some(exit) = streaming.exit.take() { self.finish_stream_exit(exit); }
     }
 
-    fn dispatch_stream_event(&mut self, event: &SDL_Event) {
+    pub(super) fn dispatch_stream_event(&mut self, event: &SDL_Event) {
         // The stream ends on it (`render_device_ended`); the launcher then makes the renderer again.
         // SAFETY: reading the event type.
         self.note_render_device(SDL_EventType(unsafe { event.r#type }));
@@ -675,6 +651,9 @@ impl App {
         self.track_visibility(event);
         // SAFETY: reading the event type.
         let kind = SDL_EventType(unsafe { event.r#type });
+        if is_gamepad_activity(kind) {
+            self.pad_poll.note_activity(Instant::now());
+        }
         // A stream keeps the night look; the launcher it returns to has the system's theme.
         if kind == SDL_EVENT_SYSTEM_THEME_CHANGED {
             self.launcher.system_light = sdl::system_light();

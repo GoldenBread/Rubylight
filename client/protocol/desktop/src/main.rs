@@ -79,6 +79,7 @@ struct App {
     launcher: Launcher,
     latency_bench: latency_bench::Bench,
     pads: Gamepads,
+    pad_poll: PadPoll,
     /// The starts connecting and those just cancelled or timed out, whose workers may still run.
     attempts: stream::Attempts,
     /// A start's decoder checks, on a worker thread (`LaunchProbe`); the start waits for them.
@@ -555,6 +556,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     sdl::set_hint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, c"0");
     sdl::set_hint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, c"480");
     sdl::set_hint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, c"1");
+    sdl::set_hint(SDL_HINT_AUTO_UPDATE_JOYSTICKS, c"0"); // Adaptive polling via PadPoll.
     sdl::set_hint(SDL_HINT_MOUSE_RELATIVE_MODE_CENTER, c"1");
     // The second screen's window opens beside the first stream without taking its keyboard and mouse.
     if second_screen::this_process() {
@@ -634,9 +636,9 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     let profiles = store.profiles();
     let mappings = store.controller_mappings();
     let hosts = store.hosts();
-    #[cfg(target_os = "macos")]
-    let gpu = false; // Start the launcher in SDR. Its stream chooses its own Metal path.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "macos", windows))]
+    let gpu = false; // Start the launcher in SDR (8-bit BGRA on Windows, Metal SDR on macOS); streams switch as needed.
+    #[cfg(not(any(target_os = "macos", windows)))]
     let gpu = settings.needs_gpu() || hosts.iter()
         .any(|host| host.settings.as_ref().is_some_and(config::Overrides::needs_gpu) || host.app_settings.values().any(config::Overrides::needs_gpu))
         || profiles.entries.iter().any(|profile| profile.settings.needs_gpu());
@@ -964,6 +966,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         launcher,
         latency_bench: Default::default(),
         pads,
+        pad_poll: PadPoll::default(),
         attempts: stream::Attempts::default(),
         probe: None,
         packed_probed: None,

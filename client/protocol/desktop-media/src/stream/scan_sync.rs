@@ -172,11 +172,11 @@ pub const SCAN_WAIT_SLACK_NS: u64 = 1_000_000;
 pub const TEAR_LANDING_NS: u64 = 2_000_000;
 
 /// Waits for a scan under way longer than this sleep most of it (ns)...
-const SLEEP_FROM_NS: u64 = 1_500_000;
-/// ...and spin the last millisecond, reading the beam: a sleep can overshoot, and on a display that
-/// scans back to back a present that goes out late lands in the next scan's rows instead of its
-/// blanking (0.5 ms of lines at 240 Hz). Nightjar 5.4.0 spun the whole wait.
-const SPIN_LAST_NS: u64 = 1_000_000;
+const SLEEP_FROM_NS: u64 = 900_000;
+/// ...and spin the last 0.6 ms, reading the beam: `SDL_DelayNS` uses Windows' high-resolution
+/// waitable timer (~0.5 ms granularity), so 0.6 ms still catches a sleep overshoot without landing
+/// in the next scan's rows while cutting spin time by 40% vs 1 ms.
+const SPIN_LAST_NS: u64 = 600_000;
 
 /// What the wait for a scan under way does next (`Streaming::wait_out_scan`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,7 +264,12 @@ pub fn wait_out(beam: &super::scanline::Beam, first: super::scanline::Sample, mu
             ScanStep::Go => return Some(Waited { ns: elapsed(), cut_short: false, wrapped }),
             ScanStep::CutShort => return Some(Waited { ns: elapsed(), cut_short: true, wrapped: false }),
             ScanStep::Sleep(ns) => sleep(ns),
-            ScanStep::Spin => std::hint::spin_loop(),
+            ScanStep::Spin => {
+                // Brief pause burst avoids hammering kernel D3DKMTGetScanLine every microsecond.
+                for _ in 0..32 {
+                    std::hint::spin_loop();
+                }
+            }
         }
         let reading = read();
         read_ok = reading.is_some();
@@ -274,6 +279,30 @@ pub fn wait_out(beam: &super::scanline::Beam, first: super::scanline::Sample, mu
             if wrapped { None } else { beam.scan_left_ns(&reading) }
         });
     }
+}
+
+/// Polls for the previous present's scan to begin, sleeping up to 250 us between readings instead
+/// of spinning 100% CPU for up to `LANDING_LIMIT_NS`: once the scan starts it takes 4-8 ms anyway
+/// and `beam.since_scan_ns` computes exact landing time regardless of poll phase.
+pub fn wait_landing(
+    beam: &super::scanline::Beam,
+    initial: super::scanline::Sample,
+    limit: std::time::Duration,
+    mut read: impl FnMut() -> Option<super::scanline::Sample>,
+    mut sleep: impl FnMut(u64),
+) -> (super::scanline::Sample, u64, bool) {
+    let begun = std::time::Instant::now();
+    let mut last = initial;
+    let landed = loop {
+        if let Some(reading) = read() {
+            last = reading;
+            if beam.scan_left_ns(&last).is_some() { break true; }
+        }
+        let remaining = limit.saturating_sub(begun.elapsed());
+        if remaining.is_zero() { break false; }
+        sleep(remaining.as_nanos().min(250_000) as u64);
+    };
+    (last, begun.elapsed().as_nanos() as u64, landed)
 }
 
 /// Whether the present issued `since_present_ns` ago has not started a scan yet, from a reading
@@ -473,7 +502,7 @@ impl DrawQuery {
 /// `renderer` is the live renderer of this thread.
 #[cfg(windows)]
 pub unsafe fn finish_drawing(renderer: *mut sdl3_sys::everything::SDL_Renderer, limit: std::time::Duration, cache: &mut DrawQuery) -> Option<std::time::Duration> {
-    use sdl3_sys::everything::{SDL_FlushRenderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER};
+    use sdl3_sys::everything::{SDL_DelayNS, SDL_FlushRenderer, SDL_PROP_RENDERER_D3D11_DEVICE_POINTER};
     use windows::core::Interface;
     use windows::Win32::Graphics::Direct3D11::{
         ID3D11Device, D3D11_ASYNC_GETDATA_DONOTFLUSH, D3D11_QUERY_DESC, D3D11_QUERY_EVENT,
@@ -517,7 +546,7 @@ pub unsafe fn finish_drawing(renderer: *mut sdl3_sys::everything::SDL_Renderer, 
             if polls < 4 {
                 std::thread::yield_now();
             } else {
-                std::thread::sleep(std::time::Duration::from_micros(50));
+                SDL_DelayNS(250_000);
             }
         }
     }

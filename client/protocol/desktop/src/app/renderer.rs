@@ -77,7 +77,7 @@ pub(crate) fn any_yuv444_asked(store: &config::Store, settings: &config::Setting
 
 /// Ends Nightjar, loudly, when it has no renderer to draw with: `why` goes to the log and a
 /// message box.
-fn no_renderer(why: &str) -> ! {
+pub(super) fn no_renderer(why: &str) -> ! {
     let why = format!("Nightjar has no renderer any more: {why}");
     eprintln!("nightjar: {why}");
     message_box(SDL_MESSAGEBOX_ERROR, &why);
@@ -173,7 +173,6 @@ pub(crate) fn any_async_compute_asked<'a>(settings: &config::Settings, overrides
 
 /// What a start says when a session that has ended is still using the graphics card: a renderer
 /// switch cannot be made while its decoder and audio threads run.
-#[cfg(unix)]
 pub(crate) fn teardown_switch_text() -> &'static str {
     tr("A start that has ended is still using the graphics card, so it cannot be switched yet. The change is kept and applied when that start stops; if it does not stop, restart Nightjar.")
 }
@@ -685,14 +684,14 @@ impl App {
     /// How long a remake waits for the old devices to flush what their users let go of: the flush
     /// takes a decoder's lock, which a start stuck in a driver call may hold.
     #[cfg(windows)]
-    const FLUSH_WAIT: Duration = Duration::from_secs(2);
+    pub(super) const FLUSH_WAIT: Duration = Duration::from_secs(2);
 
     /// Flushes `devices` on a thread of their own, waited for at most `wait`: the remake then goes
     /// on even when a stuck decoder holds the device's lock, instead of freezing the window before
     /// it. What a device still holds when the wait ends stays on the window; the remake's tries
     /// say what they made of it.
     #[cfg(windows)]
-    fn flush_released(devices: Vec<media::DeviceRef>, wait: Duration) {
+    pub(super) fn flush_released(devices: Vec<media::DeviceRef>, wait: Duration) {
         if devices.is_empty() {
             return;
         }
@@ -716,7 +715,7 @@ impl App {
     /// connecting or ending, a decoder check running or let go of, and one waiting to replace a
     /// game.
     #[cfg(windows)]
-    fn launch_devices(&self) -> impl Iterator<Item = &media::DeviceRef> {
+    pub(super) fn launch_devices(&self) -> impl Iterator<Item = &media::DeviceRef> {
         let connecting = self.attempts.devices();
         let probes = self.probe.iter().chain(self.ending_probes.iter()).map(LaunchProbe::device);
         connecting.chain(self.pending_replace.iter().map(|plan| &plan.device)).chain(probes)

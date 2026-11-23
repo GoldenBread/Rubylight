@@ -1551,6 +1551,7 @@ pub(super) fn connect(plan: &mut LaunchPlan, shared: Arc<Shared>, interrupt: &In
     let mut facts = Facts {
         frame_warp,
         frame_warp_refused,
+        wlan_streaming: wlan::should_enable(network.wireless(), network.error.is_some()),
         role,
         width: outcome.config.width,
         height: outcome.config.height,

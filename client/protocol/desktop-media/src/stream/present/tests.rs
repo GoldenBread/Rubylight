@@ -1413,7 +1413,7 @@ fn a_present_without_waiting_is_refused_while_the_last_picture_waits() {
         for n in 0..60u8 {
             clear(n + 1);
             let begun = std::time::Instant::now();
-            match present_without_waiting(renderer, std::time::Duration::ZERO) {
+            match present_without_waiting(renderer, std::time::Duration::ZERO, 60.0) {
                 NoWait::Shown => shown += 1,
                 NoWait::Refused => refused += 1,
                 NoWait::Failed => panic!("the present failed"),
@@ -1430,7 +1430,7 @@ fn a_present_without_waiting_is_refused_while_the_last_picture_waits() {
         let before = shown;
         for _ in 0..3 {
             drawn(200);
-            if present_without_waiting(renderer, std::time::Duration::from_millis(100)) == NoWait::Shown { shown += 1; }
+            if present_without_waiting(renderer, std::time::Duration::from_millis(100), 60.0) == NoWait::Shown { shown += 1; }
         }
         assert_eq!(shown, before + 3, "a hold longer than a refresh always gets its turn");
         drawn(201);

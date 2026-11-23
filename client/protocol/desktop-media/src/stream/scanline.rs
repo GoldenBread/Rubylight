@@ -175,21 +175,38 @@ pub fn calibrate(samples: &[Sample], picture_rows: u32) -> Result<Beam, Calibrat
     let vblank_fraction = if samples.is_empty() { 0.0 } else { vblank as f64 / samples.len() as f64 };
     let runs: Vec<&[Sample]> = rising_runs(samples).into_iter().filter(|run| run.len() >= MIN_RUN).collect();
     let (mut rates, mut edges, mut tops) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut edge_low, mut edge_high) = (0u32, u32::MAX);
     let mut scanned = Vec::new();
     for run in &runs {
+        // Every rising run contributes its active line bounds unconditionally, so coarse sleep
+        // pacing (`SDL_DelayNS`) does not phase-lock the blanking upper bound or end-of-scan top
+        // to the subset of refreshes that happened to catch a short vblank.
+        if let Some(first_active) = run.iter().find(|s| !s.vblank) {
+            edge_high = edge_high.min(first_active.line);
+        }
+        if let Some(max_active) = run.iter().filter(|s| !s.vblank).map(|s| s.line).max() {
+            tops.push(f64::from(max_active));
+        }
         // A refresh counts when its blanking was read (the counter begins in the blanking).
         let Some(edge) = run.windows(2).find(|w| w[0].vblank && !w[1].vblank) else { continue };
         let Some(rate) = slope(run) else { continue };
         rates.push(rate);
+        edge_low = edge_low.max(edge[0].line);
         edges.push((f64::from(edge[0].line) + f64::from(edge[1].line)) / 2.0);
-        tops.push(f64::from(run.iter().filter(|s| !s.vblank).map(|s| s.line).max().unwrap_or(0)));
         scanned.push(*run);
     }
     if edges.is_empty() {
         return Err(if runs.is_empty() { CalibrationError::NoScan } else { CalibrationError::Unsteady });
     }
     let rate = median(&mut rates);
-    let blank_rows = median(&mut edges).round() as u32;
+    // Across refreshes with random sampling phase, `edge_low` bounds the blanking end from below
+    // (highest vblank reading before active) and `edge_high` bounds it from above (lowest active
+    // reading across all rising runs). Bracketing stays unbiased even with ~0.5 ms `SDL_DelayNS`.
+    let blank_rows = if edge_low <= edge_high {
+        ((f64::from(edge_low) + f64::from(edge_high)) / 2.0).round() as u32
+    } else {
+        median(&mut edges).round() as u32
+    };
     // The highest line read is short of the last one by half a reading's walk on average.
     let step = rate * median(&mut samples.windows(2).map(|w| (w[1].at_ns - w[0].at_ns) as f64).collect::<Vec<_>>());
     let top = (median(&mut tops) + step / 2.0).round() as u32 + 1;
@@ -276,17 +293,50 @@ pub fn restart(before: &Sample, after: &[Sample], beam: &Beam, longest_idle_ns: 
     if !before.vblank || before.line < beam.idle_from {
         return Restart::NotTested;
     }
-    let Some(first) = after.iter().find(|s| !s.vblank) else { return Restart::Missed };
-    if u64::from(first.line.saturating_sub(beam.blank_rows)) * 100 >= u64::from(beam.rows) * 5 {
-        return Restart::Missed;
-    }
+    let Some((index, first)) = after.iter().enumerate().find(|(_, s)| !s.vblank) else { return Restart::Missed };
     // The scans' starts, counted back from their readings at the counter's rate.
     let started = |s: &Sample| s.at_ns as i64 - (f64::from(s.line) * 1e6 / beam.lines_per_ms) as i64;
-    let gap = started(first) - started(before);
+    let first_start = started(first);
+    // Accept the first active reading when it is within the top 5% of rows, or when the helper's
+    // short sleep crossed directly from vblank into active rows of a scan that started after
+    // `before` (200 us slack for lines_per_ms rounding).
+    let near_top = u64::from(first.line.saturating_sub(beam.blank_rows)) * 100 < u64::from(beam.rows) * 5;
+    let crossed_from_vblank = index > 0
+        && after[index - 1].vblank
+        && first.at_ns.saturating_sub(after[index - 1].at_ns) <= 1_500_000
+        && first_start >= before.at_ns as i64 - 200_000;
+    if !near_top && !crossed_from_vblank {
+        return Restart::Missed;
+    }
+    let gap = first_start - started(before);
     if longest_idle_ns > 0 && (gap - longest_idle_ns as i64).abs() <= FORCED_TOLERANCE_NS {
         return Restart::NotTested;
     }
     Restart::Began
+}
+
+/// Extrapolates the delay from `before_ns` to the start of the first active row in `after`, so a
+/// short sleep between restart-probe polls does not bias Beam Race's present-to-scan delay.
+#[cfg(any(windows, test))]
+pub fn restart_delay_ns(after: &[Sample], beam: &Beam, before_ns: u64) -> Option<u64> {
+    after.iter().find(|s| !s.vblank).map(|first| {
+        let into_active_ns = if beam.lines_per_ms > 0.0 {
+            (f64::from(first.line.saturating_sub(beam.blank_rows)) * 1e6 / beam.lines_per_ms) as u64
+        } else {
+            0
+        };
+        first.at_ns.saturating_sub(into_active_ns).saturating_sub(before_ns)
+    })
+}
+
+/// Sleeps briefly (<= 250 us, clamped to `end`) between restart-probe scanline readings instead of
+/// burning 100% of a core for up to `RESTART_WINDOW_NS`.
+#[cfg(windows)]
+pub fn sleep_restart_poll(now_ns: u64, end_ns: u64) {
+    if let Some(left) = end_ns.checked_sub(now_ns).filter(|&n| n > 0) {
+        // SAFETY: plain high-resolution timer sleep.
+        unsafe { sdl3_sys::everything::SDL_DelayNS(left.min(250_000)) };
+    }
 }
 
 /// The presents the restart check tests, and the misses that fail it. A present is tested when
@@ -657,9 +707,45 @@ mod win {
     }
 }
 
-/// Readings every 0.25 ms for `window`, from `scan` (spinning: a sleep cannot be this short).
+/// Readings every `every` for `window`, from `scan`, paced with `SDL_DelayNS` so the 1.2 s
+/// calibration does not burn a full CPU core (and several watts on laptops/handhelds) spinning.
+/// On displays that refresh too fast for the OS waitable timer (>300 Hz), callers can fall back to
+/// [`collect_precise`] when [`calibrate`] sees too few readings per refresh.
 #[cfg(windows)]
 pub fn collect(scan: &Scanline, window: Duration, every: Duration) -> Vec<Sample> {
+    let clock = scan.clock();
+    let end = clock.elapsed() + window;
+    let every_ns = every.as_nanos().min(u64::MAX as u128) as u64;
+    let mut samples = Vec::with_capacity((window.as_nanos() / every.as_nanos().max(1)) as usize + 1);
+    while clock.elapsed() < end {
+        if let Some(sample) = scan.sample() { samples.push(sample); }
+        let remaining = end.saturating_sub(clock.elapsed());
+        let sleep_ns = every_ns.min(remaining.as_nanos().min(u64::MAX as u128) as u64);
+        if sleep_ns == 0 { break; }
+        // SAFETY: `SDL_DelayNS` is thread-safe and uses the OS high-resolution waitable timer.
+        unsafe { sdl3_sys::everything::SDL_DelayNS(sleep_ns); }
+    }
+    samples
+}
+
+/// Collects scanline readings with [`collect`] (sleep-paced, near-0% CPU) and calibrates; only
+/// falls back to [`collect_precise`] when too few samples land in each refresh (e.g. >300 Hz).
+#[cfg(windows)]
+pub fn calibrate_scan(scan: &Scanline, window: Duration, every: Duration) -> Result<Beam, CalibrationError> {
+    let samples = collect(scan, window, every);
+    match calibrate(&samples, scan.rows()) {
+        Err(CalibrationError::NoScan | CalibrationError::Unsteady) => {
+            let samples = collect_precise(scan, window, every);
+            calibrate(&samples, scan.rows())
+        }
+        other => other,
+    }
+}
+
+/// Spin-paced fallback for ultra-high-refresh displays (>300 Hz) where a 0.5 ms OS timer cannot fit
+/// [`MIN_RUN`] samples inside a single refresh.
+#[cfg(windows)]
+pub fn collect_precise(scan: &Scanline, window: Duration, every: Duration) -> Vec<Sample> {
     let clock = scan.clock();
     let end = clock.elapsed() + window;
     let mut samples = Vec::with_capacity((window.as_nanos() / every.as_nanos().max(1)) as usize + 1);
