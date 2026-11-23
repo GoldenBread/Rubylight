@@ -34,7 +34,7 @@ public class ShortcutHelperContinueTest {
         Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
         boolean[] asked = {false};
         ShortcutHelper helper = new ShortcutHelper(activity) {
-            @Override void reportContinue(ComputerDetails computer, NvApp app) {
+            @Override void reportContinue(ComputerDetails computer, NvApp app, String artKey) {
                 asked[0] = true;
                 throw new IllegalStateException("the shortcut service went away");
             }
@@ -52,7 +52,7 @@ public class ShortcutHelperContinueTest {
         helper.createAppViewShortcut(pc("desk"), true, false);
         helper.reportContinue(pc("desk"), new NvApp("Dota 2", 7, false));
         helper.reportContinue(pc("desk"), new NvApp("Hades", 9, false));
-        helper.reportContinue(pc("lounge"), new NvApp("Celeste", 3, false));
+        helper.reportContinue(pc("lounge"), new NvApp("Celeste", 3, false), "3-6f1c2a2e-4f4b-4f6e-9a65-0f3cbb0d4d11");
 
         List<ShortcutInfo> shortcuts = manager.getDynamicShortcuts();
         ShortcutInfo cont = null;
@@ -67,5 +67,7 @@ public class ShortcutHelperContinueTest {
         assertEquals("Continue Celeste", cont.getShortLabel().toString());
         assertEquals(0, cont.getRank());
         assertEquals("lounge", cont.getIntent().getStringExtra(com.limelight.AppView.UUID_EXTRA));
+        assertEquals("3-6f1c2a2e-4f4b-4f6e-9a65-0f3cbb0d4d11",
+                cont.getIntent().getStringExtra(com.limelight.Game.EXTRA_APP_ART_KEY));
     }
 }

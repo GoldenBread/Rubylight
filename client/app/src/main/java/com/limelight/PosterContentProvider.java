@@ -69,8 +69,7 @@ public class PosterContentProvider extends ContentProvider {
         }
         String appId = segments.get(APP_ID_PATH_INDEX);
         String uuid = segments.get(COMPUTER_UUID_PATH_INDEX);
-        if (!appId.matches("-?[0-9]+(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?") ||
-                !uuid.matches("[0-9a-fA-F-]+")) {
+        if (!DiskAssetLoader.isValidCacheKey(appId) || !uuid.matches("[0-9a-fA-F-]+")) {
             throw new FileNotFoundException();
         }
         File file = mDiskAssetLoader.getFile(uuid, appId);

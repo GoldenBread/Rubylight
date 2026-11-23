@@ -3,8 +3,10 @@ package com.limelight.utils;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
@@ -19,13 +21,21 @@ import android.os.Build;
 import com.limelight.LimeLog;
 import com.limelight.PosterContentProvider;
 import com.limelight.R;
+import com.limelight.computers.HostCapabilityCache;
 import com.limelight.grid.assets.DiskAssetLoader;
 import com.limelight.grid.assets.PlaceholderArt;
+import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
+import com.limelight.nvstream.http.NvHTTP;
 
+import org.xmlpull.v1.XmlPullParserException;
+
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.StringReader;
+import java.util.List;
 
 public class TvChannelHelper {
 
@@ -33,6 +43,7 @@ public class TvChannelHelper {
     private static final int TYPE_GAME = 12;
     private static final int INTERNAL_PROVIDER_ID_INDEX = 1;
     private static final int PROGRAM_BROWSABLE_INDEX = 2;
+    private static final int POSTER_ART_URI_INDEX = 3;
     private static final int ID_INDEX = 0;
     private Activity context;
 
@@ -143,24 +154,158 @@ public class TvChannelHelper {
         return launch ? launchArtKey : appKey;
     }
 
-    private boolean cached(String uuid, String key) {
-        return key != null && !key.isEmpty() && new DiskAssetLoader(context).getFile(uuid, key).isFile();
+    private static boolean isCover(DiskAssetLoader disk, String uuid, String key) {
+        return DiskAssetLoader.isValidCacheKey(key) && PlaceholderArt.isCover(disk.getFile(uuid, key));
     }
 
-    void addGameToChannel(ComputerDetails computer, NvApp app, String launchArtKey) {
+    private static boolean isPlaceholder(DiskAssetLoader disk, String uuid, String key) {
+        if (!DiskAssetLoader.isValidCacheKey(key)) return false;
+        File file = disk.getFile(uuid, key);
+        return file.isFile() && PlaceholderArt.matches(file);
+    }
+
+    private static String pickNewerCover(DiskAssetLoader disk, String uuid, String first, String second) {
+        boolean firstCover = isCover(disk, uuid, first);
+        boolean secondCover = isCover(disk, uuid, second);
+        if (firstCover && secondCover) {
+            File f1 = disk.getFile(uuid, first);
+            File f2 = disk.getFile(uuid, second);
+            return f2.lastModified() > f1.lastModified() ? second : first;
+        }
+        if (firstCover) return first;
+        if (secondCover) return second;
+        return null;
+    }
+
+    private static String cachedAppListArtKey(Context context, String computerUuid, int appId, String appUuid) {
+        if (context == null || computerUuid == null || computerUuid.isEmpty()) return null;
+        if (!CacheHelper.cacheFileExists(context.getCacheDir(), "applist", computerUuid)) return null;
+        try {
+            String raw = CacheHelper.readInputStreamToString(
+                    CacheHelper.openCacheFileForInput(context.getCacheDir(), "applist", computerUuid));
+            if (raw.isEmpty()) return null;
+            NvApp idMatch = null;
+            for (NvApp candidate : NvHTTP.getAppListByReader(new StringReader(raw),
+                    HostCapabilityCache.load(context, computerUuid))) {
+                if (appUuid != null && !appUuid.isEmpty()
+                        && appUuid.equalsIgnoreCase(candidate.getAppUuid())) {
+                    return candidate.getAssetCacheKey();
+                }
+                if (idMatch == null && appId != 0 && candidate.getAppId() == appId) {
+                    idMatch = candidate;
+                }
+            }
+            return idMatch == null ? null : idMatch.getAssetCacheKey();
+        } catch (IOException | XmlPullParserException e) {
+            // No readable cached applist.
+        }
+        return null;
+    }
+
+    /** Extracts the cover key from one of this app's own PosterContentProvider URIs for {@code uuid}, or null. */
+    static String posterArtKeyFromUri(String uriString, String uuid) {
+        if (uriString == null || uriString.isEmpty() || uuid == null || uuid.isEmpty()) return null;
+        Uri uri = Uri.parse(uriString);
+        if (!ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())
+                || !PosterContentProvider.AUTHORITY.equals(uri.getAuthority())) {
+            return null;
+        }
+        List<String> segments = uri.getPathSegments();
+        if (segments.size() != 3 || !"boxart".equals(segments.get(0))) return null;
+        if (!uuid.equals(segments.get(1))) return null;
+        String key = segments.get(2);
+        return DiskAssetLoader.isValidCacheKey(key) ? key : null;
+    }
+
+    /**
+     * Resolves the cover cache key when launching a game through a shortcut, TV channel card, or
+     * frontend entry ({@code ShortcutTrampoline}). A shortcut's {@link NvApp} is rebuilt without the
+     * host's cover version, so without this a subsequent launch from a TV channel card passes an
+     * unversioned key and overwrites the card's cover art with the title-only poster (nightjar#130).
+     */
+    public static String resolveShortcutArtKey(Context context, String computerUuid, NvApp app,
+                                               int fallbackAppId, String incomingArtKey) {
+        String validIncoming = DiskAssetLoader.isValidCacheKey(incomingArtKey) ? incomingArtKey : null;
+        String appKey = app.getAssetCacheKey();
+        if (context == null || computerUuid == null || computerUuid.isEmpty()) {
+            return validIncoming != null ? validIncoming : appKey;
+        }
+        int lookupAppId = app.getAppId() != 0 ? app.getAppId() : fallbackAppId;
+        DiskAssetLoader disk = new DiskAssetLoader(context);
+        ConsoleRepository.CachedLibraryCover libraryCover =
+                ConsoleRepository.findCachedLibraryCover(context, computerUuid, lookupAppId, app.getAppUuid());
+        String libraryKey = libraryCover == null ? null : libraryCover.artKey;
+        String appListKey = cachedAppListArtKey(context, computerUuid, lookupAppId, app.getAppUuid());
+
+        // Prefer the current library/applist cover when cached on disk so cover updates on the host
+        // flow into existing shortcuts as well.
+        String cachedFromMeta = pickNewerCover(disk, computerUuid, libraryKey, appListKey);
+        if (cachedFromMeta != null) return cachedFromMeta;
+
+        if (isCover(disk, computerUuid, validIncoming)) return validIncoming;
+        if (isCover(disk, computerUuid, appKey)) return appKey;
+
+        boolean explicitlyNoCover = (libraryCover != null && libraryCover.explicitlyNoCover)
+                || isPlaceholder(disk, computerUuid, validIncoming);
+        if (!explicitlyNoCover) {
+            String diskKey = disk.findCachedCoverKey(computerUuid, lookupAppId);
+            if (diskKey != null) return diskKey;
+        }
+
+        if (DiskAssetLoader.isValidCacheKey(libraryKey)) return libraryKey;
+        if (DiskAssetLoader.isValidCacheKey(appListKey)) return appListKey;
+        return validIncoming != null ? validIncoming : appKey;
+    }
+
+    /**
+     * Resolves the cover key to store on a TV channel card, keeping the fast path when
+     * {@code launchArtKey} already names a cached cover, and otherwise recovering from saved
+     * libraries, the card's existing poster URI, or the on-disk cover cache.
+     */
+    static String resolveChannelArtKey(Context context, String computerUuid, NvApp app,
+                                       String launchArtKey, String existingPosterArtKey) {
+        String validLaunch = DiskAssetLoader.isValidCacheKey(launchArtKey) ? launchArtKey : null;
+        String validExisting = DiskAssetLoader.isValidCacheKey(existingPosterArtKey) ? existingPosterArtKey : null;
+        String appKey = app.getAssetCacheKey();
+        DiskAssetLoader disk = new DiskAssetLoader(context);
+
+        if (isCover(disk, computerUuid, validLaunch)) return validLaunch;
+        if (isCover(disk, computerUuid, appKey)) return appKey;
+
+        ConsoleRepository.CachedLibraryCover libraryCover =
+                ConsoleRepository.findCachedLibraryCover(context, computerUuid, app.getAppId(), app.getAppUuid());
+        String libraryKey = libraryCover == null ? null : libraryCover.artKey;
+        String appListKey = cachedAppListArtKey(context, computerUuid, app.getAppId(), app.getAppUuid());
+        String cachedFromMeta = pickNewerCover(disk, computerUuid, libraryKey, appListKey);
+        if (cachedFromMeta != null) return cachedFromMeta;
+
+        boolean explicitlyNoCover = (libraryCover != null && libraryCover.explicitlyNoCover)
+                || isPlaceholder(disk, computerUuid, validLaunch);
+        if (!explicitlyNoCover) {
+            if (isCover(disk, computerUuid, validExisting)) return validExisting;
+            String diskKey = disk.findCachedCoverKey(computerUuid, app.getAppId());
+            if (diskKey != null) return diskKey;
+        }
+
+        if (DiskAssetLoader.isValidCacheKey(libraryKey)) return libraryKey;
+        if (DiskAssetLoader.isValidCacheKey(appListKey)) return appListKey;
+        return posterArtKey(validLaunch, appKey, false, false);
+    }
+
+    String addGameToChannel(ComputerDetails computer, NvApp app, String launchArtKey) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!isAndroidTV()) {
-                return;
+                return null;
             }
-
 
             Long channelId = getChannelId(computer.uuid);
             if (channelId == null) {
-                return;
+                return null;
             }
 
-            String appKey = app.getAssetCacheKey();
-            String artKey = posterArtKey(launchArtKey, appKey, cached(computer.uuid, launchArtKey), cached(computer.uuid, appKey));
+            ExistingProgram existing = getExistingProgram(channelId, ""+app.getAppId());
+            String existingArtKey = existing == null ? null : posterArtKeyFromUri(existing.posterArtUri, computer.uuid);
+            String artKey = resolveChannelArtKey(context, computer.uuid, app, launchArtKey, existingArtKey);
             // A game without a cover of its own gets a poster with its title: the TV home screen
             // draws a poster it cannot open as an empty grey card.
             if (!PlaceholderArt.isCover(new DiskAssetLoader(context).getFile(computer.uuid, artKey))) {
@@ -177,16 +322,15 @@ public class TvChannelHelper {
                     .setTitle(app.getAppName())
                     .setPosterArtAspectRatio(ASPECT_RATIO_MOVIE_POSTER)
                     .setPosterArtUri(PosterContentProvider.createBoxArtUri(computer.uuid, artKey))
-                    .setIntent(ServerHelper.createAppShortcutIntent(context, computer, app))
+                    .setIntent(ServerHelper.createAppShortcutIntent(context, computer, app, artKey))
                     .setInternalProviderId(""+app.getAppId())
                     // Weight should increase each time we run the game
                     .setWeight((int)((System.currentTimeMillis() - 1500000000000L) / 1000));
 
-            Long programId = getProgramId(channelId, ""+app.getAppId());
-            if (programId != null) {
-                context.getContentResolver().update(TvContract.buildPreviewProgramUri(programId),
+            if (existing != null) {
+                context.getContentResolver().update(TvContract.buildPreviewProgramUri(existing.id),
                         builder.toContentValues(), null, null);
-                return;
+                return artKey;
             }
 
             try {
@@ -196,11 +340,13 @@ public class TvChannelHelper {
                 // This can happen on HarmonyOS devices which report to
                 // support Leanback APIs, yet don't implement this URI
                 e.printStackTrace();
-                return;
+                return artKey;
             }
 
             TvContract.requestChannelBrowsable(context, channelId);
+            return artKey;
         }
+        return null;
     }
 
     void deleteChannel(ComputerDetails computer) {
@@ -230,12 +376,22 @@ public class TvChannelHelper {
             }
 
 
-            Long programId = getProgramId(channelId, ""+app.getAppId());
-            if (programId == null) {
+            ExistingProgram existing = getExistingProgram(channelId, ""+app.getAppId());
+            if (existing == null) {
                 return;
             }
 
-            context.getContentResolver().delete(TvContract.buildPreviewProgramUri(programId), null, null);
+            context.getContentResolver().delete(TvContract.buildPreviewProgramUri(existing.id), null, null);
+        }
+    }
+
+    private static final class ExistingProgram {
+        final long id;
+        final String posterArtUri;
+
+        ExistingProgram(long id, String posterArtUri) {
+            this.id = id;
+            this.posterArtUri = posterArtUri;
         }
     }
 
@@ -262,10 +418,15 @@ public class TvChannelHelper {
     }
 
     @TargetApi(Build.VERSION_CODES.O)
-    private Long getProgramId(long channelId, String appId) {
+    private ExistingProgram getExistingProgram(long channelId, String appId) {
         try (Cursor cursor = context.getContentResolver().query(
                 TvContract.buildPreviewProgramsUriForChannel(channelId),
-                new String[] {TvContract.PreviewPrograms._ID, TvContract.PreviewPrograms.COLUMN_INTERNAL_PROVIDER_ID, TvContract.PreviewPrograms.COLUMN_BROWSABLE},
+                new String[] {
+                        TvContract.PreviewPrograms._ID,
+                        TvContract.PreviewPrograms.COLUMN_INTERNAL_PROVIDER_ID,
+                        TvContract.PreviewPrograms.COLUMN_BROWSABLE,
+                        TvContract.PreviewPrograms.COLUMN_POSTER_ART_URI
+                },
                 null,
                 null,
                 null)) {
@@ -278,7 +439,9 @@ public class TvChannelHelper {
                     long id = cursor.getLong(ID_INDEX);
                     int browsable = cursor.getInt(PROGRAM_BROWSABLE_INDEX);
                     if (browsable != 0) {
-                        return id;
+                        String posterUri = cursor.getColumnCount() > POSTER_ART_URI_INDEX && !cursor.isNull(POSTER_ART_URI_INDEX)
+                                ? cursor.getString(POSTER_ART_URI_INDEX) : null;
+                        return new ExistingProgram(id, posterUri);
                     } else {
                         int countDeleted = context.getContentResolver().delete(TvContract.buildPreviewProgramUri(id), null, null);
                         if (countDeleted > 0) {

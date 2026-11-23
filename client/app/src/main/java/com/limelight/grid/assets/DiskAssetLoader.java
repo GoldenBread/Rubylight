@@ -28,6 +28,15 @@ public class DiskAssetLoader {
     // backdrop at the box's 450 px height. A 32:9 banner would otherwise decode at 1600x450, about 2.9 MB.
     static final int MAX_DECODED_SIDE = 800;
 
+    private static final String UUID_SUFFIX_REGEX =
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+    private static final String CACHE_KEY_REGEX = "-?[0-9]+(?:-" + UUID_SUFFIX_REGEX + ")?";
+
+    /** True when {@code key} has the shape of {@link com.limelight.nvstream.http.NvApp#getAssetCacheKey()}. */
+    public static boolean isValidCacheKey(String key) {
+        return key != null && key.matches(CACHE_KEY_REGEX);
+    }
+
     private final boolean isLowRamDevice;
     private final File cacheDir;
 
@@ -185,6 +194,52 @@ public class DiskAssetLoader {
 
     public File getFile(String computerUuid, String cacheKey) {
         return CacheHelper.openPath(false, cacheDir, "boxart", computerUuid, cacheKey + ".png");
+    }
+
+    /**
+     * The newest real cover cached on disk for {@code (computerUuid, appId)} ({@code <appId>.png} or
+     * {@code <appId>-<uuid>.png}), skipping the host's grey placeholder, or null when none is cached.
+     */
+    public String findCachedCoverKey(String computerUuid, int appId) {
+        if (computerUuid == null || computerUuid.isEmpty() || appId == 0) {
+            return null;
+        }
+        File dir = CacheHelper.openPath(false, cacheDir, "boxart", computerUuid);
+        File[] files = dir.listFiles();
+        if (files == null || files.length == 0) {
+            return null;
+        }
+        String exactName = appId + ".png";
+        String versionPrefix = appId + "-";
+        File best = null;
+        String bestKey = null;
+        for (File file : files) {
+            String name = file.getName();
+            if (!name.endsWith(".png")) {
+                continue;
+            }
+            String key;
+            if (name.equals(exactName)) {
+                key = Integer.toString(appId);
+            } else if (name.startsWith(versionPrefix)) {
+                String suffix = name.substring(versionPrefix.length(), name.length() - 4);
+                if (!suffix.matches(UUID_SUFFIX_REGEX)) {
+                    continue;
+                }
+                key = name.substring(0, name.length() - 4);
+            } else {
+                continue;
+            }
+            if (!PlaceholderArt.isCover(file)) {
+                continue;
+            }
+            if (best == null || file.lastModified() > best.lastModified() ||
+                    (file.lastModified() == best.lastModified() && key.compareTo(bestKey) > 0)) {
+                best = file;
+                bestKey = key;
+            }
+        }
+        return bestKey;
     }
 
     public void deleteAssetsForComputer(String computerUuid) {

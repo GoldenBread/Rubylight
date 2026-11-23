@@ -93,22 +93,26 @@ public class ShortcutHelper {
     /** {@code artKey}: the launch's cover key ({@code Game.EXTRA_APP_ART_KEY}), or null. */
     public void reportGameLaunched(ComputerDetails computer, NvApp app, String artKey) {
         tvChannelHelper.createTvChannel(computer);
-        tvChannelHelper.addGameToChannel(computer, app, artKey);
+        String resolvedArtKey = tvChannelHelper.addGameToChannel(computer, app, artKey);
         if (app.getRole() == NvApp.Role.STREAM) {
             // A convenience: the system's shortcut service failing must not stop the stream being started.
             try {
-                reportContinue(computer, app);
+                reportContinue(computer, app, resolvedArtKey != null ? resolvedArtKey : artKey);
             } catch (RuntimeException e) {
                 LimeLog.warning("Could not update the Continue shortcut: " + e);
             }
         }
     }
 
+    void reportContinue(ComputerDetails computer, NvApp app) {
+        reportContinue(computer, app, null);
+    }
+
     /**
      * Long-pressing the app icon offers the last game first. Its id starts with the PC's, so removing the PC takes
      * it along ({@link #disableComputerShortcut}); there is one, so the previous PC's goes when another PC plays.
      */
-    void reportContinue(ComputerDetails computer, NvApp app) {
+    void reportContinue(ComputerDetails computer, NvApp app, String artKey) {
         String id = computer.uuid + CONTINUE_SUFFIX;
         List<String> others = new ArrayList<>();
         for (ShortcutInfo info : sm.getDynamicShortcuts()) {
@@ -117,7 +121,7 @@ public class ShortcutHelper {
         if (!others.isEmpty()) sm.removeDynamicShortcuts(others);
         String label = context.getString(R.string.open_play_continue, app.getAppName());
         ShortcutInfo info = new ShortcutInfo.Builder(context, id)
-                .setIntent(ServerHelper.createAppShortcutIntent(context, computer, app))
+                .setIntent(ServerHelper.createAppShortcutIntent(context, computer, app, artKey))
                 .setShortLabel(label)
                 .setLongLabel(label)
                 .setIcon(Icon.createWithResource(context, R.mipmap.ic_pc_scut))

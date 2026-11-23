@@ -37,6 +37,7 @@ import com.limelight.ui.NavigationDialogBuilder;
 import com.limelight.utils.ServerHelper;
 import com.limelight.utils.ShortcutHelper;
 import com.limelight.utils.SpinnerDialog;
+import com.limelight.utils.TvChannelHelper;
 import com.limelight.utils.UiHelper;
 
 import org.xmlpull.v1.XmlPullParserException;
@@ -56,6 +57,7 @@ public class ShortcutTrampoline extends Activity {
     // A shortcut's or frontend's start, and the app that sent it: the stream logs it.
     private String launchSource = LaunchSource.SHORTCUT;
     private NvApp app;
+    private String appArtKey;
     private ArrayList<Intent> intentStack = new ArrayList<>();
 
     private ComputerDetails computer;
@@ -224,6 +226,15 @@ public class ShortcutTrampoline extends Activity {
         managerBinder = null;
     }
 
+    private Intent createGameStartIntent(ComputerDetails details) {
+        Intent startIntent = ServerHelper.createStartIntent(ShortcutTrampoline.this, app, details,
+                managerBinder, launchSource);
+        if (appArtKey != null && !appArtKey.isEmpty()) {
+            startIntent.putExtra(Game.EXTRA_APP_ART_KEY, appArtKey);
+        }
+        return startIntent;
+    }
+
     /** Launches, or says why not, once the PC answered or the wait for it is over; then lets go of the manager. */
     private void finishWith(ComputerDetails details) {
         if (waker != null) {
@@ -249,8 +260,7 @@ public class ShortcutTrampoline extends Activity {
                 if (details.runningGameId == 0 || app.getControl() != NvApp.Control.NONE ||
                         details.caps.has(HostCapabilities.Feature.HOST_CONFIRMS_REPLACEMENT) ||
                         app.matchesRunningApp(details.runningGameId, details.runningGameUuid)) {
-                    intentStack.add(ServerHelper.createStartIntent(ShortcutTrampoline.this, app, details, managerBinder,
-                            launchSource));
+                    intentStack.add(createGameStartIntent(details));
 
                     // Close this activity
                     finish();
@@ -260,8 +270,7 @@ public class ShortcutTrampoline extends Activity {
                 } else {
                     // Create the start intent immediately, so we can safely unbind the managerBinder
                     // below before we return.
-                    final Intent startIntent = ServerHelper.createStartIntent(ShortcutTrampoline.this, app, details,
-                            managerBinder, launchSource);
+                    final Intent startIntent = createGameStartIntent(details);
 
                     UiHelper.displayQuitConfirmationDialog(ShortcutTrampoline.this, new Runnable() {
                         @Override
@@ -456,6 +465,9 @@ public class ShortcutTrampoline extends Activity {
             return;
         }
 
+        int fallbackAppId = (appIdString != null && !appIdString.isEmpty()) ? Integer.parseInt(appIdString) : 0;
+        String incomingArtKey = getIntent().getStringExtra(Game.EXTRA_APP_ART_KEY);
+
         if (uuidString == null || uuidString.isEmpty()) {
             // Use nameString to find the corresponding UUID
             ComputerDetails _computer;
@@ -532,6 +544,13 @@ public class ShortcutTrampoline extends Activity {
                 // No readable list of the PC's games: its library loads it again.
                 gameGone();
                 return;
+            }
+        }
+
+        if (app != null) {
+            appArtKey = TvChannelHelper.resolveShortcutArtKey(this, uuidString, app, fallbackAppId, incomingArtKey);
+            if (appArtKey != null && !appArtKey.isEmpty()) {
+                setIntent(new Intent(getIntent()).putExtra(Game.EXTRA_APP_ART_KEY, appArtKey));
             }
         }
 

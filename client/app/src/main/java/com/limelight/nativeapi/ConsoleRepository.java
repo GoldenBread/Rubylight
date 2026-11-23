@@ -134,6 +134,55 @@ public final class ConsoleRepository {
         return new FileLibraryCache(libraryDirectory(context.getApplicationContext())).load(hostUuid) != null;
     }
 
+    /** A game's cover entry from the host's saved native library. */
+    public static final class CachedLibraryCover {
+        /** True when the saved library explicitly listed this game with no cover of its own. */
+        public final boolean explicitlyNoCover;
+        /** The cover cache key matching {@code CoverLoaders.appOf}, or null when the game has none. */
+        public final String artKey;
+
+        private CachedLibraryCover(boolean explicitlyNoCover, String artKey) {
+            this.explicitlyNoCover = explicitlyNoCover;
+            this.artKey = artKey;
+        }
+    }
+
+    /**
+     * Looks up an added game in this host's saved native library to recover its cover cache key
+     * (matching {@code CoverLoaders.appOf}), or null when no saved library lists the game.
+     */
+    public static CachedLibraryCover findCachedLibraryCover(Context context, String hostUuid, int appId, String installId) {
+        if (context == null || hostUuid == null || hostUuid.isEmpty()) return null;
+        LibraryCache.Entry stored = new FileLibraryCache(libraryDirectory(context.getApplicationContext())).load(hostUuid);
+        if (stored == null) return null;
+        try {
+            NativeLibrary library = NativeLibrary.parse(new JSONObject(stored.libraryJson));
+            NativeLibrary.Game matched = null;
+            for (NativeLibrary.Game game : library.games) {
+                if (!game.added) continue;
+                if (installId != null && !installId.isEmpty() && installId.equalsIgnoreCase(game.installId)) {
+                    matched = game;
+                    break;
+                }
+                if (matched == null && appId != 0 && game.appId == appId) {
+                    matched = game;
+                }
+            }
+            if (matched != null) {
+                if (matched.coverPath == null && (matched.coverVersion == null || matched.coverVersion.isEmpty())) {
+                    return new CachedLibraryCover(true, null);
+                }
+                // Matches CoverLoaders.appOf: native sources have empty appUuid and coverVersion as artVersion.
+                NvApp listed = new NvApp(matched.title, matched.appId, false);
+                listed.setArtVersion(matched.coverVersion == null ? "" : matched.coverVersion);
+                return new CachedLibraryCover(false, listed.getAssetCacheKey());
+            }
+        } catch (JSONException e) {
+            LimeLog.warning("Unreadable cached library for " + hostUuid + ": " + e.getMessage());
+        }
+        return null;
+    }
+
     /** Drops what the app stores for a removed host without needing a repository. */
     public static void forgetHost(Context context, String hostUuid) {
         Context app = context.getApplicationContext();

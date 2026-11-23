@@ -79,6 +79,10 @@ public class ServerHelper {
     }
 
     public static Intent createAppShortcutIntent(Activity parent, ComputerDetails computer, NvApp app) {
+        return createAppShortcutIntent(parent, computer, app, null);
+    }
+
+    public static Intent createAppShortcutIntent(Activity parent, ComputerDetails computer, NvApp app, String artKey) {
         Intent i = new Intent(parent, ShortcutTrampoline.class);
         i.putExtra(AppView.NAME_EXTRA, computer.displayName());
         i.putExtra(AppView.UUID_EXTRA, computer.uuid);
@@ -87,6 +91,11 @@ public class ServerHelper {
         i.putExtra(Game.EXTRA_APP_HDR, app.isHdrSupported());
         i.putExtra(Game.EXTRA_APP_UUID, app.getAppUuid());
         i.putExtra(Game.EXTRA_MONITOR_RESUME, app.getRole() == NvApp.Role.REMOTE_MONITOR);
+        String resolvedArtKey = com.limelight.grid.assets.DiskAssetLoader.isValidCacheKey(artKey) ? artKey
+                : (!app.getArtVersion().isEmpty() ? app.getAssetCacheKey() : null);
+        if (resolvedArtKey != null) {
+            i.putExtra(Game.EXTRA_APP_ART_KEY, resolvedArtKey);
+        }
         i.setAction(Intent.ACTION_DEFAULT);
         return i;
     }

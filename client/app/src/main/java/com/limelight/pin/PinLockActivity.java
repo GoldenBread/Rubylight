@@ -123,6 +123,10 @@ public class PinLockActivity extends NightjarActivity {
             String value = incoming.getStringExtra(key);
             if (value != null) again.putExtra(key, value);
         }
+        String artKey = incoming.getStringExtra(Game.EXTRA_APP_ART_KEY);
+        if (com.limelight.grid.assets.DiskAssetLoader.isValidCacheKey(artKey)) {
+            again.putExtra(Game.EXTRA_APP_ART_KEY, artKey);
+        }
         for (String key : new String[] {Game.EXTRA_APP_HDR, Game.EXTRA_MONITOR_RESUME}) {
             if (incoming.hasExtra(key)) again.putExtra(key, incoming.getBooleanExtra(key, false));
         }
