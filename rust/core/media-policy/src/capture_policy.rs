@@ -104,6 +104,10 @@ pub struct Freshness {
     picture_median: Option<u64>,
     picture_mean: Option<u64>,
     picture_late: Option<u64>,
+    /// When the latest counted source picture was captured, and whether the
+    /// latest observation counted as a new source picture (`new_source_picture`).
+    source_picture: Option<u64>,
+    new_source_picture: bool,
     /// The latest capture that changed the focus window, the first capture
     /// of its latest picture and the interval before that picture, and
     /// whether the latest capture only extends the focus window's latest
@@ -239,6 +243,20 @@ impl Freshness {
     pub fn extends_picture(&self) -> bool {
         self.extends
     }
+    /// Whether the latest observation counted as a new source picture for
+    /// pipeline frame-rate reporting (`source_fps`).
+    ///
+    /// Like [`Self::picture_start`], this skips constant-rate repeats, updates
+    /// outside an animating focus window, and a duplicate composition within
+    /// `PICTURE_GAP` of the picture's start. Unlike `picture_start`, it bounds
+    /// the merge window to `PICTURE_GAP` from the counted picture rather than
+    /// chaining across `self.last`: a continuous >500 Hz capture (such as a
+    /// 576 Hz or 1000 Hz virtual display, or uncapped Desktop Duplication)
+    /// still leaves `picture_interval` as `None` for pacing, without collapsing
+    /// `source_fps` to zero or random >2 ms jitter gaps.
+    pub fn new_source_picture(&self) -> bool {
+        self.new_source_picture
+    }
     pub fn observe(&mut self, captured: u64, delay: u64) {
         self.observe_focus(captured, delay, None);
     }
@@ -255,10 +273,12 @@ impl Freshness {
     /// focus window (typing, a caret, a terminal printing) leaves every update
     /// a picture of its own, as without the distinction.
     pub fn observe_focus(&mut self, captured: u64, delay: u64, focus: Option<bool>) {
+        let same_timestamp = self.last == Some(captured);
         let mut same_picture = self.record(captured, delay);
         // A real capture after a repeat is a new picture of the game, however
         // soon it comes: a game frame can land within 2 ms of a repeat.
-        if std::mem::take(&mut self.repeated) {
+        let was_repeated = std::mem::take(&mut self.repeated);
+        if was_repeated {
             same_picture = false;
         }
         self.extends = false;
@@ -304,6 +324,17 @@ impl Freshness {
             }
             _ => {}
         }
+        let new_picture = !self.extends
+            && !same_timestamp
+            && (was_repeated
+                || !same_picture
+                || self
+                    .source_picture
+                    .is_none_or(|at| captured.saturating_sub(at) >= Self::PICTURE_GAP));
+        self.new_source_picture = new_picture;
+        if new_picture {
+            self.source_picture = Some(captured);
+        }
         self.published(captured, same_picture);
     }
     /// Observe a picture a constant-rate capture published again at the
@@ -315,6 +346,7 @@ impl Freshness {
     pub fn observe_repeat(&mut self, captured: u64, delay: u64) {
         self.record(captured, delay);
         self.extends = false;
+        self.new_source_picture = false;
         self.focus_at = None;
         self.focus_start = None;
         self.focus_interval = None;
@@ -342,6 +374,9 @@ impl Freshness {
                 self.focus_at = None;
                 self.focus_start = None;
                 self.focus_interval = None;
+                if captured != previous {
+                    self.source_picture = None;
+                }
             }
         }
         same_picture

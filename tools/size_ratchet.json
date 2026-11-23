@@ -188,7 +188,6 @@
     "rust/core/media-policy/src/packet/streamed_tests.rs": 828,
     "rust/core/media-policy/src/packet/tests.rs": 1488,
     "rust/core/media-policy/src/performance/tests.rs": 827,
-    "rust/core/media-policy/src/pipeline_rates.rs": 1012,
     "rust/core/media-policy/src/pyrowave.rs": 1047,
     "rust/core/media-policy/src/stream_policy.rs": 1770,
     "rust/core/media-policy/src/stream_policy/tests.rs": 3893,

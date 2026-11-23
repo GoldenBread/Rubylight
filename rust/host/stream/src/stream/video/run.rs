@@ -175,6 +175,7 @@ impl SessionThread<'_> {
         // Whether the game or desktop delivers the stream's rate, over the
         // same 5 s windows.
         let mut source_rate = butterpollo_media_policy::pipeline_rates::SourceRate::default();
+        let mut warned_virtual_display = false;
         // The refresh rate the stream's display last had, to say when it changes.
         let mut display_refresh_mhz: Option<u32> = None;
         // The stream's stutter report over the windows that ended. This thread
@@ -900,7 +901,8 @@ impl SessionThread<'_> {
                         // samples and runs before the INFO-only timing line.
                         let rates = pipeline_log.sample(now, s.pipeline_counts(), Duration::from_secs(5));
                         let pipeline = rates.as_ref().map(butterpollo_media_policy::pipeline_rates::PipelineRates::from);
-                        let source_mhz = pipeline.as_ref().and_then(|rates| rates.source_mhz);
+                        let raw_source_mhz = pipeline.as_ref().and_then(|r| r.source_mhz);
+                        let capture_mhz = pipeline.as_ref().and_then(|r| r.capture_mhz);
                         // What the stream can show: its own rate, or the
                         // captured display's where that is lower (read above).
                         // The source rate against what the stream can show. A
@@ -908,25 +910,31 @@ impl SessionThread<'_> {
                         // number hides. A new warning or a re-word writes one
                         // WARN line; `SourceRate` limits re-words to one per
                         // 60 s (`REWORD`).
-                        if let Some(change) = source_rate.window(now, stream.fps_millihz(), display_mhz, source_mhz) {
-                            use butterpollo_media_policy::pipeline_rates::{SourceRateWarning, below_message};
+                        if let Some(change) = source_rate.window(now, stream.fps_millihz(), display_mhz, raw_source_mhz) {
+                            use butterpollo_media_policy::pipeline_rates::{SourceRateWarning, below_message, virtual_display_limited};
                             match change {
                                 SourceRateWarning::Below { source_mhz, limit_mhz } => {
-                                    // `idd-push` captures Rubylight's virtual display: a low rate
-                                    // can come from the display's frame delivery or the game.
-                                    let pushed = backend == "idd-push";
+                                    // Blame `idd-push` only when `capture_fps` itself is low, not paired frames (< 2 ms).
+                                    let pushed = virtual_display_limited(
+                                        backend == "idd-push",
+                                        capture_mhz,
+                                        raw_source_mhz.unwrap_or(source_mhz),
+                                        limit_mhz,
+                                    );
+                                    warned_virtual_display = pushed;
+                                    let reason = if pushed {
+                                        "the virtual display capture is below the stream's frame rate"
+                                    } else {
+                                        "the game or desktop is the frame-rate limit"
+                                    };
                                     tracing::warn!(
                                         client = %s.launch.client.name,
                                         source_fps = source_mhz / 1000,
+                                        capture_fps = capture_mhz.map(|mhz| mhz as f64 / 1000.),
                                         stream_fps = stream.fps_millihz() as f64 / 1000.,
                                         display_fps = display_mhz.map(|mhz| mhz as f64 / 1000.),
                                         capture = backend,
-                                        "{}",
-                                        if pushed {
-                                            "the virtual display capture is below the stream's frame rate"
-                                        } else {
-                                            "the game or desktop is the frame-rate limit"
-                                        }
+                                        "{reason}"
                                     );
                                     let message = below_message(
                                         pushed,
@@ -938,15 +946,15 @@ impl SessionThread<'_> {
                                 }
                                 SourceRateWarning::Cleared => {
                                     s.launch.warnings.clear("source_frame_rate");
+                                    let msg = if std::mem::take(&mut warned_virtual_display) {
+                                        "the virtual display keeps up with the stream's frame rate again"
+                                    } else {
+                                        "the game or desktop keeps up with the stream's frame rate again"
+                                    };
                                     tracing::info!(
                                         client = %s.launch.client.name,
                                         capture = backend,
-                                        "{}",
-                                        if backend == "idd-push" {
-                                            "the virtual display keeps up with the stream's frame rate again"
-                                        } else {
-                                            "the game or desktop keeps up with the stream's frame rate again"
-                                        }
+                                        "{msg}"
                                     );
                                 }
                             }

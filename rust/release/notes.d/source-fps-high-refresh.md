@@ -1,0 +1,2 @@
+# Source frame rate
+- **Accurate `source_fps` and virtual-display warnings on high-refresh captures.** Captures faster than 500 Hz (such as 576 Hz and 1000 Hz virtual displays or uncapped Desktop Duplication) no longer collapse `source_fps` by chaining consecutive `< 2 ms` intervals together, and `idd-push` streams no longer blame Rubylight's virtual display for a low frame rate when `capture_fps` itself is keeping up or delivering paired frames at a higher rate.

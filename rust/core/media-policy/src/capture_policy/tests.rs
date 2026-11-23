@@ -500,6 +500,79 @@ fn a_second_composition_of_a_picture_does_not_shorten_the_picture_interval() {
     assert_eq!(cadence.picture_start(), Some(1));
 }
 #[test]
+fn high_refresh_captures_count_source_pictures_without_chaining_below_two_ms() {
+    let ms = 1_000_000;
+    // 1000 Hz virtual display (1 ms spacing): picture_interval stays None for
+    // pacing, but source_fps counting must not collapse to 1 picture total.
+    let mut hz1000 = Freshness::default();
+    let mut counted = 0u64;
+    for tick in 0..1000u64 {
+        hz1000.observe(tick * ms, 100_000);
+        if hz1000.new_source_picture() {
+            counted += 1;
+        }
+    }
+    assert_eq!(hz1000.picture_interval(), None);
+    assert_eq!(counted, 500);
+
+    // 576 Hz virtual display (1.736 ms spacing): every second capture crosses
+    // the 2 ms merge window instead of chaining indefinitely.
+    let mut hz576 = Freshness::default();
+    let mut counted = 0u64;
+    for tick in 0..576u64 {
+        hz576.observe(tick * 1_736_111, 100_000);
+        if hz576.new_source_picture() {
+            counted += 1;
+        }
+    }
+    assert_eq!(hz576.picture_interval(), None);
+    assert_eq!(counted, 288);
+
+    // WGC 60 Hz game with a second composition 0.5 ms later (and even a third
+    // 1.2 ms after the first) still counts once per game frame.
+    let mut wgc = Freshness::default();
+    let mut counted = 0u64;
+    for frame in 0..60u64 {
+        let base = 1_000_000_000 + frame * 16_666_667;
+        for offset in [0, 500_000, 1_200_000] {
+            wgc.observe(base + offset, 100_000);
+            if wgc.new_source_picture() {
+                counted += 1;
+            }
+        }
+    }
+    assert_eq!(counted, 60);
+
+    // Identical timestamps never double-count; repeats never count; a real
+    // capture 1 ms after a repeat counts, and its duplicate 1 ms later does not.
+    let mut edge = Freshness::default();
+    edge.observe(10 * ms, 100_000);
+    assert!(edge.new_source_picture());
+    edge.observe(10 * ms, 100_000);
+    assert!(!edge.new_source_picture());
+    edge.observe_repeat(15 * ms, 100_000);
+    assert!(!edge.new_source_picture());
+    edge.observe(16 * ms, 100_000);
+    assert!(edge.new_source_picture());
+    edge.observe(17 * ms, 100_000);
+    assert!(!edge.new_source_picture());
+
+    // Background window updates beside an animating focus window do not count.
+    let mut focused = Freshness::default();
+    for frame in 0..40u64 {
+        focused.observe_focus((1000 + 16 * frame) * ms, 100_000, Some(true));
+        assert!(focused.new_source_picture());
+    }
+    let mut bg_counted = 0u64;
+    for offset in [4, 8, 12] {
+        focused.observe_focus((1000 + 16 * 39 + offset) * ms, 100_000, Some(false));
+        if focused.new_source_picture() {
+            bg_counted += 1;
+        }
+    }
+    assert_eq!(bg_counted, 0);
+}
+#[test]
 fn predictive_polling_is_bounded_and_static_or_irregular_sources_use_normal_waits() {
     let mut cadence = learned(8_333_333);
     assert_eq!(cadence.poll_wait(2_000_000, 1_000_000), 1_000_000);

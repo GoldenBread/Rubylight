@@ -503,3 +503,28 @@ fn a_shared_capture_publishes_for_its_fastest_stream() -> Result<()> {
     assert_eq!(latest.repeat_period(fallback), fallback);
     Ok(())
 }
+
+#[test]
+fn high_refresh_captures_still_advance_picture_counts_while_preserving_wgc_pairing() -> Result<()> {
+    let start = Instant::now();
+    // 1000 Hz capture (1 ms spacing): pictures advance every 2 ms instead of
+    // sticking at 1, while pacing still sees no picture cadence.
+    let fast = Latest::<u8>::new();
+    for tick in 0..100u64 {
+        fast.publish_captured(Arc::new(tick as u8), start + Duration::from_millis(tick))?;
+    }
+    let (_, pictures, captures) = fast.frame_counts();
+    assert_eq!((pictures, captures), (50, 100));
+    assert_eq!(fast.pacing_snapshot().picture_interval, None);
+
+    // WGC 60 Hz with 0.5 ms second compositions still counts 1 picture per pair.
+    let paired = Latest::<u8>::new();
+    for frame in 0..30u64 {
+        let base = start + Duration::from_micros(frame * 16_667);
+        paired.publish_captured(Arc::new(1), base)?;
+        paired.publish_captured(Arc::new(2), base + Duration::from_micros(500))?;
+    }
+    let (_, pictures, captures) = paired.frame_counts();
+    assert_eq!((pictures, captures), (30, 60));
+    Ok(())
+}

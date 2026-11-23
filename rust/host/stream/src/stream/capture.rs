@@ -141,8 +141,8 @@ pub(super) struct Latest<T> {
     origin: Instant,
     trace_source_id: u64,
     recovering: AtomicBool,
-    /// Running counts of publications and of the pictures among them (see
-    /// `Freshness::picture_interval`), for the pipeline frame rates.
+    /// Running counts of publications and of the source pictures among them
+    /// (see `Freshness::new_source_picture`), for the pipeline frame rates.
     captures: AtomicU64,
     pictures: AtomicU64,
 }
@@ -332,7 +332,6 @@ impl<T> Latest<T> {
             return Ok(false);
         }
         state.recovery.captured = true;
-        let picture = state.cadence.picture_start();
         let (captured_ns, delay_ns) = (
             nanos(captured.saturating_duration_since(self.origin)),
             nanos(now.saturating_duration_since(captured)),
@@ -343,7 +342,7 @@ impl<T> Latest<T> {
             state.cadence.observe_focus(captured_ns, delay_ns, focus);
         }
         self.captures.fetch_add(1, Ordering::Relaxed);
-        if !repeat && state.cadence.picture_start() != picture {
+        if state.cadence.new_source_picture() {
             self.pictures.fetch_add(1, Ordering::Relaxed);
         }
         if tracing::enabled!(target: "pacing", tracing::Level::TRACE) {
