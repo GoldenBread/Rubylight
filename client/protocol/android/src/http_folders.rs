@@ -262,7 +262,7 @@ impl Read for JniUploadSource<'_, '_, '_> {
     }
 }
 
-fn call_folder_progress(env: &mut JNIEnv, progress: &JObject, done: u64, total: Option<u64>) {
+pub(crate) fn call_folder_progress(env: &mut JNIEnv, progress: &JObject, done: u64, total: Option<u64>) {
     if progress.is_null() {
         return;
     }

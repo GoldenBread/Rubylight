@@ -851,8 +851,9 @@ public class GameDetailOpenPlayTest {
     @Test
     public void theAppPinComesFirstAndTheFullCountdownFollowsIt() throws Exception {
         com.limelight.pin.PinGate.resetForTests();
+        com.limelight.pin.PinStore.clearForTests(context);
         com.limelight.pin.PinStore store = new com.limelight.pin.PinStore(context);
-        store.setPin(new byte[] {1, 2, 3, 4});
+        store.setPin("1234".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         store.setMode(com.limelight.pin.PinStore.Mode.APP);
         try {
             open(true, null, null);
@@ -867,6 +868,7 @@ public class GameDetailOpenPlayTest {
         } finally {
             store.removePin();
             com.limelight.pin.PinGate.resetForTests();
+            com.limelight.pin.PinStore.clearForTests(context);
         }
     }
 }

@@ -108,4 +108,9 @@ public final class NightjarHttpJni {
     public static native String folderUpload(long handle, String capsJson, String folder, String path,
                                              ByteSource source, long length, FolderProgress progress,
                                              long cancelHandle);
+
+    // Update
+    public static native String updateFetchLatest(int target);
+    public static native String updateDownloadApk(String releaseJson, boolean root, String dirPath,
+                                                  FolderProgress progress, long cancelHandle);
 }

@@ -41,6 +41,7 @@ public class RustEngineJniParityTest {
     static {
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarJni_", NightjarJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarPolicyJni_", NightjarPolicyJni.class);
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarPinJni_", NightjarPinJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarHttpJni_", NightjarHttpJni.class);
     }
 
@@ -242,7 +243,12 @@ public class RustEngineJniParityTest {
                 "com/limelight/nvstream/jni/NativeApiBridge",
                 "com/limelight/nvstream/jni/FileTransferBridge",
                 "com/limelight/nvstream/jni/NightjarPolicyJni",
+                "com/limelight/nvstream/jni/NightjarPinJni",
                 "com/limelight/nvstream/jni/NightjarHttpJni",
+                "com/limelight/pin/PinHasher",
+                "com/limelight/pin/PinThrottle",
+                "com/limelight/pin/PinStore",
+                "com/limelight/pin/PinGate",
                 "com/limelight/binding/audio/EchoCanceller",
                 "com/limelight/ui/StreamMenuModel",
                 "com/limelight/preferences/SimpleProfileModel",
@@ -270,6 +276,13 @@ public class RustEngineJniParityTest {
                 "com/limelight/nvstream/http/PairingLink",
                 "com/limelight/nvstream/http/InviteLink",
                 "com/limelight/nvstream/http/FoundationAbr",
+                "com/limelight/update/SemVer",
+                "com/limelight/update/ReleaseInfo",
+                "com/limelight/update/ChecksumFile",
+                "com/limelight/update/ReleaseNotes",
+                "com/limelight/update/UpdatePolicy",
+                "com/limelight/update/UpdateChecker",
+                "com/limelight/update/UpdateDownloader",
         };
         for (String rel : delegating) {
             Class<?> cls = Class.forName(rel.replace('/', '.'), false,

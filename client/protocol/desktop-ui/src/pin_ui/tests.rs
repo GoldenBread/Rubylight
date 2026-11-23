@@ -1,55 +1,11 @@
 //! Unit tests for `pin_ui` lock screen, timeout and store state transitions.
 
 use super::*;
-use crate::pin_lock::Clock;
-use std::sync::atomic::{AtomicI64, Ordering};
-
-struct Still(AtomicI64);
-
-impl Clock for Still {
-    fn elapsed(&self) -> i64 {
-        self.0.load(Ordering::SeqCst)
-    }
-    fn boot(&self) -> i64 {
-        1
-    }
-}
-
-struct TestCrypto;
-
-impl crate::pin_lock::PinCrypto for TestCrypto {
-    fn create(&self, pin: &[u8], iterations: u32) -> Result<String, String> {
-        let text = std::str::from_utf8(pin).map_err(|_| "bad utf-8".to_owned())?;
-        Ok(format!("v1${iterations}$test${text}"))
-    }
-    fn verify(&self, stored: &str, pin: &[u8]) -> bool {
-        let Ok(text) = std::str::from_utf8(pin) else { return false };
-        stored.split('$').nth(3) == Some(text)
-    }
-    fn well_formed(&self, stored: &str) -> bool {
-        let parts: Vec<&str> = stored.split('$').collect();
-        parts.len() == 4 && parts[0] == "v1" && !parts[2].is_empty() && !parts[3].is_empty()
-    }
-    fn calibrate(&self) -> u32 {
-        1_000
-    }
-    fn random_token(&self) -> Result<String, String> {
-        Ok("01".repeat(32))
-    }
-    fn token_hash(&self, token: &str) -> String {
-        let mut h = 0xcbf2_9ce4_8422_2325_u64;
-        for b in token.bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
-        }
-        format!("fnv1a:{h:016x}")
-    }
-}
+use crate::pin_lock::StubPinStore;
 
 fn lock(tag: &str) -> (PinLock, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("nightjar-pin-ui-{tag}-{}", std::process::id()));
-    std::fs::remove_dir_all(&dir).ok();
-    std::fs::create_dir_all(&dir).unwrap();
-    (PinLock::with_store(PinStore::new(&dir, Arc::new(Still(AtomicI64::new(5_000_000))), Arc::new(TestCrypto))), dir)
+    (PinLock::with_store(Arc::new(StubPinStore::new(&dir))), dir)
 }
 
 fn type_pin(lock: &mut PinLock, pin: &str) {
@@ -77,7 +33,7 @@ fn setting_a_pin_twice_turns_the_app_lock_on_without_locking_now() {
     let (mut lock, dir) = lock("set");
     lock.open_settings();
     assert!(lock.page && lock.pad.is_none(), "no PIN yet: the page opens straight away");
-    lock.pad = Some(Pad::new(Purpose::Choose, &lock.store));
+    lock.pad = Some(Pad::new(Purpose::Choose, lock.store.as_ref()));
     type_pin(&mut lock, "2468");
     lock.key(PadKey::Confirm);
     assert!(matches!(lock.pad.as_ref().unwrap().purpose, Purpose::Confirm(_)));
@@ -131,7 +87,7 @@ fn a_damaged_lock_file_is_named_on_the_lock_screen_and_takes_no_tries() {
     std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("pin_lock.json"), "{ not json").unwrap();
-    let mut lock = PinLock::with_store(PinStore::new(&dir, Arc::new(Still(AtomicI64::new(5_000_000))), Arc::new(TestCrypto)));
+    let mut lock = PinLock::with_store(Arc::new(StubPinStore::damaged(&dir)));
     assert!(lock.app_locked());
     let problem = lock.store.problem().expect("damaged");
     let said = problem_text(&problem, lock.store.path());
@@ -153,7 +109,7 @@ fn removing_the_pin_asks_for_it_first() {
     type_pin(&mut lock, "8642");
     finish(&mut lock);
     assert!(lock.page);
-    lock.pad = Some(Pad::new(Purpose::Verify(After::Remove), &lock.store));
+    lock.pad = Some(Pad::new(Purpose::Verify(After::Remove), lock.store.as_ref()));
     type_pin(&mut lock, "8642");
     finish(&mut lock);
     assert!(!lock.store.has_pin() && lock.store.mode() == Mode::Off);

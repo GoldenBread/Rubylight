@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use egui::{vec2, Align, Key, Layout, Rect, RichText, Ui, Vec2};
 
-use crate::pin_lock::{Mode, Outcome, PinGate, PinStore, Problem, GRACE_CHOICES, MAX_DIGITS, MIN_DIGITS};
+use crate::pin_lock::{Mode, Outcome, PinGate, PinStoreBackend, Problem, GRACE_CHOICES, MAX_DIGITS, MIN_DIGITS};
 use crate::strings::{en, tr, trf};
 use crate::ui::{design_tokens, glass, glass_behind, pin_key, pin_slots, round_button, Icon, Tone, DIALOG_MARGIN};
 use crate::theme::*;
@@ -45,7 +45,7 @@ struct Pad {
 }
 
 impl Pad {
-    fn new(purpose: Purpose, store: &PinStore) -> Self {
+    fn new(purpose: Purpose, store: &dyn PinStoreBackend) -> Self {
         let mut pad = Self { purpose, digits: Vec::new(), error: None, locked_until: None };
         if pad.checks() {
             pad.lock_for(store.locked_for_ms());
@@ -84,7 +84,7 @@ enum Done {
 
 /// The lock as the launcher holds it: the store, the gate, and what is on screen.
 pub struct PinLock {
-    pub store: PinStore,
+    pub store: Arc<dyn PinStoreBackend>,
     gate: PinGate,
     pad: Option<Pad>,
     /// The settings page is open (after its PIN was given, while the window stayed in view).
@@ -95,47 +95,26 @@ pub struct PinLock {
     notice: Option<&'static str>,
 }
 
-type ClockFactory = fn() -> Arc<dyn crate::pin_lock::Clock>;
-type CryptoFactory = fn() -> Arc<dyn crate::pin_lock::PinCrypto>;
+type StoreFactory = fn(&Path) -> Arc<dyn PinStoreBackend>;
 
-static PIN_BACKEND: std::sync::OnceLock<(ClockFactory, CryptoFactory)> = std::sync::OnceLock::new();
+static PIN_BACKEND: std::sync::OnceLock<StoreFactory> = std::sync::OnceLock::new();
 
-/// Registers the OS clock and `ring`-backed PIN crypto from `nightjar-desktop::pin_clock`.
-pub fn register_backend(clock: ClockFactory, crypto: CryptoFactory) {
-    let _ = PIN_BACKEND.set((clock, crypto));
+/// Registers the real `nightjar_core::pin_lock::PinStore` backend from `nightjar-desktop::pin_clock`.
+pub fn register_backend(factory: StoreFactory) {
+    let _ = PIN_BACKEND.set(factory);
 }
 
-pub fn default_backend() -> (Arc<dyn crate::pin_lock::Clock>, Arc<dyn crate::pin_lock::PinCrypto>) {
-    if let Some((clock, crypto)) = PIN_BACKEND.get() {
-        return (clock(), crypto());
+/// Opens a PIN store via the registered backend, or falls back to an in-memory stub for UI tests.
+pub fn open_store(dir: &Path) -> Arc<dyn PinStoreBackend> {
+    match PIN_BACKEND.get() {
+        Some(factory) => factory(dir),
+        None => Arc::new(crate::pin_lock::StubPinStore::new(dir)),
     }
-    struct StubClock;
-    impl crate::pin_lock::Clock for StubClock {
-        fn elapsed(&self) -> i64 { 1_000_000 }
-        fn boot(&self) -> i64 { 7 }
-    }
-    struct StubCrypto;
-    impl crate::pin_lock::PinCrypto for StubCrypto {
-        fn create(&self, pin: &[u8], iterations: u32) -> Result<String, String> {
-            Ok(format!("v1${iterations}$stub${}", std::str::from_utf8(pin).unwrap_or("")))
-        }
-        fn verify(&self, stored: &str, pin: &[u8]) -> bool {
-            stored.split('$').nth(3) == std::str::from_utf8(pin).ok()
-        }
-        fn well_formed(&self, stored: &str) -> bool {
-            stored.split('$').count() == 4
-        }
-        fn calibrate(&self) -> u32 { 1_000 }
-        fn random_token(&self) -> Result<String, String> { Ok("a".repeat(64)) }
-        fn token_hash(&self, token: &str) -> String { format!("hash:{token}") }
-    }
-    (Arc::new(StubClock), Arc::new(StubCrypto))
 }
 
 impl PinLock {
     pub fn open(dir: &Path) -> Self {
-        let (clock, crypto) = default_backend();
-        Self::with_store(PinStore::new(dir, clock, crypto))
+        Self::with_store(open_store(dir))
     }
 
     /// A PIN screen for the demo's shots, over an empty store in `dir`.
@@ -143,7 +122,7 @@ impl PinLock {
     pub fn demo(dir: &Path, choose: bool, pc: &str) -> Self {
         let mut lock = Self::open(dir);
         let purpose = if choose { Purpose::Choose } else { Purpose::Stream { key: String::new(), pc: pc.to_owned() } };
-        lock.pad = Some(Pad::new(purpose, &lock.store));
+        lock.pad = Some(Pad::new(purpose, lock.store.as_ref()));
         lock
     }
 
@@ -153,8 +132,7 @@ impl PinLock {
     pub fn demo_page(dir: &Path, mode: Option<Mode>) -> Self {
         std::fs::remove_dir_all(dir).ok();
         std::fs::create_dir_all(dir).ok();
-        let (clock, crypto) = default_backend();
-        let store = PinStore::new(dir, clock, crypto);
+        let store = open_store(dir);
         if let Some(mode) = mode {
             store.set_pin(b"1234").expect("the demo's PIN is valid");
             store.set_mode(mode);
@@ -167,11 +145,10 @@ impl PinLock {
     }
 
     /// The second screen's lock: open when `hand_over` is the token the first screen's process
-    /// wrote on this process's input ([`PinStore::hand_over`]), else as [`Self::open`].
+    /// wrote on this process's input, else as [`Self::open`].
     pub fn open_second_screen(dir: &Path, hand_over: Option<&str>) -> Self {
-        let (clock, crypto) = default_backend();
-        let store = PinStore::new(dir, clock, crypto);
-        let mut gate = PinGate::new(&store);
+        let store = open_store(dir);
+        let mut gate = PinGate::new(store.as_ref());
         match hand_over {
             Some(token) if store.handed_over(token) => gate.hand_over(),
             _ if !store.has_pin() => {}
@@ -181,21 +158,21 @@ impl PinLock {
         Self::with_gate(store, gate)
     }
 
-    pub fn with_store(store: PinStore) -> Self {
-        let gate = PinGate::new(&store);
+    pub fn with_store(store: Arc<dyn PinStoreBackend>) -> Self {
+        let gate = PinGate::new(store.as_ref());
         Self::with_gate(store, gate)
     }
 
-    fn with_gate(store: PinStore, gate: PinGate) -> Self {
+    fn with_gate(store: Arc<dyn PinStoreBackend>, gate: PinGate) -> Self {
         let mut lock = Self { store, gate, pad: None, page: false, focus_page: false, job: None, notice: None };
         lock.lock_app_if_needed();
         lock
     }
 
     fn lock_app_if_needed(&mut self) {
-        if self.gate.needs_pin_for_app(&self.store) && !matches!(self.pad.as_ref().map(|p| &p.purpose), Some(Purpose::App)) {
+        if self.gate.needs_pin_for_app(self.store.as_ref()) && !matches!(self.pad.as_ref().map(|p| &p.purpose), Some(Purpose::App)) {
             self.page = false;
-            self.pad = Some(Pad::new(Purpose::App, &self.store));
+            self.pad = Some(Pad::new(Purpose::App, self.store.as_ref()));
         }
     }
 
@@ -226,25 +203,25 @@ impl PinLock {
 
     /// The window went out of sight, or Nightjar is closing.
     pub fn left(&mut self) {
-        self.gate.left(&self.store);
+        self.gate.left(self.store.as_ref());
         // As on Android, the settings page asks for the PIN again on the next visit.
         self.page = false;
     }
 
     pub fn returned(&mut self) {
-        self.gate.returned(&self.store);
+        self.gate.returned(self.store.as_ref());
         self.lock_app_if_needed();
     }
 
     /// Whether starting a stream under `key` (pin_lock::stream_key) has to wait for the PIN; a
     /// grant is used up here.
     pub fn needs_pin_for_stream(&mut self, key: &str) -> bool {
-        self.gate.needs_pin_for_stream(&self.store, key)
+        self.gate.needs_pin_for_stream(self.store.as_ref(), key)
     }
 
     /// See [`crate::pin_lock::PinGate::locks_stream`].
     pub fn locks_stream(&self, key: &str) -> bool {
-        self.gate.locks_stream(&self.store, key)
+        self.gate.locks_stream(self.store.as_ref(), key)
     }
 
     /// See [`crate::pin_lock::PinGate::forget_grant`].
@@ -256,7 +233,7 @@ impl PinLock {
     /// screen asks already, and unlocking the app lets the start go on.
     pub fn ask_for_stream(&mut self, key: &str, pc: &str) {
         if !self.app_locked() {
-            self.pad = Some(Pad::new(Purpose::Stream { key: key.to_owned(), pc: pc.to_owned() }, &self.store));
+            self.pad = Some(Pad::new(Purpose::Stream { key: key.to_owned(), pc: pc.to_owned() }, self.store.as_ref()));
         }
     }
 
@@ -264,7 +241,7 @@ impl PinLock {
     pub fn open_settings(&mut self) {
         self.notice = None;
         if self.store.has_pin() {
-            self.pad = Some(Pad::new(Purpose::Verify(After::Open), &self.store));
+            self.pad = Some(Pad::new(Purpose::Verify(After::Open), self.store.as_ref()));
         } else {
             self.show_page();
         }
@@ -281,7 +258,7 @@ impl PinLock {
         self.poll(commands);
         // A lock file that could not be read, read again and found without the app lock, or
         // deleted as the lock screen said, opens the app.
-        if self.app_locked() && self.job.is_none() && !self.gate.needs_pin_for_app(&self.store) {
+        if self.app_locked() && self.job.is_none() && !self.gate.needs_pin_for_app(self.store.as_ref()) {
             self.pad = None;
             commands.push(Command::PinPassed);
         }
@@ -315,11 +292,11 @@ impl PinLock {
                         commands.push(Command::PinPassed);
                     }
                     Purpose::Stream { key, .. } => {
-                        self.gate.grant(&self.store, &key);
+                        self.gate.grant(self.store.as_ref(), &key);
                         commands.push(Command::PinPassed);
                     }
                     Purpose::Verify(After::Open) => self.show_page(),
-                    Purpose::Verify(After::Change) => self.pad = Some(Pad::new(Purpose::Choose, &self.store)),
+                    Purpose::Verify(After::Change) => self.pad = Some(Pad::new(Purpose::Choose, self.store.as_ref())),
                     Purpose::Verify(After::Remove) => {
                         self.store.remove_pin();
                         self.notice = Some(en("PIN removed"));
@@ -382,12 +359,12 @@ impl PinLock {
                     return;
                 }
                 let first = std::mem::take(&mut pad.digits);
-                self.pad = Some(Pad::new(Purpose::Confirm(first), &self.store));
+                self.pad = Some(Pad::new(Purpose::Confirm(first), self.store.as_ref()));
                 return;
             }
             Purpose::Confirm(first) => {
                 if pad.digits != *first {
-                    self.pad = Some(Pad::new(Purpose::Choose, &self.store));
+                    self.pad = Some(Pad::new(Purpose::Choose, self.store.as_ref()));
                     if let Some(pad) = self.pad.as_mut() {
                         pad.error = Some(tr("The PINs did not match. Choose a PIN again.").to_owned());
                     }
@@ -651,7 +628,7 @@ impl PinLock {
                     }
                     if set.clicked() {
                         self.notice = None;
-                        self.pad = Some(Pad::new(Purpose::Choose, &self.store));
+                        self.pad = Some(Pad::new(Purpose::Choose, self.store.as_ref()));
                     }
                     return set;
                 }
@@ -661,12 +638,12 @@ impl PinLock {
                 }
                 if change.clicked() {
                     self.notice = None;
-                    self.pad = Some(Pad::new(Purpose::Verify(After::Change), &self.store));
+                    self.pad = Some(Pad::new(Purpose::Verify(After::Change), self.store.as_ref()));
                 }
                 let remove = quiet_button(ui, "Remove PIN");
                 if remove.clicked() {
                     self.notice = None;
-                    self.pad = Some(Pad::new(Purpose::Verify(After::Remove), &self.store));
+                    self.pad = Some(Pad::new(Purpose::Verify(After::Remove), self.store.as_ref()));
                 }
                 remove
             })

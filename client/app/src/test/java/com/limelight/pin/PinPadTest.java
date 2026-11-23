@@ -14,6 +14,7 @@ import com.limelight.ui.GlassPanelDrawable;
 import com.limelight.ui.NightSkyView;
 import com.limelight.ui.PinSlots;
 
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -25,6 +26,12 @@ import org.robolectric.annotation.Config;
 @Config(sdk = 34, application = android.app.Application.class, qualifiers = "w400dp-h800dp-port",
         shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class, instrumentedPackages = "com.limelight.nvstream.jni")
 public class PinPadTest {
+    @After
+    public void tearDown() {
+        PinGate.resetForTests();
+        PinStore.clearForTests(org.robolectric.RuntimeEnvironment.getApplication());
+    }
+
     private static PinLockActivity set() {
         return Robolectric.buildActivity(PinLockActivity.class,
                 PinLockActivity.forSet(org.robolectric.RuntimeEnvironment.getApplication())).setup().get();

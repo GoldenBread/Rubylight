@@ -5,60 +5,7 @@
 use std::io::Read;
 use std::time::Duration;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Url {
-    pub secure: bool,
-    pub host: String,
-    pub port: u16,
-    /// With its query.
-    pub path: String,
-}
-
-impl Url {
-    /// An http or https address with a plain host name or IPv4 address: no user part, no IPv6, no
-    /// spaces or control characters, so what is judged here is what gets connected to.
-    pub fn parse(text: &str) -> Option<Self> {
-        let (secure, rest) = match (text.strip_prefix("https://"), text.strip_prefix("http://")) {
-            (Some(rest), _) => (true, rest),
-            (_, Some(rest)) => (false, rest),
-            _ => return None,
-        };
-        let (authority, path) = match rest.find(['/', '?', '#']) {
-            Some(at) => rest.split_at(at),
-            None => (rest, "/"),
-        };
-        let (host, port) = match authority.split_once(':') {
-            Some((host, port)) => (host, port.parse().ok()?),
-            None => (authority, if secure { 443 } else { 80 }),
-        };
-        let plain = |b: u8| b.is_ascii_alphanumeric() || b == b'.' || b == b'-';
-        if host.is_empty() || !host.bytes().all(plain) || !path.starts_with('/') || path.bytes().any(|b| b <= b' ' || b == 0x7F) {
-            return None;
-        }
-        Some(Self { secure, host: host.to_ascii_lowercase(), port, path: path.to_owned() })
-    }
-
-    /// Where a redirect's `Location` points from here.
-    pub fn resolve(&self, location: &str) -> Option<Self> {
-        if location.starts_with('/') && !location.starts_with("//") {
-            if location.bytes().any(|b| b <= b' ' || b == 0x7F) { return None; }
-            return Some(Self { path: location.to_owned(), ..self.clone() });
-        }
-        Self::parse(location)
-    }
-}
-
-pub struct Response {
-    pub status: u16,
-    pub location: Option<String>,
-    pub length: Option<u64>,
-    pub body: Box<dyn Read + Send>,
-}
-
-/// One GET. `api` asks for GitHub's JSON. Redirects come back as they are.
-pub trait Transport: Send + Sync {
-    fn get(&self, url: &Url, api: bool) -> Result<Response, String>;
-}
+pub use nightjar_core::update::net::{Response, Transport, Url};
 
 pub struct Native {
     pub agent: String,
@@ -277,30 +224,5 @@ impl Transport for Native {
         let header = |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
         let (status, location, length) = (response.status().as_u16(), header("location"), header("content-length").and_then(|l| l.parse().ok()));
         Ok(Response { status, location, length, body: Box::new(response.into_body().into_reader()) })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_address_is_read_strictly() {
-        let url = Url::parse("https://GitHub.com/a/b?c=d").unwrap();
-        assert_eq!(url, Url { secure: true, host: "github.com".into(), port: 443, path: "/a/b?c=d".into() });
-        assert_eq!(Url::parse("http://127.0.0.1:81").unwrap(), Url { secure: false, host: "127.0.0.1".into(), port: 81, path: "/".into() });
-        for bad in ["ftp://github.com/", "https://", "https://user@github.com/", "https://github.com@evil.example/", "https://[::1]/", "https://github.com:x/", "https://git hub.com/", "https://github.com/a b", "github.com/a"] {
-            assert_eq!(Url::parse(bad), None, "{bad}");
-        }
-    }
-
-    #[test]
-    fn a_redirect_resolves_from_here() {
-        let from = Url::parse("https://github.com/a").unwrap();
-        assert_eq!(from.resolve("/b?c").unwrap().path, "/b?c");
-        assert_eq!(from.resolve("/b").unwrap().host, "github.com");
-        assert_eq!(from.resolve("https://evil.example/x").unwrap().host, "evil.example");
-        assert_eq!(from.resolve("//evil.example/x"), None, "a host in disguise");
-        assert_eq!(from.resolve("b"), None);
     }
 }

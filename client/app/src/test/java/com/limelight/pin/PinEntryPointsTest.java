@@ -76,8 +76,8 @@ public class PinEntryPointsTest {
         app = RuntimeEnvironment.getApplication();
         Settings.Global.putInt(app.getContentResolver(), "boot_count", 3);
         PinGate.resetForTests();
+        PinStore.clearForTests(app);
         PinLockActivity.executorForTests = Runnable::run;
-        app.getSharedPreferences(PinStore.FILE, Context.MODE_PRIVATE).edit().clear().commit();
         store = new PinStore(app);
         store.setPin(PIN.getBytes(StandardCharsets.US_ASCII));
     }
@@ -85,6 +85,8 @@ public class PinEntryPointsTest {
     @After
     public void tearDown() {
         PinLockActivity.executorForTests = null;
+        PinGate.resetForTests();
+        PinStore.clearForTests(app);
     }
 
     private static Intent nextStarted(Activity activity) {

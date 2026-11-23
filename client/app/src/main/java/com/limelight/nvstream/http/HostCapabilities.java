@@ -250,6 +250,7 @@ public final class HostCapabilities {
 
     public boolean isKnown() { return json != null; }
     public Family family() { return family; }
+    public boolean isRubylight() { return family == Family.RUBYLIGHT; }
     public String hostVersion() { return hostVersion; }
     public int nativeApiVersion() { return nativeApiVersion; }
     public boolean has(Feature feature) { return availability(feature).isSupported(); }

@@ -500,7 +500,6 @@
       "client/app/src/main/java/com/limelight/ui/PictureInPicturePolicy.java",
       "client/app/src/main/java/com/limelight/ui/StreamView.java",
       "client/app/src/main/java/com/limelight/ui/UiNavigation.java",
-      "client/app/src/main/java/com/limelight/update/HostUpdateChecker.java",
       "client/app/src/main/java/com/limelight/utils/CacheHelper.java",
       "client/app/src/main/java/com/limelight/utils/ConnectionTestStats.java",
       "client/app/src/main/java/com/limelight/utils/CrashCapture.java",
@@ -905,7 +904,6 @@
     "legacy": {
       "client/app/src/main/java/com/limelight/GameAdaptation.java": 1,
       "client/app/src/main/java/com/limelight/nvstream/http/ComputerDetails.java": 1,
-      "client/app/src/main/java/com/limelight/update/HostUpdateChecker.java": 2,
       "client/app/src/main/java/com/limelight/utils/WiredLink.java": 1,
       "client/protocol/client/src/http/launch.rs": 4,
       "client/protocol/desktop-media/src/stream/connect.rs": 1,

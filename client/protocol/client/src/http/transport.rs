@@ -175,7 +175,7 @@ impl Cancel {
 
 /// A connection's socket as its cancels hold it. The abort is sticky: every read and write
 /// through [`DeadlineSocket`] checks it before it starts, so none begins blocking after a cancel.
-pub(super) struct Abort {
+pub(crate) struct Abort {
     socket: TcpStream,
     aborted: AtomicBool,
     /// While a read or write may block on the socket.
@@ -187,14 +187,14 @@ pub(super) struct Abort {
 const ABORT_WAIT: Duration = Duration::from_secs(1);
 
 impl Abort {
-    pub(super) fn new(socket: &TcpStream) -> Result<Arc<Self>, Error> {
+    pub(crate) fn new(socket: &TcpStream) -> Result<Arc<Self>, Error> {
         Ok(Arc::new(Self { socket: socket.try_clone()?, aborted: AtomicBool::new(false), busy: AtomicBool::new(false) }))
     }
 
     /// Shuts the socket, so any later call fails at once, and aborts the call in progress. A
     /// call that passed its check just before the abort may reach the socket only after
     /// `CancelIoEx` ran; it is aborted again until it returns.
-    fn abort(&self) {
+    pub(crate) fn abort(&self) {
         self.aborted.store(true, Ordering::SeqCst);
         let _ = self.socket.shutdown(Shutdown::Both);
         #[cfg(windows)]
@@ -211,7 +211,7 @@ impl Abort {
     }
 
     /// Runs `call` on the socket unless it was aborted; `abort` sees it as busy meanwhile.
-    fn guard<T>(&self, call: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+    pub(crate) fn guard<T>(&self, call: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
         self.busy.store(true, Ordering::SeqCst);
         let result = if self.aborted.load(Ordering::SeqCst) {
             Err(std::io::Error::new(ErrorKind::ConnectionAborted, "the request was cancelled"))
@@ -710,7 +710,7 @@ fn connection<T>(request: &Request<'_>, cancels: &[&Cancel], deadline: Deadline,
     }
 }
 
-pub(super) fn connect(host: &Host, port: u16, timeout: Duration, deadline: Option<std::time::Instant>) -> Result<TcpStream, Error> {
+pub(crate) fn connect(host: &Host, port: u16, timeout: Duration, deadline: Option<std::time::Instant>) -> Result<TcpStream, Error> {
     connect_each(&host.socket_addrs(port)?, timeout, deadline, TcpStream::connect_timeout)
 }
 
@@ -872,14 +872,14 @@ impl Write for DeadlineSocket {
     fn flush(&mut self) -> std::io::Result<()> { self.socket.flush() }
 }
 
-pub(super) fn tls_error(error: rustls::Error) -> Error {
+pub(crate) fn tls_error(error: rustls::Error) -> Error {
     match error {
         rustls::Error::InvalidCertificate(_) => Error::CertificateMismatch,
         other => Error::Tls(other.to_string()),
     }
 }
 
-pub(super) fn io_tls_error(error: std::io::Error) -> Error {
+pub(crate) fn io_tls_error(error: std::io::Error) -> Error {
     let inner = error
         .get_ref()
         .and_then(|e| e.downcast_ref::<rustls::Error>())

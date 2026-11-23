@@ -13,6 +13,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Settings;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -38,9 +39,14 @@ public class PinLockSettingsTest {
         app = RuntimeEnvironment.getApplication();
         Settings.Global.putInt(app.getContentResolver(), "boot_count", 3);
         PinGate.resetForTests();
-        app.getSharedPreferences(PinStore.FILE, Context.MODE_PRIVATE).edit().clear().commit();
-        app.getSharedPreferences(PinStore.FILE, Context.MODE_PRIVATE).edit()
-                .putString(PinStore.HASH, "v1$1$x$y").putInt(PinStore.LENGTH, 4).commit();
+        PinStore.clearForTests(app);
+        new PinStore(app).setPinForTests("1234".getBytes(java.nio.charset.StandardCharsets.US_ASCII), 1);
+    }
+
+    @After
+    public void tearDown() {
+        PinGate.resetForTests();
+        PinStore.clearForTests(app);
     }
 
     private static Intent verifyStarted(Activity activity) {
@@ -71,7 +77,7 @@ public class PinLockSettingsTest {
 
     @Test
     public void withoutAPinThePageOpensAtOnce() {
-        app.getSharedPreferences(PinStore.FILE, Context.MODE_PRIVATE).edit().clear().commit();
+        PinStore.clearForTests(app);
         ActivityController<PinLockSettingsActivity> page = Robolectric.buildActivity(PinLockSettingsActivity.class).setup();
         assertNull(verifyStarted(page.get()));
     }

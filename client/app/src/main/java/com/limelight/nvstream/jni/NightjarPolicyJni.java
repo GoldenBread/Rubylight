@@ -113,4 +113,23 @@ public final class NightjarPolicyJni {
     public static native boolean paceSearchIsDone(long handle);
     public static native void paceSearchRecord(long handle, int paceKbps, String measurementJson);
     public static native String paceSearchOutcome(long handle);
+
+    // Update
+    public static native String semVerParse(String text);
+    public static native int semVerCompare(String a, String b);
+    public static native boolean semVerIsNewer(String candidate, String current);
+    public static native String semVerNormalize(String text);
+    public static native String releaseInfoParse(String json);
+    public static native boolean releaseInfoIsUpdateFor(String releaseJson, String currentVersion);
+    public static native String releaseInfoApkAsset(String releaseJson, boolean root);
+    public static native String releaseInfoChecksumAsset(String releaseJson);
+    public static native String checksumFileFind(String sums, String fileName);
+    public static native String checksumFileHex(byte[] bytes);
+    public static native String releaseNotesPlain(String markdown, int maxChars);
+    public static native boolean updatePolicyIsCheckDue(boolean autoCheck, long lastCheckMs, long nowMs);
+    public static native boolean updatePolicyShouldOffer(String releaseJson, String currentVersion,
+                                                         String skippedVersion);
+    public static native boolean updatePolicyIsManagedByStore(String installerPackage);
+    public static native boolean updatePolicyIsSelfUpdateAvailable(String installerPackage,
+                                                                   boolean githubDistribution);
 }

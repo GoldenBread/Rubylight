@@ -330,6 +330,7 @@ public class DemoModeTest {
         assertFalse(store.hasPin());
         assertEquals(PinStore.Mode.OFF, store.mode());
         PinGate.resetForTests();
+        PinStore.clearForTests(context);
     }
 
     @Test public void driverScreenReadsAsOnASupportedPhoneAndImportsNothing() {

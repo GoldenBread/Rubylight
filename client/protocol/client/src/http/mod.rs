@@ -9,7 +9,7 @@
 mod clipboard_image;
 mod coop;
 mod crypto;
-mod der;
+pub(crate) mod der;
 mod device_approval;
 mod files;
 mod folders;
@@ -29,10 +29,10 @@ mod probe;
 mod remote_check;
 mod session_guests;
 pub mod transfers;
-mod transport;
+pub(crate) mod transport;
 mod upgrade;
 mod usb;
-mod wire;
+pub(crate) mod wire;
 
 #[cfg(test)]
 mod fuzz_tests;

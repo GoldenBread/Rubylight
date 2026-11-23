@@ -1,13 +1,13 @@
 package com.limelight.update;
 
-import org.json.JSONArray;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
+
 import org.json.JSONException;
-import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 
 /** The parts of a GitHub release that the updater uses. */
 public final class ReleaseInfo {
@@ -20,6 +20,20 @@ public final class ReleaseInfo {
             this.name = name;
             this.url = url;
             this.size = size;
+        }
+
+        private static Asset fromJsonObj(Json.Obj obj) {
+            return new Asset(
+                    obj.getString("name"),
+                    obj.getString("url"),
+                    obj.optLong("size", -1));
+        }
+
+        private Json.Obj toJsonObj() {
+            return Json.obj()
+                    .put("name", name)
+                    .put("url", url)
+                    .put("size", size);
         }
     }
 
@@ -38,19 +52,45 @@ public final class ReleaseInfo {
     }
 
     public static ReleaseInfo parse(String json) throws JSONException {
-        JSONObject release = new JSONObject(json);
-        String tag = release.getString("tag_name");
-        List<Asset> assets = new ArrayList<>();
-        JSONArray array = release.optJSONArray("assets");
-        for (int i = 0; array != null && i < array.length(); i++) {
-            JSONObject asset = array.optJSONObject(i);
-            if (asset == null || asset.isNull("name") || asset.isNull("browser_download_url")) {
-                continue;
-            }
-            assets.add(new Asset(asset.getString("name"), asset.getString("browser_download_url"), asset.optLong("size", -1)));
+        if (json == null) {
+            throw new JSONException("Null release JSON");
         }
-        return new ReleaseInfo(tag, release.isNull("body") ? "" : release.optString("body", ""),
-                release.optBoolean("draft", false), release.optBoolean("prerelease", false), assets);
+        String parsed = NightjarPolicyJni.releaseInfoParse(json);
+        if (parsed == null) {
+            throw new JSONException("Invalid release JSON");
+        }
+        return fromJsonObj(Json.parseObject(parsed));
+    }
+
+    static ReleaseInfo fromJsonObj(Json.Obj obj) {
+        List<Asset> list = new ArrayList<>();
+        if (obj.has("assets") && !obj.isNull("assets")) {
+            Json.Arr arr = obj.getArray("assets");
+            for (int i = 0; i < arr.length(); i++) {
+                list.add(Asset.fromJsonObj(arr.getObject(i)));
+            }
+        }
+        return new ReleaseInfo(
+                obj.getString("tag"),
+                obj.optString("body", ""),
+                obj.optBoolean("draft", false),
+                obj.optBoolean("prerelease", false),
+                list);
+    }
+
+    String toJson() {
+        Json.Arr arr = Json.arr();
+        for (Asset asset : assets) {
+            arr.add(asset.toJsonObj());
+        }
+        return Json.obj()
+                .put("tag", tag)
+                .put("body", body)
+                .put("html_url", "")
+                .put("draft", draft)
+                .put("prerelease", prerelease)
+                .put("assets", arr)
+                .toString();
     }
 
     /** The version without a leading v. */
@@ -60,44 +100,18 @@ public final class ReleaseInfo {
 
     /** Whether this release is a final one newer than the running version. */
     public boolean isUpdateFor(String currentVersion) {
-        SemVer release = SemVer.parse(tag);
-        return !draft && !prerelease && release != null && !release.isPrerelease()
-                && SemVer.isNewer(tag, currentVersion);
+        return currentVersion != null && NightjarPolicyJni.releaseInfoIsUpdateFor(toJson(), currentVersion);
     }
 
     /** The APK for this build: nightjar-X.Y.Z.apk, or nightjar-X.Y.Z-root.apk for the root flavor. */
     public Asset apkAsset(boolean root) {
-        Asset fallback = null;
-        for (Asset asset : assets) {
-            String name = asset.name.toLowerCase(Locale.ROOT);
-            if (!name.endsWith(".apk") || name.endsWith("-root.apk") != root) {
-                continue;
-            }
-            if (name.startsWith("nightjar-")) {
-                return asset;
-            }
-            if (fallback == null) {
-                fallback = asset;
-            }
-        }
-        return fallback;
+        String raw = NightjarPolicyJni.releaseInfoApkAsset(toJson(), root);
+        return raw == null ? null : Asset.fromJsonObj(Json.parseObject(raw));
     }
 
     /** SHA256SUMS-X.Y.Z.txt, or null when the release has none. */
     public Asset checksumAsset() {
-        Asset fallback = null;
-        for (Asset asset : assets) {
-            String name = asset.name.toLowerCase(Locale.ROOT);
-            if (!name.startsWith("sha256sums") || !name.endsWith(".txt")) {
-                continue;
-            }
-            if (name.equals("sha256sums-" + version().toLowerCase(Locale.ROOT) + ".txt")) {
-                return asset;
-            }
-            if (fallback == null) {
-                fallback = asset;
-            }
-        }
-        return fallback;
+        String raw = NightjarPolicyJni.releaseInfoChecksumAsset(toJson());
+        return raw == null ? null : Asset.fromJsonObj(Json.parseObject(raw));
     }
 }

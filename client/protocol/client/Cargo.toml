@@ -23,6 +23,7 @@ regex = { version = "1", default-features = false, features = ["std", "perf"] }
 ring = "0.17"
 rsa = { version = "0.9", default-features = false, features = ["std"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 # Rubylight native API v1 types (library, session, Radeon, errors).
 rubylight-native-api = { path = "../native-api" }
 serde = "1"

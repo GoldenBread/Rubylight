@@ -7,6 +7,7 @@ import android.content.Context;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
 
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -34,6 +35,13 @@ public class UpdateNoticesTest {
         return ReflectionHelpers.callStaticMethod(HostCapabilities.class, "fromServerInfo",
                 ReflectionHelpers.ClassParameter.from(String.class,
                         "<root><RustHostVersion>" + version + "</RustHostVersion></root>"));
+    }
+
+    @After
+    public void tearDown() {
+        Context app = RuntimeEnvironment.getApplication();
+        app.getSharedPreferences("update_state", Context.MODE_PRIVATE).edit().clear().commit();
+        app.getSharedPreferences("host_update_state", Context.MODE_PRIVATE).edit().clear().commit();
     }
 
     @Test public void cachedAppUpdatesRespectInstalledAndSkippedVersions() {

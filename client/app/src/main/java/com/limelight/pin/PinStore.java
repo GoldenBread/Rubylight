@@ -1,3 +1,8 @@
+/**
+ * File-backed PIN lock store ({@code pin_lock.json} in {@code noBackupFilesDir}) backed by
+ * {@code nightjar-core::pin_lock} via {@link NightjarPinJni}, with one-time migration from
+ * legacy {@code SharedPreferences("pin_lock")}.
+ */
 package com.limelight.pin;
 
 import android.content.Context;
@@ -5,17 +10,18 @@ import android.content.SharedPreferences;
 import android.os.SystemClock;
 import android.provider.Settings;
 
-import java.util.Arrays;
+import com.limelight.nvstream.jni.HandleReaper;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarPinJni;
+
+import java.io.Closeable;
+import java.io.File;
 import java.util.HashSet;
 import java.util.Set;
 
-/**
- * The PIN lock's own preferences file. It is separate from the default settings so "Reset all settings" leaves
- * the lock alone, and backup excludes it with the rest of the shared preferences. Only the salted hash is kept,
- * never the PIN.
- */
-public final class PinStore {
+public final class PinStore implements Closeable {
     public static final String FILE = "pin_lock";
+    public static final String LOCK_FILE_NAME = "pin_lock.json";
     static final String HASH = "pin_hash";
     static final String LENGTH = "pin_length";
     static final String MODE = "pin_mode";
@@ -43,7 +49,11 @@ public final class PinStore {
         }
 
         static Mode of(String value) {
-            for (Mode mode : values()) if (mode.value.equals(value)) return mode;
+            for (Mode mode : values()) {
+                if (mode.value.equals(value)) {
+                    return mode;
+                }
+            }
             return OFF;
         }
     }
@@ -60,7 +70,8 @@ public final class PinStore {
         private final Context context;
 
         SystemClockSource(Context context) {
-            this.context = context.getApplicationContext();
+            Context app = context.getApplicationContext();
+            this.context = app != null ? app : context;
         }
 
         @Override public long elapsed() {
@@ -101,130 +112,205 @@ public final class PinStore {
         boolean matches(String storedHash, byte[] pin);
     }
 
-    /** One try at a time, across every PinStore in the process. */
-    private static final Object TRY_LOCK = new Object();
-
-    private final SharedPreferences prefs;
+    private final long handle;
     private final Clock clock;
     private final Verifier verifier;
 
     public PinStore(Context context) {
-        this(context.getApplicationContext().getSharedPreferences(FILE, Context.MODE_PRIVATE),
-                new SystemClockSource(context), PinHasher::verify);
+        this(resolveApp(context), new SystemClockSource(context));
     }
 
-    PinStore(SharedPreferences prefs, Clock clock, Verifier verifier) {
-        this.prefs = prefs;
+    private PinStore(Context app, Clock clock) {
+        this(migrateAndPrepareDir(app), true, clock, null);
+    }
+
+    PinStore(File dir, Clock clock, Verifier verifier) {
+        this(dir, false, clock, verifier);
+    }
+
+    private PinStore(File dir, boolean cached, Clock clock, Verifier verifier) {
         this.clock = clock;
         this.verifier = verifier;
+        this.handle = NightjarPinJni.storeOpen(dir.getAbsolutePath(), cached);
+        HandleReaper.register(this, handle, NightjarPinJni::storeDestroy);
+    }
+
+    private static Context resolveApp(Context context) {
+        Context app = context.getApplicationContext();
+        return app != null ? app : context;
+    }
+
+    static File storeDir(Context context) {
+        Context app = resolveApp(context);
+        File noBackup = app.getNoBackupFilesDir();
+        return noBackup != null ? noBackup : app.getFilesDir();
+    }
+
+    private static File migrateAndPrepareDir(Context app) {
+        File dir = storeDir(app);
+        migrateLegacyIfNeeded(app, dir);
+        return dir;
+    }
+
+    private static synchronized void migrateLegacyIfNeeded(Context app, File dir) {
+        SharedPreferences legacy = app.getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        if (legacy == null || legacy.getAll().isEmpty()) {
+            return;
+        }
+        Json.Obj obj = Json.obj();
+        if (legacy.contains(HASH)) {
+            obj.put(HASH, legacy.getString(HASH, null));
+        }
+        if (legacy.contains(LENGTH)) {
+            obj.put(LENGTH, legacy.getInt(LENGTH, MAX_DIGITS));
+        }
+        if (legacy.contains(MODE)) {
+            obj.put(MODE, legacy.getString(MODE, Mode.OFF.value));
+        }
+        Set<String> pcs = legacy.getStringSet(PCS, null);
+        if (pcs != null) {
+            Json.Arr arr = Json.arr();
+            for (String pc : pcs) {
+                arr.add(pc);
+            }
+            obj.put(PCS, arr);
+        }
+        if (legacy.contains(GRACE)) {
+            obj.put(GRACE, legacy.getInt(GRACE, DEFAULT_GRACE_MINUTES));
+        }
+        if (legacy.contains(FAILS)) {
+            obj.put(FAILS, legacy.getInt(FAILS, 0));
+        }
+        if (legacy.contains(LOCK_UNTIL)) {
+            obj.put(LOCK_UNTIL, legacy.getLong(LOCK_UNTIL, 0));
+        }
+        if (legacy.contains(LOCK_BOOT)) {
+            obj.put(LOCK_BOOT, legacy.getLong(LOCK_BOOT, 0));
+        }
+        if (legacy.contains(ACTIVE_AT)) {
+            obj.put(ACTIVE_AT, legacy.getLong(ACTIVE_AT, 0));
+        }
+        if (legacy.contains(ACTIVE_BOOT)) {
+            obj.put(ACTIVE_BOOT, legacy.getLong(ACTIVE_BOOT, -1));
+        }
+        int status = NightjarPinJni.storeImportLegacy(dir.getAbsolutePath(), obj.toString());
+        if (status >= 0) {
+            legacy.edit().clear().commit();
+        }
+    }
+
+    long handle() {
+        return handle;
+    }
+
+    private Json.Obj view() {
+        return Json.parseObject(NightjarPinJni.storeViewJson(handle));
     }
 
     public boolean hasPin() {
-        return prefs.getString(HASH, null) != null;
+        return view().optBoolean("has_pin", false);
     }
 
     /** Digits in the PIN, for the dots and the automatic submit; 0 without a PIN. */
     public int pinLength() {
-        return hasPin() ? Math.max(MIN_DIGITS, Math.min(MAX_DIGITS, prefs.getInt(LENGTH, MAX_DIGITS))) : 0;
+        return view().optInt("pin_length", 0);
     }
 
     /** Mode in effect: without a PIN nothing is locked, whatever the stored mode says. */
     public Mode mode() {
-        return hasPin() ? Mode.of(prefs.getString(MODE, Mode.OFF.value)) : Mode.OFF;
+        return Mode.of(view().optString("mode", Mode.OFF.value));
     }
 
     public void setMode(Mode mode) {
-        prefs.edit().putString(MODE, mode.value).apply();
+        NightjarPinJni.storeSetMode(handle, (mode == null ? Mode.OFF : mode).value);
     }
 
     public Set<String> pcs() {
-        Set<String> stored = prefs.getStringSet(PCS, null);
-        return stored == null ? new HashSet<>() : new HashSet<>(stored);
+        Json.Obj obj = view();
+        Set<String> out = new HashSet<>();
+        if (obj.has("pcs") && !obj.isNull("pcs")) {
+            Json.Arr arr = obj.getArray("pcs");
+            for (int i = 0; i < arr.length(); i++) {
+                out.add(arr.getString(i));
+            }
+        }
+        return out;
     }
 
     public void setPcs(Set<String> uuids) {
-        prefs.edit().putStringSet(PCS, new HashSet<>(uuids)).apply();
+        Json.Arr arr = Json.arr();
+        if (uuids != null) {
+            for (String uuid : uuids) {
+                arr.add(uuid);
+            }
+        }
+        NightjarPinJni.storeSetPcs(handle, arr.toString());
     }
 
     public int graceMinutes() {
-        int minutes = prefs.getInt(GRACE, DEFAULT_GRACE_MINUTES);
-        return Arrays.binarySearch(GRACE_CHOICES, minutes) >= 0 ? minutes : DEFAULT_GRACE_MINUTES;
+        return view().optInt("grace_minutes", DEFAULT_GRACE_MINUTES);
     }
 
     public void setGraceMinutes(int minutes) {
-        prefs.edit().putInt(GRACE, minutes).apply();
+        NightjarPinJni.storeSetGraceMinutes(handle, minutes);
     }
 
     /** Stores a new PIN under a fresh salt and clears the failure count. Slow: measures the device. */
     public void setPin(byte[] pin) {
-        String hash = PinHasher.create(pin, PinHasher.calibrate());
-        prefs.edit().putString(HASH, hash).putInt(LENGTH, pin.length)
-                .putInt(FAILS, 0).putLong(LOCK_UNTIL, 0).putLong(LOCK_BOOT, 0).commit();
+        String err = NightjarPinJni.storeSetPin(handle, pin, 0);
+        if (err != null) {
+            throw new IllegalArgumentException(err);
+        }
+    }
+
+    void setPinForTests(byte[] pin, int iterations) {
+        String err = NightjarPinJni.storeSetPin(handle, pin, iterations);
+        if (err != null) {
+            throw new IllegalArgumentException(err);
+        }
     }
 
     /** Removes the PIN and everything that depended on it. */
     public void removePin() {
-        prefs.edit().clear().commit();
-    }
-
-    private PinThrottle.State load() {
-        return new PinThrottle.State(prefs.getInt(FAILS, 0), prefs.getLong(LOCK_UNTIL, 0), prefs.getLong(LOCK_BOOT, 0));
-    }
-
-    private void save(PinThrottle.State state) {
-        prefs.edit().putInt(FAILS, state.fails).putLong(LOCK_UNTIL, state.lockUntil)
-                .putLong(LOCK_BOOT, state.lockBoot).commit();
-    }
-
-    /** The stored state seen from this boot; a lock renewed for a new boot is saved so its countdown moves on. */
-    private PinThrottle.State current(long now, long boot) {
-        PinThrottle.State stored = load();
-        PinThrottle.State state = PinThrottle.onBoot(stored, now, boot);
-        if (state.lockBoot != stored.lockBoot || state.lockUntil != stored.lockUntil) save(state);
-        return state;
+        NightjarPinJni.storeRemovePin(handle);
     }
 
     /** Milliseconds until the next try is allowed, 0 when it is. */
     public long lockedForMs() {
-        synchronized (TRY_LOCK) {
-            long now = clock.elapsed();
-            return PinThrottle.remainingMs(current(now, clock.boot()), now);
-        }
+        return NightjarPinJni.storeLockedForMs(handle, clock.elapsed(), clock.boot());
     }
 
     /**
      * One try. Refused while locked out; otherwise the failure is written (and flushed) before the PIN is
      * checked, so killing the app mid-check cannot get a free guess, and a match clears it again. Slow.
-     * Load, count and save run under one lock, so two PIN screens cannot both count against the same state.
      */
     public Attempt tryPin(byte[] pin) {
-        synchronized (TRY_LOCK) {
-            long now = clock.elapsed();
-            long boot = clock.boot();
-            PinThrottle.State state = current(now, boot);
-            long locked = PinThrottle.remainingMs(state, now);
-            if (locked > 0) return new Attempt(Result.LOCKED, locked);
-            PinThrottle.State counted = PinThrottle.failed(state, now, boot);
-            save(counted);
-            if (!verifier.matches(prefs.getString(HASH, null), pin)) {
-                return new Attempt(Result.WRONG, PinThrottle.remainingMs(counted, clock.elapsed()));
-            }
-            save(PinThrottle.State.CLEAN);
-            return new Attempt(Result.OK, 0);
+        NightjarPinJni.PinVerifier callback = verifier == null ? null : verifier::matches;
+        long[] res = NightjarPinJni.storeTryPin(handle, pin, clock.elapsed(), clock.boot(), callback);
+        if (res == null || res.length < 2) {
+            return new Attempt(Result.LOCKED, 0);
+        }
+        switch ((int) res[0]) {
+            case 0:
+                return new Attempt(Result.OK, 0);
+            case 1:
+                return new Attempt(Result.WRONG, res[1]);
+            default:
+                return new Attempt(Result.LOCKED, res[1]);
         }
     }
 
     /** Remembers when the app was left unlocked, for the "ask again after" time. */
     void setActive(long elapsed, long boot) {
-        prefs.edit().putLong(ACTIVE_AT, elapsed).putLong(ACTIVE_BOOT, boot).apply();
+        NightjarPinJni.storeSetActive(handle, elapsed, boot);
     }
 
     long activeAt() {
-        return prefs.getLong(ACTIVE_AT, 0);
+        return NightjarPinJni.storeActiveAt(handle);
     }
 
     long activeBoot() {
-        return prefs.getLong(ACTIVE_BOOT, -1);
+        return NightjarPinJni.storeActiveBoot(handle);
     }
 
     long elapsed() {
@@ -233,5 +319,32 @@ public final class PinStore {
 
     long boot() {
         return clock.boot();
+    }
+
+    void flushForTests() {
+        NightjarPinJni.storeFlush(handle);
+    }
+
+    static PinStore reopenForTests(File dir, Clock clock, Verifier verifier) {
+        return new PinStore(dir, clock, verifier);
+    }
+
+    public static void clearForTests(Context context) {
+        Context app = resolveApp(context);
+        File dir = storeDir(app);
+        NightjarPinJni.storeEvictCacheForTests(dir.getAbsolutePath());
+        File lockFile = new File(dir, LOCK_FILE_NAME);
+        if (lockFile.exists()) {
+            lockFile.delete();
+        }
+        SharedPreferences legacy = app.getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        if (legacy != null) {
+            legacy.edit().clear().commit();
+        }
+    }
+
+    @Override public void close() {
+        NightjarPinJni.storeFlush(handle);
+        NightjarPinJni.storeDestroy(handle);
     }
 }

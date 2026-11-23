@@ -8,9 +8,8 @@ import com.limelight.LimeLog;
 import com.limelight.nativeapi.KnownUpdates;
 import com.limelight.nvstream.http.HostCapabilities;
 
+/** Checks for newer Rubylight host releases and exposes cached version availability per PC. */
 public final class HostUpdateChecker {
-    private static final String LATEST_RELEASE_URL = "https://api.github.com/repos/RamazanKara/Rubylight/releases/latest";
-
     private HostUpdateChecker() { }
 
     private static SharedPreferences state(Context context) {
@@ -23,7 +22,7 @@ public final class HostUpdateChecker {
      */
     private static boolean isDue(Context context, HostCapabilities caps) {
         return UpdateFlow.isAvailable(context) &&
-                caps.family() == HostCapabilities.Family.RUBYLIGHT && SemVer.parse(caps.hostVersion()) != null &&
+                caps.isRubylight() && SemVer.parse(caps.hostVersion()) != null &&
                 UpdatePolicy.isCheckDue(new UpdatePrefs(context).isAutoCheck(),
                         state(context).getLong("last_check", 0), System.currentTimeMillis());
     }
@@ -33,7 +32,7 @@ public final class HostUpdateChecker {
      * update channel) wins; without one, a build that updates itself falls back to the latest GitHub release.
      */
     public static String availableVersion(Context context, String hostUuid, HostCapabilities caps) {
-        if (caps.family() != HostCapabilities.Family.RUBYLIGHT) return null;
+        if (!caps.isRubylight()) return null;
         if (KnownUpdates.answered(hostUuid)) return KnownUpdates.offered(hostUuid);
         if (!UpdateFlow.isAvailable(context)) return null;
         String latest = state(context).getString("latest_version", "");
@@ -56,7 +55,7 @@ public final class HostUpdateChecker {
         SharedPreferences prefs = state(context);
         prefs.edit().putLong("last_check", System.currentTimeMillis()).apply();
         try {
-            ReleaseInfo release = UpdateChecker.fetchLatest(LATEST_RELEASE_URL);
+            ReleaseInfo release = UpdateChecker.fetchLatestHost();
             prefs.edit().putString("latest_version", release.isUpdateFor("0.0.0") ? release.version() : "").apply();
         } catch (Exception e) {
             LimeLog.info("Host update check failed: " + e);

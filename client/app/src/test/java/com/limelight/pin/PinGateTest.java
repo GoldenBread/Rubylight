@@ -13,6 +13,7 @@ import android.provider.Settings;
 
 import com.limelight.HelpTopicsActivity;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -46,14 +47,19 @@ public class PinGateTest {
         app = RuntimeEnvironment.getApplication();
         Settings.Global.putInt(app.getContentResolver(), "boot_count", 5);
         PinGate.resetForTests();
-        app.getSharedPreferences(PinStore.FILE, Context.MODE_PRIVATE).edit().clear().commit();
+        PinStore.clearForTests(app);
         store = new PinStore(app);
     }
 
-    /** A PIN is set without paying for the key derivation: only the presence of a record matters to the gate. */
+    @After
+    public void tearDown() {
+        PinGate.resetForTests();
+        PinStore.clearForTests(app);
+    }
+
+    /** A PIN is set without paying for the full calibration: only a valid record matters to the gate. */
     private void lock(PinStore.Mode mode) {
-        app.getSharedPreferences(PinStore.FILE, Context.MODE_PRIVATE).edit()
-                .putString(PinStore.HASH, "v1$1$x$y").putInt(PinStore.LENGTH, 4).commit();
+        store.setPinForTests("1234".getBytes(java.nio.charset.StandardCharsets.US_ASCII), 1);
         store.setMode(mode);
     }
 

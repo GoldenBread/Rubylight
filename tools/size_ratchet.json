@@ -157,7 +157,6 @@
     "client/protocol/desktop/src/hosts.rs": 1648,
     "client/protocol/desktop/src/hosts/tests.rs": 2256,
     "client/protocol/desktop/src/main.rs": 1122,
-    "client/protocol/desktop/src/update_check/tests.rs": 851,
     "client/protocol/policy/src/health.rs": 833,
     "client/protocol/policy/src/http/capabilities.rs": 1257,
     "client/protocol/policy/src/simple_profile.rs": 837,

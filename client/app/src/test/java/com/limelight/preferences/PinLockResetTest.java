@@ -7,6 +7,7 @@ import android.app.Application;
 
 import com.limelight.pin.PinStore;
 
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -19,9 +20,15 @@ import java.util.Collections;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28, application = Application.class)
 public class PinLockResetTest {
+    @After
+    public void tearDown() {
+        PinStore.clearForTests(RuntimeEnvironment.getApplication());
+    }
+
     @Test
     public void resetAllSettingsLeavesThePinLockAlone() {
         Application app = RuntimeEnvironment.getApplication();
+        PinStore.clearForTests(app);
         byte[] pin = "2468".getBytes(StandardCharsets.US_ASCII);
         PinStore store = new PinStore(app);
         store.setPin(pin);

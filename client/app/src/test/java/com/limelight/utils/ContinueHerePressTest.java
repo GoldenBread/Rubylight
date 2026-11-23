@@ -60,6 +60,7 @@ public class ContinueHerePressTest {
     public void tearDown() {
         new PinStore(app).setMode(PinStore.Mode.OFF);
         PinGate.resetForTests();
+        PinStore.clearForTests(app);
     }
 
     /** Presses, lets {@code meanwhile} happen before the PC answers, and runs the UI thread until that answer is in. */

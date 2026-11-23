@@ -14,6 +14,7 @@ pub mod http;
 pub mod internet;
 pub mod input;
 pub mod invite;
+pub mod pin_lock;
 pub mod priority;
 pub mod report;
 pub mod roaming;
@@ -24,6 +25,7 @@ pub mod sharp_color;
 pub mod stun;
 pub use nightjar_policy::tile;
 pub mod timing_record;
+pub mod update;
 pub mod usb;
 pub mod video;
 

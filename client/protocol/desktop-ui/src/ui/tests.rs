@@ -798,7 +798,7 @@ fn screen_readers_hear_a_name_for_everything_on_the_main_screens() {
     let dir = std::env::temp_dir().join(format!("nightjar-ui-pin-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
-    let store = { let (c, cr) = crate::pin_ui::default_backend(); crate::pin_lock::PinStore::new(&dir, c, cr) };
+    let store = crate::pin_ui::open_store(&dir);
     store.set_pin(b"1234").unwrap();
     store.set_mode(crate::pin_lock::Mode::App);
     store.flush();
@@ -2204,7 +2204,7 @@ fn the_pin_screen_does_not_stop_checks_from_being_polled() {
     let dir = std::env::temp_dir().join(format!("nightjar-ui-pin-poll-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
-    let store = { let (c, cr) = crate::pin_ui::default_backend(); crate::pin_lock::PinStore::new(&dir, c, cr) };
+    let store = crate::pin_ui::open_store(&dir);
     store.set_pin(b"1234").unwrap();
     store.set_mode(crate::pin_lock::Mode::App);
     store.flush();
@@ -7561,7 +7561,7 @@ fn a_link_waits_behind_a_dialog_and_the_pin_screen() {
     let dir = std::env::temp_dir().join(format!("nightjar-link-pin-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let store = { let (c, cr) = crate::pin_ui::default_backend(); crate::pin_lock::PinStore::new(&dir, c, cr) };
+    let store = crate::pin_ui::open_store(&dir);
     store.set_pin(b"1234").unwrap();
     store.set_mode(crate::pin_lock::Mode::App);
     store.flush();

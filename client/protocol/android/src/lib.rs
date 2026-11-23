@@ -25,6 +25,7 @@ mod listener;
 pub mod native_api;
 pub mod open_play;
 mod opus;
+pub mod pin;
 mod platform;
 pub mod policy;
 pub mod policy_quality;
@@ -34,6 +35,7 @@ pub mod simple_profile;
 mod slab;
 pub mod stream_menu;
 mod touchpad;
+pub mod update;
 pub mod uri;
 mod usb;
 

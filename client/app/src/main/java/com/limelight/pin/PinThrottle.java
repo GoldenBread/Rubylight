@@ -1,11 +1,11 @@
+/**
+ * Backoff after wrong PINs backed by {@code nightjar_policy::pin::throttle} via
+ * {@link NightjarPinJni}.
+ */
 package com.limelight.pin;
 
-/**
- * Backoff after wrong PINs. Four tries are free; the fifth wrong one locks for 30 s and each further one doubles
- * that, up to 30 min. Times are on the elapsed-realtime clock, which phone clock changes cannot move; a reboot
- * restarts that clock, so the stored lock is then renewed at its current step rather than dropped.
- * Pure: {@link PinStore} keeps the state and supplies the clock.
- */
+import com.limelight.nvstream.jni.NightjarPinJni;
+
 final class PinThrottle {
     static final int FREE_FAILURES = 4;
     static final long BASE_MS = 30_000;
@@ -31,27 +31,26 @@ final class PinThrottle {
 
     /** The wait that follows the {@code fails}-th wrong try in a row. */
     static long delayAfter(int fails) {
-        if (fails <= FREE_FAILURES) return 0;
-        int doublings = Math.min(fails - FREE_FAILURES - 1, 16);
-        return Math.min(MAX_MS, BASE_MS << doublings);
+        return NightjarPinJni.throttleDelayAfter(fails);
     }
 
     /** The state seen from boot {@code boot}: a lock written on another boot is renewed at its current step. */
     static State onBoot(State s, long now, long boot) {
-        if (s.lockBoot == boot) return s;
-        long delay = delayAfter(s.fails);
-        return new State(s.fails, delay > 0 ? now + delay : 0, boot);
+        long[] res = NightjarPinJni.throttleOnBoot(s.fails, s.lockUntil, s.lockBoot, now, boot);
+        if (res == null || res.length < 4 || res[3] == 0) {
+            return s;
+        }
+        return new State((int) res[0], res[1], res[2]);
     }
 
     /** How long input stays refused; never more than the longest step, whatever was stored. */
     static long remainingMs(State s, long now) {
-        return Math.max(0, Math.min(MAX_MS, s.lockUntil - now));
+        return NightjarPinJni.throttleRemainingMs(s.lockUntil, now);
     }
 
     /** The state after one more wrong (or not yet verified) try. */
     static State failed(State s, long now, long boot) {
-        int fails = s.fails + 1;
-        long delay = delayAfter(fails);
-        return new State(fails, delay > 0 ? now + delay : 0, boot);
+        long[] res = NightjarPinJni.throttleFailed(s.fails, now, boot);
+        return new State((int) res[0], res[1], res[2]);
     }
 }

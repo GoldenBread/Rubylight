@@ -1,3 +1,8 @@
+/**
+ * Decides when the PIN is asked for and shows the PIN screen over the app. Pure gate decisions and
+ * grant/grace state live in {@code nightjar-policy::pin::PinGate} via {@link NightjarPinJni}; this
+ * class owns only Android {@link Activity} lifecycle hooks and recents-thumbnail hiding.
+ */
 package com.limelight.pin;
 
 import android.app.Activity;
@@ -8,70 +13,56 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.WindowManager;
 
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarPinJni;
 import com.limelight.ui.NightjarActivity;
 
 import java.lang.ref.WeakReference;
-import java.util.Locale;
 import java.util.Set;
 
-/**
- * Decides when the PIN is asked for and shows the PIN screen over the app.
- *
- * Two things are locked: opening the app (every NightjarActivity that comes to the front while the app is locked)
- * and starting a stream (the two code paths that build a stream intent, {@code ServerHelper.doStart} and
- * {@code ShortcutTrampoline}, ask {@link #needsPinForStream}). The stream screen itself is not gated: it restarts
- * itself for reconnects and recovery, and none of that is a new start.
- */
 public final class PinGate {
     /** How long the PIN screen's approval of one PC's stream start stays valid. */
     static final long GRANT_MS = 60_000;
     private static final long LAUNCH_MS = 3_000;
 
-    private static boolean unlockedApp;
-    /**
-     * This process streams the second screen ({@code GameSecondary}, which no other app can start): only a first
-     * stream the lock let through starts it, so it asks for no PIN, for its start, Continue here, reconnects and
-     * joins alike.
-     */
     private static boolean secondScreen;
-    private static String grantUuid;
-    private static long grantAt;
     /** The app-lock PIN screen that is up, if any; weak so a lost screen cannot keep the lock from coming back. */
     private static WeakReference<Activity> screen;
     /** Until when a PIN screen that was just started is assumed to be on its way. */
     private static long launchingUntil;
     private static int started;
-    /** Elapsed time when the last activity stopped, or -1 while the app is in front (or only rotating). */
-    private static long leftAt = -1;
 
     private PinGate() {
     }
 
-    // ---- The decisions, pure so the table can be tested row by row ----
+    // ---- The decisions, delegated to nightjar-policy::pin ----
 
     static boolean appNeeded(boolean pinSet, PinStore.Mode mode, boolean unlocked) {
-        return pinSet && mode == PinStore.Mode.APP && !unlocked;
+        return NightjarPinJni.gateAppNeeded(pinSet, mode.value, unlocked);
     }
 
     static boolean streamNeeded(boolean pinSet, PinStore.Mode mode, Set<String> pcs, String uuid,
                                 boolean unlocked, boolean grantValid) {
-        if (appNeeded(pinSet, mode, unlocked)) return true;
-        if (!pinSet) return false;
-        boolean asks = mode == PinStore.Mode.STREAMS || (mode == PinStore.Mode.SELECTED && contains(pcs, uuid));
-        return asks && !grantValid;
+        return NightjarPinJni.gateStreamNeeded(pinSet, mode.value, pcsJson(pcs), uuid, unlocked, grantValid);
     }
 
     static boolean contains(Set<String> pcs, String uuid) {
-        if (uuid == null) return false;
-        String wanted = uuid.toLowerCase(Locale.ROOT);
-        for (String pc : pcs) if (pc != null && pc.toLowerCase(Locale.ROOT).equals(wanted)) return true;
-        return false;
+        return NightjarPinJni.gateContains(pcsJson(pcs), uuid);
     }
 
     /** Whether the app was left unlocked recently enough on this boot. */
     static boolean withinGrace(boolean sameBoot, long leftAt, long now, int graceMinutes) {
-        long away = now - leftAt;
-        return sameBoot && graceMinutes > 0 && away >= 0 && away < graceMinutes * 60_000L;
+        return NightjarPinJni.gateWithinGrace(sameBoot, leftAt, now, graceMinutes);
+    }
+
+    private static String pcsJson(Set<String> pcs) {
+        Json.Arr arr = Json.arr();
+        if (pcs != null) {
+            for (String pc : pcs) {
+                arr.add(pc);
+            }
+        }
+        return arr.toString();
     }
 
     // ---- Entry points ----
@@ -79,7 +70,7 @@ public final class PinGate {
     /** The app is locked and nothing has unlocked it. */
     public static synchronized boolean needsPinForApp(Context context) {
         PinStore store = new PinStore(context);
-        return appNeeded(store.hasPin(), store.mode(), unlockedApp);
+        return NightjarPinJni.gateNeedsPinForApp(store.handle());
     }
 
     /**
@@ -87,49 +78,41 @@ public final class PinGate {
      * screen ({@link #grant}) is used up by the start it was given for.
      */
     public static synchronized boolean needsPinForStream(Context context, String uuid) {
+        if (secondScreen) {
+            return false;
+        }
         PinStore store = new PinStore(context);
-        if (secondScreen) return false;
-        boolean granted = grantValid(uuid, SystemClock.elapsedRealtime());
-        boolean needed = streamNeeded(store.hasPin(), store.mode(), store.pcs(), uuid, unlockedApp, granted);
-        if (!needed && granted) grantUuid = null;
-        return needed;
+        return NightjarPinJni.gateNeedsPinForStream(store.handle(), uuid, SystemClock.elapsedRealtime());
     }
 
     /** The same answer without using up a grant: Continue here's press asks this, and the start after it uses the grant. */
     public static synchronized boolean streamLocked(Context context, String uuid) {
-        if (secondScreen) return false;
+        if (secondScreen) {
+            return false;
+        }
         PinStore store = new PinStore(context);
-        return streamNeeded(store.hasPin(), store.mode(), store.pcs(), uuid, unlockedApp,
-                grantValid(uuid, SystemClock.elapsedRealtime()));
-    }
-
-    private static boolean grantValid(String uuid, long now) {
-        return grantUuid != null && uuid != null && grantUuid.equalsIgnoreCase(uuid)
-                && now - grantAt >= 0 && now - grantAt < GRANT_MS;
+        return NightjarPinJni.gateStreamLocked(store.handle(), uuid, SystemClock.elapsedRealtime());
     }
 
     /** The PIN was entered for starting a stream on {@code uuid}. */
     public static synchronized void grant(String uuid) {
-        grantUuid = uuid;
-        grantAt = SystemClock.elapsedRealtime();
+        NightjarPinJni.gateGrant(uuid, SystemClock.elapsedRealtime());
     }
 
     /** The start a grant was left for will not come (Continue here's press failed): it must not open the next one. */
     public static synchronized void forgetGrant() {
-        grantUuid = null;
+        NightjarPinJni.gateForgetGrant();
     }
 
     /** The PIN was entered (or has just been set): the app stays open until it is left for the grace time. */
     public static synchronized void unlockApp() {
-        unlockedApp = true;
-        leftAt = -1;
+        NightjarPinJni.gateUnlockApp();
     }
 
-    /** This process is the second screen's, started by a first stream the lock let through: see {@link #secondScreen}. */
+    /** This process is the second screen's, started by a first stream the lock let through. */
     public static synchronized void followFirstScreen() {
         secondScreen = true;
-        unlockedApp = true;
-        leftAt = -1;
+        NightjarPinJni.gateFollowFirstScreen();
     }
 
     /** The app-lock PIN screen has come up. */
@@ -140,34 +123,33 @@ public final class PinGate {
 
     /** That screen is going away (call before finishing it, so the lock can come back at once). */
     static synchronized void clearScreen(Activity activity) {
-        if (screen != null && screen.get() == activity) screen = null;
+        if (screen != null && screen.get() == activity) {
+            screen = null;
+        }
     }
 
     private static boolean showing() {
-        if (SystemClock.elapsedRealtime() < launchingUntil) return true;
+        if (SystemClock.elapsedRealtime() < launchingUntil) {
+            return true;
+        }
         Activity live = screen == null ? null : screen.get();
         return live != null && !live.isFinishing() && !live.isDestroyed();
     }
 
-    /** Test hook: forget everything the gate remembers in this process. */
+    /** Test hook: forget in-memory gate state in this process without deleting {@code pin_lock.json}. */
     public static synchronized void resetForTests() {
-        unlockedApp = false;
         secondScreen = false;
-        grantUuid = null;
-        grantAt = 0;
         screen = null;
         launchingUntil = 0;
         started = 0;
-        leftAt = -1;
+        NightjarPinJni.gateResetForTests();
     }
 
     /** Starts watching the app's screens; called once from the Application. */
     public static void install(Application app) {
         PinStore store = new PinStore(app);
         synchronized (PinGate.class) {
-            // After a restart of the process the app counts as unlocked if it was left unlocked a moment ago.
-            unlockedApp = store.hasPin() && store.mode() == PinStore.Mode.APP && withinGrace(
-                    store.activeBoot() == store.boot(), store.activeAt(), store.elapsed(), store.graceMinutes());
+            NightjarPinJni.gateInstall(store.handle(), store.elapsed(), store.boot());
         }
         app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             @Override public void onActivityStarted(Activity activity) {
@@ -191,17 +173,14 @@ public final class PinGate {
         boolean show;
         synchronized (PinGate.class) {
             if (started++ == 0) {
-                // Coming back to the app after it was out of sight, not after a rotation.
-                if (leftAt >= 0 && unlockedApp && !secondScreen && store.mode() == PinStore.Mode.APP
-                        && !withinGrace(true, leftAt, store.elapsed(), store.graceMinutes())) {
-                    unlockedApp = false;
-                }
-                leftAt = -1;
+                NightjarPinJni.gateReturned(store.handle(), store.elapsed());
             }
             show = activity instanceof NightjarActivity && !(activity instanceof PinLockActivity)
                     && !activity.isFinishing() && !showing()
-                    && appNeeded(store.hasPin(), store.mode(), unlockedApp);
-            if (show) launchingUntil = SystemClock.elapsedRealtime() + LAUNCH_MS;
+                    && NightjarPinJni.gateNeedsPinForApp(store.handle());
+            if (show) {
+                launchingUntil = SystemClock.elapsedRealtime() + LAUNCH_MS;
+            }
         }
         hideFromRecents(activity, store);
         if (show) {
@@ -216,7 +195,9 @@ public final class PinGate {
      */
     @SuppressWarnings("deprecation")
     private static void hideFromRecents(Activity activity, PinStore store) {
-        if (!(activity instanceof NightjarActivity)) return;
+        if (!(activity instanceof NightjarActivity)) {
+            return;
+        }
         boolean hide = store.mode() == PinStore.Mode.APP;
         if (Build.VERSION.SDK_INT >= 33) {
             activity.setRecentsScreenshotEnabled(!hide);
@@ -231,8 +212,7 @@ public final class PinGate {
         synchronized (PinGate.class) {
             started = Math.max(0, started - 1);
             if (started == 0 && !activity.isChangingConfigurations()) {
-                leftAt = store.elapsed();
-                if (unlockedApp) store.setActive(leftAt, store.boot());
+                NightjarPinJni.gateLeft(store.handle(), store.elapsed(), store.boot());
             }
         }
     }

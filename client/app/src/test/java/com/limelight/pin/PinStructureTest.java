@@ -122,15 +122,21 @@ public class PinStructureTest {
                 }
                 sectionsChecked++;
                 boolean dropsPrefs = false;
+                boolean dropsLockFile = false;
                 for (Node child = section.getFirstChild(); child != null; child = child.getNextSibling()) {
                     if (child instanceof Element && "exclude".equals(((Element) child).getTagName())) {
                         Element exclude = (Element) child;
                         if ("sharedpref".equals(exclude.getAttribute("domain")) && ".".equals(exclude.getAttribute("path"))) {
                             dropsPrefs = true;
                         }
+                        if ("file".equals(exclude.getAttribute("domain"))
+                                && PinStore.LOCK_FILE_NAME.equals(exclude.getAttribute("path"))) {
+                            dropsLockFile = true;
+                        }
                     }
                 }
                 assertTrue(file + " <" + tag + "> must exclude all shared preferences", dropsPrefs);
+                assertTrue(file + " <" + tag + "> must exclude " + PinStore.LOCK_FILE_NAME, dropsLockFile);
             }
             assertTrue(file, sectionsChecked > 0 && excludes.getLength() >= sectionsChecked);
         }

@@ -1,33 +1,11 @@
 use super::*;
 use crate::update_net::{Response, Url};
-use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-#[test]
-fn only_a_newer_stable_release_is_offered() {
-    assert!(newer_stable("v4.0.1", "4.0.0"));
-    assert!(newer_stable("v4.1.0", "4.0.9"));
-    assert!(newer_stable("5.0.0", "4.9.9"));
-    assert!(newer_stable("v4.0.0", "4.0.0-rc.3"), "the final release follows its candidates");
-    assert!(!newer_stable("v4.0.0", "4.0.0"));
-    assert!(!newer_stable("v3.9.9", "4.0.0"));
-    assert!(!newer_stable("v4.1.0-rc.1", "4.0.0"), "a pre-release tag is never offered");
-    assert!(!newer_stable("nightly", "4.0.0"));
-    assert!(!newer_stable("v4.1.0", "a local build"));
-    assert!(newer_stable("v4.1", "4.0.0"), "a two-part tag reads as .0");
-    assert!(!newer_stable("v4.1.0.2", "4.0.0"));
-    for odd in ["v9.9.9+a/b", "9.9.9+build", "v9.9.9/..", " v9.9.9"] {
-        assert!(!newer_stable(odd, "4.0.0"), "{odd}");
-        assert_eq!(offer(&answer(odd, false, false, ""), "4.0.0", &CopyKind::Installed), Ok(None), "{odd}");
-    }
-    assert!(newer_stable("v4.1.0", "4.0.0+local"), "only the tag is held to this");
-}
-
-/// The setup an installed copy on this PC takes (x86_64 or arm64, by the PC's Windows).
 fn setup() -> String {
     CopyKind::Installed.asset_name("4.1.0").unwrap()
 }
@@ -46,49 +24,17 @@ fn github_url() -> String {
 }
 
 #[test]
-fn the_answer_is_read_like_v_plus_reads_it() {
-    let release = |tag: &str, draft: bool, pre: bool| answer(tag, draft, pre, "");
-    assert_eq!(offer(&release("v4.1.0", false, false), "4.0.0", &CopyKind::Portable), Ok(Some(Release {
-        version: "4.1.0".into(),
-        url: "https://github.com/RamazanKara/nightjar/releases/tag/v4.1.0".into(),
-        asset: Err(Failure::NoInstaller),
-    })));
-    assert_eq!(offer(&release("v4.1.0", true, false), "4.0.0", &CopyKind::Portable), Ok(None), "a draft");
-    assert_eq!(offer(&release("v4.1.0", false, true), "4.0.0", &CopyKind::Portable), Ok(None), "a pre-release");
-    assert_eq!(offer(&release("v4.0.0", false, false), "4.0.0", &CopyKind::Portable), Ok(None), "this version");
-    assert!(offer("{\"message\":\"Not Found\"}", "4.0.0", &CopyKind::Portable).is_err());
-    assert!(offer("<html>", "4.0.0", &CopyKind::Portable).is_err());
-    assert!(offer(r#"{"tag_name":"v9.0.0","html_url":"https://evil.example/"}"#, "4.0.0", &CopyKind::Portable).is_err(), "only GitHub pages open");
-}
-
-#[test]
-fn the_release_answer_says_what_to_download_and_check() {
+fn desktop_release_offer_and_asset_mapping_smoke() {
+    assert!(newer_stable("v4.0.1", "4.0.0") && !newer_stable("v4.1.0-rc.1", "4.0.0") && !newer_stable("v9.9.9+a/b", "4.0.0"));
+    assert_eq!(offer(&answer("v4.1.0", true, false, ""), "4.0.0", &CopyKind::Portable), Ok(None));
+    assert!(offer(r#"{"tag_name":"v9.0.0","html_url":"https://evil.example/"}"#, "4.0.0", &CopyKind::Portable).is_err());
     let read = |assets: &str| offer(&answer("v4.1.0", false, false, assets), "4.0.0", &CopyKind::Installed).unwrap().unwrap().asset;
-    let digest = format!(r#","digest":"{DIGEST}""#);
-    assert_eq!(read(&setup_asset(&github_url(), &digest)), Ok(Asset {
-        name: setup(),
-        url: github_url(),
-        digest: DIGEST[7..].to_ascii_lowercase(),
-        size: 1000,
-    }));
+    let d = format!(r#","digest":"{DIGEST}""#);
+    assert_eq!(read(&setup_asset(&github_url(), &d)), Ok(Asset { name: setup(), url: github_url(), digest: DIGEST[7..].to_ascii_lowercase(), size: 1000 }));
     assert_eq!(read(""), Err(Failure::NoInstaller));
-}
-
-#[test]
-fn a_missing_digest_refuses() {
-    let read = |digest: &str| offer(&answer("v4.1.0", false, false, &setup_asset(&github_url(), digest)), "4.0.0", &CopyKind::Installed).unwrap().unwrap().asset;
-    assert_eq!(read(""), Err(Failure::NoDigest), "no field");
-    assert_eq!(read(r#","digest":null"#), Err(Failure::NoDigest), "null");
-    assert_eq!(read(r#","digest":"md5:abcd""#), Err(Failure::NoDigest), "another hash");
-    assert_eq!(read(r#","digest":"sha256:abcd""#), Err(Failure::NoDigest), "too short");
-}
-
-#[test]
-fn an_asset_on_another_host_refuses() {
-    let digest = format!(r#","digest":"{DIGEST}""#);
-    let url = format!("https://evil.example/RamazanKara/nightjar/releases/download/v4.1.0/{}", setup());
-    let release = offer(&answer("v4.1.0", false, false, &setup_asset(&url, &digest)), "4.0.0", &CopyKind::Installed).unwrap().unwrap();
-    assert_eq!(release.asset, Err(Failure::Address(url)));
+    assert_eq!(read(&setup_asset(&github_url(), "")), Err(Failure::NoDigest));
+    let bad = format!("https://evil.example/RamazanKara/nightjar/releases/download/v4.1.0/{}", setup());
+    assert_eq!(read(&setup_asset(&bad, &d)), Err(Failure::Address(bad)));
 }
 
 /// The real request: `cargo test -p nightjar-desktop asks_github -- --ignored`.
@@ -266,7 +212,7 @@ fn folder(name: &str) -> PathBuf {
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    nightjar_core::update::sha256_hex(bytes)
 }
 
 /// The fake installer: keeps what it was handed instead of running anything.

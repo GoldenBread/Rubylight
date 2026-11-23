@@ -24,14 +24,14 @@ pub(super) fn read_response_with_headers<R: Read + ?Sized>(stream: &mut R, body_
 }
 
 /// A response's status line and header fields.
-pub(super) struct Head {
-    pub(super) status: u16,
+pub(crate) struct Head {
+    pub(crate) status: u16,
     reason: String,
-    pub(super) headers: Vec<(String, String)>,
+    pub(crate) headers: Vec<(String, String)>,
 }
 
 impl Head {
-    pub(super) fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case(name))
@@ -40,7 +40,7 @@ impl Head {
 
     /// The Content-Length: digits only and a single field, since a repeated or signed one
     /// could frame the body differently for this client than for a proxy in between.
-    pub(super) fn content_length(&self) -> Result<Option<u64>, Error> {
+    pub(crate) fn content_length(&self) -> Result<Option<u64>, Error> {
         let invalid = || Error::Malformed("invalid Content-Length".into());
         let mut fields = self.headers.iter().filter(|(n, _)| n.eq_ignore_ascii_case("Content-Length"));
         let Some((_, value)) = fields.next() else {
@@ -65,7 +65,7 @@ impl Head {
     }
 }
 
-pub(super) fn read_head<R: Read + ?Sized>(reader: &mut Reader<'_, R>) -> Result<Head, Error> {
+pub(crate) fn read_head<R: Read + ?Sized>(reader: &mut Reader<'_, R>) -> Result<Head, Error> {
     let head_end = loop {
         if let Some(at) = find(&reader.buffer, b"\r\n\r\n") {
             break at;
@@ -148,15 +148,15 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-pub(super) struct Reader<'a, R: Read + ?Sized> {
-    pub(super) stream: &'a mut R,
-    pub(super) buffer: Vec<u8>,
-    pub(super) eof: bool,
+pub(crate) struct Reader<'a, R: Read + ?Sized> {
+    pub(crate) stream: &'a mut R,
+    pub(crate) buffer: Vec<u8>,
+    pub(crate) eof: bool,
 }
 
 impl<R: Read + ?Sized> Reader<'_, R> {
     /// Reads more; false at the end of the stream.
-    pub(super) fn fill(&mut self) -> Result<bool, Error> {
+    pub(crate) fn fill(&mut self) -> Result<bool, Error> {
         if self.eof {
             return Ok(false);
         }
@@ -192,7 +192,7 @@ impl<R: Read + ?Sized> Reader<'_, R> {
         Ok(self.buffer.drain(..n).collect())
     }
 
-    pub(super) fn line(&mut self) -> Result<String, Error> {
+    pub(crate) fn line(&mut self) -> Result<String, Error> {
         loop {
             if let Some(at) = find(&self.buffer, b"\r\n") {
                 let line = String::from_utf8_lossy(&self.buffer[..at]).into_owned();

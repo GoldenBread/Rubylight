@@ -792,7 +792,7 @@ public class GameRecoveryTest {
             });
         } finally {
             store.setMode(com.limelight.pin.PinStore.Mode.OFF);
-            com.limelight.pin.PinGate.resetForTests();
+            com.limelight.pin.PinGate.resetForTests(); com.limelight.pin.PinStore.clearForTests(application);
         }
     }
 
@@ -870,7 +870,7 @@ public class GameRecoveryTest {
             }
         } finally {
             store.setMode(com.limelight.pin.PinStore.Mode.OFF);
-            com.limelight.pin.PinGate.resetForTests();
+            com.limelight.pin.PinGate.resetForTests(); com.limelight.pin.PinStore.clearForTests(RuntimeEnvironment.getApplication());
         }
     }
 
@@ -1158,7 +1158,7 @@ public class GameRecoveryTest {
         } finally {
             cleanupRecovery(game);
             store.setMode(com.limelight.pin.PinStore.Mode.OFF);
-            com.limelight.pin.PinGate.resetForTests();
+            com.limelight.pin.PinGate.resetForTests(); com.limelight.pin.PinStore.clearForTests(application);
         }
     }
 

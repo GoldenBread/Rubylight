@@ -2,38 +2,31 @@ package com.limelight.update;
 
 import android.content.Context;
 
-import java.io.ByteArrayOutputStream;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarHttpJni;
+
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Locale;
 
-import okhttp3.Call;
-import okhttp3.Request;
-import okhttp3.Response;
-
-/** Downloads a release APK into the cache and checks it against the release's SHA256SUMS file. */
+/** Downloads a release APK into the cache and checks it against the release's SHA256SUMS file via nightjar-core. */
 public final class UpdateDownloader {
     public interface Progress {
         void onProgress(long done, long total);
     }
 
     private static final String DIRECTORY = "updates";
-    private static final long MAX_SUMS_BYTES = 64 * 1024;
 
-    private volatile Call call;
-    private volatile boolean cancelled;
+    private long cancelHandle;
+    private boolean cancelled;
 
     public void cancel() {
-        cancelled = true;
-        Call current = call;
-        if (current != null) {
-            current.cancel();
+        long handle;
+        synchronized (this) {
+            cancelled = true;
+            handle = cancelHandle;
+            if (handle != 0) {
+                NightjarHttpJni.transferCancelCancel(handle);
+            }
         }
     }
 
@@ -54,117 +47,68 @@ public final class UpdateDownloader {
      * Blocks on the network; call from a background thread.
      */
     public File download(Context context, ReleaseInfo release, boolean root, Progress progress) throws IOException {
-        ReleaseInfo.Asset apk = release.apkAsset(root);
-        if (apk == null) {
+        if (release == null) {
             throw new UpdateException(UpdateException.Reason.NO_APK);
         }
-        ReleaseInfo.Asset sums = release.checksumAsset();
-        if (sums == null) {
-            throw new UpdateException(UpdateException.Reason.NO_CHECKSUMS);
+        long handle = NightjarHttpJni.transferCancelCreate();
+        synchronized (this) {
+            cancelHandle = handle;
+            if (cancelled && handle != 0) {
+                NightjarHttpJni.transferCancelCancel(handle);
+            }
         }
-        requireHttps(apk.url);
-        requireHttps(sums.url);
-
-        String expected = ChecksumFile.find(fetchText(sums.url), apk.name);
-        if (expected == null) {
-            throw new UpdateException(UpdateException.Reason.CHECKSUM_ENTRY_MISSING);
-        }
-
-        cleanUp(context);
-        File directory = directory(context);
-        if (!directory.isDirectory() && !directory.mkdirs()) {
-            throw new IOException("Cannot create " + directory);
-        }
-        File part = new File(directory, apk.name + ".part");
-        File target = new File(directory, apk.name);
         try {
-            String actual = fetchFile(apk.url, apk.size, part, progress);
-            if (!actual.equals(expected)) {
-                throw new UpdateException(UpdateException.Reason.CHECKSUM_MISMATCH);
+            NightjarHttpJni.FolderProgress jniProgress =
+                    progress == null ? null : (done, total) -> progress.onProgress(done, total);
+            String raw = NightjarHttpJni.updateDownloadApk(
+                    release.toJson(),
+                    root,
+                    directory(context).getAbsolutePath(),
+                    jniProgress,
+                    handle);
+            if (raw == null) {
+                throw new UpdateException(UpdateException.Reason.DOWNLOAD_FAILED);
             }
-            if (!part.renameTo(target)) {
-                throw new IOException("Cannot rename " + part);
+            Json.Obj reply;
+            try {
+                reply = Json.parseObject(raw);
+            } catch (Json.SyntaxException e) {
+                throw new UpdateException(UpdateException.Reason.DOWNLOAD_FAILED, e);
             }
-            return target;
+            if (reply.has("ok")) {
+                return new File(reply.getString("ok"));
+            }
+            throw mapError(reply.optObject("error"));
         } finally {
-            part.delete();
+            synchronized (this) {
+                cancelHandle = 0;
+            }
+            if (handle != 0) {
+                NightjarHttpJni.transferCancelDestroy(handle);
+            }
         }
     }
 
-    private static void requireHttps(String url) throws UpdateException {
-        if (!url.toLowerCase(Locale.ROOT).startsWith("https://")) {
-            throw new UpdateException(UpdateException.Reason.DOWNLOAD_FAILED);
+    private IOException mapError(Json.Obj err) {
+        String kind = err == null ? "" : err.optString("kind", "");
+        String msg = err == null ? "Download failed" : err.optString("message", "Download failed");
+        switch (kind) {
+            case "no_apk":
+                return new UpdateException(UpdateException.Reason.NO_APK);
+            case "no_checksums":
+                return new UpdateException(UpdateException.Reason.NO_CHECKSUMS);
+            case "checksum_entry_missing":
+                return new UpdateException(UpdateException.Reason.CHECKSUM_ENTRY_MISSING);
+            case "checksum_mismatch":
+                return new UpdateException(UpdateException.Reason.CHECKSUM_MISMATCH);
+            case "cancelled":
+                return new UpdateException(UpdateException.Reason.CANCELLED);
+            case "io":
+                return new IOException(msg);
+            default:
+                return new UpdateException(cancelled
+                        ? UpdateException.Reason.CANCELLED
+                        : UpdateException.Reason.DOWNLOAD_FAILED);
         }
-    }
-
-    private String fetchText(String url) throws IOException {
-        if (cancelled) {
-            throw new UpdateException(UpdateException.Reason.CANCELLED);
-        }
-        Request request = UpdateChecker.request(url).build();
-        call = UpdateChecker.client().newCall(request);
-        try (Response response = call.execute()) {
-            if (!response.isSuccessful() || response.body() == null) {
-                throw new UpdateException(UpdateException.Reason.DOWNLOAD_FAILED);
-            }
-            ByteArrayOutputStream text = new ByteArrayOutputStream();
-            try (InputStream in = response.body().byteStream()) {
-                byte[] buffer = new byte[4096];
-                int read;
-                while ((read = in.read(buffer)) > 0) {
-                    text.write(buffer, 0, read);
-                    if (text.size() > MAX_SUMS_BYTES) {
-                        throw new UpdateException(UpdateException.Reason.DOWNLOAD_FAILED);
-                    }
-                }
-            }
-            return new String(text.toByteArray(), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw failure(e);
-        }
-    }
-
-    /** Writes the response to the file and returns the SHA-256 of what was written. */
-    private String fetchFile(String url, long expectedSize, File file, Progress progress) throws IOException {
-        if (cancelled) {
-            throw new UpdateException(UpdateException.Reason.CANCELLED);
-        }
-        Request request = UpdateChecker.request(url).build();
-        call = UpdateChecker.client().newCall(request);
-        try (Response response = call.execute()) {
-            if (!response.isSuccessful() || response.body() == null) {
-                throw new UpdateException(UpdateException.Reason.DOWNLOAD_FAILED);
-            }
-            long total = response.body().contentLength() > 0 ? response.body().contentLength() : expectedSize;
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream in = response.body().byteStream(); OutputStream out = new FileOutputStream(file)) {
-                byte[] buffer = new byte[64 * 1024];
-                long done = 0;
-                int read;
-                while ((read = in.read(buffer)) > 0) {
-                    out.write(buffer, 0, read);
-                    digest.update(buffer, 0, read);
-                    done += read;
-                    if (progress != null) {
-                        progress.onProgress(done, total);
-                    }
-                }
-                if (total > 0 && done != total) {
-                    throw new UpdateException(UpdateException.Reason.DOWNLOAD_FAILED);
-                }
-            }
-            return ChecksumFile.hex(digest.digest());
-        } catch (NoSuchAlgorithmException e) {
-            throw new IOException(e);
-        } catch (IOException e) {
-            throw failure(e);
-        }
-    }
-
-    private UpdateException failure(IOException e) {
-        if (e instanceof UpdateException) {
-            return (UpdateException) e;
-        }
-        return new UpdateException(cancelled ? UpdateException.Reason.CANCELLED : UpdateException.Reason.DOWNLOAD_FAILED, e);
     }
 }

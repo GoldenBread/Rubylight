@@ -38,44 +38,31 @@ pub struct Release {
     pub asset: Result<Asset, Failure>,
 }
 
-/// A version's numbers and its pre-release part ("rc.1" in 4.0.0-rc.1), from a tag or a
-/// versionName; a leading `v` is allowed.
-fn parse(text: &str) -> Option<([u64; 3], Option<&str>)> {
-    let text = text.trim().strip_prefix('v').unwrap_or(text.trim());
-    let (core, pre) = match text.split_once('-') { Some((core, pre)) => (core, Some(pre)), None => (text, None) };
-    let core = core.split('+').next()?;
-    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
-    let numbers = [parts.next()??, parts.next()??, parts.next().unwrap_or(Some(0))?];
-    parts.next().is_none().then_some((numbers, pre.filter(|p| !p.is_empty())))
-}
-
-/// Whether `tag` is a stable release newer than `current`. A pre-release build is older than its
-/// own final version, as in SemVer. A tag is digits and dots only: it becomes a file name and an
-/// address, and `v9.9.9+a/b` would read as 9.9.9.
+/// Whether `tag` is a stable release newer than `current`. Delegated to `nightjar_policy::update`.
 pub fn newer_stable(tag: &str, current: &str) -> bool {
-    if !tag.strip_prefix('v').unwrap_or(tag).bytes().all(|b| b.is_ascii_digit() || b == b'.') { return false; }
-    let (Some((latest, None)), Some((running, pre))) = (parse(tag), parse(current)) else { return false };
-    latest > running || (latest == running && pre.is_some())
+    nightjar_policy::update::newer_stable_tag(tag, current)
 }
 
 /// The release GitHub answered, if it is an update for `current`. Drafts and pre-releases never
 /// are (GitHub's latest release excludes them; the flags are checked as V+ PC does).
 pub fn offer(json: &str, current: &str, copy: &CopyKind) -> Result<Option<Release>, String> {
-    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("unreadable release: {e}"))?;
-    let tag = value["tag_name"].as_str().ok_or("the release has no tag")?;
-    if value["draft"].as_bool() == Some(true) || value["prerelease"].as_bool() == Some(true) || !newer_stable(tag, current) {
+    let parsed = nightjar_policy::update::Release::parse(json)?;
+    if parsed.draft || parsed.prerelease || !newer_stable(&parsed.tag, current) {
         return Ok(None);
     }
-    let url = value["html_url"].as_str().filter(|u| u.starts_with("https://github.com/")).ok_or("the release has no page")?;
-    let version = tag.trim_start_matches('v');
-    // The first asset the release has; a broken one (address, digest, size) is reported, not skipped.
-    let asset = copy
-        .asset_names(version)
-        .iter()
-        .map(|name| self_update::asset(&value, tag, name))
-        .find(|found| !matches!(found, Err(Failure::NoInstaller)))
-        .unwrap_or(Err(Failure::NoInstaller));
-    Ok(Some(Release { version: version.to_owned(), url: url.to_owned(), asset }))
+    if !parsed.html_url.starts_with("https://github.com/") {
+        return Err("the release has no page".into());
+    }
+    let version = parsed.tag.trim_start_matches('v').to_owned();
+    let names = copy.asset_names(&version);
+    let asset = parsed
+        .select_desktop_asset(&names)
+        .map_err(self_update::map_asset_error);
+    Ok(Some(Release {
+        version,
+        url: parsed.html_url,
+        asset,
+    }))
 }
 
 /// A download on its way.

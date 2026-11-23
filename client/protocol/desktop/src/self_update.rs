@@ -12,22 +12,20 @@
 //! The asset's size and SHA-256 come from GitHub's release answer. Nothing runs without both
 //! matching, and only https addresses at GitHub's own hosts are ever connected to, redirects included.
 
-use std::fs::File;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use sha2::{Digest, Sha256};
+use nightjar_core::update::net::OpenError;
+use nightjar_core::update::{UpdateError, download_verified_file};
+use nightjar_policy::update::DesktopAssetError;
 
+pub use nightjar_core::update::net::{api_host, download_host};
+pub use nightjar_policy::update::DesktopAsset as Asset;
 use crate::update_net::{Response, Transport, Url};
 
-const REPOSITORY: &str = "RamazanKara/nightjar";
-/// The releases are around 12 MB.
-const MAX_SIZE: u64 = 512 << 20;
-const MAX_REDIRECTS: usize = 5;
 const PART_PREFIX: &str = ".nightjar-update-";
 /// A leftover younger than this may belong to another running Nightjar.
 const STALE_AFTER: Duration = Duration::from_secs(3600);
@@ -233,51 +231,21 @@ fn install_location() -> Option<PathBuf> {
     None
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Asset {
-    pub name: String,
-    pub url: String,
-    pub digest: String,
-    pub size: u64,
-}
-
-/// The named asset of a release answer, with what the download is checked against.
-pub fn asset(release: &serde_json::Value, tag: &str, name: &str) -> Result<Asset, Failure> {
-    let found = release["assets"].as_array().and_then(|list| list.iter().find(|asset| asset["name"] == name)).ok_or(Failure::NoInstaller)?;
-    let url = format!("https://github.com/{REPOSITORY}/releases/download/{tag}/{name}");
-    if found["browser_download_url"] != url.as_str() {
-        return Err(Failure::Address(found["browser_download_url"].as_str().unwrap_or("").to_owned()));
+pub(crate) fn map_asset_error(err: DesktopAssetError) -> Failure {
+    match err {
+        DesktopAssetError::NoInstaller => Failure::NoInstaller,
+        DesktopAssetError::NoDigest => Failure::NoDigest,
+        DesktopAssetError::Address(url) => Failure::Address(url),
+        DesktopAssetError::Size => Failure::Size,
     }
-    let digest = found["digest"]
-        .as_str()
-        .and_then(|d| d.strip_prefix("sha256:"))
-        .filter(|d| d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()))
-        .ok_or(Failure::NoDigest)?;
-    let size = found["size"].as_u64().filter(|s| *s > 0 && *s <= MAX_SIZE).ok_or(Failure::Size)?;
-    Ok(Asset { name: name.to_owned(), url, digest: digest.to_ascii_lowercase(), size })
-}
-
-/// The hosts a release download goes through, GitHub's redirect to its asset storage included.
-pub fn download_host(url: &Url) -> bool {
-    url.secure && url.port == 443 && matches!(url.host.as_str(), "github.com" | "release-assets.githubusercontent.com" | "objects.githubusercontent.com")
-}
-
-/// The host of the release question.
-pub fn api_host(url: &Url) -> bool {
-    url.secure && url.port == 443 && url.host == "api.github.com"
 }
 
 /// A GET that follows redirects itself, judging each address before connecting to it.
 pub fn open(net: &dyn Transport, address: &str, allow: fn(&Url) -> bool, api: bool) -> Result<Response, Failure> {
-    let mut url = Url::parse(address).ok_or_else(|| Failure::Address(address.to_owned()))?;
-    for _ in 0..=MAX_REDIRECTS {
-        if !allow(&url) { return Err(Failure::Address(url.host)); }
-        let response = net.get(&url, api).map_err(Failure::Network)?;
-        if !matches!(response.status, 301 | 302 | 303 | 307 | 308) { return Ok(response); }
-        let location = response.location.as_deref().ok_or_else(|| Failure::Network("a redirect to nowhere".into()))?;
-        url = url.resolve(location).ok_or_else(|| Failure::Address(location.to_owned()))?;
-    }
-    Err(Failure::Network("too many redirects".into()))
+    nightjar_core::update::net::open(net, address, allow, api).map_err(|e| match e {
+        OpenError::Address(host) => Failure::Address(host),
+        OpenError::Network(msg) => Failure::Network(msg),
+    })
 }
 
 /// What the launcher and the download thread share.
@@ -289,45 +257,34 @@ pub struct Progress {
 
 /// Downloads to `part` and checks it. Afterwards `part` is the complete, verified file, or gone.
 pub fn download(net: &dyn Transport, allow: fn(&Url) -> bool, asset: &Asset, part: &Path, progress: &Progress) -> Result<(), Failure> {
-    let result = download_inner(net, allow, asset, part, progress);
-    if result.is_err()
-        && let Err(e) = std::fs::remove_file(part)
-            && e.kind() != std::io::ErrorKind::NotFound { eprintln!("nightjar: update: leftover {}: {e}", part.display()); }
-    result
-}
-
-fn download_inner(net: &dyn Transport, allow: fn(&Url) -> bool, asset: &Asset, part: &Path, progress: &Progress) -> Result<(), Failure> {
-    let cancelled = || progress.cancel.load(Ordering::Relaxed);
-    let mut response = open(net, &asset.url, allow, false)?;
-    if response.status != 200 { return Err(Failure::Network(format!("HTTP {}", response.status))); }
-    if response.length.is_some_and(|length| length != asset.size) { return Err(Failure::Size); }
-    let local = |e: std::io::Error| Failure::Apply(format!("{}: {e}", part.display()));
-    if let Some(dir) = part.parent() { std::fs::create_dir_all(dir).map_err(local)?; }
-    let mut file = File::create(part).map_err(local)?;
-    let mut hash = Sha256::new();
-    let mut received = 0u64;
-    let mut chunk = vec![0u8; 64 * 1024];
     let mut woke = Instant::now();
-    loop {
-        if cancelled() { return Err(Failure::Cancelled); }
-        let read = response.body.read(&mut chunk).map_err(|e| Failure::Network(e.to_string()))?;
-        if read == 0 { break; }
-        received += read as u64;
-        if received > asset.size { return Err(Failure::Size); }
-        hash.update(&chunk[..read]);
-        file.write_all(&chunk[..read]).map_err(local)?;
-        progress.received.store(received, Ordering::Relaxed);
-        if woke.elapsed() > Duration::from_millis(100) {
-            woke = Instant::now();
-            (progress.wake)();
-        }
-    }
-    if cancelled() { return Err(Failure::Cancelled); }
-    if received != asset.size { return Err(Failure::Size); }
-    let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if digest != asset.digest { return Err(Failure::Digest); }
-    file.sync_all().map_err(local)?;
-    Ok(())
+    download_verified_file(
+        net,
+        allow,
+        &asset.url,
+        Some(asset.size),
+        &asset.digest,
+        part,
+        None,
+        &|| progress.cancel.load(Ordering::Relaxed),
+        &mut |done, _| {
+            progress.received.store(done, Ordering::Relaxed);
+            if woke.elapsed() > Duration::from_millis(100) {
+                woke = Instant::now();
+                (progress.wake)();
+            }
+        },
+    )
+    .map_err(|err| match err {
+        UpdateError::Cancelled => Failure::Cancelled,
+        UpdateError::SizeMismatch => Failure::Size,
+        UpdateError::ChecksumMismatch => Failure::Digest,
+        UpdateError::Address(host) => Failure::Address(host),
+        UpdateError::Io(msg) => Failure::Apply(msg),
+        UpdateError::Network(msg) | UpdateError::Malformed(msg) => Failure::Network(msg),
+        UpdateError::RateLimited => Failure::Network("HTTP 429".into()),
+        UpdateError::NoApk | UpdateError::NoChecksums | UpdateError::ChecksumEntryMissing => Failure::NoDigest,
+    })
 }
 
 /// How one copy gets updated; what a test replaces.
