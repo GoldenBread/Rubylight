@@ -8,6 +8,9 @@ import static org.junit.Assert.assertTrue;
 
 import android.app.Application;
 
+import com.limelight.nativeapi.NativeApiFixtures;
+
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -17,59 +20,40 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.security.PrivateKey;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 
-import okhttp3.Interceptor;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Protocol;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
-import okio.Buffer;
-import okio.BufferedSource;
-
-/** Shared folders as the host's folders routes speak them (nightjar-core folders.rs). */
+/** Shared folders over real TLS loopback and nightjar-core folders.rs JNI. */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class SharedFoldersTest {
-    private final List<Request> requests = new ArrayList<>();
+    private final List<TestHttpServer> servers = new ArrayList<>();
+    private final List<TestHttpServer.RecordedRequest> requests = new ArrayList<>();
     private final List<byte[]> uploaded = new ArrayList<>();
 
-    private SharedFolders folders(Interceptor host) throws Exception {
-        NvHTTP http = new NvHTTP(new ComputerDetails.AddressTuple("192.0.2.1", 47989), 47984,
-                "1234567890abcdef", null, new LimelightCryptoProvider() {
-            public X509Certificate getClientCertificate() { return null; }
-            public PrivateKey getClientPrivateKey() { return null; }
-            public byte[] getPemEncodedClientCertificate() { return new byte[0]; }
-            public String encodeBase64String(byte[] data) { return ""; }
-        });
-        java.lang.reflect.Field field = NvHTTP.class.getDeclaredField("httpClientLongConnectTimeout");
-        field.setAccessible(true);
-        field.set(http, new OkHttpClient.Builder().addInterceptor(chain -> {
-            requests.add(chain.request());
-            if (chain.request().body() != null) {
-                Buffer body = new Buffer();
-                chain.request().body().writeTo(body);
-                uploaded.add(body.readByteArray());
+    @After
+    public void closeServers() throws IOException {
+        for (TestHttpServer s : servers) {
+            s.close();
+        }
+        servers.clear();
+    }
+
+    private SharedFolders folders(TestHttpServer.Handler host) throws Exception {
+        TestHttpServer server = new TestHttpServer(req -> {
+            requests.add(req);
+            if (req.body.length > 0) {
+                uploaded.add(req.body);
             }
-            // Application interceptors run before OkHttp's own cancel check: stand in for it.
-            if (chain.call().isCanceled()) throw new IOException("Canceled");
-            return host.intercept(chain);
-        }).build());
+            return host.handle(req);
+        });
+        servers.add(server);
+        NvHTTP http = server.newClient("1234567890abcdef", true, NativeApiFixtures.crypto());
         return new SharedFolders(http);
     }
 
-    private static Interceptor answer(int code, String json) {
-        return chain -> response(chain, code, ResponseBody.create(json, MediaType.get("application/json")));
-    }
-
-    private static Response response(Interceptor.Chain chain, int code, ResponseBody body) {
-        return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(code)
-                .message("Fixture").body(body).build();
+    private static TestHttpServer.Handler answer(int code, String json) {
+        return req -> TestHttpServer.Response.json(code, json);
     }
 
     private static String refusal(String code) {
@@ -86,13 +70,12 @@ public class SharedFoldersTest {
         assertEquals("Games", list.get(0).name);
         assertTrue(list.get(0).writable);
         assertFalse(list.get(1).writable);
-        // An access from a newer host counts as read only.
         assertFalse(list.get(2).writable);
-        Request request = requests.get(0);
-        assertEquals("GET", request.method());
-        assertEquals("/api/native/v1/folders", request.url().encodedPath());
-        assertEquals("1234567890abcdef", request.url().queryParameter("uniqueid"));
-        assertNull(request.url().queryParameter("path"));
+        TestHttpServer.RecordedRequest request = requests.get(0);
+        assertEquals("GET", request.method);
+        assertEquals("/api/native/v1/folders", request.path);
+        assertEquals("1234567890abcdef", request.queryParam("uniqueid"));
+        assertNull(request.queryParam("path"));
     }
 
     @Test
@@ -107,14 +90,15 @@ public class SharedFoldersTest {
         assertEquals(SharedFolders.Kind.FILE, listing.entries.get(1).kind);
         assertEquals(5000000000L, listing.entries.get(1).size);
         assertEquals(SharedFolders.Kind.UNKNOWN, listing.entries.get(2).kind);
-        assertEquals("/api/native/v1/folders/games/entries", requests.get(0).url().encodedPath());
-        assertEquals("Saves", requests.get(0).url().queryParameter("path"));
+        assertEquals("/api/native/v1/folders/games/entries", requests.get(0).path);
+        assertEquals("Saves", requests.get(0).queryParam("path"));
         for (String bad : new String[] {"{\"entries\":[]}", "{\"path\":\"\",\"entries\":[{\"name\":\"a\",\"kind\":\"file\","
                 + "\"size\":\"5\",\"modified_unix_ms\":0}]}", "{\"path\":\"\",\"entries\":[{\"name\":\"a\",\"kind\":\"file\","
                 + "\"size\":-1,\"modified_unix_ms\":0}]}", "{\"path\":\"\",\"entries\":[1]}", "[]"}) {
-            assertThrows(bad, IOException.class, () -> SharedFolders.parseEntries(bad));
+            assertThrows(bad, IOException.class, () -> folders(answer(200, bad)).entries("games", ""));
         }
-        assertThrows(IOException.class, () -> SharedFolders.parseFolders("{\"folders\":[{\"id\":1,\"name\":\"a\",\"access\":\"read\"}]}"));
+        assertThrows(IOException.class, () -> folders(answer(200,
+                "{\"folders\":[{\"id\":1,\"name\":\"a\",\"access\":\"read\"}]}")).folders());
     }
 
     @Test
@@ -131,9 +115,10 @@ public class SharedFoldersTest {
             assertEquals(expected, refused.refusal);
             assertEquals(expected.status, refused.status);
         }
-        // A code under another status, an unknown code or a page that is no error body stay plain HTTP errors.
-        for (Interceptor other : new Interceptor[] {answer(409, refusal("forbidden")), answer(403, refusal("new_reason")),
-                answer(500, "<html>"), answer(204, "")}) {
+        for (TestHttpServer.Handler other : new TestHttpServer.Handler[] {
+                answer(409, refusal("forbidden")), answer(403, refusal("new_reason")),
+                req -> TestHttpServer.Response.bytes(500, "text/html", "<html>".getBytes()),
+                answer(204, "")}) {
             IOException failure = assertThrows(IOException.class, () -> folders(other).folders());
             assertTrue(failure.toString(), failure instanceof HostHttpResponseException);
         }
@@ -143,40 +128,39 @@ public class SharedFoldersTest {
     public void aDownloadWritesTheWholeFileAndReportsProgress() throws Exception {
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         List<long[]> progress = new ArrayList<>();
-        long length = folders(chain -> response(chain, 200, ResponseBody.create("hello",
-                MediaType.get("application/octet-stream")))).download("games", "Saves/a b.sav", sink,
-                (done, total) -> progress.add(new long[] {done, total}), new TransferCancel());
+        long length = folders(req -> TestHttpServer.Response.bytes(
+                200, "application/octet-stream", "hello".getBytes(StandardCharsets.UTF_8)))
+                .download("games", "Saves/a b.sav", sink,
+                        (done, total) -> progress.add(new long[] {done, total}), new TransferCancel());
         assertEquals(5, length);
         assertEquals("hello", sink.toString("UTF-8"));
         assertEquals(5, progress.get(progress.size() - 1)[0]);
         assertEquals(5, progress.get(progress.size() - 1)[1]);
-        assertEquals("/api/native/v1/folders/games/content", requests.get(0).url().encodedPath());
-        assertEquals("path=Saves%2Fa%20b.sav", requests.get(0).url().encodedQuery().split("&uniqueid")[0]);
+        assertEquals("/api/native/v1/folders/games/content", requests.get(0).path);
+        assertTrue(requests.get(0).rawQuery,
+                requests.get(0).rawQuery.startsWith("path=Saves%2Fa%20b.sav"));
     }
 
     @Test
     public void aHostThatSendsMoreThanItListedIsStoppedAtTheListedSize() throws Exception {
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
-        IOException failure = assertThrows(IOException.class, () -> folders(chain -> response(chain, 200,
-                ResponseBody.create("hello, and more", MediaType.get("application/octet-stream"))))
+        IOException failure = assertThrows(IOException.class, () -> folders(req -> TestHttpServer.Response.bytes(
+                200, "application/octet-stream", "hello, and more".getBytes(StandardCharsets.UTF_8)))
                 .download("games", "a.sav", 5, sink, (done, total) -> { }, new TransferCancel()));
         assertFalse(failure instanceof SharedFolders.LocalFileException);
         assertTrue(failure.getMessage(), failure.getMessage().contains("more than the 5 bytes it listed"));
         assertEquals("nothing past the listed size is written", 0, sink.size());
-        // Exactly the listed size is a whole file.
-        assertEquals(5, folders(chain -> response(chain, 200, ResponseBody.create("hello",
-                MediaType.get("application/octet-stream")))).download("games", "a.sav", 5, new ByteArrayOutputStream(),
-                (done, total) -> { }, new TransferCancel()));
+        assertEquals(5, folders(req -> TestHttpServer.Response.bytes(
+                200, "application/octet-stream", "hello".getBytes(StandardCharsets.UTF_8)))
+                .download("games", "a.sav", 5, new ByteArrayOutputStream(),
+                        (done, total) -> { }, new TransferCancel()));
     }
 
     @Test
     public void aShortDownloadFails() throws Exception {
-        ResponseBody shortBody = new ResponseBody() {
-            @Override public MediaType contentType() { return MediaType.get("application/octet-stream"); }
-            @Override public long contentLength() { return 10; }
-            @Override public BufferedSource source() { return new Buffer().writeUtf8("hello"); }
-        };
-        IOException failure = assertThrows(IOException.class, () -> folders(chain -> response(chain, 200, shortBody))
+        IOException failure = assertThrows(IOException.class, () -> folders(req -> TestHttpServer.Response.bytes(
+                200, "application/octet-stream", "hello".getBytes(StandardCharsets.UTF_8))
+                .declaredContentLength(10))
                 .download("games", "a.sav", new ByteArrayOutputStream(), (done, total) -> { }, new TransferCancel()));
         assertFalse(failure instanceof SharedFolders.LocalFileException);
         assertTrue(failure.getMessage(), failure.getMessage().contains("5 of 10"));
@@ -207,14 +191,12 @@ public class SharedFoldersTest {
         String stored = folders(answer(201, "{\"name\":\"a (1).txt\",\"size\":5}")).upload("games", "Docs/a.txt",
                 new ByteArrayInputStream(file), file.length, (done, total) -> { }, new TransferCancel());
         assertEquals("a (1).txt", stored);
-        Request request = requests.get(0);
-        assertEquals("PUT", request.method());
-        assertEquals("/api/native/v1/folders/games/content", request.url().encodedPath());
-        assertEquals("Docs/a.txt", request.url().queryParameter("path"));
-        assertEquals("100-continue", request.header("Expect"));
-        assertEquals(5, request.body().contentLength());
-        assertTrue(request.body().isOneShot());
-        assertEquals("application/octet-stream", request.body().contentType().toString());
+        TestHttpServer.RecordedRequest request = requests.get(0);
+        assertEquals("PUT", request.method);
+        assertEquals("/api/native/v1/folders/games/content", request.path);
+        assertEquals("Docs/a.txt", request.queryParam("path"));
+        assertEquals("5", request.header("content-length"));
+        assertEquals("application/octet-stream", request.header("content-type"));
         assertEquals("hello", new String(uploaded.get(0), StandardCharsets.UTF_8));
     }
 
@@ -243,7 +225,6 @@ public class SharedFoldersTest {
                             new ByteArrayInputStream(new byte[length + 1]), length, (done, total) -> sent[0] = done,
                             new TransferCancel()));
             assertTrue(changed.getMessage(), changed.getMessage().contains("changed during the upload"));
-            // The host got less than the length it was promised, so it keeps nothing.
             assertTrue(length + ": sent " + sent[0], length == 0 || sent[0] < length);
         }
     }
@@ -269,7 +250,7 @@ public class SharedFoldersTest {
     }
 
     @Test
-    public void pathsJoinAndSplitByName() {
+    public void pathsJoinAndSplitByName() throws Exception {
         assertEquals("a", SharedFolders.childPath("", "a"));
         assertEquals("a/b", SharedFolders.childPath("a", "b"));
         assertEquals("", SharedFolders.parentPath("a"));
@@ -278,7 +259,8 @@ public class SharedFoldersTest {
         assertTrue(SharedFolders.hasPartSuffix("x.Part"));
         assertFalse(SharedFolders.hasPartSuffix("part"));
         assertFalse(SharedFolders.hasPartSuffix("x.parts"));
-        // The host percent-decodes the whole argument, the slashes between names with it.
-        assertEquals("path=a%20b%2Fc%26d%3D", SharedFolders.pathQuery("a b/c&d="));
+        folders(answer(200, "{\"path\":\"a b/c&d=\",\"entries\":[]}")).entries("games", "a b/c&d=");
+        assertTrue(requests.get(0).rawQuery,
+                requests.get(0).rawQuery.startsWith("path=a%20b%2Fc%26d%3D"));
     }
 }

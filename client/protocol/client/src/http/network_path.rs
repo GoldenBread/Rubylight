@@ -85,7 +85,7 @@ mod tests {
         let client = HostClient::new("127.0.0.1", 1, identity)
             .unwrap()
             .with_https_port(1);
-        client.pin(Some(client.identity().certificate_der().to_vec()));
+        client.pin(Some(client.identity().unwrap().certificate_der().to_vec()));
         let without = ServerInfo::parse(
             &RUBYLIGHT.replace("<NetworkPathVersion>1</NetworkPathVersion>", ""),
             47989,

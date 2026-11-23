@@ -149,6 +149,7 @@ final class StreamRateChanges {
 
     // limitKbps is this client's cap on the range (see clientLimitKbps), 0 for none.
     void startAutomatic(int initialKbps, int limitKbps, long nowMs) {
+        if (automatic != null) automatic.close();
         automatic = new ClientHintBitrateController(initialKbps, limitKbps, nowMs);
         automaticSerial = 0;
     }
@@ -160,6 +161,7 @@ final class StreamRateChanges {
     }
 
     void stopAutomatic() {
+        if (automatic != null) automatic.close();
         automatic = null;
         automaticSerial = 0;
     }

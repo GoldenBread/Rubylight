@@ -1,6 +1,12 @@
 package com.limelight.nvstream.http;
 
+import android.app.Application;
+
 import com.limelight.nativeapi.NativeApiFixtures;
+
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
@@ -36,6 +42,8 @@ import static org.junit.Assert.assertTrue;
  * streaming app answers on the same ports): serverinfo says so, so the poll keeps the pairing
  * instead of taking that answer's PairStatus 0 as the PC forgetting this device.
  */
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class ServerInfoCertificateTest {
     private static final String SERVERINFO = "<?xml version=\"1.0\" encoding=\"utf-8\"?><root status_code=\"200\">"
             + "<hostname>Other</hostname><uniqueid>other</uniqueid><HttpsPort>47984</HttpsPort>"

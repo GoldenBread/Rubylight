@@ -6,7 +6,7 @@
 
 use serde_json::Value;
 
-use crate::stats::{known, Stats};
+use crate::stats::{Stats, known};
 use crate::trace::{Args, Subject};
 
 /// Lowest rate the controller steps down to unless the person sets a higher minimum.
@@ -104,6 +104,7 @@ pub struct AdaptiveBitrateController {
     step_back_target_kbps: Option<u32>,
     step_back_from_kbps: Option<u32>,
     step_back_failures: u32,
+    last_reason: String,
 }
 
 impl AdaptiveBitrateController {
@@ -155,10 +156,18 @@ impl AdaptiveBitrateController {
             step_back_target_kbps: None,
             step_back_from_kbps: None,
             step_back_failures: 0,
+            last_reason: String::new(),
         };
         controller.update_floor();
         controller
     }
+
+    pub fn last_reason(&self) -> &str {
+        &self.last_reason
+    }
+
+    pub fn ceiling_kbps(&self) -> u32 { self.ceiling_kbps }
+    pub fn floor_kbps(&self) -> u32 { self.floor_kbps }
 
     fn update_floor(&mut self) {
         let nominal = built_in_floor_kbps(self.width, self.height, self.fps, self.codec)
@@ -261,11 +270,29 @@ impl AdaptiveBitrateController {
                 } else {
                     floor.max(self.current_kbps * 80 / 100)
                 };
-                if target < self.current_kbps && s.thermal_level < 2 && slow_decoder {
-                    self.decode_before_reduction_ms = s.decode_ms;
-                    self.decode_before_reduction_kbps = self.current_kbps;
+                if target < self.current_kbps {
+                    if s.thermal_level < 2 && slow_decoder {
+                        self.decode_before_reduction_ms = s.decode_ms;
+                        self.decode_before_reduction_kbps = self.current_kbps;
+                    }
+                    self.last_reason = if !poor {
+                        if s.thermal_level >= 2 {
+                            "device heat".to_owned()
+                        } else {
+                            format!("decode {:.1} ms", s.decode_ms.unwrap_or(0.0))
+                        }
+                    } else if s.poor_connection {
+                        "connection warning".to_owned()
+                    } else if recent && s.loss_percent.is_some_and(|l| l >= 3.0) {
+                        format!("{:.1}% frame loss", s.loss_percent.unwrap_or(0.0))
+                    } else if queue_building {
+                        format!("network queue {:.0} ms", s.queue_ms.unwrap_or(0.0))
+                    } else {
+                        format!("jitter {:.0} ms", s.jitter_ms.unwrap_or(0.0))
+                    };
+                    return Some(target);
                 }
-                return (target < self.current_kbps).then_some(target);
+                return None;
             }
             return None;
         }
@@ -315,12 +342,14 @@ impl AdaptiveBitrateController {
                 let target = self.current_kbps + step;
                 self.step_back_target_kbps = Some(target);
                 self.step_back_from_kbps = Some(self.current_kbps);
+                self.last_reason = format!("step back toward {stable} kbps");
                 return Some(target);
             }
         } else if healthy_ms >= 15_000 && since_change_ms >= 15_000 {
             let target = self
                 .ceiling_kbps
                 .min(self.current_kbps + 250.max(self.current_kbps / 20));
+            self.last_reason = "healthy".to_owned();
             return (target > self.current_kbps).then_some(target);
         }
         None
@@ -761,11 +790,7 @@ mod tests {
         // so the retry waits STEP_BACK_RETRY_HEALTHY_MS (15 s).
         for s in 1..=15 {
             now += 1000;
-            assert_eq!(
-                c.sample(&stats(now, 0.0)),
-                None,
-                "must hold before 15 s healthy (at {s} s)"
-            );
+            assert_eq!(c.sample(&stats(now, 0.0)), None, "must hold before 15 s healthy (at {s} s)");
         }
         now += 1000;
         assert!(c.sample(&stats(now, 0.0)).is_some(), "retries at 15 s healthy");

@@ -11,11 +11,11 @@
 //! `{"error": {...}}`. Java decodes both, so no exception crosses the JNI boundary and the
 //! error keeps its API code, HTTP status and setting.
 
-use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jboolean, jint, jstring, JNI_FALSE};
 use jni::JNIEnv;
+use jni::objects::{JByteArray, JClass, JString};
+use jni::sys::{JNI_FALSE, jboolean, jint, jstring};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use nightjar_core::http::native_api::audio::{Audio, AudioWrite};
@@ -23,10 +23,10 @@ use nightjar_core::http::native_api::radeon::{Radeon, SettingsWrite};
 use nightjar_core::http::native_api::session::{ActionId, CouchMenu, CouchMenuRequest, Session};
 use nightjar_core::http::native_api::wake::Wake;
 use nightjar_core::http::{
-    update_arrived, valid_pairing_pin, ClientIdentity, Coop, CoopJoined, Error, GuestAction,
-    HostClient, HostUpdate, InviteCreate, InviteCreated, NativeCapabilities, NativeLibrary,
-    PairingApprove, PairingApproved, PairingRequests, PcPower, PcPowerOffer, PowerError,
-    PowerReply, Refusal, SessionGuests, StreamMove,
+    ClientIdentity, Coop, CoopJoined, Error, GuestAction, HostClient, HostUpdate, InviteCreate,
+    InviteCreated, NativeCapabilities, NativeLibrary, PairingApprove, PairingApproved,
+    PairingRequests, PcPower, PcPowerOffer, PowerError, PowerReply, Refusal, SessionGuests,
+    StreamMove, update_arrived, valid_pairing_pin,
 };
 use nightjar_core::http::{Neural, NeuralWrite};
 
@@ -167,7 +167,7 @@ impl Host for HostClient {
 
 /// Set in the process of a device's second screen (Dual screen mode): every client this module
 /// builds marks its requests as that stream's.
-static SECOND_SCREEN: AtomicBool = AtomicBool::new(false);
+pub(crate) static SECOND_SCREEN: AtomicBool = AtomicBool::new(false);
 
 pub fn client(endpoint: &Endpoint) -> Result<HostClient, Error> {
     let identity = ClientIdentity::from_der(

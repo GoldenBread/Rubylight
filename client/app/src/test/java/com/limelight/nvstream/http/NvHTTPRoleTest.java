@@ -1,31 +1,50 @@
 package com.limelight.nvstream.http;
 
+import android.app.Application;
+
 import com.limelight.nvstream.ConnectionContext;
 import com.limelight.nvstream.StreamConfiguration;
 import com.limelight.preferences.HostDisplayChoice;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import java.io.InputStream;
 import java.io.StringReader;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.security.PrivateKey;
-import java.security.cert.X509Certificate;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.crypto.spec.SecretKeySpec;
 
-import okhttp3.HttpUrl;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Protocol;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
-
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class NvHTTPRoleTest {
+    private static final class Query {
+        private final Map<String, String> params = new LinkedHashMap<>();
+
+        Query(String rawQuery) {
+            for (String pair : rawQuery.split("&")) {
+                if (pair.isEmpty()) continue;
+                int eq = pair.indexOf('=');
+                String key = URLDecoder.decode(eq < 0 ? pair : pair.substring(0, eq), StandardCharsets.UTF_8);
+                String val = eq < 0 ? "" : URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+                params.putIfAbsent(key, val);
+            }
+        }
+
+        String queryParameter(String name) {
+            return params.get(name);
+        }
+    }
+
     public static String fixture(String name) throws Exception {
         try (InputStream input = NvHTTPRoleTest.class.getResourceAsStream("/protocol/butterpollo-" + name + ".xml")) {
             assertNotNull(input);
@@ -35,8 +54,17 @@ public class NvHTTPRoleTest {
 
     public static HostHttpResponseException error(String name) throws Exception {
         String xml = fixture(name);
-        return assertThrows(HostHttpResponseException.class,
-                () -> NvHTTP.readLaunchResponse(new ConnectionContext(), "launch", xml));
+        try (TestHttpServer server = new TestHttpServer(req -> TestHttpServer.Response.xml(200, xml))) {
+            NvHTTP http = server.newClient();
+            ConnectionContext ctx = new ConnectionContext();
+            ctx.streamConfig = new StreamConfiguration.Builder().build();
+            ctx.negotiatedWidth = 1920;
+            ctx.negotiatedHeight = 1080;
+            ctx.riKey = new SecretKeySpec(new byte[16], "AES");
+            ctx.hostCaps = HostCapabilities.UNKNOWN;
+            return assertThrows(HostHttpResponseException.class,
+                    () -> http.launchApp(ctx, "launch", 42, false));
+        }
     }
 
     private List<NvApp> apps(String catalogue) throws Exception {
@@ -83,8 +111,6 @@ public class NvHTTPRoleTest {
         }
     }
 
-    // An Apollo applist with input-only mode on and a game running (Apollo nvhttp.cpp applist,
-    // process.cpp parse()), plus the Virtual Display and fallback Desktop apps it adds elsewhere.
     private static final String APOLLO_APPLIST = "<root status_code=\"200\">" +
             apolloApp("Game", "0F3C2B1A-1111-4222-8333-944455556666", 0, 1385710102) +
             apolloApp("Virtual Display", "8902CB19-674A-403D-A587-41B092E900BA", 1, 1913204568) +
@@ -113,7 +139,6 @@ public class NvHTTPRoleTest {
             assertEquals(caps.toString(), NvApp.Control.TERMINATE, apps.get(4).getControl());
             assertTrue(caps.toString(), apps.get(4).isControlAction());
         }
-        // Sunshine, GameStream and Rubylight never made these apps; there they stay ordinary.
         for (String host : new String[] {"sunshine", "gamestream", "rubylight"}) {
             for (NvApp app : NvHTTP.getAppListByReader(new StringReader(APOLLO_APPLIST),
                     TestHosts.fixture(host + "-serverinfo.xml"))) {
@@ -121,7 +146,6 @@ public class NvHTTPRoleTest {
                 assertEquals(host, NvApp.Role.STREAM, app.getRole());
             }
         }
-        // A shortcut keeps the role by UUID alone, in whatever case it was stored.
         NvApp shortcut = new NvApp("Remote Input", 0, false);
         shortcut.setAppUuid("8cb5c136-da67-4f99-b4a1-f9cd35005cf4");
         shortcut.setHostCapabilities(TestHosts.fixture("apollo-serverinfo.xml"));
@@ -134,7 +158,7 @@ public class NvHTTPRoleTest {
                 TestHosts.fixture("apollo-serverinfo.xml")).get(3);
         ConnectionContext context = context(app);
         context.hostCaps = TestHosts.fixture("apollo-serverinfo.xml");
-        HttpUrl query = query(context, "launch");
+        Query query = query(context, "launch");
         assertEquals("1557224430", query.queryParameter("appid"));
         assertEquals("8CB5C136-DA67-4F99-B4A1-F9CD35005CF4", query.queryParameter("appuuid"));
         assertEquals("1", query.queryParameter("input_only"));
@@ -148,13 +172,12 @@ public class NvHTTPRoleTest {
         assertEquals(NvApp.Role.INPUT_ONLY, app.getRole());
         assertFalse(app.isSmallStreamInputOnly());
         assertFalse(app.isControlAction());
-        HttpUrl query = query(context(app), "launch");
+        Query query = query(context(app), "launch");
         assertEquals("0", query.queryParameter("appid"));
         assertEquals("1", query.queryParameter("input_only"));
         assertEquals("1", query.queryParameter("rlMicOnly"));
         assertNull(query.queryParameter("virtualDisplay"));
         assertNull(query.queryParameter("hdrMode"));
-        // An ordinary Input-only launch does not ask for it.
         assertNull(query(context(apps("remote-applist").get(1)), "launch").queryParameter("rlMicOnly"));
     }
 
@@ -180,16 +203,15 @@ public class NvHTTPRoleTest {
         return context;
     }
 
-    private HttpUrl query(ConnectionContext context, String verb) {
-        return HttpUrl.get("https://host/" + verb + "?" + NvHTTP.getLaunchQuery(context,
-                context.streamConfig.getApp().getAppId(), true));
+    private Query query(ConnectionContext context, String verb) {
+        return new Query(NvHTTP.getLaunchQuery(context, context.streamConfig.getApp().getAppId(), true));
     }
 
     @Test
     public void monitorLaunchAndResumeRequestVideoWithoutControllers() throws Exception {
         for (NvApp app : new NvApp[] {apps("remote-applist").get(2), apps("monitor-applist").get(0)}) {
             for (String verb : new String[] {"launch", "resume"}) {
-                HttpUrl query = query(context(app), verb);
+                Query query = query(context(app), verb);
                 assertEquals("1", query.queryParameter("remote_monitor"));
                 assertNull(query.queryParameter("input_only"));
                 assertEquals("0", query.queryParameter("gcmap"));
@@ -217,11 +239,10 @@ public class NvHTTPRoleTest {
         ConnectionContext context = context(remote.get(0));
         context.hostDisplay = HostDisplayChoice.EXTENDED;
         for (String verb : new String[] {"launch", "resume"}) {
-            HttpUrl query = query(context, verb);
+            Query query = query(context, verb);
             assertEquals("extended", query.queryParameter("hostDisplay"));
             assertEquals("1", query.queryParameter("virtualDisplay"));
         }
-        // GameStream has no display modes, so it never receives the choice.
         context.hostCaps = TestHosts.fixture("gamestream-serverinfo.xml");
         assertNull(query(context, "launch").queryParameter("hostDisplay"));
     }
@@ -230,7 +251,7 @@ public class NvHTTPRoleTest {
     public void inputOnlyRequestsInputWithoutDisplayHdrOrVrrChanges() throws Exception {
         ConnectionContext context = context(apps("remote-applist").get(1));
         for (String verb : new String[] {"launch", "resume"}) {
-            HttpUrl query = query(context, verb);
+            Query query = query(context, verb);
             assertEquals("1", query.queryParameter("input_only"));
             assertNull(query.queryParameter("remote_monitor"));
             assertNull(query.queryParameter("hdrMode"));
@@ -255,7 +276,7 @@ public class NvHTTPRoleTest {
             context.negotiatedWidth = 640;
             context.negotiatedHeight = 360;
             for (String verb : new String[] {"launch", "resume"}) {
-                HttpUrl query = query(context, verb);
+                Query query = query(context, verb);
                 assertNull(host, query.queryParameter("input_only"));
                 assertNull(host, query.queryParameter("remote_monitor"));
                 assertNull(host, query.queryParameter("hdrMode"));
@@ -286,12 +307,14 @@ public class NvHTTPRoleTest {
 
     @Test
     public void ordinaryLaunchKeepsItsDisplayAndControllerParameters() {
-        HttpUrl query = query(context(new NvApp("Game", 73, true)), "launch");
+        Query query = query(context(new NvApp("Game", 73, true)), "launch");
         assertNull(query.queryParameter("remote_monitor"));
         assertNull(query.queryParameter("input_only"));
         assertEquals("3", query.queryParameter("gcmap"));
         assertEquals("1", query.queryParameter("gcpersist"));
         assertEquals("1", query.queryParameter("hdrMode"));
+        assertEquals("150", query.queryParameter("scaleFactor"));
+        assertEquals("1", query.queryParameter("clientVrrRequested"));
         assertEquals("150", query.queryParameter("scaleFactor"));
         assertEquals("1", query.queryParameter("clientVrrRequested"));
         assertEquals("1", query.queryParameter("vrr"));
@@ -301,7 +324,7 @@ public class NvHTTPRoleTest {
     public void uuidOnlyShortcutStillRequestsTheRemoteRole() {
         NvApp app = new NvApp("Remote Input", 0, false);
         app.setAppUuid("9a1c5a25-58fe-40e0-b9aa-7d3f00000006");
-        HttpUrl query = query(context(app), "launch");
+        Query query = query(context(app), "launch");
         assertEquals("0", query.queryParameter("appid"));
         assertEquals(app.getAppUuid(), query.queryParameter("appuuid"));
         assertEquals("1", query.queryParameter("input_only"));
@@ -311,48 +334,46 @@ public class NvHTTPRoleTest {
     @Test
     public void roleSuccessUsesTheRequestedEndpointsReplyAndEncryptedRtspUrl() throws Exception {
         for (String verb : new String[] {"launch", "resume"}) {
-            ConnectionContext context = new ConnectionContext();
-            assertTrue(NvHTTP.readLaunchResponse(context, verb, fixture("role-" + verb)));
-            assertEquals("rtspenc://192.0.2.1:48010", context.rtspSessionUrl);
+            String xml = fixture("role-" + verb);
+            try (TestHttpServer server = new TestHttpServer(req -> TestHttpServer.Response.xml(200, xml))) {
+                ConnectionContext context = context(new NvApp("Game", 42, false));
+                assertTrue(server.newClient().launchApp(context, verb, 42, false));
+                assertEquals("rtspenc://192.0.2.1:48010", context.rtspSessionUrl);
+            }
         }
     }
 
     @Test
     public void disconnectingEitherRoleUsesItsControlTileAndNeverCancel() throws Exception {
-        NvHTTP http = new NvHTTP(new ComputerDetails.AddressTuple("192.0.2.1", 47989), 47984,
-                "paired-device", null, new LimelightCryptoProvider() {
-            public X509Certificate getClientCertificate() { return null; }
-            public PrivateKey getClientPrivateKey() { return null; }
-            public byte[] getPemEncodedClientCertificate() { return new byte[0]; }
-            public String encodeBase64String(byte[] data) { return ""; }
-        });
-        java.lang.reflect.Field client = NvHTTP.class.getDeclaredField("httpClientLongConnectTimeout");
-        client.setAccessible(true);
         AtomicInteger requests = new AtomicInteger();
-        for (NvApp.Role role : new NvApp.Role[] {NvApp.Role.REMOTE_MONITOR, NvApp.Role.INPUT_ONLY}) {
-            boolean monitor = role == NvApp.Role.REMOTE_MONITOR;
-            // Rubylight's reply, then Vibepollo's.
-            for (String xml : new String[] {fixture(monitor ? "monitor-disconnected" : "input-disconnected"),
-                    completion(monitor ? "Remote Monitor disconnected successfully." :
-                            "Remote Input disconnected successfully.", true)}) {
-                client.set(http, new OkHttpClient.Builder().addInterceptor(chain -> {
-                    requests.incrementAndGet();
-                    HttpUrl url = chain.request().url();
-                    assertEquals("/launch", url.encodedPath());
-                    assertEquals(monitor ? "2147483502" : "2147483503", url.queryParameter("appid"));
-                    // Vibepollo rejects a launch without these before it reads the tile.
-                    assertTrue(url.queryParameter("rikey").matches("[0-9A-F]{32}"));
-                    assertEquals("0", url.queryParameter("rikeyid"));
-                    assertEquals("0", url.queryParameter("localAudioPlayMode"));
-                    assertNull(url.queryParameter("appuuid"));
-                    return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
-                            .code(200).message("OK").body(ResponseBody.create(xml, MediaType.get("application/xml"))).build();
-                }).build());
-                assertTrue(xml, http.disconnectRole(role));
+        java.util.concurrent.atomic.AtomicReference<String> nextXml =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean expectMonitor =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        try (TestHttpServer server = new TestHttpServer(req -> {
+            requests.incrementAndGet();
+            assertEquals("/launch", req.path);
+            assertEquals(expectMonitor.get() ? "2147483502" : "2147483503", req.queryParam("appid"));
+            assertTrue(req.queryParam("rikey").matches("[0-9A-F]{32}"));
+            assertEquals("0", req.queryParam("rikeyid"));
+            assertEquals("0", req.queryParam("localAudioPlayMode"));
+            assertNull(req.queryParam("appuuid"));
+            return TestHttpServer.Response.xml(200, nextXml.get());
+        })) {
+            NvHTTP http = server.newClient();
+            for (NvApp.Role role : new NvApp.Role[] {NvApp.Role.REMOTE_MONITOR, NvApp.Role.INPUT_ONLY}) {
+                boolean monitor = role == NvApp.Role.REMOTE_MONITOR;
+                expectMonitor.set(monitor);
+                for (String xml : new String[] {fixture(monitor ? "monitor-disconnected" : "input-disconnected"),
+                        completion(monitor ? "Remote Monitor disconnected successfully." :
+                                "Remote Input disconnected successfully.", true)}) {
+                    nextXml.set(xml);
+                    assertTrue(xml, http.disconnectRole(role));
+                }
             }
+            assertThrows(IllegalArgumentException.class, () -> http.disconnectRole(NvApp.Role.STREAM));
+            assertEquals(4, requests.get());
         }
-        assertThrows(IllegalArgumentException.class, () -> http.disconnectRole(NvApp.Role.STREAM));
-        assertEquals(4, requests.get());
     }
 
     /**

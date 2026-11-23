@@ -22,5 +22,11 @@ public final class NightjarAndroidConfigurer extends AndroidConfigurer {
     public void configure(InstrumentationConfiguration.Builder builder, Interceptors interceptors) {
         super.configure(builder, interceptors);
         builder.doNotAcquireClass(NightjarJni.class.getName());
+        builder.doNotAcquireClass(NightjarPolicyJni.class.getName());
+        builder.doNotAcquireClass(NightjarHttpJni.class.getName());
+        builder.doNotAcquireClass(NightjarHttpJni.ByteSink.class.getName());
+        builder.doNotAcquireClass(NightjarHttpJni.ByteSource.class.getName());
+        builder.doNotAcquireClass(NightjarHttpJni.PercentProgress.class.getName());
+        builder.doNotAcquireClass(NightjarHttpJni.FolderProgress.class.getName());
     }
 }

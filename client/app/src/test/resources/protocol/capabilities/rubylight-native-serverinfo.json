@@ -53,9 +53,9 @@
     "neural_frame_generation": "unknown",
     "mic_only": "unknown",
     "continue_here": {"only": "rust", "availability": "unknown", "comment": "Android reads the native list itself: NativeCapabilities.offersContinueHere"},
-    "pc_restart": {"only": "java", "availability": "unknown", "comment": "Desktop reads power.restart, power.shutdown and update from the native capabilities itself"},
-    "pc_shutdown": {"only": "java", "availability": "unknown", "comment": "Desktop reads power.restart, power.shutdown and update from the native capabilities itself"},
-    "host_update": {"only": "java", "availability": "unknown", "comment": "Desktop reads power.restart, power.shutdown and update from the native capabilities itself"},
-    "pairing_approve": {"only": "java", "availability": "unknown", "comment": "Desktop reads pairing.approve from the native capabilities itself."}
+    "pc_restart": "unknown",
+    "pc_shutdown": "unknown",
+    "host_update": "unknown",
+    "pairing_approve": "unknown"
   }
 }

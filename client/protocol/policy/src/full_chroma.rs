@@ -34,8 +34,8 @@ impl Unavailable {
 /// `Packed444Modes` from serverinfo: the modes this client knows (bits a newer host adds are left
 /// out), or None when absent or not a number (Android's `NvHTTP.readPacked444Modes`).
 pub fn read_serverinfo_modes(value: Option<&str>) -> Option<u8> {
-    let parsed: i64 = value?.trim().parse().ok()?;
-    (parsed >= 0).then(|| (parsed & i64::from(ALL_MODES)) as u8)
+    let parsed: i32 = value?.trim().parse().ok()?;
+    (parsed >= 0).then(|| (parsed as u32 & u32::from(ALL_MODES)) as u8)
 }
 
 /// Whether [`before_launch`] would call `device_modes`: the PC does not rule packed out. The check
@@ -198,8 +198,14 @@ mod tests {
         assert!(device_modes_needed(None, false));
         assert!(device_modes_needed(Some(HEVC8), false));
         assert!(!device_modes_needed(Some(0), false));
-        assert!(!device_modes_needed(None, true), "a refusal the PC has not lifted");
-        assert!(device_modes_needed(Some(HEVC8), true), "the PC's modes outrank the refusal");
+        assert!(
+            !device_modes_needed(None, true),
+            "a refusal the PC has not lifted"
+        );
+        assert!(
+            device_modes_needed(Some(HEVC8), true),
+            "the PC's modes outrank the refusal"
+        );
     }
 
     #[test]
@@ -293,9 +299,15 @@ mod tests {
         assert!(memory.renew(&first));
         assert!(!memory.renew(&first), "the same versions change nothing");
         assert!(memory.refused());
-        assert_eq!(memory.under, first, "a refusal keeps the versions it was given under");
+        assert_eq!(
+            memory.under, first,
+            "a refusal keeps the versions it was given under"
+        );
         assert!(!memory.renew(&first));
-        assert!(memory.refused_before(None), "same versions: not asked again");
+        assert!(
+            memory.refused_before(None),
+            "same versions: not asked again"
+        );
         // The PC was updated: it is asked again.
         assert!(memory.renew(&stamp("0.9.0", Some("3.12.0"))));
         assert!(!memory.refused_before(None));
@@ -308,7 +320,10 @@ mod tests {
         assert!(!memory.refused_before(None));
         // The known modes stay across an update; started and refused keep the versions.
         memory.started(HEVC8);
-        assert_eq!((memory.modes, memory.under.as_str()), (Some(HEVC8), "0.9.1/"));
+        assert_eq!(
+            (memory.modes, memory.under.as_str()),
+            (Some(HEVC8), "0.9.1/")
+        );
         // A refusal saved before versions were kept is asked again at the next launch.
         let old: Memory = serde_json::from_str(r#"{"modes":null,"refused":true}"#).unwrap();
         assert_eq!(old.under, "");
@@ -316,6 +331,10 @@ mod tests {
         assert!(old.renew(&first));
         assert!(!old.refused);
         // Nothing to say is not written.
-        assert!(!serde_json::to_string(&Memory::default()).unwrap().contains("under"));
+        assert!(
+            !serde_json::to_string(&Memory::default())
+                .unwrap()
+                .contains("under")
+        );
     }
 }

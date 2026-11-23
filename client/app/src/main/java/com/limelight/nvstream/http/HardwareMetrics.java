@@ -1,25 +1,21 @@
+/**
+ * Host CPU and GPU telemetry ({@code GET /api/hardware-metrics}), parsed in Rust via {@link NightjarHttpJni}.
+ */
 package com.limelight.nvstream.http;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarHttpJni;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public final class HardwareMetrics {
     static final int MAX_RESPONSE_BYTES = 256 * 1024;
-    private static final String[] CPU_METRICS = {"cpu_usage_percent"};
-    private static final String[] GPU_METRICS = {
-            "gpu_usage_percent", "gpu_clock_mhz", "gpu_memory_clock_mhz",
-            "gpu_temperature_c", "gpu_hotspot_temperature_c", "gpu_memory_temperature_c",
-            "gpu_voltage_mv", "gpu_fan_rpm", "gpu_fan_percent", "gpu_power_w",
-            "gpu_board_power_w", "gpu_vram_used_mb", "gpu_vram_usage_percent"
-    };
 
     public final long sampledAtUnixMs;
     public final int intervalMs;
@@ -52,60 +48,41 @@ public final class HardwareMetrics {
     }
 
     public static HardwareMetrics parse(String json) throws IOException {
-        if (json.length() > MAX_RESPONSE_BYTES) {
-            throw new IOException("Hardware metrics response too large");
-        }
         try {
-            JSONObject root = new JSONObject(json);
-            if (integer(root, "version", 0, Integer.MAX_VALUE) != 1) {
-                throw new UnsupportedVersionException();
-            }
-            long sampledAt = integer(root, "sampled_at_unix_ms", 0, Long.MAX_VALUE);
-            int interval = (int) integer(root, "interval_ms", 500, 10000);
-            Map<String, Double> cpu = readings(root.getJSONObject("cpu"), CPU_METRICS);
-            JSONArray entries = root.getJSONArray("gpus");
-            if (entries.length() > 64) {
-                throw new IOException("Too many hardware metrics GPUs");
-            }
-            List<Gpu> gpus = new ArrayList<>(entries.length());
-            for (int i = 0; i < entries.length(); i++) {
-                JSONObject entry = entries.getJSONObject(i);
-                int id = (int) integer(entry, "id", Integer.MIN_VALUE, Integer.MAX_VALUE);
-                Object name = entry.get("name");
-                if (!(name instanceof String) || ((String) name).length() > 512) {
-                    throw new IOException("Invalid hardware metrics GPU name");
+            Json.Obj reply = Json.parseObject(NightjarHttpJni.parseHardwareMetrics(json));
+            if (reply.has("error")) {
+                Json.Obj err = reply.getObject("error");
+                if ("unsupported_version".equals(err.optString("kind"))) {
+                    throw new UnsupportedVersionException();
                 }
-                gpus.add(new Gpu(id, (String) name, readings(entry.getJSONObject("metrics"), GPU_METRICS)));
+                throw new IOException(err.optString("message", "Invalid hardware metrics response"));
             }
-            return new HardwareMetrics(sampledAt, interval, cpu, gpus);
-        } catch (JSONException e) {
+            return fromJsonObj(reply.getObject("ok"));
+        } catch (Json.SyntaxException e) {
             throw new IOException("Invalid hardware metrics response", e);
         }
     }
 
-    private static long integer(JSONObject object, String key, long min, long max) throws IOException, JSONException {
-        Object value = object.get(key);
-        if (!(value instanceof Integer) && !(value instanceof Long)) {
-            throw new IOException("Invalid hardware metrics " + key);
+    static HardwareMetrics fromJsonObj(Json.Obj root) {
+        long sampledAt = root.getLong("sampled_at_unix_ms");
+        int interval = root.getInt("interval_ms");
+        Map<String, Double> cpu = toMap(root.getObject("cpu"));
+        Json.Arr entries = root.getArray("gpus");
+        List<Gpu> gpus = new ArrayList<>(entries.length());
+        for (int i = 0; i < entries.length(); i++) {
+            Json.Obj entry = entries.getObject(i);
+            gpus.add(new Gpu(entry.getInt("id"), entry.getString("name"), toMap(entry.getObject("metrics"))));
         }
-        long number = ((Number) value).longValue();
-        if (number < min || number > max) {
-            throw new IOException("Invalid hardware metrics " + key);
-        }
-        return number;
+        return new HardwareMetrics(sampledAt, interval, cpu, gpus);
     }
 
-    private static Map<String, Double> readings(JSONObject object, String[] supported) {
-        Map<String, Double> result = new LinkedHashMap<>();
-        for (String key : supported) {
-            Object value = object.opt(key);
-            if (value instanceof Number) {
-                double number = ((Number) value).doubleValue();
-                if (!Double.isNaN(number) && !Double.isInfinite(number) && number >= 0) {
-                    result.put(key, number);
-                }
-            }
+    private static Map<String, Double> toMap(Json.Obj obj) {
+        Map<String, Double> out = new LinkedHashMap<>();
+        Iterator<String> keys = obj.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            out.put(key, obj.getDouble(key));
         }
-        return result;
+        return out;
     }
 }

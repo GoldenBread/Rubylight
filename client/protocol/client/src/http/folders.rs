@@ -1,19 +1,19 @@
 //! Shared folders under the native API (`/api/native/v1/folders`): HostClient calls.
 //! Wire DTOs and path helpers live in `nightjar_policy::http`.
 
-pub use nightjar_policy::http::{
-    check_id, check_path, child_path, collision_name, file_name, has_part_suffix, parent_path,
-    EntryKind, FolderAccess, FolderEntries, FolderEntry, SharedFolder, MAX_FOLDER_DEPTH,
-    PART_SUFFIX,
-};
 use super::files::{
-    decode, download_listed, uploaded, FileError, Local, TransferCancel, Uploaded, MAX_JSON_BYTES,
-    MAX_LIST_BYTES, TRANSFER_TIMEOUT,
+    FileError, Local, MAX_JSON_BYTES, MAX_LIST_BYTES, TRANSFER_TIMEOUT, TransferCancel, Uploaded,
+    decode, download_listed, download_stream_optional, uploaded,
 };
 use super::native_api::PREFIX;
 use super::transfers::{discard_partial, move_partial};
-use super::transport::{self, encode_query, Upload};
+use super::transport::{self, Upload, encode_query};
 use super::{Error, HostClient, READ_TIMEOUT};
+pub use nightjar_policy::http::{
+    EntryKind, FolderAccess, FolderEntries, FolderEntry, MAX_FOLDER_DEPTH, PART_SUFFIX,
+    SharedFolder, check_id, check_path, child_path, collision_name, file_name, has_part_suffix,
+    parent_path,
+};
 use serde::Deserialize;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -37,7 +37,11 @@ const RESERVED_NAMES: &[&str] = &[
 /// path or an alternate data stream), `<>"|?*`, control characters, a trailing dot or space
 /// (Windows drops them) or a device name, which would write somewhere other than the directory.
 fn check_local_name(name: &str, windows: bool) -> Result<(), Error> {
-    let refuse = |why: &str| Err(Error::InvalidArgument(format!("not a file name here ({why}): {name:?}")));
+    let refuse = |why: &str| {
+        Err(Error::InvalidArgument(format!(
+            "not a file name here ({why}): {name:?}"
+        )))
+    };
     let mut components = Path::new(name).components();
     let single = matches!(
         (components.next(), components.next()),
@@ -60,7 +64,10 @@ fn check_local_name(name: &str, windows: bool) -> Result<(), Error> {
     }
     // Windows reads `CON.txt` and `CON .txt` as the device too.
     let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
-    if RESERVED_NAMES.iter().any(|device| stem.eq_ignore_ascii_case(device)) {
+    if RESERVED_NAMES
+        .iter()
+        .any(|device| stem.eq_ignore_ascii_case(device))
+    {
         return refuse("a device name");
     }
     Ok(())
@@ -167,6 +174,33 @@ impl HostClient {
         )
     }
 
+    /// Streams a folder file into `sink`, allowing `listed == None` (when the caller has no
+    /// directory size or the host streams without a Content-Length).
+    pub fn download_folder_file_stream(
+        &self,
+        id: &str,
+        path: &str,
+        listed: Option<u64>,
+        sink: &mut dyn Write,
+        progress: &mut dyn FnMut(u64, Option<u64>),
+        stop: &TransferCancel,
+    ) -> Result<u64, FileError> {
+        if path.is_empty() {
+            return Err(Error::InvalidArgument("A download needs a file path".into()).into());
+        }
+        let (location, target) = self.folders_target(Some(id), "/content", Some(path))?;
+        let request = self.files_request(&target, MAX_JSON_BYTES, TRANSFER_TIMEOUT)?;
+        download_stream_optional(
+            &request,
+            &self.cancel,
+            &location,
+            listed,
+            sink,
+            progress,
+            stop,
+        )
+    }
+
     /// Downloads the file `path` of the folder `id` into the directory `dir`: into
     /// `<name>.part`, renamed to `name`, or `name (n)` when that is taken, once every byte
     /// arrived. A file that takes the name during the download is not replaced: the download
@@ -234,7 +268,10 @@ impl HostClient {
             method: "PUT",
         };
         let cancel = Arc::new(transport::Cancel::default());
-        let hook = stop.register_hook(Arc::new({ let cancel = cancel.clone(); move || cancel.cancel() }))?;
+        let hook = stop.register_hook(Arc::new({
+            let cancel = cancel.clone();
+            move || cancel.cancel()
+        }))?;
         let res = transport::upload(&request, &self.cancel, upload, progress, &cancel);
         stop.unregister_hook(hook);
         match res {
@@ -396,15 +433,43 @@ mod tests {
 
     #[test]
     fn a_download_saves_only_under_a_plain_local_name() {
-        for name in ["a.txt", "日本.sav", ".config", "x (1).zip", "CONSOLE.txt", "COM10", "LPT"] {
+        for name in [
+            "a.txt",
+            "日本.sav",
+            ".config",
+            "x (1).zip",
+            "CONSOLE.txt",
+            "COM10",
+            "LPT",
+        ] {
             assert!(check_local_name(name, true).is_ok(), "{name}");
             assert!(check_local_name(name, false).is_ok(), "{name}");
         }
         // A drive-relative path, a stream, devices, names Windows rewrites or refuses.
         for name in [
-            "C:x", "C:version.dll", "a:b", "a.txt:evil", "CON", "con.txt", "CON .txt", "NUL",
-            "COM1", "lpt9.log", "COM¹", "CONIN$", "CONOUT$", "x.", "x ", "a<b", "a>b", "a\"b",
-            "a|b", "a?b", "a*b", "a\u{1}b", "a\tb",
+            "C:x",
+            "C:version.dll",
+            "a:b",
+            "a.txt:evil",
+            "CON",
+            "con.txt",
+            "CON .txt",
+            "NUL",
+            "COM1",
+            "lpt9.log",
+            "COM¹",
+            "CONIN$",
+            "CONOUT$",
+            "x.",
+            "x ",
+            "a<b",
+            "a>b",
+            "a\"b",
+            "a|b",
+            "a?b",
+            "a*b",
+            "a\u{1}b",
+            "a\tb",
         ] {
             assert!(
                 matches!(check_local_name(name, true), Err(Error::InvalidArgument(_))),
@@ -415,7 +480,10 @@ mod tests {
         for name in ["", ".", "..", "a/b", "a\\b", "/etc", "\\\\server\\share"] {
             for windows in [false, true] {
                 assert!(
-                    matches!(check_local_name(name, windows), Err(Error::InvalidArgument(_))),
+                    matches!(
+                        check_local_name(name, windows),
+                        Err(Error::InvalidArgument(_))
+                    ),
                     "{name:?} windows {windows}"
                 );
             }
@@ -439,22 +507,32 @@ mod tests {
 
     #[test]
     fn a_part_file_that_stays_is_named_in_the_error() {
-        let dir = std::env::temp_dir().join(format!("nightjar-folders-part-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("nightjar-folders-part-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let failed = || FileError::Host(Error::Cancelled);
         // Deleted, or already gone: the download's own error.
         let part = dir.join("a.txt.part");
         std::fs::write(&part, b"half").unwrap();
-        assert!(matches!(discard_partial(&part, failed()), FileError::Host(Error::Cancelled)));
+        assert!(matches!(
+            discard_partial(&part, failed()),
+            FileError::Host(Error::Cancelled)
+        ));
         assert!(!part.exists());
-        assert!(matches!(discard_partial(&part, failed()), FileError::Host(Error::Cancelled)));
+        assert!(matches!(
+            discard_partial(&part, failed()),
+            FileError::Host(Error::Cancelled)
+        ));
         // A `.part` that can't be deleted (here a directory) is reported, with the cause.
         std::fs::create_dir(&part).unwrap();
         match discard_partial(&part, failed()) {
             FileError::Local(e) => {
                 let text = e.to_string();
-                assert!(text.contains("a.txt.part") && text.contains("could not be deleted"), "{text}");
+                assert!(
+                    text.contains("a.txt.part") && text.contains("could not be deleted"),
+                    "{text}"
+                );
                 assert!(text.contains(&Error::Cancelled.to_string()), "{text}");
             }
             other => panic!("{other:?}"),

@@ -1,26 +1,29 @@
 package com.limelight.nvstream.http;
 
+import android.app.Application;
+
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.util.concurrent.atomic.AtomicReference;
+
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-import org.junit.Test;
-
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.ByteBuffer;
-import java.nio.file.Files;
-
-import okhttp3.MediaType;
-import okhttp3.ResponseBody;
-import okio.Okio;
-
-/** The host's image clipboard limits, checked on both sides of the transfer as nightjar-core checks them. */
+/** The host's image clipboard limits, checked on both sides of the transfer over nightjar-core JNI. */
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class ClipboardImageExceptionTest {
     /** A PNG signature and IHDR chunk of the given size; enough for the header checks. */
     static byte[] png(long width, long height) {
@@ -67,78 +70,85 @@ public class ClipboardImageExceptionTest {
     }
 
     @Test
-    public void eachDocumentedStatusIsItsReasonAndOthersStayHttpErrors() throws IOException {
-        ClipboardImageException.check(200, "OK");
-        int[] statuses = {400, 403, 413, 415};
-        ClipboardImageException.Reason[] reasons = {ClipboardImageException.Reason.NOT_PNG,
-                ClipboardImageException.Reason.FORBIDDEN, ClipboardImageException.Reason.TOO_LARGE,
-                ClipboardImageException.Reason.UNSUPPORTED};
-        for (int i = 0; i < statuses.length; i++) {
-            int status = statuses[i];
-            assertEquals(reasons[i], assertThrows(ClipboardImageException.class,
-                    () -> ClipboardImageException.check(status, "x")).reason);
+    public void eachDocumentedStatusIsItsReasonAndOthersStayHttpErrors() throws Exception {
+        byte[] valid = png(4, 4);
+        AtomicReference<TestHttpServer.Response> reply = new AtomicReference<>(
+                TestHttpServer.Response.bytes(200, "image/png", valid));
+        try (TestHttpServer server = new TestHttpServer(req -> reply.get())) {
+            NvHTTP http = server.newClient();
+            assertTrue(http.getClipboardImage(new ByteArrayOutputStream()));
+            int[] statuses = {400, 403, 413, 415};
+            ClipboardImageException.Reason[] reasons = {ClipboardImageException.Reason.NOT_PNG,
+                    ClipboardImageException.Reason.FORBIDDEN, ClipboardImageException.Reason.TOO_LARGE,
+                    ClipboardImageException.Reason.UNSUPPORTED};
+            for (int i = 0; i < statuses.length; i++) {
+                reply.set(TestHttpServer.Response.text(statuses[i], "x"));
+                assertEquals(reasons[i], assertThrows(ClipboardImageException.class,
+                        () -> http.getClipboardImage(new ByteArrayOutputStream())).reason);
+            }
+            reply.set(TestHttpServer.Response.text(500, "Server Error"));
+            HostHttpResponseException other = assertThrows(HostHttpResponseException.class,
+                    () -> http.getClipboardImage(new ByteArrayOutputStream()));
+            assertEquals(500, other.getErrorCode());
         }
-        HostHttpResponseException other = assertThrows(HostHttpResponseException.class,
-                () -> ClipboardImageException.check(500, "Server Error"));
-        assertEquals(500, other.getErrorCode());
-    }
-
-    private static byte[] written(ResponseBody body) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        assertEquals(body.contentLength(), ClipboardImageException.writePng(body, out));
-        return out.toByteArray();
     }
 
     @Test
-    public void aReceivedImageMustBeAPngOfTypeImagePng() throws IOException {
+    public void aReceivedImageMustBeAPngOfTypeImagePng() throws Exception {
         byte[] image = png(4, 4);
-        assertArrayEquals(image, written(ResponseBody.create(image, MediaType.get("image/png"))));
-        assertThrows(IOException.class, () -> written(
-                ResponseBody.create(image, MediaType.get("application/octet-stream"))));
-        assertThrows(IOException.class, () -> written(ResponseBody.create(image, null)));
-        assertEquals(ClipboardImageException.Reason.NOT_PNG, assertThrows(ClipboardImageException.class,
-                () -> written(ResponseBody.create("<html>", MediaType.get("image/png")))).reason);
-        assertEquals(ClipboardImageException.Reason.TOO_LARGE, assertThrows(ClipboardImageException.class,
-                () -> written(ResponseBody.create(new byte[ClipboardImageException.MAX_BYTES + 1],
-                        MediaType.get("image/png")))).reason);
+        AtomicReference<TestHttpServer.Response> reply = new AtomicReference<>();
+        try (TestHttpServer server = new TestHttpServer(req -> reply.get())) {
+            NvHTTP http = server.newClient();
+            reply.set(TestHttpServer.Response.bytes(200, "image/png", image));
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            assertTrue(http.getClipboardImage(out));
+            assertArrayEquals(image, out.toByteArray());
+
+            reply.set(TestHttpServer.Response.bytes(200, "application/octet-stream", image));
+            assertThrows(IOException.class, () -> http.getClipboardImage(new ByteArrayOutputStream()));
+
+            reply.set(TestHttpServer.Response.bytes(200, "text/html", image));
+            assertThrows(IOException.class, () -> http.getClipboardImage(new ByteArrayOutputStream()));
+
+            reply.set(TestHttpServer.Response.bytes(200, "image/png", "<html>".getBytes()));
+            assertEquals(ClipboardImageException.Reason.NOT_PNG, assertThrows(ClipboardImageException.class,
+                    () -> http.getClipboardImage(new ByteArrayOutputStream())).reason);
+
+            reply.set(TestHttpServer.Response.bytes(200, "image/png", new byte[ClipboardImageException.MAX_BYTES + 1]));
+            assertEquals(ClipboardImageException.Reason.TOO_LARGE, assertThrows(ClipboardImageException.class,
+                    () -> http.getClipboardImage(new ByteArrayOutputStream())).reason);
+        }
     }
 
-    /** A PNG header followed by zeros, {@code length} bytes in all, made as it is read. */
-    private static InputStream endless(long length) {
+    private static byte[] endlessBytes(int length) {
         byte[] head = png(4, 4);
-        return new InputStream() {
-            long at;
-            @Override public int read() {
-                byte[] one = new byte[1];
-                return read(one, 0, 1) == -1 ? -1 : one[0] & 0xff;
-            }
-            @Override public int read(byte[] buffer, int offset, int count) {
-                if (at >= length) return -1;
-                int n = (int) Math.min(count, length - at);
-                for (int i = 0; i < n; i++) buffer[offset + i] = at + i < head.length ? head[(int) (at + i)] : 0;
-                at += n;
-                return n;
-            }
-        };
+        byte[] data = new byte[length];
+        System.arraycopy(head, 0, data, 0, Math.min(head.length, length));
+        return data;
     }
 
     @Test
-    public void aReceivedImageOfUnknownLengthIsStreamedAndCutAtTheLimit() throws IOException {
+    public void aReceivedImageOfUnknownLengthIsStreamedAndCutAtTheLimit() throws Exception {
         long[] kept = {0};
         OutputStream counting = new OutputStream() {
             @Override public void write(int b) { kept[0]++; }
             @Override public void write(byte[] b, int off, int len) { kept[0] += len; }
         };
-        ResponseBody chunked = ResponseBody.create(Okio.buffer(Okio.source(endless(ClipboardImageException.MAX_BYTES + 1L))),
-                MediaType.get("image/png"), -1);
-        assertEquals(ClipboardImageException.Reason.TOO_LARGE, assertThrows(ClipboardImageException.class,
-                () -> ClipboardImageException.writePng(chunked, counting)).reason);
-        assertTrue("wrote " + kept[0], kept[0] <= ClipboardImageException.MAX_BYTES);
-        ResponseBody fits = ResponseBody.create(Okio.buffer(Okio.source(endless(ClipboardImageException.MAX_BYTES))),
-                MediaType.get("image/png"), -1);
-        kept[0] = 0;
-        assertEquals(ClipboardImageException.MAX_BYTES, ClipboardImageException.writePng(fits, counting));
-        assertEquals(ClipboardImageException.MAX_BYTES, kept[0]);
+        AtomicReference<TestHttpServer.Response> reply = new AtomicReference<>();
+        try (TestHttpServer server = new TestHttpServer(req -> reply.get())) {
+            NvHTTP http = server.newClient();
+            reply.set(TestHttpServer.Response.bytes(200, "image/png",
+                    endlessBytes(ClipboardImageException.MAX_BYTES + 1)).chunked());
+            assertEquals(ClipboardImageException.Reason.TOO_LARGE, assertThrows(ClipboardImageException.class,
+                    () -> http.getClipboardImage(counting)).reason);
+            assertTrue("wrote " + kept[0], kept[0] <= ClipboardImageException.MAX_BYTES);
+
+            kept[0] = 0;
+            reply.set(TestHttpServer.Response.bytes(200, "image/png",
+                    endlessBytes(ClipboardImageException.MAX_BYTES)).chunked());
+            assertTrue(http.getClipboardImage(counting));
+            assertEquals(ClipboardImageException.MAX_BYTES, kept[0]);
+        }
     }
 
     @Test

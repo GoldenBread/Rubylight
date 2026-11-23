@@ -53,9 +53,9 @@
     "neural_frame_generation": "unsupported:update_host",
     "mic_only": "unsupported:update_host",
     "continue_here": {"only": "rust", "availability": "unsupported:update_host", "comment": "Android reads the native list itself: NativeCapabilities.offersContinueHere"},
-    "pc_restart": {"only": "java", "availability": "unsupported:update_host", "comment": "Desktop reads power.restart, power.shutdown and update from the native capabilities itself"},
-    "pc_shutdown": {"only": "java", "availability": "unsupported:update_host", "comment": "Desktop reads power.restart, power.shutdown and update from the native capabilities itself"},
-    "host_update": {"only": "java", "availability": "unsupported:update_host", "comment": "Desktop reads power.restart, power.shutdown and update from the native capabilities itself"},
-    "pairing_approve": {"only": "java", "availability": "unsupported:update_host", "comment": "Desktop reads pairing.approve from the native capabilities itself."}
+    "pc_restart": "unsupported:update_host",
+    "pc_shutdown": "unsupported:update_host",
+    "host_update": "unsupported:update_host",
+    "pairing_approve": "unsupported:update_host"
   }
 }

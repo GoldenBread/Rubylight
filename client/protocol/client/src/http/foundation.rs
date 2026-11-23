@@ -62,11 +62,21 @@ pub struct AbrRequest {
 impl AbrRequest {
     /// On as V+ PC turns it on: balanced, from 0 up to the chosen bitrate.
     pub fn balanced_up_to(max_kbps: u32) -> Self {
-        Self { enabled: true, mode: Some(AbrMode::Balanced), min_bitrate: Some(0), max_bitrate: Some(max_kbps) }
+        Self {
+            enabled: true,
+            mode: Some(AbrMode::Balanced),
+            min_bitrate: Some(0),
+            max_bitrate: Some(max_kbps),
+        }
     }
 
     pub fn off() -> Self {
-        Self { enabled: false, mode: None, min_bitrate: None, max_bitrate: None }
+        Self {
+            enabled: false,
+            mode: None,
+            min_bitrate: None,
+            max_bitrate: None,
+        }
     }
 }
 
@@ -123,6 +133,119 @@ pub struct AbrAction {
     pub reason: String,
 }
 
+/// Shared 3-second window accumulator for Foundation's host ABR feedback loop.
+#[derive(Clone, Debug)]
+pub struct HostAbr {
+    /// The bitrate in Kbps the PC last set.
+    pub current_kbps: u32,
+    frames: f64,
+    drops: f64,
+    decoded: f64,
+    window_start_ms: u64,
+    in_flight: bool,
+}
+
+impl HostAbr {
+    /// The PC's controller is on from `now_ms`, starting at its initial bitrate (else the stream's).
+    pub fn new(configured: &AbrConfigured, stream_kbps: u32, now_ms: u64) -> Self {
+        Self::from_initial(configured.initial_bitrate, stream_kbps, now_ms)
+    }
+
+    pub fn from_initial(initial_kbps: u32, stream_kbps: u32, now_ms: u64) -> Self {
+        let current_kbps = if initial_kbps > 0 {
+            initial_kbps
+        } else {
+            stream_kbps
+        };
+        Self {
+            current_kbps,
+            frames: 0.0,
+            drops: 0.0,
+            decoded: 0.0,
+            window_start_ms: now_ms,
+            in_flight: false,
+        }
+    }
+
+    /// One overlay tick: frames completed and dropped, and frames decoded.
+    pub fn add(&mut self, completed: u64, drops: u64, decoded: u64) {
+        self.frames += (completed + drops) as f64;
+        self.drops += drops as f64;
+        self.decoded += decoded as f64;
+    }
+
+    /// One second of video (Android decoder counters): frame loss in percent and decoded FPS.
+    pub fn add_rate(&mut self, loss_percent: f64, fps: f64) {
+        if !fps.is_finite() || fps <= 0.0 {
+            return;
+        }
+        let loss = if loss_percent.is_finite() {
+            loss_percent.clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+        let sent = if loss >= 100.0 {
+            fps
+        } else {
+            fps * 100.0 / (100.0 - loss)
+        };
+        self.frames += sent;
+        self.drops += sent - fps;
+        self.decoded += fps;
+    }
+
+    /// The report for the window that ends at `now_ms`, once three seconds have passed and the
+    /// last report has been answered. Starts the next window.
+    pub fn due(&mut self, now_ms: u64, rtt_ms: Option<f64>) -> Option<AbrFeedback> {
+        if now_ms < self.window_start_ms {
+            return None;
+        }
+        let elapsed = now_ms - self.window_start_ms;
+        if self.in_flight || elapsed < ABR_FEEDBACK_INTERVAL.as_millis() as u64 {
+            return None;
+        }
+        let packet_loss = if self.frames == 0.0 {
+            0.0
+        } else {
+            (self.drops * 100.0 / self.frames).min(100.0)
+        };
+        let feedback = AbrFeedback {
+            packet_loss,
+            rtt_ms: rtt_ms.filter(|r| r.is_finite() && *r >= 0.0).unwrap_or(0.0),
+            decode_fps: self.decoded * 1000.0 / elapsed as f64,
+            dropped_frames: self.drops.round().clamp(0.0, u32::MAX as f64) as u32,
+            current_bitrate: self.current_kbps,
+        };
+        *self = Self {
+            window_start_ms: now_ms,
+            in_flight: true,
+            ..Self::fresh(self.current_kbps)
+        };
+        Some(feedback)
+    }
+
+    /// The PC's answer to the last report: the bitrate it moved to, if it moved.
+    pub fn answered(&mut self, action: Option<&AbrAction>) -> Option<u32> {
+        self.in_flight = false;
+        let kbps = action?
+            .new_bitrate
+            .filter(|kbps| *kbps > 0 && *kbps != self.current_kbps)?;
+        self.current_kbps = kbps;
+        Some(kbps)
+    }
+
+    fn fresh(current_kbps: u32) -> Self {
+        Self {
+            current_kbps,
+            frames: 0.0,
+            drops: 0.0,
+            decoded: 0.0,
+            window_start_ms: 0,
+            in_flight: false,
+        }
+    }
+}
+
 /// `GET /api/network/capabilities`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -145,14 +268,23 @@ pub struct BandwidthProbe {
 impl NetworkCapabilities {
     /// The probe size to ask for, or why there is none (V+ Android's `parseNetworkProbeCapabilities`).
     pub fn probe_bytes(&self) -> Result<u64, Error> {
-        let probe = self.bandwidth_probe.as_ref().filter(|p| self.version >= 1 && p.version >= 1);
+        let probe = self
+            .bandwidth_probe
+            .as_ref()
+            .filter(|p| self.version >= 1 && p.version >= 1);
         let Some(probe) = probe else {
-            return Err(Error::Malformed("The PC's bandwidth test has an unknown version.".into()));
+            return Err(Error::Malformed(
+                "The PC's bandwidth test has an unknown version.".into(),
+            ));
         };
-        if probe.endpoint != "/api/network/probe" || probe.min_bytes == 0 || probe.max_bytes < probe.min_bytes
+        if probe.endpoint != "/api/network/probe"
+            || probe.min_bytes == 0
+            || probe.max_bytes < probe.min_bytes
             || probe.min_bytes > MAX_NETWORK_PROBE_BYTES
         {
-            return Err(Error::Malformed("The PC's bandwidth test is not one this device can run.".into()));
+            return Err(Error::Malformed(
+                "The PC's bandwidth test is not one this device can run.".into(),
+            ));
         }
         Ok(probe.max_bytes.min(MAX_NETWORK_PROBE_BYTES))
     }
@@ -169,7 +301,11 @@ pub struct NetworkProbeResult {
 
 /// Mean and mean successive difference of the request times after the first.
 fn latency_and_jitter(samples: &[f64]) -> (f64, f64) {
-    let steady = if samples.len() > 1 { &samples[1..] } else { samples };
+    let steady = if samples.len() > 1 {
+        &samples[1..]
+    } else {
+        samples
+    };
     if steady.is_empty() {
         return (0.0, 0.0);
     }
@@ -195,14 +331,21 @@ impl HostClient {
             port: self.https_port(true)?,
             target: &target,
             tls: Some(self.tls()?),
-            timeouts: Timeouts { connect: LONG_CONNECT_TIMEOUT.min(read), read: Some(read) },
+            timeouts: Timeouts {
+                connect: LONG_CONNECT_TIMEOUT.min(read),
+                read: Some(read),
+            },
             body_limit: MAX_ABR_JSON_BYTES,
         };
         let response = transport::send(&request, &self.cancel, body.map(Body::json))?;
         match response.status {
-            200..=299 => serde_json::from_slice(&response.body).map_err(|e| Error::Malformed(format!("/{path}: {e}"))),
+            200..=299 => serde_json::from_slice(&response.body)
+                .map_err(|e| Error::Malformed(format!("/{path}: {e}"))),
             404 => Err(Error::NotFound(format!("/{path}"))),
-            code => Err(Error::Status { code: i32::from(code), message: error_text(&response.body).unwrap_or(response.reason) }),
+            code => Err(Error::Status {
+                code: i32::from(code),
+                message: error_text(&response.body).unwrap_or(response.reason),
+            }),
         }
     }
 
@@ -213,18 +356,27 @@ impl HostClient {
 
     /// Turns host ABR on or off for this device's running stream.
     pub fn configure_abr(&self, request: &AbrRequest) -> Result<AbrConfigured, Error> {
-        let body = serde_json::to_vec(request).map_err(|e| Error::InvalidArgument(e.to_string()))?;
-        let read = if request.enabled { ABR_TIMEOUT } else { ABR_OFF_TIMEOUT };
+        let body =
+            serde_json::to_vec(request).map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        let read = if request.enabled {
+            ABR_TIMEOUT
+        } else {
+            ABR_OFF_TIMEOUT
+        };
         let answer: AbrConfigured = self.foundation_json("api/abr", Some(&body), read)?;
         if !answer.success {
-            return Err(Error::Status { code: 200, message: answer.error.unwrap_or_else(|| "ABR refused".into()) });
+            return Err(Error::Status {
+                code: 200,
+                message: answer.error.unwrap_or_else(|| "ABR refused".into()),
+            });
         }
         Ok(answer)
     }
 
     /// Reports this device's network; the answer carries the bitrate the host moved to.
     pub fn abr_feedback(&self, feedback: &AbrFeedback) -> Result<AbrAction, Error> {
-        let body = serde_json::to_vec(feedback).map_err(|e| Error::InvalidArgument(e.to_string()))?;
+        let body =
+            serde_json::to_vec(feedback).map_err(|e| Error::InvalidArgument(e.to_string()))?;
         self.foundation_json("api/abr/feedback", Some(&body), ABR_TIMEOUT)
     }
 
@@ -234,9 +386,26 @@ impl HostClient {
         self.foundation_json("api/network/capabilities", None, ABR_TIMEOUT)
     }
 
+    /// Whether the PC offers Foundation Sunshine's bandwidth test.
+    pub fn supports_foundation_bandwidth_test(&self) -> Result<bool, Error> {
+        match self.network_capabilities() {
+            Ok(caps) => Ok(caps.probe_bytes().is_ok()),
+            Err(Error::NotFound(_) | Error::Status { .. } | Error::Malformed(_)) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Foundation's bandwidth test, between streams only (the PC answers 409 during one): four
     /// capability requests for the answer time, then one download of up to 4 MiB.
     pub fn foundation_network_probe(&self) -> Result<NetworkProbeResult, Error> {
+        self.foundation_network_probe_with_progress(&mut |_| {})
+    }
+
+    /// Foundation's bandwidth test, streaming the probe body and reporting `0..=100` progress.
+    pub fn foundation_network_probe_with_progress(
+        &self,
+        progress: &mut dyn FnMut(u8),
+    ) -> Result<NetworkProbeResult, Error> {
         let mut samples = Vec::with_capacity(4);
         let mut capabilities: Option<NetworkCapabilities> = None;
         for _ in 0..4 {
@@ -250,13 +419,18 @@ impl HostClient {
         let path = "api/network/probe";
         let target = self.url_target(path, Some(&format!("bytes={bytes}&nonce={nonce}")));
         let mut body_started = None;
-        let response = transport::probe(
+        let mut total: u64 = 0;
+        let mut prev_percent: Option<u8> = None;
+        let received = transport::probe_stream(
             &Request {
                 host: &self.host,
                 port: self.https_port(true)?,
                 target: &target,
                 tls: Some(self.tls()?),
-                timeouts: Timeouts { connect: LONG_CONNECT_TIMEOUT, read: Some(Duration::from_secs(5)) },
+                timeouts: Timeouts {
+                    connect: LONG_CONNECT_TIMEOUT,
+                    read: Some(Duration::from_secs(5)),
+                },
                 body_limit: bytes as usize,
             },
             &self.cancel,
@@ -266,16 +440,31 @@ impl HostClient {
                 body_started = Some(Instant::now());
                 Ok(())
             },
+            &mut |chunk| {
+                total += chunk.len() as u64;
+                let percent = ((total * 100) / bytes).min(100) as u8;
+                if prev_percent != Some(percent) {
+                    progress(percent);
+                    prev_percent = Some(percent);
+                }
+                Ok(())
+            },
         )?;
-        if response.body.len() as u64 != bytes {
-            return Err(Error::Malformed("The bandwidth test ended before its size.".into()));
+        if received != bytes {
+            return Err(Error::Malformed(
+                "The bandwidth test ended before its size.".into(),
+            ));
         }
         let seconds = body_started.map_or(0.0, |t| t.elapsed().as_secs_f64());
         if seconds <= 0.0 {
             return Err(Error::Malformed("The bandwidth test took no time.".into()));
         }
         let (latency_ms, jitter_ms) = latency_and_jitter(&samples);
-        Ok(NetworkProbeResult { bandwidth_mbps: bytes as f64 * 8.0 / seconds / 1_000_000.0, latency_ms, jitter_ms })
+        Ok(NetworkProbeResult {
+            bandwidth_mbps: bytes as f64 * 8.0 / seconds / 1_000_000.0,
+            latency_ms,
+            jitter_ms,
+        })
     }
 }
 
@@ -287,11 +476,23 @@ fn check_probe_head(status: u16, headers: &[(String, String)], nonce: &str) -> R
             429 => "The PC was tested a moment ago; try again shortly.".to_owned(),
             _ => format!("The PC refused the bandwidth test ({status})."),
         };
-        return Err(Error::Status { code: i32::from(status), message });
+        return Err(Error::Status {
+            code: i32::from(status),
+            message,
+        });
     }
-    let get = |name: &str| headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str());
-    if get("X-Bandwidth-Probe-Version") != Some("1") || get("X-Bandwidth-Probe-Nonce") != Some(nonce) {
-        return Err(Error::Malformed("The bandwidth test answer is not this request's.".into()));
+    let get = |name: &str| {
+        headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    };
+    if get("X-Bandwidth-Probe-Version") != Some("1")
+        || get("X-Bandwidth-Probe-Nonce") != Some(nonce)
+    {
+        return Err(Error::Malformed(
+            "The bandwidth test answer is not this request's.".into(),
+        ));
     }
     Ok(())
 }
@@ -302,7 +503,9 @@ fn error_text(body: &[u8]) -> Option<String> {
     struct ErrorBody {
         error: String,
     }
-    serde_json::from_slice::<ErrorBody>(body).ok().map(|b| b.error)
+    serde_json::from_slice::<ErrorBody>(body)
+        .ok()
+        .map(|b| b.error)
 }
 
 #[cfg(test)]
@@ -316,8 +519,17 @@ mod tests {
             serde_json::to_value(AbrRequest::balanced_up_to(40000)).unwrap(),
             json!({"enabled": true, "mode": "balanced", "minBitrate": 0, "maxBitrate": 40000})
         );
-        assert_eq!(serde_json::to_value(AbrRequest::off()).unwrap(), json!({"enabled": false}));
-        let feedback = AbrFeedback { packet_loss: 1.5, rtt_ms: 12.0, decode_fps: 120.0, dropped_frames: 3, current_bitrate: 30000 };
+        assert_eq!(
+            serde_json::to_value(AbrRequest::off()).unwrap(),
+            json!({"enabled": false})
+        );
+        let feedback = AbrFeedback {
+            packet_loss: 1.5,
+            rtt_ms: 12.0,
+            decode_fps: 120.0,
+            dropped_frames: 3,
+            current_bitrate: 30000,
+        };
         assert_eq!(
             serde_json::to_value(feedback).unwrap(),
             json!({"packetLoss": 1.5, "rttMs": 12.0, "decodeFps": 120.0, "droppedFrames": 3, "currentBitrate": 30000})
@@ -341,23 +553,48 @@ mod tests {
                 "requestedMaxBitrate":50000,"hostMaxBitrate":40000,"maxBitrateCapped":true,"maxBitrateInheritedFromHost":false,"bitrateApplied":true}"#,
         )
         .unwrap();
-        assert_eq!((on.success, on.initial_bitrate, on.max_bitrate, on.max_bitrate_capped), (true, 35000, 40000, true));
-        let off: AbrConfigured = serde_json::from_str(r#"{"success":true,"enabled":false}"#).unwrap();
+        assert_eq!(
+            (
+                on.success,
+                on.initial_bitrate,
+                on.max_bitrate,
+                on.max_bitrate_capped
+            ),
+            (true, 35000, 40000, true)
+        );
+        let off: AbrConfigured =
+            serde_json::from_str(r#"{"success":true,"enabled":false}"#).unwrap();
         assert!(off.success && !off.enabled);
-        let moved: AbrAction = serde_json::from_str(r#"{"newBitrate":28000,"bitrateApplied":true,"reason":"loss"}"#).unwrap();
+        let moved: AbrAction =
+            serde_json::from_str(r#"{"newBitrate":28000,"bitrateApplied":true,"reason":"loss"}"#)
+                .unwrap();
         assert_eq!(moved.new_bitrate, Some(28000));
-        let kept: AbrAction = serde_json::from_str(r#"{"bitrateApplied":true,"reason":"stable"}"#).unwrap();
+        let kept: AbrAction =
+            serde_json::from_str(r#"{"bitrateApplied":true,"reason":"stable"}"#).unwrap();
         assert_eq!(kept.new_bitrate, None);
-        assert_eq!(error_text(br#"{"success":false,"error":"No active streaming session for this client"}"#).as_deref(),
-            Some("No active streaming session for this client"));
+        assert_eq!(
+            error_text(
+                br#"{"success":false,"error":"No active streaming session for this client"}"#
+            )
+            .as_deref(),
+            Some("No active streaming session for this client")
+        );
     }
 
     #[test]
     fn the_probe_size_follows_the_pcs_capabilities() {
         let caps = |body: &str| serde_json::from_str::<NetworkCapabilities>(body).unwrap();
-        let ok = caps(r#"{"version":1,"features":["bandwidth-probe-v1"],"bandwidthProbe":{"version":1,"endpoint":"/api/network/probe","minBytes":262144,"maxBytes":8388608,"cooldownMs":10000}}"#);
-        assert_eq!(ok.probe_bytes().unwrap(), MAX_NETWORK_PROBE_BYTES, "capped at 4 MiB");
-        let small = caps(r#"{"version":1,"bandwidthProbe":{"version":1,"endpoint":"/api/network/probe","minBytes":1000,"maxBytes":2000}}"#);
+        let ok = caps(
+            r#"{"version":1,"features":["bandwidth-probe-v1"],"bandwidthProbe":{"version":1,"endpoint":"/api/network/probe","minBytes":262144,"maxBytes":8388608,"cooldownMs":10000}}"#,
+        );
+        assert_eq!(
+            ok.probe_bytes().unwrap(),
+            MAX_NETWORK_PROBE_BYTES,
+            "capped at 4 MiB"
+        );
+        let small = caps(
+            r#"{"version":1,"bandwidthProbe":{"version":1,"endpoint":"/api/network/probe","minBytes":1000,"maxBytes":2000}}"#,
+        );
         assert_eq!(small.probe_bytes().unwrap(), 2000);
         for bad in [
             r#"{"version":1}"#,
@@ -373,12 +610,18 @@ mod tests {
     #[test]
     fn the_probe_answer_must_echo_the_nonce() {
         let headers = |version: &str, nonce: &str| {
-            vec![("x-bandwidth-probe-version".to_owned(), version.to_owned()), ("X-Bandwidth-Probe-Nonce".to_owned(), nonce.to_owned())]
+            vec![
+                ("x-bandwidth-probe-version".to_owned(), version.to_owned()),
+                ("X-Bandwidth-Probe-Nonce".to_owned(), nonce.to_owned()),
+            ]
         };
         assert!(check_probe_head(200, &headers("1", "n1"), "n1").is_ok());
         assert!(check_probe_head(200, &headers("1", "n2"), "n1").is_err());
         assert!(check_probe_head(200, &headers("2", "n1"), "n1").is_err());
-        assert!(matches!(check_probe_head(409, &[], "n1"), Err(Error::Status { code: 409, .. })));
+        assert!(matches!(
+            check_probe_head(409, &[], "n1"),
+            Err(Error::Status { code: 409, .. })
+        ));
         assert_eq!(latency_and_jitter(&[90.0, 10.0, 14.0, 12.0]), (12.0, 3.0));
     }
 }

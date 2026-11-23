@@ -281,6 +281,10 @@ impl AdaptiveQualityController {
         self.levels[self.level]
     }
 
+    pub fn levels(&self) -> &[Target] {
+        &self.levels
+    }
+
     /// A fold or window change keeps the current degradation level and the chosen user floors.
     /// Returns the new current target, or `None` when the ceiling did not change.
     pub fn resize_ceiling(

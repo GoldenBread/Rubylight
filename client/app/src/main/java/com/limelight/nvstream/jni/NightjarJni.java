@@ -80,6 +80,12 @@ public final class NightjarJni {
         }
     }
 
+    private static void ensureLibraryLoaded() {
+        if (!LOADER.isAvailable(() -> System.loadLibrary("nightjar_core"))) {
+            throw new UnsatisfiedLinkError(LOADER.failure());
+        }
+    }
+
     // --- Stream engine (lib.rs) ---
 
     public static native boolean rustBridgeInit(String appVersion, Class<?> moonBridgeClass);
@@ -391,4 +397,25 @@ public final class NightjarJni {
     private static native String nativeOpenPlayCall(String request);
 
     private static native String nativeGameInfoCall(String request);
+
+    public static String capabilitiesCall(String request) {
+        ensureLibraryLoaded();
+        return nativeCapabilitiesCall(request);
+    }
+
+    public static String uriCall(String request) {
+        ensureLibraryLoaded();
+        return nativeUriCall(request);
+    }
+
+    public static String uriFields(String op, String text) {
+        ensureLibraryLoaded();
+        return nativeUriFields(op, text);
+    }
+
+    private static native String nativeCapabilitiesCall(String request);
+
+    private static native String nativeUriCall(String request);
+
+    private static native String nativeUriFields(String op, String text);
 }

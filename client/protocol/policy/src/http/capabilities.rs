@@ -110,10 +110,18 @@ pub enum Feature {
     /// Play over the internet (`RustHostInternetPlayVersion`): the host publishes rendezvous
     /// records for its paired devices and answers hole punches (`/internet-play/v1`).
     InternetPlay,
+    /// Restart PC (`power.restart` in native features). Known only after [`HostCapabilities::with_native`].
+    PcRestart,
+    /// Shut down PC (`power.shutdown` in native features). Known only after [`HostCapabilities::with_native`].
+    PcShutdown,
+    /// Install the host's pending update (`update` in native features, with Host control).
+    HostUpdate,
+    /// Devices waiting to pair, approved from here (`pairing.approve` in native features).
+    PairingApprove,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 50] = [
+    pub const ALL: [Feature; 54] = [
         Feature::Permissions,
         Feature::OtpPairing,
         Feature::Clipboard,
@@ -164,6 +172,10 @@ impl Feature {
         Feature::MicOnly,
         Feature::ContinueHere,
         Feature::InternetPlay,
+        Feature::PcRestart,
+        Feature::PcShutdown,
+        Feature::HostUpdate,
+        Feature::PairingApprove,
     ];
 }
 
@@ -185,6 +197,10 @@ pub enum Reason {
     HardwareMetricsOff,
     /// The host supports sleep but has not allowed it for this paired client.
     SleepPermission,
+    /// The host supports restart/shutdown but has not granted it to this paired client.
+    RestartShutdownPermission,
+    /// The host offers pairing approval but has not granted it to this paired client.
+    PairingApprovePermission,
     /// The host offers file transfer but has not allowed it for this device.
     FilePermission,
     /// The host forwards USB devices but has not allowed it for this device.
@@ -310,6 +326,15 @@ pub struct Evidence {
     /// `session.mic_only` in the native features, with the launch permission.
     pub mic_only_offered: bool,
     pub continue_here_offered: bool,
+    /// `power.restart` and `power.shutdown` in native features, and `restart_shutdown` grant.
+    pub restart_offered: bool,
+    pub shutdown_offered: bool,
+    pub restart_shutdown_permission: bool,
+    /// `update` in native features, with Host control.
+    pub update_offered: bool,
+    /// `pairing.approve` in native features, and `pairing_approve` or Host control grant.
+    pub pairing_offered: bool,
+    pub pairing_permission: bool,
     /// `MaxVideoPacket`: the largest video packet this host accepts, including a client's
     /// 32-byte encryption header. 0 when the host offers no more than stock Moonlight's 1400.
     pub max_video_packet: u16,
@@ -368,10 +393,14 @@ pub fn parse_rubylight_version(version: &str) -> Option<[u32; 4]> {
     }
     // The 3.0 hosts report "3.0.0-beta.N". The number stops at 100000, below one stage.
     const STAGE: u32 = 1_000_000;
-    if let Some((stage, after)) = ["-alpha.", "-beta.", "-rc."]
-        .iter()
-        .enumerate()
-        .find_map(|(stage, tag)| rest.strip_prefix(tag).map(|after| (stage as u32 + 1, after)))
+    if let Some((stage, after)) =
+        ["-alpha.", "-beta.", "-rc."]
+            .iter()
+            .enumerate()
+            .find_map(|(stage, tag)| {
+                rest.strip_prefix(tag)
+                    .map(|after| (stage as u32 + 1, after))
+            })
     {
         rest = after;
         parts[3] = stage * STAGE + number(&mut rest).filter(|&pre| pre > 0)?;
@@ -392,6 +421,10 @@ pub fn parse_rubylight_version(version: &str) -> Option<[u32; 4]> {
 const HOST_DISPLAY_MODES_VERSION: [u32; 4] = [2, 2, 1, u32::MAX];
 
 impl Evidence {
+    pub fn parse_xml(xml: &str) -> Result<Self, super::Error> {
+        Ok(Self::parse(&super::xml::parse(xml)?))
+    }
+
     pub fn parse(root: &Element) -> Self {
         let mut e = Evidence {
             permission: -1,
@@ -727,11 +760,7 @@ impl Evidence {
             }
             Feature::PyroWaveBandwidthProbe => {
                 if !self.pyrowave_fields {
-                    if rubylight {
-                        update
-                    } else {
-                        self.absent(true)
-                    }
+                    if rubylight { update } else { self.absent(true) }
                 } else if !self.paired {
                     pair
                 } else if self.pyrowave_probe_bytes == PYROWAVE_BANDWIDTH_PROBE_BYTES {
@@ -921,6 +950,19 @@ impl Evidence {
             }
             Feature::MicOnly => self.native_feature(self.mic_only_offered, None),
             Feature::ContinueHere => self.native_feature(self.continue_here_offered, None),
+            Feature::PcRestart => self.native_feature(
+                self.restart_offered,
+                (!self.restart_shutdown_permission).then_some(Reason::RestartShutdownPermission),
+            ),
+            Feature::PcShutdown => self.native_feature(
+                self.shutdown_offered,
+                (!self.restart_shutdown_permission).then_some(Reason::RestartShutdownPermission),
+            ),
+            Feature::HostUpdate => self.native_feature(self.update_offered, None),
+            Feature::PairingApprove => self.native_feature(
+                self.pairing_offered,
+                (!self.pairing_permission).then_some(Reason::PairingApprovePermission),
+            ),
         }
     }
 
@@ -961,6 +1003,10 @@ impl Evidence {
 }
 
 impl HostCapabilities {
+    pub fn from_server_info_xml(xml: &str) -> Result<Self, super::Error> {
+        Ok(Self::from_evidence(Evidence::parse_xml(xml)?))
+    }
+
     /// A host never reached from this device: nothing is known, so nothing is ruled out.
     pub const UNKNOWN: HostCapabilities = HostCapabilities { evidence: None };
 
@@ -998,11 +1044,57 @@ impl HostCapabilities {
         evidence.neural_offered = listed("neural.frame_generation");
         evidence.view_permission = native.capabilities.permissions.view;
         // Starting one takes the launch permission, so it is offered only with that.
-        evidence.mic_only_offered = listed("session.mic_only") && native.capabilities.permissions.launch;
+        evidence.mic_only_offered =
+            listed("session.mic_only") && native.capabilities.permissions.launch;
         // The host refuses a press without View and Launch.
         let permissions = &native.capabilities.permissions;
-        evidence.continue_here_offered = listed("session.continue_here") && permissions.view && permissions.launch;
+        evidence.continue_here_offered =
+            listed("session.continue_here") && permissions.view && permissions.launch;
+        evidence.restart_offered = listed("power.restart");
+        evidence.shutdown_offered = listed("power.shutdown");
+        evidence.restart_shutdown_permission = native.files.restart_shutdown;
+        evidence.update_offered = listed("update") && permissions.host_control;
+        evidence.pairing_offered = listed("pairing.approve");
+        evidence.pairing_permission = native.files.pairing_approve || permissions.host_control;
         Self::from_evidence(evidence)
+    }
+
+    pub fn native_api_version(&self) -> i32 {
+        self.evidence.as_ref().map_or(-1, |e| e.native_api_version)
+    }
+
+    pub fn hdr_formats(&self) -> i32 {
+        if self.has(Feature::DolbyVision) || self.has(Feature::Hlg) {
+            self.evidence.as_ref().map_or(0, |e| {
+                e.hdr_formats & i32::from(rubylight_protocol::hdr::ALL | 0x80)
+            })
+        } else {
+            0
+        }
+    }
+
+    pub fn native_features(&self) -> u32 {
+        (u32::from(self.has(Feature::PyroWaveRecords)))
+            | (u32::from(self.has(Feature::ControllerIdentity)) << 1)
+    }
+
+    pub fn offers_enhancement(&self, bit: u8) -> bool {
+        (self.nvidia_enhancements() & bit) != 0
+    }
+
+    pub fn enhancement_parameters(&self, rtx_hdr: Option<bool>, rtx_video: Option<bool>) -> String {
+        let mut out = String::new();
+        for (k, v) in rubylight_protocol::nvidia_enhance::launch_parameters(
+            self.nvidia_enhancements(),
+            rtx_hdr,
+            rtx_video,
+        ) {
+            out.push('&');
+            out.push_str(k);
+            out.push('=');
+            out.push_str(v);
+        }
+        out
     }
 
     pub fn is_known(&self) -> bool {
@@ -1064,194 +1156,5 @@ impl HostCapabilities {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rubylight_versions() {
-        assert_eq!(
-            parse_rubylight_version("2.2.21"),
-            Some([2, 2, 21, u32::MAX])
-        );
-        assert_eq!(parse_rubylight_version("2.0.0-rc.19"), Some([2, 0, 0, 3_000_019]));
-        assert_eq!(parse_rubylight_version("3.0.0-beta.1"), Some([3, 0, 0, 2_000_001]));
-        assert_eq!(parse_rubylight_version("3.0.0-alpha.2+abc.1"), Some([3, 0, 0, 1_000_002]));
-        // alpha < beta < rc < release, whatever the numbers.
-        let ascending = ["3.0.0-alpha.1", "3.0.0-alpha.99", "3.0.0-beta.1", "3.0.0-beta.12", "3.0.0-rc.1", "3.0.0-rc.30", "3.0.0"];
-        for pair in ascending.windows(2) {
-            assert!(parse_rubylight_version(pair[0]).unwrap() < parse_rubylight_version(pair[1]).unwrap(), "{pair:?}");
-        }
-        assert_eq!(
-            parse_rubylight_version("2.2.1+abc.1"),
-            Some([2, 2, 1, u32::MAX])
-        );
-        for bad in ["", "2.2", "02.1.1", "2.2.1-rc.0", "2.2.1+", "2.2.1x", "3.0.0-beta", "3.0.0-beta.0", "3.0.0-gamma.1"] {
-            assert_eq!(parse_rubylight_version(bad), None, "{bad}");
-        }
-        assert!(parse_rubylight_version("2.2.1").unwrap() >= HOST_DISPLAY_MODES_VERSION);
-        assert!(parse_rubylight_version("2.2.1-rc.3").unwrap() < HOST_DISPLAY_MODES_VERSION);
-    }
-
-    #[test]
-    fn unknown_hosts_rule_nothing_out() {
-        let caps = HostCapabilities::UNKNOWN;
-        assert_eq!(caps.family(), Family::Unknown);
-        assert!(caps.may_have(Feature::RemoteSessionTiles));
-        assert!(!caps.has(Feature::PyroWave));
-        assert_eq!(caps.trusted_codec_mode_support(0x0180_0101), 0x0000_0101);
-    }
-
-    #[test]
-    fn file_transfer_follows_the_native_features_and_permissions() {
-        let cases = include_str!("../../../client/tests/fixtures/files/files-capabilities.txt");
-        let availability = |name: &str| match name {
-            "supported" => Availability::Supported,
-            "never" => Availability::Unsupported(None),
-            "unknown" => Availability::Unknown,
-            "pair" => Availability::Unsupported(Some(Reason::Pair)),
-            "update_host" => Availability::Unsupported(Some(Reason::UpdateHost)),
-            "file_permission" => Availability::Unsupported(Some(Reason::FilePermission)),
-            other => panic!("unknown availability {other}"),
-        };
-        let (mut count, mut invalid) = (0, 0);
-        for line in cases.lines().filter(|l| !l.is_empty() && !l.starts_with('#')) {
-            let fields: Vec<&str> = line.splitn(4, '|').collect();
-            if fields[0] == "invalid" {
-                let parsed = serde_json::from_str::<super::super::native_types::NativeCapabilities>(fields[2]);
-                assert!(parsed.is_err(), "{line}");
-                invalid += 1;
-                continue;
-            }
-            let mut caps = super::super::serverinfo::ServerInfo::parse(fields[3], 47989)
-                .unwrap()
-                .capabilities;
-            // Serverinfo alone never decides file transfer on a host with the native API.
-            for feature in [Feature::FileUpload, Feature::FileDownload] {
-                assert_ne!(caps.availability(feature), Availability::Supported, "{line}");
-            }
-            if fields[2] != "-" {
-                caps = caps.with_native(&serde_json::from_str(fields[2]).unwrap());
-            }
-            for (feature, expected) in [(Feature::FileUpload, fields[0]), (Feature::FileDownload, fields[1])] {
-                let expected = availability(expected);
-                assert_eq!(caps.availability(feature), expected, "{feature:?} {line}");
-                assert_eq!(caps.supported().contains(&feature), expected.is_supported());
-            }
-            count += 1;
-        }
-        assert_eq!((count, invalid), (13, 15));
-        // Without serverinfo there is nothing to add to.
-        let native = serde_json::from_str(cases.lines().find(|l| l.starts_with("supported|supported|")).unwrap().split('|').nth(2).unwrap()).unwrap();
-        assert_eq!(HostCapabilities::UNKNOWN.with_native(&native), HostCapabilities::UNKNOWN);
-    }
-
-    #[test]
-    fn jumbo_packets_are_offered_by_a_serverinfo_field_and_zero_means_off() {
-        let caps = |field: &str| {
-            let xml = format!(
-                "<root status_code=\"200\"><uniqueid>uid</uniqueid><state>SUNSHINE_SERVER_FREE</state>\
-                 <PairStatus>1</PairStatus><RustHostVersion>3.0.0</RustHostVersion>{field}</root>"
-            );
-            super::super::serverinfo::ServerInfo::parse(&xml, 47989)
-                .unwrap()
-                .capabilities
-        };
-        use rubylight_protocol::video_packet::{MAX_VIDEO_PACKET, STOCK_MAX_VIDEO_PACKET};
-        assert_eq!(caps("<MaxVideoPacket>8192</MaxVideoPacket>").max_video_packet(), MAX_VIDEO_PACKET);
-        assert_eq!(caps("<MaxVideoPacket>8160</MaxVideoPacket>").max_video_packet(), 8160);
-        // An offer of 1424 is above stock and changes nothing without asking; the host's
-        // on-link MTU rule normally offers nothing on a 1500-byte path.
-        assert_eq!(caps("<MaxVideoPacket>1424</MaxVideoPacket>").max_video_packet(), 1424);
-        // Rounded down to 16, capped, and junk, absent or stock reads as no offer.
-        assert_eq!(caps("<MaxVideoPacket>1420</MaxVideoPacket>").max_video_packet(), 1408);
-        assert_eq!(caps("<MaxVideoPacket>9000</MaxVideoPacket>").max_video_packet(), MAX_VIDEO_PACKET);
-        assert_eq!(caps("<MaxVideoPacket>8193</MaxVideoPacket>").max_video_packet(), MAX_VIDEO_PACKET);
-        assert_eq!(caps(&format!("<MaxVideoPacket>{STOCK_MAX_VIDEO_PACKET}</MaxVideoPacket>")).max_video_packet(), 0);
-        for field in ["<MaxVideoPacket>0</MaxVideoPacket>", "<MaxVideoPacket>-16</MaxVideoPacket>", "<MaxVideoPacket>x</MaxVideoPacket>", "<MaxVideoPacket>999999999999</MaxVideoPacket>", ""] {
-            assert_eq!(caps(field).max_video_packet(), 0, "{field}");
-        }
-        // A host never reached offers nothing.
-        assert_eq!(HostCapabilities::UNKNOWN.max_video_packet(), 0);
-    }
-
-    #[test]
-    fn the_30_extensions_follow_their_serverinfo_bits() {
-        let xml =
-            include_str!("../../../../app/src/test/resources/protocol/rubylight-30-serverinfo.xml");
-        let caps = |field: &str, value: &str| {
-            let re = format!("<{field}>{value}</{field}>");
-            let start = xml.find(&format!("<{field}>")).unwrap();
-            let end = xml[start..].find(&format!("</{field}>")).unwrap() + start + field.len() + 3;
-            let xml = format!("{}{re}{}", &xml[..start], &xml[end..]);
-            super::super::serverinfo::ServerInfo::parse(&xml, 47989).unwrap().capabilities
-        };
-        let never = Availability::Unsupported(None);
-        for (field, feature, cases) in [
-            (
-                "HdrFormats",
-                Feature::DolbyVision,
-                &[("4", true), ("8", true), ("16", true), ("3", false), ("x", false)][..],
-            ),
-            // 131 and 143 add the PyroWave HLG offer flag to HLG; 128 is the flag alone.
-            (
-                "HdrFormats",
-                Feature::Hlg,
-                &[("2", true), ("131", true), ("143", true), ("13", false), ("128", false), ("256", false)],
-            ),
-            (
-                "AudioCodecs",
-                Feature::AudioPassthrough,
-                &[("2", true), ("4", true), ("8", true), ("1", false)],
-            ),
-            ("AudioLayouts", Feature::Surround714, &[("8", true), ("7", false)]),
-            ("FecControlVersion", Feature::ClientFec, &[("2", true), ("0", false), ("-1", false)]),
-            ("PipelineRatesVersion", Feature::PipelineRates, &[("1", true), ("", false)]),
-            // Only a host that says so keeps a device's second stream beside its first.
-            ("SecondScreenVersion", Feature::SecondScreen, &[("1", true), ("2", true), ("0", false), ("x", false)]),
-            // A host with Play over the internet off says 0.
-            ("RustHostInternetPlayVersion", Feature::InternetPlay, &[("1", true), ("0", false), ("", false)]),
-            ("BandwidthProbeVersion", Feature::BandwidthProbe, &[("1", true), ("0", false), ("x", false)]),
-            ("TextInputVersion", Feature::TextInput, &[("1", true), ("0", false), ("x", false)]),
-            ("KeyboardLayoutVersion", Feature::ClientKeyboardLayout, &[("1", true), ("0", false), ("x", false)]),
-            ("PenBarrelRollVersion", Feature::PenBarrelRoll, &[("1", true), ("0", false), ("x", false)]),
-            ("ControllerIdentityVersion", Feature::ControllerIdentity, &[("1", true), ("0", false), ("x", false)]),
-        ] {
-            for &(value, supported) in cases {
-                let expected = if supported { Availability::Supported } else { never };
-                assert_eq!(caps(field, value).availability(feature), expected, "{field} {value}");
-            }
-        }
-        // Before the native API answered, its features are unknown, never supported.
-        let caps = caps("HdrFormats", "15");
-        for feature in [
-            Feature::UsbForwarding,
-            Feature::ImageClipboard,
-            Feature::SharedFolders,
-            Feature::Coop,
-            Feature::NeuralFrameGeneration,
-            Feature::MicOnly,
-            Feature::ContinueHere,
-        ] {
-            assert_eq!(caps.availability(feature), Availability::Unknown, "{feature:?}");
-        }
-        assert!(caps.supported().contains(&Feature::TextInput));
-    }
-
-    #[test]
-    fn reading_the_native_capabilities_again_drops_what_the_host_stopped_offering() {
-        let cases = include_str!("../../../client/tests/fixtures/files/files-capabilities.txt");
-        let fields: Vec<&str> = cases.lines().find(|l| l.starts_with("supported|supported|")).unwrap().splitn(4, '|').collect();
-        let caps = super::super::serverinfo::ServerInfo::parse(fields[3], 47989)
-            .unwrap()
-            .capabilities;
-        let offered = caps.with_native(&serde_json::from_str(fields[2]).unwrap());
-        assert!(offered.has(Feature::FileUpload) && offered.has(Feature::FileDownload));
-        let withdrawn = fields[2]
-            .replace(r#","files.upload","files.download""#, "")
-            .replace(r#","file_upload":true,"file_download":true"#, "");
-        let withdrawn = offered.with_native(&serde_json::from_str(&withdrawn).unwrap());
-        for feature in [Feature::FileUpload, Feature::FileDownload] {
-            assert_eq!(withdrawn.availability(feature), Availability::Unsupported(None));
-        }
-    }
-}
+#[path = "capabilities_tests.rs"]
+mod tests;

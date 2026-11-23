@@ -1,13 +1,23 @@
 package com.limelight.nvstream.http;
 
+import android.app.Application;
+
+import com.limelight.nvstream.jni.NightjarHttpJni;
+
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 import org.xmlpull.v1.XmlPullParserException;
 
+import java.net.URI;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
 
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class NvHTTPNetworkingTest {
     private NvHTTP http(String address) throws Exception {
         return new NvHTTP(new ComputerDetails.AddressTuple(address, 47989), 47984, "client", null,
@@ -22,9 +32,12 @@ public class NvHTTPNetworkingTest {
     @Test
     public void scopedIpv6CanBuildHttpAndHttpsUrls() throws Exception {
         NvHTTP http = http("fe80::1234%1");
-        assertEquals("fe80::1234", http.getHttpsUrl(true).host());
-        assertEquals(47984, http.getHttpsUrl(true).port());
+        URI boxArt = URI.create(NightjarHttpJni.getBoxArtUrl(http.httpHandle(), 42));
+        assertEquals("https", boxArt.getScheme());
+        assertEquals("[fe80::1234]", boxArt.getHost());
+        assertEquals(47984, boxArt.getPort());
     }
+
     @Test
     public void hostIdsCannotEscapeTheCacheDirectory() throws Exception {
         NvHTTP http = http("192.0.2.1");

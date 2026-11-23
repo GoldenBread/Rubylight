@@ -9,25 +9,6 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
-import java.lang.reflect.Field;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.List;
-
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
-
-import okhttp3.Interceptor;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Protocol;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
-
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
@@ -35,6 +16,11 @@ import static org.junit.Assert.*;
 public class NvHTTPUserAgentTest {
     private static final String EMPTY = "{\"version\":1,\"sampled_at_unix_ms\":1791712800000," +
             "\"interval_ms\":1000,\"cpu\":{},\"gpus\":[]}";
+
+    private static final String METRICS_SERVERINFO = "<root status_code=\"200\"><uniqueid>host-1</uniqueid>" +
+            "<state>SUNSHINE_SERVER_FREE</state><HttpsPort>47984</HttpsPort>" +
+            "<RustHostVersion>3.1.0</RustHostVersion><PairStatus>1</PairStatus><appversion>7.1.0.0</appversion>" +
+            "<HardwareMetricsVersion>1</HardwareMetricsVersion><Permission>" + ComputerDetails.PERMISSION_VIEW + "</Permission></root>";
 
     @Test
     public void theUserAgentNamesTheAppVersion() {
@@ -44,63 +30,31 @@ public class NvHTTPUserAgentTest {
 
     @Test
     public void everyClientToTheHostSendsTheUserAgent() throws Exception {
-        NvHTTP http = http();
-        for (String name : new String[] {"httpClientLongConnectTimeout",
-                "httpClientLongConnectNoReadTimeout", "httpClientShortConnectTimeout"}) {
-            List<String> agents = new ArrayList<>();
-            OkHttpClient client = capture(client(http, name), agents);
-            client.newCall(new Request.Builder().url("http://192.0.2.1:47989/serverinfo").build())
-                    .execute().close();
-            assertEquals(name, List.of(NvHTTP.USER_AGENT), agents);
+        try (TestHttpServer server = new TestHttpServer(req -> {
+            if ("/serverinfo".equals(req.path)) {
+                return TestHttpServer.Response.xml(200, METRICS_SERVERINFO);
+            }
+            return TestHttpServer.Response.json(200, EMPTY);
+        })) {
+            NvHTTP http = server.newClient();
+            http.getComputerDetails(METRICS_SERVERINFO);
+            http.getServerInfo(true);
+            http.getHardwareMetrics();
+            assertEquals(2, server.requests().size());
+            for (TestHttpServer.RecordedRequest req : server.requests()) {
+                assertEquals(NvHTTP.USER_AGENT, req.header("User-Agent"));
+            }
         }
     }
 
     @Test
     public void aCallThatBuildsItsOwnClientKeepsTheUserAgent() throws Exception {
-        NvHTTP http = http();
-        List<String> agents = new ArrayList<>();
-        Field field = NvHTTP.class.getDeclaredField("httpClientShortConnectTimeout");
-        field.setAccessible(true);
-        field.set(http, capture((OkHttpClient) field.get(http), agents));
-        http.getHardwareMetrics();
-        assertEquals(List.of(NvHTTP.USER_AGENT), agents);
-    }
-
-    /** The client with a last interceptor that records the User-Agent and answers for the host. */
-    private static OkHttpClient capture(OkHttpClient client, List<String> agents) {
-        return client.newBuilder().addInterceptor(chain -> {
-            agents.add(chain.request().header("User-Agent"));
-            return response(chain);
-        }).build();
-    }
-
-    private static Response response(Interceptor.Chain chain) {
-        return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200)
-                .message("Fixture").body(ResponseBody.create(EMPTY, MediaType.get("application/json"))).build();
-    }
-
-    private static OkHttpClient client(NvHTTP http, String name) throws Exception {
-        Field field = NvHTTP.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return (OkHttpClient) field.get(http);
-    }
-
-    private static NvHTTP http() throws Exception {
-        NvHTTP http = new NvHTTP(new ComputerDetails.AddressTuple("192.0.2.1", 47989), 47984,
-                "device", null, new LimelightCryptoProvider() {
-            public X509Certificate getClientCertificate() { return null; }
-            public PrivateKey getClientPrivateKey() { return null; }
-            public byte[] getPemEncodedClientCertificate() { return new byte[0]; }
-            public String encodeBase64String(byte[] data) { return ""; }
-        });
-        TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        factory.init((KeyStore) null);
-        for (TrustManager manager : factory.getTrustManagers()) {
-            if (manager instanceof X509TrustManager) {
-                http.setServerCert(((X509TrustManager) manager).getAcceptedIssuers()[0]);
-                break;
-            }
+        try (TestHttpServer server = new TestHttpServer(req -> TestHttpServer.Response.json(200, EMPTY))) {
+            NvHTTP http = server.newClient();
+            http.getComputerDetails(METRICS_SERVERINFO);
+            http.getHardwareMetrics();
+            assertEquals(1, server.requests().size());
+            assertEquals(NvHTTP.USER_AGENT, server.requests().get(0).header("User-Agent"));
         }
-        return http;
     }
 }

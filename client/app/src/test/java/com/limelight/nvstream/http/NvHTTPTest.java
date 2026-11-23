@@ -1,12 +1,19 @@
 package com.limelight.nvstream.http;
 
+import android.app.Application;
+
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import java.io.StringReader;
 import java.util.LinkedList;
 
 import static org.junit.Assert.assertEquals;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class NvHTTPTest {
     @Test
     public void appListStripsLegacyOrderZeroWidthPrefixFromAppTitle() throws Exception {

@@ -1,72 +1,65 @@
+/**
+ * In-flight host launch/terminate confirmation state and HTTP 410 classification via {@link NightjarHttpJni}.
+ */
 package com.limelight.nvstream.http;
+
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarHttpJni;
 
 public final class LaunchConfirmation {
     public enum State { WAITING, CONFIRMED, CANCELLED, TIMED_OUT }
 
-    /**
-     * Rubylight's launch parameter: 1 on the launch that answers a confirmed replace prompt, 0 on
-     * every other, so a remembered launch or a retry never closes the running game by itself.
-     */
+    static final long TIMEOUT_MS = 60_000;
     public static final String REPLACE_PARAMETER = "rlConfirmReplace";
+    static final String REPLACE = "An app is already running. Launch this app again within 60 seconds to confirm that you want to close it.";
 
-    private static final String REPLACE = "An app is already running. Launch this app again within 60 seconds to confirm that you want to close it.";
-    private static final String TERMINATE = "This will close the active stream but leave Remote Monitor and Remote Input connected. Launch Terminate again within 60 seconds to confirm this was intentional.";
-    private final long deadline;
     private final boolean terminate;
+    private final long deadlineMs;
     private State state = State.WAITING;
 
     public LaunchConfirmation(boolean terminate, long nowMs) {
         this.terminate = terminate;
-        deadline = nowMs + 60_000;
+        this.deadlineMs = nowMs + TIMEOUT_MS;
+    }
+
+    private static Json.Obj classify(HostHttpResponseException error) {
+        if (error == null) return null;
+        try {
+            return Json.parseObject(NightjarHttpJni.launchConfirmationClassify(
+                    error.getErrorCode(), error.getErrorMessage())).optObject("ok");
+        } catch (Json.SyntaxException e) {
+            return null;
+        }
     }
 
     public static boolean isRequired(NvApp app, HostHttpResponseException error) {
-        // 410 also reports completed actions. Never confirm an unknown response by retrying it.
-        return error.getErrorCode() == 410 &&
-                (app.getControl() == NvApp.Control.TERMINATE ? TERMINATE.equals(error.getErrorMessage()) :
-                        app.getControl() == NvApp.Control.NONE && REPLACE.equals(error.getErrorMessage()));
+        Json.Obj info = classify(error);
+        if (info == null) return false;
+        if (app == null) return false;
+        if (app.getControl() == NvApp.Control.TERMINATE) {
+            return info.optBoolean("terminate_required", false);
+        }
+        return app.getControl() == NvApp.Control.NONE && info.optBoolean("replace_required", false);
     }
 
     public static boolean isCompleted(NvApp app, HostHttpResponseException error) {
-        if (error.getErrorCode() != 410) {
-            return false;
+        Json.Obj info = classify(error);
+        if (app == null || info == null) return false;
+        NvApp.Control control = app.getControl();
+        if (control == NvApp.Control.DISCONNECT_MONITOR) {
+            return info.optBoolean("remote_monitor_completed", false);
         }
-        // Rubylight's wording first (rust/host/src/nvhttp/launch_steps.rs), then Vibepollo's control tiles
-        // (remote_session.cpp successful_control_completion), then Apollo's Terminate app, which
-        // Vibepollo also still serves (nvhttp.cpp launch).
-        switch (app.getControl()) {
-            case DISCONNECT_MONITOR:
-                return reports(error, "Remote monitor disconnected", "Remote Monitor disconnected successfully");
-            case DISCONNECT_INPUT:
-                return reports(error, "Remote input disconnected", "Remote Input disconnected successfully");
-            case TERMINATE:
-                return reports(error, "Application terminated",
-                        "Active stream terminated. Remote Monitor and Remote Input remain connected", "App terminated");
-            default:
-                return false;
+        if (control == NvApp.Control.DISCONNECT_INPUT) {
+            return info.optBoolean("input_only_completed", false);
         }
-    }
-
-    /** Whether the host's message is one of these, apart from case and a closing period. */
-    private static boolean reports(HostHttpResponseException error, String... messages) {
-        String message = error.getErrorMessage();
-        if (message == null) {
-            return false;
-        }
-        message = message.trim();
-        if (message.endsWith(".")) {
-            message = message.substring(0, message.length() - 1);
-        }
-        for (String known : messages) {
-            if (known.equalsIgnoreCase(message)) {
-                return true;
-            }
+        if (control == NvApp.Control.TERMINATE) {
+            return info.optBoolean("terminate_completed", false);
         }
         return false;
     }
 
     public static long nowMs() {
-        return System.nanoTime() / 1_000_000;
+        return System.nanoTime() / 1_000_000L;
     }
 
     public boolean isTerminate() {
@@ -74,7 +67,7 @@ public final class LaunchConfirmation {
     }
 
     public synchronized State getState(long nowMs) {
-        if (state == State.WAITING && nowMs >= deadline) {
+        if (state == State.WAITING && nowMs >= deadlineMs) {
             state = State.TIMED_OUT;
             notifyAll();
         }
@@ -82,22 +75,21 @@ public final class LaunchConfirmation {
     }
 
     public synchronized void confirm(long nowMs) {
-        if (getState(nowMs) == State.WAITING) {
-            state = State.CONFIRMED;
-            notifyAll();
-        }
+        if (getState(nowMs) != State.WAITING) return;
+        state = State.CONFIRMED;
+        notifyAll();
     }
 
     public synchronized void cancel() {
-        if (state == State.WAITING) {
-            state = State.CANCELLED;
-            notifyAll();
-        }
+        if (state != State.WAITING) return;
+        state = State.CANCELLED;
+        notifyAll();
     }
 
     public synchronized State await() throws InterruptedException {
         while (getState(nowMs()) == State.WAITING) {
-            wait(Math.max(1, deadline - nowMs()));
+            long remaining = deadlineMs - nowMs();
+            if (remaining > 0) wait(remaining);
         }
         return state;
     }

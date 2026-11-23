@@ -1,9 +1,16 @@
 package com.limelight.nvstream.http;
 
+import android.app.Application;
+
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class NvHTTPPacked444ModesTest {
     private static final String HOST = "<root status_code=\"200\"><PairStatus>1</PairStatus>%s</root>";
 

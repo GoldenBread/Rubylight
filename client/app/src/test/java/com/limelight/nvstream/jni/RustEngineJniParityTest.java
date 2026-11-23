@@ -37,6 +37,12 @@ import static org.junit.Assert.*;
  */
 public class RustEngineJniParityTest {
     private static final String CLASS_PREFIX = "Java_com_limelight_nvstream_jni_NightjarJni_";
+    private static final Map<String, Class<?>> AUTHORIZED_JNI_HOLDERS = new TreeMap<>();
+    static {
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarJni_", NightjarJni.class);
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarPolicyJni_", NightjarPolicyJni.class);
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarHttpJni_", NightjarHttpJni.class);
+    }
 
     /** A Rust name that differs from the Java one for the same startConnection parameter. */
     private static final Map<String, String> RENAMED = new TreeMap<>();
@@ -79,6 +85,7 @@ public class RustEngineJniParityTest {
             case "JString": case "jstring": return "Ljava/lang/String;";
             case "JClass": case "jclass": return "Ljava/lang/Class;";
             case "JByteArray": case "jbyteArray": return "[B";
+            case "JBooleanArray": case "jbooleanArray": return "[Z";
             case "JShortArray": case "jshortArray": return "[S";
             case "JIntArray": case "jintArray": return "[I";
             case "JLongArray": case "jlongArray": return "[J";
@@ -149,11 +156,11 @@ public class RustEngineJniParityTest {
         return exports;
     }
 
-    private static Map<String, Export> rustExports() throws IOException {
+    private static Map<String, Export> rustExports(String prefix) throws IOException {
         Map<String, Export> exports = new TreeMap<>();
         for (File file : rustFiles(rustSources())) {
             String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
-            for (Map.Entry<String, Export> entry : parseExports(text, CLASS_PREFIX).entrySet()) {
+            for (Map.Entry<String, Export> entry : parseExports(text, prefix).entrySet()) {
                 assertNull("exported twice: " + entry.getKey(), exports.put(entry.getKey(), entry.getValue()));
             }
         }
@@ -189,38 +196,53 @@ public class RustEngineJniParityTest {
     }
 
     @Test public void everyNightjarJniNativeMatchesItsRustExportParameterByParameter() throws Exception {
-        Map<String, Export> exports = rustExports();
-        TreeSet<String> natives = new TreeSet<>();
-        for (Method method : NightjarJni.class.getDeclaredMethods()) {
-            if (!Modifier.isNative(method.getModifiers())) {
-                continue;
+        for (Map.Entry<String, Class<?>> holder : AUTHORIZED_JNI_HOLDERS.entrySet()) {
+            String prefix = holder.getKey();
+            Class<?> holderClass = holder.getValue();
+            Map<String, Export> exports = rustExports(prefix);
+            TreeSet<String> natives = new TreeSet<>();
+            for (Method method : holderClass.getDeclaredMethods()) {
+                if (!Modifier.isNative(method.getModifiers())) {
+                    continue;
+                }
+                natives.add(method.getName());
+                Export export = exports.get(method.getName());
+                assertNotNull("no Rust export for " + holderClass.getSimpleName() + "." + method.getName(), export);
+                assertNull(mismatch(method, export), mismatch(method, export));
             }
-            natives.add(method.getName());
-            Export export = exports.get(method.getName());
-            assertNotNull("no Rust export for NightjarJni." + method.getName(), export);
-            assertNull(mismatch(method, export), mismatch(method, export));
+            TreeSet<String> orphans = new TreeSet<>(exports.keySet());
+            orphans.removeAll(natives);
+            assertTrue("Rust exports without a " + holderClass.getSimpleName() + " native: " + orphans, orphans.isEmpty());
+            if (holderClass == NightjarJni.class) {
+                assertTrue(natives.contains("startConnection"));
+                assertTrue(natives.contains("rustBridgeInit"));
+            }
         }
-        TreeSet<String> orphans = new TreeSet<>(exports.keySet());
-        orphans.removeAll(natives);
-        assertTrue("Rust exports without a NightjarJni native: " + orphans, orphans.isEmpty());
-        assertTrue(natives.contains("startConnection"));
-        assertTrue(natives.contains("rustBridgeInit"));
 
-        // Every nightjar_core JNI export must live under NightjarJni, and no delegating class may keep
-        // native declarations or System.loadLibrary("nightjar_core").
+        // Every nightjar_core JNI export must live under an authorized pure-JDK JNI holder, and no
+        // delegating class may keep native declarations or System.loadLibrary("nightjar_core").
         Pattern anyExport = Pattern.compile("fn (Java_com_limelight_\\w+)\\s*\\(");
         for (File file : rustFiles(rustSources())) {
             String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
             Matcher m = anyExport.matcher(text);
             while (m.find()) {
-                assertTrue("unexpected JNI export " + m.group(1) + " in " + file.getName(),
-                        m.group(1).startsWith(CLASS_PREFIX));
+                String sym = m.group(1);
+                boolean authorized = false;
+                for (String prefix : AUTHORIZED_JNI_HOLDERS.keySet()) {
+                    if (sym.startsWith(prefix)) {
+                        authorized = true;
+                        break;
+                    }
+                }
+                assertTrue("unexpected JNI export " + sym + " in " + file.getName(), authorized);
             }
         }
         String[] delegating = {
                 "com/limelight/nvstream/jni/RustBridge",
                 "com/limelight/nvstream/jni/NativeApiBridge",
                 "com/limelight/nvstream/jni/FileTransferBridge",
+                "com/limelight/nvstream/jni/NightjarPolicyJni",
+                "com/limelight/nvstream/jni/NightjarHttpJni",
                 "com/limelight/binding/audio/EchoCanceller",
                 "com/limelight/ui/StreamMenuModel",
                 "com/limelight/preferences/SimpleProfileModel",
@@ -230,13 +252,33 @@ public class RustEngineJniParityTest {
                 "com/limelight/computers/InternetPlay",
                 "com/limelight/console/OpenPlayModel",
                 "com/limelight/console/GameInfoModel",
+                "com/limelight/nvstream/AdaptiveBitrateController",
+                "com/limelight/nvstream/ClientHintBitrateController",
+                "com/limelight/nvstream/PyroWaveBitrateController",
+                "com/limelight/nvstream/PyroWaveBitrateFloor",
+                "com/limelight/nvstream/AdaptiveQualityController",
+                "com/limelight/nvstream/PyroWavePace",
+                "com/limelight/nvstream/http/HostCapabilities",
+                "com/limelight/nvstream/http/NvHTTP",
+                "com/limelight/nvstream/http/PairingManager",
+                "com/limelight/nvstream/http/SharedFolders",
+                "com/limelight/nvstream/http/TransferCancel",
+                "com/limelight/nvstream/http/HardwareMetrics",
+                "com/limelight/nvstream/http/NetworkPathInfo",
+                "com/limelight/nvstream/http/ClipboardImageException",
+                "com/limelight/nvstream/http/LaunchConfirmation",
+                "com/limelight/nvstream/http/PairingLink",
+                "com/limelight/nvstream/http/InviteLink",
+                "com/limelight/nvstream/http/FoundationAbr",
         };
         for (String rel : delegating) {
             Class<?> cls = Class.forName(rel.replace('/', '.'), false,
                     RustEngineJniParityTest.class.getClassLoader());
-            for (Method method : cls.getDeclaredMethods()) {
-                assertFalse("unexpected native method " + rel + "." + method.getName(),
-                        Modifier.isNative(method.getModifiers()));
+            if (!AUTHORIZED_JNI_HOLDERS.containsValue(cls)) {
+                for (Method method : cls.getDeclaredMethods()) {
+                    assertFalse("unexpected native method " + rel + "." + method.getName(),
+                            Modifier.isNative(method.getModifiers()));
+                }
             }
             String src = new String(Files.readAllBytes(new File("src/main/java/" + rel + ".java").toPath()),
                     StandardCharsets.UTF_8);
@@ -258,7 +300,7 @@ public class RustEngineJniParityTest {
             javaNames.add(words[words.length - 1].replaceAll("([A-Z])", "_$1").toLowerCase(Locale.ROOT));
         }
         List<String> rustNames = new ArrayList<>();
-        for (String name : rustExports().get("startConnection").names) {
+        for (String name : rustExports(CLASS_PREFIX).get("startConnection").names) {
             rustNames.add(RENAMED.containsKey(name) ? RENAMED.get(name) : name);
         }
         assertEquals(javaNames, rustNames);

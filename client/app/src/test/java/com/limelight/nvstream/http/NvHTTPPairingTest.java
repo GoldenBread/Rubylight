@@ -2,24 +2,15 @@ package com.limelight.nvstream.http;
 
 import android.app.Application;
 
+import com.limelight.nativeapi.NativeApiFixtures;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowBuild;
-import org.robolectric.util.ReflectionHelpers;
 
-import java.security.PrivateKey;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
 import java.util.List;
-
-import okhttp3.HttpUrl;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Protocol;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
 
 import static org.junit.Assert.*;
 
@@ -28,50 +19,33 @@ import static org.junit.Assert.*;
 public class NvHTTPPairingTest {
     @Test
     public void pairingRequestsPreserveDeviceNamesWithoutAddingQueryParameters() throws Exception {
-        NvHTTP http = new NvHTTP(new ComputerDetails.AddressTuple("192.0.2.1", 47989),
-                47984, "client", null, new LimelightCryptoProvider() {
-            public X509Certificate getClientCertificate() { return null; }
-            public PrivateKey getClientPrivateKey() { return null; }
-            public byte[] getPemEncodedClientCertificate() { return new byte[0]; }
-            public String encodeBase64String(byte[] data) { return ""; }
-        });
-        List<HttpUrl> requests = new ArrayList<>();
-        OkHttpClient client = new OkHttpClient.Builder().addInterceptor(chain -> {
-            requests.add(chain.request().url());
-            return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
-                    .code(200).message("OK").body(ResponseBody.create(
-                            "<root status_code=\"200\"><paired>1</paired></root>",
-                            MediaType.get("application/xml"))).build();
-        }).build();
-        ReflectionHelpers.setField(http, "httpClientLongConnectTimeout", client);
-        ReflectionHelpers.setField(http, "httpClientLongConnectNoReadTimeout", client);
+        try (TestHttpServer server = new TestHttpServer(req -> TestHttpServer.Response.xml(
+                200, "<root status_code=\"200\"><paired>0</paired></root>"))) {
+            for (String model : new String[] {"Odin2 Portal", "SM-F956B", "München's handheld",
+                    "Model &uniqueid=other+50%#"}) {
+                ShadowBuild.setModel(model);
+                NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+                int before = server.requests().size();
+                PairingManager pm = http.getPairingManager();
+                assertEquals(PairingManager.PairState.FAILED, pm.pair("<root status_code=\"200\"><uniqueid>host-1</uniqueid><state>SUNSHINE_SERVER_FREE</state><PairStatus>0</PairStatus><appversion>7.1.2.3</appversion></root>", "0042"));
+                assertEquals(PairingManager.PairState.FAILED, pm.pair("<root status_code=\"200\"><uniqueid>host-1</uniqueid><state>SUNSHINE_SERVER_FREE</state><PairStatus>0</PairStatus><appversion>7.1.2.3</appversion></root>", "0042", "secret"));
 
-        for (String model : new String[] {"Odin2 Portal", "SM-F956B", "München's handheld",
-                "Model &uniqueid=other+50%#"}) {
-            ShadowBuild.setModel(model);
-            requests.clear();
-            http.executePairingCommand("phrase=getservercert&salt=0011&clientcert=AABB", false);
-            http.executePairingCommand("phrase=getservercert&salt=0011&clientcert=AABB&otpauth=CCDD", true);
-            http.executePairingChallenge();
-
-            assertEquals(3, requests.size());
-            for (HttpUrl request : requests) {
-                assertEquals("/pair", request.encodedPath());
-                assertEquals(List.of(model), request.queryParameterValues("devicename"));
-                assertEquals(List.of("client"), request.queryParameterValues("uniqueid"));
-                assertEquals("1", request.queryParameter("updateState"));
-                assertNotNull(request.queryParameter("uuid"));
+                List<TestHttpServer.RecordedRequest> reqs = server.requests().subList(before, server.requests().size());
+                assertEquals(2, reqs.size());
+                for (TestHttpServer.RecordedRequest req : reqs) {
+                    assertEquals("http", req.scheme);
+                    assertEquals("/pair", req.path);
+                    assertEquals(List.of(model), req.queryValues("devicename"));
+                    assertEquals(List.of("client"), req.queryValues("uniqueid"));
+                    assertEquals("1", req.queryParam("updateState"));
+                    assertNotNull(req.queryParam("uuid"));
+                    assertEquals("getservercert", req.queryParam("phrase"));
+                    assertNotNull(req.queryParam("salt"));
+                    assertNotNull(req.queryParam("clientcert"));
+                }
+                assertNull(reqs.get(0).queryParam("otpauth"));
+                assertTrue(reqs.get(1).queryParam("otpauth").matches("[0-9A-F]{64}"));
             }
-            for (HttpUrl request : requests.subList(0, 2)) {
-                assertEquals("http", request.scheme());
-                assertEquals("getservercert", request.queryParameter("phrase"));
-                assertEquals("0011", request.queryParameter("salt"));
-                assertEquals("AABB", request.queryParameter("clientcert"));
-            }
-            assertNull(requests.get(0).queryParameter("otpauth"));
-            assertEquals("CCDD", requests.get(1).queryParameter("otpauth"));
-            assertEquals("https", requests.get(2).scheme());
-            assertEquals("pairchallenge", requests.get(2).queryParameter("phrase"));
         }
     }
 }

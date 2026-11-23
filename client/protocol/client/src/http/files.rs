@@ -283,5 +283,36 @@ pub(super) fn download_listed(
     }
 }
 
+pub(super) fn download_stream_optional(
+    request: &Request<'_>,
+    cancel: &transport::Cancel,
+    path: &str,
+    listed: Option<u64>,
+    sink: &mut dyn Write,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+    stop: &TransferCancel,
+) -> Result<u64, FileError> {
+    if let Some(limit) = listed {
+        return download_listed(request, cancel, path, limit, sink, &mut |done, total| progress(done, Some(total)), stop);
+    }
+    let mut sink = Local::new(sink);
+    let mut length = 0u64;
+    let mut counted = |done, total| {
+        length = done;
+        progress(done, total);
+    };
+    let stop_cancel = Arc::new(transport::Cancel::default());
+    let hook = stop.register_hook(Arc::new({
+        let stop_cancel = stop_cancel.clone();
+        move || stop_cancel.cancel()
+    }))?;
+    let res = transport::download_optional(request, cancel, &mut sink, &mut counted, &stop_cancel);
+    stop.unregister_hook(hook);
+    match res {
+        Ok(response) => downloaded(response, path, length),
+        Err(error) => Err(sink.or(error)),
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -81,14 +81,18 @@ impl PairingUri {
     /// text that is not UTF-8 and a repeated key reject it. Unknown keys are ignored; `pass`, `id`
     /// and `name` may be absent.
     pub fn is_link(text: &str) -> bool {
+        let text = text.trim();
         text.starts_with(PREFIX) || text.starts_with(SHELL_PREFIX)
     }
 
     pub fn parse(uri: &str) -> Option<Self> {
+        let uri = uri.trim();
         if uri.len() > MAX_LEN {
             return None;
         }
-        let query = uri.strip_prefix(PREFIX).or_else(|| uri.strip_prefix(SHELL_PREFIX))?;
+        let query = uri
+            .strip_prefix(PREFIX)
+            .or_else(|| uri.strip_prefix(SHELL_PREFIX))?;
         let mut pairs: Vec<(&str, String)> = Vec::new();
         for part in query.split('&') {
             let (key, value) = part.split_once('=')?;
@@ -303,7 +307,10 @@ mod tests {
         assert_eq!(PairingUri::parse(&from_shell), Some(invitation()));
         assert!(PairingUri::is_link(&uri) && PairingUri::is_link(&from_shell));
         assert!(!PairingUri::is_link("192.168.4.2"));
-        assert_eq!(PairingUri::parse(&uri.replacen(PREFIX, "rubylight://pair/x?", 1)), None);
+        assert_eq!(
+            PairingUri::parse(&uri.replacen(PREFIX, "rubylight://pair/x?", 1)),
+            None
+        );
     }
 
     #[test]
@@ -358,12 +365,14 @@ mod tests {
             let bad = format!("{}fp={bad_fp}{}", &good[..fp_start], &good[fp_start + 67..]);
             assert_eq!(PairingUri::parse(&bad), None, "{bad}");
         }
-        assert!(PairingUri::parse(&format!(
-            "{}{fp}{}",
-            &good[..fp_start],
-            &good[fp_start + 67..]
-        ))
-        .is_some());
+        assert!(
+            PairingUri::parse(&format!(
+                "{}{fp}{}",
+                &good[..fp_start],
+                &good[fp_start + 67..]
+            ))
+            .is_some()
+        );
         assert_eq!(PairingUri::parse("rubylight://pair?v=1&host"), None);
     }
 
@@ -448,12 +457,35 @@ mod tests {
         assert_eq!(named("  Desk\u{202e}cod\n\u{200b}\u{feff} "), "Deskcod");
         assert_eq!(named("\u{202e}\u{200b}"), "");
         for hidden in [
-            '\u{34f}', '\u{600}', '\u{6dd}', '\u{70f}', '\u{8e2}', '\u{115f}', '\u{1160}',
-            '\u{17b4}', '\u{180b}', '\u{2800}', '\u{3164}', '\u{fe0f}', '\u{ffa0}', '\u{fffb}',
-            '\u{110bd}', '\u{13430}', '\u{1bca0}', '\u{1d173}', '\u{e0001}', '\u{e0041}', '\u{e007f}',
+            '\u{34f}',
+            '\u{600}',
+            '\u{6dd}',
+            '\u{70f}',
+            '\u{8e2}',
+            '\u{115f}',
+            '\u{1160}',
+            '\u{17b4}',
+            '\u{180b}',
+            '\u{2800}',
+            '\u{3164}',
+            '\u{fe0f}',
+            '\u{ffa0}',
+            '\u{fffb}',
+            '\u{110bd}',
+            '\u{13430}',
+            '\u{1bca0}',
+            '\u{1d173}',
+            '\u{e0001}',
+            '\u{e0041}',
+            '\u{e007f}',
             '\u{e0100}',
         ] {
-            assert_eq!(named(&format!("Desk{hidden}top")), "Desktop", "{:x}", hidden as u32);
+            assert_eq!(
+                named(&format!("Desk{hidden}top")),
+                "Desktop",
+                "{:x}",
+                hidden as u32
+            );
         }
         // A name padded to look like the address line stays a name.
         assert_eq!(
@@ -464,9 +496,14 @@ mod tests {
             named("Gaming\u{a0}\u{2003}\t\u{3000}PC\u{200b} \u{200b} x"),
             "Gaming PC x"
         );
-        assert_eq!(named(&format!("{}  b", "a".repeat(MAX_SHOWN_NAME - 1))), format!("{} ", "a".repeat(MAX_SHOWN_NAME - 1)));
         assert_eq!(
-            named(&format!("{} {}", "a".repeat(10), "b".repeat(100))).chars().count(),
+            named(&format!("{}  b", "a".repeat(MAX_SHOWN_NAME - 1))),
+            format!("{} ", "a".repeat(MAX_SHOWN_NAME - 1))
+        );
+        assert_eq!(
+            named(&format!("{} {}", "a".repeat(10), "b".repeat(100)))
+                .chars()
+                .count(),
             MAX_SHOWN_NAME
         );
         assert_eq!(

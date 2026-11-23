@@ -30,7 +30,7 @@ fn user_agent_for(version: &str) -> String {
     }
 }
 
-fn user_agent() -> &'static str {
+pub(super) fn user_agent() -> &'static str {
     USER_AGENT.get().map_or("Nightjar", String::as_str)
 }
 
@@ -157,7 +157,7 @@ impl Cancel {
         self.cancelled.load(Ordering::SeqCst)
     }
 
-    fn register(&self, socket: &Arc<Abort>) -> Result<u64, Error> {
+    pub(super) fn register(&self, socket: &Arc<Abort>) -> Result<u64, Error> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         self.sockets.lock().unwrap().push((id, socket.clone()));
         if self.is_cancelled() {
@@ -168,14 +168,14 @@ impl Cancel {
         Ok(id)
     }
 
-    fn unregister(&self, id: u64) {
+    pub(super) fn unregister(&self, id: u64) {
         self.sockets.lock().unwrap().retain(|(i, _)| *i != id);
     }
 }
 
 /// A connection's socket as its cancels hold it. The abort is sticky: every read and write
 /// through [`DeadlineSocket`] checks it before it starts, so none begins blocking after a cancel.
-struct Abort {
+pub(super) struct Abort {
     socket: TcpStream,
     aborted: AtomicBool,
     /// While a read or write may block on the socket.
@@ -187,7 +187,7 @@ struct Abort {
 const ABORT_WAIT: Duration = Duration::from_secs(1);
 
 impl Abort {
-    fn new(socket: &TcpStream) -> Result<Arc<Self>, Error> {
+    pub(super) fn new(socket: &TcpStream) -> Result<Arc<Self>, Error> {
         Ok(Arc::new(Self { socket: socket.try_clone()?, aborted: AtomicBool::new(false), busy: AtomicBool::new(false) }))
     }
 
@@ -227,7 +227,7 @@ impl Abort {
 /// answers, which a stalled host never does; this aborts it at once, through any handle of the
 /// socket.
 #[cfg(windows)]
-fn abort_blocked_io(socket: &TcpStream) {
+pub(super) fn abort_blocked_io(socket: &TcpStream) {
     use std::os::windows::io::AsRawSocket;
     unsafe extern "system" {
         fn CancelIoEx(file: *mut std::ffi::c_void, overlapped: *mut std::ffi::c_void) -> i32;
@@ -287,6 +287,70 @@ pub(crate) fn probe(request: &Request<'_>, cancel: &Cancel, timeout: Duration, h
     send_inner(request, cancel, None, Some(timeout), headers)
 }
 
+pub(crate) fn probe_stream(
+    request: &Request<'_>,
+    cancel: &Cancel,
+    timeout: Duration,
+    headers: &mut HeaderHook<'_>,
+    on_chunk: &mut dyn FnMut(&[u8]) -> Result<(), Error>,
+) -> Result<u64, Error> {
+    let deadline = Deadline::At(std::time::Instant::now() + timeout);
+    let head_str = request_head(request, None);
+    let too_large = || Error::Malformed(format!("host response exceeds the {} byte limit", request.body_limit));
+    connection(request, &[cancel], deadline, Some(write_timeout(request)), &head_str, None, |stream, peer| {
+        stream.flush().map_err(io_tls_error)?;
+        let mut reader = Reader { stream, buffer: Vec::new(), eof: false };
+        let head = read_head(&mut reader)?;
+        headers(head.status, &head.headers, peer)?;
+        let mut total = 0usize;
+        if head.header("Transfer-Encoding").is_some_and(|t| t.eq_ignore_ascii_case("chunked")) {
+            loop {
+                let line = reader.line()?;
+                let size_text = line.split(';').next().unwrap_or_default().trim();
+                let mut left = size_text.bytes().all(|b| b.is_ascii_hexdigit())
+                    .then(|| usize::from_str_radix(size_text, 16).ok()).flatten()
+                    .ok_or_else(|| Error::Malformed("invalid chunk size".into()))?;
+                if left == 0 { break; }
+                if left > request.body_limit.saturating_sub(total) { return Err(too_large()); }
+                while left > 0 {
+                    if reader.buffer.is_empty() && !reader.fill()? {
+                        return Err(Error::Malformed("connection closed before the HTTP body ended".into()));
+                    }
+                    let take = left.min(reader.buffer.len());
+                    let chunk: Vec<u8> = reader.buffer.drain(..take).collect();
+                    on_chunk(&chunk)?;
+                    total += take;
+                    left -= take;
+                }
+                if !reader.line()?.is_empty() { return Err(Error::Malformed("invalid chunk terminator".into())); }
+            }
+        } else if let Some(len) = head.content_length()? {
+            let len = usize::try_from(len).ok().filter(|l| *l <= request.body_limit).ok_or_else(too_large)?;
+            while total < len {
+                if reader.buffer.is_empty() && !reader.fill()? {
+                    return Err(Error::Malformed("connection closed before the HTTP body ended".into()));
+                }
+                let take = (len - total).min(reader.buffer.len());
+                let chunk: Vec<u8> = reader.buffer.drain(..take).collect();
+                on_chunk(&chunk)?;
+                total += take;
+            }
+        } else {
+            loop {
+                if !reader.buffer.is_empty() {
+                    let take = reader.buffer.len();
+                    if take > request.body_limit.saturating_sub(total) { return Err(too_large()); }
+                    let chunk = std::mem::take(&mut reader.buffer);
+                    on_chunk(&chunk)?;
+                    total += take;
+                }
+                if !reader.fill()? { break; }
+            }
+        }
+        Ok(total as u64)
+    })
+}
+
 fn send_inner(request: &Request<'_>, cancel: &Cancel, body: Option<Body<'_>>, timeout: Option<Duration>, headers: &mut HeaderHook<'_>) -> Result<Response, Error> {
     let deadline = timeout.map_or(Deadline::None, |timeout| Deadline::At(std::time::Instant::now() + timeout));
     let head = request_head(request, body);
@@ -298,7 +362,7 @@ fn send_inner(request: &Request<'_>, cancel: &Cancel, body: Option<Body<'_>>, ti
 }
 
 /// How long one write may block on the buffered requests.
-fn write_timeout(request: &Request<'_>) -> Duration {
+pub(super) fn write_timeout(request: &Request<'_>) -> Duration {
     request.timeouts.connect.max(Duration::from_secs(5))
 }
 
@@ -495,6 +559,70 @@ pub(crate) fn download(request: &Request<'_>, cancel: &Cancel, sink: &mut dyn Wr
     })
 }
 
+pub(crate) fn download_optional(
+    request: &Request<'_>,
+    cancel: &Cancel,
+    sink: &mut dyn Write,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+    transfer: &Cancel,
+) -> Result<Response, Error> {
+    let head = request_head(request, None);
+    connection(request, &[cancel, transfer], Deadline::idle(request), Some(write_timeout(request)), &head, None, |stream, _| {
+        let mut reader = Reader { stream, buffer: Vec::new(), eof: false };
+        let head = read_head(&mut reader)?;
+        if !(200..=299).contains(&head.status) {
+            let body = read_body(&mut reader, &head, request.body_limit)?;
+            return Ok(head.into_response(body));
+        }
+        if head.header("Transfer-Encoding").is_some_and(|t| t.eq_ignore_ascii_case("chunked")) {
+            let mut done = 0u64;
+            progress(0, None);
+            loop {
+                let line = reader.line()?;
+                let size_text = line.split(';').next().unwrap_or_default().trim();
+                let mut left = size_text.bytes().all(|b| b.is_ascii_hexdigit())
+                    .then(|| usize::from_str_radix(size_text, 16).ok()).flatten()
+                    .ok_or_else(|| Error::Malformed("invalid chunk size".into()))?;
+                if left == 0 { break; }
+                while left > 0 {
+                    if transfer.is_cancelled() { return Err(Error::Cancelled); }
+                    if reader.buffer.is_empty() && !reader.fill()? {
+                        return Err(Error::Malformed("the download ended early".into()));
+                    }
+                    let take = left.min(reader.buffer.len());
+                    sink.write_all(&reader.buffer[..take])?;
+                    reader.buffer.drain(..take);
+                    done += take as u64;
+                    left -= take;
+                    progress(done, None);
+                }
+                if !reader.line()?.is_empty() { return Err(Error::Malformed("invalid chunk terminator".into())); }
+            }
+            sink.flush()?;
+            return Ok(head.into_response(Vec::new()));
+        }
+        let length = head.content_length()?.ok_or_else(|| Error::Malformed("a download without a Content-Length".into()))?;
+        let mut done = 0u64;
+        let mut throttle = Throttle::start(&mut |d, t| progress(d, Some(t)), length);
+        while done < length {
+            if transfer.is_cancelled() { return Err(Error::Cancelled); }
+            if reader.buffer.is_empty() && !reader.fill()? {
+                return Err(Error::Malformed(format!("the download ended after {done} of {length} bytes")));
+            }
+            let n = usize::try_from(length - done).map_or(reader.buffer.len(), |left| left.min(reader.buffer.len()));
+            sink.write_all(&reader.buffer[..n])?;
+            reader.buffer.drain(..n);
+            done += n as u64;
+            throttle.update(&mut |d, t| progress(d, Some(t)), done);
+        }
+        if !reader.buffer.is_empty() || reader.fill()? {
+            return Err(Error::Malformed(format!("the download is longer than its {length} bytes")));
+        }
+        sink.flush()?;
+        Ok(head.into_response(Vec::new()))
+    })
+}
+
 fn receive(stream: &mut dyn Stream, body_limit: usize, sink: &mut dyn Write, progress: &mut Progress<'_>, transfer: &Cancel) -> Result<Response, Error> {
     let mut reader = Reader { stream, buffer: Vec::new(), eof: false };
     let head = read_head(&mut reader)?;
@@ -582,7 +710,7 @@ fn connection<T>(request: &Request<'_>, cancels: &[&Cancel], deadline: Deadline,
     }
 }
 
-fn connect(host: &Host, port: u16, timeout: Duration, deadline: Option<std::time::Instant>) -> Result<TcpStream, Error> {
+pub(super) fn connect(host: &Host, port: u16, timeout: Duration, deadline: Option<std::time::Instant>) -> Result<TcpStream, Error> {
     connect_each(&host.socket_addrs(port)?, timeout, deadline, TcpStream::connect_timeout)
 }
 
@@ -744,7 +872,7 @@ impl Write for DeadlineSocket {
     fn flush(&mut self) -> std::io::Result<()> { self.socket.flush() }
 }
 
-fn tls_error(error: rustls::Error) -> Error {
+pub(super) fn tls_error(error: rustls::Error) -> Error {
     match error {
         rustls::Error::InvalidCertificate(_) => Error::CertificateMismatch,
         other => Error::Tls(other.to_string()),
@@ -762,196 +890,8 @@ pub(super) fn io_tls_error(error: std::io::Error) -> Error {
     }
 }
 
-/// The most of an error body read from a refused upgrade.
-const UPGRADE_ERROR_BYTES: usize = 64 * 1024;
-
-/// Asks the host to switch `request`, over TLS, to `protocol`, with `fields` in the head.
-/// Any answer but `101 Switching Protocols` comes back as the response it is, for its error.
-pub(crate) fn upgrade(request: &Request<'_>, cancel: &Cancel, protocol: &str, fields: &[(&str, &str)])
-    -> Result<Result<Upgraded, Response>, Error> {
-    let config = request.tls.clone().ok_or_else(|| Error::InvalidArgument("an upgrade needs TLS".into()))?;
-    let tcp = connect(request.host, request.port, request.timeouts.connect, None)?;
-    let id = cancel.register(&Abort::new(&tcp)?)?;
-    let result = (|| {
-        tcp.set_read_timeout(request.timeouts.read)?;
-        tcp.set_write_timeout(Some(write_timeout(request)))?;
-        tcp.set_nodelay(true)?;
-        let name = ServerName::try_from(request.host.name.clone())
-            .map_err(|_| Error::InvalidArgument(format!("invalid host name: {}", request.host.name)))?;
-        let mut stream = StreamOwned::new(ClientConnection::new(config, name).map_err(tls_error)?, tcp.try_clone()?);
-        while stream.conn.is_handshaking() {
-            stream.conn.complete_io(&mut stream.sock).map_err(io_tls_error)?;
-        }
-        let mut head = format!(
-            "GET /{} HTTP/1.1\r\nHost: {}:{}\r\nConnection: Upgrade\r\nUpgrade: {protocol}\r\nUser-Agent: {}\r\n",
-            request.target,
-            request.host.url_host(),
-            request.port,
-            user_agent()
-        );
-        for (name, value) in fields {
-            head.push_str(&format!("{name}: {value}\r\n"));
-        }
-        head.push_str("\r\n");
-        stream.write_all(head.as_bytes()).map_err(io_tls_error)?;
-        stream.flush().map_err(io_tls_error)?;
-        let mut reader = Reader { stream: &mut stream, buffer: Vec::new(), eof: false };
-        let head = read_head(&mut reader)?;
-        if head.status != 101 {
-            let body = read_body(&mut reader, &head, UPGRADE_ERROR_BYTES)?;
-            return Ok(Err(head.into_response(body)));
-        }
-        if !head.header("Upgrade").is_some_and(|upgrade| upgrade.eq_ignore_ascii_case(protocol)) {
-            return Err(Error::Malformed(format!("the host switched to {:?}, not {protocol}", head.header("Upgrade"))));
-        }
-        // Whatever the host sent after its head is the new protocol's.
-        let early = std::mem::take(&mut reader.buffer);
-        let StreamOwned { conn, sock } = stream;
-        sock.set_read_timeout(None)?;
-        sock.set_write_timeout(None)?;
-        Ok(Ok(Upgraded { socket: sock.try_clone()?, writing: Mutex::new(()),
-            tls: Mutex::new(UpgradedTls { conn, socket: sock, early }) }))
-    })();
-    cancel.unregister(id);
-    match result {
-        Err(_) if cancel.is_cancelled() => Err(Error::Cancelled),
-        other => other,
-    }
-}
-
-/// How long [`Upgraded::close`] waits to send the host its close_notify.
-const CLOSE_NOTIFY_WAIT: Duration = Duration::from_millis(100);
-
-/// A TLS connection the host switched to another protocol. One thread may read while others
-/// write: a read waits for bytes without holding the TLS state, and a write holds it only to
-/// encrypt, never while the socket takes the records.
-///
-/// Lock order: `writing` before `tls`; a read takes `tls` alone.
-pub struct Upgraded {
-    /// Waits for bytes, takes the encrypted records and closes the connection.
-    socket: TcpStream,
-    /// Orders writers, so records reach the socket in the order they were encrypted.
-    writing: Mutex<()>,
-    tls: Mutex<UpgradedTls>,
-}
-
-struct UpgradedTls {
-    conn: ClientConnection,
-    socket: TcpStream,
-    /// Plaintext read past the response head.
-    early: Vec<u8>,
-}
-
-impl Upgraded {
-    fn tls(&self) -> std::sync::MutexGuard<'_, UpgradedTls> {
-        self.tls.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Reads what arrived, waiting for it; 0 once the host closed.
-    pub fn read(&self, bytes: &mut [u8]) -> std::io::Result<usize> {
-        loop {
-            {
-                let mut tls = self.tls();
-                if !tls.early.is_empty() {
-                    let n = bytes.len().min(tls.early.len());
-                    bytes[..n].copy_from_slice(&tls.early[..n]);
-                    tls.early.drain(..n);
-                    return Ok(n);
-                }
-                match tls.conn.reader().read(bytes) {
-                    Ok(n) => return Ok(n),
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => {}
-                    // The host closed without close_notify.
-                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => return Ok(0),
-                    Err(e) => return Err(e),
-                }
-            }
-            let mut probe = [0];
-            match self.socket.peek(&mut probe) {
-                Ok(_) => {}
-                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-            let mut tls = self.tls();
-            let UpgradedTls { conn, socket, .. } = &mut *tls;
-            match conn.read_tls(socket) {
-                Ok(0) => return Ok(0),
-                Ok(_) => {}
-                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-            conn.process_new_packets().map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
-        }
-    }
-
-    /// Fills `bytes`; `UnexpectedEof` when the host closed first.
-    pub fn read_exact(&self, mut bytes: &mut [u8]) -> std::io::Result<()> {
-        while !bytes.is_empty() {
-            match self.read(bytes)? {
-                0 => return Err(ErrorKind::UnexpectedEof.into()),
-                n => bytes = &mut bytes[n..],
-            }
-        }
-        Ok(())
-    }
-
-    /// Sends `bytes` whole, as one write.
-    pub fn write_all(&self, mut bytes: &[u8]) -> std::io::Result<()> {
-        let _writing = self.writing.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut records = Vec::new();
-        while !bytes.is_empty() {
-            {
-                // Encrypts under the TLS lock; a blocked socket write below must not hold it,
-                // or the read that would drain the host's side waits behind it.
-                let mut tls = self.tls();
-                let conn = &mut tls.conn;
-                // rustls takes as much as its send buffer holds, 64 KiB, and none until it drained.
-                let n = conn.writer().write(bytes)?;
-                if n == 0 && !conn.wants_write() {
-                    return Err(ErrorKind::WriteZero.into());
-                }
-                bytes = &bytes[n..];
-                while conn.wants_write() {
-                    conn.write_tls(&mut records)?;
-                }
-            }
-            (&self.socket).write_all(&records)?;
-            records.clear();
-        }
-        Ok(())
-    }
-
-    /// Closes the connection, waking a blocked read or write. The host first gets a TLS
-    /// close_notify, a clean end, unless a write that holds the connection doesn't finish
-    /// within [`CLOSE_NOTIFY_WAIT`]: the shutdown wakes it.
-    pub fn close(&self) {
-        let deadline = std::time::Instant::now() + CLOSE_NOTIFY_WAIT;
-        fn wait<T>(lock: &Mutex<T>, deadline: std::time::Instant) -> Option<std::sync::MutexGuard<'_, T>> {
-            loop {
-                match lock.try_lock() {
-                    Ok(guard) => break Some(guard),
-                    Err(std::sync::TryLockError::Poisoned(poisoned)) => break Some(poisoned.into_inner()),
-                    Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() >= deadline => break None,
-                    Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(1)),
-                }
-            }
-        }
-        // The close_notify goes after any write's records, never inside them: it waits for
-        // the writers, then for the TLS state.
-        let writing = wait(&self.writing, deadline);
-        let tls = writing.as_ref().and_then(|_| wait(&self.tls, deadline));
-        if let Some(mut tls) = tls {
-            let UpgradedTls { conn, socket, .. } = &mut *tls;
-            conn.send_close_notify();
-            // Never waits long on a host that stopped reading.
-            let _ = socket.set_write_timeout(Some(CLOSE_NOTIFY_WAIT));
-            while conn.wants_write() && conn.write_tls(socket).is_ok_and(|n| n > 0) {}
-        }
-        let _ = self.socket.shutdown(Shutdown::Both);
-        #[cfg(windows)]
-        abort_blocked_io(&self.socket);
-    }
-}
+pub use super::upgrade::Upgraded;
+pub(crate) use super::upgrade::upgrade;
 
 /// Accepts exactly the pinned certificate, whatever its name or issuer.
 #[derive(Debug)]

@@ -415,7 +415,7 @@ mod tests {
             .unwrap()
             .with_https_port(https_port);
         if pinned {
-            client.pin(Some(client.identity().certificate_der().to_vec()));
+            client.pin(Some(client.identity().unwrap().certificate_der().to_vec()));
         }
         client
     }

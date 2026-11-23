@@ -110,6 +110,10 @@ fn feature_name(feature: Feature) -> &'static str {
         Feature::MicOnly => "mic_only",
         Feature::ContinueHere => "continue_here",
         Feature::InternetPlay => "internet_play",
+        Feature::PcRestart => "pc_restart",
+        Feature::PcShutdown => "pc_shutdown",
+        Feature::HostUpdate => "host_update",
+        Feature::PairingApprove => "pairing_approve",
     }
 }
 
@@ -125,6 +129,8 @@ fn reason_name(reason: Reason) -> &'static str {
         Reason::VirtualDisplayDriver => "virtual_display_driver",
         Reason::HardwareMetricsOff => "hardware_metrics_off",
         Reason::SleepPermission => "sleep_permission",
+        Reason::RestartShutdownPermission => "restart_shutdown_permission",
+        Reason::PairingApprovePermission => "pairing_approve_permission",
         Reason::FilePermission => "file_permission",
         Reason::UsbPermission => "usb_permission",
         Reason::FolderPermission => "folder_permission",

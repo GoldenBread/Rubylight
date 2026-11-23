@@ -234,7 +234,7 @@ fn a_host_without_the_network_path_reports_why() {
     let client = HostClient::new("127.0.0.1", 1, identity)
         .unwrap()
         .with_https_port(1);
-    client.pin(Some(client.identity().certificate_der().to_vec()));
+    client.pin(Some(client.identity().unwrap().certificate_der().to_vec()));
     let without = RUBYLIGHT.replace("<NetworkPathVersion>1</NetworkPathVersion>", "");
     let check = run(
         "0123-ABCD",
@@ -266,13 +266,13 @@ fn the_check_needs_the_pin_and_the_host_identity() {
         client.remote_check("0123-ABCD"),
         Err(Error::NotPaired)
     ));
-    client.pin(Some(client.identity().certificate_der().to_vec()));
+    client.pin(Some(client.identity().unwrap().certificate_der().to_vec()));
     assert!(matches!(
         client.remote_check(""),
         Err(Error::InvalidArgument(_))
     ));
-    let unknown_port = HostClient::new("127.0.0.1", 1, client.identity.clone()).unwrap();
-    unknown_port.pin(Some(client.identity().certificate_der().to_vec()));
+    let unknown_port = HostClient::new("127.0.0.1", 1, client.identity.clone().unwrap()).unwrap();
+    unknown_port.pin(Some(client.identity().unwrap().certificate_der().to_vec()));
     assert!(matches!(
         unknown_port.remote_check("0123-ABCD"),
         Err(Error::InvalidArgument(_))

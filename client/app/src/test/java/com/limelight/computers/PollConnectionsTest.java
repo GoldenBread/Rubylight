@@ -65,7 +65,7 @@ public class PollConnectionsTest {
     }
 
     private static int httpsPort(NvHTTP http) {
-        return ReflectionHelpers.getField(http, "httpsPort");
+        return http.getHttpsPort();
     }
 
     /** A certificate that is not the fixture's: the first one this JVM trusts. */

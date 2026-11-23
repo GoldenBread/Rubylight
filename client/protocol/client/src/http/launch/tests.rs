@@ -1,5 +1,5 @@
 use super::super::capabilities::{Availability, Reason};
-use super::super::serverinfo::{tests::RUBYLIGHT, ServerInfo};
+use super::super::serverinfo::{ServerInfo, tests::RUBYLIGHT};
 use super::*;
 
 fn rubylight() -> HostCapabilities {
@@ -14,7 +14,10 @@ fn rubylight_host(display_scale: bool) -> HostCapabilities {
         "<VirtualDisplayDriverReady>true</VirtualDisplayDriverReady>",
     );
     if display_scale {
-        xml = xml.replace("</root>", "<DisplayScaleVersion>1</DisplayScaleVersion></root>");
+        xml = xml.replace(
+            "</root>",
+            "<DisplayScaleVersion>1</DisplayScaleVersion></root>",
+        );
     }
     ServerInfo::parse(&xml, 47989).unwrap().capabilities
 }
@@ -57,7 +60,10 @@ fn ten_bit_sdr_says_hdr_mode_zero_and_hdr_still_wins() {
                 .query(&caps, false)
                 .replace("&localAudioPlayMode=", "&hdrMode=0&localAudioPlayMode=")
         );
-        let hdr = LaunchRequest { hdr: true, ..sdr.clone() };
+        let hdr = LaunchRequest {
+            hdr: true,
+            ..sdr.clone()
+        };
         let q = hdr.query(&caps, false);
         assert!(q.contains("&hdrMode=1&") && !q.contains("hdrMode=0"), "{q}");
         let input = LaunchRequest {
@@ -72,32 +78,62 @@ fn ten_bit_sdr_says_hdr_mode_zero_and_hdr_still_wins() {
 #[test]
 fn the_display_scale_goes_when_chosen_with_or_without_the_virtual_display_switch() {
     let query = |virtual_display, dpi| {
-        LaunchRequest { virtual_display, virtual_display_dpi: dpi, ..request() }.query(&rubylight(), false)
+        LaunchRequest {
+            virtual_display,
+            virtual_display_dpi: dpi,
+            ..request()
+        }
+        .query(&rubylight(), false)
     };
-    assert!(!query(true, 0).contains("rlDisplayScale"), "0 keeps the PC's own scale");
-    assert!(query(true, 200).contains("&scaleFactor=100&rlDisplayScale=200"), "the render resolution stays 100 %");
+    assert!(
+        !query(true, 0).contains("rlDisplayScale"),
+        "0 keeps the PC's own scale"
+    );
+    assert!(
+        query(true, 200).contains("&scaleFactor=100&rlDisplayScale=200"),
+        "the render resolution stays 100 %"
+    );
     // The host makes a virtual display of its own by default (per_client), so the switch
     // being off does not mean a physical display; the host ignores the scale on one.
     let off = query(false, 200);
-    assert!(off.contains("&rlDisplayScale=200&") && !off.contains("virtualDisplay"), "{off}");
+    assert!(
+        off.contains("&rlDisplayScale=200&") && !off.contains("virtualDisplay"),
+        "{off}"
+    );
     // An input-only launch has no display.
-    let input_only = LaunchRequest { role: AppRole::InputOnly, virtual_display_dpi: 200, ..request() }.query(&rubylight(), false);
+    let input_only = LaunchRequest {
+        role: AppRole::InputOnly,
+        virtual_display_dpi: 200,
+        ..request()
+    }
+    .query(&rubylight(), false);
     assert!(!input_only.contains("rlDisplayScale"), "{input_only}");
 }
 
 #[test]
 fn hosts_without_display_scale_version_get_no_display_scale() {
     // Older Rubylight hosts (2.6.x, 3.0.0-rc.5) ignore rlDisplayScale.
-    let request = LaunchRequest { virtual_display: true, virtual_display_dpi: 200, ..request() };
+    let request = LaunchRequest {
+        virtual_display: true,
+        virtual_display_dpi: 200,
+        ..request()
+    };
     let older = rubylight_host(false);
     assert_eq!(
         older.availability(Feature::DisplayScale),
         Availability::Unsupported(Some(Reason::UpdateHost))
     );
     let query = request.query(&older, false);
-    assert!(query.contains("&virtualDisplay=1&scaleFactor=100&"), "{query}");
+    assert!(
+        query.contains("&virtualDisplay=1&scaleFactor=100&"),
+        "{query}"
+    );
     assert!(!query.contains("rlDisplayScale"), "{query}");
-    assert!(request.query(&rubylight_host(true), false).contains("&rlDisplayScale=200&"));
+    assert!(
+        request
+            .query(&rubylight_host(true), false)
+            .contains("&rlDisplayScale=200&")
+    );
 }
 
 #[test]
@@ -152,9 +188,11 @@ fn clipboard_sync_is_asked_only_of_a_rubylight_host() {
     // Other hosts get exactly today's query.
     let caps = HostCapabilities::UNKNOWN;
     assert_eq!(asked.query(&caps, false), request().query(&caps, false));
-    assert!(!request()
-        .query(&rubylight(), false)
-        .contains("rlClipboardSync"));
+    assert!(
+        !request()
+            .query(&rubylight(), false)
+            .contains("rlClipboardSync")
+    );
 }
 
 #[test]
@@ -166,36 +204,57 @@ fn image_enhancement_choices_go_only_for_what_the_host_offers() {
     };
     // A host without the field, and other hosts, get exactly today's query.
     assert_eq!(rubylight().nvidia_enhancements(), 0);
-    assert_eq!(chosen.query(&rubylight(), false), request().query(&rubylight(), false));
+    assert_eq!(
+        chosen.query(&rubylight(), false),
+        request().query(&rubylight(), false)
+    );
     let caps = HostCapabilities::UNKNOWN;
     assert_eq!(chosen.query(&caps, false), request().query(&caps, false));
     // A host offering only RTX Video gets only that choice.
     let video_only = ServerInfo::parse(
-        &RUBYLIGHT.replace("</root>", "<NvidiaEnhancements>2</NvidiaEnhancements></root>"),
+        &RUBYLIGHT.replace(
+            "</root>",
+            "<NvidiaEnhancements>2</NvidiaEnhancements></root>",
+        ),
         47989,
     )
     .unwrap()
     .capabilities;
     assert_eq!(video_only.nvidia_enhancements(), 2);
     let query = chosen.query(&video_only, false);
-    assert!(query.contains("&rlRtxVideo=0&") && !query.contains("rlRtxHdr"), "{query}");
+    assert!(
+        query.contains("&rlRtxVideo=0&") && !query.contains("rlRtxHdr"),
+        "{query}"
+    );
     // Both, and following the app sends nothing.
     let both = ServerInfo::parse(
-        &RUBYLIGHT.replace("</root>", "<NvidiaEnhancements>3</NvidiaEnhancements></root>"),
+        &RUBYLIGHT.replace(
+            "</root>",
+            "<NvidiaEnhancements>3</NvidiaEnhancements></root>",
+        ),
         47989,
     )
     .unwrap()
     .capabilities;
     let query = chosen.query(&both, false);
     assert!(query.contains("&rlRtxHdr=1&rlRtxVideo=0&"), "{query}");
-    assert_eq!(request().query(&both, false), request().query(&rubylight(), false));
+    assert_eq!(
+        request().query(&both, false),
+        request().query(&rubylight(), false)
+    );
     // An input-only session encodes no picture.
-    let input_only = LaunchRequest { role: AppRole::InputOnly, ..chosen };
+    let input_only = LaunchRequest {
+        role: AppRole::InputOnly,
+        ..chosen
+    };
     assert!(!input_only.query(&both, false).contains("rlRtx"));
     // Unknown bits and junk read as nothing more.
     for (text, mask) in [("255", 3), ("x", 0), ("-1", 0)] {
         let caps = ServerInfo::parse(
-            &RUBYLIGHT.replace("</root>", &format!("<NvidiaEnhancements>{text}</NvidiaEnhancements></root>")),
+            &RUBYLIGHT.replace(
+                "</root>",
+                &format!("<NvidiaEnhancements>{text}</NvidiaEnhancements></root>"),
+            ),
             47989,
         )
         .unwrap()
@@ -211,7 +270,10 @@ fn the_fec_choice_goes_only_to_a_host_that_takes_it() {
     let fec_host = ServerInfo::parse(&xml, 47989).unwrap().capabilities;
     assert!(fec_host.has(Feature::ClientFec));
     let plain = request().query(&fec_host, false);
-    assert!(!plain.contains("rlFecPercentage"), "no choice, no parameter");
+    assert!(
+        !plain.contains("rlFecPercentage"),
+        "no choice, no parameter"
+    );
     for (choice, value) in [
         (FecChoice::Host, "host"),
         (FecChoice::Auto, "auto"),
@@ -287,14 +349,28 @@ fn display_luminance_goes_to_other_hosts_at_launch_and_to_rubylight_by_control_m
     assert!(lit.query(&other, false).ends_with(
         "&gcpersist=0&minBrightness=0.005&maxBrightness=1000.0&maxAverageBrightness=400.0&corever=1"
     ), "{}", lit.query(&other, false));
-    assert_eq!(lit.query(&rubylight(), false), request().query(&rubylight(), false));
-    let input = LaunchRequest { role: AppRole::InputOnly, ..lit.clone() };
+    assert_eq!(
+        lit.query(&rubylight(), false),
+        request().query(&rubylight(), false)
+    );
+    let input = LaunchRequest {
+        role: AppRole::InputOnly,
+        ..lit.clone()
+    };
     assert!(!input.query(&other, false).contains("Brightness"));
-    let small = LaunchRequest { small_stream_input_only: true, ..input };
+    let small = LaunchRequest {
+        small_stream_input_only: true,
+        ..input
+    };
     assert!(!small.query(&other, false).contains("Brightness"));
     // Unknown luminance: nothing, and the host picks its own.
-    assert_eq!(request().query(&other, false), lit.query(&other, false).replace(
-        "&minBrightness=0.005&maxBrightness=1000.0&maxAverageBrightness=400.0", ""));
+    assert_eq!(
+        request().query(&other, false),
+        lit.query(&other, false).replace(
+            "&minBrightness=0.005&maxBrightness=1000.0&maxAverageBrightness=400.0",
+            ""
+        )
+    );
 }
 
 #[test]
@@ -340,9 +416,10 @@ fn roles_and_gamestream_quirks() {
         mic_only: true,
         ..input.clone()
     };
-    assert!(mic
-        .query(&rubylight(), false)
-        .contains("&input_only=1&rlMicOnly=1&mode="));
+    assert!(
+        mic.query(&rubylight(), false)
+            .contains("&input_only=1&rlMicOnly=1&mode=")
+    );
     let small = LaunchRequest {
         small_stream_input_only: true,
         ..input
@@ -369,13 +446,15 @@ fn launch_replies() {
         })
     );
     assert_eq!(
-        parse_launch_reply("<root status_code=\"200\"><resume>0</resume></root>", true)
-            .unwrap(),
+        parse_launch_reply("<root status_code=\"200\"><resume>0</resume></root>", true).unwrap(),
         None
     );
     assert!(parse_launch_reply(ok, true).is_err());
     assert!(matches!(
-        parse_launch_reply("<root status_code=\"503\" status_message=\"busy\"><gamesession>0</gamesession></root>", false),
+        parse_launch_reply(
+            "<root status_code=\"503\" status_message=\"busy\"><gamesession>0</gamesession></root>",
+            false
+        ),
         Err(Error::Status { code: 503, .. })
     ));
 }

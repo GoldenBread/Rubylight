@@ -192,7 +192,7 @@ impl<R: Read + ?Sized> Reader<'_, R> {
         Ok(self.buffer.drain(..n).collect())
     }
 
-    fn line(&mut self) -> Result<String, Error> {
+    pub(super) fn line(&mut self) -> Result<String, Error> {
         loop {
             if let Some(at) = find(&self.buffer, b"\r\n") {
                 let line = String::from_utf8_lossy(&self.buffer[..at]).into_owned();

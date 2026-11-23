@@ -920,19 +920,19 @@ final class GameConnection {
         game.bitrateHandler.removeCallbacks(game.updateBitrate);
         game.bitrateHandler.removeCallbacks(game.updateRateChangeBitrate);
         game.bitrateHandler.removeCallbacks(game.expireRateChanges);
-        game.rateChanges = null;
+        if (game.rateChanges != null) game.rateChanges.stopAutomatic(); game.rateChanges = null;
         game.bitrateHandler.removeCallbacks(game.checkReconfigure);
         game.bitrateHandler.removeCallbacks(game.updateQuality);
         game.videoOutput.clearDecoderActions();
-        game.adaptiveQuality = null;
+        if (game.adaptiveQuality != null) game.adaptiveQuality.close(); game.adaptiveQuality = null;
         game.pendingQualityTarget = null;
-        game.adaptiveBitrate = null;
+        if (game.adaptiveBitrate != null) game.adaptiveBitrate.close(); game.adaptiveBitrate = null;
         game.qualityAutoBitrate = false;
         game.bitrateHandler.removeCallbacks(game.adaptation.sampleStreamHealth);
         game.bitrateHandler.removeCallbacks(game.videoOutput.pollContentRateVote);
         game.videoOutput.stopRefreshSwitchPolling();
         if (game.wifiDiagnostics != null) game.wifiDiagnostics.stop();
-        game.pyroWaveBitrate = null;
+        if (game.pyroWaveBitrate != null) game.pyroWaveBitrate.close(); game.pyroWaveBitrate = null;
         game.displayCapsReporter = null;
         game.touchInput.stopHostCursorShapes();
         if (game.clipboardSync != null) {

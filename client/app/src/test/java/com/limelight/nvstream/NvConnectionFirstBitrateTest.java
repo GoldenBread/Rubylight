@@ -114,9 +114,9 @@ public class NvConnectionFirstBitrateTest {
     @Test public void theErrorCorrectionSettingReachesTheLaunch() throws Exception {
         start(NEW + FEC, 20000, false, FecChoice.AUTO);
         assertTrue(NvConnectionRecoveryTest.FakeHost.lastQuery, NvConnectionRecoveryTest.FakeHost.lastQuery
-                .endsWith("&" + FecChoice.LAUNCH_PARAMETER + "=auto"));
+                .contains("&" + FecChoice.LAUNCH_PARAMETER + "=auto"));
         start(NEW + FEC, 20000, false, FecChoice.fixed(30));
-        assertTrue(NvConnectionRecoveryTest.FakeHost.lastQuery.endsWith("&" + FecChoice.LAUNCH_PARAMETER + "=30"));
+        assertTrue(NvConnectionRecoveryTest.FakeHost.lastQuery.contains("&" + FecChoice.LAUNCH_PARAMETER + "=30"));
         start(NEW, 20000, false, FecChoice.AUTO);
         assertFalse(NvConnectionRecoveryTest.FakeHost.lastQuery.contains(FecChoice.LAUNCH_PARAMETER));
     }

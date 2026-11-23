@@ -1,39 +1,34 @@
+/**
+ * Native transfer cancellation token backed by {@code nightjar_core::http::TransferCancel}.
+ */
 package com.limelight.nvstream.http;
 
-import okhttp3.Call;
+import com.limelight.nvstream.jni.HandleReaper;
+import com.limelight.nvstream.jni.NightjarHttpJni;
 
-/**
- * Cancels one upload or download from another thread, at once, even while it waits on the host: its call is
- * cancelled, which closes the socket. One per transfer; the NvHTTP's other requests carry on, unlike
- * {@link NvHTTP#cancelPendingRequests}. A transfer started with a cancelled handle fails before it connects.
- */
-public final class TransferCancel {
-    private Call call;
-    private boolean cancelled;
+public final class TransferCancel implements AutoCloseable {
+    private final long handle;
+    private final HandleReaper.Token reaper;
+
+    public TransferCancel() {
+        this.handle = NightjarHttpJni.transferCancelCreate();
+        this.reaper = HandleReaper.register(this, handle, NightjarHttpJni::transferCancelDestroy);
+    }
 
     public void cancel() {
-        Call current;
-        synchronized (this) {
-            cancelled = true;
-            current = call;
-        }
-        if (current != null) {
-            current.cancel();
-        }
+        NightjarHttpJni.transferCancelCancel(handle);
     }
 
-    public synchronized boolean isCancelled() {
-        return cancelled;
+    public boolean isCancelled() {
+        return NightjarHttpJni.transferCancelIsCancelled(handle);
     }
 
-    void attach(Call call) {
-        boolean cancel;
-        synchronized (this) {
-            this.call = call;
-            cancel = cancelled;
-        }
-        if (cancel) {
-            call.cancel();
-        }
+    long handle() {
+        return handle;
+    }
+
+    @Override
+    public void close() {
+        reaper.close();
     }
 }

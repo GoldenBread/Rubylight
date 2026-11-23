@@ -790,7 +790,7 @@ final class GameAdaptation {
     // Turns a Foundation PC's controller off at the stream's end (V+ PC's stopSunshineAbr).
     void stopFoundationAbr() {
         if (foundationAbr == null) return;
-        foundationAbr = null;
+        foundationAbr.close(); foundationAbr = null;
         game.bitrateHandler.removeCallbacks(foundationAbrTick);
         sendFoundationAbrStop(game.conn);
     }
@@ -899,7 +899,7 @@ final class GameAdaptation {
     void startAdaptiveQuality() {
         game.bitrateHandler.removeCallbacks(game.updateQuality);
         game.videoOutput.dropDecoderAction("tick");
-        game.adaptiveQuality = null;
+        if (game.adaptiveQuality != null) game.adaptiveQuality.close(); game.adaptiveQuality = null;
         game.pendingQualityTarget = null;
         game.qualityStatus = null;
         if (game.decoderRenderer != null) game.decoderRenderer.resetDecodeTiming();
@@ -984,7 +984,7 @@ final class GameAdaptation {
     }
 
     void stopAdaptiveQualityWithError() {
-        game.adaptiveQuality = null;
+        if (game.adaptiveQuality != null) game.adaptiveQuality.close(); game.adaptiveQuality = null;
         game.pendingQualityTarget = null;
         game.bitrateHandler.removeCallbacks(game.updateQuality);
         releaseQualityAutoBitrate();
@@ -1050,8 +1050,8 @@ final class GameAdaptation {
             game.qualityAutoBitrate = false;
         }
         game.bitrateHandler.removeCallbacks(game.updateBitrate);
-        game.adaptiveBitrate = null;
-        game.pyroWaveBitrate = null;
+        if (game.adaptiveBitrate != null) game.adaptiveBitrate.close(); game.adaptiveBitrate = null;
+        if (game.pyroWaveBitrate != null) game.pyroWaveBitrate.close(); game.pyroWaveBitrate = null;
         game.adaptiveBitrateRetryAt = 0;
         adaptiveBitrateClaimFailures = 0;
         if (enabled) {

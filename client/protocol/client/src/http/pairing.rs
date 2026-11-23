@@ -2,11 +2,11 @@
 //! key, the server certificate, both challenges and the signed secrets, then the pair
 //! challenge over pinned HTTPS.
 
+use super::Error;
 use super::crypto::{self, PairingHash};
 use super::der;
 use super::identity::ClientIdentity;
 use super::xml;
-use super::Error;
 
 /// How a pairing attempt ended, when the host answered every request.
 #[derive(Clone, Debug, PartialEq, Eq)]

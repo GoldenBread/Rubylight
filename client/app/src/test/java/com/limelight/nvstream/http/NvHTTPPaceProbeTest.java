@@ -1,11 +1,22 @@
 package com.limelight.nvstream.http;
 
+import android.app.Application;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
+import java.io.IOException;
+import java.util.concurrent.atomic.AtomicReference;
+
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class NvHTTPPaceProbeTest {
     private static final String VIBESHINE = "<root status_code=\"200\"><PairStatus>1</PairStatus>" +
             "<ServerCodecModeSupport>8388608</ServerCodecModeSupport>" +
@@ -41,15 +52,19 @@ public class NvHTTPPaceProbeTest {
     }
 
     @Test
-    public void onlyAPlainUnprivilegedPortIsAccepted() {
-        assertEquals(50123, NvHTTP.parseUdpPort("50123"));
-        assertEquals(1024, NvHTTP.parseUdpPort("1024"));
-        assertEquals(0, NvHTTP.parseUdpPort(null));
-        assertEquals(0, NvHTTP.parseUdpPort(""));
-        assertEquals(0, NvHTTP.parseUdpPort("80"));
-        assertEquals(0, NvHTTP.parseUdpPort("1023"));
-        assertEquals(0, NvHTTP.parseUdpPort("70000"));
-        assertEquals(0, NvHTTP.parseUdpPort(" 5000"));
-        assertEquals(0, NvHTTP.parseUdpPort("+5000"));
+    public void onlyAPlainUnprivilegedPortIsAccepted() throws Exception {
+        AtomicReference<String> port = new AtomicReference<>();
+        try (TestHttpServer server = new TestHttpServer(req -> {
+            TestHttpServer.Response res = TestHttpServer.Response.xml(200, "<root status_code=\"200\"/>");
+            if (port.get() != null) res.header("X-PyroWave-Udp-Port", port.get());
+            return res;
+        })) {
+            NvHTTP http = server.newClient();
+            for (String bad : new String[] {null, "", "80", "1023", "70000", " 5000", "+5000"}) {
+                port.set(bad);
+                assertThrows("port=" + bad, IOException.class,
+                        () -> http.probePyroWaveUdp(5000, 1392, 60, 50000));
+            }
+        }
     }
 }

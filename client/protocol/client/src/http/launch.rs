@@ -5,12 +5,14 @@ use super::apps::AppRole;
 use super::capabilities::{Family, Feature, HostCapabilities};
 use super::luminance::DisplayLuminance;
 use super::transport::encode_query;
-use super::xml;
-use super::{der, Error};
+use super::{
+    der, launch_failure, xml, Error, Scheme, ServerInfo, LAUNCH_READ_TIMEOUT, LONG_CONNECT_TIMEOUT,
+};
 use crate::sdp::AudioConfiguration;
 use rubylight_protocol::clipboard_sync;
 use rubylight_protocol::fec_report::{FecChoice, LAUNCH_PARAMETER};
 use rubylight_protocol::rate_change;
+use std::time::Duration;
 
 pub use nightjar_policy::http::HostDisplay;
 
@@ -132,10 +134,162 @@ pub const CONFIRM_REPLACE: &str = "rlConfirmReplace";
 /// The 410 a host that confirms replacement (Rubylight, Vibepollo) refuses a launch with while
 /// another app runs; any other 410 is not a prompt.
 const REPLACE_PROMPT: &str = "An app is already running. Launch this app again within 60 seconds to confirm that you want to close it.";
+const TERMINATE_PROMPT: &str = "This will close the active stream but leave Remote Monitor and Remote Input connected. Launch Terminate again within 60 seconds to confirm this was intentional.";
 
 /// Whether a refused launch asks the user to confirm closing the running app.
 pub fn asks_to_confirm_replace(error: &Error) -> bool {
     matches!(error, Error::Status { code: 410, message } if message == REPLACE_PROMPT)
+}
+
+/// Whether a refused Terminate control-tile launch asks for confirmation.
+pub fn asks_to_confirm_terminate(error: &Error) -> bool {
+    matches!(error, Error::Status { code: 410, message } if message == TERMINATE_PROMPT)
+}
+
+fn reports_410(error: &Error, messages: &[&str]) -> bool {
+    let Error::Status { code: 410, message } = error else {
+        return false;
+    };
+    let trimmed = message.trim().strip_suffix('.').unwrap_or(message.trim());
+    messages
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(trimmed))
+}
+
+/// Whether a 410 reply reports that a remote role control tile succeeded.
+pub fn is_role_completed(role: AppRole, error: &Error) -> bool {
+    match role {
+        AppRole::RemoteMonitor => reports_410(
+            error,
+            &[
+                "Remote monitor disconnected",
+                "Remote Monitor disconnected successfully",
+            ],
+        ),
+        AppRole::InputOnly => reports_410(
+            error,
+            &[
+                "Remote input disconnected",
+                "Remote Input disconnected successfully",
+            ],
+        ),
+        AppRole::Stream => false,
+    }
+}
+
+/// Whether a 410 reply reports that a Terminate control tile succeeded.
+pub fn is_terminate_completed(error: &Error) -> bool {
+    reports_410(
+        error,
+        &[
+            "Application terminated",
+            "Active stream terminated. Remote Monitor and Remote Input remain connected",
+            "App terminated",
+        ],
+    )
+}
+
+/// Generates a random 16-byte remote input key.
+pub fn random_ri_key() -> [u8; 16] {
+    super::crypto::random::<16>()
+}
+
+impl super::HostClient {
+    /// Starts an app. Waits up to [`LAUNCH_READ_TIMEOUT`] while the host prepares the session,
+    /// then fails with [`super::LaunchUnanswered`]. None when the host declined without an error status.
+    pub fn launch(
+        &self,
+        request: &LaunchRequest,
+        server_info: &ServerInfo,
+    ) -> Result<Option<Launched>, Error> {
+        self.start("launch", request, server_info)
+    }
+
+    /// Rejoins the running app.
+    pub fn resume(
+        &self,
+        request: &LaunchRequest,
+        server_info: &ServerInfo,
+    ) -> Result<Option<Launched>, Error> {
+        self.start("resume", request, server_info)
+    }
+
+    fn start(
+        &self,
+        verb: &str,
+        request: &LaunchRequest,
+        server_info: &ServerInfo,
+    ) -> Result<Option<Launched>, Error> {
+        self.launch_with_timeout(verb, request, server_info, LAUNCH_READ_TIMEOUT)
+    }
+
+    pub fn launch_with_timeout(
+        &self,
+        verb: &str,
+        request: &LaunchRequest,
+        server_info: &ServerInfo,
+        read_timeout: Duration,
+    ) -> Result<Option<Launched>, Error> {
+        self.launch_with_capabilities(
+            verb,
+            request,
+            &server_info.capabilities,
+            server_info.nvidia_server(),
+            read_timeout,
+        )
+    }
+
+    pub fn launch_with_capabilities(
+        &self,
+        verb: &str,
+        request: &LaunchRequest,
+        caps: &HostCapabilities,
+        nvidia: bool,
+        read_timeout: Duration,
+    ) -> Result<Option<Launched>, Error> {
+        let query = request.query(caps, nvidia);
+        let started = std::time::Instant::now();
+        let raw = self
+            .request_text(
+                Scheme::Https,
+                verb,
+                Some(&query),
+                LONG_CONNECT_TIMEOUT,
+                Some(read_timeout),
+            )
+            .map_err(|e| launch_failure(e, started.elapsed(), read_timeout))?;
+        parse_launch_reply(&raw, verb == "resume")
+    }
+
+    /// Disconnects a secondary role tile (`RemoteMonitor` or `InputOnly`) via `/launch`.
+    pub fn disconnect_role(&self, role: AppRole) -> Result<bool, Error> {
+        let app_id = match role {
+            AppRole::RemoteMonitor => 2_147_483_502,
+            AppRole::InputOnly => 2_147_483_503,
+            AppRole::Stream => return Err(Error::InvalidArgument("Not a remote role".into())),
+        };
+        let query = format!(
+            "appid={app_id}&rikey={}&rikeyid=0&localAudioPlayMode=0",
+            der::hex_encode(&random_ri_key())
+        );
+        let parsed = self
+            .request_text(
+                super::Scheme::Https,
+                "launch",
+                Some(&query),
+                super::LONG_CONNECT_TIMEOUT,
+                Some(super::READ_TIMEOUT),
+            )
+            .and_then(|raw| {
+                xml::parse_reply(&raw)?.required_text("gamesession")?;
+                Ok(())
+            });
+        match parsed {
+            Ok(()) => Ok(false),
+            Err(err) if is_role_completed(role, &err) => Ok(true),
+            Err(err) => Err(err),
+        }
+    }
 }
 
 impl LaunchRequest {
@@ -275,7 +429,10 @@ impl LaunchRequest {
         q.push_str(&format!("&gcpersist={}", u8::from(persist)));
         // The display's luminance as Moonlight V+ sends it to Sunshine-family hosts; a Rubylight
         // host gets it in the DisplayCaps control message once the stream runs.
-        if let Some(luminance) = self.display_luminance.filter(|_| !input_only && caps.family() != Family::Rubylight) {
+        if let Some(luminance) = self
+            .display_luminance
+            .filter(|_| !input_only && caps.family() != Family::Rubylight)
+        {
             q.push_str(&luminance.query_parameters());
         }
         if caps.family() == Family::Rubylight {

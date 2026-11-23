@@ -21,6 +21,19 @@
 -keepclassmembers interface com.limelight.nvstream.jni.FileTransferBridge$Progress {
     void onProgress(long, long, long);
 }
+# Looked up by name from protocol/android/src/http.rs and http_folders.rs.
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarHttpJni$ByteSink {
+    void write(byte[], int, int);
+}
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarHttpJni$ByteSource {
+    int read(byte[], int, int);
+}
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarHttpJni$PercentProgress {
+    void accept(int);
+}
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarHttpJni$FolderProgress {
+    void onProgress(long, long);
+}
 
 # The default Android rules retain native method names and descriptor classes.
 # BouncyCastle discovers mappings and JCA services by name. AndroidCryptoProvider

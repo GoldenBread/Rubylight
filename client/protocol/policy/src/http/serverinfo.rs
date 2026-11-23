@@ -3,7 +3,7 @@
 
 use super::capabilities::{Evidence, Family, HostCapabilities, PYROWAVE_BANDWIDTH_PROBE_BYTES};
 use super::xml::{self, Element};
-use super::{Error, DEFAULT_HTTPS_PORT};
+use super::{DEFAULT_HTTPS_PORT, Error};
 
 /// One serverinfo reply.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,14 +68,34 @@ fn unsigned(value: Option<&str>, max: u64) -> u64 {
 impl ServerInfo {
     /// Parses a reply; `http_port` is the port it was requested on.
     pub fn parse(raw: &str, http_port: u16) -> Result<Self, Error> {
+        Self::parse_inner(raw, http_port, true)
+    }
+
+    /// Parses a partial `<root status_code="...">...</root>` fragment where `uniqueid`, `state`,
+    /// and `PairStatus` may be omitted (used by field/capability extractors and unit tests).
+    pub fn parse_partial(raw: &str, http_port: u16) -> Result<Self, Error> {
+        Self::parse_inner(raw, http_port, false)
+    }
+
+    fn parse_inner(raw: &str, http_port: u16, strict: bool) -> Result<Self, Error> {
         let root = xml::parse_reply(raw)?;
         let text = |name: &str| root.find_text(name);
 
-        let unique_id = root.required_text("uniqueid")?;
-        if unique_id == "." || unique_id == ".." || unique_id.contains(['/', '\\', ':']) {
+        let unique_id = if strict {
+            root.required_text("uniqueid")?
+        } else {
+            text("uniqueid").unwrap_or_default()
+        };
+        if !unique_id.is_empty()
+            && (unique_id == "." || unique_id == ".." || unique_id.contains(['/', '\\', ':']))
+        {
             return Err(Error::Malformed("Invalid host uniqueid".into()));
         }
-        let state = root.required_text("state")?;
+        let state = if strict {
+            root.required_text("state")?
+        } else {
+            text("state").unwrap_or_default()
+        };
         let current_game = if state.ends_with("_SERVER_BUSY") {
             root.required_text("currentgame")?
                 .parse()
@@ -92,6 +112,11 @@ impl ServerInfo {
         let capabilities = HostCapabilities::from_evidence(Evidence::parse(&root));
         let (permission, server_commands, encoder, initial) = depth_two_fields(&root);
         let flag = |name: &str| text(name).as_deref() == Some("1");
+        let paired = if strict {
+            root.required_text("PairStatus")? == "1"
+        } else {
+            text("PairStatus").as_deref() == Some("1")
+        };
         Ok(Self {
             hostname: text("hostname").unwrap_or_else(|| "UNKNOWN".into()),
             unique_id,
@@ -103,7 +128,7 @@ impl ServerInfo {
             mac_address: text("mac"),
             local_ip: text("LocalIP"),
             external_ip: text("ExternalIP"),
-            paired: root.required_text("PairStatus")? == "1",
+            paired,
             session_idle: state.ends_with("_SERVER_FREE"),
             state,
             current_game,

@@ -8,32 +8,40 @@
 //! contributors); the golden tests in `client/tests` keep what it recorded.
 
 mod bridge;
+pub mod capabilities;
 pub mod collections;
-pub mod game_info;
 pub mod echo;
 mod engine;
 pub mod extras;
 pub mod files;
+mod frame_warp;
+pub mod game_info;
+pub mod http;
+pub mod http_folders;
+pub mod http_probes;
 pub mod internet;
 pub mod library_order;
-mod frame_warp;
 mod listener;
 pub mod native_api;
+pub mod open_play;
 mod opus;
 mod platform;
+pub mod policy;
+pub mod policy_quality;
 mod renderers;
-mod touchpad;
-pub mod open_play;
 pub mod sharp_color;
 pub mod simple_profile;
+mod slab;
 pub mod stream_menu;
+mod touchpad;
+pub mod uri;
 mod usb;
 
 use std::time::Duration;
 
-use jni::objects::{JByteArray, JClass, JFloatArray, JIntArray, JLongArray, JShortArray, JString};
-use jni::sys::{jboolean, jbyte, jfloat, jint, jlong, jshort, jstring, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
+use jni::objects::{JByteArray, JClass, JFloatArray, JIntArray, JLongArray, JShortArray, JString};
+use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jbyte, jfloat, jint, jlong, jshort, jstring};
 
 use nightjar_core::control::ClientMessage;
 use nightjar_core::input::InputQueue;
@@ -245,7 +253,11 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostSaidGoodb
     _: JNIEnv,
     _: JClass,
 ) -> jboolean {
-    if engine::with_session(false, |s| s.host_said_goodbye()) { JNI_TRUE } else { JNI_FALSE }
+    if engine::with_session(false, |s| s.host_said_goodbye()) {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
 }
 
 /// An address from Java; null or one that does not parse is none.
@@ -253,7 +265,9 @@ fn java_address(env: &mut JNIEnv, text: &JString) -> Option<std::net::IpAddr> {
     if text.is_null() {
         return None;
     }
-    env.get_string(text).ok().and_then(|text| String::from(text).parse().ok())
+    env.get_string(text)
+        .ok()
+        .and_then(|text| String::from(text).parse().ok())
 }
 
 /// [`nightjar_core::connectivity::test_client_connectivity`] for the connection test dialogs:
@@ -270,7 +284,11 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_testClientCon
     let Some(server) = string(&mut env, &test_server) else {
         return -1;
     };
-    nightjar_core::connectivity::test_client_connectivity(&server, reference_port as u16, test_flags as u32) as jint
+    nightjar_core::connectivity::test_client_connectivity(
+        &server,
+        reference_port as u16,
+        test_flags as u32,
+    ) as jint
 }
 
 /// [`nightjar_core::stun::find_external_ipv4`]: this device's WAN IPv4 address as text, or null
@@ -285,8 +303,14 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_findExternalA
     let Some(server) = string(&mut env, &stun_host_name) else {
         return std::ptr::null_mut();
     };
-    match nightjar_core::stun::find_external_ipv4(&server, stun_port as u16, nightjar_core::stun::STUN_TIMEOUT) {
-        Ok(Some(address)) => env.new_string(address.to_string()).map_or(std::ptr::null_mut(), |text| text.into_raw()),
+    match nightjar_core::stun::find_external_ipv4(
+        &server,
+        stun_port as u16,
+        nightjar_core::stun::STUN_TIMEOUT,
+    ) {
+        Ok(Some(address)) => env
+            .new_string(address.to_string())
+            .map_or(std::ptr::null_mut(), |text| text.into_raw()),
         Ok(None) => std::ptr::null_mut(),
         Err(e) => {
             platform::warn(&format!("STUN {server}:{stun_port} failed: {e}"));
@@ -306,7 +330,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostLossRound
     port: jint,
     gateway: JString,
 ) -> jint {
-    use nightjar_core::host_loss::{probe_round, Round};
+    use nightjar_core::host_loss::{Round, probe_round};
     let Some(host) = java_address(&mut env, &host) else {
         return Round::SilentLinkUnknown.code();
     };
@@ -321,29 +345,12 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getHostAddres
     env: JNIEnv,
     _: JClass,
 ) -> jstring {
-    match engine::with_session(None, |s| Some(s.remote_address().ip().to_string())).map(|text| env.new_string(text)) {
+    match engine::with_session(None, |s| Some(s.remote_address().ip().to_string()))
+        .map(|text| env.new_string(text))
+    {
         Some(Ok(text)) => text.into_raw(),
         _ => std::ptr::null_mut(),
     }
-}
-
-/// [`nightjar_core::host_loss::after_goodbye`] for `HostLossWatch`: one round's verdict after
-/// the host's goodbye, as [`nightjar_core::host_loss::Goodbye::code`].
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostLossAfterGoodbye(
-    _: JNIEnv,
-    _: JClass,
-    on_link: jboolean,
-    round: jint,
-    waited_ms: jlong,
-) -> jint {
-    host_loss_after_goodbye(on_link == JNI_TRUE, round, waited_ms)
-}
-
-fn host_loss_after_goodbye(on_link: bool, round: jint, waited_ms: jlong) -> jint {
-    use nightjar_core::host_loss::{after_goodbye, Round};
-    let waited = std::time::Duration::from_millis(waited_ms.max(0) as u64);
-    after_goodbye(on_link, Round::from_code(round), waited).code()
 }
 
 /// The default network changed while a stream runs (`NvConnection`'s network callback):
@@ -496,7 +503,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_touchpadFrame
     width_mm: jshort,
     height_mm: jshort,
 ) -> jint {
-    let Some(session) = engine::session_id() else { return -2 };
+    let Some(session) = engine::session_id() else {
+        return -2;
+    };
     let count = count.clamp(0, 16) as usize;
     let mut id = vec![0i32; count];
     let mut x = vec![0f32; count];
@@ -506,7 +515,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_touchpadFrame
         && (env.get_int_array_region(&ids, 0, &mut id).is_err()
             || env.get_float_array_region(&xs, 0, &mut x).is_err()
             || env.get_float_array_region(&ys, 0, &mut y).is_err()
-            || env.get_float_array_region(&pressures, 0, &mut pressure).is_err())
+            || env
+                .get_float_array_region(&pressures, 0, &mut pressure)
+                .is_err())
     {
         return -3;
     }
@@ -528,7 +539,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_touchpadCance
     _: JNIEnv,
     _: JClass,
 ) -> jint {
-    let Some(session) = engine::session_id() else { return -2 };
+    let Some(session) = engine::session_id() else {
+        return -2;
+    };
     let outs = touchpad::track(session, |t| t.cancel());
     input(|q| touchpad::send(outs, q))
 }
@@ -759,7 +772,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_getVideoRecei
     _: JNIEnv,
     _: JClass,
 ) -> jlong {
-    engine::with_session(-1, |s| extras::receive_buffer_info(s.video_receive_buffer()))
+    engine::with_session(-1, |s| {
+        extras::receive_buffer_info(s.video_receive_buffer())
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -913,7 +928,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_frameWarpMask
     }
     let mut bytes = vec![0u8; count];
     if !frame_warp::pack_r8(&mask, &mut bytes)
-        || env.set_byte_array_region(&cells, 0, bridge::jbytes(&bytes)).is_err()
+        || env
+            .set_byte_array_region(&cells, 0, bridge::jbytes(&bytes))
+            .is_err()
     {
         return frame_warp::MASK_TOO_SMALL;
     }
@@ -1136,7 +1153,11 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_presentClockS
     slack_ns: jlong,
     out: JLongArray,
 ) -> jboolean {
-    if host_us < 0 || ready_ns <= 0 || interval_ns <= 0 || env.get_array_length(&out).unwrap_or(0) < 7 {
+    if host_us < 0
+        || ready_ns <= 0
+        || interval_ns <= 0
+        || env.get_array_length(&out).unwrap_or(0) < 7
+    {
         return JNI_FALSE;
     }
     let grid = extras::grid_from_ns(anchor_ns, interval_ns, lead_ns, slack_ns);
@@ -1399,32 +1420,3 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_usbList(
         Err(_) => std::ptr::null_mut(),
     }
 }
-
-#[cfg(test)]
-mod host_loss_tests {
-    use super::host_loss_after_goodbye;
-    use nightjar_core::host_loss::{Goodbye, Round, HOST_EXIT_WINDOW, QUIET_LINK_WAIT};
-
-    const EXIT_MS: i64 = HOST_EXIT_WINDOW.as_millis() as i64;
-    const QUIET_MS: i64 = QUIET_LINK_WAIT.as_millis() as i64;
-
-    #[test]
-    fn the_codes_from_java_reach_the_shared_verdict() {
-        assert_eq!(host_loss_after_goodbye(true, Round::SilentLinkUp.code(), 0), Goodbye::Gone.code());
-        assert_eq!(host_loss_after_goodbye(true, Round::Refused.code(), 0), Goodbye::Gone.code());
-        assert_eq!(host_loss_after_goodbye(true, Round::Answered.code(), 0), Goodbye::Wait.code());
-        assert_eq!(host_loss_after_goodbye(true, Round::Answered.code(), EXIT_MS), Goodbye::Unknown.code());
-    }
-
-    #[test]
-    fn what_java_cannot_tell_is_the_old_behaviour() {
-        // A PC off the link.
-        assert_eq!(host_loss_after_goodbye(false, Round::SilentLinkUp.code(), 0), Goodbye::Unknown.code());
-        // An unknown round code reads as a quiet link: another round, then the old behaviour.
-        assert_eq!(host_loss_after_goodbye(true, 99, 0), Goodbye::Wait.code());
-        assert_eq!(host_loss_after_goodbye(true, 99, QUIET_MS), Goodbye::Unknown.code());
-        // A negative wait from a clock step is no wait.
-        assert_eq!(host_loss_after_goodbye(true, Round::Answered.code(), -5), Goodbye::Wait.code());
-    }
-}
-

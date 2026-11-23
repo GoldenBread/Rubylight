@@ -8,6 +8,8 @@
 
 use super::transport::{self, Request, Timeouts, Upload};
 use super::{Error, HostClient, LONG_CONNECT_TIMEOUT};
+use std::io::{Read, Write};
+use std::path::Path;
 use std::time::Duration;
 
 /// The most bytes an image may have: the top of the host's `clipboard_image_max_mb` (1 to 64,
@@ -160,7 +162,7 @@ impl HostClient {
                 connect: LONG_CONNECT_TIMEOUT,
                 read: Some(IMAGE_READ_TIMEOUT),
             },
-            body_limit: MAX_CLIPBOARD_IMAGE_BYTES,
+            body_limit: MAX_CLIPBOARD_IMAGE_BYTES + 1,
         };
         let Some(png) = png else {
             return transport::get(&request, &self.cancel);
@@ -191,6 +193,175 @@ impl HostClient {
     pub fn send_clipboard_image(&self, png: &[u8]) -> Result<(), ImageClipboardError> {
         png_size(png)?;
         write_answer(self.clipboard_image_request(Some(png))?)
+    }
+
+    /// Streams the PNG on the PC's clipboard directly into `sink`, or returns `Ok(None)` on 404.
+    pub fn clipboard_image_stream(
+        &self,
+        sink: &mut dyn Write,
+    ) -> Result<Option<u64>, ImageClipboardError> {
+        let target = self.url_target("actions/clipboard", Some("type=png"));
+        let request = Request {
+            host: &self.host,
+            port: self.https_port(true)?,
+            target: &target,
+            tls: Some(self.tls()?),
+            timeouts: Timeouts {
+                connect: LONG_CONNECT_TIMEOUT,
+                read: Some(IMAGE_READ_TIMEOUT),
+            },
+            body_limit: MAX_CLIPBOARD_IMAGE_BYTES + 1,
+        };
+        let mut head_buf: Vec<u8> = Vec::with_capacity(24);
+        let mut header_checked = false;
+        let mut total: u64 = 0;
+        let result = transport::probe_stream(
+            &request,
+            &self.cancel,
+            IMAGE_READ_TIMEOUT,
+            &mut |status, headers, _| {
+                if status == 404 {
+                    return Err(Error::NotFound("/actions/clipboard".into()));
+                }
+                if status != 200 {
+                    return Err(Error::Status {
+                        code: i32::from(status),
+                        message: String::new(),
+                    });
+                }
+                let content_type = headers
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case("Content-Type"))
+                    .map(|(_, v)| v.as_str());
+                let is_png = content_type.is_some_and(|mime| {
+                    mime.split(';')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .eq_ignore_ascii_case("image/png")
+                });
+                if !is_png {
+                    return Err(Error::Malformed(format!(
+                        "the PC sent {:?} for a clipboard image",
+                        content_type.unwrap_or_default()
+                    )));
+                }
+                if let Some(len) = headers
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case("Content-Length"))
+                    .and_then(|(_, v)| v.parse::<u64>().ok())
+                    && len > MAX_CLIPBOARD_IMAGE_BYTES as u64
+                {
+                    return Err(Error::InvalidArgument(format!(
+                        "too_large:The PC's image has {len} bytes, over {MAX_CLIPBOARD_IMAGE_BYTES}"
+                    )));
+                }
+                Ok(())
+            },
+            &mut |chunk| {
+                total += chunk.len() as u64;
+                if total > MAX_CLIPBOARD_IMAGE_BYTES as u64 {
+                    return Err(Error::InvalidArgument(format!(
+                        "too_large:The image has over {MAX_CLIPBOARD_IMAGE_BYTES} bytes"
+                    )));
+                }
+                if !header_checked {
+                    let take = (24 - head_buf.len()).min(chunk.len());
+                    head_buf.extend_from_slice(&chunk[..take]);
+                    if head_buf.len() == 24 {
+                        if let Err(err) = png_size(&head_buf) {
+                            let tag = match &err {
+                                ImageClipboardError::TooLarge(_) => "too_large",
+                                _ => "not_png",
+                            };
+                            return Err(Error::InvalidArgument(format!("{tag}:{err}")));
+                        }
+                        header_checked = true;
+                        sink.write_all(&head_buf)?;
+                        if take < chunk.len() {
+                            sink.write_all(&chunk[take..])?;
+                        }
+                    }
+                } else {
+                    sink.write_all(chunk)?;
+                }
+                Ok(())
+            },
+        );
+        match result {
+            Ok(_) => {
+                if !header_checked {
+                    png_size(&head_buf)?;
+                }
+                sink.flush()
+                    .map_err(|e| ImageClipboardError::Host(Error::Io(e)))?;
+                Ok(Some(total))
+            }
+            Err(Error::NotFound(_)) => Ok(None),
+            Err(Error::Status { code, message }) => Err(refused(code as u16, message)),
+            Err(Error::InvalidArgument(msg)) if msg.starts_with("too_large:") => Err(
+                ImageClipboardError::TooLarge(msg["too_large:".len()..].to_owned()),
+            ),
+            Err(Error::InvalidArgument(msg)) if msg.starts_with("not_png:") => Err(
+                ImageClipboardError::NotPng(msg["not_png:".len()..].to_owned()),
+            ),
+            Err(e) => Err(ImageClipboardError::Host(e)),
+        }
+    }
+
+    /// Reads and checks a PNG file's header against limits, then uploads it to the PC clipboard.
+    pub fn send_clipboard_image_file(&self, path: &Path) -> Result<(), ImageClipboardError> {
+        let mut file =
+            std::fs::File::open(path).map_err(|e| ImageClipboardError::Host(Error::Io(e)))?;
+        let length = file
+            .metadata()
+            .map_err(|e| ImageClipboardError::Host(Error::Io(e)))?
+            .len();
+        if length > MAX_CLIPBOARD_IMAGE_BYTES as u64 {
+            return Err(ImageClipboardError::TooLarge(format!(
+                "{length} bytes, over {MAX_CLIPBOARD_IMAGE_BYTES}"
+            )));
+        }
+        let mut head = [0u8; 24];
+        let mut got = 0;
+        while got < head.len() {
+            match file.read(&mut head[got..]) {
+                Ok(0) => break,
+                Ok(n) => got += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(ImageClipboardError::Host(Error::Io(e))),
+            }
+        }
+        png_size(&head[..got])?;
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::Start(0))
+            .map_err(|e| ImageClipboardError::Host(Error::Io(e)))?;
+        let target = self.url_target("actions/clipboard", Some("type=png"));
+        let request = Request {
+            host: &self.host,
+            port: self.https_port(true)?,
+            target: &target,
+            tls: Some(self.tls()?),
+            timeouts: Timeouts {
+                connect: LONG_CONNECT_TIMEOUT,
+                read: Some(IMAGE_READ_TIMEOUT),
+            },
+            body_limit: MAX_CLIPBOARD_IMAGE_BYTES + 1,
+        };
+        let upload = Upload {
+            reader: &mut file,
+            length,
+            content_type: "image/png",
+            method: "POST",
+        };
+        let response = transport::upload(
+            &request,
+            &self.cancel,
+            upload,
+            &mut |_, _| {},
+            &Default::default(),
+        )?;
+        write_answer(response)
     }
 }
 
@@ -265,9 +436,11 @@ mod tests {
             read_answer(response(200, Some("Image/PNG; x=1"), png.clone())).unwrap(),
             Some(png.clone())
         );
-        assert!(read_answer(response(404, None, Vec::new()))
-            .unwrap()
-            .is_none());
+        assert!(
+            read_answer(response(404, None, Vec::new()))
+                .unwrap()
+                .is_none()
+        );
         // An answer of the wrong type, or no PNG, never reaches the device's clipboard.
         for (content_type, body) in [
             (Some("text/plain"), png.clone()),

@@ -3,6 +3,7 @@
 
 mod apps;
 mod capabilities;
+mod capabilities_json;
 mod coop;
 mod device_approval;
 mod files_types;

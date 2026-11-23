@@ -10,6 +10,7 @@ mod clipboard_image;
 mod coop;
 mod crypto;
 mod der;
+mod device_approval;
 mod files;
 mod folders;
 pub mod foundation;
@@ -19,17 +20,17 @@ mod internet_play;
 mod launch;
 mod native;
 mod network_path;
-mod pairing;
 mod neural;
-mod device_approval;
-mod session_guests;
-mod pc_power;
 pub mod pace;
+mod pairing;
+mod pc_power;
 mod power;
 mod probe;
 mod remote_check;
-mod transport;
+mod session_guests;
 pub mod transfers;
+mod transport;
+mod upgrade;
 mod usb;
 mod wire;
 
@@ -37,72 +38,79 @@ mod wire;
 mod fuzz_tests;
 
 pub use clipboard_image::{
-    png_size, ImageClipboardError, MAX_CLIPBOARD_IMAGE_BYTES, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE,
-    PNG_SIGNATURE,
+    ImageClipboardError, MAX_CLIPBOARD_IMAGE_BYTES, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE,
+    PNG_SIGNATURE, png_size,
 };
 pub use coop::{
-    Coop, CoopEnd, CoopEndReason, CoopGame, CoopJoined, CoopPhase, CoopPlayer, CoopProblem, CoopSession,
+    Coop, CoopEnd, CoopEndReason, CoopGame, CoopJoined, CoopPhase, CoopPlayer, CoopProblem,
+    CoopSession,
+};
+pub use device_approval::{
+    FEATURE_PAIRING_APPROVE, PairingApprove, PairingApproved, PairingDeny, PairingRequest,
+    PairingRequests, valid_pairing_pin,
 };
 pub use files::{FileError, FileList, FileRefusal, RemoteFile, TransferCancel, Uploaded};
 pub use folders::{
-    child_path, collision_name, file_name, has_part_suffix, parent_path, EntryKind, FolderAccess,
-    FolderEntries, FolderEntry, SharedFolder, MAX_FOLDER_DEPTH, PART_SUFFIX,
+    EntryKind, FolderAccess, FolderEntries, FolderEntry, MAX_FOLDER_DEPTH, PART_SUFFIX,
+    SharedFolder, child_path, collision_name, file_name, has_part_suffix, parent_path,
 };
 pub use hardware_metrics::{
-    GpuMetrics, HardwareMetrics, Readings, CPU_METRICS, GPU_METRICS, MAX_HARDWARE_METRICS_BYTES,
+    CPU_METRICS, GPU_METRICS, GpuMetrics, HardwareMetrics, MAX_HARDWARE_METRICS_BYTES, Readings,
 };
 pub use identity::ClientIdentity;
 pub use internet_play::{InternetPlay, MAX_INTERNET_PLAY_BYTES};
 pub use launch::{
-    asks_to_confirm_replace, parse_launch_reply, HostDisplay, LaunchRequest, Launched,
-    CONFIRM_REPLACE, CORE_LAUNCH_PARAMETERS,
+    CONFIRM_REPLACE, CORE_LAUNCH_PARAMETERS, HostDisplay, LaunchRequest, Launched,
+    asks_to_confirm_replace, asks_to_confirm_terminate, is_role_completed, is_terminate_completed,
+    parse_launch_reply, random_ri_key,
 };
-pub use native::{FilePermissions, MovedTo, NativeCapabilities, NativeLibrary, PlayingOn, StreamMove};
-pub use device_approval::{
-    valid_pairing_pin, PairingApprove, PairingApproved, PairingDeny, PairingRequest, PairingRequests,
-    FEATURE_PAIRING_APPROVE,
+pub use native::{
+    FilePermissions, MovedTo, NativeCapabilities, NativeLibrary, PlayingOn, StreamMove,
 };
-pub use network_path::{NetworkPath, MAX_NETWORK_PATH_BYTES};
-pub use session_guests::{
-    guest_ended, join_refused, GuestAction, GuestRequest, InviteCreate, InviteCreated, SessionGuest, SessionGuests,
-    FEATURE_GUEST_INVITES, FEATURE_SESSION_GUESTS, GUESTS_POLL_MS, GUEST_CONTROLLER, GUEST_KEYBOARD_MOUSE,
-    GUEST_PERMISSIONS, GUEST_VIEW, INVITED_JOINS_ONLY,
-};
+pub use network_path::{MAX_NETWORK_PATH_BYTES, NetworkPath};
 pub use neural::{
-    Neural, NeuralAction, NeuralJob, NeuralMode, NeuralPhase, NeuralSwitch, NeuralWhy, NeuralWrite,
-    FRAME_GENERATION,
+    FRAME_GENERATION, Neural, NeuralAction, NeuralJob, NeuralMode, NeuralPhase, NeuralSwitch,
+    NeuralWhy, NeuralWrite,
 };
 pub use pairing::{PairFailure, PairResult, PairStep};
 pub use pc_power::{
-    host_words, update_arrived, HostUpdate, LateRefusal, PcPower, PcPowerOffer, PowerAvailability, FEATURE_RESTART, FEATURE_SHUTDOWN,
-    FEATURE_UPDATE, POWER_TOKEN_REFRESH,
+    FEATURE_RESTART, FEATURE_SHUTDOWN, FEATURE_UPDATE, HostUpdate, LateRefusal,
+    POWER_TOKEN_REFRESH, PcPower, PcPowerOffer, PowerAvailability, host_words, update_arrived,
 };
 pub use power::{PowerError, PowerReply, Refusal};
-pub use probe::{probe_start_kbps, jumbo_probe_passes, jumbo_probe_size, LINK_PROBE_BYTES, JUMBO_PROBE_FPS, JUMBO_PROBE_KBPS, PROBE_FLOOR_KBPS, PROBE_START_SHARE};
-pub use remote_check::{ConnectionTestStats, RemoteCheck, RemoteOutcome, REMOTE_CHECK_PROBES};
+pub use probe::{
+    JUMBO_PROBE_FPS, JUMBO_PROBE_KBPS, LINK_PROBE_BYTES, PROBE_FLOOR_KBPS, PROBE_START_SHARE,
+    jumbo_probe_passes, jumbo_probe_size, probe_start_kbps,
+};
+pub use remote_check::{ConnectionTestStats, REMOTE_CHECK_PROBES, RemoteCheck, RemoteOutcome};
+pub use session_guests::{
+    FEATURE_GUEST_INVITES, FEATURE_SESSION_GUESTS, GUEST_CONTROLLER, GUEST_KEYBOARD_MOUSE,
+    GUEST_PERMISSIONS, GUEST_VIEW, GUESTS_POLL_MS, GuestAction, GuestRequest, INVITED_JOINS_ONLY,
+    InviteCreate, InviteCreated, SessionGuest, SessionGuests, guest_ended, join_refused,
+};
 pub use transport::set_app_version;
 pub use usb::{
-    UsbTunnel, TOKEN_HEADER as USB_TOKEN_HEADER, TUNNEL_PATH as USB_TUNNEL_PATH,
-    UPGRADE as USB_UPGRADE,
+    TOKEN_HEADER as USB_TOKEN_HEADER, TUNNEL_PATH as USB_TUNNEL_PATH, UPGRADE as USB_UPGRADE,
+    UsbTunnel,
 };
 
 /// Re-exported pure HTTP DTOs and parsers from `nightjar_policy::http`.
 pub use nightjar_policy::http::{
-    app_control, parse_app_list, parse_rubylight_version, xml, App, AppControl, AppRole,
-    Availability, DisplayLuminance, Error, Evidence, Family, Feature, HostApiError,
-    HostCapabilities, LaunchUnanswered, Reason, ServerInfo, DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT,
-    PERMISSION_CLIPBOARD_READ, PERMISSION_CLIPBOARD_SET, PERMISSION_CONTROLLER, PERMISSION_INPUT,
-    PERMISSION_LAUNCH, PERMISSION_LIST, PERMISSION_SERVER_COMMAND, PERMISSION_VIEW,
-    PYROWAVE_CODEC_BITS, SECOND_SCREEN_PARAMETER,
+    App, AppControl, AppRole, Availability, DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT,
+    DisplayLuminance, Error, Evidence, Family, Feature, HostApiError, HostCapabilities,
+    LaunchUnanswered, PERMISSION_CLIPBOARD_READ, PERMISSION_CLIPBOARD_SET, PERMISSION_CONTROLLER,
+    PERMISSION_INPUT, PERMISSION_LAUNCH, PERMISSION_LIST, PERMISSION_SERVER_COMMAND,
+    PERMISSION_VIEW, PYROWAVE_CODEC_BITS, Reason, SECOND_SCREEN_PARAMETER, ServerInfo, app_control,
+    parse_app_list, parse_rubylight_version, xml,
 };
 pub use rubylight_native_api as native_api;
 
 pub(crate) mod capabilities {
+    #[cfg(test)]
+    pub use nightjar_policy::http::{Availability, Evidence, Reason, parse_rubylight_version};
     pub use nightjar_policy::http::{
         Family, Feature, HostCapabilities, PYROWAVE_BANDWIDTH_PROBE_BYTES,
     };
-    #[cfg(test)]
-    pub use nightjar_policy::http::{parse_rubylight_version, Availability, Evidence, Reason};
 }
 pub(crate) mod apps {
     pub use nightjar_policy::http::AppRole;
@@ -114,7 +122,7 @@ pub(crate) mod luminance {
 }
 pub(crate) mod serverinfo {
     #[cfg(test)]
-    pub use nightjar_policy::http::{parse_version_quad, ServerInfo};
+    pub use nightjar_policy::http::{ServerInfo, parse_version_quad};
     #[cfg(test)]
     pub(crate) mod tests {
         pub(crate) const RUBYLIGHT: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?><root status_code=\"200\"><NetworkPathVersion>1</NetworkPathVersion><HardwareMetricsVersion>0</HardwareMetricsVersion><hostname>Gaming PC</hostname><appversion>7.1.431.-1</appversion><GfeVersion>3.23.0.74</GfeVersion><uniqueid>0123-ABCD</uniqueid><HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort><PairStatus>1</PairStatus><currentgame>5</currentgame><currentgameuuid>uuid-5</currentgameuuid><state>SUNSHINE_SERVER_BUSY</state><LocalIP>192.168.1.20</LocalIP><mac>AA:BB:CC:DD:EE:FF</mac><MaxLumaPixelsHEVC>1869449984</MaxLumaPixelsHEVC><ServerCodecModeSupport>8457985</ServerCodecModeSupport><RustHostVersion>2.2.21</RustHostVersion><RustHostEncoderBitrateKbps>40000</RustHostEncoderBitrateKbps><RustHostInitialEncoderBitrateKbps>50000</RustHostInitialEncoderBitrateKbps><RustHostSessionCount></RustHostSessionCount><PyroWaveHostLinkMbps>2500</PyroWaveHostLinkMbps><PyroWaveBandwidthProbeBytes>33554432</PyroWaveBandwidthProbeBytes><PyroWaveUdpProbeVersion>1</PyroWaveUdpProbeVersion><PyroWaveUdpHandshakeVersion>1</PyroWaveUdpHandshakeVersion><PyroWaveUdpProbeBurstVersion>1</PyroWaveUdpProbeBurstVersion><PyroWaveWireBudgetVersion>1</PyroWaveWireBudgetVersion><PyroWaveCriticalFecPercentage>20</PyroWaveCriticalFecPercentage><PyroWaveMinParityShards>2</PyroWaveMinParityShards><Permission>119480064</Permission><FrameLimiterSupported>1</FrameLimiterSupported><FrameLimiterEnabled>1</FrameLimiterEnabled><VirtualDisplayFrameLimiterEnabled>0</VirtualDisplayFrameLimiterEnabled><FrameLimiterFpsLimitMilliHz>119880</FrameLimiterFpsLimitMilliHz><VirtualDisplayCapable>true</VirtualDisplayCapable><VirtualDisplayDriverReady>false</VirtualDisplayDriverReady><ControllerPreparation>1</ControllerPreparation><VirtualDisplayHDRCapable>true</VirtualDisplayHDRCapable><ServerCommand>Sleep</ServerCommand><ServerCommand></ServerCommand></root>";
@@ -148,8 +156,14 @@ pub fn certificate_sha256(pem: &str) -> Result<[u8; 32], Error> {
 /// Rubylight's and Sunshine-family hosts' since Sunshine 0.21, and Sunshine 0.20 and older. Android's
 /// `PlaceholderArt` knows the same two.
 const PLACEHOLDER_BOX_ART: [(usize, &str); 2] = [
-    (680, "d9164ebd069b5f735eb8efc557801778498da37f572ef70e3d35604739e6c613"),
-    (998, "f5992b68a72ef6f74c6e4970d0eb081fd7c51e8b5556c6a3f87dc414fda0473b"),
+    (
+        680,
+        "d9164ebd069b5f735eb8efc557801778498da37f572ef70e3d35604739e6c613",
+    ),
+    (
+        998,
+        "f5992b68a72ef6f74c6e4970d0eb081fd7c51e8b5556c6a3f87dc414fda0473b",
+    ),
 ];
 
 /// True when box art is a host's grey placeholder rather than the app's own cover: hosts answer
@@ -175,13 +189,16 @@ pub enum InfoPath {
     /// The pinned certificate's host refused this client (401) and answered over HTTP: it no
     /// longer knows this client.
     Refused,
+    /// Another certificate was presented at this address and the client fell back to HTTP
+    /// (`server_info_with_cert_check`); `PairStatus` says nothing about our pairing.
+    CertificateMismatch,
     /// Over plain HTTP with nothing pinned: `PairStatus` says nothing of a pairing.
     Plain,
 }
 
 /// A launch's failure after `waited`: a timeout that took the whole `limit` is the PC's missing
 /// answer; a connect that timed out early stays the usual connection failure.
-fn launch_failure(error: Error, waited: Duration, limit: Duration) -> Error {
+pub(super) fn launch_failure(error: Error, waited: Duration, limit: Duration) -> Error {
     match error {
         Error::Io(e)
             if matches!(
@@ -206,18 +223,18 @@ struct State {
 
 /// One host, reached at one address. Methods block; the client may be shared across threads.
 pub struct HostClient {
-    host: Host,
-    http_port: u16,
-    identity: Arc<ClientIdentity>,
+    pub(super) host: Host,
+    pub(super) http_port: u16,
+    identity: Option<Arc<ClientIdentity>>,
+    unique_id: String,
     device_name: String,
     second_screen: bool,
     state: Mutex<State>,
-    cancel: Cancel,
+    pub(super) cancel: Cancel,
 }
 
-
 #[derive(Clone, Copy)]
-enum Scheme {
+pub(super) enum Scheme {
     Http,
     Https,
 }
@@ -229,10 +246,30 @@ impl HostClient {
         http_port: u16,
         identity: Arc<ClientIdentity>,
     ) -> Result<Self, Error> {
+        let unique_id = identity.unique_id().to_owned();
         Ok(Self {
             host: Host::parse(address)?,
             http_port,
-            identity,
+            identity: Some(identity),
+            unique_id,
+            device_name: "Nightjar".into(),
+            second_screen: false,
+            state: Mutex::new(State::default()),
+            cancel: Cancel::default(),
+        })
+    }
+
+    /// An unauthenticated client (no client certificate/key) for HTTP-only calls or tests.
+    pub fn new_unauthenticated(
+        address: &str,
+        http_port: u16,
+        unique_id: impl Into<String>,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            host: Host::parse(address)?,
+            http_port,
+            identity: None,
+            unique_id: unique_id.into(),
             device_name: "Nightjar".into(),
             second_screen: false,
             state: Mutex::new(State::default()),
@@ -255,8 +292,18 @@ impl HostClient {
 
     /// The HTTPS port from an earlier serverinfo, to skip asking for it.
     pub fn with_https_port(self, port: u16) -> Self {
-        self.state.lock().unwrap().https_port = port;
+        self.set_https_port(port);
         self
+    }
+
+    /// Updates the cached HTTPS port in-place (0 forces rediscovery via HTTP `serverinfo`).
+    pub fn set_https_port(&self, port: u16) {
+        self.state.lock().unwrap().https_port = port;
+    }
+
+    /// Currently cached HTTPS port (0 if unknown).
+    pub fn https_port_cached(&self) -> u16 {
+        self.state.lock().unwrap().https_port
     }
 
     /// The host certificate stored at pairing (PEM).
@@ -264,6 +311,16 @@ impl HostClient {
         let der = der::pem_decode(pem, "CERTIFICATE")?;
         self.pin(Some(der));
         Ok(self)
+    }
+
+    /// Pins (or clears, with `None`) the host certificate DER bytes in-place.
+    pub fn pin_server_certificate_der(&self, der: Option<Vec<u8>>) {
+        self.pin(der);
+    }
+
+    /// The pinned host certificate DER bytes, if any.
+    pub fn server_certificate_der(&self) -> Option<Vec<u8>> {
+        self.state.lock().unwrap().server_certificate.clone()
     }
 
     /// The pinned host certificate as PEM, if any.
@@ -275,8 +332,8 @@ impl HostClient {
             .map(|d| der::pem_encode(d, "CERTIFICATE"))
     }
 
-    pub fn identity(&self) -> &ClientIdentity {
-        &self.identity
+    pub fn identity(&self) -> Option<&ClientIdentity> {
+        self.identity.as_deref()
     }
 
     /// Aborts requests in flight, such as a pairing waiting for its PIN, and every later one.
@@ -293,6 +350,7 @@ impl HostClient {
             host: self.host.clone(),
             http_port: self.http_port,
             identity: self.identity.clone(),
+            unique_id: self.unique_id.clone(),
             device_name: self.device_name.clone(),
             second_screen: self.second_screen,
             state: Mutex::new(State {
@@ -318,7 +376,7 @@ impl HostClient {
         }
         target.push_str(&format!(
             "uniqueid={}&uuid={}",
-            transport::encode_query(self.identity.unique_id()),
+            transport::encode_query(&self.unique_id),
             transport::random_uuid()
         ));
         if self.second_screen {
@@ -342,10 +400,14 @@ impl HostClient {
             .server_certificate
             .as_deref()
             .ok_or(Error::NotPaired)?;
+        let identity = self
+            .identity
+            .as_deref()
+            .ok_or_else(|| Error::InvalidIdentity("missing client certificate".into()))?;
         let tls = transport::tls_config(
             server,
-            self.identity.certificate_der(),
-            self.identity.private_key_pkcs8(),
+            identity.certificate_der(),
+            identity.private_key_pkcs8(),
         )?;
         state.tls = Some(tls.clone());
         Ok(tls)
@@ -409,7 +471,7 @@ impl HostClient {
         }
     }
 
-    fn request_text(
+    pub(super) fn request_text(
         &self,
         scheme: Scheme,
         path: &str,
@@ -429,9 +491,21 @@ impl HostClient {
     /// Serverinfo: over pinned HTTPS when paired, falling back to HTTP when the host does not
     /// know this client (401) or shows another certificate, so the client can pair again.
     pub fn server_info(&self, likely_online: bool) -> Result<ServerInfo, Error> {
+        self.server_info_with_cert_check(likely_online)
+            .map(|(info, _)| info)
+    }
+
+    /// Serverinfo like [`HostClient::server_info`], also reporting [`InfoPath::CertificateMismatch`]
+    /// when it fell back to HTTP after another certificate answered at the pinned HTTPS port.
+    pub fn server_info_with_cert_check(
+        &self,
+        likely_online: bool,
+    ) -> Result<(ServerInfo, InfoPath), Error> {
         match self.server_info_checked(likely_online) {
-            Ok((info, _)) => Ok(info),
-            Err(Error::CertificateMismatch) => self.server_info_http(likely_online),
+            Ok((info, path)) => Ok((info, path)),
+            Err(Error::CertificateMismatch) => self
+                .server_info_http(likely_online)
+                .map(|info| (info, InfoPath::CertificateMismatch)),
             Err(e) => Err(e),
         }
     }
@@ -441,7 +515,10 @@ impl HostClient {
     /// (401) or when nothing is pinned. Another certificate at this address is
     /// [`Error::CertificateMismatch`], with no HTTP fallback: that answer would be another
     /// host's, not this one's.
-    pub fn server_info_checked(&self, likely_online: bool) -> Result<(ServerInfo, InfoPath), Error> {
+    pub fn server_info_checked(
+        &self,
+        likely_online: bool,
+    ) -> Result<(ServerInfo, InfoPath), Error> {
         let connect = if likely_online {
             LONG_CONNECT_TIMEOUT
         } else {
@@ -461,12 +538,15 @@ impl HostClient {
             match https {
                 Ok(info) => return Ok((info, InfoPath::Pinned)),
                 Err(Error::Status { code: 401, .. }) => {
-                    return self.server_info_http(likely_online).map(|info| (info, InfoPath::Refused))
+                    return self
+                        .server_info_http(likely_online)
+                        .map(|info| (info, InfoPath::Refused));
                 }
                 Err(e) => return Err(e),
             }
         }
-        self.server_info_http(likely_online).map(|info| (info, InfoPath::Plain))
+        self.server_info_http(likely_online)
+            .map(|info| (info, InfoPath::Plain))
     }
 
     /// Serverinfo over plain HTTP; hosts report `PairStatus` 0 there.
@@ -547,7 +627,7 @@ impl HostClient {
         self.pair_checked(server_info, pin, passphrase, None)
     }
 
-    fn pair_checked(
+    pub fn pair_checked(
         &self,
         server_info: &ServerInfo,
         pin: &str,
@@ -562,12 +642,16 @@ impl HostClient {
             }
             state.server_certificate.clone()
         };
+        let identity = self
+            .identity
+            .as_deref()
+            .ok_or_else(|| Error::InvalidIdentity("missing client certificate".into()))?;
         // A failed attempt keeps the previous pin (the Java client left the new one set).
         let mut transport = PairingClient {
             client: self,
             fingerprint,
         };
-        let result = pairing::pair(&mut transport, &self.identity, major, pin, passphrase);
+        let result = pairing::pair(&mut transport, identity, major, pin, passphrase);
         if !matches!(result, Ok(PairResult::Paired { .. })) {
             self.pin(previous);
         }
@@ -634,45 +718,6 @@ impl HostClient {
         ))
     }
 
-    /// Starts an app. Waits up to [`LAUNCH_READ_TIMEOUT`] while the host prepares the session,
-    /// then fails with [`LaunchUnanswered`]. None when the host declined without an error status.
-    pub fn launch(
-        &self,
-        request: &LaunchRequest,
-        server_info: &ServerInfo,
-    ) -> Result<Option<Launched>, Error> {
-        self.start("launch", request, server_info)
-    }
-
-    /// Rejoins the running app.
-    pub fn resume(
-        &self,
-        request: &LaunchRequest,
-        server_info: &ServerInfo,
-    ) -> Result<Option<Launched>, Error> {
-        self.start("resume", request, server_info)
-    }
-
-    fn start(
-        &self,
-        verb: &str,
-        request: &LaunchRequest,
-        server_info: &ServerInfo,
-    ) -> Result<Option<Launched>, Error> {
-        let query = request.query(&server_info.capabilities, server_info.nvidia_server());
-        let started = std::time::Instant::now();
-        let raw = self
-            .request_text(
-                Scheme::Https,
-                verb,
-                Some(&query),
-                LONG_CONNECT_TIMEOUT,
-                Some(LAUNCH_READ_TIMEOUT),
-            )
-            .map_err(|e| launch_failure(e, started.elapsed(), LAUNCH_READ_TIMEOUT))?;
-        parse_launch_reply(&raw, verb == "resume")
-    }
-
     /// Quits the running app. Ok(false) when the host declined; a 599 status when the host
     /// still runs a game afterwards (it belongs to another client).
     pub fn cancel(&self) -> Result<bool, Error> {
@@ -691,7 +736,9 @@ impl HostClient {
 
     fn clipboard_request(&self, text: Option<&str>) -> Result<transport::Response, Error> {
         if text.is_some_and(|text| text.len() > MAX_CLIPBOARD_BYTES) {
-            return Err(Error::InvalidArgument("Clipboard text exceeds 1 MiB".into()));
+            return Err(Error::InvalidArgument(
+                "Clipboard text exceeds 1 MiB".into(),
+            ));
         }
         let response = transport::send(
             &Request {
@@ -699,14 +746,20 @@ impl HostClient {
                 port: self.https_port(true)?,
                 target: &self.url_target("actions/clipboard", Some("type=text")),
                 tls: Some(self.tls()?),
-                timeouts: Timeouts { connect: LONG_CONNECT_TIMEOUT, read: Some(READ_TIMEOUT) },
+                timeouts: Timeouts {
+                    connect: LONG_CONNECT_TIMEOUT,
+                    read: Some(READ_TIMEOUT),
+                },
                 body_limit: MAX_CLIPBOARD_BYTES,
             },
             &self.cancel,
             text.map(|text| transport::Body::text(text.as_bytes())),
         )?;
         if !(200..=299).contains(&response.status) {
-            return Err(Error::Status { code: i32::from(response.status), message: response.reason });
+            return Err(Error::Status {
+                code: i32::from(response.status),
+                message: response.reason,
+            });
         }
         Ok(response)
     }
@@ -714,29 +767,46 @@ impl HostClient {
     pub fn clipboard(&self) -> Result<String, Error> {
         let response = self.clipboard_request(None)?;
         if !response.content_type.as_deref().is_some_and(|mime| {
-            mime.split(';').next().unwrap_or_default().trim().eq_ignore_ascii_case("text/plain")
+            mime.split(';')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .eq_ignore_ascii_case("text/plain")
         }) {
-            return Err(Error::Malformed("The PC does not support text clipboard transfer".into()));
+            return Err(Error::Malformed(
+                "The PC does not support text clipboard transfer".into(),
+            ));
         }
-        String::from_utf8(response.body).map_err(|_| Error::Malformed("Clipboard text is not UTF-8".into()))
+        String::from_utf8(response.body)
+            .map_err(|_| Error::Malformed("Clipboard text is not UTF-8".into()))
     }
 
     pub fn send_clipboard(&self, text: &str) -> Result<(), Error> {
         if !self.clipboard_request(Some(text))?.body.is_empty() {
-            return Err(Error::Malformed("The PC did not accept the clipboard text".into()));
+            return Err(Error::Malformed(
+                "The PC did not accept the clipboard text".into(),
+            ));
         }
         Ok(())
     }
 
     pub fn set_bitrate(&self, kbps: u32) -> Result<u32, Error> {
         if !(1..=2_000_000).contains(&kbps) {
-            return Err(Error::InvalidArgument("Bitrate must be between 1 and 2000000 kbps".into()));
+            return Err(Error::InvalidArgument(
+                "Bitrate must be between 1 and 2000000 kbps".into(),
+            ));
         }
         let raw = self.request_text(
-            Scheme::Https, "bitrate", Some(&format!("bitrate={kbps}")),
-            LONG_CONNECT_TIMEOUT, Some(READ_TIMEOUT),
+            Scheme::Https,
+            "bitrate",
+            Some(&format!("bitrate={kbps}")),
+            LONG_CONNECT_TIMEOUT,
+            Some(READ_TIMEOUT),
         )?;
-        xml::parse_reply(&raw)?.required_text("bitrate")?.parse::<u32>().ok()
+        xml::parse_reply(&raw)?
+            .required_text("bitrate")?
+            .parse::<u32>()
+            .ok()
             .filter(|applied| (1..=2_000_000).contains(applied))
             .ok_or_else(|| Error::Malformed("The PC did not apply the bitrate".into()))
     }
@@ -816,8 +886,10 @@ mod tests {
             "not a dropped connection a retry would cure"
         );
         let would_block = Error::Io(std::io::ErrorKind::WouldBlock.into());
-        assert!(launch_failure(would_block, LAUNCH_READ_TIMEOUT, LAUNCH_READ_TIMEOUT)
-            .is_launch_unanswered());
+        assert!(
+            launch_failure(would_block, LAUNCH_READ_TIMEOUT, LAUNCH_READ_TIMEOUT)
+                .is_launch_unanswered()
+        );
         // A connect that timed out early stays the usual failure.
         let early = launch_failure(timed_out(), Duration::from_secs(5), LAUNCH_READ_TIMEOUT);
         assert!(!early.is_launch_unanswered());
@@ -839,7 +911,9 @@ mod tests {
             let mut request = [0u8; 4096];
             let _ = socket.read(&mut request);
             socket
-                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
                 .unwrap();
         });
         let identity = Arc::new(identity::tests::fixture());
@@ -847,10 +921,16 @@ mod tests {
             .unwrap()
             .with_https_port(47984);
         client.cancel_pending_requests();
-        assert!(matches!(client.server_info_http(true), Err(Error::Cancelled)));
+        assert!(matches!(
+            client.server_info_http(true),
+            Err(Error::Cancelled)
+        ));
         let detached = client.detached();
         assert_eq!(detached.state.lock().unwrap().https_port, 47984);
-        assert!(!matches!(detached.server_info_http(true), Err(Error::Cancelled)));
+        assert!(!matches!(
+            detached.server_info_http(true),
+            Err(Error::Cancelled)
+        ));
         host.join().unwrap();
     }
 
@@ -862,13 +942,30 @@ mod tests {
         assert!(target.starts_with("launch?appid=1&uniqueid="), "{target}");
         assert!(!target.contains(SECOND_SCREEN_PARAMETER), "{target}");
         let second = first.detached().with_second_screen();
-        for (path, query) in [("launch", Some("appid=1")), ("cancel", None), ("api/abr", None)] {
+        for (path, query) in [
+            ("launch", Some("appid=1")),
+            ("cancel", None),
+            ("api/abr", None),
+        ] {
             let target = second.url_target(path, query);
             assert!(target.ends_with("&rlSecondScreen=1"), "{target}");
-            assert_eq!(target.matches(SECOND_SCREEN_PARAMETER).count(), 1, "{target}");
+            assert_eq!(
+                target.matches(SECOND_SCREEN_PARAMETER).count(),
+                1,
+                "{target}"
+            );
         }
-        assert!(second.detached().url_target("bitrate", None).ends_with("&rlSecondScreen=1"));
-        assert!(!first.url_target("bitrate", None).contains(SECOND_SCREEN_PARAMETER));
+        assert!(
+            second
+                .detached()
+                .url_target("bitrate", None)
+                .ends_with("&rlSecondScreen=1")
+        );
+        assert!(
+            !first
+                .url_target("bitrate", None)
+                .contains(SECOND_SCREEN_PARAMETER)
+        );
     }
 
     #[test]
@@ -877,10 +974,16 @@ mod tests {
         assert!(is_placeholder_box_art(placeholder));
         let mut other = placeholder.to_vec();
         other[600] ^= 1;
-        assert!(!is_placeholder_box_art(&other), "a cover of the same size is a cover");
+        assert!(
+            !is_placeholder_box_art(&other),
+            "a cover of the same size is a cover"
+        );
         assert!(!is_placeholder_box_art(&[]));
         // In the monorepo the fixture is the host's own placeholder.
-        let host = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../rust/assets/package/box.png");
+        let host = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../rust/assets/package/box.png"
+        );
         if let Ok(host) = std::fs::read(host) {
             assert_eq!(host, placeholder.to_vec());
         }

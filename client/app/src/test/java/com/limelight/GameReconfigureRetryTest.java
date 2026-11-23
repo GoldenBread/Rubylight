@@ -89,7 +89,7 @@ public class GameReconfigureRetryTest {
         // Battery above 60 fps steps down at once.
         com.limelight.nvstream.AdaptiveQualityController quality = new com.limelight.nvstream.AdaptiveQualityController(
                 com.limelight.nvstream.AdaptiveQualityController.Mode.BATTERY, 1080, 1920, 120, 360, 30, 2, 2, -100000);
-        List<com.limelight.nvstream.AdaptiveQualityController.Target> levels = ReflectionHelpers.getField(quality, "levels");
+        List<com.limelight.nvstream.AdaptiveQualityController.Target> levels = quality.levels();
         ReflectionHelpers.setField(activity, "adaptiveQuality", quality);
         ReflectionHelpers.setField(activity, "foreground", true);
         ReflectionHelpers.callInstanceMethod(activity.videoOutput, "listenForRebuilds");
@@ -105,7 +105,7 @@ public class GameReconfigureRetryTest {
         ShadowLooper.idleMainLooper();
         assertEquals(1, ReconfigureBridge.requests.size());
         assertArrayEquals(levels.get(1).request(), ReconfigureBridge.requests.get(0));
-        assertSame(levels.get(1), ReflectionHelpers.getField(activity, "pendingQualityTarget"));
+        assertEquals(levels.get(1), ReflectionHelpers.getField(activity, "pendingQualityTarget"));
     }
 
     // The window turned while the decoder was rebuilt, with automatic quality on: the new ceiling
@@ -139,7 +139,7 @@ public class GameReconfigureRetryTest {
         Game activity = turnedStream(renderer);
         com.limelight.nvstream.AdaptiveQualityController quality = new com.limelight.nvstream.AdaptiveQualityController(
                 com.limelight.nvstream.AdaptiveQualityController.Mode.DETAIL, 1080, 1920, 60, 360, 30, 2, 2, 0);
-        List<com.limelight.nvstream.AdaptiveQualityController.Target> levels = ReflectionHelpers.getField(quality, "levels");
+        List<com.limelight.nvstream.AdaptiveQualityController.Target> levels = quality.levels();
         com.limelight.nvstream.AdaptiveQualityController.Target step = levels.get(1);
         quality.resumeAt(step.width, step.height, step.fps);
         ReflectionHelpers.setField(activity, "adaptiveQuality", quality);
@@ -155,7 +155,7 @@ public class GameReconfigureRetryTest {
         ShadowLooper.idleMainLooper();
         assertEquals(1, ReconfigureBridge.requests.size());
         assertArrayEquals(step.request(), ReconfigureBridge.requests.get(0));
-        assertSame(step, quality.current());
+        assertEquals(step, quality.current());
     }
 
     // Automatic quality one step down on a plain stream (no native resolution, no rotation, a fixed
@@ -219,7 +219,7 @@ public class GameReconfigureRetryTest {
         renderer.size = new int[] {1920, 1080};
         com.limelight.nvstream.AdaptiveQualityController quality = new com.limelight.nvstream.AdaptiveQualityController(
                 mode, 1920, 1080, 60, 360, 30, 2, 2, 0);
-        List<com.limelight.nvstream.AdaptiveQualityController.Target> levels = ReflectionHelpers.getField(quality, "levels");
+        List<com.limelight.nvstream.AdaptiveQualityController.Target> levels = quality.levels();
         com.limelight.nvstream.AdaptiveQualityController.Target step = null;
         for (com.limelight.nvstream.AdaptiveQualityController.Target level : levels) {
             if (level.width < 1920 && level.fps < 60) { step = level; break; }

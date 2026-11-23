@@ -1,10 +1,12 @@
 package com.limelight.nvstream;
 
+import com.limelight.nvstream.jni.NightjarPolicyJni;
+
 /** Immutable observations from one bounded, non-overlapping decoder sampling interval. */
 public final class DecodeTiming {
     /** Input-to-output latency includes pipeline depth, not just work on a single frame. */
     public static double decodeBudgetMs(int fps) {
-        return 2000d / Math.max(1, fps);
+        return NightjarPolicyJni.qualityDecodeBudgetMs(fps);
     }
 
     public final long generation, windowStartNs, windowEndNs, firstSampleNs, lastSampleNs;

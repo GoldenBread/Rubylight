@@ -2,6 +2,8 @@ package com.limelight.nvstream.http;
 
 import android.app.Application;
 
+import com.limelight.nativeapi.NativeApiFixtures;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -9,26 +11,11 @@ import org.robolectric.annotation.Config;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.lang.reflect.Field;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
-
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
-
-import okhttp3.Interceptor;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Protocol;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
@@ -131,78 +118,68 @@ public class HardwareMetricsTest {
         assertThrows(UnsupportedOperationException.class, gpu.metrics::clear);
     }
 
+    private static final String METRICS_CAPS = "<root status_code=\"200\"><uniqueid>host-1</uniqueid>" +
+            "<state>SUNSHINE_SERVER_FREE</state><HttpsPort>47984</HttpsPort>" +
+            "<RustHostVersion>3.1.0</RustHostVersion><PairStatus>1</PairStatus>" +
+            "<HardwareMetricsVersion>1</HardwareMetricsVersion>" +
+            "<Permission>" + ComputerDetails.PERMISSION_VIEW + "</Permission></root>";
+
     @Test
     public void networkUsesPinnedHttpsAndBoundedDeadline() throws Exception {
-        NvHTTP http = http(true, 48001);
-        intercept(http, chain -> {
-            assertEquals("https", chain.request().url().scheme());
-            assertEquals(48001, chain.request().url().port());
-            assertEquals("/api/hardware-metrics", chain.request().url().encodedPath());
-            assertEquals("device", chain.request().url().queryParameter("uniqueid"));
-            assertEquals(TimeUnit.SECONDS.toNanos(2), chain.call().timeout().timeoutNanos());
-            return response(chain, 200, "application/json; charset=utf-8", EMPTY);
-        });
-        assertEquals(1000, http.getHardwareMetrics().intervalMs);
-        for (NvHTTP unavailable : new NvHTTP[] {http(false, 48001), http(true, 0)}) {
-            intercept(unavailable, chain -> { throw new AssertionError("Unauthenticated discovery or request"); });
-            assertThrows(IOException.class, unavailable::getHardwareMetrics);
+        try (TestHttpServer server = new TestHttpServer(req -> {
+            assertEquals("https", req.scheme);
+            assertEquals("/api/hardware-metrics", req.path);
+            assertEquals("device", req.queryParam("uniqueid"));
+            return TestHttpServer.Response.json(200, EMPTY);
+        })) {
+            NvHTTP pinned = server.newClient("device", true, NativeApiFixtures.crypto());
+            pinned.getComputerDetails(METRICS_CAPS);
+            assertEquals(1000, pinned.getHardwareMetrics().intervalMs);
+            assertEquals(1, server.requests().size());
+
+            NvHTTP unpinned = server.newClient("device", false, NativeApiFixtures.crypto());
+            unpinned.getComputerDetails(METRICS_CAPS);
+            NvHTTP noHttpsPort = new NvHTTP(new ComputerDetails.AddressTuple("127.0.0.1", server.httpPort()),
+                    0, "device", server.serverCert(), NativeApiFixtures.crypto());
+            noHttpsPort.getComputerDetails(METRICS_CAPS);
+            for (NvHTTP unavailable : new NvHTTP[] {unpinned, noHttpsPort}) {
+                assertThrows(IOException.class, unavailable::getHardwareMetrics);
+            }
+            assertEquals(1, server.requests().size());
         }
     }
 
     @Test
     public void networkPreservesTerminalAndTemporaryErrorsAndRejectsRedirects() throws Exception {
-        NvHTTP http = http(true, 47984);
-        for (int code : new int[] {403, 409, 503, 302}) {
-            intercept(http, chain -> response(chain, code, "application/json", "{\"error\":\"unavailable\"}")
-                    .newBuilder().header("Location", "https://192.0.2.2:47984/other").build());
-            HostHttpResponseException error = assertThrows(HostHttpResponseException.class, http::getHardwareMetrics);
-            assertEquals(code, error.getErrorCode());
+        AtomicReference<TestHttpServer.Response> reply = new AtomicReference<>();
+        try (TestHttpServer server = new TestHttpServer(req -> reply.get())) {
+            NvHTTP http = server.newClient("device", true, NativeApiFixtures.crypto());
+            http.getComputerDetails(METRICS_CAPS);
+            for (int code : new int[] {403, 409, 503, 302}) {
+                reply.set(TestHttpServer.Response.json(code, "{\"error\":\"unavailable\"}")
+                        .header("Location", "https://192.0.2.2:47984/other"));
+                HostHttpResponseException error = assertThrows(HostHttpResponseException.class, http::getHardwareMetrics);
+                assertEquals(code, error.getErrorCode());
+            }
+            reply.set(TestHttpServer.Response.text(404, "Not found"));
+            assertThrows(FileNotFoundException.class, http::getHardwareMetrics);
+
+            reply.set(TestHttpServer.Response.json(200, EMPTY.replace("\"version\":1", "\"version\":2")));
+            assertThrows(HardwareMetrics.UnsupportedVersionException.class, http::getHardwareMetrics);
         }
-        intercept(http, chain -> response(chain, 404, "text/plain", "Not found"));
-        assertThrows(FileNotFoundException.class, http::getHardwareMetrics);
-        intercept(http, chain -> response(chain, 200, "application/json", EMPTY.replace("\"version\":1", "\"version\":2")));
-        assertThrows(HardwareMetrics.UnsupportedVersionException.class, http::getHardwareMetrics);
     }
 
     @Test
     public void networkRejectsUnexpectedOrOversizedBodies() throws Exception {
-        NvHTTP http = http(true, 47984);
-        intercept(http, chain -> response(chain, 200, "text/html", EMPTY));
-        assertThrows(IOException.class, http::getHardwareMetrics);
-        String oversized = String.join("", Collections.nCopies(HardwareMetrics.MAX_RESPONSE_BYTES + 1, " "));
-        intercept(http, chain -> response(chain, 200, "application/json", oversized));
-        assertThrows(IOException.class, http::getHardwareMetrics);
-    }
-
-    private static Response response(Interceptor.Chain chain, int code, String type, String body) {
-        return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
-                .code(code).message("Fixture").body(ResponseBody.create(body, MediaType.get(type))).build();
-    }
-
-    private static void intercept(NvHTTP http, Interceptor interceptor) throws Exception {
-        Field client = NvHTTP.class.getDeclaredField("httpClientShortConnectTimeout");
-        client.setAccessible(true);
-        client.set(http, new OkHttpClient.Builder().addInterceptor(interceptor).build());
-    }
-
-    private static NvHTTP http(boolean pinned, int httpsPort) throws Exception {
-        NvHTTP http = new NvHTTP(new ComputerDetails.AddressTuple("192.0.2.1", 47989), httpsPort,
-                "device", null, new LimelightCryptoProvider() {
-            public X509Certificate getClientCertificate() { return null; }
-            public PrivateKey getClientPrivateKey() { return null; }
-            public byte[] getPemEncodedClientCertificate() { return new byte[0]; }
-            public String encodeBase64String(byte[] data) { return ""; }
-        });
-        if (pinned) {
-            TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            factory.init((KeyStore) null);
-            for (TrustManager manager : factory.getTrustManagers()) {
-                if (manager instanceof X509TrustManager) {
-                    http.setServerCert(((X509TrustManager) manager).getAcceptedIssuers()[0]);
-                    break;
-                }
-            }
+        AtomicReference<TestHttpServer.Response> reply = new AtomicReference<>();
+        try (TestHttpServer server = new TestHttpServer(req -> reply.get())) {
+            NvHTTP http = server.newClient("device", true, NativeApiFixtures.crypto());
+            http.getComputerDetails(METRICS_CAPS);
+            reply.set(TestHttpServer.Response.bytes(200, "text/html", EMPTY.getBytes()));
+            assertThrows(IOException.class, http::getHardwareMetrics);
+            String oversized = String.join("", Collections.nCopies(HardwareMetrics.MAX_RESPONSE_BYTES + 1, " "));
+            reply.set(TestHttpServer.Response.json(200, oversized));
+            assertThrows(IOException.class, http::getHardwareMetrics);
         }
-        return http;
     }
 }

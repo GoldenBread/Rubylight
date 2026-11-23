@@ -1367,7 +1367,7 @@ public class PcViewLifecycleTest {
                         String request = in.readLine();
                         for (String line = in.readLine(); line != null && !line.isEmpty(); line = in.readLine()) { }
                         if (request != null && request.contains("/unpair")) unpaired.set(true);
-                        byte[] body = ("<root status_code=\"200\"><appversion>7.1.431.-1</appversion><PairStatus>"
+                        byte[] body = ("<root status_code=\"200\"><uniqueid>ready</uniqueid><state>SUNSHINE_SERVER_FREE</state><appversion>7.1.431.-1</appversion><PairStatus>"
                                 + (unpaired.get() ? "0" : "1") + "</PairStatus></root>").getBytes(StandardCharsets.UTF_8);
                         client.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: "
                                 + body.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));

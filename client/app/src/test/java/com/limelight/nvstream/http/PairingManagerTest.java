@@ -1,205 +1,211 @@
 package com.limelight.nvstream.http;
 
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
-import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import android.app.Application;
+
+import com.limelight.nativeapi.NativeApiFixtures;
+
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import java.io.IOException;
-import java.math.BigInteger;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.PrivateKey;
+import java.nio.charset.StandardCharsets;
 import java.security.Signature;
-import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayDeque;
 import java.util.Arrays;
-import java.util.Date;
+import java.util.Base64;
 import java.util.HexFormat;
-
-import javax.net.ssl.X509TrustManager;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class PairingManagerTest {
-    private static final String SERVER_INFO = "<root status_code=\"200\"><appversion>7.1.2.3</appversion></root>";
-    private static KeyPair keys;
-    private static X509Certificate certificate;
-    private static X509Certificate otherCertificate;
-    private static LimelightCryptoProvider crypto;
+    private static final String SERVER_INFO = "<root status_code=\"200\"><uniqueid>host-1</uniqueid><state>SUNSHINE_SERVER_FREE</state><PairStatus>0</PairStatus><appversion>7.1.2.3</appversion></root>";
+    private static String hostCertPemHex;
 
     @BeforeClass
     public static void createIdentity() throws Exception {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-        generator.initialize(2048);
-        keys = generator.generateKeyPair();
-        X500Name name = new X500Name("CN=Pairing test");
-        certificate = new JcaX509CertificateConverter().getCertificate(new JcaX509v3CertificateBuilder(
-                name, BigInteger.ONE, new Date(0), new Date(4102444800000L), name, keys.getPublic())
-                .build(new JcaContentSignerBuilder("SHA256withRSA").build(keys.getPrivate())));
-        otherCertificate = new JcaX509CertificateConverter().getCertificate(new JcaX509v3CertificateBuilder(
-                name, BigInteger.TWO, new Date(0), new Date(4102444800000L), name, keys.getPublic())
-                .build(new JcaContentSignerBuilder("SHA256withRSA").build(keys.getPrivate())));
-        crypto = new LimelightCryptoProvider() {
-            public X509Certificate getClientCertificate() { return certificate; }
-            public PrivateKey getClientPrivateKey() { return keys.getPrivate(); }
-            public byte[] getPemEncodedClientCertificate() { return new byte[0]; }
-            public String encodeBase64String(byte[] data) { return ""; }
-        };
+        TestHttpServer.ensureIdentities();
+        String b64 = Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII))
+                .encodeToString(TestHttpServer.hostCert().getEncoded());
+        String pem = "-----BEGIN CERTIFICATE-----\n" + b64 + "\n-----END CERTIFICATE-----\n";
+        hostCertPemHex = HexFormat.of().formatHex(pem.getBytes(StandardCharsets.US_ASCII));
     }
 
     private static String reply(String tag, String value) {
         return "<root status_code=\"200\"><paired>1</paired><" + tag + ">" + value + "</" + tag + "></root>";
     }
 
-    private static class PairingHttp extends NvHTTP {
-        final ArrayDeque<String> replies = new ArrayDeque<>();
-        int cancellations;
-        boolean failCancellation;
-
-        PairingHttp(String... replies) throws IOException {
-            super(new ComputerDetails.AddressTuple("127.0.0.1", 47989), 47984, "client", null, crypto);
-            this.replies.addAll(Arrays.asList(replies));
-        }
-
-        @Override String executePairingCommand(String arguments, boolean timeout) {
-            return replies.removeFirst();
-        }
-
-        @Override void cancelPairing() throws IOException {
-            cancellations++;
-            if (failCancellation) throw new IOException("Host disconnected during cleanup");
-        }
+    private static TestHttpServer scriptedServer(AtomicInteger cancellations, boolean failCancel, String... replies)
+            throws IOException {
+        ArrayDeque<String> queue = new ArrayDeque<>(Arrays.asList(replies));
+        return new TestHttpServer(req -> {
+            if ("/unpair".equals(req.path)) {
+                cancellations.incrementAndGet();
+                if (failCancel) return TestHttpServer.Response.text(500, "cancel failed");
+                return TestHttpServer.Response.xml(200, "<root status_code=\"200\"><paired>0</paired></root>");
+            }
+            if (queue.isEmpty()) {
+                return TestHttpServer.Response.text(500, "unexpected extra request: " + req.rawQuery);
+            }
+            return TestHttpServer.Response.xml(200, queue.removeFirst());
+        });
     }
 
     private static PairingLink link(X509Certificate host) throws Exception {
-        String fp = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(host.getEncoded()));
-        return PairingLink.parse("rubylight://pair?v=1&host=127.0.0.1&port=47989&otp=1234&pass=abcd1234&fp=" + fp);
+        return PairingLink.parse("rubylight://pair?v=1&host=127.0.0.1&port=47989&otp=1234&pass=abcd1234&fp="
+                + TestHttpServer.sha256Hex(host));
     }
 
     @Test
     public void aLinkNamingAnotherCertificateIsRefusedBeforeItIsTrusted() throws Exception {
-        PairingHttp http = new PairingHttp(reply("plaincert", HexFormat.of().formatHex(certificate.getEncoded())));
-        PairingManager pairing = http.getPairingManager();
-        assertEquals(PairingManager.PairState.CERT_MISMATCH, pairing.pair(SERVER_INFO, link(otherCertificate)));
-        assertNull(pairing.getPairedCert());
-        // The host's pairing is cancelled and no challenge was sent.
-        assertEquals(1, http.cancellations);
-        assertTrue(http.replies.isEmpty());
+        AtomicInteger cancellations = new AtomicInteger();
+        try (TestHttpServer server = scriptedServer(cancellations, false, reply("plaincert", hostCertPemHex))) {
+            NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+            PairingManager pairing = http.getPairingManager();
+            assertEquals(PairingManager.PairState.CERT_MISMATCH,
+                    pairing.pair(SERVER_INFO, link(TestHttpServer.otherCert())));
+            assertNull(pairing.getPairedCert());
+            assertEquals(1, cancellations.get());
+            for (TestHttpServer.RecordedRequest req : server.requests()) {
+                assertNull(req.queryParam("clientchallenge"));
+            }
+        }
     }
 
     @Test
     public void aReplayedLinkIsAHostRefusalNotANetworkError() throws Exception {
-        // Rubylight's answer to a used or expired link while no code is live: HTTP 200 with status 400, which
-        // HostActions shows as "show a new QR code" (HostActionsLinkTest) instead of the network advice.
-        PairingHttp http = new PairingHttp("<?xml version=\"1.0\" encoding=\"utf-8\"?><root status_code=\"400\""
+        AtomicInteger cancellations = new AtomicInteger();
+        String refusedXml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><root status_code=\"400\""
                 + " status_message=\"no one-time pairing code is live: it was used or has expired; show a new one"
-                + " on the PC\"><paired>0</paired></root>");
-        HostHttpResponseException refusal = assertThrows(HostHttpResponseException.class,
-                () -> http.getPairingManager().pair(SERVER_INFO, link(certificate)));
-        assertEquals(400, refusal.getErrorCode());
-        assertTrue(refusal.getMessage(), refusal.getMessage().contains("show a new one"));
-        assertTrue(http.replies.isEmpty());
+                + " on the PC\"><paired>0</paired></root>";
+        try (TestHttpServer server = scriptedServer(cancellations, false, refusedXml)) {
+            NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+            HostHttpResponseException refusal = assertThrows(HostHttpResponseException.class,
+                    () -> http.getPairingManager().pair(SERVER_INFO, link(TestHttpServer.hostCert())));
+            assertEquals(400, refusal.getErrorCode());
+            assertTrue(refusal.getMessage(), refusal.getMessage().contains("show a new one"));
+        }
     }
 
     @Test
     public void aLinkNamingTheHostCertificateGoesOnToTheChallenge() throws Exception {
-        PairingHttp http = new PairingHttp(reply("plaincert", HexFormat.of().formatHex(certificate.getEncoded())),
-                reply("challengeresponse", "AA"));
-        // The truncated challenge reply shows the certificate check passed and the next step ran.
-        assertThrows(IOException.class, () -> http.getPairingManager().pair(SERVER_INFO, link(certificate)));
-        assertEquals(1, http.cancellations);
+        AtomicInteger cancellations = new AtomicInteger();
+        try (TestHttpServer server = scriptedServer(cancellations, false,
+                reply("plaincert", hostCertPemHex), reply("challengeresponse", "AA"))) {
+            NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+            assertThrows(IOException.class,
+                    () -> http.getPairingManager().pair(SERVER_INFO, link(TestHttpServer.hostCert())));
+            assertEquals(1, cancellations.get());
+        }
     }
 
     @Test
     public void malformedCertificatesFailWithCheckedErrorsAndReleasePairing() throws Exception {
         for (String encoded : new String[] {"0", "GG", "00"}) {
-            PairingHttp http = new PairingHttp(reply("plaincert", encoded));
-            assertThrows(IOException.class, () -> http.getPairingManager().pair(SERVER_INFO, "1234"));
-            assertEquals(1, http.cancellations);
+            AtomicInteger cancellations = new AtomicInteger();
+            try (TestHttpServer server = scriptedServer(cancellations, false, reply("plaincert", encoded))) {
+                NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+                assertThrows(IOException.class, () -> http.getPairingManager().pair(SERVER_INFO, "1234"));
+                assertEquals(1, cancellations.get());
+            }
         }
     }
 
     @Test
     public void truncatedEncryptedChallengesFailBeforeTheNextProtocolStep() throws Exception {
         for (String encoded : new String[] {"AA", "00".repeat(16), "00".repeat(47)}) {
-            PairingHttp http = new PairingHttp(reply("plaincert", HexFormat.of().formatHex(certificate.getEncoded())),
-                    reply("challengeresponse", encoded));
-            assertThrows(IOException.class, () -> http.getPairingManager().pair(SERVER_INFO, "1234"));
-            assertEquals(1, http.cancellations);
+            AtomicInteger cancellations = new AtomicInteger();
+            try (TestHttpServer server = scriptedServer(cancellations, false,
+                    reply("plaincert", hostCertPemHex), reply("challengeresponse", encoded))) {
+                NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+                assertThrows(IOException.class, () -> http.getPairingManager().pair(SERVER_INFO, "1234"));
+                assertEquals(1, cancellations.get());
+            }
         }
     }
 
     @Test
     public void truncatedSecretsAreCheckedErrors() throws Exception {
-        PairingHttp http = new PairingHttp(reply("plaincert", HexFormat.of().formatHex(certificate.getEncoded())),
-                reply("challengeresponse", "00".repeat(48)), reply("pairingsecret", "AA"));
-        assertThrows(IOException.class, () -> http.getPairingManager().pair(SERVER_INFO, "1234"));
-        assertEquals(1, http.cancellations);
+        AtomicInteger cancellations = new AtomicInteger();
+        try (TestHttpServer server = scriptedServer(cancellations, false,
+                reply("plaincert", hostCertPemHex), reply("challengeresponse", "00".repeat(48)),
+                reply("pairingsecret", "AA"))) {
+            NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+            assertThrows(IOException.class, () -> http.getPairingManager().pair(SERVER_INFO, "1234"));
+            assertEquals(1, cancellations.get());
+        }
     }
 
     @Test
     public void invalidSignatureFailsPairingWithoutCrashing() throws Exception {
-        PairingHttp http = new PairingHttp(reply("plaincert", HexFormat.of().formatHex(certificate.getEncoded())),
-                reply("challengeresponse", "00".repeat(48)), reply("pairingsecret", "00".repeat(17)));
-        assertEquals(PairingManager.PairState.SERVER_UNVERIFIED, http.getPairingManager().pair(SERVER_INFO, "1234"));
-        assertEquals(1, http.cancellations);
+        AtomicInteger cancellations = new AtomicInteger();
+        try (TestHttpServer server = scriptedServer(cancellations, false,
+                reply("plaincert", hostCertPemHex), reply("challengeresponse", "00".repeat(48)),
+                reply("pairingsecret", "00".repeat(17)))) {
+            NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+            assertEquals(PairingManager.PairState.SERVER_UNVERIFIED,
+                    http.getPairingManager().pair(SERVER_INFO, "1234"));
+            assertEquals(1, cancellations.get());
+        }
     }
 
     @Test
     public void cleanupFailureDoesNotHideWrongPin() throws Exception {
         byte[] secret = new byte[16];
         Signature signature = Signature.getInstance("SHA256withRSA");
-        signature.initSign(keys.getPrivate());
+        signature.initSign(TestHttpServer.hostKey());
         signature.update(secret);
-        PairingHttp http = new PairingHttp(reply("plaincert", HexFormat.of().formatHex(certificate.getEncoded())),
-                reply("challengeresponse", "00".repeat(48)),
-                reply("pairingsecret", HexFormat.of().formatHex(secret) + HexFormat.of().formatHex(signature.sign())));
-        http.failCancellation = true;
-        assertEquals(PairingManager.PairState.PIN_WRONG, http.getPairingManager().pair(SERVER_INFO, "1234"));
-        assertEquals(1, http.cancellations);
-    }
-
-    private static X509TrustManager trustManager(NvHTTP http, boolean caTrusted) throws Exception {
-        java.lang.reflect.Field defaults = NvHTTP.class.getDeclaredField("defaultTrustManager");
-        defaults.setAccessible(true);
-        defaults.set(http, new X509TrustManager() {
-            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-            public void checkClientTrusted(X509Certificate[] chain, String authType) { }
-            public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-                if (!caTrusted) throw new CertificateException("Untrusted CA");
-            }
-        });
-        java.lang.reflect.Field field = NvHTTP.class.getDeclaredField("trustManager");
-        field.setAccessible(true);
-        return (X509TrustManager) field.get(http);
+        AtomicInteger cancellations = new AtomicInteger();
+        try (TestHttpServer server = scriptedServer(cancellations, true,
+                reply("plaincert", hostCertPemHex), reply("challengeresponse", "00".repeat(48)),
+                reply("pairingsecret", HexFormat.of().formatHex(secret) + HexFormat.of().formatHex(signature.sign())))) {
+            NvHTTP http = server.newClient("client", false, NativeApiFixtures.crypto());
+            assertEquals(PairingManager.PairState.PIN_WRONG,
+                    http.getPairingManager().pair(SERVER_INFO, "1234"));
+            assertEquals(1, cancellations.get());
+        }
     }
 
     @Test
-    public void pairedCertificateCannotBeReplacedByACaTrustedCertificate() throws Exception {
-        PairingHttp http = new PairingHttp();
-        http.setServerCert(certificate);
-        X509TrustManager trust = trustManager(http, true);
-        assertThrows(CertificateException.class,
-                () -> trust.checkServerTrusted(new X509Certificate[] {otherCertificate}, "RSA"));
+    public void pairedCertificateCannotBeReplacedByAnotherCertificate() throws Exception {
+        try (TestHttpServer wrongHost = new TestHttpServer(req -> TestHttpServer.Response.json(
+                200, "{\"version\":1,\"sampled_at_unix_ms\":1791712800000,\"interval_ms\":1000,\"cpu\":{},\"gpus\":[]}"))) {
+            NvHTTP http = new NvHTTP(
+                    new ComputerDetails.AddressTuple("127.0.0.1", wrongHost.httpPort()),
+                    wrongHost.httpsPort(),
+                    "client",
+                    TestHttpServer.otherCert(),
+                    NativeApiFixtures.crypto());
+            assertThrows(IOException.class, http::getHardwareMetrics);
+            assertEquals(0, wrongHost.requests().size());
+        }
     }
 
     @Test
-    public void pairedLeafRemainsTrustedWhenServerIncludesItsChain() throws Exception {
-        PairingHttp http = new PairingHttp();
-        http.setServerCert(certificate);
-        trustManager(http, false).checkServerTrusted(new X509Certificate[] {certificate, otherCertificate}, "RSA");
+    public void pairedLeafRemainsTrustedForHttpsHostCalls() throws Exception {
+        try (TestHttpServer server = new TestHttpServer(req -> TestHttpServer.Response.xml(
+                200, "<root status_code=\"200\"><uniqueid>host-1</uniqueid><state>SUNSHINE_SERVER_FREE</state><PairStatus>1</PairStatus></root>"))) {
+            NvHTTP http = server.newClient(true);
+            String reply = http.getServerInfo(true);
+            assertTrue(reply.contains("<uniqueid>host-1</uniqueid>"));
+            assertFalse(http.serverInfoFromAnotherCertificate());
+            assertEquals("https", server.requests().get(0).scheme);
+        }
     }
 
     @Test
-    public void unpairedHostsStillRequireCaTrust() throws Exception {
-        PairingHttp http = new PairingHttp();
-        trustManager(http, true).checkServerTrusted(new X509Certificate[] {certificate}, "RSA");
-        X509TrustManager trust = trustManager(http, false);
-        assertThrows(CertificateException.class,
-                () -> trust.checkServerTrusted(new X509Certificate[] {certificate}, "RSA"));
+    public void unpairedHostsCannotMakeAuthenticatedHttpsCalls() throws Exception {
+        try (TestHttpServer server = new TestHttpServer(req -> TestHttpServer.Response.xml(
+                200, "<root status_code=\"200\"><uniqueid>host-1</uniqueid><state>SUNSHINE_SERVER_FREE</state><PairStatus>1</PairStatus></root>"))) {
+            NvHTTP http = server.newClient(false);
+            assertTrue(http.getServerInfo(true).contains("host-1"));
+            assertThrows(IOException.class, http::getHardwareMetrics);
+        }
     }
 }

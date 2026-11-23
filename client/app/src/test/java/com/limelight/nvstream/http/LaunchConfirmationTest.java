@@ -1,10 +1,19 @@
 package com.limelight.nvstream.http;
 
+import android.app.Application;
+
+import com.limelight.nvstream.ConnectionContext;
+
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import static com.limelight.nvstream.http.LaunchConfirmation.State.*;
 import static org.junit.Assert.*;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29, application = Application.class)
 public class LaunchConfirmationTest {
     @Test
     public void onlyHostConfirmationMessagesAllowASecondLaunch() throws Exception {
@@ -32,10 +41,19 @@ public class LaunchConfirmationTest {
         }
     }
 
-    private static HostHttpResponseException reply(String message, boolean gameSession) {
+    private static HostHttpResponseException reply(String message, boolean gameSession) throws Exception {
         String xml = NvHTTPRoleTest.completion(message, gameSession);
-        return assertThrows(HostHttpResponseException.class,
-                () -> NvHTTP.readLaunchResponse(new com.limelight.nvstream.ConnectionContext(), "launch", xml));
+        try (TestHttpServer server = new TestHttpServer(req -> TestHttpServer.Response.xml(200, xml))) {
+            NvHTTP http = server.newClient();
+            ConnectionContext ctx = new ConnectionContext();
+            ctx.streamConfig = new com.limelight.nvstream.StreamConfiguration.Builder().build();
+            ctx.negotiatedWidth = 1920;
+            ctx.negotiatedHeight = 1080;
+            ctx.riKey = new javax.crypto.spec.SecretKeySpec(new byte[16], "AES");
+            ctx.hostCaps = HostCapabilities.UNKNOWN;
+            return assertThrows(HostHttpResponseException.class,
+                    () -> http.launchApp(ctx, "launch", 42, false));
+        }
     }
 
     @Test

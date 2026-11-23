@@ -905,7 +905,6 @@
     "legacy": {
       "client/app/src/main/java/com/limelight/GameAdaptation.java": 1,
       "client/app/src/main/java/com/limelight/nvstream/http/ComputerDetails.java": 1,
-      "client/app/src/main/java/com/limelight/nvstream/http/NvHTTP.java": 4,
       "client/app/src/main/java/com/limelight/update/HostUpdateChecker.java": 2,
       "client/app/src/main/java/com/limelight/utils/WiredLink.java": 1,
       "client/protocol/client/src/http/launch.rs": 4,
