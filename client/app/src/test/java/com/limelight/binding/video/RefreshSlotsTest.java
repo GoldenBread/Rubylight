@@ -162,6 +162,24 @@ public class RefreshSlotsTest {
         }
     }
 
+    @Test public void sharedBurstSlotStaysSnappedToLiveDriftingVsyncGrid() {
+        long liveVsync = VSYNC;
+        slots.plan(liveVsync + 1_000_000L, liveVsync, INTERVAL_120, DEADLINE_120, slot);
+        slots.plan(liveVsync + 2_000_000L, liveVsync, INTERVAL_120, DEADLINE_120, slot);
+        // Live vsync shifts by +300 us when a burst third output shares the claimed slot.
+        long shiftedVsync = liveVsync + 300_000L;
+        slots.plan(shiftedVsync + 2_500_000L, shiftedVsync, INTERVAL_120, DEADLINE_120, slot);
+        assertTrue(slot.shared);
+        assertEquals(0L, Math.floorMod(slot.vsyncNs - shiftedVsync, INTERVAL_120));
+        assertEquals(slot.vsyncNs - INTERVAL_120 / 2, slot.targetNs);
+    }
+
+    @Test public void firstVsyncHandlesReadyTimeSlightlyBeforeLatestVsyncAnchor() {
+        // When onVsync advances vsyncNs slightly past a releaseNs captured just before the lock,
+        // floorDiv keeps the first reachable refresh one interval after vsyncNs.
+        assertEquals(VSYNC + INTERVAL_120, RefreshSlots.firstVsyncNs(VSYNC - 500_000L, VSYNC, INTERVAL_120, 0L));
+    }
+
     private long plan2(long releaseNs, long intervalNs, long deadlineNs) {
         slots.plan(releaseNs, VSYNC, intervalNs, deadlineNs, slot);
         return slot.vsyncNs;

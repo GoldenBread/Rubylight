@@ -1,9 +1,96 @@
 #include "present_scheduler.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iterator>
 
 namespace vkr {
+
+namespace {
+
+// Wraps an initial hardware-minus-Choreographer offset into (-7/8 * period, +1/8 * period].
+// Hardware scanout is at or before Choreographer's frameTimeNanos by appVsyncOffset (usually
+// 0 to 7/8 of a refresh); the +1/8 cushion keeps zero-offset jitter from wrapping a full refresh
+// early while keeping positive app offsets at the preceding scanout so initial delay stays tight.
+int64_t normalizeInitialOffset(int64_t deltaNs, int64_t periodNs) {
+    int64_t offset = deltaNs % periodNs;
+    if (offset > periodNs / 8) {
+        offset -= periodNs;
+    }
+    else if (offset <= -periodNs + periodNs / 8) {
+        offset += periodNs;
+    }
+    return offset;
+}
+
+// Wraps a phase residual into (-period / 2, +period / 2].
+int64_t wrapSigned(int64_t deltaNs, int64_t periodNs) {
+    int64_t remainder = deltaNs % periodNs;
+    if (remainder <= -periodNs / 2) {
+        remainder += periodNs;
+    }
+    else if (remainder > periodNs / 2) {
+        remainder -= periodNs;
+    }
+    return remainder;
+}
+
+}  // namespace
+
+void PresentScheduler::observeHardwareVsync(int64_t vsyncNs, int64_t actualNs, int64_t periodNs) {
+    if (vsyncNs <= 0 || actualNs <= 0 || periodNs <= 0 || std::llabs(actualNs - vsyncNs) >= 1'000'000'000) {
+        return;
+    }
+    if (hwPhasePeriodNs_ > 0 && std::llabs(periodNs - hwPhasePeriodNs_) * 50 > hwPhasePeriodNs_) {
+        hwPhaseLocked_ = false;
+    }
+    hwPhasePeriodNs_ = periodNs;
+
+    if (!hwPhaseLocked_) {
+        hwOffsetNs_ = normalizeInitialOffset(actualNs - vsyncNs, periodNs);
+        hwPhaseLocked_ = true;
+        return;
+    }
+    const int64_t err = wrapSigned(actualNs - (vsyncNs + hwOffsetNs_), periodNs);
+    hwOffsetNs_ += err / 8;
+    // Wide hysteresis (quarter-period past the initial bounds) so jitter never oscillates by a vsync.
+    if (hwOffsetNs_ > periodNs * 3 / 8) {
+        hwOffsetNs_ -= periodNs;
+    }
+    else if (hwOffsetNs_ < -periodNs - periodNs / 8) {
+        hwOffsetNs_ += periodNs;
+    }
+}
+
+int64_t PresentScheduler::hardwareVsyncNs(int64_t vsyncNs, int64_t periodNs) const {
+    if (periodNs <= 0) {
+        return vsyncNs;
+    }
+    if (hwPhaseLocked_) {
+        return vsyncNs + hwOffsetNs_;
+    }
+    if (appVsyncOffsetNs_ != 0) {
+        return vsyncNs + normalizeInitialOffset(-appVsyncOffsetNs_, periodNs);
+    }
+    return vsyncNs;
+}
+
+PresentScheduler::PlannedPresent PresentScheduler::planPresent(int64_t rawVsyncNs, int64_t periodNs,
+                                                               int64_t appVsyncOffsetNs) {
+    appVsyncOffsetNs_ = appVsyncOffsetNs;
+    const int64_t hwVsyncNs = hardwareVsyncNs(rawVsyncNs, periodNs);
+    return {hwVsyncNs, hwVsyncNs + delay_ * periodNs - periodNs / 2};
+}
+
+void PresentScheduler::onMissed(bool ahead, int64_t slackNs, int64_t vsyncNs, int delayUsed, int64_t periodNs,
+                                bool presentsAhead) {
+    if (ahead) {
+        onAheadOutcome(slackNs, vsyncNs, delayUsed, false, 0, 0, 0, periodNs);
+    }
+    else if (!presentsAhead) {
+        onDropped(vsyncNs, delayUsed, periodNs);
+    }
+}
 
 void PresentScheduler::fix(int delayVsyncs, int64_t guardNs) {
     if (delayVsyncs > 0) {
@@ -361,6 +448,61 @@ void PresentScheduler::onPresented(int64_t vsyncNs, int delayUsed, int64_t perio
             resetWindows();
             return;
         }
+        lowerCount_ = lowerNotSooner_ = lowerMisses_ = 0;
+    }
+}
+
+void PresentScheduler::onDropped(int64_t vsyncNs, int delayUsed, int64_t periodNs) {
+    if (periodNs <= 0) {
+        return;
+    }
+
+    missedTotal_++;
+
+    const int64_t pauseNs = std::max(kResumeGapNs, 3 * (aheadWindowNs_ > 0 ? aheadWindowNs_ : periodNs));
+    if (lastReportVsyncNs_ != 0 && vsyncNs - lastReportVsyncNs_ >= pauseNs) {
+        resumingPresents_ = kResumePresents;
+    }
+    lastReportVsyncNs_ = vsyncNs;
+    const bool resuming = resumingPresents_ > 0;
+    if (resuming) {
+        resumingPresents_--;
+    }
+    const bool missed = !resuming;
+
+    if (settling_ > 0) {
+        settling_--;
+        return;
+    }
+
+    if (delayFixed_ || delayUsed != delay_) {
+        return;
+    }
+
+    raiseCount_++;
+    raiseMisses_ += missed ? 1 : 0;
+    if (raiseCount_ >= kRaiseWindow || raiseMisses_ >= kRaiseMisses) {
+        if (raiseMisses_ >= kRaiseMisses && delay_ < maxDelay_) {
+            if (loweredLast_) {
+                undoLowering();
+                return;
+            }
+            delay_++;
+            resetWindows();
+            resetGuardHistory();
+            return;
+        }
+        raiseCount_ = raiseMisses_ = 0;
+    }
+
+    if (aheadSeen_) {
+        return;
+    }
+
+    lowerCount_++;
+    lowerNotSooner_++;
+    lowerMisses_ += missed ? 1 : 0;
+    if (lowerCount_ >= kLowerWindow) {
         lowerCount_ = lowerNotSooner_ = lowerMisses_ = 0;
     }
 }

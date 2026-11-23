@@ -87,4 +87,16 @@ public class RefreshSlotsWiringTest {
         ReflectionHelpers.setField(renderer, "vsyncTimeNs", 0L);
         assertEquals(RELEASE, plan(renderer));
     }
+
+    @Test public void arrScreenWithVrrOffStillPlansPanelRateSlotsWhileVrrOnDoesNot() {
+        MediaCodecDecoderRenderer renderer = renderer(120_000, INTERVAL, true);
+        ReflectionHelpers.setField(renderer, "outputHasArrSupport", true);
+        // VRR off on an Android 16 ARR panel (default arrFixedTiming=false): Nightjar voted
+        // fixed-source 120 Hz, so Balanced still assigns one refresh per output.
+        assertEquals(SLOT - INTERVAL / 2, plan(renderer));
+
+        PreferenceConfiguration prefs = ReflectionHelpers.getField(renderer, "prefs");
+        prefs.vrr = true;
+        assertEquals(RELEASE, plan(renderer));
+    }
 }

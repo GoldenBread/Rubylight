@@ -72,7 +72,7 @@ final class RefreshSlots {
      */
     static long firstVsyncNs(long readyNs, long vsyncNs, long intervalNs, long leadNs) {
         if (vsyncNs <= 0 || intervalNs <= 0) return 0;
-        long intervals = Math.max(1, (readyNs + Math.max(0, leadNs) - vsyncNs) / intervalNs + 1);
+        long intervals = Math.max(1, Math.floorDiv(readyNs + Math.max(0, leadNs) - vsyncNs, intervalNs) + 1);
         return vsyncNs + intervals * intervalNs;
     }
 
@@ -95,6 +95,7 @@ final class RefreshSlots {
             this.intervalNs = intervalNs;
         }
         long earliestNs = firstVsyncNs(releaseNs, vsyncNs, intervalNs, leadNs);
+        long claimedNs = 0;
         long vsync;
         if (lastVsyncNs == 0) {
             vsync = earliestNs;
@@ -103,15 +104,17 @@ final class RefreshSlots {
             // Snap the carried claim back onto the live vsync grid so panel clock drift or
             // Choreographer jitter cannot ratchet lastVsyncNs off the display's refreshes.
             nextNs = vsyncNs + Math.floorDiv(nextNs - vsyncNs + intervalNs / 2, intervalNs) * intervalNs;
+            claimedNs = nextNs - intervalNs;
             vsync = Math.max(earliestNs, nextNs);
         }
         if (lastVsyncNs != 0 && vsync - earliestNs >= 2 * intervalNs) {
             // Two refreshes already claimed ahead of this output: stamp it with the refresh already
-            // claimed (the previous output's), where the compositor replaces that older buffer with
-            // this one, so the newest frame of the burst is what shows.
+            // claimed (the previous output's, snapped onto the live grid), where the compositor
+            // replaces that older buffer with this one, so the newest frame of the burst is what shows.
+            lastVsyncNs = claimedNs;
             shared++;
-            out.vsyncNs = lastVsyncNs;
-            out.targetNs = lastVsyncNs - intervalNs / 2;
+            out.vsyncNs = claimedNs;
+            out.targetNs = claimedNs - intervalNs / 2;
             out.shared = true;
             return;
         }

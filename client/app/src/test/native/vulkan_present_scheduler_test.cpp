@@ -104,5 +104,89 @@ int main() {
         scheduler.setMaxDelay(PresentScheduler::kMinDelay);
         assert(scheduler.delayVsyncs() == 1);
     }
+
+    // Hardware scanout phase alignment: when Choreographer's frameTimeNanos sits half a refresh
+    // after hardware scanout (common on 120 Hz displays), desiredPresentNs() must still land
+    // halfway between hardware scanouts rather than on a hardware vsync boundary.
+    {
+        constexpr int64_t kPeriod120Ns = 8'333'333;
+        constexpr int64_t kHwOriginNs = 1'000'000'000;
+        const int64_t appOffsets[] = {
+            0, 1'000'000, kPeriod120Ns / 2, kPeriod120Ns / 2 + 50'000, kPeriod120Ns * 3 / 4, kPeriod120Ns - 400'000
+        };
+        for (int64_t appOffset : appOffsets) {
+            PresentScheduler scheduler;
+            // Start without relying on Display.getAppVsyncOffsetNanos(): live actualPresentTime locks the phase.
+            int64_t lastDesired = 0;
+            for (int i = 0; i < 120; i++) {
+                const int64_t hwVsyncNs = kHwOriginNs + i * kPeriod120Ns;
+                const int64_t jitterNs = (i % 3 == 0 ? 250'000 : i % 3 == 1 ? -250'000 : 0);
+                const int64_t choreoNs = hwVsyncNs + appOffset + jitterNs;
+                const int delay = scheduler.delayVsyncs();
+                const int64_t desiredNs = scheduler.desiredPresentNs(choreoNs, kPeriod120Ns);
+
+                // Simulate SurfaceFlinger latching at the first hardware scanout >= desiredNs.
+                const int64_t deltaFromOrigin = desiredNs - kHwOriginNs;
+                const int64_t scanoutIdx = (deltaFromOrigin + kPeriod120Ns - 1) / kPeriod120Ns;
+                const int64_t actualNs = kHwOriginNs + scanoutIdx * kPeriod120Ns;
+
+                if (i >= 5) {
+                    // Desired time stays centered near half a refresh before the target hardware scanout,
+                    // well clear of both adjacent scanout boundaries despite +-250 us Choreographer jitter.
+                    const int64_t distToScanout = actualNs - desiredNs;
+                    assert(distToScanout >= kPeriod120Ns / 4 && distToScanout <= kPeriod120Ns * 3 / 4);
+                    // Consecutive presents advance by exactly one refresh without skipping or colliding.
+                    assert(std::llabs((desiredNs - lastDesired) - kPeriod120Ns) <= 700'000);
+                }
+                lastDesired = desiredNs;
+
+                const int64_t alignedVsync = scheduler.hardwareVsyncNs(choreoNs, kPeriod120Ns);
+                scheduler.observeHardwareVsync(choreoNs, actualNs, kPeriod120Ns);
+                scheduler.onPresented(alignedVsync, delay, kPeriod120Ns, actualNs, actualNs, 0);
+            }
+            // No spurious misses once locked onto the true hardware phase.
+            assert(scheduler.delayVsyncs() == 2);
+        }
+    }
+
+    // Display.getAppVsyncOffsetNanos() centers even the very first present before feedback arrives,
+    // and live actualPresentTime smoothly tracks a mid-stream dynamic SurfaceFlinger phase shift.
+    {
+        constexpr int64_t kPeriod120Ns = 8'333'333;
+        constexpr int64_t kHwOriginNs = 2'000'000'000;
+        PresentScheduler scheduler;
+        const int64_t firstChoreoNs = kHwOriginNs + kPeriod120Ns / 2;
+        const PresentScheduler::PlannedPresent plan = scheduler.planPresent(firstChoreoNs, kPeriod120Ns, kPeriod120Ns / 2);
+        // Should sit halfway between H_1 and H_2 (at H_2 - P/2), not on H_2.
+        const int64_t targetH2 = kHwOriginNs + 2 * kPeriod120Ns;
+        assert(std::llabs(plan.hwVsyncNs - kHwOriginNs) <= 2);
+        assert(std::llabs(plan.desiredNs - (targetH2 - kPeriod120Ns / 2)) <= 2);
+
+        // Lock at appOffset = P/2, then shift SurfaceFlinger's dynamic app offset by +2 ms mid-stream.
+        for (int i = 0; i < 80; i++) {
+            const int64_t offset = i < 20 ? kPeriod120Ns / 2 : kPeriod120Ns / 2 + 2'000'000;
+            const int64_t hwVsyncNs = kHwOriginNs + i * kPeriod120Ns;
+            const int64_t choreoNs = hwVsyncNs + offset;
+            const int64_t desiredNs = scheduler.desiredPresentNs(choreoNs, kPeriod120Ns);
+            const int64_t scanoutIdx = (desiredNs - kHwOriginNs + kPeriod120Ns - 1) / kPeriod120Ns;
+            const int64_t actualNs = kHwOriginNs + scanoutIdx * kPeriod120Ns;
+            scheduler.observeHardwareVsync(choreoNs, actualNs, kPeriod120Ns);
+            if (i >= 60) {
+                assert(std::llabs((actualNs - desiredNs) - kPeriod120Ns / 2) <= 100'000);
+            }
+        }
+    }
+
+    // Unexpected compositor drops in non-ahead modes count as misses and raise delay when room exists.
+    {
+        PresentScheduler scheduler;
+        scheduler.setMaxDelay(PresentScheduler::kMaxDelay);
+        for (int i = 0; i < static_cast<int>(PresentScheduler::kSettlingPresents) + 10; i++) {
+            const int64_t vsyncNs = (i + 1) * kPeriodNs;
+            scheduler.onMissed(false, 0, vsyncNs, scheduler.delayVsyncs(), kPeriodNs, false);
+        }
+        assert(scheduler.delayVsyncs() > 2);
+        assert(scheduler.missedTotal() >= PresentScheduler::kSettlingPresents + 10);
+    }
     return 0;
 }

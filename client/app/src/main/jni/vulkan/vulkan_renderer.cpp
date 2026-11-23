@@ -2196,25 +2196,19 @@ bool VulkanRenderer::renderFrame(const FramePtr& frame, uint64_t presentId, int6
     // A front buffer is drawn at its time and never presented as a new image, so it has no
     // time to ask for, and its capture to present is counted up to the present
     if (presentId != 0 && hasDisplayTimingExt_ && !frontBuffer_ && (onArrival || currentPeriodNs_ > 0)) {
-        const int64_t vsyncNs = showVsyncNs != 0 ? showVsyncNs : currentVsyncNs_;
-        if (!onArrival) {
-            presentTime.desiredPresentTime =
-                    static_cast<uint64_t>(presentScheduler_.desiredPresentNs(vsyncNs, currentPeriodNs_));
-        }
-        else if (!presentOnArrival_) {
-            presentTime.desiredPresentTime = static_cast<uint64_t>(nowNs());
-        }
+        const int64_t rawVsyncNs = showVsyncNs != 0 ? showVsyncNs : currentVsyncNs_;
+        const auto plan = presentScheduler_.planPresent(rawVsyncNs, currentPeriodNs_,
+                                                        vsyncOffsetNs_.load(std::memory_order_relaxed));
+        if (!onArrival) presentTime.desiredPresentTime = static_cast<uint64_t>(plan.desiredNs);
+        else if (!presentOnArrival_) presentTime.desiredPresentTime = static_cast<uint64_t>(nowNs());
         presentTimes.swapchainCount = 1;
         presentTimes.pTimes = &presentTime;
         present.pNext = &presentTimes;
 
-        // Slack from the commit, not from now: the pacer holds frames to the guard when it
-        // commits them, and on a Pixel 10 Pro rendering sometimes took milliseconds after that
-        // (waiting for a swapchain image). Measured from here, the guard learned was a third of
-        // what commits needed.
+        // Slack from commit (render wait can take ms on Pixel 10 Pro and skew the learned guard).
         PendingPresent& pending = pendingPresents_[presentId];
-        pending = {vsyncNs, presentScheduler_.delayVsyncs(), ahead,
-                   ahead ? vsyncNs - (commitNs != 0 ? commitNs : nowNs()) : 0};
+        pending = {plan.hwVsyncNs, presentScheduler_.delayVsyncs(), ahead,
+                   ahead ? rawVsyncNs - (commitNs != 0 ? commitNs : nowNs()) : 0, rawVsyncNs};
         pending.onArrival = onArrival;
         taggedPresentId = presentId;
         if (!frame->presentCounted) {
@@ -2345,18 +2339,21 @@ void VulkanRenderer::collectPresentTimings() {
     for (uint32_t i = 0; i < count; i++) {
         const VkPastPresentationTimingGOOGLE& t = timings[i];
 
-        // Reports come in present order, so earlier presents still without one never reached
-        // the screen: the compositor dropped them
+        // Reports come in present order, so earlier presents still without one were dropped
         for (auto it = pendingPresents_.begin(); it != pendingPresents_.end() && it->first < t.presentID;) {
-            if (it->second.ahead && !it->second.replaced) {
-                presentScheduler_.onAheadOutcome(it->second.slackNs, it->second.vsyncNs, it->second.delayVsyncs,
-                                                 false, 0, 0, 0, currentPeriodNs_);
+            if (!it->second.replaced && !it->second.onArrival) {
+                presentScheduler_.onMissed(it->second.ahead, it->second.slackNs, it->second.vsyncNs,
+                                           it->second.delayVsyncs, currentPeriodNs_, presentsAhead());
             }
             reportPresent(it->second.hostPtsNs, 0, 0);
             it = pendingPresents_.erase(it);
         }
 
         auto pending = pendingPresents_.find(t.presentID);
+        if (pending != pendingPresents_.end() && !pending->second.onArrival && t.actualPresentTime > 0) {
+            presentScheduler_.observeHardwareVsync(pending->second.rawVsyncNs,
+                                                   static_cast<int64_t>(t.actualPresentTime), currentPeriodNs_);
+        }
         if (pending != pendingPresents_.end() && pending->second.ahead && !pending->second.replaced) {
             presentScheduler_.onAheadOutcome(pending->second.slackNs, pending->second.vsyncNs,
                                              pending->second.delayVsyncs, true,

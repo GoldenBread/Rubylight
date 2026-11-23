@@ -401,10 +401,11 @@ private:
     int64_t currentVsyncNs_ = 0;
     int64_t currentPeriodNs_ = 0;
     struct PendingPresent {
-        int64_t vsyncNs;
+        int64_t vsyncNs;     // Hardware-aligned vsync used for desiredPresentTime and PresentScheduler
         int delayVsyncs;
         bool ahead;
-        int64_t slackNs;  // How long before its vsync a frame presented ahead was presented
+        int64_t slackNs;     // How long before its Choreographer vsync a frame presented ahead was committed
+        int64_t rawVsyncNs = 0;  // Choreographer frameTimeNanos / showVsyncNs, for tracking hardware phase
         bool replaced = false;  // Another frame was presented for the same vsync
         int64_t originNs = 0;   // For the capture to present statistic, if it's counted at this present
         bool originSynced = false;

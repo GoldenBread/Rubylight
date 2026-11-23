@@ -532,25 +532,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (fatal != null) failVulkan(fatal);
         logVulkanDiagnostics(vulkan);
         handBackToneMappedHdr(vulkan);
-        if (!vulkanPresentReports) return;
-        // How each frame ended up takes the place of MediaCodec's frame rendered callback, which
-        // on this path only says a frame was handed to the renderer. Display wait counts to the
-        // time the present was queued, as it counts to the hand-off on the direct path; the screen
-        // time only goes to decoded to on screen. Screen time 0: it was never shown.
-        long nowNs = System.nanoTime();
-        int n;
-        while ((n = vulkan.takePresentReports(vulkanReports)) > 0) {
-            for (int i = 0; i < n; i++) {
-                long ptsUs = vulkanReports[3 * i];
-                long queuedNs = vulkanReports[3 * i + 1];
-                long scanoutNs = vulkanReports[3 * i + 2];
-                if (scanoutNs == 0) {
-                    frameLatencyStats.onFrameReplaced(ptsUs);
-                } else {
-                    frameLatencyStats.onFrameShown(ptsUs, queuedNs, scanoutNs, nowNs);
+        drainVulkanPresentReports(vulkan);
+    }
+
+    // Drains Vulkan present timings into FrameLatencyStats (display wait to queue time; scanout
+    // to screen stage, Presented FPS and present jitter; scanout 0 = replaced).
+    private void drainVulkanPresentReports(VulkanRendererBridge vulkan) {
+        if (vulkan == null || !vulkanPresentReports) return;
+        synchronized (vulkanReports) {
+            long nowNs = System.nanoTime();
+            for (int n; (n = vulkan.takePresentReports(vulkanReports)) > 0; ) {
+                for (int i = 0; i < n; i++) {
+                    long ptsUs = vulkanReports[3 * i], queuedNs = vulkanReports[3 * i + 1], scanoutNs = vulkanReports[3 * i + 2];
+                    if (scanoutNs == 0) frameLatencyStats.onFrameReplaced(ptsUs);
+                    else frameLatencyStats.onFrameShown(ptsUs, queuedNs, scanoutNs, nowNs);
                 }
+                if (n < vulkanReports.length / 3) break;
             }
-            if (n < vulkanReports.length / 3) break;
         }
     }
 
@@ -796,6 +794,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /** A bounded snapshot for the stream doctor, including unavailable stage values. */
     public com.limelight.utils.StreamHealth.Sample healthSample(long nowMs, int fps, float jitterMs) {
+        drainVulkanPresentReports(vulkanRenderer);
         long nowNs = System.nanoTime();
         double[][] timing = frameLatencyStats.summarizeRecent(nowNs, 2_000_000_000L);
         float[] rates = frameLatencyStats.getFrameRates(nowNs);
@@ -931,14 +930,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private volatile int heldAnchorRefreshes = 1;
     /** The refreshes smoothDisplayNs last logged holding each frame for, 1 before it held any. Decoder thread. */
     private int smoothHoldLogged = 1;
-    // Balanced at the panel's own rate, released as outputs come out: the refresh each output is
-    // shown at, one per refresh (RefreshSlots). Decoder thread; reset when the display changes.
+    // Balanced at the panel's own rate: the refresh each output is shown at, one per refresh
+    // (RefreshSlots). Both the renderer thread (direct path) and Choreographer thread (Balanced
+    // vsync queue) may plan slots, so each thread owns its own reusable Slot; reset when the display changes.
     private final RefreshSlots refreshSlots = new RefreshSlots();
     private final RefreshSlots.Slot refreshSlot = new RefreshSlots.Slot();
-    /** debug.nightjar.refresh_slots: whether Balanced's direct path stamps outputs for a refresh. */
+    private final RefreshSlots.Slot vsyncRefreshSlot = new RefreshSlots.Slot();
+    /** debug.nightjar.refresh_slots: whether Balanced stamps outputs at the panel rate for a refresh. */
     private boolean refreshSlotsEnabled;
-    private boolean slotPlateauLogged;
-    private boolean slotSharedLogged;
+    private volatile boolean slotPlateauLogged;
+    private volatile boolean slotSharedLogged;
     private HandlerThread choreographerHandlerThread;
     private Handler choreographerHandler;
     private final Object vsyncMonitor = new Object();
@@ -1373,6 +1374,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     /** The overlay's received, rendered and compositor-confirmed FPS (-1 when unreported) now. */
     public float[] getFrameRates() {
+        drainVulkanPresentReports(vulkanRenderer);
         return frameLatencyStats.getFrameRates(System.nanoTime());
     }
 
@@ -3904,7 +3906,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     @Override
     public void doFrame(long frameTimeNanos) {
-        onVsync(frameTimeNanos, 0, -1);
+        onVsync(frameTimeNanos, 0, 0, -1);
     }
 
     /**
@@ -3920,24 +3922,18 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         long anchorNs = VsyncTimeline.anchorNs(expectedPresentNs, frameTimeNanos, intervalNs);
         // A presentation time that cannot be right says nothing about the deadline either.
         long leadNs = anchorNs > 0 ? VsyncTimeline.deadlineLeadNs(expectedPresentNs, deadlineNs, intervalNs) : -1;
-        onVsync(frameTimeNanos, anchorNs, leadNs);
+        onVsync(frameTimeNanos, anchorNs, anchorNs > 0 ? expectedPresentNs : 0, leadNs);
     }
 
-    /**
-     * One vsync. anchorNs is a vsync time from the frame timeline (0: derive it from the frame
-     * time and the app vsync offset); deadlineLeadNs how long before its vsync a buffer must be
-     * queued, from the frame timeline (negative: keep the display's fixed value).
-     */
-    private void onVsync(long frameTimeNanos, long anchorNs, long deadlineLeadNs) {
-        // Do nothing if we're stopping
-        if (stopping || !outputVsyncAvailable) {
-            return;
-        }
+    /** One vsync: anchorNs (0 = frameTime - appVsyncOffset), expectedPresentNs (0 = none), deadlineLeadNs (< 0 = keep fixed). */
+    private void onVsync(long frameTimeNanos, long anchorNs, long expectedPresentNs, long deadlineLeadNs) {
+        if (stopping || !outputVsyncAvailable) return;
 
-        long reportedNs;
+        long callbackVsyncNs, reportedNs;
         synchronized (vsyncMonitor) {
-            frameTimeNanos = anchorNs > 0 ? anchorNs : frameTimeNanos - appVsyncOffsetNs;
-            vsyncTimeNs = frameTimeNanos;
+            // Keep Choreographer cadence monotonic even when VsyncTimeline.anchorNs steps by a refresh.
+            callbackVsyncNs = frameTimeNanos - appVsyncOffsetNs;
+            vsyncTimeNs = anchorNs > 0 ? anchorNs : callbackVsyncNs;
             if (deadlineLeadNs >= 0) vsyncPresentationDeadlineNs = deadlineLeadNs;
             reportedNs = reportedPresentationDeadlineNs;
         }
@@ -3951,7 +3947,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 FramePacingPolicy.usesPyroWaveDisplayClock(prefs.framePacing, prefs.vrr, outputVsyncAvailable)) {
             // This only publishes immutable Java values. No Vulkan call or renderer lock can
             // delay the display callback or race native teardown.
-            pyroWaveDisplayClock.observe(frameTimeNanos);
+            pyroWaveDisplayClock.observe(expectedPresentNs > 0 ? expectedPresentNs : callbackVsyncNs);
         }
         if (prefs.framePacing != PreferenceConfiguration.FRAME_PACING_BALANCED ||
                 (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0) {
@@ -3973,7 +3969,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // multiple each frame gets the same number of refreshes, as fractional V-Sync holds them,
         // so the setting does nothing here (SettingRules.fractionalVsyncApplies). Frames from this
         // queue send no phase report (reportPhaseSlack runs for frames released as they come out).
-        if (FramePacingPolicy.isFrameDue(nextFrameTimeNanos, frameTimeNanos, vsyncIntervalNs)) {
+        if (FramePacingPolicy.isFrameDue(nextFrameTimeNanos, callbackVsyncNs, vsyncIntervalNs)) {
             // Render up to one frame when in frame pacing mode.
             //
             // The queue holds at most two buffers to avoid starving the decoder. Keeping
@@ -3989,12 +3985,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                         // The cadence goes on as if it was shown: the screen keeps the previous frame.
                         dropForDisplayQueue(nextOutputBuffer, releaseNs);
                     } else {
-                        countRenderRelease(nextOutputBuffer, releaseNs, releaseNs);
-                        releaseOutputFrame(nextOutputBuffer, System.nanoTime());
+                        long displayAtNs = planRefreshSlot(releaseNs, vsyncRefreshSlot, false);
+                        countRenderRelease(nextOutputBuffer, releaseNs, displayAtNs);
+                        releaseOutputFrame(nextOutputBuffer, displayAtNs);
                         activeWindowVideoStats.totalFramesRendered++;
                     }
                     nextFrameTimeNanos = FramePacingPolicy.nextFrameTimeNsMilliHz(
-                            nextFrameTimeNanos, frameTimeNanos, fpsMilliHz);
+                            nextFrameTimeNanos, callbackVsyncNs, fpsMilliHz);
                 } catch (IllegalStateException ignored) {
                     // The frame was counted as submitted before the release threw.
                     frameLatencyStats.onReleaseFailed(releaseNs);
@@ -4655,20 +4652,17 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return targetNs - intervalNs / 2;
     }
 
-    /**
-     * Balanced at the panel's own rate, released as outputs come out: the time to release this
-     * output with, the next free refresh less half a refresh, or the refresh already claimed for a
-     * surplus output (RefreshSlots). Without a grid to plan on (no vsync sample yet, an adaptive
-     * screen, an upscaler drawing the frame) or for a stream that is not the panel's rate (a faster
-     * one has surplus frames at every refresh, where a stamp only holds them back a refresh or
-     * more), it is the "now" path: the release time itself, and the frame lands wherever the
-     * compositor latches it, as before. debug.nightjar.refresh_slots=0 turns the slots off.
-     */
+    /** Balanced at the panel's own rate: stamps outputs on the refresh grid (RefreshSlots) unless VRR/upscaler/switch disables it. */
     private long planRefreshSlot(long releaseNs) {
+        return planRefreshSlot(releaseNs, refreshSlot, true);
+    }
+
+    private long planRefreshSlot(long releaseNs, RefreshSlots.Slot slot, boolean allowHold) {
         long vsyncNs, intervalNs, deadlineNs;
         boolean grid;
         synchronized (vsyncMonitor) {
-            grid = refreshSlotsEnabled && outputVsyncAvailable && upscaler == null && !adaptiveInUse() &&
+            // VRR off votes a fixed-source refresh even on Android 16 ARR panels; FrameData gives live timing.
+            grid = refreshSlotsEnabled && outputVsyncAvailable && upscaler == null && !prefs.vrr &&
                     vsyncTimeNs != 0 && vsyncIntervalNs > 0;
             vsyncNs = vsyncTimeNs;
             intervalNs = vsyncIntervalNs;
@@ -4678,22 +4672,22 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (!grid || fpsMilliHz < 1000 || fpsMilliHz > 1_000_000 ||
                 !RefreshSlots.applies(FramePacingPolicy.frameIntervalNs(fpsMilliHz), intervalNs)) {
             refreshSlots.reset();
-            refreshSlot.vsyncNs = 0;
-            refreshSlot.shared = false;
-            return heldDisplayNs(releaseNs);
+            slot.vsyncNs = 0;
+            slot.shared = false;
+            return allowHold ? heldDisplayNs(releaseNs) : releaseNs;
         }
-        refreshSlots.plan(releaseNs, vsyncNs, intervalNs, deadlineNs, refreshSlot);
+        refreshSlots.plan(releaseNs, vsyncNs, intervalNs, deadlineNs, slot);
         if (!slotPlateauLogged) {
             slotPlateauLogged = true;
             LimeLog.info(String.format(Locale.US,
                     "Balanced: each output takes the next free refresh, one per refresh (%.2f ms, due %.2f ms before it)",
                     intervalNs / 1e6, (intervalNs / 2) / 1e6));
         }
-        if (refreshSlot.shared && !slotSharedLogged) {
+        if (slot.shared && !slotSharedLogged) {
             slotSharedLogged = true;
             LimeLog.info("Balanced: a surplus output shares the refresh already claimed, replacing the older buffer there");
         }
-        return refreshSlot.targetNs;
+        return slot.targetNs;
     }
 
     /** Balanced, see FramePacingPolicy.balancedPacesOnVsync. Host frame times keep the vsync callback. */

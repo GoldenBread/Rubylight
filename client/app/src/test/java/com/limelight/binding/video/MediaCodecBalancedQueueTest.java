@@ -134,6 +134,45 @@ public class MediaCodecBalancedQueueTest {
         }
     }
 
+    @Test public void frameTimelineBoundaryJitterDoesNotSkipVsyncsInBalancedEveryFrame() throws Exception {
+        // At 120 Hz, truncated vsyncIntervalNs is 8,333,333 ns while 2 true refreshes are
+        // 16,666,667 ns. Crossing 2 * intervalNs caused VsyncTimeline.anchorNs to jump back by one
+        // full refresh; Balanced's Choreographer cadence must stay monotonic and render every tick.
+        try (Fixture fixture = new Fixture(2, new LinkedBlockingQueue<>())) {
+            fixture.renderer.setStreamFrameRateMilliHz(120_000);
+            ReflectionHelpers.setField(fixture.renderer, "refreshSlotsEnabled", true);
+            long base = System.nanoTime();
+            long lead = 10_000_000L;
+            long[] aheadJitter = {2 * FRAME_NS, 2 * FRAME_NS + 1, 2 * FRAME_NS - 500, 2 * FRAME_NS + 500,
+                    2 * FRAME_NS, 2 * FRAME_NS + 1};
+            List<Integer> expected = new ArrayList<>();
+            long[] anchors = new long[aheadJitter.length];
+            for (int tick = 0; tick < aheadJitter.length; tick++) {
+                int id = 100 + tick;
+                expected.add(id);
+                fixture.seed(id);
+                long frameTimeNs = base + tick * FRAME_NS;
+                long expectedPresentNs = frameTimeNs + aheadJitter[tick];
+                anchors[tick] = VsyncTimeline.anchorNs(expectedPresentNs, frameTimeNs, FRAME_NS);
+                fixture.renderer.onFrameTimeline(frameTimeNs, expectedPresentNs, expectedPresentNs - lead);
+            }
+            assertEquals("every vsync must render without skipping across anchorNs steps", expected,
+                    fixture.state.rendered);
+            assertTrue(fixture.queue.isEmpty());
+            // Every panel-rate release is stamped half a refresh ahead of a refresh on the live
+            // vsync grid (via RefreshSlots), and consecutive outputs advance by one refresh.
+            assertEquals(expected.size(), fixture.state.releaseTimestamps.size());
+            for (int i = 0; i < fixture.state.releaseTimestamps.size(); i++) {
+                long slotNs = fixture.state.releaseTimestamps.get(i) + FRAME_NS / 2;
+                assertEquals("release " + i + " should lie on the live vsync grid", 0L,
+                        Math.floorMod(slotNs - anchors[i], FRAME_NS));
+            }
+            long firstStep = fixture.state.releaseTimestamps.get(1) - fixture.state.releaseTimestamps.get(0);
+            assertTrue("consecutive outputs should claim consecutive refreshes, got " + firstStep,
+                    firstStep >= FRAME_NS - 10_000L && firstStep <= FRAME_NS + 10_000L);
+        }
+    }
+
     /** Force the old size/poll race, but never wait for a consumer while holding its monitor. */
     private static final class SizeBarrierQueue extends LinkedBlockingQueue<Integer> {
         final CountDownLatch sizeRead = new CountDownLatch(1);
@@ -159,6 +198,7 @@ public class MediaCodecBalancedQueueTest {
         final CountDownLatch allowDiscard = new CountDownLatch(1);
         final List<Integer> dropped = new ArrayList<>();
         final List<Integer> rendered = new ArrayList<>();
+        final List<Long> releaseTimestamps = new ArrayList<>();
         boolean outputDelivered, codecCallHeldQueueLock;
     }
 
@@ -270,6 +310,7 @@ public class MediaCodecBalancedQueueTest {
         @Implementation public void releaseOutputBuffer(int index, long timestampNs) {
             state.codecCallHeldQueueLock |= Thread.holdsLock(state.queue);
             state.rendered.add(index);
+            state.releaseTimestamps.add(timestampNs);
         }
     }
 }

@@ -70,15 +70,39 @@ public:
     // trying a setting on a device. Either can be left out (0, or below 0 for the guard).
     void fix(int delayVsyncs, int64_t guardNs);
 
+    // How long after the display's hardware vsync Choreographer's frame times are
+    // (Display.getAppVsyncOffsetNanos()), used until live actualPresentTime feedback locks the phase.
+    void setAppVsyncOffsetNs(int64_t appVsyncOffsetNs) { appVsyncOffsetNs_ = appVsyncOffsetNs; }
+
+    // Locks and tracks the offset from Choreographer's frame time (`vsyncNs`) to the display's
+    // hardware scanout grid (`actualNs`, from VK_GOOGLE_display_timing). Choreographer's frame time
+    // carries SurfaceFlinger's dynamic app phase offset, which on 120 Hz displays can sit near half
+    // a refresh; without aligning to actual scanouts, desiredPresentNs() lands right on a hardware
+    // vsync boundary and minor jitter causes two frames to target the same scanout (dropping one).
+    void observeHardwareVsync(int64_t vsyncNs, int64_t actualNs, int64_t periodNs);
+
+    // Maps a Choreographer frame time (`vsyncNs`) onto the hardware scanout grid.
+    int64_t hardwareVsyncNs(int64_t vsyncNs, int64_t periodNs) const;
+
+    struct PlannedPresent {
+        int64_t hwVsyncNs;
+        int64_t desiredNs;
+    };
+
+    // Updates the fallback app vsync offset and computes both the hardware-aligned vsync and the
+    // centered desiredPresentTime for one present.
+    PlannedPresent planPresent(int64_t rawVsyncNs, int64_t periodNs, int64_t appVsyncOffsetNs);
+
     // When to ask for an image presented at `vsyncNs` to reach the screen: halfway through the
-    // vsync interval before the one we want, so the compositor takes it for that vsync.
+    // hardware vsync interval before the one we want, so the compositor takes it for that vsync
+    // without straddling a hardware scanout boundary.
     int64_t desiredPresentNs(int64_t vsyncNs, int64_t periodNs) const {
-        return vsyncNs + delay_ * periodNs - periodNs / 2;
+        return hardwareVsyncNs(vsyncNs, periodNs) + delay_ * periodNs - periodNs / 2;
     }
 
-    // Feedback for one present: the vsync it was made at, the delay it asked for, and when the
-    // device reports it reached the screen and could have at the earliest. slackNs is how long
-    // before its vsync a frame presented ahead was presented (-1 for others).
+    // Feedback for one present: the hardware-aligned vsync it was made at, the delay it asked for,
+    // and when the device reports it reached the screen and could have at the earliest. slackNs is
+    // how long before its vsync a frame presented ahead was presented (-1 for others).
     //
     // Two kinds of miss don't count toward raising the delay, since more delay wouldn't have
     // shown the frame on time:
@@ -90,6 +114,11 @@ public:
     // - frames presented ahead with more than a vsync beyond the guard to spare
     void onPresented(int64_t vsyncNs, int delayUsed, int64_t periodNs, int64_t actualNs, int64_t earliestNs,
                      int64_t marginNs, int64_t slackNs = -1);
+    // A non-ahead, non-replaced present that the compositor dropped before it reached the screen:
+    // counts as a miss against the current delay, respecting settling and stream pauses.
+    void onDropped(int64_t vsyncNs, int delayUsed, int64_t periodNs);
+    // Dispatches a compositor-dropped present (not replaced, not on-arrival) to onAheadOutcome or onDropped.
+    void onMissed(bool ahead, int64_t slackNs, int64_t vsyncNs, int delayUsed, int64_t periodNs, bool presentsAhead);
     static constexpr int64_t kResumeGapNs = 50'000'000;
     static constexpr uint32_t kResumePresents = 3;  // Presents after a pause its misses are excused for
 
@@ -103,7 +132,10 @@ public:
     uint64_t missedTotal() const { return missedTotal_; }
 
     // A new swapchain: its first presents miss for reasons of their own, so they're not counted
-    void onSwapchainCreated() { settling_ = kSettlingPresents; }
+    void onSwapchainCreated() {
+        settling_ = kSettlingPresents;
+        hwPhaseLocked_ = false;
+    }
 
     // How long before its vsync a frame presented ahead must be presented. With less time than
     // that, the compositor may not have it in time even for the vsyncs the delay allows: on a
@@ -234,6 +266,12 @@ private:
     int64_t aheadWindowNs_ = 0;  // 0 until set: one vsync
     int64_t lastReportVsyncNs_ = 0;   // The vsync of the last present reported to onPresented()
     uint32_t resumingPresents_ = 0;   // Presents left whose misses a pause before them excuses
+
+    // Hardware scanout phase relative to Choreographer's frameTimeNanos (hwVsyncNs = vsyncNs + hwOffsetNs_)
+    int64_t appVsyncOffsetNs_ = 0;
+    int64_t hwOffsetNs_ = 0;
+    int64_t hwPhasePeriodNs_ = 0;
+    bool hwPhaseLocked_ = false;
 };
 
 }  // namespace vkr
