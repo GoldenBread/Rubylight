@@ -534,6 +534,7 @@ fn paired_record(unique_id: &str) -> HostRecord {
         notices: Default::default(),
         full_chroma: Default::default(),
         internet_play: Default::default(),
+        ..Default::default()
     }
 }
 

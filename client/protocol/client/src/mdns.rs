@@ -53,12 +53,13 @@ impl MdnsDiscoveryTracker {
 }
 
 fn parse_ipv6_base(raw: &str) -> Option<Ipv6Addr> {
-    let base = raw.split('%').next().unwrap_or(raw);
-    let unbracketed = base
+    let trimmed = raw.trim();
+    let unbracketed = trimmed
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
-        .unwrap_or(base);
-    unbracketed.parse::<Ipv6Addr>().ok()
+        .unwrap_or(trimmed);
+    let base = unbracketed.split('%').next().unwrap_or(unbracketed);
+    base.parse::<Ipv6Addr>().ok()
 }
 
 /// Parses IPv6 address strings (stripping any `%scope_id` suffix before parsing so callers can
@@ -105,6 +106,11 @@ mod tests {
         ];
         assert_eq!(select_ipv6_strings(&addrs), (Some(2), Some(0)));
         assert_eq!(link_local_ipv6_strings(&addrs), Some(0));
+        assert_eq!(link_local_ipv6_strings(&["[fe80::1%wlan0]"]), Some(0));
+        assert_eq!(
+            select_ipv6_strings(&["[fe80::1%wlan0]", "[2001:db8::1234:5678:9abc:def0%3]"]),
+            (Some(1), Some(0))
+        );
 
         let tracker = MdnsDiscoveryTracker::new();
         let gen1 = tracker.reset();

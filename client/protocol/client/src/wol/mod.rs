@@ -6,12 +6,13 @@ pub mod store;
 mod tests;
 
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, ToSocketAddrs, UdpSocket};
 
 pub use nightjar_policy::wol::{
     Links, MAX_BROADCASTS, MAX_MACS, NO_MAC, Plan, WAKE_POLL_INTERVAL_MS, WakeLaunch, WakeStep,
-    WakeTargetsPollState, WakeWait, Wakes, Waking, build_plan, extract_targets, magic_packet,
-    normal_mac, parse_ipv4_literal, parse_macs, ports, targets,
+    WakeTargetsPollState, WakeWait, Wakes, Waking, build_plan, build_plan_sockets, extract_targets,
+    magic_packet, normal_mac, parse_ipv4_literal, parse_macs, parse_scoped_ipv6_literal, ports,
+    targets,
 };
 pub use store::{WakeTargetEntry, WakeTargetsStore};
 
@@ -25,7 +26,39 @@ pub struct WakeHost<'a> {
     pub fallback_http_port: u16,
 }
 
-/// Resolves `host.endpoints` via DNS and delegates to [`build_plan`].
+#[cfg(unix)]
+fn scope_id_from_name(name: &str) -> u32 {
+    let Ok(c_name) = std::ffi::CString::new(name) else {
+        return 0;
+    };
+    // SAFETY: `c_name` is a valid NUL-terminated string passed to POSIX `if_nametoindex`.
+    unsafe { libc::if_nametoindex(c_name.as_ptr()) }
+}
+
+#[cfg(not(unix))]
+fn scope_id_from_name(_name: &str) -> u32 {
+    0
+}
+
+/// Parses an endpoint IP literal (IPv4, IPv6, `[IPv6]`, or `IPv6%<scope>` / `[IPv6%<scope>]`),
+/// resolving numeric scope IDs directly and interface-name scopes on Unix (falling back
+/// gracefully to `scope_id = 0` so link-local IPv6 destinations are never silently dropped).
+pub fn resolve_endpoint_literal(address: &str, port: u16) -> Option<SocketAddr> {
+    let trimmed = address.trim();
+    if let Ok(ip) = trimmed.parse::<std::net::IpAddr>() {
+        return Some(SocketAddr::new(ip, port));
+    }
+    if let Some((ip, num_scope, name_scope)) = parse_scoped_ipv6_literal(trimmed) {
+        let scope_id = num_scope
+            .or_else(|| name_scope.map(scope_id_from_name))
+            .unwrap_or(0);
+        return Some(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, scope_id)));
+    }
+    None
+}
+
+/// Resolves `host.endpoints` via IP literal parsing (preserving IPv6 `%scope_id`) or DNS and
+/// delegates to [`build_plan_sockets`].
 pub fn plan(host: &WakeHost<'_>, links: &Links) -> Result<Plan, String> {
     let macs: Vec<&str> = host
         .mac
@@ -38,10 +71,15 @@ pub fn plan(host: &WakeHost<'_>, links: &Links) -> Result<Plan, String> {
     let mut endpoint_ports = Vec::new();
     for (address, port) in host.endpoints {
         endpoint_ports.push(*port);
+        if let Some(socket) = resolve_endpoint_literal(address, *port) {
+            resolved_endpoints.push(socket);
+            continue;
+        }
         match (address.as_str(), 9).to_socket_addrs() {
             Ok(resolved) => {
-                for addr in resolved {
-                    resolved_endpoints.push((addr.ip(), *port));
+                for mut addr in resolved {
+                    addr.set_port(*port);
+                    resolved_endpoints.push(addr);
                 }
             }
             Err(e) => eprintln!("nightjar: Wake-on-LAN skips {address}: {e}"),
@@ -52,7 +90,7 @@ pub fn plan(host: &WakeHost<'_>, links: &Links) -> Result<Plan, String> {
     }
 
     let wake_broadcasts: Vec<&str> = host.wake_broadcasts.iter().map(String::as_str).collect();
-    build_plan(
+    build_plan_sockets(
         &macs,
         &resolved_endpoints,
         &endpoint_ports,

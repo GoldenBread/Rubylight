@@ -753,3 +753,46 @@ fn the_pages_that_show_the_link_speed_are_the_ones_read_often() {
         assert_eq!(screen.network_pace(), Pace::Idle, "{screen:?}");
     }
 }
+
+#[test]
+fn desktop_host_store_roundtrips_android_slots_and_unknown_extra_fields() {
+    use nightjar_core::hosts::{EndpointSlot, HostEntry, HostStore};
+    let (_, dir) = temp_store("bidirectional-hosts");
+    let store = HostStore::open(&dir);
+
+    let mut android = HostEntry::default();
+    android.shared.unique_id = "pc-bi".into();
+    android.shared.name = "Rig".into();
+    android.shared.address = "192.168.1.50".into();
+    android.shared.http_port = 47989;
+    android.shared.manual = true;
+    android.local_endpoint = EndpointSlot::new("192.168.1.50", 47989);
+    android.remote_endpoint = EndpointSlot::new("203.0.113.50", 48989);
+    android.manual_endpoint = EndpointSlot::new("rig.example", 47989);
+    android.ipv6_endpoint = EndpointSlot::new("2001:db8::50", 47989);
+    android.pinned_endpoint = EndpointSlot::new("192.168.1.50", 47989);
+    android.extra.insert("future_android_key".into(), serde_json::json!({"v": 2}));
+    assert!(store.upsert(android.clone()).unwrap());
+
+    let mut desktop_records =
+        store.load_records::<config::HostRecord, _>(config::keep_readable_settings_value);
+    assert_eq!(desktop_records.len(), 1);
+    desktop_records[0].https_port = 47984;
+    desktop_records[0].other_addresses = vec!["10.0.0.50".into()];
+    desktop_records[0].own_wake_macs = vec!["aa:bb:cc:dd:ee:01".into()];
+    desktop_records[0].internet_play = Some("secret".into());
+    store.save_records(&desktop_records).unwrap();
+
+    let after_desktop = store.get_by_uuid("pc-bi").unwrap();
+    assert_eq!(after_desktop.local_endpoint, android.local_endpoint);
+    assert_eq!(after_desktop.remote_endpoint, android.remote_endpoint);
+    assert_eq!(after_desktop.manual_endpoint, android.manual_endpoint);
+    assert_eq!(after_desktop.ipv6_endpoint, android.ipv6_endpoint);
+    assert_eq!(after_desktop.pinned_endpoint, android.pinned_endpoint);
+    assert_eq!(after_desktop.extra.get("future_android_key"), Some(&serde_json::json!({"v": 2})));
+    assert_eq!(after_desktop.shared.https_port, 47984);
+    assert_eq!(after_desktop.shared.other_addresses, vec!["10.0.0.50"]);
+    assert_eq!(after_desktop.shared.own_wake_macs, vec!["aa:bb:cc:dd:ee:01"]);
+    assert_eq!(after_desktop.shared.internet_play.as_deref(), Some("secret"));
+    std::fs::remove_dir_all(dir).ok();
+}

@@ -85,9 +85,11 @@ public class HostPackedModesTest {
         context.getSharedPreferences(HostPackedModes.PREFERENCES, Context.MODE_PRIVATE).edit()
                 .putInt("pc", 0b1101)
                 .putBoolean("refused:pc", true)
-                .putString("stamp:pc", "1.0.0/4.0.0")
+                .putString("under:pc", "1.0.0/4.0.0")
                 .commit();
         assertEquals(0b1101, HostPackedModes.cached(context, "pc"));
+        assertTrue(HostPackedModes.refused(context, "pc"));
+        HostPackedModes.renew(context, "pc", "1.0.0/4.0.0");
         assertTrue(HostPackedModes.refused(context, "pc"));
 
         HostPackedModes.clearRefusals(context);

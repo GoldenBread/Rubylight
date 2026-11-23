@@ -90,19 +90,40 @@ pub(crate) fn base64_decode(text: &str) -> Option<Vec<u8>> {
 }
 
 fn entry_to_dto(entry: &HostEntry) -> JniHostDto {
-    let local = entry.local_endpoint.clone().or_else(|| {
-        if !entry.shared.address.is_empty() && entry.shared.http_port > 0 {
-            EndpointSlot::new(&entry.shared.address, entry.shared.http_port)
-        } else {
-            None
-        }
-    });
+    let has_android_slots = entry.local_endpoint.is_some()
+        || entry.remote_endpoint.is_some()
+        || entry.manual_endpoint.is_some()
+        || entry.ipv6_endpoint.is_some();
+    let fallback_port = if entry.shared.http_port == 0 {
+        47989
+    } else {
+        entry.shared.http_port
+    };
+    let legacy_slot = if !has_android_slots && !entry.shared.address.is_empty() {
+        EndpointSlot::new(&entry.shared.address, fallback_port)
+    } else {
+        None
+    };
+    let local = if has_android_slots {
+        entry.local_endpoint.clone()
+    } else if !entry.shared.manual {
+        legacy_slot.clone()
+    } else {
+        None
+    };
+    let manual = if has_android_slots {
+        entry.manual_endpoint.clone()
+    } else if entry.shared.manual {
+        legacy_slot
+    } else {
+        None
+    };
     let remote = entry.remote_endpoint.clone().or_else(|| {
         entry
             .shared
             .remote_address
             .as_deref()
-            .and_then(|addr| EndpointSlot::new(addr, entry.shared.http_port.max(47989)))
+            .and_then(|addr| EndpointSlot::new(addr, fallback_port))
     });
     let server_cert_b64 = entry
         .server_certificate_der()
@@ -112,7 +133,7 @@ fn entry_to_dto(entry: &HostEntry) -> JniHostDto {
         name: entry.shared.name.clone(),
         local,
         remote,
-        manual: entry.manual_endpoint.clone(),
+        manual,
         ipv6: entry.ipv6_endpoint.clone(),
         mac: entry.shared.mac.clone(),
         server_cert_b64,
@@ -242,7 +263,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHostsJni_hostStor
     let Ok(dto) = serde_json::from_str::<JniHostDto>(&raw) else {
         return JNI_FALSE;
     };
-    if store.upsert(dto_to_entry(dto)).is_ok() {
+    if store.upsert(dto_to_entry(dto)).unwrap_or(false) {
         JNI_TRUE
     } else {
         JNI_FALSE
@@ -331,5 +352,123 @@ mod tests {
         let back = entry_to_dto(&entry);
         assert_eq!(back.uuid, "host-1");
         assert_eq!(back.local.unwrap().address, "192.168.1.5");
+    }
+
+    #[test]
+    fn entry_to_dto_never_fabricates_local_for_manual_remote_ipv6_or_cleared_hosts() {
+        // Manual-only Android host.
+        let manual = dto_to_entry(JniHostDto {
+            uuid: "manual-only".into(),
+            name: "Manual".into(),
+            manual: EndpointSlot::new("my-pc.example", 47989),
+            ..Default::default()
+        });
+        let manual_back = entry_to_dto(&manual);
+        assert_eq!(manual_back.local, None);
+        assert_eq!(manual_back.manual, EndpointSlot::new("my-pc.example", 47989));
+
+        // Remote-only Android host.
+        let remote = dto_to_entry(JniHostDto {
+            uuid: "remote-only".into(),
+            name: "Remote".into(),
+            remote: EndpointSlot::new("203.0.113.55", 48989),
+            ..Default::default()
+        });
+        let remote_back = entry_to_dto(&remote);
+        assert_eq!(remote_back.local, None);
+        assert_eq!(remote_back.remote, EndpointSlot::new("203.0.113.55", 48989));
+
+        // IPv6-only Android host.
+        let v6 = dto_to_entry(JniHostDto {
+            uuid: "ipv6-only".into(),
+            name: "V6".into(),
+            ipv6: EndpointSlot::new("2001:db8::1", 47989),
+            ..Default::default()
+        });
+        let v6_back = entry_to_dto(&v6);
+        assert_eq!(v6_back.local, None);
+        assert_eq!(v6_back.ipv6, EndpointSlot::new("2001:db8::1", 47989));
+
+        // Desktop-only manual entry without Android slot fields maps shared.address -> manual, not local.
+        let mut desktop_manual = HostEntry::default();
+        desktop_manual.shared.unique_id = "desk-manual".into();
+        desktop_manual.shared.address = "desk.example".into();
+        desktop_manual.shared.http_port = 47989;
+        desktop_manual.shared.manual = true;
+        let desk_manual_dto = entry_to_dto(&desktop_manual);
+        assert_eq!(desk_manual_dto.local, None);
+        assert_eq!(desk_manual_dto.manual, EndpointSlot::new("desk.example", 47989));
+
+        // Desktop-only LAN entry without Android slot fields maps shared.address -> local with actual port.
+        let mut desktop_lan = HostEntry::default();
+        desktop_lan.shared.unique_id = "desk-lan".into();
+        desktop_lan.shared.address = "192.168.1.20".into();
+        desktop_lan.shared.http_port = 47980;
+        desktop_lan.shared.remote_address = Some("203.0.113.5".into());
+        let desk_lan_dto = entry_to_dto(&desktop_lan);
+        assert_eq!(desk_lan_dto.local, EndpointSlot::new("192.168.1.20", 47980));
+        assert_eq!(desk_lan_dto.remote, EndpointSlot::new("203.0.113.5", 47980));
+        assert_eq!(desk_lan_dto.manual, None);
+    }
+
+    #[test]
+    fn android_upsert_clears_local_detects_noops_and_preserves_desktop_fields() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nightjar-android-hosts-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = HostStore::open(&dir);
+
+        let mut desktop = HostEntry::default();
+        desktop.shared.unique_id = "pc-1".into();
+        desktop.shared.name = "DesktopPC".into();
+        desktop.shared.alias = Some("Studio".into());
+        desktop.shared.address = "192.168.1.10".into();
+        desktop.shared.http_port = 47989;
+        desktop.shared.https_port = 47984;
+        desktop.shared.other_addresses = vec!["10.0.0.50".into()];
+        desktop.shared.other_http_ports = vec![48000];
+        desktop.shared.pinned_address = Some("10.0.0.50".into());
+        desktop.shared.remote_address = Some("203.0.113.99".into());
+        desktop.shared.wake_macs = vec!["aa:bb:cc:dd:ee:02".into()];
+        desktop.shared.wake_broadcasts = vec!["10.0.0.255".into()];
+        desktop.shared.own_wake_macs = vec!["aa:bb:cc:dd:ee:03".into()];
+        desktop.shared.quit_on_leave.insert("uuid:g1".into());
+        desktop.shared.notices.insert("PYROWAVE_FALLBACK".into());
+        desktop.shared.full_chroma.modes = Some(3);
+        desktop.shared.internet_play = Some("secret-token".into());
+        desktop.pinned_endpoint = EndpointSlot::new("10.0.0.50", 48000);
+        desktop.extra.insert("settings".into(), serde_json::json!({"fps": 120}));
+        store.save_records(&[desktop.clone()]).unwrap();
+
+        // Android reads, clears local while keeping remote, and upserts.
+        let mut dto = entry_to_dto(&store.get_by_uuid("pc-1").unwrap());
+        assert_eq!(dto.local, EndpointSlot::new("192.168.1.10", 47989));
+        dto.local = None;
+        assert!(store.upsert(dto_to_entry(dto.clone())).unwrap());
+        assert!(!store.upsert(dto_to_entry(dto)).unwrap(), "identical second upsert returns false");
+
+        let reloaded = store.get_by_uuid("pc-1").unwrap();
+        let back = entry_to_dto(&reloaded);
+        assert_eq!(back.local, None);
+        assert_eq!(back.remote, EndpointSlot::new("203.0.113.99", 47989));
+        assert_eq!(reloaded.shared.alias.as_deref(), Some("Studio"));
+        assert_eq!(reloaded.shared.https_port, 47984);
+        assert_eq!(reloaded.shared.other_addresses, vec!["10.0.0.50"]);
+        assert_eq!(reloaded.shared.other_http_ports, vec![48000]);
+        assert_eq!(reloaded.shared.pinned_address.as_deref(), Some("10.0.0.50"));
+        assert_eq!(reloaded.shared.wake_macs, vec!["aa:bb:cc:dd:ee:02"]);
+        assert_eq!(reloaded.shared.wake_broadcasts, vec!["10.0.0.255"]);
+        assert_eq!(reloaded.shared.own_wake_macs, vec!["aa:bb:cc:dd:ee:03"]);
+        assert!(reloaded.shared.quit_on_leave.contains("uuid:g1"));
+        assert!(reloaded.shared.notices.contains("PYROWAVE_FALLBACK"));
+        assert_eq!(reloaded.shared.full_chroma.modes, Some(3));
+        assert_eq!(reloaded.shared.internet_play.as_deref(), Some("secret-token"));
+        assert_eq!(reloaded.pinned_endpoint, EndpointSlot::new("10.0.0.50", 48000));
+        assert_eq!(reloaded.extra.get("settings"), Some(&serde_json::json!({"fps": 120})));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

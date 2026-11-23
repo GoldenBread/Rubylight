@@ -62,6 +62,58 @@ pub struct HostStore {
     unreadable: Arc<UnreadableGuard>,
 }
 
+fn merge_preserving_desktop(existing: &HostEntry, mut incoming: HostEntry) -> HostEntry {
+    for (key, value) in &existing.extra {
+        incoming
+            .extra
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
+    if incoming.pinned_endpoint.is_none() {
+        incoming.pinned_endpoint = existing.pinned_endpoint.clone();
+    }
+    if incoming.shared.alias.is_none() {
+        incoming.shared.alias = existing.shared.alias.clone();
+    }
+    if incoming.shared.https_port == 0 {
+        incoming.shared.https_port = existing.shared.https_port;
+    }
+    if incoming.shared.other_addresses.is_empty() {
+        incoming.shared.other_addresses = existing.shared.other_addresses.clone();
+    }
+    if incoming.shared.other_http_ports.is_empty() {
+        incoming.shared.other_http_ports = existing.shared.other_http_ports.clone();
+    }
+    if incoming.shared.pinned_address.is_none() {
+        incoming.shared.pinned_address = existing.shared.pinned_address.clone();
+    }
+    if incoming.shared.wake_macs.is_empty() {
+        incoming.shared.wake_macs = existing.shared.wake_macs.clone();
+    }
+    if incoming.shared.wake_broadcasts.is_empty() {
+        incoming.shared.wake_broadcasts = existing.shared.wake_broadcasts.clone();
+    }
+    if incoming.shared.own_wake_macs.is_empty() {
+        incoming.shared.own_wake_macs = existing.shared.own_wake_macs.clone();
+    }
+    if incoming.shared.quit_on_leave.is_empty() {
+        incoming.shared.quit_on_leave = existing.shared.quit_on_leave.clone();
+    }
+    if incoming.shared.notices.is_empty() {
+        incoming.shared.notices = existing.shared.notices.clone();
+    }
+    if incoming.shared.full_chroma == Default::default() {
+        incoming.shared.full_chroma = existing.shared.full_chroma.clone();
+    }
+    if incoming.shared.internet_play.is_none() {
+        incoming.shared.internet_play = existing.shared.internet_play.clone();
+    }
+    if existing.shared.manual && incoming.manual_endpoint.is_some() {
+        incoming.shared.manual = true;
+    }
+    incoming
+}
+
 impl HostStore {
     pub fn open(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref().to_path_buf();
@@ -178,7 +230,8 @@ impl HostStore {
     }
 
     /// Inserts or updates a host by `shared.unique_id`. Returns `Ok(true)` and writes to disk ONLY
-    /// when the entry is new or its persistent fields changed.
+    /// when the entry is new or its persistent fields changed. Preserves Desktop-owned
+    /// `SharedHostFields`, `pinned_endpoint`, `alias`, and `extra` when incoming leaves them empty.
     pub fn upsert(&self, entry: HostEntry) -> io::Result<bool> {
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut entries: Vec<HostEntry> = self.read_kept_unlocked(|_| {});
@@ -187,14 +240,7 @@ impl HostStore {
                 .iter_mut()
                 .find(|e| e.shared.unique_id == entry.shared.unique_id)
         {
-            // Preserve Desktop-only `extra` fields (e.g. settings, pace) when Android updates.
-            let mut merged = entry;
-            if merged.extra.is_empty() && !existing.extra.is_empty() {
-                merged.extra = existing.extra.clone();
-            }
-            if merged.shared.alias.is_none() && existing.shared.alias.is_some() {
-                merged.shared.alias = existing.shared.alias.clone();
-            }
+            let merged = merge_preserving_desktop(existing, entry);
             if *existing == merged {
                 return Ok(false);
             }
@@ -253,6 +299,8 @@ impl HostStore {
         }
         if changed || !self.path().exists() {
             self.write_unlocked(&entries)?;
+        } else {
+            self.unreadable.check_writable(&self.path())?;
         }
         write_atomic(&marker, b"1\n", true)?;
         Ok(changed)

@@ -366,4 +366,81 @@ public class PollSavesOnlyChangesTest {
         assertNull("deleted host must never resurrect from legacy computers4.db", second.getComputerByUUID("legacy-pc"));
         second.close();
     }
+
+    @Test
+    public void updateComputerReturnsTrueOnlyWhenChangedAndDoesNotFabricateLocalAddress() {
+        Context context = RuntimeEnvironment.getApplication();
+        ComputerDatabaseManager db = new ComputerDatabaseManager(context);
+
+        ComputerDetails manualOnly = new ComputerDetails();
+        manualOnly.uuid = "manual-only";
+        manualOnly.name = "ManualPC";
+        manualOnly.manualAddress = new ComputerDetails.AddressTuple("my-pc.example", 47989);
+        assertTrue(db.updateComputer(manualOnly));
+        assertFalse("identical upsert returns false", db.updateComputer(manualOnly));
+        ComputerDetails manualRead = db.getComputerByUUID("manual-only");
+        assertNotNull(manualRead);
+        assertNull("manual-only host must not fabricate localAddress", manualRead.localAddress);
+        assertEquals(manualOnly.manualAddress, manualRead.manualAddress);
+
+        ComputerDetails remoteOnly = new ComputerDetails();
+        remoteOnly.uuid = "remote-only";
+        remoteOnly.name = "RemotePC";
+        remoteOnly.remoteAddress = new ComputerDetails.AddressTuple("203.0.113.55", 48989);
+        assertTrue(db.updateComputer(remoteOnly));
+        assertFalse(db.updateComputer(remoteOnly));
+        ComputerDetails remoteRead = db.getComputerByUUID("remote-only");
+        assertNotNull(remoteRead);
+        assertNull("remote-only host must not fabricate localAddress", remoteRead.localAddress);
+        assertEquals(remoteOnly.remoteAddress, remoteRead.remoteAddress);
+
+        ComputerDetails ipv6Only = new ComputerDetails();
+        ipv6Only.uuid = "ipv6-only";
+        ipv6Only.name = "V6PC";
+        ipv6Only.ipv6Address = new ComputerDetails.AddressTuple("2001:db8::1", 47989);
+        assertTrue(db.updateComputer(ipv6Only));
+        ComputerDetails ipv6Read = db.getComputerByUUID("ipv6-only");
+        assertNotNull(ipv6Read);
+        assertNull("ipv6-only host must not fabricate localAddress", ipv6Read.localAddress);
+        assertEquals(ipv6Only.ipv6Address, ipv6Read.ipv6Address);
+
+        // Clearing localAddress on an existing host with remoteAddress leaves localAddress null.
+        ComputerDetails cleared = new ComputerDetails();
+        cleared.uuid = "local-cleared";
+        cleared.name = "ClearedPC";
+        cleared.localAddress = new ComputerDetails.AddressTuple("192.168.1.10", 47989);
+        cleared.remoteAddress = new ComputerDetails.AddressTuple("203.0.113.99", 47989);
+        assertTrue(db.updateComputer(cleared));
+        cleared.localAddress = null;
+        assertTrue(db.updateComputer(cleared));
+        assertFalse(db.updateComputer(cleared));
+        ComputerDetails clearedRead = db.getComputerByUUID("local-cleared");
+        assertNotNull(clearedRead);
+        assertNull("cleared localAddress must stay null", clearedRead.localAddress);
+        assertEquals(cleared.remoteAddress, clearedRead.remoteAddress);
+
+        db.close();
+    }
+
+    @Test
+    public void legacyComputersDbSurvivesWhenHostsJsonIsUnreadableDirectory() {
+        Context context = RuntimeEnvironment.getApplication();
+        File v1Db = context.getDatabasePath("computers.db");
+        v1Db.getParentFile().mkdirs();
+        try (SQLiteDatabase db = SQLiteDatabase.openOrCreateDatabase(v1Db, null)) {
+            db.execSQL("CREATE TABLE Computers (ComputerName TEXT, UUID TEXT, LocalAddress TEXT, RemoteAddress TEXT, MacAddress TEXT)");
+            db.execSQL("INSERT INTO Computers (ComputerName, UUID, LocalAddress, RemoteAddress, MacAddress) VALUES (?, ?, ?, ?, ?)",
+                    new Object[] {"LegacyV1", "v1-uuid", "ADDRESS_PREFIX__192.168.1.40", null, "00:11:22:33:44:55"});
+        }
+
+        File hostsDir = new File(context.getFilesDir(), "hosts.json");
+        assertTrue(hostsDir.mkdirs());
+
+        ComputerDatabaseManager mgr = new ComputerDatabaseManager(context);
+        mgr.close();
+
+        assertTrue("computers.db must survive when hosts.json cannot be written", v1Db.exists());
+        assertTrue(hostsDir.isDirectory());
+        assertFalse(new File(context.getFilesDir(), ".hosts_migrated").exists());
+    }
 }

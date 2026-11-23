@@ -170,10 +170,51 @@ pub struct Plan {
     pub best_effort: BTreeSet<SocketAddr>,
 }
 
+/// Parses an IPv6 literal with an optional `%scope_id` zone suffix (and optional `[...]`
+/// brackets), returning `(ip, numeric_scope_id, interface_name_scope)`. Returns `None` if the
+/// address is not a valid IPv6 literal or has an empty zone suffix.
+pub fn parse_scoped_ipv6_literal(raw: &str) -> Option<(Ipv6Addr, Option<u32>, Option<&str>)> {
+    let trimmed = raw.trim();
+    let unbracketed = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    if let Some((ip_part, zone)) = unbracketed.split_once('%') {
+        if zone.is_empty() {
+            return None;
+        }
+        let ip = ip_part.parse::<Ipv6Addr>().ok()?;
+        if let Ok(num) = zone.parse::<u32>() {
+            Some((ip, Some(num), None))
+        } else {
+            Some((ip, None, Some(zone)))
+        }
+    } else {
+        let ip = unbracketed.parse::<Ipv6Addr>().ok()?;
+        Some((ip, None, None))
+    }
+}
+
 /// Builds a pure Wake-on-LAN transmission plan from already-resolved endpoint IPs.
 pub fn build_plan(
     macs: &[&str],
     resolved_endpoints: &[(IpAddr, u16)],
+    broadcast_http_ports: &[u16],
+    wake_broadcasts: &[&str],
+    links: &Links,
+) -> Result<Plan, String> {
+    let sockets: Vec<SocketAddr> = resolved_endpoints
+        .iter()
+        .map(|&(ip, port)| SocketAddr::new(ip, port))
+        .collect();
+    build_plan_sockets(macs, &sockets, broadcast_http_ports, wake_broadcasts, links)
+}
+
+/// Builds a pure Wake-on-LAN transmission plan from already-resolved endpoint socket addresses
+/// (preserving IPv6 `scope_id` values on link-local endpoints).
+pub fn build_plan_sockets(
+    macs: &[&str],
+    resolved_endpoints: &[SocketAddr],
     broadcast_http_ports: &[u16],
     wake_broadcasts: &[&str],
     links: &Links,
@@ -193,9 +234,12 @@ pub fn build_plan(
     }
 
     let mut destinations = BTreeSet::new();
-    for &(ip, http_port) in resolved_endpoints {
+    for &endpoint in resolved_endpoints {
+        let http_port = endpoint.port();
         for port in ports(http_port) {
-            destinations.insert(SocketAddr::new(ip, port));
+            let mut dest = endpoint;
+            dest.set_port(port);
+            destinations.insert(dest);
         }
     }
 

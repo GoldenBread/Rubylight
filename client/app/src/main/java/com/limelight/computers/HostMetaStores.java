@@ -16,10 +16,12 @@ import com.limelight.nvstream.jni.NightjarHostsJni;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 final class HostMetaStores {
     private static final ConcurrentHashMap<String, Long> HANDLES = new ConcurrentHashMap<>();
+    private static final Set<String> IMPORTED_SOURCES = ConcurrentHashMap.newKeySet();
 
     private HostMetaStores() {
     }
@@ -34,20 +36,34 @@ final class HostMetaStores {
 
     static long openSource(Context context, String source) {
         Context app = context.getApplicationContext();
+        File dir = app.getFilesDir();
         long handle = open(app);
-        if (NightjarHostsJni.metaNeedsImport(handle, source)) {
-            SharedPreferences prefs = app.getSharedPreferences(source, Context.MODE_PRIVATE);
-            Map<String, ?> all = prefs.getAll();
-            Json.Obj entries = Json.obj();
-            for (Map.Entry<String, ?> entry : all.entrySet()) {
-                Object val = entry.getValue();
-                if (val instanceof String || val instanceof Number || val instanceof Boolean) {
-                    entries.put(entry.getKey(), val);
+        String importKey = dir.getAbsolutePath() + "\0" + source;
+        if (!IMPORTED_SOURCES.contains(importKey)) {
+            synchronized (IMPORTED_SOURCES) {
+                if (!IMPORTED_SOURCES.contains(importKey)) {
+                    if (NightjarHostsJni.metaNeedsImport(handle, source)) {
+                        SharedPreferences prefs = app.getSharedPreferences(source, Context.MODE_PRIVATE);
+                        Map<String, ?> all = prefs.getAll();
+                        Json.Obj entries = Json.obj();
+                        for (Map.Entry<String, ?> entry : all.entrySet()) {
+                            Object val = entry.getValue();
+                            if (val instanceof String || val instanceof Number || val instanceof Boolean) {
+                                entries.put(entry.getKey(), val);
+                            }
+                        }
+                        boolean migrated = NightjarHostsJni.metaImportLegacy(handle, source, entries.toString())
+                                || !NightjarHostsJni.metaNeedsImport(handle, source);
+                        if (migrated) {
+                            if (!all.isEmpty()) {
+                                prefs.edit().clear().commit();
+                            }
+                            IMPORTED_SOURCES.add(importKey);
+                        }
+                    } else {
+                        IMPORTED_SOURCES.add(importKey);
+                    }
                 }
-            }
-            NightjarHostsJni.metaImportLegacy(handle, source, entries.toString());
-            if (!all.isEmpty()) {
-                prefs.edit().clear().commit();
             }
         }
         return handle;
@@ -58,8 +74,11 @@ final class HostMetaStores {
         if (context == null) return;
         File dir = context.getApplicationContext().getFilesDir();
         if (dir == null) return;
+        String dirKey = dir.getAbsolutePath();
+        String prefix = dirKey + "\0";
+        IMPORTED_SOURCES.removeIf(k -> k.startsWith(prefix));
         synchronized (HANDLES) {
-            Long h = HANDLES.remove(dir.getAbsolutePath());
+            Long h = HANDLES.remove(dirKey);
             if (h != null && h != 0L) {
                 NightjarHostsJni.metaStoreDestroy(h);
             }
@@ -68,6 +87,7 @@ final class HostMetaStores {
 
     @VisibleForTesting
     static void resetForTests() {
+        IMPORTED_SOURCES.clear();
         synchronized (HANDLES) {
             for (Long h : new ArrayList<>(HANDLES.values())) {
                 if (h != null && h != 0L) {

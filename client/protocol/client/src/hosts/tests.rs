@@ -58,7 +58,71 @@ fn host_store_unreadable_directory_refuses_overwrite() {
     assert!(store.all().is_empty());
     let err = store.save_records::<HostEntry>(&[]).unwrap_err();
     assert!(err.to_string().contains("left as it is"), "{err}");
+    assert!(store.import_legacy_if_needed(Vec::new()).is_err());
+    assert!(!store.has_migrated_legacy());
     assert!(dir.join("hosts.json").is_dir());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn host_store_upsert_preserves_all_desktop_shared_fields_and_pinned_endpoint() {
+    let dir = temp_dir("desktop-preserve");
+    let store = HostStore::open(&dir);
+
+    let mut desktop = HostEntry::default();
+    desktop.shared.unique_id = "pc-desk".into();
+    desktop.shared.name = "Rig".into();
+    desktop.shared.alias = Some("Main Rig".into());
+    desktop.shared.address = "192.168.1.5".into();
+    desktop.shared.http_port = 47989;
+    desktop.shared.https_port = 47984;
+    desktop.shared.other_addresses = vec!["10.0.0.5".into()];
+    desktop.shared.other_http_ports = vec![48000];
+    desktop.shared.pinned_address = Some("10.0.0.5".into());
+    desktop.shared.remote_address = Some("203.0.113.5".into());
+    desktop.shared.wake_macs = vec!["aa:bb:cc:dd:ee:02".into()];
+    desktop.shared.wake_broadcasts = vec!["10.0.0.255".into()];
+    desktop.shared.own_wake_macs = vec!["aa:bb:cc:dd:ee:03".into()];
+    desktop.shared.quit_on_leave.insert("uuid:game-1".into());
+    desktop.shared.notices.insert("PYROWAVE_FALLBACK".into());
+    desktop.shared.full_chroma.modes = Some(3);
+    desktop.shared.full_chroma.refused = true;
+    desktop.shared.internet_play = Some("{\"version\":1}".into());
+    desktop.pinned_endpoint = EndpointSlot::new("10.0.0.5", 48000);
+    desktop.extra.insert("pace".into(), serde_json::json!({"pace_mbps": 150}));
+    desktop.extra.insert("future_field".into(), serde_json::json!("kept"));
+    assert!(store.upsert(desktop).unwrap());
+
+    let mut android_update = HostEntry::default();
+    android_update.shared.unique_id = "pc-desk".into();
+    android_update.shared.name = "Rig-Renamed".into();
+    android_update.shared.address = "192.168.1.9".into();
+    android_update.shared.http_port = 47989;
+    android_update.local_endpoint = EndpointSlot::new("192.168.1.9", 47989);
+    android_update.ipv6_endpoint = EndpointSlot::new("2001:db8::9", 47989);
+    assert!(store.upsert(android_update.clone()).unwrap());
+    assert!(!store.upsert(android_update).unwrap());
+
+    let loaded = store.get_by_uuid("pc-desk").unwrap();
+    assert_eq!(loaded.shared.name, "Rig-Renamed");
+    assert_eq!(loaded.local_endpoint, EndpointSlot::new("192.168.1.9", 47989));
+    assert_eq!(loaded.ipv6_endpoint, EndpointSlot::new("2001:db8::9", 47989));
+    assert_eq!(loaded.shared.alias.as_deref(), Some("Main Rig"));
+    assert_eq!(loaded.shared.https_port, 47984);
+    assert_eq!(loaded.shared.other_addresses, vec!["10.0.0.5"]);
+    assert_eq!(loaded.shared.other_http_ports, vec![48000]);
+    assert_eq!(loaded.shared.pinned_address.as_deref(), Some("10.0.0.5"));
+    assert_eq!(loaded.shared.wake_macs, vec!["aa:bb:cc:dd:ee:02"]);
+    assert_eq!(loaded.shared.wake_broadcasts, vec!["10.0.0.255"]);
+    assert_eq!(loaded.shared.own_wake_macs, vec!["aa:bb:cc:dd:ee:03"]);
+    assert!(loaded.shared.quit_on_leave.contains("uuid:game-1"));
+    assert!(loaded.shared.notices.contains("PYROWAVE_FALLBACK"));
+    assert_eq!(loaded.shared.full_chroma.modes, Some(3));
+    assert!(loaded.shared.full_chroma.refused);
+    assert_eq!(loaded.shared.internet_play.as_deref(), Some("{\"version\":1}"));
+    assert_eq!(loaded.pinned_endpoint, EndpointSlot::new("10.0.0.5", 48000));
+    assert_eq!(loaded.extra.get("future_field"), Some(&serde_json::json!("kept")));
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 

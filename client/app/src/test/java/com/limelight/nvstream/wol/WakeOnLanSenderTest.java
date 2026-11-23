@@ -191,4 +191,17 @@ public class WakeOnLanSenderTest {
         }
         assertEquals(3, attempts[0]);
     }
+
+    @Test
+    public void scopedIpv6ResolvedEndpointsAreNotDroppedFromWolPlan() throws Exception {
+        String reply = com.limelight.nvstream.jni.NightjarDiscoveryJni.wolPlan(
+                "{\"macs\":[\"02:7c:16:b4:13:4f\"],"
+                        + "\"endpoints\":[{\"addr\":\"fe80::1%wlan0\",\"port\":47989}],"
+                        + "\"resolved_endpoints\":[{\"addr\":\"fe80::1%wlan0\",\"port\":47989},{\"addr\":\"fe80::2%3\",\"port\":47989}],"
+                        + "\"wake_broadcasts\":[],\"local_broadcasts\":[],\"ipv6_scopes\":[],"
+                        + "\"fallback_port\":47989,\"use_pre_resolved\":true}");
+        assertTrue("expected fe80::1 in destinations: " + reply, reply.contains("\"ip\":\"fe80::1\""));
+        assertTrue("expected fe80::2 with scope 3 in destinations: " + reply,
+                reply.contains("\"ip\":\"fe80::2\"") && reply.contains("\"scope\":3"));
+    }
 }

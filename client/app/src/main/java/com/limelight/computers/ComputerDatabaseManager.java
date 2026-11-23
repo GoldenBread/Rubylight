@@ -73,8 +73,18 @@ public class ComputerDatabaseManager {
     private static long openAndMigrate(Context app) {
         File dir = app.getFilesDir();
         long h = handleFor(dir);
-        if (MIGRATED_DIRS.add(dir.getAbsolutePath()) && !NightjarHostsJni.hostStoreHasMigrated(h)) {
-            migrateLegacy(app, h);
+        String key = dir.getAbsolutePath();
+        if (!MIGRATED_DIRS.contains(key)) {
+            synchronized (MIGRATED_DIRS) {
+                if (!MIGRATED_DIRS.contains(key)) {
+                    if (!NightjarHostsJni.hostStoreHasMigrated(h)) {
+                        migrateLegacy(app, h);
+                    }
+                    if (NightjarHostsJni.hostStoreHasMigrated(h)) {
+                        MIGRATED_DIRS.add(key);
+                    }
+                }
+            }
         }
         return h;
     }
@@ -111,8 +121,10 @@ public class ComputerDatabaseManager {
             }
         }
         NightjarHostsJni.hostStoreImportLegacy(handle, arr.toString());
-        for (String db : deleteAfter) {
-            app.deleteDatabase(db);
+        if (NightjarHostsJni.hostStoreHasMigrated(handle)) {
+            for (String db : deleteAfter) {
+                app.deleteDatabase(db);
+            }
         }
     }
 

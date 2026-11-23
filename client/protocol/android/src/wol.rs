@@ -2,15 +2,15 @@
 //! transmission, `WakeTargetsStore`, `WakeTargetsPollState`, and `WakeLaunch`.
 
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jbyteArray, jint, jintArray, jlong, jstring};
 use nightjar_core::wol::{
     Links, Plan, WakeHost, WakeLaunch, WakeStep, WakeTargetEntry, WakeTargetsPollState,
-    WakeTargetsStore, build_plan, magic_packet, parse_ipv4_literal, parse_macs, plan, ports,
-    send_udp,
+    WakeTargetsStore, build_plan_sockets, magic_packet, parse_ipv4_literal, parse_macs, plan,
+    ports, resolve_endpoint_literal, send_udp,
 };
 use serde::{Deserialize, Serialize};
 
@@ -114,10 +114,10 @@ fn build_plan_from_request(req: &WolPlanRequest) -> Result<Plan, String> {
     }
     if req.use_pre_resolved {
         let mac_refs: Vec<&str> = req.macs.iter().map(String::as_str).collect();
-        let resolved: Vec<(IpAddr, u16)> = req
+        let resolved: Vec<SocketAddr> = req
             .resolved_endpoints
             .iter()
-            .filter_map(|ep| ep.addr.parse::<IpAddr>().ok().map(|ip| (ip, ep.port)))
+            .filter_map(|ep| resolve_endpoint_literal(&ep.addr, ep.port))
             .collect();
         let ports: Vec<u16> = if req.endpoints.is_empty() {
             vec![if req.fallback_port == 0 { 47989 } else { req.fallback_port }]
@@ -125,7 +125,7 @@ fn build_plan_from_request(req: &WolPlanRequest) -> Result<Plan, String> {
             req.endpoints.iter().map(|e| e.port).collect()
         };
         let bcast_refs: Vec<&str> = req.wake_broadcasts.iter().map(String::as_str).collect();
-        build_plan(&mac_refs, &resolved, &ports, &bcast_refs, &links)
+        build_plan_sockets(&mac_refs, &resolved, &ports, &bcast_refs, &links)
     } else {
         let endpoints: Vec<(String, u16)> = req
             .endpoints
@@ -604,5 +604,45 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarDiscoveryJni_wake
         WakeStep::Send => 1,
         WakeStep::Online => 2,
         WakeStep::TimedOut => 3,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn wol_plan_preserves_scoped_ipv6_resolved_endpoints() {
+        let req = WolPlanRequest {
+            macs: vec!["02:7c:16:b4:13:4f".into()],
+            endpoints: vec![EndpointInput {
+                addr: "fe80::1%wlan0".into(),
+                port: 47989,
+            }],
+            resolved_endpoints: vec![
+                EndpointInput {
+                    addr: "fe80::1%wlan0".into(),
+                    port: 47989,
+                },
+                EndpointInput {
+                    addr: "fe80::2%3".into(),
+                    port: 47989,
+                },
+            ],
+            use_pre_resolved: true,
+            ..Default::default()
+        };
+        let built = build_plan_from_request(&req).unwrap();
+        let v6_1: Ipv6Addr = "fe80::1".parse().unwrap();
+        let v6_2: Ipv6Addr = "fe80::2".parse().unwrap();
+        assert!(built.destinations.iter().any(|d| matches!(
+            d,
+            SocketAddr::V6(v6) if *v6.ip() == v6_1 && v6.port() == 47998
+        )));
+        assert!(built.destinations.iter().any(|d| matches!(
+            d,
+            SocketAddr::V6(v6) if *v6.ip() == v6_2 && v6.scope_id() == 3 && v6.port() == 47998
+        )));
     }
 }

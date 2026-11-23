@@ -6,7 +6,6 @@
 package com.limelight.binding.crypto;
 
 import android.content.Context;
-import android.util.Base64;
 
 import com.limelight.LimeLog;
 import com.limelight.nvstream.http.LimelightCryptoProvider;
@@ -127,6 +126,6 @@ public class AndroidCryptoProvider implements LimelightCryptoProvider {
 
     @Override
     public String encodeBase64String(byte[] data) {
-        return Base64.encodeToString(data, Base64.NO_WRAP);
+        return java.util.Base64.getEncoder().encodeToString(data);
     }
 }

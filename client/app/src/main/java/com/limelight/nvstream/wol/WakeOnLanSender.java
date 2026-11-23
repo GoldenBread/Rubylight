@@ -114,7 +114,12 @@ public class WakeOnLanSender {
         Json.Arr destArr = ok.getArray("destinations");
         for (int i = 0; i < destArr.length(); i++) {
             Json.Obj d = destArr.getObject(i);
-            destinations.add(new InetSocketAddress(InetAddress.getByName(d.getString("ip")), d.getInt("port")));
+            InetAddress addr = InetAddress.getByName(d.getString("ip"));
+            int scope = d.isNull("scope") ? 0 : d.optInt("scope", 0);
+            if (scope > 0 && addr instanceof Inet6Address) {
+                addr = Inet6Address.getByAddress(null, addr.getAddress(), scope);
+            }
+            destinations.add(new InetSocketAddress(addr, d.getInt("port")));
         }
         Set<InetSocketAddress> bestEffort = new LinkedHashSet<>();
         Json.Arr bestArr = ok.getArray("best_effort");

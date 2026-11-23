@@ -1506,6 +1506,20 @@ pub struct HostRecord {
     /// rendezvous secret for this device, IPv6 addresses and forwarded ports, for reaching it
     /// from outside (`nightjar_core::internet`). None until a PC that offers it answered.
     pub internet_play: Option<String>,
+    /// Typed Android endpoint slots and unknown fields in `hosts.json`, preserved losslessly when
+    /// Desktop loads and saves records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_endpoint: Option<nightjar_policy::hosts::EndpointSlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_endpoint: Option<nightjar_policy::hosts::EndpointSlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_endpoint: Option<nightjar_policy::hosts::EndpointSlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ipv6_endpoint: Option<nightjar_policy::hosts::EndpointSlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_endpoint: Option<nightjar_policy::hosts::EndpointSlot>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

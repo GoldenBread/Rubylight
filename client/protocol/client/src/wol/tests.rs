@@ -44,6 +44,30 @@ fn plan_and_send_handle_dns_fallback_and_best_effort_v6() {
 }
 
 #[test]
+fn plan_preserves_scoped_ipv6_endpoints() {
+    let host = WakeHost {
+        mac: Some("02:7c:16:b4:13:4f"),
+        endpoints: &[
+            ("fe80::1%wlan0".into(), 47989),
+            ("[fe80::2%3]".into(), 47989),
+        ],
+        wake_macs: &[],
+        wake_broadcasts: &[],
+        own_wake_macs: &[],
+        fallback_http_port: 47989,
+    };
+    let p = plan(&host, &Links::default()).unwrap();
+    assert!(p.destinations.iter().any(|d| matches!(
+        d,
+        SocketAddr::V6(v6) if *v6.ip() == "fe80::1".parse::<std::net::Ipv6Addr>().unwrap() && v6.port() == 47998
+    )));
+    assert!(p.destinations.iter().any(|d| matches!(
+        d,
+        SocketAddr::V6(v6) if *v6.ip() == "fe80::2".parse::<std::net::Ipv6Addr>().unwrap() && v6.scope_id() == 3 && v6.port() == 47998
+    )));
+}
+
+#[test]
 fn wake_targets_store_persists_isolates_manual_and_imports_idempotently() {
     let dir = temp_dir("store");
     let store = WakeTargetsStore::open(&dir);
