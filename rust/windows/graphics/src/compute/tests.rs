@@ -780,3 +780,11 @@ fn compute_after_a_reset_waits_for_a_fresh_device_and_no_longer() {
     assert!(DeviceLost::from_error(&result.unwrap_err()).is_some());
     assert!(again < 20);
 }
+
+#[test]
+fn planar_compute_pipeline_selects_only_pyro_cs_and_its_uav_range() {
+    assert_eq!(InitialPipeline::Yuv.shader_entry(), b"yuv420_cs\0");
+    assert_eq!(InitialPipeline::Yuv.uav_range(), (0, 2));
+    assert_eq!(InitialPipeline::Planar.shader_entry(), b"pyro_cs\0");
+    assert_eq!(InitialPipeline::Planar.uav_range(), (2, 3));
+}

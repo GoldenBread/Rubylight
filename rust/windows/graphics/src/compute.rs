@@ -749,10 +749,12 @@ struct PointerUpload {
 /// D3D11 converter (scaling, letterboxing, HDR and the colour matrix).
 pub struct Converter {
     compute: Arc<Compute>,
-    root: ID3D12RootSignature,
-    /// Luma and chroma in one pass over 2x2 blocks.
-    convert: ID3D12PipelineState,
-    /// PyroWave's three planes, made when first used.
+    /// Luma and chroma in one pass over 2x2 blocks (`yuv420_cs` or
+    /// `chroma_pack_cs`). `None` on a planar-only converter until `convert` or
+    /// `pack_chroma` needs it.
+    yuv: Option<(ID3D12RootSignature, ID3D12PipelineState)>,
+    /// PyroWave's three planes (`pyro_cs`), made at creation by
+    /// [`Self::new_planar`] or when [`Self::convert_planes`] is first used.
     planar: Option<(ID3D12RootSignature, ID3D12PipelineState)>,
     heap: ID3D12DescriptorHeap,
     increment: u32,
@@ -827,7 +829,12 @@ impl Converter {
             self.focus.is_none(),
             "encoder focus does not support packed 4:4:4"
         );
-        self.convert = pipeline(&self.compute.device, &self.root, b"chroma_pack_cs\0")?;
+        let root = match &self.yuv {
+            Some((root, _)) => root.clone(),
+            None => root_signature(&self.compute.device, 0, 2)?,
+        };
+        let convert = pipeline(&self.compute.device, &root, b"chroma_pack_cs\0")?;
+        self.yuv = Some((root, convert));
         self.packs_chroma = true;
         Ok(())
     }
@@ -865,6 +872,15 @@ impl Converter {
         Ok(())
     }
     pub fn new(compute: Arc<Compute>, width: u32, height: u32, ten_bit: bool) -> Result<Self> {
+        Self::new_with_pipeline(compute, width, height, ten_bit, InitialPipeline::Yuv)
+    }
+    fn new_with_pipeline(
+        compute: Arc<Compute>,
+        width: u32,
+        height: u32,
+        ten_bit: bool,
+        initial: InitialPipeline,
+    ) -> Result<Self> {
         compute.ensure_active()?;
         if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
             bail!("compute conversion needs even, nonzero dimensions");
@@ -873,8 +889,13 @@ impl Converter {
         // `constants` (SLOTS * 512 bytes) stays mapped at `mapped` until Unmap in Drop.
         unsafe {
             let device = &compute.device;
-            let root = root_signature(device, 0, 2)?;
-            let convert = pipeline(device, &root, b"yuv420_cs\0")?;
+            let (first_uav, uav_count) = initial.uav_range();
+            let root = root_signature(device, first_uav, uav_count)?;
+            let pso = pipeline(device, &root, initial.shader_entry())?;
+            let (yuv, planar) = match initial {
+                InitialPipeline::Yuv => (Some((root, pso)), None),
+                InitialPipeline::Planar => (None, Some((root, pso))),
+            };
             let heap: ID3D12DescriptorHeap =
                 device.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC {
                     Type: D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
@@ -926,9 +947,8 @@ impl Converter {
             }
             Ok(Self {
                 compute,
-                root,
-                convert,
-                planar: None,
+                yuv,
+                planar,
                 heap,
                 increment,
                 constants,
@@ -1269,6 +1289,15 @@ impl Converter {
             (true, _) => (&b"chroma_pack_menu_cs\0"[..], [2, 1]),
         };
         let menu = self.menu_pass(slot, entry, 0, 2, block)?;
+        let focus_active = self
+            .focus
+            .as_deref()
+            .is_some_and(|focus| focus.settings.is_some());
+        if !focus_active && self.yuv.is_none() {
+            let root = root_signature(&self.compute.device, 0, 2)?;
+            let convert = pipeline(&self.compute.device, &root, b"yuv420_cs\0")?;
+            self.yuv = Some((root, convert));
+        }
         // SAFETY: The slot's last conversion has finished (waited above), so its constants and
         // views may be rewritten, and every view and barrier names a live resource on this device.
         unsafe {
@@ -1314,9 +1343,13 @@ impl Converter {
                 .focus
                 .as_deref()
                 .filter(|focus| focus.settings.is_some());
-            let (root, convert) = focus.map_or((&self.root, &self.convert), |focus| {
-                (&focus.root, &focus.convert)
-            });
+            let (root, convert) = match focus {
+                Some(focus) => (&focus.root, &focus.convert),
+                None => {
+                    let (root, convert) = self.yuv.as_ref().expect("YUV pipeline ensured above");
+                    (root, convert)
+                }
+            };
             allocator.Reset()?;
             list.Reset(allocator, convert)?;
             if let Some(menu) = &menu {
@@ -1417,185 +1450,14 @@ impl Converter {
         self.queue_hdr_stats(slot, fence);
         Ok(converted)
     }
-    /// Convert `source` into PyroWave's Y, Cb and Cr planes, full size or
-    /// with chroma halved (`values[11]`), in textures the encoder shares
-    /// with Vulkan. The queue first waits for `target.fence` to reach
-    /// `target.after`, when the encoder is done with the planes, then
-    /// signals `target.done`.
-    pub fn convert_planes(
-        &mut self,
-        source: &ID3D12Resource,
-        format: DXGI_FORMAT,
-        pointer: Option<&ID3D12Resource>,
-        ready: Option<&Ready>,
-        target: &Planes,
-        image: Option<&crate::capture::GpuImage>,
-    ) -> Result<()> {
-        self.compute.ensure_active()?;
-        self.release_completed();
-        validate_colour_input(&self.values)?;
-        let (root, planar) = match &self.planar {
-            Some(planar) => planar.clone(),
-            None => {
-                let root = root_signature(&self.compute.device, 2, 3)?;
-                let planar = pipeline(&self.compute.device, &root, b"pyro_cs\0")?;
-                self.planar = Some((root.clone(), planar.clone()));
-                (root, planar)
-            }
-        };
-        let slot = self.slot;
-        self.slot = (self.slot + 1) % SLOTS;
-        self.compute.wait(self.slots[slot].last())?;
-        self.slots[slot].capture = None;
-        self.reset_hdr_stats(slot);
-        // `convert_planes` writes planar UAVs into `at(2..=4)`; a later `convert`
-        // into this slot must make its own target views there.
-        self.slots[slot].target_view = None;
-        let menu = self.menu_pass(slot, b"pyro_menu_cs\0", 2, 3, [2, 2])?;
-        self.slots[slot].inputs = [
-            Some(source.clone()),
-            pointer.cloned(),
-            menu.as_ref().map(|menu| menu.texture.clone()),
-        ];
-        self.slots[slot].capture = image.cloned();
-        self.slots[slot].outputs = target.planes.to_vec();
-        self.slots[slot].waits = ready
-            .map(|ready| ready.fence.clone())
-            .into_iter()
-            .chain(std::iter::once(target.fence.clone()))
-            .collect();
-        // The planes carry no map, so the slot's old one must not look like theirs.
-        if let Some(focus) = self.focus.as_deref_mut() {
-            focus.written[slot] = false;
-        }
-        // `ComputePlanes` passes the encoder's same three planes every frame, so
-        // their UAVs are only remade when the planes or their format change. The
-        // slot's `outputs` keep them alive while their views are cached.
-        let planar_key = (
-            target
-                .planes
-                .each_ref()
-                .map(|plane| plane.as_raw() as usize),
-            target.format.0,
-        );
-        // SAFETY: As in `convert`, the slot is idle; `target`'s planes are on `compute.device`.
-        unsafe {
-            self.write_values(slot);
-            let device = &self.compute.device;
-            let cpu = self.heap.GetCPUDescriptorHandleForHeapStart();
-            let gpu = self.heap.GetGPUDescriptorHandleForHeapStart();
-            let at = |index: usize| D3D12_CPU_DESCRIPTOR_HANDLE {
-                ptr: cpu.ptr + (slot * VIEWS + index) * self.increment as usize,
-            };
-            device.CreateShaderResourceView(source, Some(&texture_srv(format)), at(0));
-            device.CreateShaderResourceView(
-                pointer,
-                Some(&texture_srv(DXGI_FORMAT_R8G8B8A8_UNORM)),
-                at(1),
-            );
-            if self.slots[slot].planar_view != Some(planar_key) {
-                for (index, plane) in target.planes.iter().enumerate() {
-                    device.CreateUnorderedAccessView(
-                        plane,
-                        None,
-                        Some(&texture_uav(target.format, 0)),
-                        at(2 + index),
-                    );
-                }
-                self.slots[slot].planar_view = Some(planar_key);
-            }
-            let Slot {
-                allocator, list, ..
-            } = &self.slots[slot];
-            allocator.Reset()?;
-            list.Reset(allocator, &planar)?;
-            if let Some(menu) = &menu {
-                menu.copy(list);
-            }
-            let mut barriers = target.planes.each_ref().map(|plane| {
-                transition(
-                    plane,
-                    D3D12_RESOURCE_STATE_COMMON,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                )
-            });
-            list.ResourceBarrier(&barriers);
-            drop_barriers(&mut barriers);
-            list.SetComputeRootSignature(&root);
-            list.SetDescriptorHeaps(&[Some(self.heap.clone())]);
-            list.SetComputeRootConstantBufferView(
-                0,
-                self.constants.GetGPUVirtualAddress() + (slot * 256) as u64,
-            );
-            let table = |index: usize| D3D12_GPU_DESCRIPTOR_HANDLE {
-                ptr: gpu.ptr + ((slot * VIEWS + index) * self.increment as usize) as u64,
-            };
-            list.SetComputeRootDescriptorTable(1, table(0));
-            list.SetComputeRootDescriptorTable(2, table(2));
-            list.Dispatch(
-                (self.width / 2).div_ceil(8),
-                (self.height / 2).div_ceil(8),
-                1,
-            );
-            if let Some(menu) = &menu {
-                menu.record(list, self.constants.GetGPUVirtualAddress(), slot, table);
-            }
-            let mut barriers = target.planes.each_ref().map(|plane| {
-                transition(
-                    plane,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_COMMON,
-                )
-            });
-            list.ResourceBarrier(&barriers);
-            drop_barriers(&mut barriers);
-            list.Close()?;
-        }
-        let ordered = self
-            .compute
-            .ensure_active()
-            .and_then(|()| self.wait_capture(ready))
-            .and_then(|()| {
-                // SAFETY: `target.fence` is opened on this queue's device and outlives the call.
-                unsafe { self.compute.queue.Wait(&target.fence, target.after) }
-                    .inspect_err(|_| self.compute.retire())
-                    .map_err(Into::into)
-            });
-        let Slot { fence, list, .. } = &mut self.slots[slot];
-        let (compute, overlay) = (&self.compute, &mut self.menu);
-        submit_slot(
-            fence,
-            ordered,
-            || overlay.submitting(menu.as_ref()),
-            || compute.execute(list).inspect_err(|_| compute.retire()),
-        )?;
-        if let Some(menu) = &menu {
-            self.menu_submitted(menu, self.slots[slot].fence);
-        }
-        if let Some(ready) = ready {
-            ready.read_by(&self.compute, self.slots[slot].fence)?;
-        }
-        // SAFETY: `target.fence` is opened on this queue's device and outlives the call.
-        unsafe { self.compute.queue.Signal(&target.fence, target.done) }
-            .inspect_err(|_| self.compute.retire())?;
-        Ok(())
-    }
-}
-/// PyroWave's planes on the compute device and the fence the encoder's
-/// Vulkan queue shares, for [`Converter::convert_planes`].
-pub struct Planes {
-    pub planes: [ID3D12Resource; 3],
-    /// `DXGI_FORMAT_R16_UNORM` for ten-bit streams, else `R8_UNORM`.
-    pub format: DXGI_FORMAT,
-    pub fence: ID3D12Fence,
-    pub after: u64,
-    pub done: u64,
 }
 impl Drop for Converter {
     fn drop(&mut self) {
         let mut work = RetainedWork::new(&self.compute, &self.compute.queue);
-        work.keep(&self.root);
-        work.keep(&self.convert);
+        if let Some((root, pipeline)) = &self.yuv {
+            work.keep(root);
+            work.keep(pipeline);
+        }
         if let Some((root, pipeline)) = &self.planar {
             work.keep(root);
             work.keep(pipeline);
@@ -1997,7 +1859,10 @@ pub mod frame_warp;
 pub(crate) mod hdr_stats;
 #[path = "compute_menu.rs"]
 mod menu;
+mod planar;
 pub use hdr_stats::{HDR_STATS_BINS, HdrStatsReadout};
+use planar::InitialPipeline;
+pub use planar::Planes;
 /// A transition of every subresource; `drop_barriers` releases its reference.
 fn transition(
     resource: &ID3D12Resource,

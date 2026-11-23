@@ -303,3 +303,114 @@ fn legacy_and_record_frames_do_not_accumulate_a_pause_budget() {
         );
     }
 }
+
+#[test]
+fn warmup_budget_covers_configured_streams_and_degenerate_inputs() {
+    let hdr_120 = Negotiated {
+        width: 1920,
+        height: 1080,
+        fps: 120,
+        bitrate_kbps: 794_995,
+        codec: 3,
+        hdr: true,
+        packet_size: 1392,
+        pyrowave_records: true,
+        min_fec: 2,
+        ..Default::default()
+    };
+    let budget = warmup_budget(&hdr_120, true, 20);
+    assert!(budget >= WARMUP_MIN_BUDGET);
+    assert!(budget <= pyrowave::max_frame_bytes(hdr_120.packet_size, true));
+    assert_eq!(budget & 3, 0);
+
+    let legacy = Negotiated {
+        pyrowave_records: false,
+        ..hdr_120.clone()
+    };
+    let legacy_budget = warmup_budget(&legacy, false, 0);
+    assert!(legacy_budget >= WARMUP_MIN_BUDGET);
+    assert_eq!(legacy_budget & 3, 0);
+
+    // Default config, zero bitrate, and tiny/zero packet size all produce valid aligned budgets.
+    let default_budget = warmup_budget(&Negotiated::default(), false, 0);
+    assert!(default_budget >= WARMUP_MIN_BUDGET);
+    assert_eq!(default_budget & 3, 0);
+    for packet_size in [0, 16] {
+        assert_eq!(
+            warmup_budget(
+                &Negotiated {
+                    packet_size,
+                    ..Default::default()
+                },
+                false,
+                0,
+            ),
+            WARMUP_MIN_BUDGET
+        );
+    }
+    assert_eq!(
+        warmup_budget(
+            &Negotiated {
+                packet_size: 1392,
+                bitrate_kbps: 0,
+                fps: 60,
+                ..Default::default()
+            },
+            false,
+            0,
+        ),
+        WARMUP_MIN_BUDGET
+    );
+}
+
+#[test]
+fn precreated_slots_are_reused_until_an_established_source_changes() {
+    let f16 = (1920, 1080, Pixel::RgbaF16);
+    let pq10 = (1920, 1080, Pixel::Rgba10Pq);
+    let resized = (2560, 1440, Pixel::RgbaF16);
+    // An encoder opened without a sample image keeps its pre-created slots on frame 1.
+    assert!(!source_rebuilds_slots(None, f16));
+    // Matching source reuses the pre-created slots.
+    assert!(!source_rebuilds_slots(Some(f16), f16));
+    // Format or dimension changes still rebuild slots.
+    assert!(source_rebuilds_slots(Some(f16), pq10));
+    assert!(source_rebuilds_slots(Some(f16), resized));
+}
+
+#[test]
+fn warmup_outcome_quarantines_unconfirmed_gpu_work_but_not_d3d_device_loss() {
+    let loss = crate::device_loss::DeviceLost(DXGI_ERROR_DEVICE_REMOVED.0);
+
+    // Confirmed warmup on healthy devices stays clean.
+    let (mut unconfirmed, mut lost) = (false, None);
+    assert!(finish_warmup(Ok(true), None, &mut unconfirmed, &mut lost).is_ok());
+    assert!(!unconfirmed);
+    assert_eq!(lost, None);
+
+    // Confirmed Vulkan wait followed by a lost D3D device reports DeviceLost without quarantining.
+    let (mut unconfirmed, mut lost) = (false, None);
+    let error = finish_warmup(Ok(true), Some(loss), &mut unconfirmed, &mut lost).unwrap_err();
+    assert!(!unconfirmed);
+    assert_eq!(lost, Some(loss));
+    assert_eq!(
+        crate::device_loss::DeviceLost::from_error(&error),
+        Some(loss)
+    );
+
+    // Unconfirmed wait (timeout) marks unconfirmed for quarantine.
+    let (mut unconfirmed, mut lost) = (false, None);
+    assert!(finish_warmup(Ok(false), None, &mut unconfirmed, &mut lost).is_err());
+    assert!(unconfirmed);
+    assert_eq!(lost, None);
+
+    // Vulkan device loss during wait marks unconfirmed and records the loss.
+    let (mut unconfirmed, mut lost) = (false, None);
+    let vk_loss = completion_result(p::VkResult_VK_ERROR_DEVICE_LOST).map(|()| true);
+    let error = finish_warmup(vk_loss, None, &mut unconfirmed, &mut lost).unwrap_err();
+    assert!(unconfirmed);
+    assert_eq!(lost, Some(loss));
+    assert_eq!(
+        crate::device_loss::DeviceLost::from_error(&error),
+        Some(loss)
+    );
+}

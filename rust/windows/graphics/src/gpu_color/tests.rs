@@ -949,7 +949,7 @@ fn compute_planes_match_the_pyrowave_graphics_planes() -> Result<()> {
                         );
                     }
                     if yuv444 {
-                        graphics.combined = None;
+                        graphics.use_combined = false;
                         graphics.convert(&image, [100., 1.])?;
                         for (texture, expected) in graphics.textures.iter().zip(&expected) {
                             assert_eq!(
@@ -1764,7 +1764,7 @@ fn converters_take_their_contexts_lock_once_and_hold_it_per_conversion() -> Resu
     let mut convert = Converter::new(&gpu, &config, (64, 64, Pixel::RgbaF16))?;
     assert_eq!(convert.lock.cast::<IUnknown>()?.as_raw(), context.as_raw());
     let mut planar = PlanarConverter::new(&gpu, &config, (64, 64, Pixel::RgbaF16))?;
-    let planar_lock = planar.base.lock.cast::<IUnknown>()?;
+    let planar_lock = planar.lock.cast::<IUnknown>()?;
     assert_eq!(planar_lock.as_raw(), context.as_raw());
     // Every conversion enters and leaves it, and converts the same frame alike each time.
     let first = readback(&gpu, convert.convert(&image)?.as_ref())?;

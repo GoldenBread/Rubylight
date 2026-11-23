@@ -321,9 +321,9 @@ impl Encoder {
                     "PyroWave stream: no HDR dynamic metadata (HDR10+, HDR Vivid) is sent"
                 );
             }
-            Self::Pyrowave(Box::new(crate::pyrowave::Encoder::new_device_reported(
+            Self::Pyrowave(Box::new(crate::pyrowave::Encoder::new_gpu_reported(
                 config,
-                image.gpu.clone(),
+                image,
                 tuning,
                 warnings.clone(),
             )?))

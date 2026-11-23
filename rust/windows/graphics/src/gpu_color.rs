@@ -219,26 +219,65 @@ fn pointer_constants(pointer: Option<&crate::cursor::Cursor>) -> [u32; 8] {
         ]
     })
 }
+fn validate_dimensions(config: &butterpollo_media_policy::rtsp::Negotiated) -> Result<()> {
+    if config.width == 0
+        || config.height == 0
+        || (!config.yuv444
+            && config.chroma_packing == 0
+            && (!config.width.is_multiple_of(2) || !config.height.is_multiple_of(2)))
+    {
+        bail!("GPU conversion requires nonzero dimensions, and even dimensions for 4:2:0");
+    }
+    Ok(())
+}
+fn validate_source(
+    config: &butterpollo_media_policy::rtsp::Negotiated,
+    source: (u32, u32, Pixel),
+) -> Result<()> {
+    // An HDR desktop hands an SDR stream FP16 frames, which the shader
+    // takes back to sRGB; only PQ has no SDR path. Refusing FP16 failed
+    // every fallback from the compute queue on such a desktop.
+    if !config.hdr && source.2 == Pixel::Rgba10Pq {
+        bail!("HDR surface supplied to an SDR converter");
+    }
+    Ok(())
+}
+fn set_luminance_values(values: &mut [u32; 20], dirty: &mut bool, luminance: [f32; 2]) {
+    // Kept in step with `constants`.
+    let white = (luminance[0] / 80.).to_bits();
+    let scale = luminance[1].to_bits();
+    if values[9] != white || values[10] != scale {
+        values[9] = white;
+        values[10] = scale;
+        *dirty = true;
+    }
+}
+fn prepare_source_views(
+    gpu: &Device,
+    sources: &mut SourceViews,
+    values: &mut [u32; 20],
+    dirty: &mut bool,
+    image: &GpuImage,
+) -> Result<[Option<ID3D11ShaderResourceView>; 2]> {
+    // A fence-ring image orders graphics-queue readers only when they need it.
+    image.order_d3d11()?;
+    let pointer = image.cursor.as_ref();
+    let pointer_values = pointer_constants(pointer);
+    if values[12..] != pointer_values {
+        values[12..].copy_from_slice(&pointer_values);
+        *dirty = true;
+    }
+    let source = source_view(sources, gpu, image)?;
+    Ok([Some(source), pointer.map(|c| c.view.clone())])
+}
 impl Converter {
     pub fn new(
         gpu: &Device,
         config: &butterpollo_media_policy::rtsp::Negotiated,
         source: (u32, u32, Pixel),
     ) -> Result<Self> {
-        if config.width == 0
-            || config.height == 0
-            || (!config.yuv444
-                && config.chroma_packing == 0
-                && (!config.width.is_multiple_of(2) || !config.height.is_multiple_of(2)))
-        {
-            bail!("GPU conversion requires nonzero dimensions, and even dimensions for 4:2:0");
-        }
-        // An HDR desktop hands an SDR stream FP16 frames, which the shader
-        // takes back to sRGB; only PQ has no SDR path. Refusing FP16 failed
-        // every fallback from the compute queue on such a desktop.
-        if !config.hdr && source.2 == Pixel::Rgba10Pq {
-            bail!("HDR surface supplied to an SDR converter");
-        }
+        validate_dimensions(config)?;
+        validate_source(config, source)?;
         // SAFETY: `gpu.device` is a live D3D11 device, `compile` gets NUL-terminated names, and
         // every descriptor and the 80-byte `values` outlive the calls that read them.
         unsafe {
@@ -323,14 +362,7 @@ impl Converter {
         }
     }
     pub fn set_luminance(&mut self, luminance: [f32; 2]) {
-        // Kept in step with `constants`.
-        let white = (luminance[0] / 80.).to_bits();
-        let scale = luminance[1].to_bits();
-        if self.values[9] != white || self.values[10] != scale {
-            self.values[9] = white;
-            self.values[10] = scale;
-            self.dirty = true;
-        }
+        set_luminance_values(&mut self.values, &mut self.dirty, luminance);
     }
     /// Draw `overlay` over the next conversions, or stop with `None`.
     pub fn set_overlay(&mut self, overlay: Option<&crate::overlay::Overlay>) {
@@ -451,16 +483,13 @@ impl Converter {
         }
     }
     fn source_views(&mut self, image: &GpuImage) -> Result<[Option<ID3D11ShaderResourceView>; 2]> {
-        // A fence-ring image orders graphics-queue readers only when they need it.
-        image.order_d3d11()?;
-        let pointer = image.cursor.as_ref();
-        let values = pointer_constants(pointer);
-        if self.values[12..] != values {
-            self.values[12..].copy_from_slice(&values);
-            self.dirty = true;
-        }
-        let source = source_view(&mut self.sources, &self.gpu, image)?;
-        Ok([Some(source), pointer.map(|c| c.view.clone())])
+        prepare_source_views(
+            &self.gpu,
+            &mut self.sources,
+            &mut self.values,
+            &mut self.dirty,
+            image,
+        )
     }
     pub fn convert(&mut self, image: &GpuImage) -> Result<Arc<ID3D11Texture2D>> {
         let index = self.target()?;
@@ -569,243 +598,13 @@ impl Converter {
         Ok(self.targets[index].texture.clone())
     }
 }
-pub(crate) struct PlanarConverter {
-    base: Converter,
-    shaders: [ID3D11PixelShader; 3],
-    combined: Option<ID3D11PixelShader>,
-    compute: Option<(ID3D11ComputeShader, [ID3D11UnorderedAccessView; 3])>,
-    pub textures: [Arc<ID3D11Texture2D>; 3],
-    views: [ID3D11RenderTargetView; 3],
-    divisor: u32,
-}
-impl PlanarConverter {
-    pub fn new(
-        gpu: &Device,
-        config: &butterpollo_media_policy::rtsp::Negotiated,
-        source: (u32, u32, Pixel),
-    ) -> Result<Self> {
-        let mut base = Converter::new(gpu, config, source)?;
-        base.values[11] = u32::from(config.yuv444);
-        base.dirty = true;
-        let divisor = if config.yuv444 { 1 } else { 2 };
-        // SAFETY: `gpu.device` is a live D3D11 device, `compile` gets NUL-terminated names, and
-        // every descriptor outlives the call that reads it.
-        unsafe {
-            let mut textures = Vec::new();
-            let mut views = Vec::new();
-            let mut shaders = Vec::new();
-            let mut combined = None;
-            if config.yuv444 {
-                gpu.device.CreatePixelShader(
-                    &compile(b"pyro_444\0", b"ps_5_0\0")?,
-                    None,
-                    Some(&mut combined),
-                )?;
-            }
-            for (plane, entry) in [b"pyro_y\0", b"pyro_u\0", b"pyro_v\0"].iter().enumerate() {
-                let mut shader = None;
-                gpu.device.CreatePixelShader(
-                    &compile(*entry, b"ps_5_0\0")?,
-                    None,
-                    Some(&mut shader),
-                )?;
-                shaders.push(shader.unwrap());
-                let mut texture = None;
-                gpu.device.CreateTexture2D(
-                    &D3D11_TEXTURE2D_DESC {
-                        Width: config.width / if plane == 0 { 1 } else { divisor },
-                        Height: config.height / if plane == 0 { 1 } else { divisor },
-                        MipLevels: 1,
-                        ArraySize: 1,
-                        Format: if config.ten_bit() {
-                            DXGI_FORMAT_R16_UNORM
-                        } else {
-                            DXGI_FORMAT_R8_UNORM
-                        },
-                        SampleDesc: DXGI_SAMPLE_DESC {
-                            Count: 1,
-                            Quality: 0,
-                        },
-                        Usage: D3D11_USAGE_DEFAULT,
-                        // Unordered access for the conversion on the compute queue.
-                        BindFlags: (D3D11_BIND_SHADER_RESOURCE.0
-                            | D3D11_BIND_RENDER_TARGET.0
-                            | D3D11_BIND_UNORDERED_ACCESS.0)
-                            as u32,
-                        MiscFlags: (D3D11_RESOURCE_MISC_SHARED.0
-                            | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0)
-                            as u32,
-                        ..Default::default()
-                    },
-                    None,
-                    Some(&mut texture),
-                )?;
-                let texture = texture.unwrap();
-                let mut view = None;
-                gpu.device
-                    .CreateRenderTargetView(&texture, None, Some(&mut view))?;
-                textures.push(Arc::new(texture));
-                views.push(view.unwrap());
-            }
-            // `pyro_cs` covers 4:4:4 too: with `padding` set it writes full-size
-            // chroma (`color.hlsl`), so only a failure falls back to the pixel shaders.
-            let compute = (|| -> Result<_> {
-                let mut shader = None;
-                gpu.device.CreateComputeShader(
-                    &compile(b"pyro_cs\0", b"cs_5_0\0")?,
-                    None,
-                    Some(&mut shader),
-                )?;
-                let mut unordered = Vec::new();
-                for texture in &textures {
-                    let mut view = None;
-                    gpu.device.CreateUnorderedAccessView(
-                        texture.as_ref(),
-                        None,
-                        Some(&mut view),
-                    )?;
-                    unordered.push(view.unwrap());
-                }
-                Ok((shader.unwrap(), unordered.try_into().ok().unwrap()))
-            })()
-            .ok();
-            Ok(Self {
-                base,
-                shaders: shaders.try_into().ok().unwrap(),
-                combined,
-                compute,
-                textures: textures.try_into().ok().unwrap(),
-                views: views.try_into().ok().unwrap(),
-                divisor,
-            })
-        }
-    }
-    pub fn set_overlay(&mut self, overlay: Option<&crate::overlay::Overlay>) {
-        self.base.set_overlay(overlay);
-    }
-    #[cfg(test)]
-    pub(crate) fn menu_counts(&self) -> (u64, u64) {
-        self.base.menu_counts()
-    }
-    pub fn convert(&mut self, image: &GpuImage, luminance: [f32; 2]) -> Result<()> {
-        self.base.set_luminance(luminance);
-        let source = self.base.source_views(image)?;
-        let menu = self.base.menu.prepare(
-            &self.base.gpu,
-            &self.base.values,
-            [2, 2],
-            match (&self.compute, &self.combined) {
-                (Some(_), _) => &[],
-                (None, Some(_)) => &[b"menu_pyro_444\0"],
-                (None, None) => &[b"menu_pyro_y\0", b"menu_pyro_u\0", b"menu_pyro_v\0"],
-            },
-            self.compute.is_some().then_some(&b"pyro_menu_cs\0"[..]),
-        )?;
-        // SAFETY: The context is held from Enter to Leave with no early return between, all bound
-        // objects are on this device, and `values` is the buffer's 80 bytes.
-        unsafe {
-            let context = &self.base.gpu.context;
-            let lock = &self.base.lock;
-            lock.Enter();
-            if self.base.dirty {
-                context.UpdateSubresource(
-                    &self.base.constants,
-                    0,
-                    None,
-                    self.base.values.as_ptr().cast(),
-                    0,
-                    0,
-                );
-                self.base.dirty = false;
-            }
-            if let Some(menu) = &menu {
-                menu.update(context);
-            }
-            if let Some((shader, views)) = &self.compute {
-                context.CSSetShader(shader, None);
-                context.CSSetShaderResources(0, Some(&source));
-                context.CSSetConstantBuffers(0, Some(&[Some(self.base.constants.clone())]));
-                context.CSSetUnorderedAccessViews(
-                    2,
-                    3,
-                    Some(views.each_ref().map(|v| Some(v.clone())).as_ptr()),
-                    None,
-                );
-                context.Dispatch(
-                    (self.base.width / 2).div_ceil(8),
-                    (self.base.height / 2).div_ceil(8),
-                    1,
-                );
-                if let Some(menu) = &menu {
-                    menu.dispatch(context);
-                }
-                context.CSSetUnorderedAccessViews(2, 3, Some([None, None, None].as_ptr()), None);
-                context.CSSetShaderResources(0, Some(&[None, None]));
-                context.CSSetShader(None, None);
-            } else {
-                context.IASetInputLayout(None);
-                context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                context.VSSetShader(&self.base.vertex, None);
-                context.PSSetShaderResources(0, Some(&source));
-                context.PSSetConstantBuffers(0, Some(&[Some(self.base.constants.clone())]));
-                context.RSSetState(None);
-                context.OMSetBlendState(None, None, u32::MAX);
-                if let Some(menu) = &menu {
-                    menu.bind(context);
-                }
-                if let Some(shader) = &self.combined {
-                    context.RSSetViewports(Some(&[D3D11_VIEWPORT {
-                        Width: self.base.width as f32,
-                        Height: self.base.height as f32,
-                        MinDepth: 0.,
-                        MaxDepth: 1.,
-                        ..Default::default()
-                    }]));
-                    context.OMSetRenderTargets(
-                        Some(&self.views.each_ref().map(|view| Some(view.clone()))),
-                        None,
-                    );
-                    context.PSSetShader(shader, None);
-                    context.Draw(3, 0);
-                    if let Some(menu) = &menu {
-                        context.PSSetShader(&menu.pixel[0], None);
-                        context.Draw(3, 0);
-                    }
-                } else {
-                    for plane in 0..3 {
-                        let divisor = if plane == 0 { 1 } else { self.divisor };
-                        context.RSSetViewports(Some(&[D3D11_VIEWPORT {
-                            Width: (self.base.width / divisor) as f32,
-                            Height: (self.base.height / divisor) as f32,
-                            MinDepth: 0.,
-                            MaxDepth: 1.,
-                            ..Default::default()
-                        }]));
-                        context.OMSetRenderTargets(Some(&[Some(self.views[plane].clone())]), None);
-                        context.PSSetShader(&self.shaders[plane], None);
-                        context.Draw(3, 0);
-                        if let Some(menu) = &menu {
-                            context.PSSetShader(&menu.pixel[plane], None);
-                            context.Draw(3, 0);
-                        }
-                    }
-                }
-                if menu.is_some() {
-                    menu::Pass::unbind(context);
-                }
-                context.PSSetShaderResources(0, Some(&[None, None]));
-                context.OMSetRenderTargets(None, None);
-            }
-            lock.Leave();
-        }
-        Ok(())
-    }
-}
 mod hdr_stats;
 mod hlg_scene;
 mod menu;
+mod planar;
 mod view_cache;
 pub(crate) use hdr_stats::HdrStats;
 pub(crate) use hlg_scene::HlgScene;
+pub(crate) use planar::{PlanarConverter, planar_textures};
 #[cfg(test)]
 mod tests;

@@ -220,7 +220,7 @@ impl Rig {
                 Route::D3d11Graphics => converter.compute = None,
                 _ => {
                     converter.compute = None;
-                    converter.combined = None;
+                    converter.use_combined = false;
                 }
             }
             converter.convert(image, [100., 1.])?;
