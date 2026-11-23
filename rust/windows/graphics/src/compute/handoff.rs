@@ -266,9 +266,23 @@ impl Returns {
 }
 impl Drop for Returns {
     fn drop(&mut self) {
-        for texture in &self.imported {
-            self.compute.forget(texture);
+        // `hand_back` queues `compute.queue.Signal(&self.drained.0, value)` right
+        // before the last lease can drop `Returns`. Keep the shared fences,
+        // context and imported resources alive until the compute queue drains.
+        let mut work = RetainedWork::new(&self.compute, &self.compute.queue);
+        work.keep(&self.acquired.0);
+        work.keep(&self.acquired.1);
+        work.keep(&self.drained.0);
+        work.keep(&self.drained.1);
+        work.keep(&self.context);
+        for texture in self.imported.drain(..) {
+            work.keep(&texture);
+            for (d3d11, d3d12) in self.compute.take_forgotten(&texture) {
+                work.keep(&d3d11);
+                work.keep(&d3d12);
+            }
         }
+        work.finish(&self.compute);
     }
 }
 
@@ -531,7 +545,10 @@ impl Drop for Handoff {
         }
         for (texture, _) in self.readers.values() {
             work.keep(texture);
-            self.compute.forget(texture);
+            for (d3d11, d3d12) in self.compute.take_forgotten(texture) {
+                work.keep(&d3d11);
+                work.keep(&d3d12);
+            }
         }
         self.compute
             .opened

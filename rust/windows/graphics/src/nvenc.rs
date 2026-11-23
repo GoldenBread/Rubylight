@@ -12,6 +12,8 @@
 
 mod cuda;
 mod drain;
+mod teardown;
+use teardown::cleanup_slot;
 
 use crate::capture::{Device, GpuImage, Image, Pixel};
 use crate::encoder::Encoded;
@@ -436,10 +438,13 @@ struct Input {
     /// A D3D12 session's input resource and its READBACK output buffer.
     d3d12: Option<D3d12Input>,
 }
-/// What a D3D12 slot registers: the conversion's texture as its input and a
-/// READBACK buffer the driver writes the bitstream into.
+/// What a D3D12 slot registers: the conversion's texture as its input, the
+/// conversion fence value the driver waits for if registration touches the
+/// resource on the GPU, and a READBACK buffer the driver writes the bitstream
+/// into.
 struct D3d12Input {
     _resource: Option<ID3D12Resource>,
+    wait: Option<(*mut c_void, u64)>,
     output: *mut c_void,
     size: u32,
     _output: Option<ID3D12Resource>,
@@ -471,10 +476,12 @@ impl Fence for ID3D12Fence {
         Ok(value)
     }
 }
-/// A D3D12 session's output fence and the value its last frame signals.
+/// A D3D12 session's output fence, the next value to assign, and the highest
+/// value accepted by `nvEncEncodePicture`.
 struct D3d12 {
     fence: Rc<dyn Fence>,
     value: u64,
+    submitted: u64,
 }
 /// A D3D12 slot's output registration and mapping, and the resource
 /// structures each picture passes in place of buffers. Boxed, so the
@@ -614,10 +621,6 @@ struct Session {
     /// The driver APIs this session tried and the driver refused, when it
     /// opened an older one; reported to the stream as a session warning.
     api_fallbacks: Vec<String>,
-    _runtime: Arc<Runtime>,
-    cuda: Option<Rc<cuda::Context>>,
-    /// A session on the D3D12 conversion's device ([`Session::open`]).
-    d3d12: Option<D3d12>,
     /// `qpMapMode` is the delta map, for encoder focus.
     qp_map: bool,
     /// The driver returns per-block statistics (`enableOutputStats`).
@@ -674,9 +677,6 @@ struct Session {
     /// The output fence value the encoder's output event was last armed
     /// for ([`Session::arm_output`]); 0 before any.
     armed: std::cell::Cell<u64>,
-    /// The event a D3D12 drain waits on for the oldest frame
-    /// ([`Session::wait_oldest`]), created on first use.
-    drain_event: Option<crate::timing::Signal>,
     /// The output fence value `drain_event` was last armed for; 0 before any.
     drain_armed: u64,
     /// Blocks a P-frame is sent in when slice delivery is on, else 0.
@@ -701,6 +701,18 @@ struct Session {
     next: u64,
     initialized: bool,
     force_idr: bool,
+    /// A session on the D3D12 conversion's device ([`Session::open`]).
+    /// Declared after `slots` and `pending` and before `drain_event` so
+    /// registered resources release before the fence and the fence releases
+    /// before the event it may signal.
+    d3d12: Option<D3d12>,
+    /// The event a D3D12 drain waits on for the oldest frame
+    /// ([`Session::wait_oldest`]) or teardown completion, created on first use.
+    drain_event: Option<crate::timing::Signal>,
+    cuda: Option<Rc<cuda::Context>>,
+    /// Declared last so `nvEncodeAPI64.dll` stays loaded until every session
+    /// resource has dropped.
+    _runtime: Arc<Runtime>,
 }
 impl Session {
     fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
@@ -800,7 +812,11 @@ impl Session {
             api_fallbacks: Vec::new(),
             _runtime: runtime,
             cuda,
-            d3d12: fence.map(|fence| D3d12 { fence, value: 0 }),
+            d3d12: fence.map(|fence| D3d12 {
+                fence,
+                value: 0,
+                submitted: 0,
+            }),
             qp_map: false,
             block_stats: false,
             next_map: None,
@@ -1605,6 +1621,12 @@ impl Session {
     /// Register slot `index`'s input and make its output and completion
     /// event. A failure leaves what was made in the slot for `cleanup_slot`.
     fn acquire(&mut self, index: usize) -> Result<()> {
+        let mut input_fence = self.slots[index]
+            .input
+            .d3d12
+            .as_mut()
+            .and_then(|input| input.wait.take())
+            .map(|(fence, value)| fence_point(self.api, fence, value, false));
         let mut register = NV_ENC_REGISTER_RESOURCE {
             version: self.api.register(),
             resourceType: self.slots[index].input.kind,
@@ -1614,6 +1636,9 @@ impl Session {
             resourceToRegister: self.slots[index].input.raw,
             bufferFormat: buffer_format(&self.stream),
             bufferUsage: _NV_ENC_BUFFER_USAGE_NV_ENC_INPUT_IMAGE,
+            pInputFencePoint: input_fence
+                .as_mut()
+                .map_or(ptr::null_mut(), |point| point as *mut _),
             ..Default::default()
         };
         // SAFETY: `validate` checked the entry; `input.raw` is kept alive by the slot's texture
@@ -1724,6 +1749,7 @@ impl Session {
     fn resource_slot(
         &mut self,
         resource: &ID3D12Resource,
+        wait: Option<(*mut c_void, u64)>,
         output: impl FnOnce() -> Result<(ID3D12Resource, u32)>,
     ) -> Result<usize> {
         let key = resource.as_raw() as usize;
@@ -1740,6 +1766,7 @@ impl Session {
             cuda: None,
             d3d12: Some(D3d12Input {
                 _resource: Some(resource.clone()),
+                wait,
                 output: buffer.as_raw(),
                 size,
                 _output: Some(buffer),
@@ -1924,6 +1951,9 @@ impl Session {
                 resources.mapped = ptr::null_mut();
             }
             self.check(status, "submit picture")?;
+        }
+        if let (Some(d3d12), Some(signal)) = (&mut self.d3d12, signal) {
+            d3d12.submitted = d3d12.submitted.max(signal);
         }
         self.force_idr = false;
         self.submitted_metadata = metadata;
@@ -2605,70 +2635,6 @@ impl Session {
         Ok(self.ready.drain(..).collect())
     }
 }
-fn cleanup_slot(
-    functions: &NV_ENCODE_API_FUNCTION_LIST,
-    raw: *mut c_void,
-    api: ApiVersion,
-    slot: &mut Slot,
-) -> Result<()> {
-    let check = |status, operation| check_raw(status, operation, functions, raw);
-    // SAFETY: `raw` is the session these resources belong to; each is released only while still
-    // held and then cleared, and the unregister entry existed when `event_registered` was set.
-    unsafe {
-        if !slot.mapped.is_null() {
-            check(
-                (functions.nvEncUnmapInputResource.unwrap())(raw, slot.mapped),
-                "unmap input during cleanup",
-            )?;
-            slot.mapped = ptr::null_mut();
-        }
-        if let Some(resources) = slot.d3d12.as_mut() {
-            if !resources.mapped.is_null() {
-                check(
-                    (functions.nvEncUnmapInputResource.unwrap())(raw, resources.mapped),
-                    "unmap D3D12 output during cleanup",
-                )?;
-                resources.mapped = ptr::null_mut();
-            }
-            if !resources.registered.is_null() {
-                check(
-                    (functions.nvEncUnregisterResource.unwrap())(raw, resources.registered),
-                    "unregister D3D12 output",
-                )?;
-                resources.registered = ptr::null_mut();
-            }
-            // The output is the slot's own structure, not a driver buffer.
-            slot.output = ptr::null_mut();
-        }
-        if slot.event_registered {
-            let mut event = NV_ENC_EVENT_PARAMS {
-                version: api.event(),
-                completionEvent: slot.event.0,
-                ..Default::default()
-            };
-            check(
-                (functions.nvEncUnregisterAsyncEvent.unwrap())(raw, &mut event),
-                "unregister completion event",
-            )?;
-            slot.event_registered = false;
-        }
-        if !slot.output.is_null() {
-            check(
-                (functions.nvEncDestroyBitstreamBuffer.unwrap())(raw, slot.output),
-                "destroy output buffer",
-            )?;
-            slot.output = ptr::null_mut();
-        }
-        if !slot.registered.is_null() {
-            check(
-                (functions.nvEncUnregisterResource.unwrap())(raw, slot.registered),
-                "unregister GPU input",
-            )?;
-            slot.registered = ptr::null_mut();
-        }
-    }
-    Ok(())
-}
 /// A drain's view of a session: its frames in flight and the time it has
 /// taken so far.
 struct SessionDrain<'a> {
@@ -2691,68 +2657,6 @@ impl drain::DrainWaiter for SessionDrain<'_> {
     }
     fn pause(&mut self) {
         std::thread::sleep(Duration::from_millis(1));
-    }
-}
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.close();
-    }
-}
-impl Session {
-    /// Destroy the driver session and release its inputs. Nothing runs on
-    /// it after (`guard` refuses), and dropping it does nothing more.
-    fn close(&mut self) {
-        if self.raw.is_null() {
-            return;
-        }
-        let _guard = match self.guard() {
-            Ok(guard) => guard,
-            Err(error) => {
-                tracing::warn!(%error, "CUDA device lost during NVENC teardown; attempting driver cleanup");
-                None
-            }
-        };
-        if self.initialized && !self.pending.is_empty() {
-            let mut eos = NV_ENC_PIC_PARAMS {
-                version: self.api.picture(),
-                encodePicFlags: _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_EOS,
-                ..Default::default()
-            };
-            // SAFETY: `self.raw` is the non-null open session and `eos` is versioned.
-            let _ = unsafe { (self.functions.nvEncEncodePicture.unwrap())(self.raw, &mut eos) };
-            let _ = self.drain();
-        }
-        for (index, slot) in self.slots.iter_mut().enumerate() {
-            // A failed drain does not establish completion. Let session
-            // destruction stop the native worker before releasing its input,
-            // output buffer or completion event.
-            if self.pending.iter().any(|pending| pending.slot == index) {
-                continue;
-            }
-            if let Err(error) = cleanup_slot(&self.functions, self.raw, self.api, slot) {
-                tracing::warn!(%error, "NVENC input cleanup deferred to session destruction");
-            }
-        }
-        // SAFETY: `self.raw` is non-null (checked at the top) and is destroyed once, since it is
-        // cleared below.
-        let status = unsafe { (self.functions.nvEncDestroyEncoder.unwrap())(self.raw) };
-        if let Err(error) = self.check(status, "destroy session") {
-            // A failed native destroy leaves its async workers' lifetime
-            // unknown. Preserve their input/context/driver owners until process
-            // exit instead of freeing resources behind a still-running codec.
-            tracing::error!(%error, "NVENC cleanup failed; driver resources retained until host exit");
-            std::mem::forget(std::mem::take(&mut self.slots));
-            std::mem::forget(std::mem::take(&mut self.pending));
-            std::mem::forget(self._runtime.clone());
-            if let Some(context) = self.cuda.take() {
-                std::mem::forget(context);
-            }
-        }
-        self.raw = ptr::null_mut();
-        // Drop CUDA allocations/textures only after the driver destroys the
-        // session, including inputs whose explicit unregister was rejected.
-        self.slots.clear();
-        self.pending.clear();
     }
 }
 
@@ -3291,16 +3195,20 @@ impl Encoder {
                 image,
             )?;
             let size = readback_size(&self.session.stream);
-            let slot = self.session.resource_slot(&converted.texture, || {
-                let buffer = crate::compute::focus_buffer(
-                    &compute.device,
-                    D3D12_HEAP_TYPE_READBACK,
-                    u64::from(size),
-                    D3D12_RESOURCE_STATE_COPY_DEST,
-                )
-                .context("NVENC D3D12 output buffer")?;
-                Ok((buffer, size))
-            })?;
+            let slot = self.session.resource_slot(
+                &converted.texture,
+                Some((converted.fence.as_raw(), converted.value)),
+                || {
+                    let buffer = crate::compute::focus_buffer(
+                        &compute.device,
+                        D3D12_HEAP_TYPE_READBACK,
+                        u64::from(size),
+                        D3D12_RESOURCE_STATE_COPY_DEST,
+                    )
+                    .context("NVENC D3D12 output buffer")?;
+                    Ok((buffer, size))
+                },
+            )?;
             let kept = Kept::D3d12 {
                 fence: converted.fence.as_raw(),
                 value: converted.value,
@@ -3556,9 +3464,9 @@ impl Encoder {
         let stream = self.session.stream.clone();
         let metadata = std::mem::take(&mut self.session.metadata);
         let last_submitted = self.last_submitted.take();
-        self.session.close();
+        self.close_session();
         let probed = self.probe_session(&stream, &tuning);
-        self.session.close();
+        self.close_session();
         let tuning = self.tuning.clone();
         self.session = self
             .open_session(&stream, &tuning)

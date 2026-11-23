@@ -14,7 +14,7 @@ impl SessionThread<'_> {
     #[rustfmt::skip]
     pub(super) fn teardown(&self, result: Result<()>, workers: Workers, leases: Leases) {
         let SessionThread { m, h, s } = *self;
-        let Leases { com, stream_preparation, app_window, latest, encoder } = leases;
+        let Leases { com, priority, streaming, stream_preparation, app_window, latest, encoder } = leases;
         let Workers {
             client_commands,
             audio,
@@ -99,9 +99,11 @@ impl SessionThread<'_> {
         drop(stream_preparation);
         #[cfg(any(test, feature = "test-support"))]
         drop(fixture_preparation);
+        drop(streaming);
+        drop(priority);
         drop(com);
         // The encoders' reused frame buffers go with the last stream that used them; this
-        // session's streaming scope ended with its setup and loop.
+        // session's streaming scope ended above, after the encoder, capture and display leases.
         butterpollo_win_graphics::frame_pool::clear_after_stream();
         if s.launch.role == Role::RemoteMonitor
             && h.config
@@ -113,5 +115,77 @@ impl SessionThread<'_> {
         }
         h.sessions.lock().unwrap_or_else(PoisonError::into_inner).teardown.remove(&s.launch.id);
         tracing::info!(client=%s.launch.client.name,"CLIENT DISCONNECTED");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ScopeCheck(Arc<AtomicBool>);
+    impl butterpollo_session::session::Preparation<crate::display_session::StreamPreparation>
+        for ScopeCheck
+    {
+        fn prepared(&self) -> &crate::display_session::StreamPreparation {
+            unreachable!("unused in teardown test")
+        }
+        fn into_prepared(self: Box<Self>) -> crate::display_session::StreamPreparation {
+            unreachable!("unused in teardown test")
+        }
+    }
+    impl Drop for ScopeCheck {
+        fn drop(&mut self) {
+            self.0.store(
+                butterpollo_win_graphics::timing::StreamingScope::active() > 0,
+                Ordering::Release,
+            );
+        }
+    }
+
+    #[test]
+    fn teardown_keeps_streaming_scope_active_until_leases_drop() -> Result<()> {
+        let f = crate::state::test_support::Fixture::new();
+        let client = f.client(u32::MAX);
+        let session = f.session(client, Role::Stream);
+        let media = Arc::new(Media {
+            video: Arc::new(ReplySocket::bind("127.0.0.1:0")?),
+            audio: Arc::new(ReplySocket::bind("127.0.0.1:0")?),
+            control_wake: Arc::new(UdpSocket::bind("127.0.0.1:0")?),
+            control_wake_receiver: UdpSocket::bind("127.0.0.1:0")?,
+            mic: None,
+            peers: Mutex::default(),
+            captures: Mutex::new(HashMap::new()),
+            control_port: 0,
+            bind: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            shutdown_requested: AtomicBool::new(false),
+            shutdown_told: std::sync::atomic::AtomicUsize::new(0),
+            shutdown_elapsed_ms: std::sync::atomic::AtomicU64::new(0),
+            shutdown_done: AtomicBool::new(false),
+            roam_seqs: Default::default(),
+        });
+        let thread = SessionThread {
+            m: &media,
+            h: &f.host,
+            s: &session,
+        };
+        let scope_was_active = Arc::new(AtomicBool::new(false));
+        let mut workers = Workers::new(&session);
+        workers.fixture_preparation = Some(Box::new(ScopeCheck(scope_was_active.clone())));
+        let before = butterpollo_win_graphics::timing::StreamingScope::active();
+        let leases = Leases {
+            streaming: Some(butterpollo_win_graphics::timing::StreamingScope::enter()),
+            ..Leases::default()
+        };
+        thread.teardown(Ok(()), workers, leases);
+        assert!(
+            scope_was_active.load(Ordering::Acquire),
+            "StreamingScope dropped before encoder, capture and display leases finished tearing down"
+        );
+        assert_eq!(
+            butterpollo_win_graphics::timing::StreamingScope::active(),
+            before,
+            "StreamingScope was not released by teardown"
+        );
+        Ok(())
     }
 }

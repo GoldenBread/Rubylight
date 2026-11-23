@@ -605,6 +605,11 @@ struct Leases {
     // open would switch to just before it closes.
     app_window: Option<app_window::AppWindow>,
     stream_preparation: Option<crate::display_session::StreamPreparation>,
+    // Keep GPU scheduling priority, MMCSS and process priority elevated until the
+    // encoder, capture and display leases finish tearing down; dropping them earlier
+    // lowers GPU scheduling priority while D3D12/NVENC teardown is still in flight.
+    streaming: Option<butterpollo_win_graphics::timing::StreamingScope>,
+    priority: Option<Priority>,
     com: Option<ComGuard>,
 }
 
@@ -686,8 +691,8 @@ impl Media {
                         return Ok(());
                     }
                     leases.com = Some(ComGuard::new()?);
-                    let _priority = Priority::new();
-                    let _streaming = crate::win_bridge::enter_streaming_scope();
+                    leases.priority = Some(Priority::new());
+                    leases.streaming = Some(crate::win_bridge::enter_streaming_scope());
                     let Some(config) = session.configure(&mut workers)? else {
                         return Ok(());
                     };

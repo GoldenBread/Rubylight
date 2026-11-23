@@ -56,6 +56,7 @@ struct Driver {
     keyframe_busy: usize,
     need_more_input: bool,
     destroy_busy: bool,
+    destroy_status: Option<NVENCSTATUS>,
     /// NV_ENC_CAPS_NUM_ENCODER_ENGINES; 0 reads as 1.
     engines: i32,
     /// NV_ENC_CAPS_SUPPORTED_RATECONTROL_MODES, when not every mode.
@@ -87,6 +88,8 @@ struct Driver {
     hold_fence: bool,
     /// Each D3D12 picture's wait fence, wait value and signal value.
     fence_points: Vec<(usize, u64, u64)>,
+    /// Each `nvEncRegisterResource` call's optional D3D12 input wait fence and value.
+    register_fence_points: Vec<Option<(usize, u64)>>,
     /// Each output fence value an event was armed for.
     notified: Vec<u64>,
     /// Reading the output fence fails, as on a removed device.
@@ -187,7 +190,7 @@ unsafe extern "C" fn open(
 unsafe extern "C" fn destroy(raw: *mut c_void) -> NVENCSTATUS {
     // SAFETY: `raw` is a live handle from `open`; it is freed only at the end of this call.
     let api = unsafe { handle(raw) };
-    state(|d| {
+    let status = state(|d| {
         assert!(d.active.remove(&(raw as usize)));
         if d.destroy_busy {
             assert!(!d.mapped.is_empty());
@@ -207,10 +210,11 @@ unsafe extern "C" fn destroy(raw: *mut c_void) -> NVENCSTATUS {
         }
         d.destroyed.push(api);
         d.calls.push("destroy session");
+        d.destroy_status.unwrap_or(SUCCESS)
     });
     // SAFETY: `raw` came from Box::into_raw in `open`, and each session is destroyed once.
     drop(unsafe { Box::from_raw(raw.cast::<ApiVersion>()) });
-    SUCCESS
+    status
 }
 unsafe extern "C" fn caps(
     raw: *mut c_void,
@@ -352,7 +356,21 @@ unsafe extern "C" fn register(
     // SAFETY: The session passes an exclusive pointer to its live parameter struct for this call.
     let p = unsafe { &mut *parameters };
     // SAFETY: `raw` is a live handle that `open` boxed and `destroy` has not freed.
-    assert_eq!(p.version, unsafe { handle(raw) }.register());
+    let api = unsafe { handle(raw) };
+    assert_eq!(p.version, api.register());
+    let wait = if p.pInputFencePoint.is_null() {
+        None
+    } else {
+        assert_eq!(
+            p.bufferUsage, _NV_ENC_BUFFER_USAGE_NV_ENC_INPUT_IMAGE,
+            "nvEncodeAPI.h allows pInputFencePoint only on NV_ENC_INPUT_IMAGE"
+        );
+        // SAFETY: The caller passes a live NV_ENC_FENCE_POINT_D3D12 for this call.
+        let point = unsafe { *p.pInputFencePoint };
+        assert_eq!(point.version, api.structure(1, false));
+        assert_eq!((point.bWait(), point.bSignal()), (1, 0));
+        Some((point.pFence as usize, point.waitValue))
+    };
     p.registeredResource = p.resourceToRegister;
     state(|d| {
         assert!(
@@ -360,6 +378,7 @@ unsafe extern "C" fn register(
                 .insert(p.registeredResource as usize, p.bufferFormat)
                 .is_none()
         );
+        d.register_fence_points.push(wait);
         d.calls.push("register input");
     });
     SUCCESS
@@ -460,6 +479,7 @@ unsafe extern "C" fn encode(raw: *mut c_void, parameters: *mut NV_ENC_PIC_PARAMS
     // SAFETY: `raw` is a live handle that `open` boxed and `destroy` has not freed.
     assert_eq!(p.version, unsafe { handle(raw) }.picture());
     if p.encodePicFlags & _NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_EOS != 0 {
+        state(|d| d.calls.push("eos"));
         return SUCCESS;
     }
     // SAFETY: `raw` is a live handle that `open` boxed and `destroy` has not freed.
@@ -497,13 +517,15 @@ unsafe extern "C" fn encode(raw: *mut c_void, parameters: *mut NV_ENC_PIC_PARAMS
             );
             d.fence_points
                 .push((wait.pFence as usize, wait.waitValue, done.signalValue));
-            d.outputs.entry(p.outputBitstream as usize).or_default();
             input = resource.pInputBuffer;
             signal = Some(done.signalValue);
         }
         assert!(d.mapped.contains(&(input as usize)));
         if d.reject_submit {
             return _NVENCSTATUS_NV_ENC_ERR_GENERIC;
+        }
+        if d.d3d12 {
+            d.outputs.entry(p.outputBitstream as usize).or_default();
         }
         if let Some(value) = signal.filter(|_| !d.hold_fence) {
             d.fence = value;
@@ -735,6 +757,13 @@ fn d3d12_session(config: &Negotiated, maximum: ApiVersion, settings: &str) -> Re
 }
 /// A D3D12 conversion target's slot, with its READBACK buffer.
 fn d3d12_input(session: &mut Session, key: usize) -> Result<usize> {
+    d3d12_input_waiting(session, key, None)
+}
+fn d3d12_input_waiting(
+    session: &mut Session,
+    key: usize,
+    wait: Option<(*mut c_void, u64)>,
+) -> Result<usize> {
     session.slot(Input {
         key,
         raw: key as *mut c_void,
@@ -744,6 +773,7 @@ fn d3d12_input(session: &mut Session, key: usize) -> Result<usize> {
         cuda: None,
         d3d12: Some(D3d12Input {
             _resource: None,
+            wait,
             output: (key | 0x1000) as *mut c_void,
             size: 4096,
             _output: None,
@@ -2698,61 +2728,6 @@ fn the_output_event_is_armed_only_for_an_unwritten_d3d12_frame() -> Result<()> {
     Ok(())
 }
 #[test]
-fn a_d3d12_scene_cut_is_encoded_again_after_the_same_conversion() -> Result<()> {
-    reset();
-    let mut encoder = d3d12_session(&Negotiated::default(), ApiVersion(13, 0), "")?;
-    let slot = d3d12_input(&mut encoder, 17)?;
-    encoder.submit(slot, converted(1), true, Instant::now())?;
-    encoder.poll()?;
-    encoder.cut_limit = Some(4);
-    state(|d| d.picture = 24);
-    encoder.submit(slot, converted(2), false, Instant::now())?;
-    let output = encoder.poll()?;
-    assert_eq!(output.len(), 1);
-    assert!(output[0].reencoded && output[0].idr);
-    // The keyframe waits for the same conversion and signals a new value.
-    state(|d| {
-        assert_eq!(
-            d.fence_points[1..],
-            [(CONVERSION_FENCE, 2, 2), (CONVERSION_FENCE, 2, 3)]
-        )
-    });
-    drop(encoder);
-    assert_clean();
-    Ok(())
-}
-#[test]
-fn the_d3d12_structures_have_the_api_12_0_layout() {
-    // nv-codec-headers n12.0.16.1 and n12.1.14.0 declare the same versioned
-    // fence point and resource structures (SDK 11.1 had a fence point of
-    // only a fence and a value), so the D3D12 session may open at API 12.0.
-    use std::mem::{offset_of, size_of};
-    assert_eq!(offset_of!(NV_ENC_FENCE_POINT_D3D12, pFence), 8);
-    assert_eq!(offset_of!(NV_ENC_FENCE_POINT_D3D12, waitValue), 16);
-    assert_eq!(offset_of!(NV_ENC_FENCE_POINT_D3D12, signalValue), 24);
-    assert_eq!(size_of::<NV_ENC_FENCE_POINT_D3D12>(), 64);
-    assert_eq!(offset_of!(NV_ENC_INPUT_RESOURCE_D3D12, pInputBuffer), 8);
-    assert_eq!(offset_of!(NV_ENC_INPUT_RESOURCE_D3D12, inputFencePoint), 16);
-    assert_eq!(size_of::<NV_ENC_INPUT_RESOURCE_D3D12>(), 272);
-    assert_eq!(offset_of!(NV_ENC_OUTPUT_RESOURCE_D3D12, pOutputBuffer), 8);
-    assert_eq!(
-        offset_of!(NV_ENC_OUTPUT_RESOURCE_D3D12, outputFencePoint),
-        16
-    );
-    assert_eq!(size_of::<NV_ENC_OUTPUT_RESOURCE_D3D12>(), 272);
-    let mut point = NV_ENC_FENCE_POINT_D3D12::default();
-    point.set_bWait(1);
-    point.set_bSignal(1);
-    // SAFETY: The bit fields follow the three 8-byte fields as one `uint32_t`.
-    let bits = unsafe {
-        *std::ptr::from_ref(&point)
-            .cast::<u8>()
-            .add(32)
-            .cast::<u32>()
-    };
-    assert_eq!(bits, 0b11);
-}
-#[test]
 fn a_d3d12_session_needs_api_12_and_has_no_slices_or_weighted_prediction() -> Result<()> {
     reset();
     let error = d3d12_session(&Negotiated::default(), ApiVersion(11, 0), "")
@@ -3461,3 +3436,5 @@ fn without_subframe_readback_slice_delivery_stays_off_and_events_stay() -> Resul
     assert_clean();
     Ok(())
 }
+
+mod d3d12_teardown;

@@ -28,12 +28,17 @@ use windows::{
             Dxgi::{Common::*, *},
         },
     },
-    core::{IUnknown, Interface, PCWSTR},
+    core::{Interface, PCWSTR},
 };
 
 use butterpollo_win_abi::shaders::shader_bytecode;
 mod handoff;
+mod retained;
 pub use handoff::*;
+#[cfg(test)]
+use retained::RETAINED;
+pub(crate) use retained::RetainedWork;
+use retained::allow_compute_generation;
 
 /// Whether captures and the AMF and NVENC encoders use the compute queue
 /// (`gpu_compute_conversion`, on unless turned off).
@@ -66,24 +71,6 @@ pub struct Compute {
     stuck: std::sync::atomic::AtomicBool,
 }
 
-/// Resources whose last GPU access could not be proved complete. In particular,
-/// an ExecuteCommandLists followed by a failed Signal has no usable old fence
-/// value. A fresh tail marker covers that work too; if even that signal fails,
-/// only device removal makes releasing its references safe.
-struct RetainedWork {
-    device: ID3D12Device,
-    adapter: (u32, i32),
-    tail: Option<ID3D12Fence>,
-    waits: Vec<(ID3D12Fence, u64)>,
-    objects: Vec<IUnknown>,
-    captures: Vec<crate::capture::GpuImage>,
-}
-// SAFETY: The erased interfaces are D3D12 objects, multithread-protected D3D11
-// objects, or fences; they are only retained/released, never used via IUnknown.
-unsafe impl Send for RetainedWork {}
-
-static RETAINED: Mutex<Vec<RetainedWork>> = Mutex::new(Vec::new());
-
 /// How long a compute queue made after a GPU reset waits for a fresh D3D12 device. D3D12 hands
 /// out one device per adapter while anything holds it, so until the reset device's last
 /// references are gone (an encoder or capture being released, retained work) it returns the
@@ -111,102 +98,6 @@ fn retry_lost_device<T>(
             result => return (result, again),
         }
     }
-}
-
-impl RetainedWork {
-    fn new(compute: &Compute, queue: &ID3D12CommandQueue) -> Self {
-        // SAFETY: Both objects are live and on the same device. This final
-        // marker submits no new resource access, including on a retired queue.
-        let (luid, tail) = unsafe {
-            (
-                compute.device.GetAdapterLuid(),
-                compute
-                    .device
-                    .CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE)
-                    .and_then(|fence| queue.Signal(&fence, 1).map(|()| fence))
-                    .ok(),
-            )
-        };
-        let mut work = Self {
-            device: compute.device.clone(),
-            adapter: (luid.LowPart, luid.HighPart),
-            tail,
-            waits: Vec::new(),
-            objects: Vec::new(),
-            captures: Vec::new(),
-        };
-        work.keep(queue);
-        work.keep(&compute.fence);
-        work
-    }
-
-    fn keep(&mut self, object: &impl Interface) {
-        // SAFETY: Every caller supplies a COM D3D11/D3D12 interface, whose
-        // vtable starts with IUnknown. Transfer a cloned reference without a
-        // fallible QueryInterface call during failure cleanup; this erased
-        // reference is only retained and released, never used as a GPU object.
-        self.objects
-            .push(unsafe { IUnknown::from_raw(object.clone().into_raw()) });
-    }
-
-    fn complete(&self) -> bool {
-        if crate::device_loss::DeviceLost::d3d12(&self.device).is_some() {
-            return true;
-        }
-        // SAFETY: Every queried fence is retained by this bundle. Device
-        // removal is handled above, not mistaken for a completed UINT64_MAX.
-        unsafe {
-            self.tail.as_ref().is_some_and(|fence| {
-                completed_value(fence.GetCompletedValue()).is_ok_and(|done| done >= 1)
-            }) && self.waits.iter().all(|(fence, value)| {
-                completed_value(fence.GetCompletedValue()).is_ok_and(|done| done >= *value)
-            })
-        }
-    }
-
-    fn finish(self, compute: &Compute) {
-        if let Some(fence) = &self.tail {
-            let _ = wait_fence(fence, 1);
-        }
-        if !self.complete() {
-            compute.retire();
-            tracing::warn!(
-                retained_objects = self.objects.len(),
-                "retaining unfinished GPU resources; compute recovery waits for this adapter to drain"
-            );
-            RETAINED.lock().unwrap().push(self);
-        }
-    }
-}
-
-/// Do not accumulate a fresh set of video-memory allocations on every retry
-/// behind a permanently hung queue. Existing users have bounded pools; no new
-/// compute generation is admitted on this adapter until its retained work ends.
-fn allow_compute_generation(luid: LUID) -> Result<()> {
-    let (complete, blocked) = {
-        let mut retained = RETAINED.lock().unwrap();
-        let mut complete = Vec::new();
-        let mut index = 0;
-        while index < retained.len() {
-            if retained[index].complete() {
-                complete.push(retained.swap_remove(index));
-            } else {
-                index += 1;
-            }
-        }
-        let blocked = retained
-            .iter()
-            .any(|work| work.adapter == (luid.LowPart, luid.HighPart));
-        (complete, blocked)
-    };
-    // Releasing a capture lease can run its own teardown; never do it under
-    // the retention lock.
-    drop(complete);
-    anyhow::ensure!(
-        !blocked,
-        "unfinished GPU resources on this adapter; compute conversion is unavailable until they drain"
-    );
-    Ok(())
 }
 // D3D12 devices, queues and fences are free-threaded; the rest is locked.
 // SAFETY: The D3D12 device, queue and fence are free-threaded, the cached D3D11 textures and D3D12
@@ -401,21 +292,31 @@ impl Compute {
             dxgi.GetAdapter()?.GetDesc()?.AdapterLuid
         };
         let key = (luid.LowPart, luid.HighPart);
-        let mut shared = SHARED.lock().unwrap();
-        shared.retain(|(_, compute)| compute.strong_count() > 0);
-        if let Some(compute) = shared
-            .iter()
-            .filter(|(owner, _)| *owner == key)
-            .filter_map(|(_, compute)| compute.upgrade())
-            .find(|compute| {
-                !compute.stuck.load(std::sync::atomic::Ordering::Acquire) && compute.completed(0)
-            })
-        {
-            return Ok(compute);
-        }
-        let compute = Self::new(luid)?;
-        shared.push((key, Arc::downgrade(&compute)));
-        Ok(compute)
+        // Drop any rejected `Compute` outside `SHARED` so `Compute::drop` never
+        // drains its queue while holding the adapter cache lock.
+        let mut rejected = Vec::new();
+        let result = (|| {
+            let mut shared = SHARED.lock().unwrap();
+            shared.retain(|(_, compute)| compute.strong_count() > 0);
+            for (owner, weak) in shared.iter() {
+                if *owner != key {
+                    continue;
+                }
+                let Some(compute) = weak.upgrade() else {
+                    continue;
+                };
+                if !compute.stuck.load(std::sync::atomic::Ordering::Acquire) && compute.completed(0)
+                {
+                    return Ok(compute);
+                }
+                rejected.push(compute);
+            }
+            let compute = Self::new(luid)?;
+            shared.push((key, Arc::downgrade(&compute)));
+            Ok(compute)
+        })();
+        drop(rejected);
+        result
     }
     /// Signal the fence after the work submitted so far; returns its value.
     #[cfg(test)]
@@ -544,14 +445,52 @@ impl Compute {
         Ok(())
     }
     pub(crate) fn forget(&self, texture: &ID3D11Texture2D) {
-        self.opened
-            .lock()
-            .unwrap()
-            .remove(&(texture.as_raw() as usize));
-        self.foreign
-            .lock()
-            .unwrap()
-            .remove(&(texture.as_raw() as usize));
+        let _ = self.take_forgotten(texture);
+    }
+    /// Remove `texture` from this device's caches and return any cached D3D11/D3D12
+    /// pairs so teardown can retain them until queued GPU work completes.
+    pub(crate) fn take_forgotten(
+        &self,
+        texture: &ID3D11Texture2D,
+    ) -> Vec<(ID3D11Texture2D, ID3D12Resource)> {
+        let key = texture.as_raw() as usize;
+        let mut removed = Vec::new();
+        if let Some(pair) = self.opened.lock().unwrap().remove(&key) {
+            removed.push(pair);
+        }
+        if let Some(pair) = self.foreign.lock().unwrap().remove(&key) {
+            removed.push(pair);
+        }
+        removed
+    }
+    /// Drain every command, Wait and Signal queued on `self.queue` so no GPU work
+    /// remains in flight before tearing down dependent objects on this device.
+    pub(crate) fn wait_idle(&self) {
+        if crate::device_loss::DeviceLost::d3d12(&self.device).is_some() {
+            return;
+        }
+        RetainedWork::new(self, &self.queue).finish(self);
+    }
+}
+
+impl Drop for Compute {
+    fn drop(&mut self) {
+        if crate::device_loss::DeviceLost::d3d12(&self.device).is_some() {
+            return;
+        }
+        // Drain every queued Wait/Signal and keep cached shared resources alive
+        // until the queue finishes, so destroying the last `Compute` never frees
+        // the queue, device or imported textures behind in-flight GPU work.
+        let mut work = RetainedWork::new(self, &self.queue);
+        for (_, (d3d11, d3d12)) in self.opened.get_mut().unwrap().drain() {
+            work.keep(&d3d11);
+            work.keep(&d3d12);
+        }
+        for (_, (d3d11, d3d12)) in self.foreign.get_mut().unwrap().drain() {
+            work.keep(&d3d11);
+            work.keep(&d3d12);
+        }
+        work.finish(self);
     }
 }
 
@@ -1101,6 +1040,11 @@ impl Converter {
     }
     pub fn compute(&self) -> &Arc<Compute> {
         &self.compute
+    }
+    /// Wait for submitted compute conversions, stats and focus passes on this
+    /// converter's queue to finish on the GPU. Used during encoder teardown.
+    pub(crate) fn wait_idle(&self) {
+        self.compute.wait_idle();
     }
     #[cfg(test)]
     pub(crate) fn test_amf_target_states(&self) -> Vec<Option<u32>> {
