@@ -3,7 +3,7 @@
 //! (`console_favourites.json`), and hidden apps (`hidden_apps.json`).
 
 use nightjar_policy::console::{
-    parse_favourites, set_hidden, toggle_favourite, Favourite, Recent, ANDROID_RECENT_LIMIT,
+    parse_favourites, set_hidden_strict, toggle_favourite, Favourite, Recent, ANDROID_RECENT_LIMIT,
 };
 use nightjar_policy::http::NativeLibrary;
 use std::collections::{BTreeMap, BTreeSet};
@@ -138,15 +138,29 @@ impl LibraryCacheStore {
         let Ok(entries) = fs::read_dir(&self.dir) else {
             return false;
         };
-        entries
-            .flatten()
-            .any(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("json"))
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            path.extension().and_then(|e| e.to_str()) == Some("json")
+                && fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|text| parse_cached_entry(&text))
+                    .is_some_and(|(lib, _, _)| !lib.library.games.is_empty())
+        })
+    }
+}
+
+fn ensure_library_revision(val: &mut serde_json::Value) {
+    if let Some(obj) = val.as_object_mut()
+        && !obj.contains_key("revision")
+    {
+        obj.insert("revision".to_owned(), serde_json::Value::String(String::new()));
     }
 }
 
 fn parse_cached_entry(text: &str) -> Option<(NativeLibrary, u64, Vec<String>)> {
-    let val: serde_json::Value = serde_json::from_str(text).ok()?;
-    if let Some(inner) = val.get("library") {
+    let mut val: serde_json::Value = serde_json::from_str(text).ok()?;
+    if let Some(inner) = val.get_mut("library") {
+        ensure_library_revision(inner);
         let lib = serde_json::from_value::<NativeLibrary>(inner.clone()).ok()?;
         let fetched_ms = val.get("fetched_ms").and_then(|v| v.as_u64()).unwrap_or(0);
         let features = val
@@ -160,6 +174,7 @@ fn parse_cached_entry(text: &str) -> Option<(NativeLibrary, u64, Vec<String>)> {
             .unwrap_or_default();
         Some((lib, fetched_ms, features))
     } else {
+        ensure_library_revision(&mut val);
         let lib = serde_json::from_value::<NativeLibrary>(val).ok()?;
         Some((lib, 0, Vec::new()))
     }
@@ -328,12 +343,30 @@ impl FavouritesStore {
     pub fn set_explicit(&self, entry: Favourite, starred: bool) -> Result<(), String> {
         let _guard = self.lock.lock().map_err(|_| "lock poisoned".to_owned())?;
         let mut list = self.read_locked();
-        let before = list.len();
-        list.retain(|f| !f.same_game(&entry));
-        let mut changed = list.len() != before;
+        let mut changed = false;
         if starred {
-            list.insert(0, entry);
-            changed = true;
+            if let Some(pos) = list.iter().position(|f| f.same_game(&entry)) {
+                if list[pos] != entry {
+                    list[pos] = entry.clone();
+                    changed = true;
+                }
+                let mut idx = pos + 1;
+                while idx < list.len() {
+                    if list[idx].same_game(&entry) {
+                        list.remove(idx);
+                        changed = true;
+                    } else {
+                        idx += 1;
+                    }
+                }
+            } else {
+                list.insert(0, entry);
+                changed = true;
+            }
+        } else {
+            let before = list.len();
+            list.retain(|f| !f.same_game(&entry));
+            changed = list.len() != before;
         }
         if changed {
             self.write_locked(&list)?;
@@ -433,7 +466,7 @@ impl HiddenStore {
         }
         let _guard = self.lock.lock().map_err(|_| "lock poisoned".to_owned())?;
         let mut list = self.read_locked();
-        let changed = set_hidden(&mut list, games, hidden);
+        let changed = set_hidden_strict(&mut list, games, hidden);
         if changed {
             self.write_locked(&list)?;
         }
@@ -462,7 +495,10 @@ impl HiddenStore {
         let mut list = self.read_locked();
         let before = list.len();
         for entry in entries {
-            let exists = list.iter().any(|existing| existing.same_hidden(&entry));
+            if entry.host.is_empty() || (entry.app_id == 0 && entry.install_id.is_empty()) {
+                continue;
+            }
+            let exists = list.iter().any(|existing| existing.same_game_or_bare(&entry));
             if !exists {
                 list.push(entry);
             }
@@ -501,47 +537,75 @@ impl HiddenStore {
         stable_id: &str,
         hidden: bool,
     ) -> Result<(), String> {
+        if host_id.is_empty() || (app_id == 0 && stable_id.is_empty()) {
+            return Ok(());
+        }
         let _guard = self.lock.lock().map_err(|_| "lock poisoned".to_owned())?;
         let mut list = self.read_locked();
-        let mut changed = false;
+        let snapshot = list.clone();
         if hidden {
-            if !stable_id.is_empty() {
-                let before = list.len();
-                list.retain(|f| !(f.host == host_id && f.install_id == stable_id));
-                if list.len() != before {
-                    changed = true;
-                }
-            }
-            let already = list.iter().any(|f| {
-                f.host == host_id
-                    && f.app_id == app_id
-                    && (stable_id.is_empty() || f.install_id == stable_id)
-            });
-            if !already {
-                list.push(Favourite {
-                    host: host_id.to_owned(),
-                    install_id: stable_id.to_owned(),
-                    app_id,
-                    title: String::new(),
-                });
-                changed = true;
-            }
-        } else {
-            let before = list.len();
             if !stable_id.is_empty() {
                 list.retain(|f| {
                     !(f.host == host_id
-                        && (f.install_id == stable_id
-                            || (f.install_id.is_empty() && f.app_id == app_id)))
+                        && f.install_id.is_empty()
+                        && app_id != 0
+                        && f.app_id == app_id)
                 });
+                let mut found: Option<usize> = None;
+                let mut idx = 0;
+                while idx < list.len() {
+                    if list[idx].host == host_id && list[idx].install_id.eq_ignore_ascii_case(stable_id)
+                    {
+                        if let Some(first_idx) = found {
+                            list.remove(idx);
+                            if app_id != 0 && list[first_idx].app_id == 0 {
+                                list[first_idx].app_id = app_id;
+                            }
+                            continue;
+                        }
+                        found = Some(idx);
+                        if app_id != 0 && list[idx].app_id != app_id {
+                            list[idx].app_id = app_id;
+                        }
+                        if list[idx].install_id != stable_id {
+                            list[idx].install_id = stable_id.to_owned();
+                        }
+                    }
+                    idx += 1;
+                }
+                if found.is_none() {
+                    list.push(Favourite {
+                        host: host_id.to_owned(),
+                        install_id: stable_id.to_owned(),
+                        app_id,
+                        title: String::new(),
+                    });
+                }
             } else {
-                list.retain(|f| {
-                    !(f.host == host_id && f.install_id.is_empty() && f.app_id == app_id)
+                let already = list.iter().any(|f| {
+                    f.host == host_id && f.install_id.is_empty() && f.app_id == app_id
                 });
+                if !already {
+                    list.push(Favourite {
+                        host: host_id.to_owned(),
+                        install_id: String::new(),
+                        app_id,
+                        title: String::new(),
+                    });
+                }
             }
-            changed = list.len() != before;
+        } else if !stable_id.is_empty() {
+            list.retain(|f| {
+                !(f.host == host_id
+                    && (f.install_id.eq_ignore_ascii_case(stable_id)
+                        || (f.install_id.is_empty() && app_id != 0 && f.app_id == app_id)))
+            });
+        } else {
+            list.retain(|f| {
+                !(f.host == host_id && f.install_id.is_empty() && f.app_id == app_id)
+            });
         }
-        if changed {
+        if list != snapshot {
             self.write_locked(&list)?;
         }
         Ok(())
@@ -556,18 +620,21 @@ impl HiddenStore {
         let mut list = self.read_locked();
         let mut changed = false;
 
-        // Track known stable_id entries when present in `games`, keep unlisted ones for later.
-        let mut hidden_ids: BTreeSet<u32> = list
-            .iter()
-            .filter(|f| f.host == host_id && f.app_id > 0)
-            .map(|f| f.app_id)
-            .collect();
+        let lookup = |stable_id: &str| -> Option<u32> {
+            games.get(stable_id).copied().or_else(|| {
+                games
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(stable_id))
+                    .map(|(_, &v)| v)
+            })
+        };
 
         for entry in &mut list {
             if entry.host != host_id || entry.install_id.is_empty() {
                 continue;
             }
-            if let Some(&now) = games.get(&entry.install_id)
+            if let Some(now) = lookup(&entry.install_id)
+                && now != 0
                 && entry.app_id != now
             {
                 entry.app_id = now;
@@ -575,35 +642,19 @@ impl HiddenStore {
             }
         }
 
-        // Rebuild host app_ids after stable-id moves, then learn stable_id for bare app_id entries.
-        hidden_ids.clear();
-        for f in &list {
-            if f.host == host_id && f.app_id > 0 {
-                hidden_ids.insert(f.app_id);
-            }
-        }
-
         for (stable_id, &app_id) in games {
-            if stable_id.is_empty() || app_id == 0 || !hidden_ids.contains(&app_id) {
+            if stable_id.is_empty() || app_id == 0 {
                 continue;
             }
-            let already_known = list
-                .iter()
-                .any(|f| f.host == host_id && f.install_id == *stable_id);
-            if !already_known {
-                if let Some(bare) = list
+            let already_known = list.iter().any(|f| {
+                f.host == host_id && f.install_id.eq_ignore_ascii_case(stable_id)
+            });
+            if !already_known
+                && let Some(bare) = list
                     .iter_mut()
                     .find(|f| f.host == host_id && f.install_id.is_empty() && f.app_id == app_id)
-                {
-                    bare.install_id = stable_id.clone();
-                } else {
-                    list.push(Favourite {
-                        host: host_id.to_owned(),
-                        install_id: stable_id.clone(),
-                        app_id,
-                        title: String::new(),
-                    });
-                }
+            {
+                bare.install_id = stable_id.clone();
                 changed = true;
             }
         }
@@ -611,6 +662,12 @@ impl HiddenStore {
         if changed {
             self.write_locked(&list)?;
         }
+
+        let hidden_ids = list
+            .iter()
+            .filter(|f| f.host == host_id && f.app_id > 0)
+            .map(|f| f.app_id)
+            .collect();
         Ok(hidden_ids)
     }
 

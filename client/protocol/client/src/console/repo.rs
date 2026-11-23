@@ -16,7 +16,7 @@ use nightjar_policy::http::{
     AddedGame, GameExtra, NativeCapabilities, NativeLibrary, FEATURE_LIBRARY_UNADDED,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -126,6 +126,8 @@ pub struct HostSnapshotState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_kind: Option<String>,
     pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub capabilities_fetched: bool,
 }
 
 /// Complete snapshot exposed by [`ConsoleRepository::cached`] and [`ConsoleRepository::refresh`].
@@ -231,7 +233,7 @@ impl ConsoleRepository {
 
     /// Loads the current snapshot from disk + in-memory session state with zero network I/O.
     pub fn cached(&self, hosts: &[HostDescriptor]) -> ConsoleSnapshot {
-        self.build_snapshot(hosts, false)
+        self.build_snapshot(hosts, false, &HashSet::new())
     }
 
     /// Refreshes online native hosts in parallel via `std::thread::scope`, persists updated
@@ -258,6 +260,7 @@ impl ConsoleRepository {
         type RefreshResult = (
             String,
             Option<NativeCapabilities>,
+            bool,
             bool,
             Vec<String>,
             Result<NativeLibrary, String>,
@@ -304,9 +307,13 @@ impl ConsoleRepository {
                 scope.spawn(move || {
                     let mut caps = cached_caps;
                     let mut caps_failed = false;
+                    let mut caps_newly_fetched = false;
                     if caps.is_none() && can_probe_caps {
                         match transport.capabilities(host) {
-                            Ok(fetched) => caps = Some(fetched),
+                            Ok(fetched) => {
+                                caps = Some(fetched);
+                                caps_newly_fetched = true;
+                            }
                             Err(_) => caps_failed = true,
                         }
                     }
@@ -323,6 +330,7 @@ impl ConsoleRepository {
                         host.uuid.clone(),
                         caps,
                         caps_failed,
+                        caps_newly_fetched,
                         effective_features,
                         lib,
                         sess,
@@ -332,9 +340,22 @@ impl ConsoleRepository {
         });
 
         let collected = results.into_inner().unwrap();
+        let mut newly_fetched_caps = HashSet::new();
         {
             let mut guard = self.state.write().unwrap();
-            for (uuid, caps, caps_failed, effective_features, lib_res, sess) in collected {
+            for (
+                uuid,
+                caps,
+                caps_failed,
+                caps_newly_fetched,
+                effective_features,
+                lib_res,
+                sess,
+            ) in collected
+            {
+                if caps_newly_fetched {
+                    newly_fetched_caps.insert(uuid.clone());
+                }
                 if let Some(c) = caps {
                     guard
                         .cached_features
@@ -379,7 +400,7 @@ impl ConsoleRepository {
             }
         }
 
-        self.build_snapshot(hosts, true)
+        self.build_snapshot(hosts, true, &newly_fetched_caps)
     }
 
     /// Adds an unadded game to `host`'s library (`POST /api/native/v1/library/add`).
@@ -505,7 +526,9 @@ impl ConsoleRepository {
                         nl.collections,
                         false,
                     )
-                } else if let Some(classic_apps) = &host.classic_apps {
+                } else if host.paired
+                    && let Some(classic_apps) = &host.classic_apps
+                {
                     let running = host
                         .running_app_id
                         .map(|id| (id, host.running_app_uuid.as_deref()));
@@ -550,11 +573,54 @@ impl ConsoleRepository {
         out
     }
 
-    fn build_snapshot(&self, hosts: &[HostDescriptor], is_refresh: bool) -> ConsoleSnapshot {
+    fn build_snapshot(
+        &self,
+        hosts: &[HostDescriptor],
+        is_refresh: bool,
+        newly_fetched_caps: &HashSet<String>,
+    ) -> ConsoleSnapshot {
         let owned = self.prepare_sources(hosts);
         let sources: Vec<Source<'_>> = owned.iter().map(OwnedHostSource::as_source).collect();
         let rich: Vec<RichSource<'_>> = owned.iter().map(OwnedHostSource::as_rich).collect();
-        let hidden_keys = self.hidden.list();
+        let initial_hidden = self.hidden.list();
+        let mut reconciled_hidden = false;
+        for o in &owned {
+            if !o.paired || o.uuid.is_empty() || !initial_hidden.iter().any(|h| h.host == o.uuid)
+            {
+                continue;
+            }
+            let Some(lib) = &o.library else {
+                continue;
+            };
+            let mut games_map: BTreeMap<String, u32> = BTreeMap::new();
+            let mut duplicate_ids: Vec<String> = Vec::new();
+            for g in &lib.games {
+                if g.install_id.is_empty() || g.app_id == 0 {
+                    continue;
+                }
+                let lower = g.install_id.to_ascii_lowercase();
+                if duplicate_ids.contains(&lower) {
+                    continue;
+                }
+                if let Some(prev_key) = games_map
+                    .keys()
+                    .find(|k| k.to_ascii_lowercase() == lower)
+                    .cloned()
+                {
+                    games_map.remove(&prev_key);
+                    duplicate_ids.push(lower);
+                } else {
+                    games_map.insert(g.install_id.clone(), g.app_id);
+                }
+            }
+            let _ = self.hidden.following(&o.uuid, &games_map);
+            reconciled_hidden = true;
+        }
+        let hidden_keys = if reconciled_hidden {
+            self.hidden.list()
+        } else {
+            initial_hidden
+        };
         let recents = self.recents.list();
         let mut favs = self.favourites.list();
 
@@ -629,6 +695,7 @@ impl ConsoleRepository {
                         error: err,
                         error_kind,
                         features,
+                        capabilities_fetched: newly_fetched_caps.contains(&h.uuid),
                     }
                 })
                 .collect();

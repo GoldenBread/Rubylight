@@ -78,15 +78,19 @@ public interface HiddenStore {
         }
 
         private void migrateLegacyIfPresent() {
+            migrateLegacy(app, ConsoleRepository.handleFor(app.getFilesDir()));
+        }
+
+        static void migrateLegacy(Context app, long handle) {
+            SharedPreferences prefs = app.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, Context.MODE_PRIVATE);
             synchronized (WRITES) {
-                Map<String, ?> all = legacyPrefs.getAll();
+                Map<String, ?> all = prefs.getAll();
                 if (all.isEmpty()) return;
-                long h = ConsoleRepository.handleFor(app.getFilesDir());
-                Json.Arr entries = collectLegacyEntries(legacyPrefs, all);
+                Json.Arr entries = collectLegacyEntries(prefs, all);
                 if (entries.length() > 0) {
-                    NightjarConsoleJni.repoImportLegacy(h, "", "", entries.toString());
+                    NightjarConsoleJni.repoImportLegacy(handle, "", "", entries.toString());
                 }
-                legacyPrefs.edit().clear().commit();
+                prefs.edit().clear().commit();
             }
         }
 

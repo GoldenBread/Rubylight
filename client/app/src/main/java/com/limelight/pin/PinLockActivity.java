@@ -107,8 +107,9 @@ public class PinLockActivity extends NightjarActivity {
         Intent in = getIntent();
         if (!in.hasExtra(EXTRA_RECENT_HOST)) return;
         ConsoleRepository.recordLaunch(this, in.getStringExtra(EXTRA_RECENT_HOST),
+                in.getStringExtra(EXTRA_RECENT_HOST_NAME),
                 in.getIntExtra(EXTRA_RECENT_APP_ID, 0), in.getStringExtra(EXTRA_RECENT_TITLE),
-                in.getStringExtra(EXTRA_RECENT_STABLE_ID));
+                in.getStringExtra(EXTRA_RECENT_STABLE_ID), System.currentTimeMillis());
     }
 
     /**

@@ -247,4 +247,24 @@ public class NativeLibraryFieldsTest {
         assertFalse("without the feature", NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,"
                 + "\"permissions\":{\"usb\":true}}")).offersUsbForwarding());
     }
+
+    @Test
+    public void nullsAndNonsenseReadAsUntold() throws Exception {
+        ConsoleSnapshot.Source game = parseViaRepo("{\"install_id\":\"i1\",\"app_id\":5,\"title\":\"Portal\","
+                + "\"added\":null,\"last_played\":null,\"playtime_minutes\":null,\"launchable\":null,\"store\":null,"
+                + "\"artwork\":{\"cover\":null,\"hero\":\"\"}}");
+        assertTrue(game.added);
+        assertNull(game.lastPlayed);
+        assertNull(game.playtimeMinutes);
+        assertNull(game.launchable);
+        assertNull(game.storeSource);
+        assertNull(game.storeId);
+        assertNull(game.storeName);
+        assertNull(game.coverPath);
+        assertNull(game.heroPath);
+
+        assertNull(parseViaRepo("{\"install_id\":\"i2\",\"app_id\":6,\"title\":\"Soon\",\"last_played\":\"soon\"}").lastPlayed);
+        assertEquals(Long.valueOf(0L), parseViaRepo("{\"install_id\":\"i3\",\"app_id\":7,\"title\":\"Zero\",\"last_played\":0}").lastPlayed);
+        assertNull(parseViaRepo("{\"install_id\":\"i4\",\"app_id\":8,\"title\":\"Neg\",\"last_played\":-1}").lastPlayed);
+    }
 }

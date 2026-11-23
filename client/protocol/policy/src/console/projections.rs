@@ -5,7 +5,7 @@ use super::hidden::is_hidden;
 use super::merge::{Entry, Source};
 use super::{Favourite, Recent};
 use crate::http::native_api::library::Game;
-use crate::http::native_api::session::{ActionId, Owner, State};
+use crate::http::native_api::session::{ActionId, Owner, Session, State};
 use serde::{Deserialize, Serialize};
 
 /// Whether a [`Continue`] item is actively streaming or suspended.
@@ -471,8 +471,13 @@ pub fn host_line(source: &Source<'_>) -> HostLine {
     }
 }
 
-/// Whether `host` has a live native library loaded (used by UI refresh gating).
-pub fn live(source: &Source<'_>) -> bool {
+/// Whether `session` is currently active (`Preparing`, `Launching`, `Streaming`, or `Suspended`).
+pub fn live(session: &Session) -> bool {
+    crate::http::session_is_active(session)
+}
+
+/// Whether `source` has a live native library loaded (used by UI refresh gating).
+pub fn has_live_library(source: &Source<'_>) -> bool {
     source.paired && !source.classic && source.library.is_some()
 }
 

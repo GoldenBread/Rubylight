@@ -540,4 +540,74 @@ public class ConsoleRepositoryTest {
         assertFalse(byTitle.get("Hades").added);
         assertEquals("", byTitle.get("Celeste").installId);
     }
+
+    @Test
+    public void snapshotParsesCapabilitiesFetchedDistinctZeroAppIdsMixedCaseGameIdAndRenumberedContinue()
+            throws Exception {
+        // 1. capabilitiesFetched flag parses from Rust JSON (defaulting false when omitted).
+        ConsoleSnapshot withFlag = ConsoleSnapshot.fromRustJson(
+                "{\"titles\":[],\"hidden_titles\":[],\"continue_playing\":[],\"recents\":[],\"starred\":[],"
+                        + "\"sessions\":{},\"host_states\":["
+                        + "{\"uuid\":\"h1\",\"name\":\"One\",\"status\":\"LIVE\",\"fetched_at_ms\":1,\"features\":[\"wake\"],\"capabilities_fetched\":true},"
+                        + "{\"uuid\":\"h2\",\"name\":\"Two\",\"status\":\"LIVE\",\"fetched_at_ms\":1,\"features\":[\"wake\"]}"
+                        + "]}",
+                Collections.emptyList(), Collections.emptyMap());
+        assertTrue(withFlag.host("h1").capabilitiesFetched);
+        assertFalse(withFlag.host("h2").capabilitiesFetched);
+
+        // 2. Two app_id=0 entries with distinct install_ids stay two distinct Titles.
+        transport.reply("pc1", "library", ok(library("r1",
+                game("u1", 0, "One", null, false),
+                game("u2", 0, "Two", null, false))));
+        transport.reply("pc1", "session", ok(NativeApiFixtures.IDLE));
+        ConsoleSnapshot zeroIds = repository.refresh(Collections.singletonList(nativeHost("pc1", "PC1", true)));
+        assertEquals(2, zeroIds.titles.size());
+
+        // 3. Mixed-case game_id merges shown and hidden copies into 1 Title.
+        transport.reply("h1", "library", ok(library("r1", game("i1", 1, "Portal", "Steam:400", false))));
+        transport.reply("h1", "session", ok(NativeApiFixtures.IDLE));
+        transport.reply("h2", "library", ok(library("r2", game("i2", 2, "Portal", "steam:400", false))));
+        transport.reply("h2", "session", ok(NativeApiFixtures.IDLE));
+        ConsoleSnapshot initial = repository.refresh(Arrays.asList(
+                nativeHost("h1", "H1", true), nativeHost("h2", "H2", true)));
+        repository.setHidden(Collections.singletonList(initial.host("h2").sources.get(0)), true);
+        ConsoleSnapshot mergedCase = repository.cached(Arrays.asList(
+                nativeHost("h1", "H1", true), nativeHost("h2", "H2", true)));
+        assertEquals(1, mergedCase.titles.size());
+        assertEquals(2, mergedCase.titles.get(0).sources.size());
+
+        // 4. Renumbered running game deduplicates continuePlaying and findSource picks matching install_id over reused app_id.
+        ComputerDetails pc1 = nativeHost("pc1", "PC1", true);
+        ConsoleSnapshot renum = ConsoleSnapshot.fromRustJson(
+                "{\"titles\":["
+                        + "{\"key\":\"app:pc1:beta\",\"title\":\"Beta\",\"copies\":[{\"host\":1,\"host_uid\":\"pc1\",\"host_name\":\"PC1\",\"title\":\"Beta\",\"index\":0,\"online\":true,\"app_id\":10,\"install_id\":\"beta\",\"running\":false,\"installed\":true,\"added\":true,\"is_native\":true,\"has_cover\":false,\"cover_version\":\"\",\"collections\":[]}]},"
+                        + "{\"key\":\"app:pc1:alpha\",\"title\":\"Alpha\",\"copies\":[{\"host\":1,\"host_uid\":\"pc1\",\"host_name\":\"PC1\",\"title\":\"Alpha\",\"index\":1,\"online\":true,\"app_id\":20,\"install_id\":\"alpha\",\"running\":true,\"installed\":true,\"added\":true,\"is_native\":true,\"has_cover\":false,\"cover_version\":\"\",\"collections\":[]}]},"
+                        + "{\"key\":\"app:pc1:gamma\",\"title\":\"Gamma\",\"copies\":[{\"host\":1,\"host_uid\":\"pc1\",\"host_name\":\"PC1\",\"title\":\"Gamma\",\"index\":2,\"online\":true,\"app_id\":30,\"install_id\":\"gamma\",\"running\":false,\"installed\":true,\"added\":true,\"is_native\":true,\"has_cover\":false,\"cover_version\":\"\",\"collections\":[]}]}"
+                        + "],"
+                        + "\"hidden_titles\":[],"
+                        + "\"continue_playing\":[{\"host\":1,\"host_uid\":\"pc1\",\"host_name\":\"PC1\",\"app_id\":20,\"install_id\":\"alpha\",\"title\":\"Alpha\",\"playing\":\"Streaming\"}],"
+                        + "\"recents\":["
+                        + "{\"host\":\"pc1\",\"install_id\":\"alpha\",\"app_id\":10,\"title\":\"Alpha\",\"at\":9999},"
+                        + "{\"host\":\"pc1\",\"install_id\":\"gamma\",\"app_id\":10,\"title\":\"Gamma\",\"at\":8888}"
+                        + "],"
+                        + "\"starred\":[],\"sessions\":{},\"host_states\":[{\"uuid\":\"pc1\",\"name\":\"PC1\",\"status\":\"LIVE\",\"fetched_at_ms\":1,\"features\":[]}]}",
+                Collections.singletonList(pc1), Collections.emptyMap());
+        assertEquals(2, renum.continuePlaying.size());
+        assertEquals(ConsoleSnapshot.ContinueKind.RUNNING, renum.continuePlaying.get(0).kind);
+        assertEquals("alpha", renum.continuePlaying.get(0).source.installId);
+        assertEquals(ConsoleSnapshot.ContinueKind.RECENT, renum.continuePlaying.get(1).kind);
+        assertEquals("gamma", renum.continuePlaying.get(1).source.installId);
+        assertEquals(30, renum.continuePlaying.get(1).appId);
+    }
+
+    @Test
+    public void classicHostPreservesPerAppHdrSupported() throws Exception {
+        NvApp hdrApp = new NvApp("HDR Game", 1, true);
+        NvApp sdrApp = new NvApp("SDR Game", 2, false);
+        classicApps.put("sun", Arrays.asList(hdrApp, sdrApp));
+        ConsoleSnapshot snapshot = repository.refresh(Collections.singletonList(classicHost("sun", "Sunshine PC")));
+        assertEquals(2, snapshot.titles.size());
+        assertTrue(snapshot.host("sun").sources.get(0).hdrSupported);
+        assertFalse(snapshot.host("sun").sources.get(1).hdrSupported);
+    }
 }

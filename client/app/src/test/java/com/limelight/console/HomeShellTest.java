@@ -111,7 +111,7 @@ public class HomeShellTest {
         // What a host's refresh leaves behind once it has shown its games.
         File directory = new File(context.getFilesDir(), "console-library");
         assertTrue(directory.isDirectory() || directory.mkdirs());
-        assertTrue(new File(directory, "tower.json").createNewFile());
+        java.nio.file.Files.write(new File(directory, "tower.json").toPath(), "{\"fetched_ms\":1,\"library\":{\"revision\":\"r1\",\"games\":[{\"install_id\":\"i1\",\"app_id\":1,\"title\":\"Portal\"}]}}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @After

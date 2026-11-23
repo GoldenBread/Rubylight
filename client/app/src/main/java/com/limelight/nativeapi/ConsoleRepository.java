@@ -163,19 +163,12 @@ public final class ConsoleRepository {
             favsPayload = translateLegacyFavourites(rawFavs);
         }
 
-        SharedPreferences hiddenPrefs = app.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, Context.MODE_PRIVATE);
-        Map<String, ?> hiddenAll = hiddenPrefs.getAll();
-        String hiddenPayload = "";
-        if (!hiddenAll.isEmpty()) {
-            hiddenPayload = HiddenStore.Preferences.collectLegacyEntries(hiddenPrefs, hiddenAll).toString();
+        if (!recentsPayload.isEmpty() || !favsPayload.isEmpty()) {
+            NightjarConsoleJni.repoImportLegacy(h, recentsPayload, favsPayload, "");
+            if (rawRecents != null) recPrefs.edit().remove(LEGACY_RECENTS_KEY).commit();
+            if (rawFavs != null) favPrefs.edit().remove(LEGACY_FAVOURITES_KEY).commit();
         }
-
-        if (!recentsPayload.isEmpty() || !favsPayload.isEmpty() || !hiddenPayload.isEmpty()) {
-            NightjarConsoleJni.repoImportLegacy(h, recentsPayload, favsPayload, hiddenPayload);
-            if (rawRecents != null) recPrefs.edit().remove(LEGACY_RECENTS_KEY).apply();
-            if (rawFavs != null) favPrefs.edit().remove(LEGACY_FAVOURITES_KEY).apply();
-            if (!hiddenAll.isEmpty()) hiddenPrefs.edit().clear().apply();
-        }
+        HiddenStore.Preferences.migrateLegacy(app, h);
     }
 
     private static String translateLegacyRecents(String raw) {
@@ -341,8 +334,9 @@ public final class ConsoleRepository {
     }
 
     public ConsoleSnapshot cached(List<ComputerDetails> computers) {
-        String raw = NightjarConsoleJni.repoCached(handle, hostsJson(computers, false, null));
-        return ConsoleSnapshot.fromRustJson(raw, computers, Collections.emptyMap());
+        Map<String, List<NvApp>> classicHdr = new HashMap<>();
+        String raw = NightjarConsoleJni.repoCached(handle, hostsJson(computers, false, null, classicHdr));
+        return ConsoleSnapshot.fromRustJson(raw, computers, Collections.emptyMap(), classicHdr);
     }
 
     public ConsoleSnapshot refresh(List<ComputerDetails> computers) throws InterruptedException {
@@ -358,7 +352,6 @@ public final class ConsoleRepository {
             }
         }
         Map<String, NativeApiException> errors = new ConcurrentHashMap<>();
-        Map<String, NativeCapabilities> capsByHost = new ConcurrentHashMap<>();
         NightjarConsoleJni.TransportCallback cb = useRustTransport ? null : (hostUuid, op, arg) -> {
             ComputerDetails c = byUuid.get(hostUuid);
             HostEndpoint ep = endpointMap.get(hostUuid);
@@ -366,14 +359,7 @@ public final class ConsoleRepository {
                 return Json.obj().put("error", Json.obj().put("kind", "unavailable").put("message", "No address")).toString();
             }
             try {
-                String reply = transport.request(ep, op, arg);
-                if ("capabilities".equals(op)) {
-                    try {
-                        Json.Obj ok = NativeApiClient.decode(reply);
-                        capsByHost.put(hostUuid, NativeCapabilities.parse(ok));
-                    } catch (NativeApiException ignored) {}
-                }
-                return reply;
+                return transport.request(ep, op, arg);
             } catch (NativeApiException e) {
                 if ("library".equals(op)) errors.put(hostUuid, e);
                 Json.Obj err = Json.obj()
@@ -386,18 +372,20 @@ public final class ConsoleRepository {
                 return Json.obj().put("error", err).toString();
             }
         };
+        Map<String, List<NvApp>> classicHdr = new HashMap<>();
         String raw = NightjarConsoleJni.repoRefresh(
-                handle, hostsJson(computers, true, endpointMap), certDer, keyPkcs8, uniqueId, clock.nowMs(), cb);
+                handle, hostsJson(computers, true, endpointMap, classicHdr), certDer, keyPkcs8, uniqueId, clock.nowMs(), cb);
+        ConsoleSnapshot snapshot = ConsoleSnapshot.fromRustJson(raw, computers, errors, classicHdr);
         if (wakeTargets != null) {
-            for (Map.Entry<String, NativeCapabilities> entry : capsByHost.entrySet()) {
-                ComputerDetails c = byUuid.get(entry.getKey());
-                HostEndpoint ep = endpointMap.get(entry.getKey());
-                if (c != null && ep != null) {
-                    wakeTargets.refresh(entry.getKey(), entry.getValue(), new NativeApiClient(transport, ep));
+            for (ConsoleSnapshot.Host host : snapshot.hosts) {
+                if (!host.capabilitiesFetched) continue;
+                HostEndpoint ep = endpointMap.get(host.uuid);
+                if (ep != null) {
+                    wakeTargets.refresh(host.uuid, host.has(NativeCapabilities.WAKE), new NativeApiClient(transport, ep));
                 }
             }
         }
-        return ConsoleSnapshot.fromRustJson(raw, computers, errors);
+        return snapshot;
     }
 
     public boolean classicListHas(ComputerDetails computer, int appId) {
@@ -444,7 +432,7 @@ public final class ConsoleRepository {
                 return Json.obj().put("error", err).toString();
             }
         };
-        String hostJson = hostDescriptor(computer, endpoint, false).toString();
+        String hostJson = hostDescriptor(computer, endpoint, false, null).toString();
         String reply = NightjarConsoleJni.repoAddToLibrary(handle, hostJson, gameId, certDer, keyPkcs8, uniqueId, cb);
         Json.Obj env = Json.parseObject(reply);
         Json.Obj err = env.optObject("error");
@@ -507,28 +495,29 @@ public final class ConsoleRepository {
 
     public String projectHome(List<ComputerDetails> computers, String filterJson, String query,
                               String sortBy, String sortOrder) {
-        return NightjarConsoleJni.repoProjectHome(handle, hostsJson(computers, false, null),
+        return NightjarConsoleJni.repoProjectHome(handle, hostsJson(computers, false, null, null),
                 filterJson, query, sortBy, sortOrder);
     }
 
     public String gameDetail(List<ComputerDetails> computers, String hostId, int appId, boolean nativeApi) {
-        return NightjarConsoleJni.repoGameDetail(handle, hostsJson(computers, false, null), hostId, appId, nativeApi);
+        return NightjarConsoleJni.repoGameDetail(handle, hostsJson(computers, false, null, null), hostId, appId, nativeApi);
     }
 
     private String hostsJson(List<ComputerDetails> computers, boolean network,
-                             Map<String, HostEndpoint> endpointMap) {
+                             Map<String, HostEndpoint> endpointMap, Map<String, List<NvApp>> classicHdrOut) {
         Json.Arr arr = Json.arr();
         if (computers != null) {
             for (ComputerDetails c : computers) {
                 if (c == null || c.uuid == null) continue;
                 HostEndpoint ep = network && endpointMap != null ? endpointMap.get(c.uuid) : null;
-                arr.add(hostDescriptor(c, ep, network));
+                arr.add(hostDescriptor(c, ep, network, classicHdrOut));
             }
         }
         return arr.toString();
     }
 
-    private Json.Obj hostDescriptor(ComputerDetails c, HostEndpoint ep, boolean network) {
+    private Json.Obj hostDescriptor(ComputerDetails c, HostEndpoint ep, boolean network,
+                                    Map<String, List<NvApp>> classicHdrOut) {
         boolean isNative = c.caps.has(HostCapabilities.Feature.NATIVE_API);
         boolean online = c.state == ComputerDetails.State.ONLINE && (!network || !isNative || ep != null);
         Json.Obj obj = Json.obj()
@@ -546,6 +535,7 @@ public final class ConsoleRepository {
         if (!isNative && c.pairState == PairingManager.PairState.PAIRED) {
             List<NvApp> apps = classic.apps(c);
             if (apps != null) {
+                if (classicHdrOut != null) classicHdrOut.put(c.uuid, apps);
                 Json.Arr appArr = Json.arr();
                 for (NvApp app : apps) {
                     appArr.add(Json.obj()

@@ -25,9 +25,9 @@ pub use merge::{
 };
 pub use projections::{
     active, classic_app, continue_playing, detail, entry_key_of, favourite_for, favourite_games,
-    favourite_of, host_line, is_starred, last_played, live, neighbour, recheck_running,
-    recently_shown, saved_classic_app, stream_summary, Continue, Detail, EndAction, GameState,
-    HostLine, Playing, Recently, Running, Starred,
+    favourite_of, has_live_library, host_line, is_starred, last_played, live, neighbour,
+    recheck_running, recently_shown, saved_classic_app, stream_summary, Continue, Detail,
+    EndAction, GameState, HostLine, Playing, Recently, Running, Starred,
 };
 
 use crate::http::App;
@@ -245,25 +245,90 @@ impl Favourite {
             }
     }
 
+    /// Like [`Self::same_game`], except `app_id` fallback requires `app_id != 0` so two
+    /// bare/unadded `app_id == 0` entries never collide.
+    pub fn same_game_or_bare(&self, other: &Favourite) -> bool {
+        if self.host != other.host {
+            return false;
+        }
+        if !self.install_id.is_empty() && !other.install_id.is_empty() {
+            self.install_id.eq_ignore_ascii_case(&other.install_id)
+        } else {
+            self.app_id != 0 && self.app_id == other.app_id
+        }
+    }
+
     /// A hidden game by either id: the PC's list knows it by its classic UUID and Home by its
     /// install id, and the app id is the same in both.
     pub fn same_hidden(&self, other: &Favourite) -> bool {
-        self.same_game(other) || (self.host == other.host && self.app_id == other.app_id)
+        self.same_game(other)
+            || (self.host == other.host && self.app_id != 0 && self.app_id == other.app_id)
+    }
+}
+
+fn merge_hidden_entries(list: &mut Vec<Favourite>, games: Vec<Favourite>) {
+    for game in games {
+        if game.host.is_empty() || (game.app_id == 0 && game.install_id.is_empty()) {
+            continue;
+        }
+        let mut matched_idx: Option<usize> = None;
+        let mut idx = 0;
+        while idx < list.len() {
+            if game.same_game_or_bare(&list[idx]) {
+                if let Some(first_idx) = matched_idx {
+                    let dup = list.remove(idx);
+                    if list[first_idx].install_id.is_empty() && !dup.install_id.is_empty() {
+                        list[first_idx].install_id = dup.install_id;
+                    }
+                    if list[first_idx].app_id == 0 && dup.app_id != 0 {
+                        list[first_idx].app_id = dup.app_id;
+                    }
+                    if list[first_idx].title.is_empty() && !dup.title.is_empty() {
+                        list[first_idx].title = dup.title;
+                    }
+                    continue;
+                }
+                matched_idx = Some(idx);
+                if !game.install_id.is_empty() && list[idx].install_id != game.install_id {
+                    list[idx].install_id = game.install_id.clone();
+                }
+                if game.app_id != 0 && list[idx].app_id != game.app_id {
+                    list[idx].app_id = game.app_id;
+                }
+                if !game.title.is_empty() && list[idx].title != game.title {
+                    list[idx].title = game.title.clone();
+                }
+            }
+            idx += 1;
+        }
+        if matched_idx.is_none() {
+            list.push(game);
+        }
     }
 }
 
 /// Hides the `games` or shows them again, by the keys a favourite has. Returns whether the list
 /// changed.
 pub fn set_hidden(list: &mut Vec<Favourite>, games: Vec<Favourite>, hidden: bool) -> bool {
-    let before = list.len();
-    list.retain(|h| !games.iter().any(|game| game.same_hidden(h)));
-    let dropped = before - list.len();
+    let snapshot = list.clone();
     if !hidden {
-        return dropped > 0;
+        list.retain(|h| !games.iter().any(|game| game.same_hidden(h)));
+        return *list != snapshot;
     }
-    let added = games.len();
-    list.extend(games);
-    added != dropped
+    merge_hidden_entries(list, games);
+    *list != snapshot
+}
+
+/// Strict variant of [`set_hidden`] used by `HiddenStore`: uses [`Favourite::same_game_or_bare`]
+/// for both hiding and unhiding so distinct `install_id`s sharing an `app_id` never collide.
+pub fn set_hidden_strict(list: &mut Vec<Favourite>, games: Vec<Favourite>, hidden: bool) -> bool {
+    let snapshot = list.clone();
+    if !hidden {
+        list.retain(|h| !games.iter().any(|game| game.same_game_or_bare(h)));
+        return *list != snapshot;
+    }
+    merge_hidden_entries(list, games);
+    *list != snapshot
 }
 
 /// Stars `entry` (first in the list; a game already starred moves up and takes the new title)

@@ -122,6 +122,8 @@ public class ConsoleStoresTest {
 
         repo.setFavourite("b", "B", "inst-2", 40, "Two", true);
         assertTrue(repo.isFavourite("b", "inst-2", 40));
+        assertFalse(repo.isFavourite("b", "inst-9", 2));
+        assertFalse(repo.isFavourite("b", "inst-9", 40));
         repo.setFavourite("b", "B", "inst-2", 99, "Two", false);
         assertFalse(repo.isFavourite("b", "inst-2", 40));
     }

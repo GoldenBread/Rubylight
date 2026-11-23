@@ -77,7 +77,7 @@ impl NativeTransport for MockTransport {
             return Err("caps unreachable".into());
         }
         let mut caps: Capabilities = serde_json::from_str(
-            r#"{"api_version":1,"permissions":{"list":true,"view":true,"launch":true}}"#,
+            r#"{"api_version":1,"host":{"name":"Desk","version":"3.0.0","unique_id":"pc1"},"features":["library"],"permissions":{"list":true,"view":true,"launch":true,"host_control":false}}"#,
         )
         .unwrap();
         caps.features.push("library.unadded".into());
@@ -335,4 +335,287 @@ fn find_cached_library_cover_handles_precedence_unadded_explicit_none_and_format
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn library_cache_keeps_features_defaults_older_files_and_repairs_broken_json() {
+    let dir = temp_dir("lib-cache-parity");
+    let store = LibraryCacheStore::new(&dir);
+    let lib = NativeLibrary::from(Library {
+        revision: "r1".into(),
+        games: vec![sample_game("i1", 1, "Portal", Some("steam:400"))],
+    });
+    store
+        .save_entry(
+            "pc1",
+            &lib,
+            42,
+            &["library".into(), "library.unadded".into()],
+        )
+        .unwrap();
+    let (loaded, fetched_ms, features) = store.load_entry("pc1").unwrap();
+    assert_eq!(loaded.library.games.len(), 1);
+    assert_eq!(fetched_ms, 42);
+    assert_eq!(features, vec!["library", "library.unadded"]);
+
+    // Older cache file lacking `"features"` and `"revision"` still loads cleanly.
+    std::fs::write(
+        store.path_for("legacy"),
+        r#"{"fetched_ms":3,"library":{"games":[]}}"#,
+    )
+    .unwrap();
+    let (legacy_lib, legacy_ms, legacy_features) = store.load_entry("legacy").unwrap();
+    assert_eq!(legacy_ms, 3);
+    assert!(legacy_features.is_empty());
+    assert!(legacy_lib.library.games.is_empty());
+    assert_eq!(legacy_lib.library.revision, "");
+
+    // Empty games[] cache does not count as having any cached library.
+    store.forget("pc1");
+    assert!(!has_any_library(&dir));
+
+    // Broken JSON reads as None and is repaired on the next save.
+    std::fs::write(store.path_for("broken"), "{not json").unwrap();
+    assert!(store.load("broken").is_none());
+    assert!(!has_any_library(&dir));
+
+    store
+        .save_entry("broken", &lib, 99, &["library".into()])
+        .unwrap();
+    assert_eq!(store.load("broken").unwrap().library.games.len(), 1);
+    assert!(has_any_library(&dir));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn favourites_preserve_order_recover_from_corrupt_json_and_match_stable_id_before_app_id() {
+    let dir = temp_dir("fav-parity");
+    let store = FavouritesStore::new(&dir);
+    assert!(store.list().is_empty());
+
+    store
+        .set_explicit(
+            Favourite {
+                host: "a".into(),
+                install_id: "inst-1".into(),
+                app_id: 5,
+                title: "One".into(),
+            },
+            true,
+        )
+        .unwrap();
+    store
+        .set_explicit(
+            Favourite {
+                host: "b".into(),
+                install_id: "inst-2".into(),
+                app_id: 2,
+                title: "Two".into(),
+            },
+            true,
+        )
+        .unwrap();
+    assert_eq!(
+        store.list().iter().map(|f| f.title.as_str()).collect::<Vec<_>>(),
+        ["Two", "One"]
+    );
+
+    // Re-starring updates stored fields in place while preserving position.
+    store
+        .set_explicit(
+            Favourite {
+                host: "a".into(),
+                install_id: "inst-1".into(),
+                app_id: 5,
+                title: "One HD".into(),
+            },
+            true,
+        )
+        .unwrap();
+    assert_eq!(
+        store.list().iter().map(|f| f.title.as_str()).collect::<Vec<_>>(),
+        ["Two", "One HD"]
+    );
+
+    // Unstarring a missing entry is a no-op.
+    store
+        .set_explicit(
+            Favourite {
+                host: "a".into(),
+                install_id: "missing".into(),
+                app_id: 99,
+                title: "Nope".into(),
+            },
+            false,
+        )
+        .unwrap();
+    assert_eq!(store.list().len(), 2);
+
+    // Stable ID matches before app_id; differing install_id on the same app_id must not match.
+    assert!(!store.is_favourite("a", "inst-9", 5));
+    assert!(store.is_favourite("a", "inst-1", 40));
+    assert!(store.is_favourite("a", "", 5));
+
+    // Renumbered removal matches by install_id.
+    store
+        .set_explicit(
+            Favourite {
+                host: "a".into(),
+                install_id: "inst-1".into(),
+                app_id: 40,
+                title: "One HD".into(),
+            },
+            false,
+        )
+        .unwrap();
+    assert!(!store.is_favourite("a", "inst-1", 5));
+
+    // forget_host isolates other hosts.
+    store.forget_host("b").unwrap();
+    assert!(store.list().is_empty());
+
+    // Direct corrupt file on disk reads as empty, writes .bak, and recovers on next write.
+    let fav_path = dir.join("console").join("console_favourites.json");
+    std::fs::create_dir_all(fav_path.parent().unwrap()).unwrap();
+    std::fs::write(&fav_path, "{not json").unwrap();
+    assert!(store.list().is_empty());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("console").join("console_favourites.json.bak")).unwrap(),
+        "{not json"
+    );
+    store
+        .set_explicit(
+            Favourite {
+                host: "a".into(),
+                install_id: "inst-3".into(),
+                app_id: 3,
+                title: "Three".into(),
+            },
+            true,
+        )
+        .unwrap();
+    assert_eq!(store.list().len(), 1);
+    assert!(store.is_favourite("a", "inst-3", 3));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn hidden_store_and_repo_prevent_collisions_bare_leaks_and_split_brain() {
+    let dir = temp_dir("hidden-bugs");
+    let hidden = HiddenStore::new(&dir);
+
+    // Challenger Bug #1: distinct install_ids sharing an app_id do not collide or cancel out.
+    let alpha = Favourite {
+        host: "h".into(),
+        install_id: "alpha".into(),
+        app_id: 1,
+        title: "Alpha".into(),
+    };
+    let beta = Favourite {
+        host: "h".into(),
+        install_id: "beta".into(),
+        app_id: 1,
+        title: "Beta".into(),
+    };
+    assert!(hidden.set_hidden(vec![alpha.clone()], true).unwrap());
+    assert!(hidden.set_hidden(vec![beta.clone()], true).unwrap());
+    assert_eq!(hidden.list().len(), 2);
+    assert!(hidden.is_hidden("h", "alpha", 1));
+    assert!(hidden.is_hidden("h", "beta", 1));
+    assert!(hidden.set_hidden(vec![beta.clone()], false).unwrap());
+    assert!(hidden.is_hidden("h", "alpha", 1));
+    assert!(!hidden.is_hidden("h", "beta", 1));
+
+    // import_legacy_entries keeps distinct install_ids sharing an app_id.
+    assert!(
+        hidden
+            .import_legacy_entries(vec![Favourite {
+                host: "h2".into(),
+                install_id: "alpha".into(),
+                app_id: 1,
+                title: "A".into(),
+            }, Favourite {
+                host: "h2".into(),
+                install_id: "beta".into(),
+                app_id: 1,
+                title: "B".into(),
+            }])
+            .unwrap()
+    );
+    assert!(hidden.is_hidden("h2", "alpha", 1));
+    assert!(hidden.is_hidden("h2", "beta", 1));
+
+    // Challenger Bug #2: set_app cleans matching bare entry and following is case-insensitive
+    // without minting new hidden entries for another game at the old app_id.
+    hidden.changed("host", &[], &[1]).unwrap();
+    hidden.set_app("host", 1, "Alpha", true).unwrap();
+    let mut games = BTreeMap::new();
+    games.insert("alpha".into(), 7);
+    games.insert("beta".into(), 1);
+    let ids = hidden.following("host", &games).unwrap();
+    assert_eq!(ids.into_iter().collect::<Vec<_>>(), vec![7]);
+    assert!(hidden.is_hidden("host", "alpha", 7));
+    assert!(!hidden.is_hidden("host", "beta", 1));
+
+    // ConsoleRepository::refresh reconciles hidden_apps.json so Home and AppView agree,
+    // emits capabilities_fetched on the initial read only, and ignores unpaired classic_apps.
+    let repo_dir = temp_dir("repo-reconcile");
+    let repo = ConsoleRepository::new(&repo_dir);
+    repo.set_hidden(
+        vec![Favourite {
+            host: "pc1".into(),
+            install_id: "alpha".into(),
+            app_id: 1,
+            title: "Alpha".into(),
+        }],
+        true,
+    )
+    .unwrap();
+    let mut map = BTreeMap::new();
+    map.insert(
+        "pc1".into(),
+        NativeLibrary::from(Library {
+            revision: "r2".into(),
+            games: vec![
+                sample_game("alpha", 7, "Alpha", None),
+                sample_game("beta", 1, "Beta", None),
+            ],
+        }),
+    );
+    let transport = MockTransport {
+        caps_calls: AtomicUsize::new(0),
+        fail_caps: false,
+        libs: Mutex::new(map),
+    };
+    let mut unpaired_classic = host_desc("stranger", "Stranger");
+    unpaired_classic.paired = false;
+    unpaired_classic.is_native = false;
+    unpaired_classic.classic_apps = Some(nightjar_policy::console::ClassicApps {
+        version: 1,
+        apps: vec![nightjar_policy::console::ClassicApp {
+            id: 1,
+            name: "Desktop".into(),
+            uuid: String::new(),
+            art_version: String::new(),
+        }],
+    });
+    let hosts = [host_desc("pc1", "Desk"), unpaired_classic];
+    let snap1 = repo.refresh(&hosts, &transport);
+    assert_eq!(snap1.titles.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(), vec!["Beta"]);
+    assert_eq!(
+        snap1.hidden_titles.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(),
+        vec!["Alpha"]
+    );
+    assert_eq!(
+        repo.hidden_store().of_app_ids("pc1").into_iter().collect::<Vec<_>>(),
+        vec![7]
+    );
+    assert_eq!(snap1.host_states.len(), 1);
+    assert!(snap1.host_states[0].capabilities_fetched);
+
+    let snap2 = repo.refresh(&hosts, &transport);
+    assert!(!snap2.host_states[0].capabilities_fetched);
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&repo_dir);
 }

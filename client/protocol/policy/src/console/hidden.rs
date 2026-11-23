@@ -47,10 +47,10 @@ impl HiddenTracker {
             && self
                 .tracked
                 .iter()
-                .all(|a| current.iter().any(|b| a.same_hidden(b)))
+                .all(|a| current.iter().any(|b| a.same_game_or_bare(b)))
             && current
                 .iter()
-                .all(|b| self.tracked.iter().any(|a| a.same_hidden(b)));
+                .all(|b| self.tracked.iter().any(|a| a.same_game_or_bare(b)));
         if same_set {
             false
         } else {
@@ -88,7 +88,7 @@ pub fn hide_keys(sources: &[Source<'_>], host: u64, app_id: u32) -> Vec<Favourit
             app_id: copy.app_id,
             title: entry.title.clone(),
         };
-        if !out.iter().any(|existing: &Favourite| existing.same_hidden(&fav)) {
+        if !out.iter().any(|existing: &Favourite| existing.same_game_or_bare(&fav)) {
             out.push(fav);
         }
     }
@@ -144,7 +144,10 @@ pub fn is_hidden(
         });
     if ambiguous_id {
         return hidden.iter().any(|h| {
-            h.host == source.unique_id && h.install_id.is_empty() && h.app_id == app_id
+            h.host == source.unique_id
+                && h.install_id.is_empty()
+                && h.app_id != 0
+                && h.app_id == app_id
         });
     }
     let key = Favourite {
@@ -153,7 +156,38 @@ pub fn is_hidden(
         app_id,
         title: String::new(),
     };
-    hidden.iter().any(|h| h.same_game(&key))
+    hidden.iter().any(|h| {
+        h.same_game_or_bare(&key) || classic_uuid_fallback(source, install_id, app_id, h)
+    })
+}
+
+fn classic_uuid_fallback(
+    source: &Source<'_>,
+    install_id: &str,
+    app_id: u32,
+    h: &Favourite,
+) -> bool {
+    if h.host != source.unique_id || h.app_id == 0 || h.app_id != app_id {
+        return false;
+    }
+    // Preserve classic `/applist` UUID fallback only when `source.library` does not identify
+    // `install_id` as a different native game or place `h.install_id` at another `app_id`.
+    let Some(lib) = source.library else {
+        return true;
+    };
+    let install_id_is_other_native = !install_id.is_empty()
+        && lib.games.iter().any(|g| {
+            !g.install_id.is_empty()
+                && g.install_id.eq_ignore_ascii_case(install_id)
+                && !g.install_id.eq_ignore_ascii_case(&h.install_id)
+        });
+    let hidden_id_is_elsewhere = !h.install_id.is_empty()
+        && lib.games.iter().any(|g| {
+            !g.install_id.is_empty()
+                && g.install_id.eq_ignore_ascii_case(&h.install_id)
+                && g.app_id != h.app_id
+        });
+    !install_id_is_other_native && !hidden_id_is_elsewhere
 }
 
 /// Whether `(host_id, install_id, app_id)` is matched by any entry in `hidden`.
@@ -167,7 +201,7 @@ pub fn is_hidden_entry(hidden: &[Favourite], host_id: &str, install_id: &str, ap
         app_id,
         title: String::new(),
     };
-    hidden.iter().any(|h| h.same_game(&key))
+    hidden.iter().any(|h| h.same_game_or_bare(&key))
 }
 
 /// Whether `(host, app_id)` in `sources` is NOT hidden.

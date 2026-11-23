@@ -78,6 +78,15 @@ public class FileParsersTest {
         FileRow over = FileRow.parse("[{\"id\":1,\"direction\":\"download\",\"name\":\"a\",\"local_name\":\"a\","
                 + "\"size\":10,\"state\":\"running\",\"done\":30,\"total\":10}]").get(0);
         assertEquals(100, over.percent());
+        FileRow negative = FileRow.parse("[{\"id\":1,\"direction\":\"download\",\"name\":\"a\",\"local_name\":\"a\","
+                + "\"size\":10,\"state\":\"running\",\"done\":-10,\"total\":10}]").get(0);
+        assertEquals(0, negative.percent());
+        FileRow hugeHalf = FileRow.parse("[{\"id\":1,\"direction\":\"download\",\"name\":\"a\",\"local_name\":\"a\","
+                + "\"size\":200000000000000000,\"state\":\"running\",\"done\":100000000000000000,\"total\":200000000000000000}]").get(0);
+        assertEquals(50, hugeHalf.percent());
+        FileRow hugeMax = FileRow.parse("[{\"id\":1,\"direction\":\"download\",\"name\":\"a\",\"local_name\":\"a\","
+                + "\"size\":9223372036854775807,\"state\":\"running\",\"done\":9223372036854775806,\"total\":9223372036854775807}]").get(0);
+        assertEquals(99, hugeMax.percent());
     }
 
     @Test

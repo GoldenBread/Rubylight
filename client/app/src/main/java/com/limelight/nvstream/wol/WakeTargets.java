@@ -167,10 +167,18 @@ public final class WakeTargets {
      * (blocks on HTTPS). A failed read keeps what is stored: those adapters still belong to the PC.
      */
     public void refresh(String hostUuid, NativeCapabilities capabilities, NativeApiClient client) {
+        refresh(hostUuid, capabilities != null && capabilities.has(NativeCapabilities.WAKE), client);
+    }
+
+    /**
+     * Reads the targets of a host when {@code hasWake} is true, and forgets them otherwise (blocks on HTTPS).
+     * A failed read keeps what is stored: those adapters still belong to the PC.
+     */
+    public void refresh(String hostUuid, boolean hasWake, NativeApiClient client) {
         if (hostUuid == null) {
             return;
         }
-        if (!capabilities.has(NativeCapabilities.WAKE)) {
+        if (!hasWake) {
             forget(hostUuid);
             return;
         }

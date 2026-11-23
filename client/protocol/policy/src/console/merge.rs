@@ -95,7 +95,7 @@ pub fn classic_library(apps: &ClassicApps, running: Option<(i32, Option<&str>)>)
 }
 
 /// One host's copy of a game in the merged library.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Copy {
     pub host: u64,
     pub host_uid: String,
@@ -128,6 +128,39 @@ pub struct Copy {
     pub collections: Vec<String>,
 }
 
+impl PartialEq for Copy {
+    fn eq(&self, other: &Self) -> bool {
+        self.host == other.host
+            && self.host_uid == other.host_uid
+            && self.host_name == other.host_name
+            && self.title == other.title
+            && self.online == other.online
+            && self.app_id == other.app_id
+            && self.install_id == other.install_id
+            && self.running == other.running
+            && self.installed == other.installed
+            && self.installed_raw == other.installed_raw
+            && self.added == other.added
+            && self.launchable == other.launchable
+            && self.is_native == other.is_native
+            && self.store == other.store
+            && self.store_name == other.store_name
+            && self.store_id == other.store_id
+            && self.game_id == other.game_id
+            && self.has_cover == other.has_cover
+            && self.cover_path == other.cover_path
+            && self.cover_version == other.cover_version
+            && self.hero_path == other.hero_path
+            && self.logo_path == other.logo_path
+            && self.landscape_path == other.landscape_path
+            && self.last_played == other.last_played
+            && self.playtime_minutes == other.playtime_minutes
+            && self.collections == other.collections
+    }
+}
+
+impl Eq for Copy {}
+
 /// A cross-host merged game entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
@@ -142,7 +175,8 @@ impl Entry {
     pub fn best(&self) -> &Copy {
         self.copies
             .iter()
-            .max_by_key(|c| {
+            .enumerate()
+            .max_by_key(|(i, c)| {
                 (
                     c.running,
                     c.online && c.installed && c.added,
@@ -150,8 +184,10 @@ impl Entry {
                     c.online,
                     c.installed,
                     c.has_cover,
+                    std::cmp::Reverse(*i),
                 )
             })
+            .map(|(_, c)| c)
             .expect("merged Entry always has at least one Copy")
     }
 
@@ -432,13 +468,14 @@ pub fn merge_rich_library(sources: &[RichSource<'_>]) -> Vec<Entry> {
             (
                 !a.running,
                 !(a.online && a.installed && a.added),
+                !(a.online && a.added),
                 !a.online,
                 !a.installed,
-                a.host,
-                a.index,
             )
         });
-        if let Some(first) = entry.copies.first() {
+        if let Some(first) = entry.copies.first()
+            && first.running
+        {
             entry.title = first.title.clone();
         }
     }

@@ -53,7 +53,15 @@ public final class FileRow {
     public int percent() {
         if (state == State.DONE) return 100;
         if (state != State.RUNNING || total <= 0) return -1;
-        return (int) Math.min(100, done * 100 / total);
+        if (done <= 0) return 0;
+        if (done >= total) return 100;
+        if (done <= Long.MAX_VALUE / 100) {
+            return (int) (done * 100 / total);
+        }
+        return java.math.BigInteger.valueOf(done)
+                .multiply(java.math.BigInteger.valueOf(100))
+                .divide(java.math.BigInteger.valueOf(total))
+                .intValue();
     }
 
     /** The rows of a snapshot; a reply that is not one is a bug in the bridge, so it throws. */

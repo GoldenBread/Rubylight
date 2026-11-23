@@ -662,5 +662,55 @@ mod tests {
         let invalid: serde_json::Value = serde_json::from_str(r#"{"title":"Celeste","added":true}"#).unwrap();
         assert!(parse_added(&invalid, "gog:c").is_err());
     }
+
+    #[test]
+    fn nulls_and_nonsense_read_as_untold() {
+        let json = r#"{
+            "revision":"r1",
+            "games":[
+                {
+                    "install_id":"i1",
+                    "app_id":5,
+                    "title":"Portal",
+                    "added":null,
+                    "last_played":null,
+                    "playtime_minutes":null,
+                    "launchable":null,
+                    "store":null,
+                    "artwork":{"cover":null,"hero":""}
+                },
+                {
+                    "install_id":"i2",
+                    "app_id":6,
+                    "title":"Soon",
+                    "last_played":"soon"
+                },
+                {
+                    "install_id":"i3",
+                    "app_id":7,
+                    "title":"Zero",
+                    "last_played":0
+                },
+                {
+                    "install_id":"i4",
+                    "app_id":8,
+                    "title":"Neg",
+                    "last_played":-1
+                }
+            ]
+        }"#;
+        let lib: NativeLibrary = serde_json::from_str(json).unwrap();
+        assert_eq!(lib.library.games.len(), 4);
+        assert!(lib.added_at(0));
+        assert_eq!(lib.last_played.get("i1"), None);
+        assert_eq!(lib.playtime_minutes.get("i1"), None);
+        assert_eq!(lib.extra_for(0).launchable, None);
+        assert_eq!(lib.library.games[0].store, None);
+        assert_eq!(lib.library.games[0].artwork.cover, None);
+        assert_eq!(lib.extra_for(0).hero, None);
+        assert_eq!(lib.last_played.get("i2"), None);
+        assert_eq!(lib.last_played.get("i3"), Some(&0));
+        assert_eq!(lib.last_played.get("i4"), None);
+    }
 }
 

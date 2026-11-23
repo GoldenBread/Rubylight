@@ -184,8 +184,8 @@ pub fn active(source: &Source<'_>) -> bool {
     policy::active(&source.as_policy())
 }
 
-pub fn live(source: &Source<'_>) -> bool {
-    policy::live(&source.as_policy())
+pub fn live(session: &Session) -> bool {
+    policy::live(session)
 }
 
 pub fn is_hidden(source: &Source<'_>, install_id: &str, app_id: u32, hidden: &[Favourite]) -> bool {

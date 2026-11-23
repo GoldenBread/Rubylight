@@ -185,7 +185,7 @@ fn der_spki_p256(pub_bytes: &[u8]) -> Vec<u8> {
 }
 
 #[derive(Clone)]
-enum TlsReply {
+pub(super) enum TlsReply {
     Raw(Vec<u8>),
     SlowBody {
         head: Vec<u8>,
@@ -195,14 +195,14 @@ enum TlsReply {
     },
 }
 
-struct TlsFixture {
-    port: u16,
-    roots: RootCertStore,
-    seen_requests: Arc<Mutex<Vec<String>>>,
+pub(super) struct TlsFixture {
+    pub(super) port: u16,
+    pub(super) roots: RootCertStore,
+    pub(super) seen_requests: Arc<Mutex<Vec<String>>>,
 }
 
 impl TlsFixture {
-    fn start(route: impl Fn(&str, u16) -> TlsReply + Send + Sync + 'static) -> Self {
+    pub(super) fn start(route: impl Fn(&str, u16) -> TlsReply + Send + Sync + 'static) -> Self {
         let (ca_cert, leaf_cert, key) = make_san_cert_and_key();
         let mut roots = RootCertStore::empty();
         roots.add(ca_cert.clone()).unwrap();
@@ -270,7 +270,7 @@ impl TlsFixture {
         }
     }
 
-    fn url(&self, path: &str) -> String {
+    pub(super) fn url(&self, path: &str) -> String {
         format!("https://127.0.0.1:{}{path}", self.port)
     }
 }

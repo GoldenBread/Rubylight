@@ -1,6 +1,7 @@
 package com.limelight.nativeapi;
 
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.jni.Json;
 
 import java.util.ArrayList;
@@ -8,6 +9,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -205,14 +207,21 @@ public final class ConsoleSnapshot {
         public final List<Source> sources;
         /** The native API features the host advertised when its library was read; empty for a classic host. */
         public final Set<String> features;
+        /** Whether this refresh freshly fetched capabilities for this host. */
+        public final boolean capabilitiesFetched;
 
         Host(String uuid, String name, Status status, long fetchedAtMs, NativeApiException error,
              NativeSession session, List<Source> sources) {
-            this(uuid, name, status, fetchedAtMs, error, session, sources, Collections.emptySet());
+            this(uuid, name, status, fetchedAtMs, error, session, sources, Collections.emptySet(), false);
         }
 
         Host(String uuid, String name, Status status, long fetchedAtMs, NativeApiException error,
              NativeSession session, List<Source> sources, Set<String> features) {
+            this(uuid, name, status, fetchedAtMs, error, session, sources, features, false);
+        }
+
+        Host(String uuid, String name, Status status, long fetchedAtMs, NativeApiException error,
+             NativeSession session, List<Source> sources, Set<String> features, boolean capabilitiesFetched) {
             this.uuid = uuid;
             this.name = name;
             this.status = status;
@@ -221,6 +230,7 @@ public final class ConsoleSnapshot {
             this.session = session;
             this.sources = Collections.unmodifiableList(sources);
             this.features = Collections.unmodifiableSet(features);
+            this.capabilitiesFetched = capabilitiesFetched;
         }
 
         public boolean has(String feature) {
@@ -315,18 +325,16 @@ public final class ConsoleSnapshot {
     /** Hydrates a [`ConsoleSnapshot`] from the JSON returned by `NightjarConsoleJni.repoCached`/`repoRefresh`. */
     public static ConsoleSnapshot fromRustJson(String raw, List<ComputerDetails> computers,
                                                Map<String, NativeApiException> errors) {
+        return fromRustJson(raw, computers, errors, Collections.emptyMap());
+    }
+
+    /** Hydrates a [`ConsoleSnapshot`] from Rust JSON while preserving per-app classic HDR flags. */
+    public static ConsoleSnapshot fromRustJson(String raw, List<ComputerDetails> computers,
+                                               Map<String, NativeApiException> errors,
+                                               Map<String, List<NvApp>> classicApps) {
         if (raw == null || raw.isEmpty()) return empty();
         Json.Obj root = Json.parseObject(raw);
         if (root.has("error") && !root.has("titles")) return empty();
-
-        Map<String, Boolean> hdrByHost = new HashMap<>();
-        if (computers != null) {
-            for (ComputerDetails c : computers) {
-                if (c != null && c.uuid != null) {
-                    hdrByHost.put(c.uuid, false);
-                }
-            }
-        }
 
         Map<String, NativeSession> sessionsByHost = new HashMap<>();
         Json.Obj sessionsObj = root.optObject("sessions");
@@ -350,8 +358,9 @@ public final class ConsoleSnapshot {
         }
 
         Map<String, Title> titleByKey = new java.util.LinkedHashMap<>();
-        parseEntryList(root.optArray("titles"), false, hdrByHost, classicByHost, sourcesByHost, sourceOrder, titleByKey);
-        parseEntryList(root.optArray("hidden_titles"), true, hdrByHost, classicByHost, sourcesByHost, sourceOrder, titleByKey);
+        Map<String, String> gameKeyByLower = new HashMap<>();
+        parseEntryList(root.optArray("titles"), false, classicApps, classicByHost, sourcesByHost, sourceOrder, titleByKey, gameKeyByLower);
+        parseEntryList(root.optArray("hidden_titles"), true, classicApps, classicByHost, sourcesByHost, sourceOrder, titleByKey, gameKeyByLower);
         List<Title> titles = new ArrayList<>(titleByKey.values());
         for (List<Source> list : sourcesByHost.values()) {
             list.sort(java.util.Comparator.comparingInt(s -> sourceOrder.getOrDefault(s, 0)));
@@ -376,13 +385,15 @@ public final class ConsoleSnapshot {
             }
             List<Source> hostSources = sourcesByHost.getOrDefault(uuid, Collections.emptyList());
             Host host = new Host(uuid, h.optString("name", ""), status, h.optLong("fetched_at_ms", 0L),
-                    err, sessionsByHost.get(uuid), hostSources, features);
+                    err, sessionsByHost.get(uuid), hostSources, features,
+                    h.optBoolean("capabilities_fetched", false));
             hosts.add(host);
             hostById.put(uuid, host);
         }
 
         List<Continue> continuePlaying = new ArrayList<>();
-        Set<String> playingKeys = new HashSet<>();
+        Set<String> seenAppKeys = new HashSet<>();
+        Set<String> seenInstallKeys = new HashSet<>();
         Json.Arr contArr = root.optArray("continue_playing");
         for (int i = 0; contArr != null && i < contArr.length(); i++) {
             Json.Obj c = contArr.getObject(i);
@@ -392,9 +403,14 @@ public final class ConsoleSnapshot {
             ContinueKind kind = "Suspended".equalsIgnoreCase(c.optString("playing", ""))
                     ? ContinueKind.SUSPENDED : ContinueKind.RUNNING;
             Source matched = findSource(sourcesByHost.get(hostUid), installId, appId);
-            continuePlaying.add(new Continue(kind, hostUid, c.optString("host_name", ""), appId,
+            int resolvedAppId = matched != null && matched.appId > 0 ? matched.appId : appId;
+            String resolvedInstallId = matched != null ? matched.stableId() : installId;
+            continuePlaying.add(new Continue(kind, hostUid, c.optString("host_name", ""), resolvedAppId,
                     c.optString("title", ""), sessionsByHost.get(hostUid), matched, 0L));
-            playingKeys.add(hostUid + ":" + appId);
+            if (appId > 0) seenAppKeys.add(hostUid + ":" + appId);
+            if (resolvedAppId > 0) seenAppKeys.add(hostUid + ":" + resolvedAppId);
+            if (!installId.isEmpty()) seenInstallKeys.add(hostUid + ":" + installId.toLowerCase(Locale.ROOT));
+            if (!resolvedInstallId.isEmpty()) seenInstallKeys.add(hostUid + ":" + resolvedInstallId.toLowerCase(Locale.ROOT));
         }
         Json.Arr recArr = root.optArray("recents");
         int recentsShown = 0;
@@ -404,13 +420,24 @@ public final class ConsoleSnapshot {
             int appId = r.optInt("app_id", 0);
             String installId = r.optString("install_id", "");
             Host host = hostById.get(hostUid);
-            if (host == null || playingKeys.contains(hostUid + ":" + appId)) continue;
+            if (host == null) continue;
             Source matched = findSource(sourcesByHost.get(hostUid), installId, appId);
             if (matched == null && host.status != Status.UNAVAILABLE) continue;
             if (matched != null && matched.hidden) continue;
+            int resolvedAppId = matched != null ? matched.appId : appId;
+            String resolvedInstallId = matched != null ? matched.stableId() : installId;
+            boolean seen = (appId > 0 && seenAppKeys.contains(hostUid + ":" + appId))
+                    || (resolvedAppId > 0 && seenAppKeys.contains(hostUid + ":" + resolvedAppId))
+                    || (!installId.isEmpty() && seenInstallKeys.contains(hostUid + ":" + installId.toLowerCase(Locale.ROOT)))
+                    || (!resolvedInstallId.isEmpty() && seenInstallKeys.contains(hostUid + ":" + resolvedInstallId.toLowerCase(Locale.ROOT)));
+            if (seen) continue;
+            if (appId > 0) seenAppKeys.add(hostUid + ":" + appId);
+            if (resolvedAppId > 0) seenAppKeys.add(hostUid + ":" + resolvedAppId);
+            if (!installId.isEmpty()) seenInstallKeys.add(hostUid + ":" + installId.toLowerCase(Locale.ROOT));
+            if (!resolvedInstallId.isEmpty()) seenInstallKeys.add(hostUid + ":" + resolvedInstallId.toLowerCase(Locale.ROOT));
             String title = matched != null ? matched.title : r.optString("title", "");
             long playedMs = r.optLong("at", 0L);
-            continuePlaying.add(new Continue(ContinueKind.RECENT, hostUid, host.name, appId, title, null, matched, playedMs));
+            continuePlaying.add(new Continue(ContinueKind.RECENT, hostUid, host.name, resolvedAppId, title, null, matched, playedMs));
             if (++recentsShown == 10) break;
         }
 
@@ -434,11 +461,12 @@ public final class ConsoleSnapshot {
         return new ConsoleSnapshot(titles, hosts, continuePlaying, favourites);
     }
 
-    private static void parseEntryList(Json.Arr arr, boolean hidden, Map<String, Boolean> hdrByHost,
+    private static void parseEntryList(Json.Arr arr, boolean hidden, Map<String, List<NvApp>> classicApps,
                                        Map<String, Boolean> classicByHost,
                                        Map<String, List<Source>> byHost,
                                        Map<Source, Integer> sourceOrder,
-                                       Map<String, Title> outTitles) {
+                                       Map<String, Title> outTitles,
+                                       Map<String, String> gameKeyByLower) {
         for (int i = 0; arr != null && i < arr.length(); i++) {
             Json.Obj e = arr.getObject(i);
             String titleName = e.optString("title", "");
@@ -462,10 +490,13 @@ public final class ConsoleSnapshot {
                         ? c.optBoolean("launchable") : null;
                 String rawId = c.optString("install_id", "");
                 String copyTitle = c.optString("title", titleName);
+                int appId = c.optInt("app_id", 0);
+                boolean hdrSupported = isClassic && classicApps != null
+                        && isClassicHdrSupported(classicApps.get(hostUid), rawId, appId);
                 Source s = new Source(
                         hostUid,
                         c.optString("host_name", ""),
-                        c.optInt("app_id", 0),
+                        appId,
                         isClassic ? null : rawId,
                         copyTitle.isEmpty() ? titleName : copyTitle,
                         c.isNull("game_id") ? null : c.optString("game_id", null),
@@ -474,7 +505,7 @@ public final class ConsoleSnapshot {
                         c.optString("cover_version", ""),
                         installed,
                         isClassic ? rawId : null,
-                        Boolean.TRUE.equals(hdrByHost.get(hostUid)),
+                        hdrSupported,
                         c.isNull("store") ? null : c.optString("store", null),
                         c.isNull("store_name") ? null : c.optString("store_name", null),
                         c.isNull("store_id") ? null : c.optString("store_id", null),
@@ -494,11 +525,22 @@ public final class ConsoleSnapshot {
             if (!srcs.isEmpty()) {
                 Source first = srcs.get(0);
                 String rustKey = e.optString("key", "");
-                String titleKey = first.gameId != null && !first.gameId.isEmpty()
-                        ? "game:" + first.gameId
-                        : (first.appId == 0 && (first.installId == null || first.installId.isEmpty()) && !rustKey.isEmpty())
-                        ? rustKey
-                        : "host:" + first.hostUuid + ":" + first.appId;
+                String titleKey;
+                if (first.gameId != null && !first.gameId.isEmpty()) {
+                    String candidate = "game:" + first.gameId;
+                    String lower = candidate.toLowerCase(Locale.ROOT);
+                    String canonical = gameKeyByLower.get(lower);
+                    if (canonical == null) {
+                        gameKeyByLower.put(lower, candidate);
+                        titleKey = candidate;
+                    } else {
+                        titleKey = canonical;
+                    }
+                } else if (first.appId == 0 && !rustKey.isEmpty()) {
+                    titleKey = rustKey;
+                } else {
+                    titleKey = "host:" + first.hostUuid + ":" + first.appId;
+                }
                 Title existing = outTitles.get(titleKey);
                 if (existing == null) {
                     outTitles.put(titleKey, new Title(titleKey, titleName, srcs));
@@ -512,13 +554,39 @@ public final class ConsoleSnapshot {
         }
     }
 
+    private static boolean isClassicHdrSupported(List<NvApp> apps, String appUuid, int appId) {
+        if (apps == null) return false;
+        if (appUuid != null && !appUuid.isEmpty()) {
+            for (NvApp app : apps) {
+                if (appUuid.equalsIgnoreCase(app.getAppUuid())) {
+                    return app.isHdrSupported();
+                }
+            }
+        }
+        if (appId > 0) {
+            for (NvApp app : apps) {
+                if (app.getAppId() == appId) {
+                    return app.isHdrSupported();
+                }
+            }
+        }
+        return false;
+    }
+
     private static Source findSource(List<Source> list, String installId, int appId) {
         if (list == null) return null;
+        if (installId != null && !installId.isEmpty()) {
+            for (Source s : list) {
+                if (installId.equalsIgnoreCase(s.stableId())) {
+                    return s;
+                }
+            }
+        }
         for (Source s : list) {
-            if (installId != null && !installId.isEmpty() && installId.equalsIgnoreCase(s.installId)) {
+            if (appId > 0 && s.appId == appId
+                    && (installId == null || installId.isEmpty() || s.stableId().isEmpty())) {
                 return s;
             }
-            if (appId > 0 && s.appId == appId) return s;
         }
         return null;
     }

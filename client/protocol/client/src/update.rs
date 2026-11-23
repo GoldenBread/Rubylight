@@ -358,4 +358,6 @@ fn fetch_text(
 }
 
 #[cfg(test)]
+mod exchange_tests;
+#[cfg(test)]
 mod tests;

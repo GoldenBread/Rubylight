@@ -242,6 +242,7 @@ public class PinEntryPointsTest {
         assertEquals(1, recents(app).size());
         assertEquals("Desktop", recents(app).get(0).title);
         assertEquals(PC, recents(app).get(0).hostUuid);
+        assertEquals("Desk", recents(app).get(0).hostName);
     }
 
     @Test
