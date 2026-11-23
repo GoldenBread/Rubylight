@@ -1,2 +1,0 @@
-# NVENC and D3D12 teardown
-- **Clean stream teardown on D3D12 NVENC and idd-push.** Stream teardown now drains the D3D12 compute queue, flushes D3D12 NVENC with end-of-stream and waits for its output fence before unregistering resources and destroying the session, drains shared `idd-push` and handoff fences before releasing them, and keeps streaming GPU scheduling priority active until encoder, capture, and display teardown finish (#148).

@@ -1,0 +1,5 @@
+• Fix intermittent 120 Hz judder and Presented FPS drops in Balanced pacing on Vulkan and standard renderers.
+• Keep high-refresh (120 Hz) display mode pinned on the stream window when no overlay is shown.
+• Route MediaTek and mismatched full-range SDR streams through Vulkan to preserve black levels.
+• Keep game cover art when launching again from Android TV home channel cards.
+• Log why native 4:4:4 fell back to packed full chroma.
