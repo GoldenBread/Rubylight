@@ -5,7 +5,8 @@ import static org.junit.Assert.assertTrue;
 
 import android.app.Application;
 
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -16,12 +17,12 @@ import org.robolectric.annotation.Config;
 @Config(sdk = 29, application = Application.class)
 public class NativeSessionMicrophoneTest {
     @Test
-    public void thePcsSessionSaysWhenTheMicrophoneIsBusy() throws Exception {
+    public void thePcsSessionSaysWhenTheMicrophoneIsBusy() {
         String session = "{\"revision\":1,\"state\":\"streaming\",\"owner\":\"you\",\"app\":null,"
                 + "\"game_running\":false,\"actions\":[]";
         assertTrue(NativeSession.parse(
-                new JSONObject(session + ",\"microphone_busy\":true}")).microphoneBusy);
+                Json.parseObject(session + ",\"microphone_busy\":true}")).microphoneBusy);
         // Absent from older hosts and whenever it plays.
-        assertFalse(NativeSession.parse(new JSONObject(session + "}")).microphoneBusy);
+        assertFalse(NativeSession.parse(Json.parseObject(session + "}")).microphoneBusy);
     }
 }

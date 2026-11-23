@@ -1,8 +1,6 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -43,23 +41,23 @@ public final class NativeWake {
         this.targets = Collections.unmodifiableList(targets);
     }
 
-    static NativeWake parse(JSONObject json) throws JSONException {
+    static NativeWake parse(Json.Obj json) {
         List<Target> targets = new ArrayList<>();
-        JSONArray array = json.getJSONArray("targets");
+        Json.Arr array = json.getArray("targets");
         for (int i = 0; i < array.length(); i++) {
             // A target this client cannot read is one it does not send to.
-            JSONObject target = array.optJSONObject(i);
-            if (target == null || !(target.opt("mac") instanceof String)) continue;
+            Json.Obj target = array.optObject(i);
+            if (target == null || !(target.raw("mac") instanceof String)) continue;
             List<String> broadcasts = new ArrayList<>();
-            JSONArray addresses = target.optJSONArray("broadcasts");
+            Json.Arr addresses = target.optArray("broadcasts");
             for (int j = 0; addresses != null && j < addresses.length(); j++) {
-                Object address = addresses.opt(j);
+                Object address = addresses.raw(j);
                 if (address instanceof String) broadcasts.add((String) address);
             }
             targets.add(new Target(target.getString("mac"), target.optString("kind", null),
                     target.optBoolean("connected"), target.optBoolean("route"), broadcasts));
         }
-        return new NativeWake(json.optInt("revision"), json.isNull("primary") ? null : json.optString("primary", null),
+        return new NativeWake(json.optInt("revision", 0), json.isNull("primary") ? null : json.optString("primary", null),
                 targets);
     }
 }

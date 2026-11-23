@@ -98,9 +98,8 @@ public class FrontendSyncTest {
 
         org.junit.Assert.assertEquals(1, apps.size());
         org.junit.Assert.assertEquals("Beta", apps.get(0).getAppName());
-        org.junit.Assert.assertEquals(java.util.Collections.singleton("7"),
-                context.getSharedPreferences(com.limelight.AppView.HIDDEN_APPS_PREF_FILENAME, 0)
-                        .getStringSet(computer.uuid, java.util.Collections.emptySet()));
+        org.junit.Assert.assertEquals(java.util.Collections.singleton(7),
+                new com.limelight.nativeapi.HiddenStore.Preferences(context).of(computer.uuid));
     }
 
     private void cover(int appId, byte value) throws Exception {

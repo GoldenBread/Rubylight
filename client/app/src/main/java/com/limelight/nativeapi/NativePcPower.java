@@ -1,7 +1,6 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 /**
  * Restart PC, Shut down PC (GET /power) and the host's update (GET /update), read as pc_power.rs reads them:
@@ -46,9 +45,9 @@ public final class NativePcPower {
          */
         public final boolean lastRefusalUnconfirmed;
 
-        Offer(JSONObject json) {
-            JSONObject restart = json.optJSONObject("restart");
-            JSONObject shutdown = json.optJSONObject("shutdown");
+        Offer(Json.Obj json) {
+            Json.Obj restart = json.optObject("restart");
+            Json.Obj shutdown = json.optObject("shutdown");
             restartAvailable = restart != null && restart.optBoolean("available");
             restartReason = text(restart, "reason");
             shutdownAvailable = shutdown != null && shutdown.optBoolean("available");
@@ -101,7 +100,7 @@ public final class NativePcPower {
         /** Read while following an install: the PC is back on another version with nothing under way. */
         public final boolean gaveUp;
 
-        Update(JSONObject json) {
+        Update(Json.Obj json) {
             this(json.optString("current_version", ""), text(json, "latest_version"), json.optString("phase", ""),
                     json.optBoolean("install_supported"), text(json, "waiting_for"), text(json, "error"),
                     text(json, "offered"), json.optBoolean("installing_now"), json.optBoolean("in_progress"),
@@ -139,21 +138,21 @@ public final class NativePcPower {
         }
     }
 
-    static Offer parseOffer(JSONObject json) throws JSONException {
-        if (json == null) throw new JSONException("no power object");
+    static Offer parseOffer(Json.Obj json) {
+        if (json == null) throw new Json.SyntaxException("no power object");
         return new Offer(json);
     }
 
-    static Update parseUpdate(JSONObject json) throws JSONException {
-        if (json == null) throw new JSONException("no update object");
+    static Update parseUpdate(Json.Obj json) {
+        if (json == null) throw new Json.SyntaxException("no update object");
         return new Update(json);
     }
 
-    private static String text(JSONObject json, String key) {
+    private static String text(Json.Obj json, String key) {
         if (json == null || json.isNull(key)) {
             return null;
         }
-        Object value = json.opt(key);
+        Object value = json.raw(key);
         return value instanceof String ? (String) value : null;
     }
 }

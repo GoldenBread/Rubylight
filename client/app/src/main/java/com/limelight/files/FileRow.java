@@ -1,8 +1,6 @@
 package com.limelight.files;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -31,7 +29,7 @@ public final class FileRow {
     public final boolean cancelling;
     public final boolean canRetry;
 
-    FileRow(JSONObject row) throws JSONException {
+    FileRow(Json.Obj row) {
         id = row.getLong("id");
         upload = "upload".equals(row.getString("direction"));
         name = row.getString("name");
@@ -61,13 +59,13 @@ public final class FileRow {
     /** The rows of a snapshot; a reply that is not one is a bug in the bridge, so it throws. */
     public static List<FileRow> parse(String snapshot) {
         try {
-            JSONArray rows = new JSONArray(snapshot);
+            Json.Arr rows = Json.parseArray(snapshot);
             List<FileRow> parsed = new ArrayList<>(rows.length());
             for (int i = 0; i < rows.length(); i++) {
-                parsed.add(new FileRow(rows.getJSONObject(i)));
+                parsed.add(new FileRow(rows.getObject(i)));
             }
             return Collections.unmodifiableList(parsed);
-        } catch (JSONException | IllegalArgumentException e) {
+        } catch (Json.SyntaxException | IllegalArgumentException e) {
             throw new IllegalStateException("Unreadable transfer list: " + e.getMessage(), e);
         }
     }
@@ -75,9 +73,9 @@ public final class FileRow {
     /** The row of a {@code run} answer, or null when the list or the start was gone. */
     static FileRow ofRun(String reply) {
         try {
-            JSONObject ok = new JSONObject(reply).optJSONObject("ok");
+            Json.Obj ok = Json.parseObject(reply).optObject("ok");
             return ok == null ? null : new FileRow(ok);
-        } catch (JSONException | IllegalArgumentException e) {
+        } catch (Json.SyntaxException | IllegalArgumentException e) {
             throw new IllegalStateException("Unreadable transfer answer: " + e.getMessage(), e);
         }
     }

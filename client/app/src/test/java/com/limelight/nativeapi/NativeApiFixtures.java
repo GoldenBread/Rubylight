@@ -112,13 +112,14 @@ public final class NativeApiFixtures {
     }
 
     /** A host's {@code /wake} answer with these adapters and no broadcasts, as tests in other packages store it. */
-    public static NativeWake wake(String... macs) throws org.json.JSONException {
+    public static NativeWake wake(String... macs) {
         StringBuilder targets = new StringBuilder();
         for (String mac : macs) {
             targets.append(targets.length() == 0 ? "" : ",").append("{\"mac\":\"").append(mac)
                     .append("\",\"broadcasts\":[]}");
         }
-        return NativeWake.parse(new org.json.JSONObject("{\"revision\":1,\"targets\":[" + targets + "]}"));
+        return NativeWake.parse(com.limelight.nvstream.jni.Json.parseObject(
+                "{\"revision\":1,\"targets\":[" + targets + "]}"));
     }
 
     /**
@@ -143,8 +144,8 @@ public final class NativeApiFixtures {
             + "\"reason\":\"no_session\",\"message\":\"Start a stream first.\"}]}";
 
     /** One of those answers parsed, as tests in other packages hand it to the stream menu. */
-    public static NativeAudio audio(String json) throws org.json.JSONException {
-        return NativeAudio.parse(new org.json.JSONObject(json));
+    public static NativeAudio audio(String json) {
+        return NativeAudio.parse(com.limelight.nvstream.jni.Json.parseObject(json));
     }
 
     public static String error(String kind, String message) {

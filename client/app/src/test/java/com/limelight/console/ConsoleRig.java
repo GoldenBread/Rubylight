@@ -1,53 +1,93 @@
 package com.limelight.console;
 
 import com.limelight.nativeapi.ConsoleRepository;
-import com.limelight.nativeapi.FileLibraryCache;
 import com.limelight.nativeapi.HostEndpoint;
 import com.limelight.nativeapi.NativeApiFixtures;
-import com.limelight.nativeapi.PreferencesFavouritesStore;
 import com.limelight.nativeapi.RecentsStore;
 import com.limelight.nvstream.http.NvApp;
-
-import org.robolectric.RuntimeEnvironment;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarConsoleJni;
 
 import java.io.File;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
-/** A repository over scripted hosts for the screen model tests: in-memory recents, favourites in the app's preferences, a library cache in a folder. */
+/**
+ * A repository over scripted hosts for the screen model tests, backed by Rust stores in
+ * {@code cacheDirectory}.
+ */
 final class ConsoleRig {
     final NativeApiFixtures.FakeTransport transport = new NativeApiFixtures.FakeTransport();
     final Map<String, List<NvApp>> classicApps = new HashMap<>();
-    final List<RecentsStore.Recent> recents = new ArrayList<>();
+    final List<RecentsStore.Recent> recents;
     final ConsoleRepository repository;
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final File baseDir;
 
     ConsoleRig(File cacheDirectory) {
-        RecentsStore store = new RecentsStore() {
-            @Override public List<Recent> load() {
-                return new ArrayList<>(recents);
-            }
-
-            @Override public void record(Recent recent) {
-                recents.add(0, recent);
-            }
-
-            @Override public void forgetHost(String hostUuid) {
-                recents.removeIf(recent -> recent.hostUuid.equals(hostUuid));
-            }
-        };
-        repository = new ConsoleRepository(transport,
+        this.baseDir = cacheDirectory;
+        this.recents = new RecentsList(cacheDirectory);
+        this.repository = new ConsoleRepository(cacheDirectory, transport,
                 computer -> HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()),
-                new FileLibraryCache(cacheDirectory), store,
-                new PreferencesFavouritesStore(RuntimeEnvironment.getApplication()),
-                computer -> classicApps.get(computer.uuid), executor, () -> 5000L);
+                computer -> classicApps.get(computer.uuid), () -> 5000L, null);
     }
 
     void close() {
-        executor.shutdownNow();
+        ConsoleRepository.closeForTests(baseDir);
+    }
+
+    private static final class RecentsList extends AbstractList<RecentsStore.Recent> {
+        private final File baseDir;
+        private final List<RecentsStore.Recent> items = new ArrayList<>();
+
+        RecentsList(File baseDir) {
+            this.baseDir = baseDir;
+        }
+
+        @Override public RecentsStore.Recent get(int index) {
+            return items.get(index);
+        }
+
+        @Override public int size() {
+            return items.size();
+        }
+
+        @Override public void add(int index, RecentsStore.Recent element) {
+            items.add(index, element);
+            sync();
+        }
+
+        @Override public void clear() {
+            items.clear();
+            sync();
+        }
+
+        private void sync() {
+            File dir = new File(baseDir, "console");
+            File file = new File(dir, "console_recents.json");
+            try {
+                if (items.isEmpty()) {
+                    file.delete();
+                    return;
+                }
+                dir.mkdirs();
+                Json.Arr arr = Json.arr();
+                for (RecentsStore.Recent r : items) {
+                    arr.add(Json.obj()
+                            .put("host", r.hostUuid)
+                            .put("install_id", r.stableId)
+                            .put("app_id", r.appId)
+                            .put("title", r.title)
+                            .put("at", r.playedAtMs));
+                }
+                java.nio.file.Files.write(
+                        file.toPath(),
+                        arr.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } catch (java.io.IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
     }
 }

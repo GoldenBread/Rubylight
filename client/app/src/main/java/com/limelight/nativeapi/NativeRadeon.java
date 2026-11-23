@@ -1,8 +1,6 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -142,15 +140,15 @@ public final class NativeRadeon {
         this.gpus = Collections.unmodifiableList(gpus);
     }
 
-    public static NativeRadeon parse(JSONObject json) throws JSONException {
-        JSONArray array = json.optJSONArray("gpus");
+    public static NativeRadeon parse(Json.Obj json) {
+        Json.Arr array = json.optArray("gpus");
         List<Gpu> gpus = new ArrayList<>();
         for (int i = 0; array != null && i < array.length(); i++) {
-            JSONObject gpu = array.getJSONObject(i);
-            JSONArray settings = gpu.optJSONArray("settings");
+            Json.Obj gpu = array.getObject(i);
+            Json.Arr settings = gpu.optArray("settings");
             List<Setting> parsed = new ArrayList<>();
             for (int j = 0; settings != null && j < settings.length(); j++) {
-                parsed.add(parseSetting(settings.getJSONObject(j)));
+                parsed.add(parseSetting(settings.getObject(j)));
             }
             gpus.add(new Gpu(gpuId(gpu), gpu.optString("name"), gpu.optString("driver"), parsed));
         }
@@ -159,20 +157,20 @@ public final class NativeRadeon {
                 json.optBoolean("writable_now"), gpus);
     }
 
-    private static Setting parseSetting(JSONObject json) throws JSONException {
-        JSONObject range = json.optJSONObject("range");
-        JSONObject restore = json.optJSONObject("restore");
-        JSONArray options = json.optJSONArray("options");
+    private static Setting parseSetting(Json.Obj json) {
+        Json.Obj range = json.optObject("range");
+        Json.Obj restore = json.optObject("restore");
+        Json.Arr options = json.optArray("options");
         List<Choice> choices = new ArrayList<>();
         for (int i = 0; options != null && i < options.length(); i++) {
-            JSONObject choice = options.getJSONObject(i);
+            Json.Obj choice = options.getObject(i);
             choices.add(new Choice(choice.getString("value"), choice.optString("label")));
         }
         return new Setting(json.getString("id"), json.optString("group"), Kind.of(json.optString("kind")),
-                ControlState.of(json.optString("state")), value(json.opt("value")),
+                ControlState.of(json.optString("state")), value(json.raw("value")),
                 range == null ? null : new Range(range.optLong("min"), range.optLong("max"), range.optLong("step")),
                 choices, text(json, "unit"),
-                restore == null ? null : new Restore(value(restore.opt("original")), value(restore.opt("written"))),
+                restore == null ? null : new Restore(value(restore.raw("original")), value(restore.raw("written"))),
                 text(json, "reason"), text(json, "message"));
     }
 
@@ -187,7 +185,7 @@ public final class NativeRadeon {
         return null;
     }
 
-    private static String text(JSONObject json, String key) {
+    private static String text(Json.Obj json, String key) {
         return json.isNull(key) ? null : json.optString(key, null);
     }
 
@@ -203,20 +201,20 @@ public final class NativeRadeon {
     }
 
     /** The adapter id is a signed 32-bit number; anything wider is a malformed reply, not a truncated id. */
-    private static int gpuId(JSONObject gpu) throws JSONException {
+    private static int gpuId(Json.Obj gpu) {
         long id = gpu.getLong("id");
         if (id < Integer.MIN_VALUE || id > Integer.MAX_VALUE) {
-            throw new JSONException("gpu id out of range: " + id);
+            throw new Json.SyntaxException("gpu id out of range: " + id);
         }
         return (int) id;
     }
 
     /** The body of a Radeon write for one GPU. */
-    static String writeJson(int gpu, List<Change> changes) throws JSONException {
-        JSONArray array = new JSONArray();
+    static String writeJson(int gpu, List<Change> changes) {
+        Json.Arr array = Json.arr();
         for (Change change : changes) {
-            array.put(new JSONObject().put("id", change.id).put("value", change.value));
+            array.add(Json.obj().put("id", change.id).put("value", change.value));
         }
-        return new JSONObject().put("gpu", gpu).put("changes", array).toString();
+        return Json.obj().put("gpu", gpu).put("changes", array).toString();
     }
 }

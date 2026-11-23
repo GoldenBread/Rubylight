@@ -65,7 +65,8 @@ pub use launch::{
     parse_launch_reply, random_ri_key,
 };
 pub use native::{
-    FilePermissions, MovedTo, NativeCapabilities, NativeLibrary, PlayingOn, StreamMove,
+    AddedGame, FilePermissions, GameExtra, MovedTo, NativeCapabilities, NativeLibrary, PlayingOn,
+    StreamMove,
 };
 pub use network_path::{MAX_NETWORK_PATH_BYTES, NetworkPath};
 pub use neural::{

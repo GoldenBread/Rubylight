@@ -72,15 +72,16 @@ public class ComputerManagerLifecycleTest {
 
             assertFalse(CacheHelper.openPath(false, service.getCacheDir(), "applist", computer.uuid).exists());
             assertFalse(CacheHelper.openPath(false, service.getCacheDir(), "boxart", computer.uuid).exists());
-            assertFalse(service.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0).contains(computer.uuid));
-            assertFalse(service.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0)
-                    .contains(HiddenStore.Preferences.idsKey(computer.uuid)));
-            assertTrue(service.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0)
-                    .contains(HiddenStore.Preferences.idsKey("another-host")));
+            assertTrue(new HiddenStore.Preferences(service).of(computer.uuid).isEmpty());
+            assertTrue(new HiddenStore.Preferences(service).ids(computer.uuid).isEmpty());
+            assertEquals(Collections.singletonMap("install", 42),
+                    new HiddenStore.Preferences(service).ids("another-host"));
             assertTrue(CacheHelper.openPath(false, service.getCacheDir(), "applist", "another-host").isFile());
             assertTrue(CacheHelper.openPath(false, service.getCacheDir(), "boxart", "another-host", "42.png").isFile());
-            assertTrue(service.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0).contains("another-host"));
+            assertEquals(Collections.singleton(42),
+                    new HiddenStore.Preferences(service).of("another-host"));
         } finally {
+            com.limelight.nativeapi.ConsoleRepository.resetForTests();
             controller.destroy();
         }
     }

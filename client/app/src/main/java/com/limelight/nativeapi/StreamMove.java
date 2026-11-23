@@ -1,6 +1,6 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 /** The part of GET /session Continue here reads: who plays the running game and where this device's stream went. */
 public final class StreamMove {
@@ -27,10 +27,10 @@ public final class StreamMove {
         this.pressFailed = pressFailed;
     }
 
-    static StreamMove parse(JSONObject json) {
-        JSONObject playing = json.optJSONObject("playing_on");
-        JSONObject app = playing == null ? null : playing.optJSONObject("app");
-        JSONObject moved = json.optJSONObject("moved_to");
+    static StreamMove parse(Json.Obj json) {
+        Json.Obj playing = json.optObject("playing_on");
+        Json.Obj app = playing == null ? null : playing.optObject("app");
+        Json.Obj moved = json.optObject("moved_to");
         return new StreamMove(app == null ? null : playing.optString("device", null),
                 app == null ? 0 : (int) app.optLong("app_id"),
                 app == null ? null : app.optString("install_id", null),

@@ -5,8 +5,6 @@ import static org.junit.Assert.assertTrue;
 import android.app.Application;
 import android.content.Context;
 
-import com.limelight.nativeapi.FileLibraryCache;
-import com.limelight.nativeapi.LibraryCache;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.http.TestHosts;
@@ -20,7 +18,8 @@ import org.robolectric.annotation.Config;
 import org.robolectric.util.ReflectionHelpers;
 
 import java.io.File;
-import java.util.Collections;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -39,8 +38,11 @@ public class ConsoleSeedTest {
     public void aStoredLibraryIsFoundOnTheWorkerAndItsHostIsTriedOnlyOnce() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         String uuid = "seeded-host";
-        new FileLibraryCache(new File(context.getFilesDir(), "console-library"))
-                .store(uuid, new LibraryCache.Entry("{}", 1000, Collections.emptyList()));
+        File dir = new File(context.getFilesDir(), "console-library");
+        dir.mkdirs();
+        try (FileOutputStream out = new FileOutputStream(new File(dir, uuid + ".json"))) {
+            out.write("{\"revision\":\"r1\",\"games\":[]}".getBytes(StandardCharsets.UTF_8));
+        }
 
         CountDownLatch seeded = new CountDownLatch(1);
         ConsoleSeed.seedOnce(context, "unique", onlineNativeHost(uuid), seeded::countDown);

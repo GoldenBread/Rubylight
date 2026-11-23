@@ -1,8 +1,7 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarConsoleJni;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -42,10 +41,10 @@ public final class NativeCoop {
         public final String title;
         public final int maxPlayers;
 
-        Game(JSONObject json) throws JSONException {
+        Game(Json.Obj json) {
             appId = json.getInt("app_id");
             title = json.getString("title");
-            maxPlayers = json.optInt("max_players");
+            maxPlayers = json.optInt("max_players", 0);
         }
     }
 
@@ -58,7 +57,7 @@ public final class NativeCoop {
         /** The device's stream is gone; it keeps the slot for a while. */
         public final boolean away;
 
-        Player(JSONObject json) throws JSONException {
+        Player(Json.Obj json) {
             slot = json.getInt("slot");
             name = json.isNull("name") ? null : json.optString("name", null);
             you = json.optBoolean("you");
@@ -87,16 +86,16 @@ public final class NativeCoop {
         /** Why this device cannot join, as the host words it; null when it can. */
         public final String refusal;
 
-        Session(JSONObject json) throws JSONException {
+        Session(Json.Obj json) {
             id = (int) json.getLong("id");
             appId = json.getInt("app_id");
             title = json.getString("title");
             phase = Phase.of(json.getString("phase"));
-            JSONObject end = json.optJSONObject("end");
+            Json.Obj end = json.optObject("end");
             endReason = end == null ? null : EndReason.of(end.optString("reason"));
             endDetail = end == null || end.isNull("detail") ? null : end.optString("detail", null);
-            players = list(json.optJSONArray("players"), Player::new);
-            freeSlots = json.optInt("free_slots");
+            players = list(json.optArray("players"), Player::new);
+            freeSlots = json.optInt("free_slots", 0);
             joinable = json.optBoolean("joinable");
             refusal = json.isNull("refusal") ? null : json.optString("refusal", null);
         }
@@ -122,7 +121,7 @@ public final class NativeCoop {
             this.appId = appId;
         }
 
-        static Joined parse(JSONObject json) throws JSONException {
+        static Joined parse(Json.Obj json) {
             return new Joined((int) json.getLong("session"), json.getInt("slot"), json.getInt("app_id"));
         }
     }
@@ -144,18 +143,19 @@ public final class NativeCoop {
         /** Anything else, as the error reads. */
         OTHER;
 
-        /** As coop.rs's {@code CoopProblem::of}: the code first, then the status. */
+        /** Delegated to Rust `coop::CoopProblem::of`. */
         public static Problem of(NativeApiException error) {
             if (error.isUnreachable()) return UNREACHABLE;
-            String code = error.getCode();
-            int status = error.getHttpStatus();
-            if ("permission_required".equals(code) || status == 403) return PERMISSION;
-            if ("no_session".equals(code)) return GONE;
-            if ("session_busy".equals(code)) return BUSY;
-            if ("temporarily_unavailable".equals(code) || status == 503) return UNAVAILABLE;
-            // coop_refused is newer than the codes the bridge knows: it arrives as unknown with a 409.
-            if ("coop_refused".equals(code) || status == 409) return REFUSED;
-            return OTHER;
+            String code = error.getCode() == null ? "" : error.getCode();
+            String msg = error.getMessage() == null ? "" : error.getMessage();
+            switch (NightjarConsoleJni.coopProblemKind(error.getHttpStatus(), code, msg)) {
+                case "permission": return PERMISSION;
+                case "refused": return REFUSED;
+                case "gone": return GONE;
+                case "unavailable": return UNAVAILABLE;
+                case "busy": return BUSY;
+                default: return OTHER;
+            }
         }
     }
 
@@ -165,14 +165,14 @@ public final class NativeCoop {
     public final List<Game> games;
     public final List<Session> sessions;
 
-    private NativeCoop(JSONObject json) throws JSONException {
+    private NativeCoop(Json.Obj json) {
         available = json.getBoolean("available");
         reason = json.isNull("reason") ? null : json.optString("reason", null);
-        games = list(json.optJSONArray("games"), Game::new);
-        sessions = list(json.optJSONArray("sessions"), Session::new);
+        games = list(json.optArray("games"), Game::new);
+        sessions = list(json.optArray("sessions"), Session::new);
     }
 
-    static NativeCoop parse(JSONObject json) throws JSONException {
+    static NativeCoop parse(Json.Obj json) {
         return new NativeCoop(json);
     }
 
@@ -185,13 +185,13 @@ public final class NativeCoop {
     }
 
     private interface Reader<T> {
-        T read(JSONObject json) throws JSONException;
+        T read(Json.Obj json);
     }
 
-    private static <T> List<T> list(JSONArray array, Reader<T> reader) throws JSONException {
+    private static <T> List<T> list(Json.Arr array, Reader<T> reader) {
         List<T> items = new ArrayList<>();
         for (int i = 0; array != null && i < array.length(); i++) {
-            items.add(reader.read(array.getJSONObject(i)));
+            items.add(reader.read(array.getObject(i)));
         }
         return Collections.unmodifiableList(items);
     }

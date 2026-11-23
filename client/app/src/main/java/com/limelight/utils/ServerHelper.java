@@ -15,12 +15,11 @@ import com.limelight.R;
 import com.limelight.ShortcutTrampoline;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.computers.ComputerManagerService;
+import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nativeapi.HostEndpoint;
 import com.limelight.nativeapi.JniNativeApiTransport;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiException;
-import com.limelight.nativeapi.PreferencesRecentsStore;
-import com.limelight.nativeapi.RecentsStore;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.pin.PinGate;
 import com.limelight.pin.PinLockActivity;
@@ -145,8 +144,7 @@ public class ServerHelper {
                                             String source) {
         if (record && app.getRole() == NvApp.Role.STREAM) {
             // Every start goes through here, so this is the list "Continue playing" reads.
-            new PreferencesRecentsStore(parent).record(
-                    RecentsStore.Recent.of(computer, app, System.currentTimeMillis()));
+            ConsoleRepository.recordLaunch(parent, computer, app);
         }
         Intent intent = new Intent(parent, Game.class);
         intent.putExtra(Game.EXTRA_HOST, computer.activeAddress.address);

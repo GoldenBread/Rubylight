@@ -10,6 +10,7 @@
 mod bridge;
 pub mod capabilities;
 pub mod collections;
+pub mod console;
 pub mod echo;
 mod engine;
 pub mod extras;

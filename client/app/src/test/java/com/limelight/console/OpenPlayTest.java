@@ -6,8 +6,7 @@ import android.content.SharedPreferences;
 import android.content.Intent;
 import android.preference.PreferenceManager;
 
-import com.limelight.nativeapi.PreferencesRecentsStore;
-import com.limelight.nativeapi.RecentsStore;
+import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nvstream.jni.NightjarJni;
 import com.limelight.utils.LaunchSource;
 
@@ -37,8 +36,14 @@ public class OpenPlayTest {
 
     @Before
     public void setUp() {
+        ConsoleRepository.resetForTests();
         context = org.robolectric.RuntimeEnvironment.getApplication();
-        new PreferencesRecentsStore(context).record(new RecentsStore.Recent("pc", "Desk", 7, "Dota 2", 1));
+        ConsoleRepository.recordLaunch(context, "pc", "Desk", 7, "Dota 2", "", 1);
+    }
+
+    @org.junit.After
+    public void tearDown() {
+        ConsoleRepository.resetForTests();
     }
 
     private static Intent launcher() {
@@ -170,7 +175,7 @@ public class OpenPlayTest {
     public void theLastGameCarriesItsStableIdAndAnOlderEntryOpensWithout() {
         PreferenceManager.getDefaultSharedPreferences(context).edit().putString(OpenPlay.SETTING, "last").commit();
         assertEquals("older entry", "", OpenPlay.atEntry(context, launcher(), false, true).getStringExtra(GameDetailActivity.EXTRA_STABLE_ID));
-        new PreferencesRecentsStore(context).record(new RecentsStore.Recent("pc", "Desk", 8, "Hades", 2, "t-hades"));
+        ConsoleRepository.recordLaunch(context, "pc", 8, "Hades", "t-hades", 2);
         assertEquals("t-hades", OpenPlay.atEntry(context, launcher(), false, true).getStringExtra(GameDetailActivity.EXTRA_STABLE_ID));
     }
 

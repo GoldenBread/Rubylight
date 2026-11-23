@@ -5,7 +5,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -22,8 +23,8 @@ public class NativeGuestsTest {
             + "\"waiting\":[{\"id\":3,\"name\":\"Tablet\",\"seconds_left\":40}]}";
 
     @Test
-    public void readsTheHostsShape() throws Exception {
-        NativeGuests read = NativeGuests.parse(new JSONObject(FIXTURE));
+    public void readsTheHostsShape() {
+        NativeGuests read = NativeGuests.parse(Json.parseObject(FIXTURE));
         assertTrue(read.manage);
         assertEquals(-1, read.you);
         assertEquals("Living room PC", read.owner);
@@ -35,8 +36,8 @@ public class NativeGuestsTest {
     }
 
     @Test
-    public void aSparseAnswerReadsAsNobody() throws Exception {
-        NativeGuests read = NativeGuests.parse(new JSONObject("{\"policy\":\"allow\",\"owner\":null}"));
+    public void aSparseAnswerReadsAsNobody() {
+        NativeGuests read = NativeGuests.parse(Json.parseObject("{\"policy\":\"allow\",\"owner\":null}"));
         assertFalse(read.manage);
         assertNull(read.owner);
         assertEquals(-1, read.keyboardMouse);

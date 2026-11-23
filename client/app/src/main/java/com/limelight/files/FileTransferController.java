@@ -2,9 +2,7 @@ package com.limelight.files;
 
 import com.limelight.LimeLog;
 import com.limelight.nativeapi.HostEndpoint;
-
-import org.json.JSONArray;
-import org.json.JSONException;
+import com.limelight.nvstream.jni.Json;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -191,14 +189,14 @@ public final class FileTransferController {
         if (closed) return;
         String started = engine.startNext(handle);
         try {
-            JSONArray starts = new JSONArray(started);
+            Json.Arr starts = Json.parseArray(started);
             for (int i = 0; i < starts.length(); i++) {
-                long id = starts.getJSONObject(i).getLong("id");
+                long id = starts.getObject(i).getLong("id");
                 Job job = jobs.get(id);
                 if (job != null) job.started = true;
                 worker.execute(() -> run(id, job));
             }
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw new IllegalStateException("Unreadable transfer start: " + started, e);
         }
         if (starts(started)) changed();

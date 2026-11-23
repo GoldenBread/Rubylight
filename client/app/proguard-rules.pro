@@ -38,6 +38,10 @@
 -keepclassmembers interface com.limelight.nvstream.jni.NightjarPinJni$PinVerifier {
     boolean matches(java.lang.String, byte[]);
 }
+# Looked up by name from protocol/android/src/console/jni.rs.
+-keepclassmembers interface com.limelight.nvstream.jni.NightjarConsoleJni$TransportCallback {
+    java.lang.String call(java.lang.String, java.lang.String, java.lang.String);
+}
 
 # The default Android rules retain native method names and descriptor classes.
 # BouncyCastle discovers mappings and JCA services by name. AndroidCryptoProvider

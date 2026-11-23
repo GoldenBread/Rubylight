@@ -3,6 +3,7 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,6 +15,18 @@ use crate::http::transport::{Abort, Host, connect, io_tls_error, tls_error};
 use crate::http::wire::{Reader, read_head};
 
 const MAX_REDIRECTS: usize = 5;
+/// Cap on buffered response bodies for [`WebPkiTransport::exchange`] (24 MiB).
+pub const MAX_EXCHANGE_BYTES: usize = 24 * 1024 * 1024;
+/// Cap on downloaded game info assets via [`WebPkiTransport::download_to_path`] (64 MiB).
+const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Buffered HTTPS response from [`WebPkiTransport::exchange`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Exchanged {
+    pub status: u16,
+    pub retry_after: Option<u64>,
+    pub body: Vec<u8>,
+}
 
 /// An http or https address with a plain hostname or IPv4 literal: no userinfo, no IPv6, no
 /// whitespace/control chars, so what is judged here is what gets connected to.
@@ -140,6 +153,8 @@ pub struct WebPkiTransport {
     tls_config: Arc<ClientConfig>,
     cancel: Option<Arc<TransferCancel>>,
 }
+
+type RawResponse = (u16, Option<String>, Option<u64>, Box<dyn Read>);
 
 impl WebPkiTransport {
     pub fn new(agent: String) -> Self {
@@ -467,5 +482,269 @@ impl Read for HttpBody {
                 io.stream.read(out)
             }
         }
+    }
+}
+
+impl WebPkiTransport {
+    /// Performs an HTTPS request using strict `rustls` + WebPKI CA verification.
+    /// Follows up to `MAX_REDIRECTS` HTTPS redirects when `follow_redirects` is true (never
+    /// downgrading HTTPS to plain HTTP). Caps buffered body at [`MAX_EXCHANGE_BYTES`] (24 MiB).
+    pub fn exchange(
+        &self,
+        method: &str,
+        url: &Url,
+        headers: &[(String, String)],
+        body: Option<&[u8]>,
+        follow_redirects: bool,
+    ) -> Result<Exchanged, String> {
+        let valid_token = |s: &str| {
+            !s.is_empty()
+                && !s.contains('\r')
+                && !s.contains('\n')
+                && s.bytes().all(|b| b.is_ascii_graphic())
+        };
+        if !valid_token(method) {
+            return Err("invalid HTTP method".into());
+        }
+        for (k, v) in headers {
+            if !valid_token(k) || v.contains('\r') || v.contains('\n') {
+                return Err(format!("invalid header: {k}"));
+            }
+        }
+        let mut current = url.clone();
+        let mut current_method = method.to_owned();
+        let mut current_body = body;
+        for _ in 0..=MAX_REDIRECTS {
+            let (status, location, retry_after, mut resp_body) =
+                self.send_request(&current_method, &current, headers, current_body)?;
+            if follow_redirects && matches!(status, 301 | 302 | 303 | 307 | 308) {
+                let Some(loc) = location else {
+                    return Err(format!("redirect {status} without Location"));
+                };
+                let next = current
+                    .resolve(&loc)
+                    .ok_or_else(|| format!("invalid redirect URL: {loc}"))?;
+                if !next.secure {
+                    return Err("redirect downgraded off HTTPS".into());
+                }
+                if matches!(status, 301..=303) && current_method.eq_ignore_ascii_case("POST") {
+                    current_method = "GET".to_owned();
+                    current_body = None;
+                }
+                current = next;
+                continue;
+            }
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                let n = resp_body.read(&mut chunk).map_err(|e| e.to_string())?;
+                if n == 0 {
+                    break;
+                }
+                if buf.len() + n > MAX_EXCHANGE_BYTES {
+                    return Err("response exceeded 24 MiB limit".into());
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            return Ok(Exchanged {
+                status,
+                retry_after,
+                body: buf,
+            });
+        }
+        Err(format!("too many redirects ({MAX_REDIRECTS})"))
+    }
+
+    /// Streams an HTTPS `GET` directly into `target` (writing a temporary sibling `.part` file
+    /// and renaming atomically), returning HTTP status. Fails cleanly on non-2xx or IO errors.
+    pub fn download_to_path(
+        &self,
+        url: &Url,
+        target: &Path,
+        follow_redirects: bool,
+    ) -> Result<u16, String> {
+        let mut current = url.clone();
+        for _ in 0..=MAX_REDIRECTS {
+            let (status, location, _, mut resp_body) = self.send_request("GET", &current, &[], None)?;
+            if follow_redirects && matches!(status, 301 | 302 | 303 | 307 | 308) {
+                let Some(loc) = location else {
+                    return Err(format!("redirect {status} without Location"));
+                };
+                let next = current
+                    .resolve(&loc)
+                    .ok_or_else(|| format!("invalid redirect URL: {loc}"))?;
+                if !next.secure {
+                    return Err("redirect downgraded off HTTPS".into());
+                }
+                current = next;
+                continue;
+            }
+            if !(200..=299).contains(&status) {
+                return Ok(status);
+            }
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let part = target.with_extension("part");
+            let write_res = (|| -> Result<(), String> {
+                let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+                let mut total = 0u64;
+                let mut chunk = [0u8; 8192];
+                loop {
+                    let n = resp_body.read(&mut chunk).map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        break;
+                    }
+                    total += n as u64;
+                    if total > MAX_DOWNLOAD_BYTES {
+                        return Err("download exceeded 64 MiB limit".into());
+                    }
+                    file.write_all(&chunk[..n]).map_err(|e| e.to_string())?;
+                }
+                file.sync_all().map_err(|e| e.to_string())?;
+                Ok(())
+            })();
+            if let Err(err) = write_res {
+                let _ = std::fs::remove_file(&part);
+                return Err(err);
+            }
+            std::fs::rename(&part, target).map_err(|e| {
+                let _ = std::fs::remove_file(&part);
+                e.to_string()
+            })?;
+            return Ok(status);
+        }
+        Err(format!("too many redirects ({MAX_REDIRECTS})"))
+    }
+
+    fn send_request(
+        &self,
+        method: &str,
+        url: &Url,
+        headers: &[(String, String)],
+        body: Option<&[u8]>,
+    ) -> Result<RawResponse, String> {
+        if !url.secure {
+            return Err("HTTPS required".into());
+        }
+        if self.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+            return Err("cancelled".into());
+        }
+        let host = Host::parse(&url.host).map_err(|e| e.to_string())?;
+        let tcp =
+            connect(&host, url.port, Duration::from_secs(10), None).map_err(|e| e.to_string())?;
+        let _ = tcp.set_nodelay(true);
+        let abort = Abort::new(&tcp).map_err(|e| e.to_string())?;
+        let hook_id = match &self.cancel {
+            Some(cancel) => {
+                let abort_ref = abort.clone();
+                Some(
+                    cancel
+                        .register_hook(Arc::new(move || abort_ref.abort()))
+                        .map_err(|e| e.to_string())?,
+                )
+            }
+            None => None,
+        };
+        let sock = CancelSocket {
+            socket: tcp,
+            abort,
+            read_timeout: self.read_timeout,
+            cancel: self.cancel.clone(),
+            hook_id,
+        };
+        let name = ServerName::try_from(url.host.clone())
+            .map_err(|_| format!("invalid host name: {}", url.host))?;
+        let conn = ClientConnection::new(self.tls_config.clone(), name)
+            .map_err(|e| tls_error(e).to_string())?;
+        let mut tls = StreamOwned::new(conn, sock);
+        while tls.conn.is_handshaking() {
+            tls.conn
+                .complete_io(&mut tls.sock)
+                .map_err(|e| io_tls_error(e).to_string())?;
+        }
+        let mut req = format!(
+            "{} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nConnection: close\r\n",
+            method,
+            url.path,
+            format_host_header(&host, url.port, url.secure),
+            self.agent
+        );
+        for (k, v) in headers {
+            if k.eq_ignore_ascii_case("host")
+                || k.eq_ignore_ascii_case("connection")
+                || k.eq_ignore_ascii_case("content-length")
+            {
+                continue;
+            }
+            req.push_str(k);
+            req.push_str(": ");
+            req.push_str(v);
+            req.push_str("\r\n");
+        }
+        if let Some(bytes) = body {
+            req.push_str(&format!("Content-Length: {}\r\n", bytes.len()));
+        }
+        req.push_str("\r\n");
+        tls.write_all(req.as_bytes())
+            .and_then(|()| {
+                if let Some(bytes) = body {
+                    tls.write_all(bytes)?;
+                }
+                tls.flush()
+            })
+            .map_err(|e| io_tls_error(e).to_string())?;
+
+        let mut stream: Box<dyn ReadWrite> = Box::new(tls);
+        let mut buffer = Vec::new();
+        let mut eof = false;
+        let head = {
+            let mut reader = Reader {
+                stream: &mut *stream,
+                buffer: std::mem::take(&mut buffer),
+                eof,
+            };
+            let head = read_head(&mut reader).map_err(|e| e.to_string())?;
+            buffer = reader.buffer;
+            eof = reader.eof;
+            head
+        };
+        let status = head.status;
+        let location = head.header("Location").map(str::to_owned);
+        let retry_after = head
+            .header("Retry-After")
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let chunked = head
+            .header("Transfer-Encoding")
+            .is_some_and(|t| t.eq_ignore_ascii_case("chunked"));
+        let length = if chunked {
+            None
+        } else {
+            head.content_length().map_err(|e| e.to_string())?
+        };
+        let framing = if chunked {
+            Framing::Chunked {
+                left: 0,
+                first: true,
+                done: false,
+            }
+        } else if let Some(len) = length {
+            Framing::Sized(len)
+        } else {
+            Framing::Close
+        };
+        Ok((
+            status,
+            location,
+            retry_after,
+            Box::new(HttpBody {
+                io: StreamBuf {
+                    stream,
+                    buffer,
+                    eof,
+                },
+                framing,
+            }),
+        ))
     }
 }

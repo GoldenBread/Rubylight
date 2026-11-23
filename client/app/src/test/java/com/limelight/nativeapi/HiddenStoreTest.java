@@ -32,9 +32,15 @@ public class HiddenStoreTest {
 
     @Before
     public void setUp() {
+        ConsoleRepository.resetForTests();
         Application app = RuntimeEnvironment.getApplication();
         prefs = app.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0);
         store = new HiddenStore.Preferences(app);
+    }
+
+    @org.junit.After
+    public void tearDown() {
+        ConsoleRepository.resetForTests();
     }
 
     private static Map<String, Integer> games(Object... pairs) {
@@ -47,15 +53,15 @@ public class HiddenStoreTest {
         return new HashSet<>(Arrays.asList(ids));
     }
 
-    private Set<String> gridList() {
-        return prefs.getStringSet("host", Collections.emptySet());
+    private Set<Integer> gridList() {
+        return store.of("host");
     }
 
     @Test
     public void aRenumberMovesTheGridsListToo() {
         store.set("host", 1, "alpha", true);
         assertEquals(ids(7), store.following("host", games("alpha", 7, "beta", 1)));
-        assertEquals(Collections.singleton("7"), gridList());
+        assertEquals(ids(7), gridList());
         assertEquals(ids(7), store.of("host"));
     }
 
@@ -80,8 +86,7 @@ public class HiddenStoreTest {
     public void whatThePcsGridShowsAgainStaysShownThroughARenumber() {
         store.set("host", 1, "alpha", true);
         store.following("host", games("alpha", 1));
-        // AppView writes only the plain list.
-        prefs.edit().putStringSet("host", Collections.emptySet()).commit();
+        store.changed("host", ids(1), ids());
         assertEquals(ids(), store.following("host", games("alpha", 1)));
         assertEquals(ids(), store.following("host", games("alpha", 4)));
         assertTrue(store.ids("host").isEmpty());
@@ -90,7 +95,7 @@ public class HiddenStoreTest {
     @Test
     public void aGridThatRenumberedFirstIsNotUndone() {
         store.set("host", 1, "alpha", true);
-        prefs.edit().putStringSet("host", Collections.singleton("4")).commit();
+        store.changed("host", ids(1), ids(4));
         assertEquals(ids(4), store.following("host", games("alpha", 4)));
         assertEquals(games("alpha", 4), store.ids("host"));
     }
@@ -149,7 +154,7 @@ public class HiddenStoreTest {
     @Test
     public void showingAGameTheGridMovedFirstTakesTheMenusIdToo() {
         store.set("host", 1, "alpha", true);
-        prefs.edit().putStringSet("host", Collections.singleton("7")).commit();
+        store.changed("host", ids(1), ids(7));
         store.set("host", 7, "alpha", false);
         assertEquals(ids(), store.of("host"));
     }
@@ -174,7 +179,7 @@ public class HiddenStoreTest {
         store.set("host", 1, "alpha", true);
         store.following("host", games("alpha", 7));
         assertEquals(ids(7, 3), grid.changed("host", ids(9), ids(3)));
-        assertEquals(new HashSet<>(Arrays.asList("7", "3")), gridList());
+        assertEquals(ids(7, 3), gridList());
         assertEquals("its stable ids stay", games("alpha", 7), store.ids("host"));
     }
 

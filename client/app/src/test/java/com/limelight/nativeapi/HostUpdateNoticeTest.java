@@ -4,9 +4,9 @@ import android.app.Application;
 import android.content.Context;
 
 import com.limelight.nvstream.http.HostCapabilities;
+import com.limelight.nvstream.jni.Json;
 import com.limelight.update.HostUpdateChecker;
 
-import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -32,8 +32,8 @@ public class HostUpdateNoticeTest {
                         "<root><RustHostVersion>" + version + "</RustHostVersion></root>"));
     }
 
-    private static void hostAnswers(String offered) throws Exception {
-        JSONObject json = new JSONObject().put("current_version", "3.10.0").put("phase", "idle");
+    private static void hostAnswers(String offered) {
+        Json.Obj json = Json.obj().put("current_version", "3.10.0").put("phase", "idle");
         if (offered != null) json.put("offered", offered);
         KnownUpdates.record(PC, NativePcPower.parseUpdate(json));
     }

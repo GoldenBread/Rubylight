@@ -7,7 +7,8 @@ import static org.junit.Assert.assertTrue;
 
 import android.app.Application;
 
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -35,19 +36,19 @@ public class NativeStreamMoveTest {
     }
 
     @Test
-    public void anOldHostSaysNothing() throws Exception {
-        StreamMove move = StreamMove.parse(new JSONObject("{\"revision\":1}"));
+    public void anOldHostSaysNothing() {
+        StreamMove move = StreamMove.parse(Json.parseObject("{\"revision\":1}"));
         assertNull(move.playingOn);
         assertNull(move.movedTo);
         // The transport's own JSON spells absent as null.
-        move = StreamMove.parse(new JSONObject("{\"playing_on\":null,\"moved_to\":null}"));
+        move = StreamMove.parse(Json.parseObject("{\"playing_on\":null,\"moved_to\":null}"));
         assertNull(move.playingOn);
         assertNull(move.movedTo);
     }
 
     @Test
-    public void bothPartsAreRead() throws Exception {
-        StreamMove move = StreamMove.parse(new JSONObject("{\"playing_on\":{\"device\":\"Phone\",\"app\":"
+    public void bothPartsAreRead() {
+        StreamMove move = StreamMove.parse(Json.parseObject("{\"playing_on\":{\"device\":\"Phone\",\"app\":"
                 + "{\"install_id\":\"u\",\"app_id\":4000000000,\"title\":\"Game\"}},"
                 + "\"moved_to\":{\"device\":\"TV\",\"since_unix_ms\":5}}"));
         assertEquals("Phone", move.playingOn);
@@ -57,8 +58,8 @@ public class NativeStreamMoveTest {
         assertEquals((int) 4000000000L, move.playingAppId);
         assertEquals("TV", move.movedTo);
         assertFalse(move.ownedHere);
-        assertTrue(StreamMove.parse(new JSONObject("{\"owns_game\":true}")).ownedHere);
+        assertTrue(StreamMove.parse(Json.parseObject("{\"owns_game\":true}")).ownedHere);
         assertFalse(move.pressFailed);
-        assertTrue(StreamMove.parse(new JSONObject("{\"press_failed\":true}")).pressFailed);
+        assertTrue(StreamMove.parse(Json.parseObject("{\"press_failed\":true}")).pressFailed);
     }
 }

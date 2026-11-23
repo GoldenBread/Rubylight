@@ -250,7 +250,8 @@ impl Hosts {
                 let host = self.get(id)?;
                 // A PC unpaired while its read was in flight must not get its library back.
                 host.record.server_certificate.as_ref()?;
-                let library = NativeLibrary { library: host.native.library.clone()?, last_played: host.native.last_played.clone(), playtime_minutes: host.native.playtime_minutes.clone(), collections: host.native.collections.clone() };
+                let extra = vec![Default::default(); host.native.library.as_ref().map_or(0, |l| l.games.len())];
+                let library = NativeLibrary { library: host.native.library.clone()?, last_played: host.native.last_played.clone(), playtime_minutes: host.native.playtime_minutes.clone(), collections: host.native.collections.clone(), extra };
                 Some((host.record.unique_id.clone(), library))
             })
             .filter(|(unique_id, _)| !unique_id.is_empty())

@@ -47,6 +47,18 @@ impl Host for Fake {
         self.note("library");
         Err(Error::NotFound("/api/native/v1/library".into()))
     }
+    fn library_with_unadded(&self, include_unadded: bool) -> Result<NativeLibrary, Error> {
+        if include_unadded {
+            self.note("library?include=unadded");
+        } else {
+            self.note("library");
+        }
+        Err(Error::NotFound("/api/native/v1/library".into()))
+    }
+    fn add_to_library(&self, game_id: &str) -> Result<Option<AddedGame>, Error> {
+        self.note(&format!("library_add:{game_id}"));
+        Err(Error::NotFound("/api/native/v1/library/add".into()))
+    }
     fn session(&self) -> Result<Session, Error> {
         self.note("session");
         Fake::session(self)

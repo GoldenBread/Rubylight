@@ -113,4 +113,9 @@ public final class NightjarHttpJni {
     public static native String updateFetchLatest(int target);
     public static native String updateDownloadApk(String releaseJson, boolean root, String dirPath,
                                                   FolderProgress progress, long cancelHandle);
+
+    // GameInfo metadata & art HTTPS transport (rustls + WebPKI roots)
+    public static native String gameInfoExchange(String method, String url, String headersJson,
+                                                 byte[] body, boolean followRedirects);
+    public static native boolean gameInfoDownload(String url, String destPath, boolean followRedirects);
 }

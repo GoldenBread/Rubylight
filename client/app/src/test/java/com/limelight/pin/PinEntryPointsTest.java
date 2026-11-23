@@ -221,7 +221,7 @@ public class PinEntryPointsTest {
     }
 
     private static java.util.List<com.limelight.nativeapi.RecentsStore.Recent> recents(Context context) {
-        return new com.limelight.nativeapi.PreferencesRecentsStore(context).load();
+        return com.limelight.nativeapi.ConsoleRepository.loadRecents(context);
     }
 
     @Test

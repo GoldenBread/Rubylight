@@ -2,9 +2,10 @@
 
 use super::Error;
 use super::transport::{
-    Abort, Cancel, Request, abort_blocked_io, connect, io_tls_error, tls_error, user_agent,
-    write_timeout,
+    Abort, Cancel, Request, connect, io_tls_error, tls_error, user_agent, write_timeout,
 };
+#[cfg(windows)]
+use super::transport::abort_blocked_io;
 use super::wire::{Reader, read_body, read_head};
 use rustls::{ClientConnection, StreamOwned};
 use std::io::{ErrorKind, Read, Write};

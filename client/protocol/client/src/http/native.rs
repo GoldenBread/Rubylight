@@ -2,7 +2,8 @@
 //! `nightjar_policy::http`.
 
 pub use nightjar_policy::http::{
-    FilePermissions, MovedTo, NativeCapabilities, NativeLibrary, PlayingOn, StreamMove,
+    parse_added, AddedGame, FilePermissions, GameExtra, MovedTo, NativeCapabilities,
+    NativeLibrary, PlayingOn, StreamMove,
 };
 use super::coop::{Coop, CoopJoined, JoinRequest};
 use super::device_approval::{PairingApprove, PairingApproved, PairingDeny, PairingRequests};
@@ -102,7 +103,28 @@ impl HostClient {
     /// The host's games with their cover versions. Fetch covers with
     /// [`HostClient::box_art`] when an artwork `version` changes.
     pub fn library(&self) -> Result<NativeLibrary, Error> {
-        self.native("library", None, MAX_LIBRARY_BYTES, READ_TIMEOUT)
+        self.library_with_unadded(false)
+    }
+
+    /// The host's library, optionally including unadded store games when `include_unadded` is true
+    /// (`GET /api/native/v1/library?include=unadded`).
+    pub fn library_with_unadded(&self, include_unadded: bool) -> Result<NativeLibrary, Error> {
+        let path = if include_unadded {
+            "library?include=unadded"
+        } else {
+            "library"
+        };
+        self.native(path, None, MAX_LIBRARY_BYTES, READ_TIMEOUT)
+    }
+
+    /// Adds an unadded store game (`game_id`, e.g. `"gog:c"`) to the host's library
+    /// (`POST /api/native/v1/library/add`).
+    pub fn add_to_library(&self, game_id: &str) -> Result<Option<AddedGame>, Error> {
+        let body = serde_json::to_vec(&serde_json::json!({ "game_id": game_id }))
+            .map_err(|e| Error::InvalidArgument(format!("add_to_library: {e}")))?;
+        let value: serde_json::Value =
+            self.native("library/add", Some(&body), MAX_LIBRARY_BYTES, ACTION_READ_TIMEOUT)?;
+        parse_added(&value, game_id).map_err(Error::Malformed)
     }
 
     /// The session and the actions this device may run.

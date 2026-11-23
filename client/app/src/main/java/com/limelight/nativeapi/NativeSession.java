@@ -1,8 +1,6 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -98,12 +96,12 @@ public final class NativeSession {
         this.microphoneBusy = microphoneBusy;
     }
 
-    public static NativeSession parse(JSONObject json) throws JSONException {
-        JSONObject app = json.optJSONObject("app");
-        JSONArray array = json.optJSONArray("actions");
+    public static NativeSession parse(Json.Obj json) {
+        Json.Obj app = json.optObject("app");
+        Json.Arr array = json.optArray("actions");
         List<Action> actions = new ArrayList<>();
         for (int i = 0; array != null && i < array.length(); i++) {
-            JSONObject action = array.getJSONObject(i);
+            Json.Obj action = array.getObject(i);
             actions.add(new Action(ActionId.of(action.optString("id")), action.optBoolean("allowed"),
                     action.isNull("reason") ? null : action.optString("reason", null)));
         }

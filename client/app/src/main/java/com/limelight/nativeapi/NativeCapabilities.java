@@ -1,8 +1,7 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarConsoleJni;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -87,9 +86,9 @@ public final class NativeCapabilities {
             return false;
         }
         try {
-            NativeCapabilities capabilities = parse(new JSONObject(knownJson));
+            NativeCapabilities capabilities = parse(knownJson);
             return capabilities.view && capabilities.launch && capabilities.has(CONTINUE_HERE);
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             return false;
         }
     }
@@ -100,8 +99,8 @@ public final class NativeCapabilities {
             return false;
         }
         try {
-            return parse(new JSONObject(knownJson)).has(SESSION_GUESTS);
-        } catch (JSONException e) {
+            return parse(knownJson).has(SESSION_GUESTS);
+        } catch (Json.SyntaxException e) {
             return false;
         }
     }
@@ -111,20 +110,31 @@ public final class NativeCapabilities {
         return features.contains(feature);
     }
 
-    static NativeCapabilities parse(JSONObject json) throws JSONException {
-        JSONObject host = json.optJSONObject("host");
-        JSONObject permissions = json.getJSONObject("permissions");
-        List<String> features = new ArrayList<>();
-        JSONArray array = json.optJSONArray("features");
-        for (int i = 0; array != null && i < array.length(); i++) {
-            // A feature this client cannot read is one it does not use.
-            Object feature = array.opt(i);
-            if (feature instanceof String) features.add((String) feature);
+    static NativeCapabilities parse(String raw) {
+        Json.Obj env = Json.parseObject(NightjarConsoleJni.parseCapabilitiesLenient(raw));
+        Json.Obj ok = env.optObject("ok");
+        if (ok == null) {
+            Json.Obj err = env.optObject("error");
+            throw new Json.SyntaxException(err != null ? err.optString("message", "malformed capabilities") : "malformed capabilities");
         }
-        return new NativeCapabilities(json.optInt("api_version"), host == null ? null : host.optString("name", null),
+        Json.Obj src = Json.parseObject(raw);
+        Json.Obj host = src.optObject("host");
+        Json.Obj permissions = ok.getObject("permissions");
+        List<String> features = new ArrayList<>();
+        Json.Arr array = ok.optArray("features");
+        for (int i = 0; array != null && i < array.length(); i++) {
+            String feature = array.getString(i);
+            if (!feature.isEmpty()) features.add(feature);
+        }
+        return new NativeCapabilities(ok.optInt("api_version", 0),
+                host == null ? null : host.optString("name", null),
                 host == null ? null : host.optString("version", null), features,
                 permissions.optBoolean("list"), permissions.optBoolean("view"), permissions.optBoolean("launch"),
-                permissions.optBoolean("host_control"), Boolean.TRUE.equals(permissions.opt("usb")),
-                Boolean.TRUE.equals(permissions.opt("pairing_approve")));
+                permissions.optBoolean("host_control"), permissions.optBoolean("usb"),
+                permissions.optBoolean("pairing_approve"));
+    }
+
+    static NativeCapabilities parse(Json.Obj json) {
+        return parse(json.toString());
     }
 }

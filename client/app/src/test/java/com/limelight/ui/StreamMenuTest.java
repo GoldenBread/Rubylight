@@ -524,11 +524,7 @@ public class StreamMenuTest {
             withControl.imageClipboard = true;
             withControl.sessionGuests = true;
             withControl.nightModeOffered = withControl.headphoneSurroundOffered = true;
-            try {
-                withControl.hostAudio = NativeApiFixtures.audio(NativeApiFixtures.audioJson(true, false));
-            } catch (org.json.JSONException e) {
-                throw new AssertionError(e);
-            }
+            withControl.hostAudio = NativeApiFixtures.audio(NativeApiFixtures.audioJson(true, false));
             reachable.addAll(items(StreamMenu.mainPage(withControl)));
             reachable.addAll(items(StreamMenu.nativePage(withControl)));
             StreamMenu.Options options = options("rubylight-serverinfo.xml", role);

@@ -1,8 +1,7 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarConsoleJni;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -72,27 +71,27 @@ public final class NativeGuests {
         this.waiting = Collections.unmodifiableList(waiting);
     }
 
-    static NativeGuests parse(JSONObject json) throws JSONException {
+    static NativeGuests parse(Json.Obj json) {
         List<Guest> guests = new ArrayList<>();
-        JSONArray list = json.optJSONArray("guests");
+        Json.Arr list = json.optArray("guests");
         for (int i = 0; list != null && i < list.length(); i++) {
-            JSONObject guest = list.getJSONObject(i);
+            Json.Obj guest = list.getObject(i);
             guests.add(new Guest(guest.getInt("id"), guest.getString("name"), guest.getString("permission"),
                     guest.optBoolean("streaming")));
         }
         List<Request> waiting = new ArrayList<>();
-        JSONArray requests = json.optJSONArray("waiting");
+        Json.Arr requests = json.optArray("waiting");
         for (int i = 0; requests != null && i < requests.length(); i++) {
-            JSONObject request = requests.getJSONObject(i);
+            Json.Obj request = requests.getObject(i);
             waiting.add(new Request(request.getInt("id"), request.getString("name"), request.optLong("seconds_left")));
         }
         return new NativeGuests(json.optBoolean("manage"), optId(json, "you"),
                 json.isNull("owner") ? null : json.optString("owner", null),
-                json.optString("default_permission", CONTROLLER), json.optInt("max_guests"), json.optLong("version"),
+                json.optString("default_permission", CONTROLLER), json.optInt("max_guests", 0), json.optLong("version"),
                 optId(json, "keyboard_mouse"), guests, waiting);
     }
 
-    private static int optId(JSONObject json, String key) {
+    private static int optId(Json.Obj json, String key) {
         return json.has(key) && !json.isNull(key) ? json.optInt(key, -1) : -1;
     }
 
@@ -106,21 +105,8 @@ public final class NativeGuests {
      * device's guest place: Nightjar then doesn't reconnect.
      */
     public static boolean ended(String reason) {
-        if (reason == null) return false;
-        String trimmed = reason.trim();
-        for (String ending : ENDINGS) {
-            if (trimmed.startsWith(ending)) return true;
-        }
-        return false;
+        return reason != null && NightjarConsoleJni.guestsEnded(reason);
     }
-
-    /** The host's words for the endings of a guest's place, as {@code nightjar_core::http::session_guests}. */
-    static final String[] ENDINGS = {
-            "The player removed you from the game",
-            "The player does not let you join this game",
-            "Your time as a guest in this game ended",
-            "The game you joined ended",
-    };
 
     /** An invite just made: the link to send (a secret) and when it ends, in Unix seconds. */
     public static final class Invite {

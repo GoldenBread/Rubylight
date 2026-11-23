@@ -4,18 +4,15 @@ import android.content.Context;
 
 import com.limelight.nativeapi.CachedAppListSource;
 import com.limelight.nativeapi.ConsoleRepository;
-import com.limelight.nativeapi.FavouritesStore;
-import com.limelight.nativeapi.FileLibraryCache;
 import com.limelight.nativeapi.HostEndpoint;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nativeapi.NativeApiTransport;
-import com.limelight.nativeapi.PreferencesFavouritesStore;
-import com.limelight.nativeapi.PreferencesRecentsStore;
-import com.limelight.nativeapi.RecentsStore;
+
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarConsoleJni;
 
 import java.io.File;
-import java.util.concurrent.Executors;
 
 /**
  * The native API of the demo hosts, answered from fixtures so Home and the game detail run without a host:
@@ -46,23 +43,21 @@ final class DemoConsole {
     }
 
     static ConsoleRepository repository(Context context) {
-        PreferencesRecentsStore recents = new PreferencesRecentsStore(context);
+        ConsoleRepository repo = new ConsoleRepository(context.getFilesDir(), new Transport(),
+                computer -> new HostEndpoint(computer.uuid, DemoComputerManagerService.SETTINGS_ADDRESS, 47989, 47984,
+                        "", "nightjar-demo", new byte[0], new byte[0]),
+                new CachedAppListSource(context.getCacheDir()), System::currentTimeMillis, null);
         // Racing Game is the running one; these were played lately, the newest recorded last.
         long now = System.currentTimeMillis();
         for (int app : PLAYED) {
-            recents.record(new RecentsStore.Recent(DemoFixtures.PC_UUID, "Living-room PC", app, titleOf(app), now - daysAgo(app) * DAY_MS));
+            ConsoleRepository.recordLaunch(context, DemoFixtures.PC_UUID, app, titleOf(app), "",
+                    now - daysAgo(app) * DAY_MS);
         }
-        DemoAsleep.recordRecent(recents);
-        PreferencesFavouritesStore favourites = new PreferencesFavouritesStore(context);
+        DemoAsleep.recordRecent(context);
         for (int app : starred) {
-            favourites.set(new FavouritesStore.Favourite(DemoFixtures.PC_UUID, "Living-room PC", app,
-                    titleOf(app)), true);
+            repo.setFavourite(DemoFixtures.PC_UUID, "Living-room PC", app, titleOf(app), true);
         }
-        return new ConsoleRepository(new Transport(),
-                computer -> new HostEndpoint(computer.uuid, DemoComputerManagerService.SETTINGS_ADDRESS, 47989, 47984,
-                        "", "nightjar-demo", new byte[0], new byte[0]),
-                new FileLibraryCache(new File(context.getFilesDir(), "console-library")), recents, favourites,
-                new CachedAppListSource(context.getCacheDir()), Executors.newCachedThreadPool(), System::currentTimeMillis);
+        return repo;
     }
 
     /** The native API client the demo stream menu's Radeon panel reads and writes through. */

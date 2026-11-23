@@ -23,8 +23,8 @@ use nightjar_core::http::native_api::radeon::{Radeon, SettingsWrite};
 use nightjar_core::http::native_api::session::{ActionId, CouchMenu, CouchMenuRequest, Session};
 use nightjar_core::http::native_api::wake::Wake;
 use nightjar_core::http::{
-    ClientIdentity, Coop, CoopJoined, Error, GuestAction, HostClient, HostUpdate, InviteCreate,
-    InviteCreated, NativeCapabilities, NativeLibrary, PairingApprove, PairingApproved,
+    AddedGame, ClientIdentity, Coop, CoopJoined, Error, GuestAction, HostClient, HostUpdate,
+    InviteCreate, InviteCreated, NativeCapabilities, NativeLibrary, PairingApprove, PairingApproved,
     PairingRequests, PcPower, PcPowerOffer, PowerError, PowerReply, Refusal, SessionGuests,
     StreamMove, update_arrived, valid_pairing_pin,
 };
@@ -46,6 +46,8 @@ pub struct Endpoint {
 pub trait Host {
     fn capabilities_with_files(&self) -> Result<NativeCapabilities, Error>;
     fn library(&self) -> Result<NativeLibrary, Error>;
+    fn library_with_unadded(&self, include_unadded: bool) -> Result<NativeLibrary, Error>;
+    fn add_to_library(&self, game_id: &str) -> Result<Option<AddedGame>, Error>;
     fn session(&self) -> Result<Session, Error>;
     fn session_action(&self, action: ActionId) -> Result<Session, Error>;
     fn stream_move(&self) -> Result<StreamMove, Error>;
@@ -81,6 +83,12 @@ impl Host for HostClient {
     }
     fn library(&self) -> Result<NativeLibrary, Error> {
         HostClient::library(self)
+    }
+    fn library_with_unadded(&self, include_unadded: bool) -> Result<NativeLibrary, Error> {
+        HostClient::library_with_unadded(self, include_unadded)
+    }
+    fn add_to_library(&self, game_id: &str) -> Result<Option<AddedGame>, Error> {
+        HostClient::add_to_library(self, game_id)
     }
     fn session(&self) -> Result<Session, Error> {
         HostClient::session(self)
@@ -246,6 +254,29 @@ fn capabilities_with_files(result: Result<NativeCapabilities, Error>) -> String 
     }))
 }
 
+/// Serializes an [`AddedGame`] as the flat native library game JSON object Java expects.
+pub(crate) fn added_game_json(added: &AddedGame) -> Value {
+    let mut val = serde_json::to_value(&added.game).unwrap_or(Value::Null);
+    if let Some(obj) = val.as_object_mut() {
+        obj.insert("added".into(), json!(added.extra.added));
+        if let Some(launchable) = added.extra.launchable {
+            obj.insert("launchable".into(), json!(launchable));
+        }
+        if let Some(art) = obj.get_mut("artwork").and_then(Value::as_object_mut) {
+            if let Some(hero) = &added.extra.hero {
+                art.insert("hero".into(), json!(hero));
+            }
+            if let Some(logo) = &added.extra.logo {
+                art.insert("logo".into(), json!(logo));
+            }
+            if let Some(landscape) = &added.extra.landscape {
+                art.insert("landscape".into(), json!(landscape));
+            }
+        }
+    }
+    val
+}
+
 /// The update with what the shared rules make of it, so Java decides as desktop does: `offered`
 /// (the version to install, or null), `installing_now` (no Install now to offer), `in_progress`,
 /// `failed` with `failure` (the updater's words, or null), and while following an install to
@@ -335,7 +366,20 @@ pub fn execute(host: &dyn Host, op: &str, argument: &str) -> String {
         "capabilities" | "files.capabilities" => {
             capabilities_with_files(host.capabilities_with_files())
         }
-        "library" => ok(host.library()),
+        "library" => ok(host.library_with_unadded(argument.trim() == "include=unadded")),
+        "library_add" => {
+            let game_id = serde_json::from_str::<Value>(argument)
+                .ok()
+                .and_then(|v| v.get("game_id").and_then(Value::as_str).map(str::to_owned));
+            let Some(game_id) = game_id.filter(|s| !s.trim().is_empty()) else {
+                return argument_error("library_add: missing game_id".to_owned());
+            };
+            match host.add_to_library(&game_id) {
+                Ok(Some(added)) => ok(Ok(added_game_json(&added))),
+                Ok(None) => ok::<Value>(Ok(Value::Null)),
+                Err(e) => ok::<Value>(Err(e)),
+            }
+        }
         "session" => ok(host.session()),
         "session_move" => ok(host.stream_move()),
         "session_continue_here" => ok(host.continue_here()),

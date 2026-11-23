@@ -238,7 +238,7 @@ impl Hosts {
                                         host.record.wake_broadcasts = broadcasts;
                                         changed = true;
                                     }
-                                if let Some(NativeLibrary { library, last_played, playtime_minutes, collections }) = read.library {
+                                if let Some(NativeLibrary { library, last_played, playtime_minutes, collections, extra: _ }) = read.library {
                                     // The classic list a launch goes through follows the library.
                                     reload_apps = !host.native.library_live
                                         || host.native.library.as_ref().is_none_or(|old| old.revision != library.revision);

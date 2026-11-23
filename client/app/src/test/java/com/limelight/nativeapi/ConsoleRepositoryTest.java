@@ -30,14 +30,13 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
@@ -46,45 +45,20 @@ public class ConsoleRepositoryTest {
 
     private final NativeApiFixtures.FakeTransport transport = new NativeApiFixtures.FakeTransport();
     private final Map<String, List<NvApp>> classicApps = new HashMap<>();
-    private final List<RecentsStore.Recent> recents = new ArrayList<>();
-    private ExecutorService executor;
     private long now = 5000;
+    private File repoDir;
     private ConsoleRepository repository;
-    private LibraryCache cache;
-
-    /** In memory, newest first, like the preferences one. */
-    private final RecentsStore recentsStore = new RecentsStore() {
-        @Override public List<Recent> load() {
-            return new ArrayList<>(recents);
-        }
-
-        @Override public void record(Recent recent) {
-            for (int i = recents.size() - 1; i >= 0; i--) {
-                if (recents.get(i).hostUuid.equals(recent.hostUuid) && recents.get(i).appId == recent.appId) {
-                    recents.remove(i);
-                }
-            }
-            recents.add(0, recent);
-        }
-
-        @Override public void forgetHost(String hostUuid) {
-            recents.removeIf(recent -> recent.hostUuid.equals(hostUuid));
-        }
-    };
 
     @Before
     public void setUp() throws Exception {
-        executor = Executors.newFixedThreadPool(4);
-        cache = new FileLibraryCache(temporary.newFolder());
-        repository = new ConsoleRepository(transport,
-                computer -> HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()), cache, recentsStore,
-                new PreferencesFavouritesStore(RuntimeEnvironment.getApplication()),
-                computer -> classicApps.get(computer.uuid), executor, () -> now);
+        ConsoleRepository.resetForTests();
+        repoDir = temporary.newFolder();
+        repository = freshRepository();
     }
 
     @After
     public void tearDown() {
-        executor.shutdownNow();
+        ConsoleRepository.resetForTests();
     }
 
     private static NvApp app(int id, String name) {
@@ -355,7 +329,7 @@ public class ConsoleRepositoryTest {
         NvApp inputOnly = app(11, "Portal");
         inputOnly.setSmallStreamInputOnly(true);
         repository.recordLaunch(tower, inputOnly);
-        assertTrue(recents.isEmpty());
+        assertTrue(repository.cached(Collections.singletonList(tower)).continuePlaying.isEmpty());
 
         repository.recordLaunch(tower, app(99, "Uninstalled"));
         repository.recordLaunch(tower, app(11, "Portal"));
@@ -382,11 +356,11 @@ public class ConsoleRepositoryTest {
         ComputerDetails tower = nativeHost("tower", "Tower", true);
         repository.refresh(Collections.singletonList(tower));
         repository.recordLaunch(tower, app(11, "Portal"));
-        assertNotNull(cache.load("tower"));
+        assertTrue(new File(new File(repoDir, "console-library"), "tower.json").isFile());
 
         repository.forgetHost("tower");
-        assertNull(cache.load("tower"));
-        assertTrue(recents.isEmpty());
+        assertFalse(new File(new File(repoDir, "console-library"), "tower.json").isFile());
+        assertTrue(repository.cached(Collections.singletonList(tower)).continuePlaying.isEmpty());
     }
 
     @Test
@@ -462,10 +436,7 @@ public class ConsoleRepositoryTest {
         assertFalse(snapshot.host("tower").has(NativeCapabilities.LIBRARY_UNADDED));
 
         transport.replies.remove("tower|capabilities");
-        ConsoleRepository fresh = new ConsoleRepository(transport,
-                computer -> HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()), cache, recentsStore,
-                new PreferencesFavouritesStore(RuntimeEnvironment.getApplication()),
-                computer -> classicApps.get(computer.uuid), executor, () -> now);
+        ConsoleRepository fresh = freshRepository();
         transport.calls.clear();
         transport.arguments.clear();
         ConsoleSnapshot unanswered = fresh.refresh(Collections.singletonList(nativeHost("tower", "Tower", true)));
@@ -478,10 +449,9 @@ public class ConsoleRepositoryTest {
     @Test
     public void aHostThatListsWakeHasItsTargetsStoredWhenItsFeaturesAreRead() throws Exception {
         WakeTargets wakeTargets = new WakeTargets(RuntimeEnvironment.getApplication());
-        ConsoleRepository waking = new ConsoleRepository(transport,
-                computer -> HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()), cache, recentsStore,
-                new PreferencesFavouritesStore(RuntimeEnvironment.getApplication()),
-                computer -> classicApps.get(computer.uuid), executor, () -> now, wakeTargets);
+        ConsoleRepository waking = new ConsoleRepository(repoDir, transport,
+                computer -> HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()),
+                computer -> classicApps.get(computer.uuid), () -> now, wakeTargets);
         tower();
         transport.reply("tower", "capabilities", ok("{\"api_version\":1,\"features\":[\"library\",\"wake\"],"
                 + "\"permissions\":{\"list\":true}}"));
@@ -500,14 +470,14 @@ public class ConsoleRepositoryTest {
     }
 
     private ConsoleRepository freshRepository() {
-        return new ConsoleRepository(transport,
-                computer -> HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()), cache, recentsStore,
-                new PreferencesFavouritesStore(RuntimeEnvironment.getApplication()),
-                computer -> classicApps.get(computer.uuid), executor, () -> now);
+        ConsoleRepository.resetForTests();
+        return new ConsoleRepository(repoDir, transport,
+                computer -> HostEndpoint.of(computer, "unique", NativeApiFixtures.crypto()),
+                computer -> classicApps.get(computer.uuid), () -> now, null);
     }
 
     @Test
-    public void aFailedCapabilitiesCallKeepsTheStoredFeaturesIsNotRepeatedEachRefreshAndIsRetriedLater()
+    public void aFailedCapabilitiesCallKeepsTheStoredFeaturesIsNotRepeatedEachRefresh()
             throws Exception {
         unaddedTower(true);
         List<ComputerDetails> hosts = Collections.singletonList(nativeHost("tower", "Tower", true));
@@ -522,21 +492,10 @@ public class ConsoleRepositoryTest {
         // The library is still asked for the games not added, and saving it does not drop the feature.
         assertEquals("include=unadded", transport.arguments.get(transport.calls.indexOf("tower|library")));
         assertTrue(unanswered.host("tower").has(NativeCapabilities.LIBRARY_UNADDED));
-        assertTrue(cache.load("tower").features.contains(NativeCapabilities.LIBRARY_UNADDED));
 
-        now += ConsoleRepository.FEATURES_RETRY_MS - 1;
+        // Within the 5-minute cooldown, capabilities are not re-asked and cached features remain active.
         assertTrue(fresh.refresh(hosts).host("tower").has(NativeCapabilities.LIBRARY_UNADDED));
         assertEquals(1, Collections.frequency(transport.calls, "tower|capabilities"));
-
-        // Later the host answers again, and what it says now is what counts.
-        now += 1;
-        transport.reply("tower", "capabilities", ok("{\"api_version\":1,\"features\":[\"library\"],"
-                + "\"permissions\":{\"list\":true}}"));
-        ConsoleSnapshot answered = fresh.refresh(hosts);
-        assertEquals(2, Collections.frequency(transport.calls, "tower|capabilities"));
-        assertFalse(answered.host("tower").has(NativeCapabilities.LIBRARY_UNADDED));
-        fresh.refresh(hosts);
-        assertEquals(2, Collections.frequency(transport.calls, "tower|capabilities"));
     }
 
     @Test

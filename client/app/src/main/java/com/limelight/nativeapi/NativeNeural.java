@@ -1,8 +1,6 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 /**
  * GET /neural?app=: a game's Neural Rendering switches, offered while the host lists
@@ -84,17 +82,17 @@ public final class NativeNeural {
         return "failed".equals(phase);
     }
 
-    static NativeNeural parse(JSONObject json) throws JSONException {
+    static NativeNeural parse(Json.Obj json) {
         Switch frameGeneration = null;
-        JSONArray switches = json.optJSONArray("switches");
+        Json.Arr switches = json.optArray("switches");
         for (int i = 0; switches != null && i < switches.length(); i++) {
-            JSONObject s = switches.getJSONObject(i);
+            Json.Obj s = switches.getObject(i);
             if (FRAME_GENERATION.equals(s.optString("id"))) {
                 frameGeneration = new Switch(s.optString("state"), s.optBoolean("on"), text(s, "reason"),
                         text(s, "why"));
             }
         }
-        JSONObject job = json.optJSONObject("job");
+        Json.Obj job = json.optObject("job");
         return new NativeNeural(json.getString("app"), json.optBoolean("accepted"), frameGeneration,
                 json.optBoolean("replaces_earlier_upscaling"),
                 job == null ? null : job.optString("phase", null),
@@ -104,13 +102,13 @@ public final class NativeNeural {
     }
 
     /** POST /neural/settings for the frame generation switch; accept_notice only when the user just accepted it. */
-    static String writeJson(String app, boolean on, boolean acceptNotice) throws JSONException {
-        JSONObject write = new JSONObject().put("app", app).put("switch", FRAME_GENERATION).put("on", on);
+    static String writeJson(String app, boolean on, boolean acceptNotice) {
+        Json.Obj write = Json.obj().put("app", app).put("switch", FRAME_GENERATION).put("on", on);
         if (acceptNotice) write.put("accept_notice", true);
         return write.toString();
     }
 
-    private static String text(JSONObject json, String key) {
+    private static String text(Json.Obj json, String key) {
         return json.isNull(key) ? null : json.optString(key, null);
     }
 }

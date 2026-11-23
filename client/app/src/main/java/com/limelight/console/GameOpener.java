@@ -6,8 +6,8 @@ import android.widget.Toast;
 
 import com.limelight.R;
 import com.limelight.nativeapi.ConsoleRepository;
+import com.limelight.nativeapi.ConsoleSnapshot;
 import com.limelight.nativeapi.NativeApiException;
-import com.limelight.nativeapi.NativeLibrary;
 import com.limelight.nvstream.http.ComputerDetails;
 
 import java.util.Set;
@@ -67,14 +67,14 @@ final class GameOpener {
         }
         Toast.makeText(activity, activity.getString(R.string.console_adding, card.title), Toast.LENGTH_SHORT).show();
         Runnable add = () -> {
-            NativeLibrary.Game added;
+            ConsoleSnapshot.AddedGame added;
             try {
                 added = repo.addToLibrary(computer, gameId);
             } catch (NativeApiException e) {
                 com.limelight.LimeLog.warning("Could not add " + gameId + ": " + e);
                 added = null;
             }
-            final NativeLibrary.Game game = added;
+            final ConsoleSnapshot.AddedGame game = added;
             activity.runOnUiThread(() -> {
                 adding.remove(addKey);
                 if (activity.isFinishing() || activity.isDestroyed()) {

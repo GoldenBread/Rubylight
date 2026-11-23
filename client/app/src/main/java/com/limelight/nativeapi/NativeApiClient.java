@@ -1,7 +1,7 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarConsoleJni;
 
 import java.util.List;
 
@@ -20,11 +20,11 @@ public final class NativeApiClient {
 
     public NativeCapabilities capabilities() throws NativeApiException {
         try {
-            JSONObject json = call("capabilities", "");
+            Json.Obj json = call("capabilities", "");
             NativeCapabilities capabilities = NativeCapabilities.parse(json);
             KnownCapabilities.record(host.hostUuid, json.toString());
             return capabilities;
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("capabilities", e);
         }
     }
@@ -58,32 +58,45 @@ public final class NativeApiClient {
         }
     }
 
-    public NativeLibrary library() throws NativeApiException {
+    public Json.Obj library() throws NativeApiException {
         return library(false);
     }
 
     /**
-     * The library; with {@code includeUnadded} also the games the host found in its stores but has not added. Ask for
-     * those only when the host advertises {@link NativeCapabilities#LIBRARY_UNADDED}.
+     * The raw library JSON; with {@code includeUnadded} also the games the host found in its stores
+     * but has not added. Ask for those only when the host advertises
+     * {@link NativeCapabilities#LIBRARY_UNADDED}.
      */
-    public NativeLibrary library(boolean includeUnadded) throws NativeApiException {
+    public Json.Obj library(boolean includeUnadded) throws NativeApiException {
         try {
-            return NativeLibrary.parse(call("library", includeUnadded ? "include=unadded" : ""));
-        } catch (JSONException e) {
+            Json.Obj json = call("library", includeUnadded ? "include=unadded" : "");
+            json.getArray("games");
+            return json;
+        } catch (Json.SyntaxException e) {
             throw malformed("library", e);
         }
     }
 
     /**
-     * Adds a game the host found but has not added, and returns the entry the host added (see
-     * {@link NativeLibrary#parseAdded}), or null when the reply does not list it as added. Only for a host that
-     * advertises {@link NativeCapabilities#LIBRARY_ADD}.
+     * Adds a game the host found but has not added, and returns the entry the host added (parsed by
+     * Rust), or null when the reply does not list it as added. Only for a host that advertises
+     * {@link NativeCapabilities#LIBRARY_ADD}.
      */
-    public NativeLibrary.Game addToLibrary(String gameId) throws NativeApiException {
+    public ConsoleSnapshot.AddedGame addToLibrary(String gameId) throws NativeApiException {
         try {
-            return NativeLibrary.parseAdded(call("library_add", new JSONObject().put("game_id", gameId).toString()),
-                    gameId);
-        } catch (JSONException e) {
+            Json.Obj reply = call("library_add", Json.obj().put("game_id", gameId).toString());
+            String parsedJson = NightjarConsoleJni.parseAdded(reply.toString(), gameId);
+            if (parsedJson == null || parsedJson.isEmpty()) {
+                return null;
+            }
+            Json.Obj env = Json.parseObject(parsedJson);
+            Json.Obj err = env.optObject("error");
+            if (err != null) {
+                throw malformed("library_add", new Json.SyntaxException(err.optString("message", "invalid")));
+            }
+            Json.Obj added = env.optObject("ok");
+            return added == null ? null : ConsoleSnapshot.AddedGame.fromJson(added);
+        } catch (Json.SyntaxException e) {
             throw malformed("library_add", e);
         }
     }
@@ -94,7 +107,11 @@ public final class NativeApiClient {
 
     /** Who plays the running game and where this device's stream went. Only when the host lists session.continue_here. */
     public StreamMove streamMove() throws NativeApiException {
-        return StreamMove.parse(call("session_move", ""));
+        try {
+            return StreamMove.parse(call("session_move", ""));
+        } catch (Json.SyntaxException e) {
+            throw malformed("session move", e);
+        }
     }
 
     /** Ends the other devices' streams of the running game, which keeps running; the normal resume follows. */
@@ -117,8 +134,8 @@ public final class NativeApiClient {
      */
     public boolean openCouchMenu() throws NativeApiException {
         try {
-            return call("couch_menu", new JSONObject().put("open", true).toString()).getBoolean("open");
-        } catch (JSONException e) {
+            return call("couch_menu", Json.obj().put("open", true).toString()).getBoolean("open");
+        } catch (Json.SyntaxException e) {
             throw malformed("couch menu", e);
         }
     }
@@ -127,7 +144,7 @@ public final class NativeApiClient {
     public NativeWake wake() throws NativeApiException {
         try {
             return NativeWake.parse(call("wake", ""));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("wake", e);
         }
     }
@@ -139,7 +156,7 @@ public final class NativeApiClient {
     public NativeAudio audio() throws NativeApiException {
         try {
             return NativeAudio.parse(call("audio", ""));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("audio", e);
         }
     }
@@ -149,12 +166,12 @@ public final class NativeApiClient {
         String body;
         try {
             body = NativeAudio.writeJson(id, on);
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw new NativeApiException(NativeApiException.Kind.INVALID_ARGUMENT, "Audio write: " + e.getMessage());
         }
         try {
             return NativeAudio.parse(call("audio_write", body));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("audio", e);
         }
     }
@@ -163,7 +180,7 @@ public final class NativeApiClient {
     public NativeNeural neural(String app) throws NativeApiException {
         try {
             return NativeNeural.parse(call("neural", app));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("Neural Rendering", e);
         }
     }
@@ -173,12 +190,12 @@ public final class NativeApiClient {
         String body;
         try {
             body = NativeNeural.writeJson(app, on, acceptNotice);
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw new NativeApiException(NativeApiException.Kind.INVALID_ARGUMENT, "Neural write: " + e.getMessage());
         }
         try {
             return NativeNeural.parse(call("neural.write", body));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("Neural Rendering", e);
         }
     }
@@ -191,7 +208,7 @@ public final class NativeApiClient {
     public NativeRadeon writeRadeon(int gpu, List<NativeRadeon.Change> changes) throws NativeApiException {
         try {
             return parseRadeon(call("radeon_write", NativeRadeon.writeJson(gpu, changes)));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw new NativeApiException(NativeApiException.Kind.INVALID_ARGUMENT, "Radeon write: " + e.getMessage());
         }
     }
@@ -224,7 +241,7 @@ public final class NativeApiClient {
     public NativePcPower.Offer pcPower() throws NativeApiException {
         try {
             return NativePcPower.parseOffer(call("pc_power", ""));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("power", e);
         }
     }
@@ -251,7 +268,7 @@ public final class NativeApiClient {
             NativePcPower.Update update = NativePcPower.parseUpdate(call("update", target));
             KnownUpdates.record(host.hostUuid, update);
             return update;
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("update", e);
         }
     }
@@ -265,7 +282,7 @@ public final class NativeApiClient {
             NativePcPower.Update update = NativePcPower.parseUpdate(call("update.install", ""));
             KnownUpdates.installing(host.hostUuid, update);
             return update;
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("update", e);
         }
     }
@@ -277,7 +294,7 @@ public final class NativeApiClient {
     public NativeCoop coop() throws NativeApiException {
         try {
             return NativeCoop.parse(call("coop", ""));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("co-op", e);
         }
     }
@@ -289,7 +306,7 @@ public final class NativeApiClient {
     public NativeCoop.Joined joinCoop(int session) throws NativeApiException {
         try {
             return NativeCoop.Joined.parse(call("coop.join", Integer.toUnsignedString(session)));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("co-op join", e);
         }
     }
@@ -308,7 +325,7 @@ public final class NativeApiClient {
         public final int tokenLifetimeSeconds;
         public final boolean accepted;
 
-        PowerReply(JSONObject json) throws JSONException {
+        PowerReply(Json.Obj json) {
             status = json.getInt("status");
             message = json.getString("message");
             sleepSupported = json.getBoolean("sleep_supported");
@@ -324,7 +341,7 @@ public final class NativeApiClient {
     public List<NativePairing.Request> pairingRequests() throws NativeApiException {
         try {
             return NativePairing.parseRequests(call("pairing.requests", ""));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("pairing requests", e);
         }
     }
@@ -335,11 +352,9 @@ public final class NativeApiClient {
      */
     public String approvePairing(String id, String pin) throws NativeApiException {
         try {
-            JSONObject request = new JSONObject();
-            request.put("id", id);
-            request.put("pin", pin);
+            Json.Obj request = Json.obj().put("id", id).put("pin", pin);
             return call("pairing.approve", request.toString()).getString("name");
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("pairing approval", e);
         }
     }
@@ -348,7 +363,7 @@ public final class NativeApiClient {
     public NativeGuests guests() throws NativeApiException {
         try {
             return NativeGuests.parse(call("guests", ""));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("guests", e);
         }
     }
@@ -360,12 +375,12 @@ public final class NativeApiClient {
      */
     public NativeGuests guestAction(String action, int id, String permission) throws NativeApiException {
         try {
-            JSONObject request = new JSONObject();
-            request.put("action", action);
-            request.put("id", id < 0 ? JSONObject.NULL : id);
+            Json.Obj request = Json.obj()
+                    .put("action", action)
+                    .put("id", id < 0 ? null : id);
             if (permission != null) request.put("permission", permission);
             return NativeGuests.parse(call("guests.action", request.toString()));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("guests", e);
         }
     }
@@ -376,9 +391,9 @@ public final class NativeApiClient {
      */
     public NativeGuests.Invite createInvite() throws NativeApiException {
         try {
-            JSONObject made = call("guests.invite", "");
+            Json.Obj made = call("guests.invite", "");
             return new NativeGuests.Invite(made.getString("link"), made.getLong("expires"));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("invite", e);
         }
     }
@@ -387,61 +402,61 @@ public final class NativeApiClient {
     public List<NativePairing.Request> denyPairing(String id) throws NativeApiException {
         try {
             return NativePairing.parseRequests(call("pairing.deny", id));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("pairing requests", e);
         }
     }
 
-    private JSONObject call(String op, String argument) throws NativeApiException {
+    private Json.Obj call(String op, String argument) throws NativeApiException {
         return decode(transport.request(host, op, argument));
     }
 
-    private static NativeSession parseSession(JSONObject json) throws NativeApiException {
+    private static NativeSession parseSession(Json.Obj json) throws NativeApiException {
         try {
             return NativeSession.parse(json);
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("session", e);
         }
     }
 
-    private static NativeRadeon parseRadeon(JSONObject json) throws NativeApiException {
+    private static NativeRadeon parseRadeon(Json.Obj json) throws NativeApiException {
         try {
             return NativeRadeon.parse(json);
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("radeon", e);
         }
     }
 
-    private static PowerReply parsePower(JSONObject json) throws NativeApiException {
+    private static PowerReply parsePower(Json.Obj json) throws NativeApiException {
         try {
             return new PowerReply(json);
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("power action", e);
         }
     }
 
-    private static NativeApiException malformed(String what, JSONException e) {
+    private static NativeApiException malformed(String what, Json.SyntaxException e) {
         return new NativeApiException(NativeApiException.Kind.MALFORMED, "The host's " + what + " reply: " + e.getMessage());
     }
 
     /** Unwraps {"ok": ...} or throws the {"error": ...} as an exception. */
-    static JSONObject decode(String envelope) throws NativeApiException {
+    static Json.Obj decode(String envelope) throws NativeApiException {
         try {
-            JSONObject json = new JSONObject(envelope);
-            JSONObject ok = json.optJSONObject("ok");
+            Json.Obj json = Json.parseObject(envelope);
+            Json.Obj ok = json.optObject("ok");
             if (ok != null) {
                 return ok;
             }
-            JSONObject error = json.optJSONObject("error");
+            Json.Obj error = json.optObject("error");
             if (error == null) {
                 throw new NativeApiException(NativeApiException.Kind.MALFORMED, "Unrecognized native API reply");
             }
             throw new NativeApiException(NativeApiException.Kind.of(error.optString("kind")),
-                    error.optString("message", "Native API error"), error.optInt("http_status"),
+                    error.optString("message", "Native API error"), error.optInt("http_status", 0),
                     error.isNull("code") ? null : error.optString("code", null),
                     error.isNull("setting") ? null : error.optString("setting", null),
                     error.optLong("retry_after_ms"));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             throw malformed("envelope", e);
         }
     }

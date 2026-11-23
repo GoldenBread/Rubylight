@@ -43,6 +43,7 @@ public class RustEngineJniParityTest {
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarPolicyJni_", NightjarPolicyJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarPinJni_", NightjarPinJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarHttpJni_", NightjarHttpJni.class);
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarConsoleJni_", NightjarConsoleJni.class);
     }
 
     /** A Rust name that differs from the Java one for the same startConnection parameter. */
@@ -245,6 +246,11 @@ public class RustEngineJniParityTest {
                 "com/limelight/nvstream/jni/NightjarPolicyJni",
                 "com/limelight/nvstream/jni/NightjarPinJni",
                 "com/limelight/nvstream/jni/NightjarHttpJni",
+                "com/limelight/nvstream/jni/NightjarConsoleJni",
+                "com/limelight/nativeapi/ConsoleRepository",
+                "com/limelight/nativeapi/HiddenStore",
+                "com/limelight/console/HomeModel",
+                "com/limelight/console/GameDetailModel",
                 "com/limelight/pin/PinHasher",
                 "com/limelight/pin/PinThrottle",
                 "com/limelight/pin/PinStore",

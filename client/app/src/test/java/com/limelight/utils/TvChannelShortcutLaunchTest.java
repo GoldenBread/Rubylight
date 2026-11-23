@@ -24,8 +24,7 @@ import com.limelight.ShortcutTrampoline;
 import com.limelight.computers.ComputerManagerListener;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.grid.assets.DiskAssetLoader;
-import com.limelight.nativeapi.FileLibraryCache;
-import com.limelight.nativeapi.LibraryCache;
+import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.PairingManager;
@@ -33,6 +32,7 @@ import com.limelight.pin.PinLockActivity;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -53,7 +53,6 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -229,6 +228,7 @@ public class TvChannelShortcutLaunchTest {
 
     @Before
     public void setUp() {
+        ConsoleRepository.resetForTests();
         application = RuntimeEnvironment.getApplication();
         Shadows.shadowOf(application.getPackageManager())
                 .setSystemFeature(PackageManager.FEATURE_LEANBACK, true);
@@ -240,6 +240,11 @@ public class TvChannelShortcutLaunchTest {
         ShadowContentResolver.registerProviderInternal(TvContract.AUTHORITY, tvProvider);
 
         posterProvider = Robolectric.buildContentProvider(PosterContentProvider.class).create().get();
+    }
+
+    @After
+    public void tearDown() {
+        ConsoleRepository.resetForTests();
     }
 
     private ComputerDetails onlineComputer() {
@@ -288,9 +293,14 @@ public class TvChannelShortcutLaunchTest {
         JSONObject library = new JSONObject()
                 .put("revision", "rev-1")
                 .put("games", new JSONArray().put(game));
+        JSONObject envelope = new JSONObject()
+                .put("fetched_ms", 1_000L)
+                .put("features", new JSONArray())
+                .put("library", library);
         File dir = new File(application.getFilesDir(), "console-library");
-        new FileLibraryCache(dir).store(PC_UUID,
-                new LibraryCache.Entry(library.toString(), 1_000L, Collections.emptyList()));
+        assertTrue(dir.isDirectory() || dir.mkdirs());
+        Files.write(new File(dir, PC_UUID + ".json").toPath(),
+                envelope.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     private void storeClassicAppList(int appId, String title, String uuid, String artVersion) throws Exception {

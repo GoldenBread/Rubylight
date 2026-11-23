@@ -1,7 +1,9 @@
 package com.limelight.nativeapi;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 
+import com.limelight.AppView;
 import com.limelight.LimeLog;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.computers.HostCapabilityCache;
@@ -9,33 +11,24 @@ import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.nvstream.http.PairingManager;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarConsoleJni;
 import com.limelight.nvstream.wol.WakeTargets;
-
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The data behind the console's Home: the libraries of all paired hosts in one list, and the
- * games to continue. A host with the native API contributes its library (cached for when it is
- * offline); any other host contributes its classic Moonlight app list, as before.
- *
- * {@link #refresh} blocks on the network, so it runs on a worker thread; {@link #cached} does
- * not touch the network and is for the first paint.
+ * Thin Android facade over Rust's cross-host {@code ConsoleRepository} ({@link NightjarConsoleJni}),
+ * handling Android host descriptors, classic applist bridging, one-time {@link SharedPreferences}
+ * migration, and per-handle lifecycle cleanup across Robolectric tests.
  */
 public final class ConsoleRepository {
     public interface EndpointFactory {
@@ -47,78 +40,191 @@ public final class ConsoleRepository {
         long nowMs();
     }
 
-    private static final int MAX_RECENTS_SHOWN = 10;
+    private static final String LEGACY_RECENTS_PREFS = "console_recents";
+    private static final String LEGACY_RECENTS_KEY = "recents";
+    private static final String LEGACY_FAVOURITES_PREFS = "console_favourites";
+    private static final String LEGACY_FAVOURITES_KEY = "favourites";
 
+    private static final ConcurrentHashMap<String, Long> HANDLES = new ConcurrentHashMap<>();
+    private static final Set<String> MIGRATED_DIRS = ConcurrentHashMap.newKeySet();
+
+    private final long handle;
     private final NativeApiTransport transport;
     private final EndpointFactory endpoints;
-    private final LibraryCache cache;
-    private final RecentsStore recents;
-    private final FavouritesStore favourites;
-    private final HiddenStore hidden;
     private final ClassicAppSource classic;
-    private final ExecutorService executor;
     private final Clock clock;
-    /** Where the wake targets of hosts that list them go; null keeps none (tests, the demo). */
     private final WakeTargets wakeTargets;
-    private final Map<String, List<String>> features = new java.util.concurrent.ConcurrentHashMap<>();
-    /** When the capabilities call of a host last failed; it is not asked again until {@link #FEATURES_RETRY_MS} later. */
-    private final Map<String, Long> featuresFailedAtMs = new java.util.concurrent.ConcurrentHashMap<>();
-    /** Each host's session as last read, for the snapshots from storage that come between two reads. */
-    private final Map<String, NativeSession> sessions = new java.util.concurrent.ConcurrentHashMap<>();
-    static final long FEATURES_RETRY_MS = 5 * 60 * 1000L;
+    private final byte[] certDer;
+    private final byte[] keyPkcs8;
+    private final String uniqueId;
+    private final boolean useRustTransport;
 
-    public ConsoleRepository(NativeApiTransport transport, EndpointFactory endpoints, LibraryCache cache,
-                             RecentsStore recents, FavouritesStore favourites, ClassicAppSource classic, ExecutorService executor,
-                             Clock clock) {
-        this(transport, endpoints, cache, recents, favourites, classic, executor, clock, null);
+    public ConsoleRepository(File baseDir, NativeApiTransport transport, EndpointFactory endpoints,
+                             ClassicAppSource classic, Clock clock, WakeTargets wakeTargets) {
+        this(handleFor(baseDir), transport, endpoints, classic, clock, wakeTargets, null, null, "", false);
     }
 
-    public ConsoleRepository(NativeApiTransport transport, EndpointFactory endpoints, LibraryCache cache,
-                             RecentsStore recents, FavouritesStore favourites, ClassicAppSource classic, ExecutorService executor,
-                             Clock clock, WakeTargets wakeTargets) {
-        this(transport, endpoints, cache, recents, favourites, classic, executor, clock, wakeTargets, new HiddenStore.InMemory());
-    }
-
-    public ConsoleRepository(NativeApiTransport transport, EndpointFactory endpoints, LibraryCache cache,
-                             RecentsStore recents, FavouritesStore favourites, ClassicAppSource classic, ExecutorService executor,
-                             Clock clock, WakeTargets wakeTargets, HiddenStore hidden) {
+    private ConsoleRepository(long handle, NativeApiTransport transport, EndpointFactory endpoints,
+                              ClassicAppSource classic, Clock clock, WakeTargets wakeTargets,
+                              byte[] certDer, byte[] keyPkcs8, String uniqueId, boolean useRustTransport) {
+        this.handle = handle;
         this.transport = transport;
         this.endpoints = endpoints;
-        this.cache = cache;
-        this.recents = recents;
-        this.favourites = favourites;
-        this.hidden = hidden;
         this.classic = classic;
-        this.executor = executor;
         this.clock = clock;
         this.wakeTargets = wakeTargets;
+        this.certDer = certDer;
+        this.keyPkcs8 = keyPkcs8;
+        this.uniqueId = uniqueId == null ? "" : uniqueId;
+        this.useRustTransport = useRustTransport;
     }
 
-    /** The repository of the app: the Rust client, the app's own cache directories and clock. */
+    static long handleFor(File baseDir) {
+        String key = baseDir.getAbsolutePath();
+        synchronized (HANDLES) {
+            return HANDLES.computeIfAbsent(key, NightjarConsoleJni::repoCreate);
+        }
+    }
+
+    /** Destroys only the Rust repository handle associated with {@code baseDir} (tests). */
+    public static void closeForTests(File baseDir) {
+        if (baseDir == null) return;
+        String key = baseDir.getAbsolutePath();
+        synchronized (HANDLES) {
+            Long h = HANDLES.remove(key);
+            MIGRATED_DIRS.remove(key);
+            if (h != null && h != 0L) {
+                NightjarConsoleJni.repoDestroy(h);
+            }
+        }
+    }
+
+    /** Clears all Rust repository handles and migration markers between Robolectric tests. */
+    public static void resetForTests() {
+        synchronized (HANDLES) {
+            for (Long h : new ArrayList<>(HANDLES.values())) {
+                if (h != null && h != 0L) {
+                    NightjarConsoleJni.repoDestroy(h);
+                }
+            }
+            HANDLES.clear();
+            MIGRATED_DIRS.clear();
+        }
+    }
+
+    /** Evicts in-memory cached libraries/capabilities for {@code baseDir} (tests). */
+    public static void evictCacheForTests(File baseDir) {
+        long h = handleFor(baseDir);
+        NightjarConsoleJni.repoClearCache(h);
+    }
+
+    /** The repository of the app: Rust transport/stores, classic applist reader, and clock. */
     public static ConsoleRepository create(Context context, String uniqueId) {
         Context app = context.getApplicationContext();
-        return new ConsoleRepository(new JniNativeApiTransport(),
-                computer -> HostEndpoint.of(computer, uniqueId, PlatformBinding.getCryptoProvider(app)),
-                new FileLibraryCache(libraryDirectory(app)),
-                new PreferencesRecentsStore(app), new PreferencesFavouritesStore(app), new CachedAppListSource(app.getCacheDir()),
-                Executors.newCachedThreadPool(), System::currentTimeMillis, new WakeTargets(app), new HiddenStore.Preferences(app));
+        long h = openAndMigrate(app);
+        com.limelight.nvstream.http.LimelightCryptoProvider crypto = PlatformBinding.getCryptoProvider(app);
+        byte[] cert = crypto.getClientCertificate() != null ? derCert(crypto) : null;
+        byte[] key = crypto.getClientPrivateKey() != null ? crypto.getClientPrivateKey().getEncoded() : null;
+        return new ConsoleRepository(h, new JniNativeApiTransport(),
+                computer -> HostEndpoint.of(computer, uniqueId, crypto),
+                new CachedAppListSource(app.getCacheDir()), System::currentTimeMillis,
+                new WakeTargets(app), cert, key, uniqueId, cert != null && key != null);
     }
 
-    private static File libraryDirectory(Context context) {
-        return new File(context.getFilesDir(), "console-library");
+    private static byte[] derCert(com.limelight.nvstream.http.LimelightCryptoProvider crypto) {
+        try {
+            return crypto.getClientCertificate().getEncoded();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
-    /** True when the app holds the library of some host, which is when Home has something to show. */
+    private static long openAndMigrate(Context app) {
+        File dir = app.getFilesDir();
+        long h = handleFor(dir);
+        if (MIGRATED_DIRS.add(dir.getAbsolutePath())) {
+            migrateLegacy(app, h);
+        }
+        return h;
+    }
+
+    private static void migrateLegacy(Context app, long h) {
+        SharedPreferences recPrefs = app.getSharedPreferences(LEGACY_RECENTS_PREFS, Context.MODE_PRIVATE);
+        String rawRecents = recPrefs.getString(LEGACY_RECENTS_KEY, null);
+        String recentsPayload = "";
+        if (rawRecents != null && !rawRecents.isEmpty()) {
+            recentsPayload = translateLegacyRecents(rawRecents);
+        }
+
+        SharedPreferences favPrefs = app.getSharedPreferences(LEGACY_FAVOURITES_PREFS, Context.MODE_PRIVATE);
+        String rawFavs = favPrefs.getString(LEGACY_FAVOURITES_KEY, null);
+        String favsPayload = "";
+        if (rawFavs != null && !rawFavs.isEmpty()) {
+            favsPayload = translateLegacyFavourites(rawFavs);
+        }
+
+        SharedPreferences hiddenPrefs = app.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, Context.MODE_PRIVATE);
+        Map<String, ?> hiddenAll = hiddenPrefs.getAll();
+        String hiddenPayload = "";
+        if (!hiddenAll.isEmpty()) {
+            hiddenPayload = HiddenStore.Preferences.collectLegacyEntries(hiddenPrefs, hiddenAll).toString();
+        }
+
+        if (!recentsPayload.isEmpty() || !favsPayload.isEmpty() || !hiddenPayload.isEmpty()) {
+            NightjarConsoleJni.repoImportLegacy(h, recentsPayload, favsPayload, hiddenPayload);
+            if (rawRecents != null) recPrefs.edit().remove(LEGACY_RECENTS_KEY).apply();
+            if (rawFavs != null) favPrefs.edit().remove(LEGACY_FAVOURITES_KEY).apply();
+            if (!hiddenAll.isEmpty()) hiddenPrefs.edit().clear().apply();
+        }
+    }
+
+    private static String translateLegacyRecents(String raw) {
+        try {
+            Json.Arr in = Json.parseArray(raw);
+            Json.Arr out = Json.arr();
+            for (int i = 0; i < in.length(); i++) {
+                Json.Obj r = in.optObject(i);
+                if (r == null) continue;
+                out.add(Json.obj()
+                        .put("host", r.optString("host", ""))
+                        .put("install_id", r.optString("stable_id", ""))
+                        .put("app_id", r.optInt("app", 0))
+                        .put("title", r.optString("title", ""))
+                        .put("at", r.optLong("played_ms", 0L)));
+            }
+            return out.toString();
+        } catch (Json.SyntaxException e) {
+            return "";
+        }
+    }
+
+    private static String translateLegacyFavourites(String raw) {
+        try {
+            Json.Arr in = Json.parseArray(raw);
+            Json.Arr out = Json.arr();
+            for (int i = 0; i < in.length(); i++) {
+                Json.Obj f = in.optObject(i);
+                if (f == null || !f.has("app")) {
+                    out.add(in.raw(i));
+                    continue;
+                }
+                out.add(Json.obj()
+                        .put("host", f.optString("host", ""))
+                        .put("install_id", f.optString("key", ""))
+                        .put("app_id", f.getInt("app"))
+                        .put("title", f.optString("title", "")));
+            }
+            return out.toString();
+        } catch (Json.SyntaxException e) {
+            // Preserve damaged raw text so Rust writes `.bak`.
+            return raw;
+        }
+    }
+
     public static boolean hasAnyLibrary(Context context) {
-        String[] files = libraryDirectory(context.getApplicationContext()).list((dir, name) -> name.endsWith(".json"));
-        return files != null && files.length > 0;
+        return NightjarConsoleJni.repoHasAnyLibrary(context.getApplicationContext().getFilesDir().getAbsolutePath());
     }
 
-    /**
-     * True when some PC without the native API has an app list saved, which Home shows as that PC's games. The poller
-     * saves one only for a paired PC, and removing the PC deletes it. A PC with the native API counts by its library
-     * alone ({@link #hasAnyLibrary}), as before.
-     */
     public static boolean hasClassicAppList(Context context) {
         Context app = context.getApplicationContext();
         File[] lists = new File(app.getCacheDir(), "applist").listFiles(file -> file.isFile() && file.length() > 0);
@@ -129,9 +235,9 @@ public final class ConsoleRepository {
         return false;
     }
 
-    /** True when the app holds the last library of this host. */
     public static boolean hasLibrary(Context context, String hostUuid) {
-        return new FileLibraryCache(libraryDirectory(context.getApplicationContext())).load(hostUuid) != null;
+        return NightjarConsoleJni.repoHasLibrary(
+                context.getApplicationContext().getFilesDir().getAbsolutePath(), hostUuid);
     }
 
     /** A game's cover entry from the host's saved native library. */
@@ -153,87 +259,151 @@ public final class ConsoleRepository {
      */
     public static CachedLibraryCover findCachedLibraryCover(Context context, String hostUuid, int appId, String installId) {
         if (context == null || hostUuid == null || hostUuid.isEmpty()) return null;
-        LibraryCache.Entry stored = new FileLibraryCache(libraryDirectory(context.getApplicationContext())).load(hostUuid);
-        if (stored == null) return null;
+        String raw = NightjarConsoleJni.repoFindCachedLibraryCover(
+                context.getApplicationContext().getFilesDir().getAbsolutePath(),
+                hostUuid,
+                appId,
+                installId == null ? "" : installId);
+        if (raw == null || raw.isEmpty()) return null;
         try {
-            NativeLibrary library = NativeLibrary.parse(new JSONObject(stored.libraryJson));
-            NativeLibrary.Game matched = null;
-            for (NativeLibrary.Game game : library.games) {
-                if (!game.added) continue;
-                if (installId != null && !installId.isEmpty() && installId.equalsIgnoreCase(game.installId)) {
-                    matched = game;
-                    break;
-                }
-                if (matched == null && appId != 0 && game.appId == appId) {
-                    matched = game;
-                }
+            Json.Obj obj = Json.parseObject(raw);
+            if (obj.optBoolean("explicitly_no_cover", false)) {
+                return new CachedLibraryCover(true, null);
             }
-            if (matched != null) {
-                if (matched.coverPath == null && (matched.coverVersion == null || matched.coverVersion.isEmpty())) {
-                    return new CachedLibraryCover(true, null);
-                }
-                // Matches CoverLoaders.appOf: native sources have empty appUuid and coverVersion as artVersion.
-                NvApp listed = new NvApp(matched.title, matched.appId, false);
-                listed.setArtVersion(matched.coverVersion == null ? "" : matched.coverVersion);
-                return new CachedLibraryCover(false, listed.getAssetCacheKey());
-            }
-        } catch (JSONException e) {
+            // Matches CoverLoaders.appOf: native sources have empty appUuid and coverVersion as artVersion.
+            NvApp listed = new NvApp(obj.optString("title", ""), obj.optInt("app_id", 0), false);
+            listed.setArtVersion(obj.optString("cover_version", ""));
+            return new CachedLibraryCover(false, listed.getAssetCacheKey());
+        } catch (Json.SyntaxException e) {
             LimeLog.warning("Unreadable cached library for " + hostUuid + ": " + e.getMessage());
+            return null;
         }
-        return null;
     }
 
     /** Drops what the app stores for a removed host without needing a repository. */
     public static void forgetHost(Context context, String hostUuid) {
         Context app = context.getApplicationContext();
-        new FileLibraryCache(libraryDirectory(app)).forget(hostUuid);
-        new PreferencesRecentsStore(app).forgetHost(hostUuid);
-        new PreferencesFavouritesStore(app).forgetHost(hostUuid);
+        NightjarConsoleJni.repoForgetHost(openAndMigrate(app), hostUuid);
+        app.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, Context.MODE_PRIVATE)
+                .edit().remove(hostUuid).remove(HiddenStore.Preferences.idsKey(hostUuid)).apply();
         new WakeTargets(app).forgetHost(hostUuid);
         com.limelight.console.OpenPlay.forgetHost(app, hostUuid);
     }
 
-    /** The snapshot from what is stored: no network. Hosts with a native library show CACHED. */
+    /** Records a game stream launch into Rust's {@code console_recents.json} without constructing a full repository. */
+    public static void recordLaunch(Context context, String hostUuid, int appId, String title, String stableId) {
+        recordLaunch(context, hostUuid, appId, title, stableId, System.currentTimeMillis());
+    }
+
+    /** Records a game stream launch at {@code playedAtMs} into Rust's {@code console_recents.json}. */
+    public static void recordLaunch(Context context, String hostUuid, int appId, String title, String stableId,
+                                    long playedAtMs) {
+        recordLaunch(context, hostUuid, "", appId, title, stableId, playedAtMs);
+    }
+
+    /** Records a game stream launch with an explicit host display name into Rust's {@code console_recents.json}. */
+    public static void recordLaunch(Context context, String hostUuid, String hostName, int appId, String title,
+                                    String stableId, long playedAtMs) {
+        Context app = context.getApplicationContext();
+        long h = openAndMigrate(app);
+        Json.Obj entry = Json.obj()
+                .put("host", hostUuid == null ? "" : hostUuid)
+                .put("host_name", hostName == null ? "" : hostName)
+                .put("install_id", stableId == null ? "" : stableId)
+                .put("app_id", appId)
+                .put("title", title == null ? "" : title)
+                .put("at", playedAtMs);
+        NightjarConsoleJni.repoRecordLaunch(h, entry.toString());
+    }
+
+    /** Records a {@link NvApp} stream launch if its role is {@link NvApp.Role#STREAM}. */
+    public static void recordLaunch(Context context, ComputerDetails computer, NvApp nvApp) {
+        if (nvApp != null && nvApp.getRole() == NvApp.Role.STREAM) {
+            recordLaunch(context, computer.uuid, computer.displayName(), nvApp.getAppId(), nvApp.getAppName(),
+                    nvApp.getStableId(), System.currentTimeMillis());
+        }
+    }
+
+    /** Returns persisted recent launches newest-first from Rust's {@code console_recents.json}. */
+    public static List<RecentsStore.Recent> loadRecents(Context context) {
+        Context app = context.getApplicationContext();
+        String raw = NightjarConsoleJni.repoRecents(openAndMigrate(app));
+        List<RecentsStore.Recent> out = new ArrayList<>();
+        if (raw == null || raw.isEmpty()) return out;
+        Json.Arr arr = Json.parseArray(raw);
+        for (int i = 0; i < arr.length(); i++) {
+            Json.Obj r = arr.getObject(i);
+            out.add(new RecentsStore.Recent(r.optString("host", ""), r.optString("host_name", ""),
+                    r.optInt("app_id", 0), r.optString("title", ""), r.optLong("at", 0L),
+                    r.optString("install_id", "")));
+        }
+        return out;
+    }
+
     public ConsoleSnapshot cached(List<ComputerDetails> computers) {
-        List<ConsoleSnapshot.Host> hosts = new ArrayList<>();
-        for (ComputerDetails computer : computers) {
-            ConsoleSnapshot.Host host = hostOf(computer, false);
-            if (host != null) {
-                hosts.add(host);
-            }
-        }
-        return assemble(hosts);
+        String raw = NightjarConsoleJni.repoCached(handle, hostsJson(computers, false, null));
+        return ConsoleSnapshot.fromRustJson(raw, computers, Collections.emptyMap());
     }
 
-    /** Reads every reachable host (in parallel) and returns the snapshot; stores the libraries it read. */
     public ConsoleSnapshot refresh(List<ComputerDetails> computers) throws InterruptedException {
-        List<Future<ConsoleSnapshot.Host>> pending = new ArrayList<>();
-        for (ComputerDetails computer : computers) {
-            pending.add(executor.submit(() -> hostOf(computer, true)));
-        }
-        List<ConsoleSnapshot.Host> hosts = new ArrayList<>();
-        for (Future<ConsoleSnapshot.Host> future : pending) {
-            try {
-                ConsoleSnapshot.Host host = future.get();
-                if (host != null) {
-                    hosts.add(host);
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+        Map<String, ComputerDetails> byUuid = new HashMap<>();
+        Map<String, HostEndpoint> endpointMap = new HashMap<>();
+        for (ComputerDetails c : computers) {
+            if (c != null && c.uuid != null) {
+                byUuid.put(c.uuid, c);
+                if (c.state == ComputerDetails.State.ONLINE && c.caps.has(HostCapabilities.Feature.NATIVE_API)) {
+                    endpointMap.put(c.uuid, endpoints.endpoint(c));
                 }
-            } catch (ExecutionException e) {
-                LimeLog.warning("Console library failed: " + e.getCause());
             }
         }
-        return assemble(hosts);
+        Map<String, NativeApiException> errors = new ConcurrentHashMap<>();
+        Map<String, NativeCapabilities> capsByHost = new ConcurrentHashMap<>();
+        NightjarConsoleJni.TransportCallback cb = useRustTransport ? null : (hostUuid, op, arg) -> {
+            ComputerDetails c = byUuid.get(hostUuid);
+            HostEndpoint ep = endpointMap.get(hostUuid);
+            if (c == null || ep == null) {
+                return Json.obj().put("error", Json.obj().put("kind", "unavailable").put("message", "No address")).toString();
+            }
+            try {
+                String reply = transport.request(ep, op, arg);
+                if ("capabilities".equals(op)) {
+                    try {
+                        Json.Obj ok = NativeApiClient.decode(reply);
+                        capsByHost.put(hostUuid, NativeCapabilities.parse(ok));
+                    } catch (NativeApiException ignored) {}
+                }
+                return reply;
+            } catch (NativeApiException e) {
+                if ("library".equals(op)) errors.put(hostUuid, e);
+                Json.Obj err = Json.obj()
+                        .put("kind", e.getKind().name().toLowerCase(java.util.Locale.ROOT))
+                        .put("message", e.getMessage() == null ? "error" : e.getMessage())
+                        .put("http_status", e.getHttpStatus())
+                        .put("retry_after_ms", e.getRetryAfterMs());
+                if (e.getCode() != null) err.put("code", e.getCode());
+                if (e.getSetting() != null) err.put("setting", e.getSetting());
+                return Json.obj().put("error", err).toString();
+            }
+        };
+        String raw = NightjarConsoleJni.repoRefresh(
+                handle, hostsJson(computers, true, endpointMap), certDer, keyPkcs8, uniqueId, clock.nowMs(), cb);
+        if (wakeTargets != null) {
+            for (Map.Entry<String, NativeCapabilities> entry : capsByHost.entrySet()) {
+                ComputerDetails c = byUuid.get(entry.getKey());
+                HostEndpoint ep = endpointMap.get(entry.getKey());
+                if (c != null && ep != null) {
+                    wakeTargets.refresh(entry.getKey(), entry.getValue(), new NativeApiClient(transport, ep));
+                }
+            }
+        }
+        return ConsoleSnapshot.fromRustJson(raw, computers, errors);
     }
 
-    /** Whether the host's classic app list, as last saved, has this id (blocks): a native library may leave a tile out. */
     public boolean classicListHas(ComputerDetails computer, int appId) {
         return classicListHas(computer, appId, "");
     }
 
-    /**
-     * The same for a game saved with its stable id, when there is one: the id may belong to another game by now.
-     * An entry with no UUID has nothing to compare, and goes by the app id.
-     */
     public boolean classicListHas(ComputerDetails computer, int appId, String stableId) {
         List<NvApp> apps = classic.apps(computer);
         if (apps != null) {
@@ -245,18 +415,10 @@ public final class ConsoleRepository {
         return false;
     }
 
-    /**
-     * The permissions of this device on the host, read now (blocks); null for a host without the native API
-     * and when the host does not answer.
-     */
     public NativeCapabilities capabilities(ComputerDetails computer) {
-        if (!computer.caps.has(HostCapabilities.Feature.NATIVE_API)) {
-            return null;
-        }
+        if (!computer.caps.has(HostCapabilities.Feature.NATIVE_API)) return null;
         HostEndpoint endpoint = endpoints.endpoint(computer);
-        if (endpoint == null) {
-            return null;
-        }
+        if (endpoint == null) return null;
         try {
             return new NativeApiClient(transport, endpoint).capabilities();
         } catch (NativeApiException e) {
@@ -265,334 +427,140 @@ public final class ConsoleRepository {
         }
     }
 
-    /**
-     * Asks the host to add a game it found but has not added (blocks; only for a host with
-     * {@link NativeCapabilities#LIBRARY_ADD}). Returns the entry the host added, or null when its answer does not list
-     * it as added. The answer is one entry, not the library: the stored library stays as it is until the next refresh
-     * reads the host's.
-     */
-    public NativeLibrary.Game addToLibrary(ComputerDetails computer, String gameId) throws NativeApiException {
+    public ConsoleSnapshot.AddedGame addToLibrary(ComputerDetails computer, String gameId) throws NativeApiException {
         HostEndpoint endpoint = endpoints.endpoint(computer);
         if (endpoint == null) {
             throw new NativeApiException(NativeApiException.Kind.UNAVAILABLE, computer.name + " has no address");
         }
-        return new NativeApiClient(transport, endpoint).addToLibrary(gameId);
-    }
-
-    /** Remembers that this device streamed the app; call when a stream starts. */
-    public void recordLaunch(ComputerDetails computer, NvApp app) {
-        if (app.getRole() == NvApp.Role.STREAM) {
-            recents.record(RecentsStore.Recent.of(computer, app, clock.nowMs()));
+        NightjarConsoleJni.TransportCallback cb = useRustTransport ? null : (hostUuid, op, arg) -> {
+            try {
+                return transport.request(endpoint, op, arg);
+            } catch (NativeApiException e) {
+                Json.Obj err = Json.obj()
+                        .put("kind", e.getKind().name().toLowerCase(java.util.Locale.ROOT))
+                        .put("message", e.getMessage() == null ? "error" : e.getMessage())
+                        .put("http_status", e.getHttpStatus());
+                if (e.getCode() != null) err.put("code", e.getCode());
+                return Json.obj().put("error", err).toString();
+            }
+        };
+        String hostJson = hostDescriptor(computer, endpoint, false).toString();
+        String reply = NightjarConsoleJni.repoAddToLibrary(handle, hostJson, gameId, certDer, keyPkcs8, uniqueId, cb);
+        Json.Obj env = Json.parseObject(reply);
+        Json.Obj err = env.optObject("error");
+        if (err != null) {
+            throw new NativeApiException(NativeApiException.Kind.of(err.optString("kind", "api")),
+                    err.optString("message", "library_add failed"));
         }
+        Json.Obj ok = env.optObject("ok");
+        return ok == null ? null : ConsoleSnapshot.AddedGame.fromJson(ok);
     }
 
-    /** Drops what is stored for a host that was removed. */
+    public void recordLaunch(ComputerDetails computer, NvApp app) {
+        if (app.getRole() != NvApp.Role.STREAM) return;
+        Json.Obj entry = Json.obj()
+                .put("host", computer.uuid)
+                .put("host_name", computer.displayName())
+                .put("install_id", app.getStableId())
+                .put("app_id", app.getAppId())
+                .put("title", app.getAppName())
+                .put("at", clock.nowMs());
+        NightjarConsoleJni.repoRecordLaunch(handle, entry.toString());
+    }
+
     public void forgetHost(String hostUuid) {
-        cache.forget(hostUuid);
-        recents.forgetHost(hostUuid);
-        favourites.forgetHost(hostUuid);
+        NightjarConsoleJni.repoForgetHost(handle, hostUuid);
     }
 
-    /**
-     * True when the game is starred on that host. {@code key} is {@link ConsoleSnapshot.Source#stableId()} when
-     * the library lists the game, else empty.
-     */
     public boolean isFavourite(String hostUuid, String key, int appId) {
-        return favourites.isFavourite(hostUuid, key, appId);
+        return NightjarConsoleJni.repoIsFavourite(handle, hostUuid, key == null ? "" : key, appId);
     }
 
-    /** {@link #isFavourite(String, String, int)} without a stable id: by app id. */
     public boolean isFavourite(String hostUuid, int appId) {
-        return favourites.isFavourite(hostUuid, "", appId);
+        return isFavourite(hostUuid, "", appId);
     }
 
-    /** Stars or unstars a game; the names are kept for when the host's library is not at hand. */
     public void setFavourite(String hostUuid, String hostName, String key, int appId, String title, boolean starred) {
-        favourites.set(new FavouritesStore.Favourite(hostUuid, hostName, key, appId, title), starred);
+        Json.Obj entry = Json.obj()
+                .put("host", hostUuid)
+                .put("install_id", key == null ? "" : key)
+                .put("app_id", appId)
+                .put("title", title == null ? "" : title);
+        NightjarConsoleJni.repoSetFavourite(handle, entry.toString(), starred);
     }
 
-    /** {@link #setFavourite(String, String, String, int, String, boolean)} without a stable id: by app id. */
     public void setFavourite(String hostUuid, String hostName, int appId, String title, boolean starred) {
         setFavourite(hostUuid, hostName, "", appId, title, starred);
     }
 
-    /** Hides these copies of a game on this device, or shows them again. */
     public void setHidden(List<ConsoleSnapshot.Source> copies, boolean hide) {
+        Json.Arr keys = Json.arr();
         for (ConsoleSnapshot.Source copy : copies) {
-            hidden.set(copy.hostUuid, copy.appId, copy.stableId(), hide);
+            keys.add(Json.obj()
+                    .put("host", copy.hostUuid)
+                    .put("install_id", copy.stableId())
+                    .put("app_id", copy.appId)
+                    .put("title", copy.title));
         }
+        NightjarConsoleJni.repoSetHidden(handle, keys.toString(), hide);
     }
 
-    private ConsoleSnapshot.Host hostOf(ComputerDetails computer, boolean network) {
-        if (computer.caps.has(HostCapabilities.Feature.NATIVE_API)) {
-            return nativeHost(computer, network);
-        }
-        if (computer.pairState != PairingManager.PairState.PAIRED) {
-            return null;
-        }
-        List<NvApp> apps = classic.apps(computer);
-        if (apps == null) {
-            return new ConsoleSnapshot.Host(computer.uuid, computer.displayName(), ConsoleSnapshot.Status.UNAVAILABLE, 0,
-                    null, null, Collections.emptyList());
-        }
-        HiddenStore.Listing listed = new HiddenStore.Listing();
-        for (NvApp app : apps) listed.add(app.getAppUuid(), app.getAppId());
-        Set<Integer> away = hidden.following(computer.uuid, listed.games());
-        List<ConsoleSnapshot.Source> sources = new ArrayList<>();
-        for (NvApp app : apps) {
-            sources.add(new ConsoleSnapshot.Source(computer.uuid, computer.displayName(), app.getAppId(), null,
-                    app.getAppName(), null, computer.hasRunningGame() && app.matchesRunningApp(computer.runningGameId,
-                    computer.runningGameUuid), null, app.getArtVersion(), null, app.getAppUuid(),
-                    app.isHdrSupported(), null, null, true, null, null, Collections.emptyList(), away.contains(app.getAppId())));
-        }
-        return new ConsoleSnapshot.Host(computer.uuid, computer.displayName(), ConsoleSnapshot.Status.CLASSIC, 0, null, null,
-                sources);
+    public String projectHome(List<ComputerDetails> computers, String filterJson, String query,
+                              String sortBy, String sortOrder) {
+        return NightjarConsoleJni.repoProjectHome(handle, hostsJson(computers, false, null),
+                filterJson, query, sortBy, sortOrder);
     }
 
-    private ConsoleSnapshot.Host nativeHost(ComputerDetails computer, boolean network) {
-        NativeApiException failure = null;
-        if (network) sessions.remove(computer.uuid);
-        if (network && computer.state == ComputerDetails.State.ONLINE) {
-            HostEndpoint endpoint = endpoints.endpoint(computer);
-            if (endpoint != null) {
-                NativeApiClient client = new NativeApiClient(transport, endpoint);
-                try {
-                    List<String> features = features(computer, client);
-                    NativeLibrary library = client.library(features.contains(NativeCapabilities.LIBRARY_UNADDED));
-                    long now = clock.nowMs();
-                    cache.store(computer.uuid, new LibraryCache.Entry(library.toJson().toString(), now, features));
-                    NativeSession session = null;
-                    try {
-                        session = client.session();
-                    } catch (NativeApiException e) {
-                        // Home still has the library; Continue playing just lacks this host's session.
-                        LimeLog.info("No session from " + computer.name + ": " + e.getMessage());
-                    }
-                    if (session != null) sessions.put(computer.uuid, session);
-                    return new ConsoleSnapshot.Host(computer.uuid, computer.displayName(), ConsoleSnapshot.Status.LIVE, now,
-                            null, session, sourcesOf(computer, library), new HashSet<>(features));
-                } catch (NativeApiException e) {
-                    failure = e;
-                } catch (JSONException e) {
-                    failure = new NativeApiException(NativeApiException.Kind.MALFORMED, e.getMessage());
+    public String gameDetail(List<ComputerDetails> computers, String hostId, int appId, boolean nativeApi) {
+        return NightjarConsoleJni.repoGameDetail(handle, hostsJson(computers, false, null), hostId, appId, nativeApi);
+    }
+
+    private String hostsJson(List<ComputerDetails> computers, boolean network,
+                             Map<String, HostEndpoint> endpointMap) {
+        Json.Arr arr = Json.arr();
+        if (computers != null) {
+            for (ComputerDetails c : computers) {
+                if (c == null || c.uuid == null) continue;
+                HostEndpoint ep = network && endpointMap != null ? endpointMap.get(c.uuid) : null;
+                arr.add(hostDescriptor(c, ep, network));
+            }
+        }
+        return arr.toString();
+    }
+
+    private Json.Obj hostDescriptor(ComputerDetails c, HostEndpoint ep, boolean network) {
+        boolean isNative = c.caps.has(HostCapabilities.Feature.NATIVE_API);
+        boolean online = c.state == ComputerDetails.State.ONLINE && (!network || !isNative || ep != null);
+        Json.Obj obj = Json.obj()
+                .put("uuid", c.uuid)
+                .put("name", c.displayName())
+                .put("online", online)
+                .put("paired", c.pairState == PairingManager.PairState.PAIRED)
+                .put("is_native", isNative)
+                .put("address", ep != null && ep.address != null ? ep.address : "")
+                .put("http_port", ep != null ? ep.httpPort : (c.activeAddress != null ? c.activeAddress.port : 47989))
+                .put("https_port", ep != null ? ep.httpsPort : c.httpsPort);
+        if (ep != null && ep.serverCertificatePem != null) {
+            obj.put("server_cert_pem", ep.serverCertificatePem);
+        }
+        if (!isNative && c.pairState == PairingManager.PairState.PAIRED) {
+            List<NvApp> apps = classic.apps(c);
+            if (apps != null) {
+                Json.Arr appArr = Json.arr();
+                for (NvApp app : apps) {
+                    appArr.add(Json.obj()
+                            .put("id", app.getAppId())
+                            .put("name", app.getAppName())
+                            .put("uuid", app.getAppUuid())
+                            .put("art_version", app.getArtVersion()));
                 }
+                obj.put("classic_apps", Json.obj().put("version", 1).put("apps", appArr));
+            }
+            if (c.hasRunningGame()) {
+                obj.put("running_app_id", c.runningGameId);
+                if (c.runningGameUuid != null) obj.put("running_app_uuid", c.runningGameUuid);
             }
         }
-        LibraryCache.Entry stored = cache.load(computer.uuid);
-        if (stored != null) {
-            try {
-                NativeLibrary library = NativeLibrary.parse(new JSONObject(stored.libraryJson));
-                // A snapshot from storage knows what the last read of a PC that still answers said runs there: without
-                // it the next poll, which only repaints from storage, would take the running game off Home.
-                NativeSession lastRead = computer.state == ComputerDetails.State.ONLINE ? sessions.get(computer.uuid) : null;
-                return new ConsoleSnapshot.Host(computer.uuid, computer.displayName(), ConsoleSnapshot.Status.CACHED,
-                        stored.fetchedAtMs, failure, lastRead, sourcesOf(computer, library), new HashSet<>(stored.features));
-            } catch (JSONException e) {
-                LimeLog.warning("Unreadable cached library of " + computer.name + ": " + e.getMessage());
-            }
-        }
-        return new ConsoleSnapshot.Host(computer.uuid, computer.displayName(), ConsoleSnapshot.Status.UNAVAILABLE, 0, failure,
-                null, Collections.emptyList());
-    }
-
-    /**
-     * The features the host advertises, read once per host while this repository lives (a host changes them only with
-     * an update), along with the wake targets of a host that lists them. When the call fails the host keeps the features stored with its last library, the failure is
-     * remembered so the refreshes that follow do not each ask again, and a refresh after {@link #FEATURES_RETRY_MS}
-     * reads them anew. Either way its library still loads.
-     */
-    private List<String> features(ComputerDetails computer, NativeApiClient client) {
-        List<String> known = features.get(computer.uuid);
-        if (known != null) return known;
-        Long failedAt = featuresFailedAtMs.get(computer.uuid);
-        if (failedAt == null || clock.nowMs() - failedAt >= FEATURES_RETRY_MS) {
-            try {
-                NativeCapabilities capabilities = client.capabilities();
-                known = capabilities.features;
-                features.put(computer.uuid, known);
-                featuresFailedAtMs.remove(computer.uuid);
-                if (wakeTargets != null) {
-                    wakeTargets.refresh(computer.uuid, capabilities, client);
-                }
-                return known;
-            } catch (NativeApiException e) {
-                LimeLog.info("No capabilities from " + computer.name + ": " + e.getMessage());
-                featuresFailedAtMs.put(computer.uuid, clock.nowMs());
-            }
-        }
-        LibraryCache.Entry stored = cache.load(computer.uuid);
-        return stored != null ? stored.features : Collections.emptyList();
-    }
-
-    private List<ConsoleSnapshot.Source> sourcesOf(ComputerDetails computer, NativeLibrary library) {
-        HiddenStore.Listing listed = new HiddenStore.Listing();
-        for (NativeLibrary.Game game : library.games) {
-            if (game.added) listed.add(game.installId, game.appId);
-        }
-        Set<Integer> away = hidden.following(computer.uuid, listed.games());
-        List<ConsoleSnapshot.Source> sources = new ArrayList<>();
-        for (NativeLibrary.Game game : library.games) {
-            ConsoleSnapshot.Source source = new ConsoleSnapshot.Source(computer.uuid, computer.displayName(), game.appId,
-                    game.installId == null ? "" : game.installId, game.title, game.gameId, game.running,
-                    game.coverPath, game.coverVersion, game.installed, "", false, game.storeSource, game.storeName,
-                    game.added, game.lastPlayed, game.launchable, game.collections, game.added && away.contains(game.appId));
-            source.storeId = game.storeId;
-            source.playtimeMinutes = game.playtimeMinutes;
-            sources.add(source);
-        }
-        return sources;
-    }
-
-    private ConsoleSnapshot assemble(List<ConsoleSnapshot.Host> hosts) {
-        return new ConsoleSnapshot(titles(hosts), hosts, continuePlaying(hosts), starred(hosts));
-    }
-
-    private List<ConsoleSnapshot.Starred> starred(List<ConsoleSnapshot.Host> hosts) {
-        List<ConsoleSnapshot.Starred> starred = new ArrayList<>();
-        for (FavouritesStore.Favourite favourite : favourites.load()) {
-            ConsoleSnapshot.Host host = hostOrNull(hosts, favourite.hostUuid);
-            if (host == null) {
-                continue;
-            }
-            ConsoleSnapshot.Source source = findStarred(host, favourite);
-            // Same rule as recents: a known library without the game means it is gone from the host. The star
-            // stays stored, so the game comes back with a reinstall.
-            if (source == null && host.status != ConsoleSnapshot.Status.UNAVAILABLE) {
-                continue;
-            }
-            int appId = source != null ? source.appId : favourite.appId;
-            if (source != null && (source.appId != favourite.appId || !source.stableId().equals(favourite.key))) {
-                // The host renumbered its apps or only now gave an id: follow the game and keep the star on it.
-                favourites.set(new FavouritesStore.Favourite(host.uuid, host.name, source.stableId(), source.appId,
-                        source.title), true);
-            }
-            starred.add(new ConsoleSnapshot.Starred(host.uuid, host.name, appId,
-                    source != null ? source.title : favourite.title, source));
-        }
-        return starred;
-    }
-
-    /** Merges the titles of all hosts: a native game id joins copies on different hosts, nothing else does. */
-    private List<ConsoleSnapshot.Title> titles(List<ConsoleSnapshot.Host> hosts) {
-        Map<String, List<ConsoleSnapshot.Source>> byKey = new LinkedHashMap<>();
-        for (ConsoleSnapshot.Host host : hosts) {
-            for (ConsoleSnapshot.Source source : host.sources) {
-                // A game the host has not added has no app id yet: its name tells it apart.
-                String key = source.gameId != null ? "game:" + source.gameId
-                        : !source.added ? "found:" + source.hostUuid + ":" + source.title
-                        : "host:" + source.hostUuid + ":" + source.appId;
-                List<ConsoleSnapshot.Source> sources = byKey.get(key);
-                if (sources == null) {
-                    sources = new ArrayList<>();
-                    byKey.put(key, sources);
-                }
-                sources.add(source);
-            }
-        }
-        List<ConsoleSnapshot.Title> titles = new ArrayList<>();
-        for (Map.Entry<String, List<ConsoleSnapshot.Source>> entry : byKey.entrySet()) {
-            List<ConsoleSnapshot.Source> sources = entry.getValue();
-            // Stable: running copies first, otherwise the order of the hosts.
-            Collections.sort(sources, (a, b) -> Boolean.compare(b.running, a.running));
-            titles.add(new ConsoleSnapshot.Title(entry.getKey(), sources.get(0).title, sources));
-        }
-        Collections.sort(titles, TITLE_ORDER);
-        return titles;
-    }
-
-    private static final Comparator<ConsoleSnapshot.Title> TITLE_ORDER = (a, b) -> {
-        int byName = a.title.toLowerCase(Locale.ROOT).compareTo(b.title.toLowerCase(Locale.ROOT));
-        return byName != 0 ? byName : a.key.compareTo(b.key);
-    };
-
-    private List<ConsoleSnapshot.Continue> continuePlaying(List<ConsoleSnapshot.Host> hosts) {
-        List<ConsoleSnapshot.Continue> running = new ArrayList<>();
-        List<ConsoleSnapshot.Continue> suspended = new ArrayList<>();
-        List<ConsoleSnapshot.Continue> older = new ArrayList<>();
-        for (ConsoleSnapshot.Host host : hosts) {
-            NativeSession session = host.session;
-            if (session != null && session.isActive()) {
-                ConsoleSnapshot.Source source = find(host, session.app.installId, session.app.appId);
-                ConsoleSnapshot.Continue entry = new ConsoleSnapshot.Continue(
-                        session.state == NativeSession.State.SUSPENDED ? ConsoleSnapshot.ContinueKind.SUSPENDED
-                                : ConsoleSnapshot.ContinueKind.RUNNING,
-                        host.uuid, host.name, session.app.appId, session.app.title, session, source, 0);
-                (session.state == NativeSession.State.SUSPENDED ? suspended : running).add(entry);
-            } else if (host.status == ConsoleSnapshot.Status.CLASSIC) {
-                for (ConsoleSnapshot.Source source : host.sources) {
-                    if (source.running) {
-                        running.add(new ConsoleSnapshot.Continue(ConsoleSnapshot.ContinueKind.RUNNING, host.uuid,
-                                host.name, source.appId, source.title, null, source, 0));
-                    }
-                }
-            }
-        }
-        int shown = 0;
-        for (RecentsStore.Recent recent : recents.load()) {
-            ConsoleSnapshot.Host host = hostOrNull(hosts, recent.hostUuid);
-            if (host == null || isActiveEntry(running, recent) || isActiveEntry(suspended, recent)) {
-                continue;
-            }
-            ConsoleSnapshot.Source source = find(host, null, recent.appId);
-            // A known library without the game means it was uninstalled or removed from the host.
-            if (source == null && host.status != ConsoleSnapshot.Status.UNAVAILABLE) {
-                continue;
-            }
-            // A hidden game takes no place among the shown ones; a running one stays above, as the way back to it.
-            if (source != null && source.hidden) {
-                continue;
-            }
-            older.add(new ConsoleSnapshot.Continue(ConsoleSnapshot.ContinueKind.RECENT, host.uuid, host.name,
-                    recent.appId, source != null ? source.title : recent.title, null, source, recent.playedAtMs));
-            if (++shown == MAX_RECENTS_SHOWN) {
-                break;
-            }
-        }
-        List<ConsoleSnapshot.Continue> all = new ArrayList<>(running);
-        all.addAll(suspended);
-        all.addAll(older);
-        return all;
-    }
-
-    private static boolean isActiveEntry(List<ConsoleSnapshot.Continue> entries, RecentsStore.Recent recent) {
-        for (ConsoleSnapshot.Continue entry : entries) {
-            if (entry.hostUuid.equals(recent.hostUuid) && entry.appId == recent.appId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static ConsoleSnapshot.Host hostOrNull(List<ConsoleSnapshot.Host> hosts, String uuid) {
-        for (ConsoleSnapshot.Host host : hosts) {
-            if (host.uuid.equals(uuid)) {
-                return host;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * By the stored stable id first; the app id only for a star or a game that has no id. A game the host has not
-     * added is never the starred one: it has no app id, and an empty key would match its 0.
-     */
-    private static ConsoleSnapshot.Source findStarred(ConsoleSnapshot.Host host, FavouritesStore.Favourite favourite) {
-        for (ConsoleSnapshot.Source source : host.sources) {
-            if (!source.added) continue;
-            String id = source.stableId();
-            if (favourite.key.isEmpty() || id.isEmpty() ? source.appId == favourite.appId : id.equals(favourite.key)) {
-                return source;
-            }
-        }
-        return null;
-    }
-
-    private static ConsoleSnapshot.Source find(ConsoleSnapshot.Host host, String installId, int appId) {
-        for (ConsoleSnapshot.Source source : host.sources) {
-            if (installId != null ? installId.equals(source.installId) : source.appId == appId) {
-                return source;
-            }
-        }
-        return null;
+        return obj;
     }
 }

@@ -31,7 +31,7 @@ use egui::{
 };
 
 use crate::config::{
-    step_zoom, AudioChannels, CardSize, CodecPreference, DecoderPreference, ErrorCorrection, HomeGroup, HomeLayout, HomeOrder, HostDisplay, Language,
+    step_zoom, AudioChannels, CardSize, CodecPreference, DecoderPreference, ErrorCorrection, HomeEnumLabel, HomeGroup, HomeLayout, HomeOrder, HostDisplay, Language,
     MouseMode, Overrides, Profiles, ReduceMotion, Settings, WindowMode, UI_ZOOM_STEPS,
 };
 use crate::console::{self, EndAction, GameState, Playing, Source};

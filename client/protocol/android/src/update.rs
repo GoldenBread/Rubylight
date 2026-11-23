@@ -6,11 +6,12 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString};
-use jni::sys::{JNI_FALSE, jboolean, jint, jlong, jstring};
-use nightjar_core::update::net::WebPkiTransport;
+use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jint, jlong, jstring};
+use nightjar_core::update::net::{Url, WebPkiTransport};
 use nightjar_core::update::{UpdateError, UpdateTarget, download_android_apk, fetch_latest};
 use nightjar_policy::http::TransferCancel;
 use nightjar_policy::update::{ChecksumFile, Release, ReleaseNotes, SemVer, UpdatePolicy};
@@ -379,4 +380,93 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHttpJni_updateDow
         Err(err) => update_error_json(&err),
     };
     new_jstring(&env, &out)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHttpJni_gameInfoExchange(
+    mut env: JNIEnv,
+    _: JClass,
+    method: JString,
+    url_str: JString,
+    headers_json: JString,
+    body: JByteArray,
+    follow_redirects: jboolean,
+) -> jstring {
+    let Some(method) = jstr(&mut env, &method) else {
+        return new_jstring(&env, r#"{"status":0,"error":"missing method"}"#);
+    };
+    let Some(url_str) = jstr(&mut env, &url_str) else {
+        return new_jstring(&env, r#"{"status":0,"error":"missing url"}"#);
+    };
+    let Some(url) = Url::parse(&url_str) else {
+        return new_jstring(&env, r#"{"status":0,"error":"invalid url"}"#);
+    };
+    let headers: Vec<(String, String)> = if headers_json.is_null() {
+        Vec::new()
+    } else if let Some(raw) = jstr(&mut env, &headers_json) {
+        if let Ok(pairs) = serde_json::from_str::<Vec<[String; 2]>>(&raw) {
+            pairs.into_iter().map(|[k, v]| (k, v)).collect()
+        } else if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw) {
+            map.into_iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_owned())))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    let body_bytes: Option<Vec<u8>> = if body.is_null() {
+        None
+    } else {
+        env.convert_byte_array(body).ok()
+    };
+    let net = WebPkiTransport::new(USER_AGENT.to_owned()).with_read_timeout(Duration::from_secs(15));
+    let out = match net.exchange(
+        &method,
+        &url,
+        &headers,
+        body_bytes.as_deref(),
+        follow_redirects != JNI_FALSE,
+    ) {
+        Ok(res) => serde_json::json!({
+            "status": res.status,
+            "retry_after": res.retry_after,
+            "body": String::from_utf8_lossy(&res.body),
+            "error": null,
+        })
+        .to_string(),
+        Err(err) => serde_json::json!({
+            "status": 0,
+            "retry_after": null,
+            "body": "",
+            "error": err,
+        })
+        .to_string(),
+    };
+    new_jstring(&env, &out)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarHttpJni_gameInfoDownload(
+    mut env: JNIEnv,
+    _: JClass,
+    url_str: JString,
+    dest_path: JString,
+    follow_redirects: jboolean,
+) -> jboolean {
+    let Some(url_str) = jstr(&mut env, &url_str) else {
+        return JNI_FALSE;
+    };
+    let Some(dest_path) = jstr(&mut env, &dest_path) else {
+        return JNI_FALSE;
+    };
+    let Some(url) = Url::parse(&url_str) else {
+        return JNI_FALSE;
+    };
+    let net = WebPkiTransport::new(USER_AGENT.to_owned()).with_read_timeout(Duration::from_secs(15));
+    match net.download_to_path(&url, Path::new(&dest_path), follow_redirects != JNI_FALSE) {
+        Ok(status) if (200..=299).contains(&status) => JNI_TRUE,
+        _ => JNI_FALSE,
+    }
 }

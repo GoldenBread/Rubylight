@@ -10,6 +10,7 @@ pub mod choices;
 pub mod client_hint;
 pub mod collections;
 pub mod connection_test;
+pub mod console;
 pub mod full_chroma;
 pub mod gamepad_constants;
 pub mod health;

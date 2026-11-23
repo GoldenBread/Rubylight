@@ -14,13 +14,11 @@ import androidx.annotation.VisibleForTesting;
 
 import com.limelight.LimeLog;
 import com.limelight.R;
+import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nativeapi.ConsoleSnapshot;
-import com.limelight.nativeapi.PreferencesRecentsStore;
 import com.limelight.nativeapi.RecentsStore;
+import com.limelight.nvstream.jni.Json;
 import com.limelight.utils.LaunchSource;
-
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -94,10 +92,10 @@ public final class OpenPlay {
         String saved = state(context).getString(GAME, null);
         if (saved == null) return null;
         try {
-            JSONObject json = new JSONObject(saved);
+            Json.Obj json = Json.parseObject(saved);
             return new Game(json.getString("host"), json.optString("host_name"), json.getInt("app"), json.optString("title"),
                     json.optString(STABLE_ID));
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             LimeLog.warning("Automatic start: the chosen game is unreadable: " + e);
             return null;
         }
@@ -111,7 +109,7 @@ public final class OpenPlay {
     }
 
     private static Game last(Context context) {
-        List<RecentsStore.Recent> recents = new PreferencesRecentsStore(context).load();
+        List<RecentsStore.Recent> recents = ConsoleRepository.loadRecents(context);
         if (recents.isEmpty()) return null;
         RecentsStore.Recent recent = recents.get(0);
         return new Game(recent.hostUuid, recent.hostName, recent.appId, recent.title, recent.stableId);
@@ -205,13 +203,9 @@ public final class OpenPlay {
             if ("chosen".equals(settings.getString(SETTING, DEFAULT))) settings.edit().putString(SETTING, DEFAULT).apply();
             return;
         }
-        try {
-            String game = new JSONObject().put("host", hostUuid).put("host_name", hostName).put("app", appId)
-                    .put("title", title).put(STABLE_ID, stableId).toString();
-            state(context).edit().putString(GAME, game).apply();
-        } catch (JSONException impossible) {
-            throw new IllegalStateException(impossible);
-        }
+        String game = Json.obj().put("host", hostUuid).put("host_name", hostName).put("app", appId)
+                .put("title", title).put(STABLE_ID, stableId).toString();
+        state(context).edit().putString(GAME, game).apply();
         settings.edit().putString(SETTING, "chosen").apply();
         Toast.makeText(context, context.getString(R.string.open_play_chosen, title), Toast.LENGTH_SHORT).show();
     }

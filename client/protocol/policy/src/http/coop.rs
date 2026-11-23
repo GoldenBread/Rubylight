@@ -168,6 +168,17 @@ impl CoopProblem {
             | Self::Other(m) => m,
         }
     }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Permission(_) => "permission",
+            Self::Refused(_) => "refused",
+            Self::Gone(_) => "gone",
+            Self::Unavailable(_) => "unavailable",
+            Self::Busy(_) => "busy",
+            Self::Other(_) => "other",
+        }
+    }
 }
 
 #[cfg(test)]

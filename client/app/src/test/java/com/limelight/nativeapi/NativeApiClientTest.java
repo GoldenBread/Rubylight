@@ -14,9 +14,13 @@ import static org.junit.Assert.fail;
 import android.app.Application;
 
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.Json;
 
 import org.json.JSONObject;
+import org.junit.After;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
@@ -27,7 +31,13 @@ import java.util.Collections;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class)
 public class NativeApiClientTest {
+    @Rule public TemporaryFolder temporary = new TemporaryFolder();
     private final NativeApiFixtures.FakeTransport transport = new NativeApiFixtures.FakeTransport();
+
+    @After
+    public void tearDown() {
+        ConsoleRepository.resetForTests();
+    }
 
     private NativeApiClient client() {
         ComputerDetails host = NativeApiFixtures.nativeHost("pc", "PC", true);
@@ -57,9 +67,21 @@ public class NativeApiClientTest {
     public void aLibraryKeepsTheGameIdentityAndCoverAndSurvivesTheCacheRoundTrip() throws Exception {
         transport.reply("pc", "library", ok(library("r5",
                 game("steam-1", 11, "Portal", "steam:400", true), game("local-2", 12, "Notepad", null, false))));
-        NativeLibrary library = client().library();
-        assertEquals("r5", library.revision);
-        NativeLibrary.Game portal = library.games.get(0);
+        transport.reply("pc", "session", ok(NativeApiFixtures.IDLE));
+        Json.Obj raw = client().library();
+        assertEquals("r5", raw.getString("revision"));
+        assertEquals(2, raw.getArray("games").length());
+
+        java.io.File dir = temporary.newFolder();
+        ComputerDetails host = NativeApiFixtures.nativeHost("pc", "PC", true);
+        ConsoleRepository repo = new ConsoleRepository(dir, transport,
+                c -> HostEndpoint.of(c, "unique", NativeApiFixtures.crypto()), c -> null, () -> 5000L, null);
+        ConsoleSnapshot live = repo.refresh(Collections.singletonList(host));
+        ConsoleRepository.evictCacheForTests(dir);
+        ConsoleSnapshot cached = repo.cached(Collections.singletonList(host));
+        assertEquals(live.titles.size(), cached.titles.size());
+
+        ConsoleSnapshot.Source portal = cached.host("pc").sources.get(0);
         assertEquals("steam-1", portal.installId);
         assertEquals(11, portal.appId);
         assertEquals("steam:400", portal.gameId);
@@ -68,13 +90,8 @@ public class NativeApiClientTest {
         assertTrue(portal.running);
         assertEquals("/api/native/v1/cover/steam-1", portal.coverPath);
         assertEquals("v1", portal.coverVersion);
-        assertNull(library.games.get(1).gameId);
-        assertFalse(library.games.get(1).running);
-
-        NativeLibrary again = NativeLibrary.parse(new JSONObject(library.toJson().toString()));
-        assertEquals(library.toJson().toString(), again.toJson().toString());
-        assertEquals("steam:400", again.games.get(0).gameId);
-        assertNull(again.games.get(1).gameId);
+        assertNull(cached.host("pc").sources.get(1).gameId);
+        assertFalse(cached.host("pc").sources.get(1).running);
     }
 
     @Test
@@ -178,28 +195,28 @@ public class NativeApiClientTest {
     }
 
     @Test
-    public void anAudioSwitchNeedsTheHostsFeatureAndViewOrLaunch() throws Exception {
+    public void anAudioSwitchNeedsTheHostsFeatureAndViewOrLaunch() {
         String features = "\"features\":[\"audio.night_mode\"]";
-        assertTrue(NativeCapabilities.parse(new JSONObject("{\"api_version\":1,\"permissions\":{\"view\":true},"
+        assertTrue(NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,\"permissions\":{\"view\":true},"
                 + features + "}")).offersAudio(NativeCapabilities.NIGHT_MODE));
-        assertTrue(NativeCapabilities.parse(new JSONObject("{\"api_version\":1,\"permissions\":{\"launch\":true},"
+        assertTrue(NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,\"permissions\":{\"launch\":true},"
                 + features + "}")).offersAudio(NativeCapabilities.NIGHT_MODE));
-        assertFalse("listing only", NativeCapabilities.parse(new JSONObject("{\"api_version\":1,"
+        assertFalse("listing only", NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,"
                 + "\"permissions\":{\"list\":true}," + features + "}")).offersAudio(NativeCapabilities.NIGHT_MODE));
-        assertFalse("not advertised", NativeCapabilities.parse(new JSONObject("{\"api_version\":1,"
+        assertFalse("not advertised", NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,"
                 + "\"permissions\":{\"view\":true}," + features + "}")).offersAudio(NativeCapabilities.HEADPHONE_SURROUND));
     }
 
     @Test
-    public void invitesNeedTheHostsFeatureAndApproveNewDevicesOrHostControl() throws Exception {
+    public void invitesNeedTheHostsFeatureAndApproveNewDevicesOrHostControl() {
         String features = "\"features\":[\"session.guest-invites\"]";
-        assertTrue(NativeCapabilities.parse(new JSONObject("{\"api_version\":1,\"permissions\":{\"pairing_approve\":true},"
+        assertTrue(NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,\"permissions\":{\"pairing_approve\":true},"
                 + features + "}")).mayInvite());
-        assertTrue(NativeCapabilities.parse(new JSONObject("{\"api_version\":1,\"permissions\":{\"host_control\":true},"
+        assertTrue(NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,\"permissions\":{\"host_control\":true},"
                 + features + "}")).mayInvite());
-        assertFalse("a guest may not", NativeCapabilities.parse(new JSONObject("{\"api_version\":1,"
+        assertFalse("a guest may not", NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,"
                 + "\"permissions\":{\"view\":true,\"launch\":true}," + features + "}")).mayInvite());
-        assertFalse("not offered", NativeCapabilities.parse(new JSONObject("{\"api_version\":1,"
+        assertFalse("not offered", NativeCapabilities.parse(Json.parseObject("{\"api_version\":1,"
                 + "\"permissions\":{\"host_control\":true},\"features\":[]}")).mayInvite());
     }
 

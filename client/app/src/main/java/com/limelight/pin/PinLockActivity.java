@@ -21,8 +21,7 @@ import com.limelight.AppView;
 import com.limelight.Game;
 import com.limelight.R;
 import com.limelight.ShortcutTrampoline;
-import com.limelight.nativeapi.PreferencesRecentsStore;
-import com.limelight.nativeapi.RecentsStore;
+import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
 import com.limelight.ui.DpadEchoFilter;
@@ -107,9 +106,9 @@ public class PinLockActivity extends NightjarActivity {
     private void recordRecent() {
         Intent in = getIntent();
         if (!in.hasExtra(EXTRA_RECENT_HOST)) return;
-        new PreferencesRecentsStore(this).record(new RecentsStore.Recent(in.getStringExtra(EXTRA_RECENT_HOST),
-                in.getStringExtra(EXTRA_RECENT_HOST_NAME), in.getIntExtra(EXTRA_RECENT_APP_ID, 0),
-                in.getStringExtra(EXTRA_RECENT_TITLE), System.currentTimeMillis(), in.getStringExtra(EXTRA_RECENT_STABLE_ID)));
+        ConsoleRepository.recordLaunch(this, in.getStringExtra(EXTRA_RECENT_HOST),
+                in.getIntExtra(EXTRA_RECENT_APP_ID, 0), in.getStringExtra(EXTRA_RECENT_TITLE),
+                in.getStringExtra(EXTRA_RECENT_STABLE_ID));
     }
 
     /**

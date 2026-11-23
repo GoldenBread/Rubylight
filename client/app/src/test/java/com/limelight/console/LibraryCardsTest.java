@@ -22,8 +22,8 @@ import android.view.ContextThemeWrapper;
 import android.widget.FrameLayout;
 
 import com.limelight.R;
+import com.limelight.nativeapi.ConsoleSnapshot;
 import com.limelight.nativeapi.NativeApiFixtures;
-import com.limelight.nativeapi.NativeLibrary;
 import com.limelight.nvstream.http.ComputerDetails;
 
 import org.junit.After;
@@ -265,7 +265,7 @@ public class LibraryCardsTest {
         rig.transport.reply("tower", "library_add", ok("{\"install_id\":\"i9\",\"app_id\":9,\"title\":\"Hades\","
                 + "\"game_id\":\"found:Hades\",\"added\":true}"));
         ComputerDetails tower = nativeHost("tower", "Tower", true);
-        NativeLibrary.Game added = rig.repository.addToLibrary(tower, "found:Hades");
+        ConsoleSnapshot.AddedGame added = rig.repository.addToLibrary(tower, "found:Hades");
         assertNotNull(added);
         assertEquals(9, added.appId);
         assertEquals("i9", added.installId);

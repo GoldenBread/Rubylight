@@ -10,6 +10,8 @@ import androidx.annotation.VisibleForTesting;
 
 import com.limelight.LimeLog;
 import com.limelight.nvstream.http.NvApp;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarHttpJni;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -37,12 +39,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
 
 /**
  * SteamGridDB covers and IGDB facts for the library. One background thread runs every lookup, so the services' pace and
@@ -133,7 +129,6 @@ public final class GameInfo {
     private final ExecutorService executor;
     /** Reads of what is kept on disk, off the main thread and away from the lookups; never touches the network. */
     private final ExecutorService readers;
-    private final OkHttpClient client;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, JSONObject> records = new ConcurrentHashMap<>();
     private final Set<String> imagesFailed = ConcurrentHashMap.newKeySet();
@@ -151,8 +146,6 @@ public final class GameInfo {
     GameInfo(File dir, GameInfoModel.Transport transport, Supplier<GameInfoModel.Keys> keys, boolean background) {
         this.dir = dir;
         this.keys = keys;
-        this.client = new OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
-                .callTimeout(40, TimeUnit.SECONDS).build();
         this.transport = transport != null ? transport : this::send;
         this.sleeper = Thread::sleep;
         this.executor = background ? Executors.newSingleThreadExecutor(r -> daemon(r, "game-info")) : null;
@@ -383,20 +376,13 @@ public final class GameInfo {
         try {
             File folder = target.getParentFile();
             if (folder != null && !folder.isDirectory() && !folder.mkdirs()) return false;
-            try (Response response = client.newCall(new Request.Builder().url(url).get().build()).execute()) {
-                if (!response.isSuccessful() || response.body() == null) return false;
-                temporary = File.createTempFile("cover-", ".tmp", folder);
-                try (InputStream in = response.body().byteStream(); OutputStream out = new FileOutputStream(temporary)) {
-                    byte[] buffer = new byte[16 * 1024];
-                    int n;
-                    while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
-                }
-            }
+            temporary = File.createTempFile("cover-", ".tmp", folder);
+            if (!NightjarHttpJni.gameInfoDownload(url, temporary.getAbsolutePath(), true)) return false;
             if (temporary.length() == 0) return false;
             replace(temporary, target);
             temporary = null;
             return true;
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException | RuntimeException | UnsatisfiedLinkError e) {
             return false;
         } finally {
             if (temporary != null) temporary.delete();
@@ -497,32 +483,18 @@ public final class GameInfo {
     GameInfoModel.Reply send(JSONObject planned) {
         try {
             String method = planned.getString("method");
-            Request.Builder request = new Request.Builder().url(planned.getString("url"));
+            String url = planned.getString("url");
             org.json.JSONArray headers = planned.optJSONArray("headers");
-            for (int i = 0; headers != null && i < headers.length(); i++) {
-                org.json.JSONArray pair = headers.getJSONArray(i);
-                request.header(pair.getString(0), pair.getString(1));
-            }
             String body = planned.isNull("body") ? null : planned.getString("body");
-            if ("GET".equalsIgnoreCase(method)) {
-                request.get();
-            } else {
-                request.method(method, RequestBody.create(body == null ? "" : body, MediaType.parse("text/plain; charset=utf-8")));
-            }
-            try (Response response = client.newCall(request.build()).execute()) {
-                String text = response.body() == null ? "" : response.body().string();
-                Long retry = null;
-                String header = response.header("Retry-After");
-                if (header != null) {
-                    try {
-                        retry = Long.parseLong(header.trim());
-                    } catch (NumberFormatException ignored) {
-                        // An HTTP date: the library waits its own default.
-                    }
-                }
-                return new GameInfoModel.Reply(response.code(), text, retry);
-            }
-        } catch (IOException | JSONException | RuntimeException e) {
+            byte[] bodyBytes = "GET".equalsIgnoreCase(method) ? null
+                    : (body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8));
+            String raw = NightjarHttpJni.gameInfoExchange(method, url,
+                    headers == null ? "[]" : headers.toString(), bodyBytes, true);
+            Json.Obj res = Json.parseObject(raw);
+            int status = res.optInt("status", 0);
+            Long retry = res.has("retry_after") && !res.isNull("retry_after") ? res.optLong("retry_after") : null;
+            return new GameInfoModel.Reply(status, res.optString("body", ""), retry);
+        } catch (JSONException | RuntimeException | UnsatisfiedLinkError e) {
             return new GameInfoModel.Reply(0, "", null);
         }
     }

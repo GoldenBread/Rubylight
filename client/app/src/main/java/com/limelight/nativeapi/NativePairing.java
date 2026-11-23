@@ -1,8 +1,6 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,11 +26,11 @@ public final class NativePairing {
         }
     }
 
-    static List<Request> parseRequests(JSONObject json) throws JSONException {
-        JSONArray requests = json.getJSONArray("requests");
+    static List<Request> parseRequests(Json.Obj json) {
+        Json.Arr requests = json.getArray("requests");
         List<Request> parsed = new ArrayList<>(requests.length());
         for (int i = 0; i < requests.length(); i++) {
-            JSONObject request = requests.getJSONObject(i);
+            Json.Obj request = requests.getObject(i);
             parsed.add(new Request(request.getString("id"), request.getString("name"), request.getString("address"),
                     request.getLong("age_seconds")));
         }

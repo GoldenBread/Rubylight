@@ -5,7 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import com.limelight.computers.ComputerManagerListener;
-import com.limelight.nativeapi.RecentsStore;
+import com.limelight.nativeapi.ConsoleRepository;
 import com.limelight.nvstream.http.ComputerDetails;
 
 import java.io.File;
@@ -92,10 +92,10 @@ final class DemoAsleep {
     }
 
     /** Lunar Base on the Laptop leads Continue playing on a phone, so the first screen shows a card that is away. */
-    static void recordRecent(RecentsStore recents) {
+    static void recordRecent(Context context) {
         // Recents are kept between runs: a run without the Laptop drops the one an earlier run left.
-        if (enabled) recents.record(new RecentsStore.Recent(LAPTOP_UUID, "Laptop", 11, LAPTOP_ONLY[0], 3_000L));
-        else recents.forgetHost(LAPTOP_UUID);
+        if (enabled) ConsoleRepository.recordLaunch(context, LAPTOP_UUID, 11, LAPTOP_ONLY[0], "");
+        else ConsoleRepository.forgetHost(context, LAPTOP_UUID);
     }
 
     /** Gives the service's Laptop the native API, so its saved library is read; the demo's other PCs stay as they are. */

@@ -1,8 +1,6 @@
 package com.limelight.nativeapi;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,12 +55,12 @@ public final class NativeAudio {
         return null;
     }
 
-    static NativeAudio parse(JSONObject json) throws JSONException {
+    static NativeAudio parse(Json.Obj json) {
         List<Setting> settings = new ArrayList<>();
-        JSONArray array = json.getJSONArray("settings");
+        Json.Arr array = json.getArray("settings");
         for (int i = 0; i < array.length(); i++) {
-            JSONObject setting = array.getJSONObject(i);
-            Object value = setting.opt("value");
+            Json.Obj setting = array.getObject(i);
+            Object value = setting.raw("value");
             settings.add(new Setting(setting.getString("id"), "configurable".equals(setting.optString("state")),
                     value instanceof Boolean ? (Boolean) value : null,
                     setting.isNull("reason") ? null : setting.optString("reason", null),
@@ -72,8 +70,8 @@ public final class NativeAudio {
     }
 
     /** POST /audio/settings turning one switch on or off. */
-    static String writeJson(String id, boolean on) throws JSONException {
-        JSONObject change = new JSONObject().put("id", id).put("value", on);
-        return new JSONObject().put("changes", new JSONArray().put(change)).toString();
+    static String writeJson(String id, boolean on) {
+        Json.Obj change = Json.obj().put("id", id).put("value", on);
+        return Json.obj().put("changes", Json.arr().add(change)).toString();
     }
 }

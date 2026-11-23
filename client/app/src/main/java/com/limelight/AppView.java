@@ -400,14 +400,7 @@ public class AppView extends NightjarActivity implements AdapterFragmentCallback
             return;
         }
 
-        SharedPreferences hiddenAppsPrefs = getSharedPreferences(HIDDEN_APPS_PREF_FILENAME, MODE_PRIVATE);
-        for (String hiddenAppIdStr : hiddenAppsPrefs.getStringSet(uuidString, new HashSet<String>())) {
-            try {
-                hiddenAppIds.add(Integer.parseInt(hiddenAppIdStr));
-            } catch (NumberFormatException ignored) {
-                // Ignore a stale or malformed saved entry without making the library unusable.
-            }
-        }
+        hiddenAppIds.addAll(new HiddenStore.Preferences(this).of(uuidString));
         savedHiddenAppIds = new HashSet<>(hiddenAppIds);
 
         String computerName = getIntent().getStringExtra(NAME_EXTRA);

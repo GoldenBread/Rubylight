@@ -1,8 +1,6 @@
 package com.limelight.files;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -47,21 +45,21 @@ public final class RemoteFiles {
     /** {"ok": list} or {"error": {problem, message}}; anything else reads as a failure of the host's reply. */
     public static RemoteFiles parse(String reply) {
         try {
-            JSONObject json = new JSONObject(reply);
-            JSONObject ok = json.optJSONObject("ok");
+            Json.Obj json = Json.parseObject(reply);
+            Json.Obj ok = json.optObject("ok");
             if (ok == null) {
-                JSONObject error = json.getJSONObject("error");
+                Json.Obj error = json.getObject("error");
                 return failed(error.getString("problem"), error.optString("message", null));
             }
-            JSONArray list = ok.getJSONArray("files");
+            Json.Arr list = ok.getArray("files");
             List<Entry> files = new ArrayList<>(list.length());
             for (int i = 0; i < list.length(); i++) {
-                JSONObject file = list.getJSONObject(i);
+                Json.Obj file = list.getObject(i);
                 files.add(new Entry(file.getString("name"), file.getLong("size"), file.getLong("modified_unix_ms")));
             }
             return new RemoteFiles(ok.getString("folder"), ok.getLong("free_bytes"), ok.getLong("max_file_bytes"),
                     Collections.unmodifiableList(files), null, null);
-        } catch (JSONException e) {
+        } catch (Json.SyntaxException e) {
             return failed(FileProblems.HOST, "Unreadable file list: " + e.getMessage());
         }
     }

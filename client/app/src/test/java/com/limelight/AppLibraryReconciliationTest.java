@@ -168,8 +168,8 @@ public class AppLibraryReconciliationTest {
 
         assertEquals(1, adapter.getCount());
         assertEquals("visible-game", ((AppView.AppObject) adapter.getItem(0)).app.getAppUuid());
-        assertEquals(Collections.singleton("20"), screen.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0)
-                .getStringSet("library-host", Collections.emptySet()));
+        assertEquals(Collections.singleton(20),
+                new com.limelight.nativeapi.HiddenStore.Preferences(screen).of("library-host"));
     }
 
     @Test public void hidingHereKeepsAMoveTheListMadeSinceThisScreenReadIt() {
@@ -177,16 +177,16 @@ public class AppLibraryReconciliationTest {
         ReflectionHelpers.callInstanceMethod(screen, "updateHiddenApps",
                 ReflectionHelpers.ClassParameter.from(boolean.class, true));
         // Home followed the renumbered game while this screen stayed open.
-        screen.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0).edit()
-                .putStringSet("library-host", Collections.singleton("70")).commit();
+        new com.limelight.nativeapi.HiddenStore.Preferences(screen).changed(
+                "library-host", Collections.singleton(10), Collections.singleton(70));
 
         HashSet<Integer> ids = ReflectionHelpers.getField(screen, "hiddenAppIds");
         ids.add(20);
         ReflectionHelpers.callInstanceMethod(screen, "updateHiddenApps",
                 ReflectionHelpers.ClassParameter.from(boolean.class, true));
 
-        assertEquals(new HashSet<>(Arrays.asList("70", "20")), screen.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0)
-                .getStringSet("library-host", Collections.emptySet()));
+        assertEquals(new HashSet<>(Arrays.asList(70, 20)),
+                new com.limelight.nativeapi.HiddenStore.Preferences(screen).of("library-host"));
         assertEquals(new HashSet<>(Arrays.asList(70, 20)), ReflectionHelpers.getField(screen, "hiddenAppIds"));
     }
 
@@ -200,9 +200,8 @@ public class AppLibraryReconciliationTest {
 
         assertEquals(1, adapter.getCount());
         assertEquals("replacement-game", ((AppView.AppObject) adapter.getItem(0)).app.getAppUuid());
-        assertEquals("Unrelated absent apps keep their saved hidden choice", Collections.singleton("30"),
-                screen.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0)
-                        .getStringSet("library-host", Collections.emptySet()));
+        assertEquals("Unrelated absent apps keep their saved hidden choice", Collections.singleton(30),
+                new com.limelight.nativeapi.HiddenStore.Preferences(screen).of("library-host"));
     }
 
     @Test public void stableUuidMatchesBeforeLegacyNumbersDuringAnIdSwap() {
@@ -218,8 +217,8 @@ public class AppLibraryReconciliationTest {
         assertTrue(shortcuts.enabled.contains("stable-game"));
         assertTrue(shortcuts.enabled.contains("10"));
         assertFalse(shortcuts.enabled.contains("20"));
-        assertEquals(Collections.singleton("20"), screen.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0)
-                .getStringSet("library-host", Collections.emptySet()));
+        assertEquals(Collections.singleton(20),
+                new com.limelight.nativeapi.HiddenStore.Preferences(screen).of("library-host"));
     }
 
     @Test public void visibleGameMovingOntoARemovedHiddenGamesIdStaysVisible() {
@@ -232,8 +231,8 @@ public class AppLibraryReconciliationTest {
 
         assertEquals(1, adapter.getCount());
         assertEquals("visible-game", ((AppView.AppObject) adapter.getItem(0)).app.getAppUuid());
-        assertEquals(Collections.emptySet(), screen.getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, 0)
-                .getStringSet("library-host", Collections.emptySet()));
+        assertEquals(Collections.emptySet(),
+                new com.limelight.nativeapi.HiddenStore.Preferences(screen).of("library-host"));
     }
     @Test public void searchIgnoresCaseAndAccentsAndKeepsTheFullCatalogue() {
         receive(app("Pokémon", 10, "pokemon"), app("Portal", 20, "portal"));

@@ -628,3 +628,44 @@ fn download_android_apk_rejects_unsafe_asset_name_before_network_or_cleanup() {
     assert!(sentinel.exists(), "clean_dir must not run for unsafe names");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn exchange_and_download_to_path_enforce_tls_headers_and_retry_after() {
+    let fixture = TlsFixture::start(|path, _| match path {
+        "/post" => TlsReply::Raw(
+            b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 42\r\nContent-Length: 4\r\n\r\nwait"
+                .to_vec(),
+        ),
+        "/bin" => TlsReply::Raw(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n\x00\x01\x02\x03\x04".to_vec(),
+        ),
+        _ => TlsReply::Raw(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_vec()),
+    });
+
+    let trusted = WebPkiTransport::with_roots_for_test("Nightjar/test".into(), fixture.roots.clone());
+    let post_url = Url::parse(&fixture.url("/post")).unwrap();
+    let res = trusted
+        .exchange(
+            "POST",
+            &post_url,
+            &[("Authorization".into(), "Bearer tok".into())],
+            Some(br#"{"hello":1}"#),
+            false,
+        )
+        .unwrap();
+    assert_eq!(res.status, 429);
+    assert_eq!(res.retry_after, Some(42));
+    assert_eq!(res.body, b"wait");
+    let seen = fixture.seen_requests.lock().unwrap();
+    assert!(seen[0].contains("POST /post HTTP/1.1\r\n"));
+    assert!(seen[0].contains("Authorization: Bearer tok\r\n"));
+    drop(seen);
+
+    let dir = std::env::temp_dir().join("nightjar-update-dl-test");
+    let _ = std::fs::remove_dir_all(&dir);
+    let target = dir.join("art.bin");
+    let bin_url = Url::parse(&fixture.url("/bin")).unwrap();
+    assert_eq!(trusted.download_to_path(&bin_url, &target, false).unwrap(), 200);
+    assert_eq!(std::fs::read(&target).unwrap(), vec![0, 1, 2, 3, 4]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

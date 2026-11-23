@@ -1,15 +1,12 @@
 package com.limelight.console;
 
 import com.limelight.nativeapi.ConsoleSnapshot;
-import com.limelight.nativeapi.NativeCapabilities;
-import com.limelight.nativeapi.NativeSession;
 import com.limelight.nvstream.http.ComputerDetails;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -252,7 +249,7 @@ public final class HomeModel {
     public static final String FILTER_NO_COLLECTION = "no-collection";
     /** The games hidden on this device, offered when there are any. */
     public static final String FILTER_HIDDEN = "hidden";
-    private static final String HIDDEN_KEY = "hidden:";
+    static final String HIDDEN_KEY = "hidden:";
 
     /** Whether a card of {@link #allGames} shows under a filter chip. An unknown filter shows everything added. */
     public static boolean matches(String filter, GameCard card) {
@@ -372,12 +369,12 @@ public final class HomeModel {
         }
         List<Row> parts = new ArrayList<>();
         if (games.isEmpty()) {
-            if (!apps.isEmpty()) parts.add(new Row(LIBRARY_ROW, RowKind.OTHER, null, null, installedFirst(apps), FILTER_ALL, true));
+            if (!apps.isEmpty()) parts.add(new Row(LIBRARY_ROW, RowKind.OTHER, null, null, HomeRows.installedFirst(apps), FILTER_ALL, true));
             return parts;
         }
-        parts.add(new Row("shelf:games", RowKind.GAMES, null, null, installedFirst(games), FILTER_GAMES, true));
+        parts.add(new Row("shelf:games", RowKind.GAMES, null, null, HomeRows.installedFirst(games), FILTER_GAMES, true));
         if (!apps.isEmpty()) {
-            parts.add(new Row("shelf:other", RowKind.OTHER, null, null, installedFirst(apps), FILTER_OTHER, true));
+            parts.add(new Row("shelf:other", RowKind.OTHER, null, null, HomeRows.installedFirst(apps), FILTER_OTHER, true));
         }
         return parts;
     }
@@ -393,8 +390,8 @@ public final class HomeModel {
             List<GameCard> part = new ArrayList<>();
             // A game in several shows in each: every row needs a key of its own for it.
             for (int at : group.games) part.add(cards.get(at).keyed(key + ":" + cards.get(at).key));
-            parts.add(new Row(key, none ? RowKind.NO_COLLECTION : RowKind.COLLECTION, null, group.name, installedFirst(part),
-                    none ? FILTER_NO_COLLECTION : COLLECTION_FILTER + group.name, true));
+            parts.add(new Row(key, none ? RowKind.NO_COLLECTION : RowKind.COLLECTION, null, group.name,
+                    HomeRows.installedFirst(part), none ? FILTER_NO_COLLECTION : COLLECTION_FILTER + group.name, true));
         }
         return parts;
     }
@@ -442,7 +439,7 @@ public final class HomeModel {
         List<Row> sortedRows = new ArrayList<>(rows.size());
         for (Row row : rows) {
             sortedRows.add(row.kind == RowKind.RECENT ? row : new Row(row.key, row.kind, row.store, row.storeName,
-                    installedFirst(order(row.all, view)), row.filter, row.capped));
+                    HomeRows.installedFirst(order(row.all, view)), row.filter, row.capped));
         }
         Map<String, List<GameCard>> sortedGroups = new HashMap<>();
         for (Map.Entry<String, List<GameCard>> part : grouped.entrySet()) {
@@ -552,7 +549,7 @@ public final class HomeModel {
                     : String.valueOf(entry.appId);
             favourites.add(new GameCard("favourite:" + entry.hostUuid + ":" + id, entry.title,
                     entry.hostUuid, entry.hostName, entry.appId,
-                    entry.source == null ? Badge.NONE : badgeOf(snapshot, entry.source), entry.source, 1, true));
+                    entry.source == null ? Badge.NONE : HomeRows.badgeOf(snapshot, entry.source), entry.source, 1, true));
         }
         List<GameCard> continuePlaying = new ArrayList<>();
         for (ConsoleSnapshot.Continue entry : snapshot.continuePlaying) {
@@ -599,11 +596,11 @@ public final class HomeModel {
                 continue;
             }
             library.add(new GameCard("game:" + title.key, title.title, best.hostUuid, best.hostName, best.appId,
-                    badgeOf(snapshot, best), best, hosts, starred.contains(best.hostUuid + ":" + best.appId), false, listing,
-                    lineLastPlayed(snapshot, title, only), copies));
+                    HomeRows.badgeOf(snapshot, best), best, hosts, starred.contains(best.hostUuid + ":" + best.appId),
+                    false, listing, HomeRows.lineLastPlayed(snapshot, title, only), copies));
         }
         List<GameCard> allGames = new ArrayList<>();
-        List<Row> rows = libraryRows(snapshot, starred, allGames, launchDenied, only);
+        List<Row> rows = HomeRows.libraryRows(snapshot, starred, allGames, launchDenied, only);
         List<HostCard> hosts = new ArrayList<>();
         for (ConsoleSnapshot.Host host : snapshot.hosts) {
             if (only != null && !only.equals(host.uuid)) {
@@ -632,8 +629,8 @@ public final class HomeModel {
             hosts.add(new HostCard(host.uuid, host.name, line, count, online));
         }
         List<CollectionGroups.Group> groups = CollectionGroups.of(namesOf(shownGames(allGames)));
-        return new HomeModel(favourites, continuePlaying, library, hosts, rows, allGames, filtersOf(allGames, groups),
-                groupedCards(shownGames(allGames), groups), only);
+        return new HomeModel(favourites, continuePlaying, library, hosts, rows, allGames,
+                HomeRows.filtersOf(allGames, groups), groupedCards(shownGames(allGames), groups), only);
     }
 
     private static Map<String, List<GameCard>> groupedCards(List<GameCard> shown, List<CollectionGroups.Group> groups) {
@@ -644,237 +641,5 @@ public final class HomeModel {
             grouped.put(group.name == null ? FILTER_NO_COLLECTION : COLLECTION_FILTER + group.name, cards);
         }
         return grouped;
-    }
-
-    /**
-     * The library's rows. A title is shown by its best copy: an installed one, else one not installed (it shows
-     * desaturated), else, when its host lists the games it has not added, one not added. Each store's row has the
-     * installed games first and is as long as the store's share, largest store first; the apps of no store follow.
-     */
-    private static List<Row> libraryRows(ConsoleSnapshot snapshot, Set<String> starred, List<GameCard> allGames,
-                                         Set<String> launchDenied, String only) {
-        Map<String, List<GameCard>> byStore = new LinkedHashMap<>();
-        Map<String, String> storeNames = new HashMap<>();
-        List<GameCard> other = new ArrayList<>();
-        List<GameCard> unadded = new ArrayList<>();
-        List<GameCard> played = new ArrayList<>();
-        for (ConsoleSnapshot.Title title : snapshot.titles) {
-            ConsoleSnapshot.Source installed = null;
-            ConsoleSnapshot.Source missing = null;
-            ConsoleSnapshot.Source found = null;
-            boolean addable = false;
-            int hosts = 0;
-            List<String> listing = new ArrayList<>();
-            List<ConsoleSnapshot.Source> copies = new ArrayList<>();
-            List<ConsoleSnapshot.Source> away = new ArrayList<>();
-            List<String> awayHosts = new ArrayList<>();
-            for (ConsoleSnapshot.Source source : title.sources) {
-                if (only != null && !only.equals(source.hostUuid)) {
-                    continue;
-                }
-                if (source.hidden) {
-                    away.add(source);
-                    awayHosts.add(source.hostUuid);
-                    continue;
-                }
-                if (!source.added) {
-                    ConsoleSnapshot.Host host = snapshot.host(source.hostUuid);
-                    if (found == null && host != null && host.has(NativeCapabilities.LIBRARY_UNADDED)) {
-                        found = source;
-                        addable = host.has(NativeCapabilities.LIBRARY_ADD) && !launchDenied.contains(host.uuid);
-                    }
-                    continue;
-                }
-                hosts++;
-                listing.add(source.hostUuid);
-                copies.add(source);
-                if (Boolean.FALSE.equals(source.installed)) {
-                    if (missing == null) missing = source;
-                } else if (installed == null) {
-                    installed = source;
-                }
-            }
-            if (!away.isEmpty()) {
-                ConsoleSnapshot.Source first = away.get(0);
-                allGames.add(new GameCard(HIDDEN_KEY + title.key, title.title, first.hostUuid, first.hostName, first.appId,
-                        badgeOf(snapshot, first), first, away.size(), starred.contains(first.hostUuid + ":" + first.appId),
-                        false, awayHosts, lastPlayed(title, only), away));
-            }
-            ConsoleSnapshot.Source best = installed != null ? installed : missing;
-            if (best == null) {
-                if (found != null) {
-                    GameCard card = new GameCard("unadded:" + title.key, title.title, found.hostUuid, found.hostName,
-                            found.appId, Badge.NONE, found, 1, false, addable);
-                    unadded.add(card);
-                    allGames.add(card);
-                }
-                continue;
-            }
-            boolean star = starred.contains(best.hostUuid + ":" + best.appId);
-            GameCard card = new GameCard("game:" + title.key, title.title, best.hostUuid, best.hostName, best.appId,
-                    badgeOf(snapshot, best), best, hosts, star, false, listing, lineLastPlayed(snapshot, title, only), copies);
-            allGames.add(card);
-            if (best.storeSource == null) {
-                other.add(card);
-            } else {
-                List<GameCard> row = byStore.get(best.storeSource);
-                if (row == null) {
-                    row = new ArrayList<>();
-                    byStore.put(best.storeSource, row);
-                }
-                row.add(card);
-                if (!storeNames.containsKey(best.storeSource) && best.storeName != null) {
-                    storeNames.put(best.storeSource, best.storeName);
-                }
-            }
-            Long last = lastPlayed(title, only);
-            if (last != null && last > 0) {
-                played.add(new GameCard("recent:" + title.key, title.title, best.hostUuid, best.hostName, best.appId,
-                        card.badge, best, hosts, star, false, listing, last, copies));
-            }
-        }
-        List<Row> rows = new ArrayList<>();
-        if (!played.isEmpty()) {
-            Map<String, Long> at = new HashMap<>();
-            for (ConsoleSnapshot.Title title : snapshot.titles) {
-                Long last = lastPlayed(title, only);
-                if (last != null && last > 0) at.put("recent:" + title.key, last);
-            }
-            // Newest first; the sort is stable, so a tie keeps the order of the names.
-            Collections.sort(played, (a, b) -> Long.compare(at.get(b.key), at.get(a.key)));
-            if (played.size() > ROW_CAP) played = new ArrayList<>(played.subList(0, ROW_CAP));
-            rows.add(new Row("shelf:recent", RowKind.RECENT, null, null, played, FILTER_ALL, false));
-        }
-        List<String> stores = new ArrayList<>(byStore.keySet());
-        Collections.sort(stores, (a, b) -> {
-            int bySize = Integer.compare(byStore.get(b).size(), byStore.get(a).size());
-            return bySize != 0 ? bySize : a.compareTo(b);
-        });
-        for (String store : stores) {
-            List<GameCard> cards = installedFirst(byStore.get(store));
-            rows.add(new Row("shelf:store:" + store, RowKind.STORE, store, Stores.name(store, storeNames.get(store)),
-                    cards, STORE_FILTER + store, true));
-        }
-        if (!other.isEmpty()) {
-            // A library with no stores at all (a classic host) is one plain row, as before stores were known.
-            boolean plain = stores.isEmpty();
-            rows.add(new Row(plain ? LIBRARY_ROW : "shelf:other", RowKind.OTHER, null, null, installedFirst(other),
-                    plain ? FILTER_ALL : FILTER_OTHER, true));
-        }
-        if (!unadded.isEmpty()) {
-            rows.add(new Row("shelf:unadded", RowKind.UNADDED, null, null, installedFirst(unadded), FILTER_UNADDED, true));
-        }
-        return rows;
-    }
-
-    /**
-     * A List line's last-played time, in seconds: what the title's hosts say, and only when none says, when this
-     * device last streamed one of its added copies (its recents keep the last few only), as on desktop.
-     */
-    private static Long lineLastPlayed(ConsoleSnapshot snapshot, ConsoleSnapshot.Title title, String only) {
-        Long hosts = lastPlayed(title, only);
-        if (hosts != null) {
-            return hosts;
-        }
-        Long newest = null;
-        for (ConsoleSnapshot.Continue recent : snapshot.continuePlaying) {
-            if (recent.kind != ConsoleSnapshot.ContinueKind.RECENT || recent.playedAtMs <= 0) {
-                continue;
-            }
-            for (ConsoleSnapshot.Source source : title.sources) {
-                if (only != null && !only.equals(source.hostUuid)) {
-                    continue;
-                }
-                if (source.added && source.hostUuid.equals(recent.hostUuid) && source.appId == recent.appId) {
-                    long at = recent.playedAtMs / 1000;
-                    if (newest == null || at > newest) newest = at;
-                }
-            }
-        }
-        return newest;
-    }
-
-    /** The newest last-played time of a title's added copies (0 when all say never), or null when no host says. */
-    private static Long lastPlayed(ConsoleSnapshot.Title title, String only) {
-        Long newest = null;
-        for (ConsoleSnapshot.Source source : title.sources) {
-            if (only != null && !only.equals(source.hostUuid)) {
-                continue;
-            }
-            if (source.added && source.lastPlayed != null && (newest == null || source.lastPlayed > newest)) {
-                newest = source.lastPlayed;
-            }
-        }
-        return newest;
-    }
-
-    private static List<GameCard> installedFirst(List<GameCard> cards) {
-        List<GameCard> sorted = new ArrayList<>(cards);
-        // Stable: the names stay in order within each part.
-        Collections.sort(sorted, (a, b) -> Boolean.compare(a.notInstalled(), b.notInstalled()));
-        return sorted;
-    }
-
-    private static List<Filter> filtersOf(List<GameCard> allGames, List<CollectionGroups.Group> groups) {
-        int added = 0;
-        int installed = 0;
-        int other = 0;
-        int unadded = 0;
-        int hidden = 0;
-        Map<String, Integer> stores = new LinkedHashMap<>();
-        Map<String, String> names = new HashMap<>();
-        for (GameCard card : allGames) {
-            if (card.hidden()) {
-                hidden++;
-                continue;
-            }
-            if (card.notAdded()) {
-                unadded++;
-                continue;
-            }
-            added++;
-            if (!card.notInstalled()) installed++;
-            String store = card.store();
-            if (store == null) {
-                other++;
-            } else {
-                Integer count = stores.get(store);
-                stores.put(store, count == null ? 1 : count + 1);
-                if (!names.containsKey(store)) names.put(store, card.storeName());
-            }
-        }
-        List<Filter> filters = new ArrayList<>();
-        if (added == 0 && unadded == 0 && hidden == 0) return filters;
-        filters.add(new Filter(FILTER_ALL, null, added));
-        // Installed narrows only when something is not, and Not installed only beside it.
-        if (installed < added) filters.add(new Filter(FILTER_INSTALLED, null, installed));
-        if (installed < added && installed > 0) filters.add(new Filter(FILTER_NOT_INSTALLED, null, added - installed));
-        // Games, the Games row's chip, narrows only when the library has apps of no store beside stores.
-        if (other > 0 && !stores.isEmpty()) filters.add(new Filter(FILTER_GAMES, null, added - other));
-        List<String> order = new ArrayList<>(stores.keySet());
-        Collections.sort(order, (a, b) -> {
-            int bySize = Integer.compare(stores.get(b), stores.get(a));
-            return bySize != 0 ? bySize : a.compareTo(b);
-        });
-        for (String store : order) {
-            filters.add(new Filter(STORE_FILTER + store, names.get(store), stores.get(store)));
-        }
-        if (other > 0 && !stores.isEmpty()) filters.add(new Filter(FILTER_OTHER, null, other));
-        for (CollectionGroups.Group group : groups) {
-            filters.add(group.name == null ? new Filter(FILTER_NO_COLLECTION, null, group.games.length)
-                    : new Filter(COLLECTION_FILTER + group.name, group.name, group.games.length));
-        }
-        if (unadded > 0) filters.add(new Filter(FILTER_UNADDED, null, unadded));
-        if (hidden > 0) filters.add(new Filter(FILTER_HIDDEN, null, hidden));
-        return filters;
-    }
-
-    private static Badge badgeOf(ConsoleSnapshot snapshot, ConsoleSnapshot.Source source) {
-        ConsoleSnapshot.Host host = snapshot.host(source.hostUuid);
-        NativeSession session = host == null ? null : host.session;
-        if (session != null && session.isActive() && session.app.appId == source.appId) {
-            return session.state == NativeSession.State.SUSPENDED ? Badge.SUSPENDED : Badge.RUNNING;
-        }
-        return source.running ? Badge.RUNNING : Badge.NONE;
     }
 }

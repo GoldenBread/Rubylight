@@ -1,8 +1,7 @@
 package com.limelight.console;
 
 import com.limelight.nativeapi.NativeRadeon;
-
-import org.json.JSONObject;
+import com.limelight.nvstream.jni.Json;
 
 /** GET /radeon answers in each of the five states, as the host sends them. */
 final class RadeonFixtures {
@@ -33,7 +32,7 @@ final class RadeonFixtures {
 
     static NativeRadeon parse(String json) {
         try {
-            return NativeRadeon.parse(new JSONObject(json));
+            return NativeRadeon.parse(Json.parseObject(json));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

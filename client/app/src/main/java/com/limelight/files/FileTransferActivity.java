@@ -47,12 +47,11 @@ import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
 import com.limelight.nvstream.http.PairingManager;
+import com.limelight.nvstream.jni.Json;
 import com.limelight.ui.NightjarActivity;
 import com.limelight.ui.TopAppBar;
 import com.limelight.utils.ProblemReport;
 import com.limelight.utils.UiHelper;
-
-import org.json.JSONException;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -392,7 +391,7 @@ public class FileTransferActivity extends NightjarActivity implements FileTransf
             try {
                 caps = known.withNativeCapabilities(
                         new NativeApiClient(new JniNativeApiTransport(), current.host()).fileCapabilities());
-            } catch (NativeApiException | JSONException e) {
+            } catch (NativeApiException | Json.SyntaxException | org.json.JSONException e) {
                 failure = e.getMessage();
             }
             RemoteFiles list = null;

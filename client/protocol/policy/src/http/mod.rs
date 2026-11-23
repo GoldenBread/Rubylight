@@ -46,7 +46,9 @@ pub use folders_types::{
 pub use launch_types::HostDisplay;
 pub use luminance::DisplayLuminance;
 pub use native_types::{
-    FilePermissions, MovedTo, NativeCapabilities, NativeLibrary, PlayingOn, StreamMove,
+    parse_added, session_held_by_other_device, session_is_active, session_is_suspended, AddedGame,
+    FilePermissions, GameExtra, MovedTo, NativeCapabilities, NativeLibrary, PlayingOn, StreamMove,
+    FEATURE_LIBRARY_ADD, FEATURE_LIBRARY_UNADDED, FEATURE_SESSION_CONTINUE_HERE, FEATURE_USB,
 };
 pub use network_path_types::{NetworkPath, MAX_NETWORK_PATH_BYTES};
 pub use neural::{

@@ -167,6 +167,14 @@ impl HostUpdate {
         (self.install_supported && !latest.is_empty() && latest != self.current_version.trim_start_matches('v'))
             .then_some(latest)
     }
+
+    /// A copy marked as actively installing (used right after an accepted `install` trigger).
+    pub fn installing(&self) -> Self {
+        let mut next = self.clone();
+        next.phase = "installing".to_owned();
+        next.install_now = true;
+        next
+    }
 }
 
 /// Whether the version the PC answers with shows the update arrived: it is back on `target`.

@@ -110,6 +110,15 @@ public final class Json {
             return (Arr) v;
         }
 
+        public Arr optArray(String key) {
+            Object v = map.get(key);
+            return v instanceof Arr ? (Arr) v : null;
+        }
+
+        public Object raw(String key) {
+            return map.get(key);
+        }
+
         @Override public String toString() {
             StringBuilder sb = new StringBuilder().append('{');
             boolean first = true;
@@ -143,6 +152,17 @@ public final class Json {
             if (!(v instanceof Obj)) throw new SyntaxException("Expected object at " + i);
             return (Obj) v;
         }
+        public Obj optObject(int i) {
+            if (i < 0 || i >= items.size()) return null;
+            Object v = items.get(i);
+            return v instanceof Obj ? (Obj) v : null;
+        }
+        public String optString(int i, String fallback) {
+            if (i < 0 || i >= items.size()) return fallback;
+            Object v = items.get(i);
+            return v instanceof String ? (String) v : fallback;
+        }
+        public Object raw(int i) { return i >= 0 && i < items.size() ? items.get(i) : null; }
 
         @Override public String toString() {
             StringBuilder sb = new StringBuilder().append('[');
