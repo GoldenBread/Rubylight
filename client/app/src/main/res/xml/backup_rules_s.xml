@@ -9,6 +9,11 @@
     <exclude domain="file" path="pin_lock.json"/>
     <exclude domain="file" path="console-library"/>
     <exclude domain="file" path="console"/>
+    <exclude domain="file" path="wake_targets.json"/>
+    <exclude domain="file" path="hosts.json"/>
+    <exclude domain="file" path="host_meta.json"/>
+    <exclude domain="file" path="identity.json"/>
+    <exclude domain="file" path="identity.json.bad"/>
   </cloud-backup>
   <device-transfer>
     <exclude domain="sharedpref" path="."/>
@@ -18,5 +23,10 @@
     <exclude domain="file" path="pin_lock.json"/>
     <exclude domain="file" path="console-library"/>
     <exclude domain="file" path="console"/>
+    <exclude domain="file" path="wake_targets.json"/>
+    <exclude domain="file" path="hosts.json"/>
+    <exclude domain="file" path="host_meta.json"/>
+    <exclude domain="file" path="identity.json"/>
+    <exclude domain="file" path="identity.json.bad"/>
   </device-transfer>
 </data-extraction-rules>

@@ -68,7 +68,10 @@ pub(crate) use crate::render_device::renderer_gone;
 /// Whether any layer (the global settings, a PC, a game or a profile) asks for YUV 4:4:4.
 #[cfg(windows)]
 pub(crate) fn any_yuv444_asked(store: &config::Store, settings: &config::Settings) -> bool {
-    let (hosts, profiles) = (store.hosts(), store.profiles());
+    let hosts: Vec<config::HostRecord> = nightjar_core::hosts::HostStore::open(store.dir())
+        .with_read_only(store.is_read_only())
+        .load_records(config::keep_readable_settings_value);
+    let profiles = store.profiles();
     settings.prefer_yuv444
         || hosts.iter().flat_map(|host| host.settings.iter().chain(host.app_settings.values()))
             .chain(profiles.entries.iter().map(|profile| &profile.settings))

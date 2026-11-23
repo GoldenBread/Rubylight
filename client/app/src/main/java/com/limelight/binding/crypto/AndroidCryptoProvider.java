@@ -1,254 +1,126 @@
+/**
+ * Android client pairing certificate & key provider backed by Rust {@code IdentityStore}
+ * ({@code identity.json}) via {@link NightjarHostsJni} and standard JCA certificate/key decoding
+ * (zero BouncyCastle runtime dependency).
+ */
 package com.limelight.binding.crypto;
 
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.io.StringWriter;
-import java.math.BigInteger;
-import java.security.KeyFactory;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
-import java.security.Provider;
-import java.security.SecureRandom;
-import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.security.interfaces.RSAKey;
-import java.security.spec.InvalidKeySpecException;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.Locale;
-
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x500.X500NameBuilder;
-import org.bouncycastle.asn1.x500.style.BCStyle;
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.cert.X509v3CertificateBuilder;
-import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
-import org.bouncycastle.operator.ContentSigner;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
-
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.util.Base64;
 
 import com.limelight.LimeLog;
 import com.limelight.nvstream.http.LimelightCryptoProvider;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarHostsJni;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.PKCS8EncodedKeySpec;
 
 public class AndroidCryptoProvider implements LimelightCryptoProvider {
+    private static final Object globalCryptoLock = new Object();
 
-    private final File certFile;
-    private final File keyFile;
-
+    private final File filesDir;
     private X509Certificate cert;
     private PrivateKey key;
     private byte[] pemCertBytes;
 
-    private static final Object globalCryptoLock = new Object();
-
-    private static final Provider bcProvider = new BouncyCastleProvider();
-
     public AndroidCryptoProvider(Context c) {
-        this(c.getFilesDir());
+        this(c.getApplicationContext().getFilesDir());
     }
 
     AndroidCryptoProvider(File filesDir) {
-        String dataPath = filesDir.getAbsolutePath();
-
-        certFile = new File(dataPath + File.separator + "client.crt");
-        keyFile = new File(dataPath + File.separator + "client.key");
+        this.filesDir = filesDir;
     }
 
-    private byte[] loadFileToBytes(File f) {
-        if (!f.exists()) {
+    private static byte[] readFileIfPresent(File f) {
+        if (f == null || !f.isFile()) {
             return null;
         }
-
-        try (final FileInputStream fin = new FileInputStream(f)) {
-            byte[] fileData = new byte[(int) f.length()];
-            if (fin.read(fileData) != f.length()) {
-                // Failed to read
-                fileData = null;
+        try (FileInputStream in = new FileInputStream(f);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) >= 0) {
+                out.write(buf, 0, n);
             }
-            return fileData;
+            return out.toByteArray();
         } catch (IOException e) {
             return null;
         }
     }
 
-    private boolean loadCertKeyPair() {
-        byte[] certBytes = loadFileToBytes(certFile);
-        byte[] keyBytes = loadFileToBytes(keyFile);
-
-        // If either file was missing, we definitely can't succeed
-        if (certBytes == null || keyBytes == null) {
-            LimeLog.info("Missing cert or key; need to generate a new one");
-            return false;
+    private void ensureLoaded() {
+        if (cert != null && key != null && pemCertBytes != null) {
+            return;
         }
+        byte[] uidBytes = readFileIfPresent(new File(filesDir, "uniqueid"));
+        String legacyUid = uidBytes != null && uidBytes.length >= 16
+                ? new String(uidBytes, 0, 16, StandardCharsets.US_ASCII) : null;
+        byte[] certBytes = readFileIfPresent(new File(filesDir, "client.crt"));
+        String legacyCertPem = certBytes != null
+                ? new String(certBytes, StandardCharsets.US_ASCII) : null;
+        byte[] legacyKey = readFileIfPresent(new File(filesDir, "client.key"));
 
+        String raw = NightjarHostsJni.identityLoadOrCreate(
+                filesDir.getAbsolutePath(), legacyUid, legacyCertPem, legacyKey);
+        Json.Obj reply = Json.parseObject(raw);
+        if (!reply.has("ok")) {
+            LimeLog.severe("Failed to load client identity: " + reply.optString("error", "unknown"));
+            return;
+        }
+        Json.Obj ok = reply.getObject("ok");
         try {
-            CertificateFactory certFactory = CertificateFactory.getInstance("X.509", bcProvider);
-            X509Certificate loadedCert = (X509Certificate) certFactory.generateCertificate(new ByteArrayInputStream(certBytes));
-            KeyFactory keyFactory = KeyFactory.getInstance("RSA", bcProvider);
-            PrivateKey loadedKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
-            if (!(loadedCert.getPublicKey() instanceof RSAKey) ||
-                    !((RSAKey) loadedCert.getPublicKey()).getModulus().equals(((RSAKey) loadedKey).getModulus())) {
-                LimeLog.warning("Certificate and key do not match");
-                return false;
-            }
+            byte[] certDer = java.util.Base64.getDecoder().decode(ok.getString("cert_der_b64"));
+            byte[] keyPkcs8 = java.util.Base64.getDecoder().decode(ok.getString("key_pkcs8_b64"));
+            String certPem = ok.getString("cert_pem");
+
+            CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+            X509Certificate loadedCert = (X509Certificate) certFactory.generateCertificate(
+                    new ByteArrayInputStream(certDer));
+            KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+            PrivateKey loadedKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(keyPkcs8));
+
             cert = loadedCert;
             key = loadedKey;
-            pemCertBytes = certBytes;
-        } catch (CertificateException e) {
-            // May happen if the cert is corrupt
-            LimeLog.warning("Corrupted certificate");
-            return false;
-        } catch (NoSuchAlgorithmException e) {
+            pemCertBytes = certPem.replace("\r", "").getBytes(StandardCharsets.US_ASCII);
+        } catch (CertificateException | NoSuchAlgorithmException | InvalidKeySpecException
+                 | IllegalArgumentException e) {
             throw new RuntimeException(e);
-        } catch (InvalidKeySpecException e) {
-            // May happen if the key is corrupt
-            LimeLog.warning("Corrupted key");
-            return false;
-        }
-
-        return true;
-    }
-
-    @SuppressLint("TrulyRandom")
-    private boolean generateCertKeyPair() {
-        byte[] snBytes = new byte[8];
-        new SecureRandom().nextBytes(snBytes);
-
-        KeyPair keyPair;
-        try {
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA", bcProvider);
-            keyPairGenerator.initialize(2048);
-            keyPair = keyPairGenerator.generateKeyPair();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
-
-        Date now = new Date();
-
-        // Expires in 20 years
-        Calendar calendar = Calendar.getInstance();
-        calendar.setTime(now);
-        calendar.add(Calendar.YEAR, 20);
-        Date expirationDate = calendar.getTime();
-
-        BigInteger serial = new BigInteger(snBytes).abs();
-
-        X500NameBuilder nameBuilder = new X500NameBuilder(BCStyle.INSTANCE);
-        nameBuilder.addRDN(BCStyle.CN, "NVIDIA GameStream Client");
-        X500Name name = nameBuilder.build();
-
-        X509v3CertificateBuilder certBuilder = new X509v3CertificateBuilder(name, serial, now, expirationDate, Locale.ENGLISH, name,
-            SubjectPublicKeyInfo.getInstance(keyPair.getPublic().getEncoded()));
-
-        try {
-            ContentSigner sigGen = new JcaContentSignerBuilder("SHA256withRSA").setProvider(bcProvider).build(keyPair.getPrivate());
-            cert = new JcaX509CertificateConverter().setProvider(bcProvider).getCertificate(certBuilder.build(sigGen));
-            key = keyPair.getPrivate();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-
-        LimeLog.info("Generated a new key pair");
-
-        StringWriter strWriter = new StringWriter();
-        try (JcaPEMWriter pemWriter = new JcaPEMWriter(strWriter)) {
-            pemWriter.writeObject(cert);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        // The host requires UNIX line endings, including when persistence fails.
-        pemCertBytes = strWriter.toString().replace("\r", "").getBytes(StandardCharsets.US_ASCII);
-        saveCertKeyPair();
-
-        return true;
-    }
-
-    private void saveCertKeyPair() {
-        try (final FileOutputStream certOut = new FileOutputStream(certFile);
-             final FileOutputStream keyOut = new FileOutputStream(keyFile)
-        ) {
-            certOut.write(pemCertBytes);
-
-            // Write the private out in PKCS8 format
-            keyOut.write(key.getEncoded());
-
-            LimeLog.info("Saved generated key pair to disk");
-        } catch (IOException e) {
-            // This isn't good because it means we'll have
-            // to re-pair next time
-            e.printStackTrace();
         }
     }
 
+    @Override
     public X509Certificate getClientCertificate() {
-        // Use a lock here to ensure only one guy will be generating or loading
-        // the certificate and key at a time
         synchronized (globalCryptoLock) {
-            // Return a loaded cert if we have one
-            if (cert != null) {
-                return cert;
-            }
-
-            // No loaded cert yet, let's see if we have one on disk
-            if (loadCertKeyPair()) {
-                // Got one
-                return cert;
-            }
-
-            // Try to generate a new key pair
-            if (!generateCertKeyPair()) {
-                // Failed
-                return null;
-            }
-
+            ensureLoaded();
             return cert;
         }
     }
 
+    @Override
     public PrivateKey getClientPrivateKey() {
-        // Use a lock here to ensure only one guy will be generating or loading
-        // the certificate and key at a time
         synchronized (globalCryptoLock) {
-            // Return a loaded key if we have one
-            if (key != null) {
-                return key;
-            }
-
-            // No loaded key yet, let's see if we have one on disk
-            if (loadCertKeyPair()) {
-                // Got one
-                return key;
-            }
-
-            // Try to generate a new key pair
-            if (!generateCertKeyPair()) {
-                // Failed
-                return null;
-            }
-
+            ensureLoaded();
             return key;
         }
     }
 
+    @Override
     public byte[] getPemEncodedClientCertificate() {
         synchronized (globalCryptoLock) {
-            // Call our helper function to do the cert loading/generation for us
-            getClientCertificate();
-
-            // Return a cached value if we have it
+            ensureLoaded();
             return pemCertBytes;
         }
     }

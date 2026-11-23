@@ -459,6 +459,7 @@ impl ConsoleRepository {
         let _ = self.recents.forget_host(host_id);
         let _ = self.favourites.forget_host(host_id);
         let _ = self.hidden.forget_host(host_id);
+        let _ = crate::hosts::HostMetaStore::open(&self.base_dir).forget(host_id);
     }
 
     pub fn hidden_listings(&self, hosts: &[HostDescriptor]) -> Vec<HiddenListing> {

@@ -8,22 +8,18 @@ import com.limelight.nativeapi.NativePcPower;
 import com.limelight.nativeapi.NativeWake;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.HostCapabilities;
+import com.limelight.nvstream.jni.HandleReaper;
+import com.limelight.nvstream.jni.NightjarDiscoveryJni;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.LongSupplier;
 
 /**
- * Keeps the wake targets of the PCs the computer manager polls, so a PC woken from the PC list or a shortcut reaches
- * every adapter its {@code /wake} lists, not only the PCs the console or a stream already asked. A PC is asked when a
- * poll first finds it online and again every {@link #INTERVAL_MS} while it stays so. Its adapters change with hardware,
- * but this device's permissions change in the console at any moment, and the same ask is what brings them to the menus
- * ({@link com.limelight.nativeapi.KnownCapabilities}). A host offering its update to this device has that read on the
- * same ask.
+ * Keeps the wake targets of the PCs the computer manager polls, delegating reservation and
+ * 30-second cooldown state to Rust {@code WakeTargetsPollState} via {@link NightjarDiscoveryJni}.
  */
-public final class WakeTargetsPoll {
+public final class WakeTargetsPoll implements AutoCloseable {
     static final long INTERVAL_MS = 30_000;
 
     public interface Clients {
@@ -31,21 +27,14 @@ public final class WakeTargetsPoll {
         NativeApiClient open(ComputerDetails computer);
     }
 
+    private final long handle = NightjarDiscoveryJni.wakePollCreate();
+    private final HandleReaper.Token handleToken =
+            HandleReaper.register(this, handle, NightjarDiscoveryJni::wakePollDestroy);
     private final WakeTargets targets;
     private final Clients clients;
     private final Executor requests;
     private final LongSupplier clock;
-    /** The last ask of each PC that answers; a PC that went away is asked again once it answers. */
-    private final Map<String, Ask> asks = new HashMap<>();
-
-    /** One ask of one PC: what it reads is kept only while it is still the PC's last ask. */
-    private static final class Ask {
-        final long at;
-
-        Ask(long at) {
-            this.at = at;
-        }
-    }
+    private final Object storeLock = new Object();
 
     /** {@code requests} runs the HTTPS requests, so a poll never waits on them. */
     public WakeTargetsPoll(WakeTargets targets, Clients clients, Executor requests, LongSupplier clock) {
@@ -55,70 +44,64 @@ public final class WakeTargetsPoll {
         this.clock = clock;
     }
 
+    @Override
+    public void close() {
+        handleToken.close();
+    }
+
     /** After each poll of the PC, on the polling thread; an ask that is due goes to the request executor. */
     public void polled(ComputerDetails computer) {
         String uuid = computer.uuid;
         if (uuid == null) {
             return;
         }
-        long now = clock.getAsLong();
-        Ask ask;
-        synchronized (asks) {
-            if (computer.state != ComputerDetails.State.ONLINE) {
-                asks.remove(uuid);
-                return;
-            }
-            Ask last = asks.get(uuid);
-            if (!computer.caps.has(HostCapabilities.Feature.NATIVE_API) || (last != null && now - last.at < INTERVAL_MS)) {
-                return;
-            }
-            // Reserved before the request, so a second caller (a PC being added while it is polled) sends none.
-            ask = new Ask(now);
-            asks.put(uuid, ask);
+        long token = NightjarDiscoveryJni.wakePollReserve(
+                handle,
+                uuid,
+                computer.state == ComputerDetails.State.ONLINE,
+                computer.caps.has(HostCapabilities.Feature.NATIVE_API),
+                clock.getAsLong());
+        if (token == 0) {
+            return;
         }
-        // The poll goes on updating the PC it polls.
         ComputerDetails asked = new ComputerDetails(computer);
         try {
-            requests.execute(() -> ask(uuid, asked, ask));
+            requests.execute(() -> ask(uuid, asked, token));
         } catch (RejectedExecutionException e) {
-            // The service is going away.
-            drop(uuid, ask);
+            NightjarDiscoveryJni.wakePollDrop(handle, uuid, token);
         }
     }
 
     /** A removed PC is asked nothing more, and an ask still in flight for it keeps nothing. */
     public void forget(String uuid) {
-        synchronized (asks) {
-            asks.remove(uuid);
+        if (uuid != null) {
+            NightjarDiscoveryJni.wakePollForget(handle, uuid);
         }
     }
 
     /** The service is going away: an ask still queued or in flight stores nothing. */
     public void shutdown() {
-        synchronized (asks) {
-            asks.clear();
-        }
+        NightjarDiscoveryJni.wakePollShutdown(handle);
     }
 
-    private void ask(String uuid, ComputerDetails computer, Ask ask) {
-        synchronized (asks) {
-            // A PC removed (or a service gone) while this ask waited in the queue is asked nothing.
-            if (asks.get(uuid) != ask) {
-                return;
-            }
+    boolean hasPendingAsks() {
+        return NightjarDiscoveryJni.wakePollPendingCount(handle) > 0;
+    }
+
+    private void ask(String uuid, ComputerDetails computer, long token) {
+        if (!NightjarDiscoveryJni.wakePollIsActive(handle, uuid, token)) {
+            return;
         }
         NativeApiClient client = clients.open(computer);
         if (client == null) {
-            // A PC not paired yet is asked on the first poll after it is.
-            drop(uuid, ask);
+            NightjarDiscoveryJni.wakePollDrop(handle, uuid, token);
             return;
         }
         try {
             NativeCapabilities capabilities = client.capabilities();
             NativeWake wake = capabilities.has(NativeCapabilities.WAKE) ? client.wake() : null;
-            synchronized (asks) {
-                // Stored under the lock, so a PC removed (or a service gone) meanwhile keeps nothing of this ask.
-                if (asks.get(uuid) != ask) {
+            synchronized (storeLock) {
+                if (!NightjarDiscoveryJni.wakePollIsActive(handle, uuid, token)) {
                     return;
                 }
                 if (wake == null) {
@@ -131,23 +114,15 @@ public final class WakeTargetsPoll {
                 readUpdate(uuid, client);
             }
         } catch (NativeApiException e) {
-            // A failed read keeps what is stored: those adapters still belong to the PC.
             LimeLog.info("Wake targets of " + uuid + " not read: " + e.getMessage());
         }
     }
 
-    /** The host's pending update for the PC menu (the client keeps it in KnownUpdates); its own failure. */
     private static void readUpdate(String uuid, NativeApiClient client) {
         try {
             client.hostUpdate();
         } catch (NativeApiException e) {
             LimeLog.info("Host update of " + uuid + " not read: " + e.getMessage());
-        }
-    }
-
-    private void drop(String uuid, Ask ask) {
-        synchronized (asks) {
-            asks.remove(uuid, ask);
         }
     }
 }

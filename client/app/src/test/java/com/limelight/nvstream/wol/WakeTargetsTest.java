@@ -13,6 +13,7 @@ import com.limelight.nativeapi.HostEndpoint;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiFixtures;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -40,6 +41,11 @@ public class WakeTargetsTest {
     @Before
     public void setUp() {
         targets = new WakeTargets(RuntimeEnvironment.getApplication());
+    }
+
+    @After
+    public void tearDown() {
+        WakeTargets.closeForTests(RuntimeEnvironment.getApplication().getFilesDir());
     }
 
     private NativeApiClient client() {
@@ -166,5 +172,35 @@ public class WakeTargetsTest {
         targets.forgetHost("pc");
         assertSame(WakeTargets.Targets.NONE, targets.load("pc"));
         assertEquals(Collections.emptyList(), targets.manual("pc"));
+    }
+
+    @Test
+    public void legacySharedPreferencesMigrateOnceAndStayIdempotent() {
+        android.content.Context context = RuntimeEnvironment.getApplication();
+        WakeTargets.closeForTests(context.getFilesDir());
+        java.io.File file = new java.io.File(context.getFilesDir(), "wake_targets.json");
+        if (file.exists()) {
+            org.junit.Assert.assertTrue(file.delete());
+        }
+        context.getSharedPreferences(WakeTargets.PREFS, android.content.Context.MODE_PRIVATE).edit()
+                .putString("pc", "{\"macs\":[\"02:7c:16:b4:13:4f\"],\"broadcasts\":[\"192.168.4.255\"]}")
+                .putString("manual:pc", "[\"0a:00:27:00:00:05\"]")
+                .commit();
+
+        WakeTargets migrated = new WakeTargets(context);
+        assertEquals(Arrays.asList("02:7c:16:b4:13:4f", "0a:00:27:00:00:05"), migrated.load("pc").macs);
+        assertEquals(Collections.singletonList("192.168.4.255"), migrated.load("pc").broadcasts);
+        org.junit.Assert.assertTrue(file.isFile());
+
+        migrated.forgetHost("pc");
+        assertSame(WakeTargets.Targets.NONE, migrated.load("pc"));
+
+        // Re-opening after deletion stays empty even if SharedPreferences still had stale data.
+        context.getSharedPreferences(WakeTargets.PREFS, android.content.Context.MODE_PRIVATE).edit()
+                .putString("pc", "{\"macs\":[\"02:7c:16:b4:13:4f\"],\"broadcasts\":[]}")
+                .commit();
+        WakeTargets.closeForTests(context.getFilesDir());
+        WakeTargets reopened = new WakeTargets(context);
+        assertSame(WakeTargets.Targets.NONE, reopened.load("pc"));
     }
 }

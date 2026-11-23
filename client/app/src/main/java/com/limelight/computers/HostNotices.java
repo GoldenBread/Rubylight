@@ -1,15 +1,12 @@
 package com.limelight.computers;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 
 /**
  * Messages about something a PC lacks for good, shown once per PC instead of on every stream.
- * A notice is shown again only after the PC gained the feature and then lost it.
+ * Backed by Rust {@code HostMetaStore} ({@code host_meta.json}) via {@link NightjarHostsJni}.
  */
 public final class HostNotices {
     public enum Notice {
@@ -56,59 +53,37 @@ public final class HostNotices {
     private HostNotices() {
     }
 
-    private static SharedPreferences preferences(Context context) {
-        return context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
-    }
-
-    private static List<String> shown(SharedPreferences preferences, String hostUuid) {
-        String stored = preferences.getString(hostUuid, "");
-        return stored.isEmpty() ? new ArrayList<>() : new ArrayList<>(Arrays.asList(stored.split(",")));
-    }
-
     /** True the first time for this PC, and remembered; false while it stays shown. */
     public static synchronized boolean claim(Context context, String hostUuid, Notice notice) {
-        if (context == null || hostUuid == null) {
+        if (context == null || hostUuid == null || notice == null) {
             return true;
         }
-        SharedPreferences preferences = preferences(context);
-        List<String> shown = shown(preferences, hostUuid);
-        if (shown.contains(notice.name())) {
-            return false;
-        }
-        shown.add(notice.name());
-        preferences.edit().putString(hostUuid, android.text.TextUtils.join(",", shown)).apply();
-        return true;
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        return NightjarHostsJni.metaClaimNotice(handle, hostUuid, notice.name());
     }
 
     /** The PC has the feature now; if it loses it again, say so again. */
     public static synchronized void reset(Context context, String hostUuid, Notice notice) {
-        if (context == null || hostUuid == null) {
+        if (context == null || hostUuid == null || notice == null) {
             return;
         }
-        SharedPreferences preferences = preferences(context);
-        List<String> shown = shown(preferences, hostUuid);
-        if (shown.remove(notice.name())) {
-            if (shown.isEmpty()) {
-                preferences.edit().remove(hostUuid).apply();
-            } else {
-                preferences.edit().putString(hostUuid, android.text.TextUtils.join(",", shown)).apply();
-            }
-        }
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        NightjarHostsJni.metaResetNotice(handle, hostUuid, notice.name());
     }
 
     /** The user changed the setting the notice is about: every PC says it again when it applies. */
     public static synchronized void resetEverywhere(Context context, Notice notice) {
-        if (context == null) {
+        if (context == null || notice == null) {
             return;
         }
-        for (String hostUuid : new ArrayList<>(preferences(context).getAll().keySet())) {
-            reset(context, hostUuid, notice);
-        }
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        NightjarHostsJni.metaResetNoticeEverywhere(handle, notice.name());
     }
 
     public static synchronized void forget(Context context, String hostUuid) {
-        if (hostUuid != null) {
-            preferences(context).edit().remove(hostUuid).apply();
+        if (context != null && hostUuid != null) {
+            long handle = HostMetaStores.openSource(context, PREFERENCES);
+            NightjarHostsJni.metaForgetNotices(handle, hostUuid);
         }
     }
 }

@@ -14,6 +14,7 @@ import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -73,6 +74,11 @@ public class WakeTargetsPollTest {
         }, () -> now);
         transport.reply("pc", "capabilities", CAPABILITIES);
         transport.reply("pc", "wake", ok(WakeTargetsTest.WAKE));
+    }
+
+    @After
+    public void tearDown() {
+        WakeTargets.closeForTests(RuntimeEnvironment.getApplication().getFilesDir());
     }
 
     private void runQueued() {

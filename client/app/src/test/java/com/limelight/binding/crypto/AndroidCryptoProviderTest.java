@@ -87,4 +87,31 @@ public class AndroidCryptoProviderTest {
         assertEquals(certificate, reloaded.getClientCertificate());
         assertIdentityMatches(reloaded);
     }
+
+    @Test
+    public void legacyCredentialsImportIntoIdentityJsonAndCorruptIdentityIsBackedUp() throws Exception {
+        File directory = temporary.newFolder();
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair pair = generator.generateKeyPair();
+        X500Name name = new X500Name("CN=NVIDIA GameStream Client");
+        X509Certificate certificate = new JcaX509CertificateConverter().getCertificate(
+                new JcaX509v3CertificateBuilder(name, BigInteger.ONE, new Date(0),
+                        new Date(4102444800000L), name, pair.getPublic())
+                        .build(new JcaContentSignerBuilder("SHA256withRSA").build(pair.getPrivate())));
+        Files.write(new File(directory, "client.crt").toPath(), pem(certificate));
+        Files.write(new File(directory, "client.key").toPath(), pair.getPrivate().getEncoded());
+
+        AndroidCryptoProvider imported = new AndroidCryptoProvider(directory);
+        assertEquals(certificate, imported.getClientCertificate());
+        assertIdentityMatches(imported);
+        File identityJson = new File(directory, "identity.json");
+        assertTrue(identityJson.isFile());
+
+        // Corrupting identity.json backs it up to identity.json.bad and refuses silent overwrite.
+        Files.write(identityJson.toPath(), "{not-json".getBytes(StandardCharsets.UTF_8));
+        AndroidCryptoProvider fallback = new AndroidCryptoProvider(directory);
+        assertNull(fallback.getClientCertificate());
+        assertTrue(new File(directory, "identity.json.bad").isFile());
+    }
 }

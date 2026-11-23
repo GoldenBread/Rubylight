@@ -1,5 +1,9 @@
 //! Unit tests for Wake-on-LAN target parsing, packet construction and retry state.
 
+use std::collections::BTreeSet;
+use std::net::Ipv4Addr;
+use std::time::{Duration, Instant};
+
 use super::*;
 use rubylight_native_api::wake::Wake;
 use rubylight_native_api::wake::Target;

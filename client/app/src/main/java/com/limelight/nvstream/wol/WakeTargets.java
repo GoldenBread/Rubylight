@@ -3,29 +3,29 @@ package com.limelight.nvstream.wol;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import androidx.annotation.VisibleForTesting;
+
 import com.limelight.LimeLog;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nativeapi.NativeCapabilities;
 import com.limelight.nativeapi.NativeWake;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarDiscoveryJni;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The wake targets a host's native API lists besides serverinfo's MAC (GET /wake): the MACs of its other adapters
- * and the subnet broadcasts that reach them. They live in their own preferences file keyed by host UUID, so a PC that
- * is asleep can still be woken through them; a host without {@link NativeCapabilities#WAKE} has none.
- *
- * <p>The user can add MACs of their own for a PC (an adapter that wakes it while the one paired over cannot), kept
- * under {@code manual:<uuid>}: what the host lists replaces only its own entry, and only removing the PC drops them.
+ * and the subnet broadcasts that reach them. Backed by Rust {@code WakeTargetsStore} ({@code wake_targets.json})
+ * via {@link NightjarDiscoveryJni}, with one-time {@link SharedPreferences} migration.
  */
 public final class WakeTargets {
     static final String PREFS = "wake_targets";
@@ -33,6 +33,9 @@ public final class WakeTargets {
     static final int MAX_MACS = 8;
     static final int MAX_BROADCASTS = 16;
     static final String MANUAL = "manual:";
+
+    private static final ConcurrentHashMap<String, Long> HANDLES = new ConcurrentHashMap<>();
+    private static final Set<String> MIGRATED_DIRS = ConcurrentHashMap.newKeySet();
 
     /** What is stored for one host. */
     public static final class Targets {
@@ -49,10 +52,84 @@ public final class WakeTargets {
         }
     }
 
-    private final SharedPreferences prefs;
+    private final long handle;
 
     public WakeTargets(Context context) {
-        this.prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        this.handle = openAndMigrate(context.getApplicationContext());
+    }
+
+    private static long handleFor(File dir) {
+        String key = dir.getAbsolutePath();
+        synchronized (HANDLES) {
+            return HANDLES.computeIfAbsent(key, NightjarDiscoveryJni::wakeTargetsOpen);
+        }
+    }
+
+    private static long openAndMigrate(Context app) {
+        File dir = app.getFilesDir();
+        long h = handleFor(dir);
+        if (MIGRATED_DIRS.add(dir.getAbsolutePath())) {
+            migrateLegacy(app, h);
+        }
+        return h;
+    }
+
+    private static void migrateLegacy(Context app, long handle) {
+        SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        Map<String, ?> all = prefs.getAll();
+        if (all.isEmpty()) {
+            return;
+        }
+        Json.Obj hosts = Json.obj();
+        Json.Obj manual = Json.obj();
+        for (Map.Entry<String, ?> entry : all.entrySet()) {
+            if (!(entry.getValue() instanceof String)) {
+                continue;
+            }
+            String key = entry.getKey();
+            String val = (String) entry.getValue();
+            if (key.startsWith(MANUAL)) {
+                String uuid = key.substring(MANUAL.length());
+                try {
+                    manual.put(uuid, Json.parseArray(val));
+                } catch (Json.SyntaxException ignored) {
+                }
+            } else {
+                try {
+                    hosts.put(key, Json.parseObject(val));
+                } catch (Json.SyntaxException ignored) {
+                }
+            }
+        }
+        Json.Obj payload = Json.obj().put("hosts", hosts).put("manual", manual);
+        NightjarDiscoveryJni.wakeTargetsImportLegacy(handle, payload.toString());
+        prefs.edit().clear().commit();
+    }
+
+    @VisibleForTesting
+    public static void closeForTests(File dir) {
+        if (dir == null) return;
+        String key = dir.getAbsolutePath();
+        synchronized (HANDLES) {
+            Long h = HANDLES.remove(key);
+            MIGRATED_DIRS.remove(key);
+            if (h != null && h != 0L) {
+                NightjarDiscoveryJni.wakeTargetsDestroy(h);
+            }
+        }
+    }
+
+    @VisibleForTesting
+    public static void resetForTests() {
+        synchronized (HANDLES) {
+            for (Long h : new ArrayList<>(HANDLES.values())) {
+                if (h != null && h != 0L) {
+                    NightjarDiscoveryJni.wakeTargetsDestroy(h);
+                }
+            }
+            HANDLES.clear();
+            MIGRATED_DIRS.clear();
+        }
     }
 
     /**
@@ -60,53 +137,50 @@ public final class WakeTargets {
      * this, so a PC whose serverinfo has no MAC still wakes through its other adapters.
      */
     public static boolean hasMac(Context context, ComputerDetails computer) {
-        return computer != null && (computer.macAddress != null
-                || !new WakeTargets(context).load(computer.uuid).macs.isEmpty());
+        return computer != null && NightjarDiscoveryJni.wakeTargetsHasMac(
+                new WakeTargets(context).handle,
+                computer.uuid == null ? "" : computer.uuid,
+                computer.macAddress);
     }
 
     /** The host's targets with the user's own MACs after them. */
-    public synchronized Targets load(String hostUuid) {
-        List<String> manual = manual(hostUuid);
-        String stored = hostUuid == null ? null : prefs.getString(hostUuid, null);
-        if (stored == null) {
-            return manual.isEmpty() ? Targets.NONE : new Targets(manual, new ArrayList<>());
+    public Targets load(String hostUuid) {
+        if (hostUuid == null) {
+            return Targets.NONE;
         }
-        try {
-            JSONObject json = new JSONObject(stored);
-            List<String> macs = strings(json.optJSONArray("macs"));
-            for (String mac : manual) {
-                if (!macs.contains(mac)) macs.add(mac);
-            }
-            return new Targets(macs, strings(json.optJSONArray("broadcasts")));
-        } catch (JSONException e) {
-            LimeLog.warning("Unreadable wake targets of " + hostUuid + ": " + e.getMessage());
-            return manual.isEmpty() ? Targets.NONE : new Targets(manual, new ArrayList<>());
+        String raw = NightjarDiscoveryJni.wakeTargetsLoad(handle, hostUuid);
+        if (raw == null) {
+            return Targets.NONE;
         }
+        Json.Obj json = Json.parseObject(raw);
+        List<String> macs = strings(json.optArray("macs"));
+        List<String> broadcasts = strings(json.optArray("broadcasts"));
+        if (macs.isEmpty() && broadcasts.isEmpty()) {
+            return Targets.NONE;
+        }
+        return new Targets(macs, broadcasts);
     }
 
     /** The MACs the user added for the PC, lowercase and colon-separated. */
-    public synchronized List<String> manual(String hostUuid) {
-        String stored = hostUuid == null ? null : prefs.getString(MANUAL + hostUuid, null);
-        if (stored == null) {
+    public List<String> manual(String hostUuid) {
+        if (hostUuid == null) {
             return new ArrayList<>();
         }
-        try {
-            List<String> macs = new ArrayList<>();
-            for (String mac : strings(new JSONArray(stored))) addMac(macs, mac);
-            return macs;
-        } catch (JSONException e) {
-            LimeLog.warning("Unreadable wake addresses of " + hostUuid + ": " + e.getMessage());
-            return new ArrayList<>();
-        }
+        return strings(Json.parseArray(NightjarDiscoveryJni.wakeTargetsManual(handle, hostUuid)));
     }
 
     /** Keeps the user's MACs for the PC (already checked by {@link #parseMacs}); an empty list removes them. */
-    public synchronized void storeManual(String hostUuid, List<String> macs) {
-        if (macs.isEmpty()) {
-            prefs.edit().remove(MANUAL + hostUuid).apply();
-        } else {
-            prefs.edit().putString(MANUAL + hostUuid, new JSONArray(macs).toString()).apply();
+    public void storeManual(String hostUuid, List<String> macs) {
+        if (hostUuid == null) {
+            return;
         }
+        Json.Arr arr = Json.arr();
+        if (macs != null) {
+            for (String mac : macs) {
+                arr.add(mac);
+            }
+        }
+        NightjarDiscoveryJni.wakeTargetsStoreManual(handle, hostUuid, arr.toString());
     }
 
     /**
@@ -115,51 +189,44 @@ public final class WakeTargets {
      * zeros, or there are more than {@link #MAX_MACS}.
      */
     public static List<String> parseMacs(String text) {
-        List<String> macs = new ArrayList<>();
-        for (String token : text.trim().split("[\\s,;]+")) {
-            if (token.isEmpty()) continue;
-            String mac = token.matches("(?i)[0-9a-f]{12}") ? token.replaceAll("(..)(?!$)", "$1:") : token;
-            if (!isMac(mac)) return null;
-            String normal = normal(mac);
-            if (macs.contains(normal)) continue;
-            if (macs.size() >= MAX_MACS || normal.equals("00:00:00:00:00:00")) return null;
-            macs.add(normal);
+        if (text == null) {
+            return null;
         }
-        return macs;
+        String raw = NightjarDiscoveryJni.wolParseMacs(text);
+        if (raw == null) {
+            return null;
+        }
+        return strings(Json.parseArray(raw));
     }
 
     /** Keeps the host's targets in place of the stored ones; MACs and broadcasts that are not well formed are left out. */
-    public synchronized void store(String hostUuid, NativeWake wake) {
-        List<String> macs = new ArrayList<>();
-        List<String> broadcasts = new ArrayList<>();
-        if (wake.primary != null) addMac(macs, wake.primary);
+    public void store(String hostUuid, NativeWake wake) {
+        if (hostUuid == null || wake == null) {
+            return;
+        }
+        Json.Arr targetsJson = Json.arr();
         for (NativeWake.Target target : wake.targets) {
-            addMac(macs, target.mac);
-            for (String broadcast : target.broadcasts) {
-                byte[] address = ipv4(broadcast);
-                String normal = address == null ? null : (address[0] & 0xff) + "." + (address[1] & 0xff) + "."
-                        + (address[2] & 0xff) + "." + (address[3] & 0xff);
-                if (normal != null && broadcasts.size() < MAX_BROADCASTS && !broadcasts.contains(normal)) {
-                    broadcasts.add(normal);
-                }
+            Json.Arr bcasts = Json.arr();
+            for (String b : target.broadcasts) {
+                bcasts.add(b);
             }
+            targetsJson.add(Json.obj().put("mac", target.mac).put("broadcasts", bcasts));
         }
-        try {
-            prefs.edit().putString(hostUuid, new JSONObject().put("macs", new JSONArray(macs))
-                    .put("broadcasts", new JSONArray(broadcasts)).toString()).apply();
-        } catch (JSONException e) {
-            throw new IllegalStateException(e);
-        }
+        NightjarDiscoveryJni.wakeTargetsStoreWake(handle, hostUuid, wake.primary, targetsJson.toString());
     }
 
     /** Drops what the host listed; the user's own MACs stay (see {@link #forgetHost}). */
-    public synchronized void forget(String hostUuid) {
-        prefs.edit().remove(hostUuid).apply();
+    public void forget(String hostUuid) {
+        if (hostUuid != null) {
+            NightjarDiscoveryJni.wakeTargetsForget(handle, hostUuid);
+        }
     }
 
     /** Drops everything kept for a removed PC, the user's own MACs too. */
-    public synchronized void forgetHost(String hostUuid) {
-        prefs.edit().remove(hostUuid).remove(MANUAL + hostUuid).apply();
+    public void forgetHost(String hostUuid) {
+        if (hostUuid != null) {
+            NightjarDiscoveryJni.wakeTargetsForgetHost(handle, hostUuid);
+        }
     }
 
     /**
@@ -189,50 +256,18 @@ public final class WakeTargets {
         }
     }
 
-    private static boolean isMac(String mac) {
-        return mac.matches("(?i)[0-9a-f]{2}([:-])[0-9a-f]{2}(\\1[0-9a-f]{2}){4}");
-    }
-
-    private static String normal(String mac) {
-        return mac.replace('-', ':').toLowerCase(Locale.ROOT);
-    }
-
-    private static void addMac(List<String> macs, String mac) {
-        if (mac == null || macs.size() >= MAX_MACS || !isMac(mac)) {
-            return;
-        }
-        String normal = normal(mac);
-        // A zero MAC is a host that could not tell; it wakes nothing.
-        if (!normal.equals("00:00:00:00:00:00") && !macs.contains(normal)) {
-            macs.add(normal);
-        }
-    }
-
     /** The four bytes of a dotted-quad IPv4 literal, or null: a name here would need a DNS lookup. */
     static byte[] ipv4(String literal) {
-        String[] parts = literal.split("\\.", -1);
-        if (parts.length != 4) {
-            return null;
-        }
-        byte[] bytes = new byte[4];
-        for (int i = 0; i < 4; i++) {
-            if (!parts[i].matches("[0-9]{1,3}")) {
-                return null;
-            }
-            int value = Integer.parseInt(parts[i]);
-            if (value > 255) {
-                return null;
-            }
-            bytes[i] = (byte) value;
-        }
-        return bytes;
+        return literal == null ? null : NightjarDiscoveryJni.wolIpv4Literal(literal);
     }
 
-    private static List<String> strings(JSONArray array) {
+    private static List<String> strings(Json.Arr array) {
         List<String> values = new ArrayList<>();
         for (int i = 0; array != null && i < array.length(); i++) {
-            Object value = array.opt(i);
-            if (value instanceof String) values.add((String) value);
+            String item = array.optString(i, null);
+            if (item != null) {
+                values.add(item);
+            }
         }
         return values;
     }

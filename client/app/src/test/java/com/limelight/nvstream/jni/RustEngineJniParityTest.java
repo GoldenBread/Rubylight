@@ -44,6 +44,8 @@ public class RustEngineJniParityTest {
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarPinJni_", NightjarPinJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarHttpJni_", NightjarHttpJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarConsoleJni_", NightjarConsoleJni.class);
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarDiscoveryJni_", NightjarDiscoveryJni.class);
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarHostsJni_", NightjarHostsJni.class);
     }
 
     /** A Rust name that differs from the Java one for the same startConnection parameter. */
@@ -247,6 +249,22 @@ public class RustEngineJniParityTest {
                 "com/limelight/nvstream/jni/NightjarPinJni",
                 "com/limelight/nvstream/jni/NightjarHttpJni",
                 "com/limelight/nvstream/jni/NightjarConsoleJni",
+                "com/limelight/nvstream/jni/NightjarDiscoveryJni",
+                "com/limelight/nvstream/jni/NightjarHostsJni",
+                "com/limelight/nvstream/mdns/MdnsDiscoveryAgent",
+                "com/limelight/nvstream/wol/WakeOnLanSender",
+                "com/limelight/nvstream/wol/WakeTargets",
+                "com/limelight/nvstream/wol/WakeTargetsPoll",
+                "com/limelight/console/WakeLaunch",
+                "com/limelight/computers/StunClient",
+                "com/limelight/computers/ComputerDatabaseManager",
+                "com/limelight/computers/HostNotices",
+                "com/limelight/computers/HostPackedModes",
+                "com/limelight/computers/HostCapabilityCache",
+                "com/limelight/computers/HostNames",
+                "com/limelight/computers/PinnedAddresses",
+                "com/limelight/computers/IdentityManager",
+                "com/limelight/binding/crypto/AndroidCryptoProvider",
                 "com/limelight/nativeapi/ConsoleRepository",
                 "com/limelight/nativeapi/HiddenStore",
                 "com/limelight/console/HomeModel",

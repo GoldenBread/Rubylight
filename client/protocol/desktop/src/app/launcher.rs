@@ -382,12 +382,12 @@ impl App {
                 self.identity = None;
                 match result {
                     Ok(identity) => {
-                        let saved = config::Identity {
+                        let saved = nightjar_core::hosts::IdentityFile {
                             unique_id: identity.unique_id().to_owned(),
                             certificate_pem: identity.certificate_pem().to_owned(),
                             private_key_pem: identity.private_key_pem().to_owned(),
                         };
-                        if let Err(e) = self.store.save_identity(&saved) {
+                        if let Err(e) = self.identity_store.save_identity(&saved) {
                             eprintln!("nightjar: saving the pairing key failed: {e}");
                             self.launcher.notify(crate::strings::tr("Could not save this choice"),
                                 format!("The pairing key could not be saved, so the PCs paired with this device have to be paired again after a restart: {e}"));

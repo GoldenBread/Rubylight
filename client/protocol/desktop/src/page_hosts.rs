@@ -472,8 +472,10 @@ mod tests {
             dir.to_string_lossy().into_owned(),
             address.to_string_lossy().into_owned(),
         );
-        let store = nightjar_desktop_config::config::Store::at(dir.into()).unwrap();
-        let saved = store.identity().expect("a readable store").expect("a saved identity");
+        let saved = nightjar_core::hosts::IdentityStore::open(&dir)
+            .identity()
+            .expect("a readable store")
+            .expect("a saved identity");
         let identity = Arc::new(
             ClientIdentity::from_pem(
                 saved.unique_id,
@@ -482,11 +484,14 @@ mod tests {
             )
             .unwrap(),
         );
-        let record = store
-            .hosts()
-            .into_iter()
-            .find(|h| h.address == address && h.server_certificate.is_some())
-            .expect("a paired host at that address");
+        let record: nightjar_desktop_config::config::HostRecord =
+            nightjar_core::hosts::HostStore::open(&dir)
+                .load_records(nightjar_desktop_config::config::keep_readable_settings_value)
+                .into_iter()
+                .find(|h: &nightjar_desktop_config::config::HostRecord| {
+                    h.address == address && h.server_certificate.is_some()
+                })
+                .expect("a paired host at that address");
         let page = session_page::Page::open(
             move || client_for(&identity, &record, &address).map(|c| HostClientPage(Arc::new(c))),
             Arc::new(|| {}),

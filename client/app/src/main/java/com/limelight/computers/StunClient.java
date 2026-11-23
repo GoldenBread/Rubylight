@@ -1,5 +1,7 @@
 package com.limelight.computers;
 
+import com.limelight.nvstream.jni.NightjarDiscoveryJni;
+
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -7,25 +9,16 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
-import java.nio.ByteBuffer;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * IPv4 STUN binding discovery on a socket the caller binds, so the query can go out on one chosen
- * network (Network.bindSocket) without moving the process's other sockets, such as a running
- * stream, off the VPN. Same wire form as the native LiFindExternalAddressIP4 (android_stun.c).
- * Ported from Moonlight V+'s StunClient.kt (qiin2333/moonlight-vplus).
+ * IPv4 STUN binding discovery on a socket the caller binds, delegating RFC 5389 packet
+ * encoding/decoding to Rust ({@code nightjar_core::stun}) via {@link NightjarDiscoveryJni}.
  */
 final class StunClient {
-    private static final int COOKIE = 0x2112a442;
-    private static final int HEADER_SIZE = 20;
-    private static final int BINDING_REQUEST = 0x0001;
-    private static final int BINDING_SUCCESS = 0x0101;
-    private static final int XOR_MAPPED_ADDRESS = 0x0020;
-
     interface Resolver {
         InetAddress[] resolve(String host) throws UnknownHostException;
     }
@@ -51,8 +44,10 @@ final class StunClient {
         if (servers.isEmpty()) return null;
         byte[] transaction = new byte[12];
         new SecureRandom().nextBytes(transaction);
-        byte[] request = ByteBuffer.allocate(HEADER_SIZE).putShort((short) BINDING_REQUEST).putShort((short) 0)
-                .putInt(COOKIE).put(transaction).array();
+        byte[] request = NightjarDiscoveryJni.stunBindingRequest(transaction);
+        if (request == null) {
+            throw new IOException("Unable to build STUN binding request");
+        }
         try (DatagramSocket socket = new DatagramSocket()) {
             binder.bind(socket);
             long nextSend = System.nanoTime();
@@ -81,36 +76,9 @@ final class StunClient {
         return null;
     }
 
-    /** The XOR-MAPPED-ADDRESS of a binding success for this transaction, else null. */
+    /** The mapped IPv4 address of a binding success for this transaction, else null. */
     static String decode(byte[] data, byte[] transaction) {
-        if (data.length < HEADER_SIZE || transaction.length != 12) return null;
-        ByteBuffer buffer = ByteBuffer.wrap(data);
-        if ((buffer.getShort() & 0xffff) != BINDING_SUCCESS) return null;
-        int length = buffer.getShort() & 0xffff;
-        if (length % 4 != 0 || length > data.length - HEADER_SIZE || buffer.getInt() != COOKIE) return null;
-        byte[] received = new byte[12];
-        buffer.get(received);
-        if (!Arrays.equals(received, transaction)) return null;
-        int end = HEADER_SIZE + length;
-        while (buffer.position() < end) {
-            if (end - buffer.position() < 4) return null;
-            int type = buffer.getShort() & 0xffff;
-            int size = buffer.getShort() & 0xffff;
-            int padded = (size + 3) & -4;
-            if (padded > end - buffer.position()) return null;
-            if (type == XOR_MAPPED_ADDRESS && size == 8) {
-                buffer.get();
-                if (buffer.get() != 1) return null;
-                buffer.getShort();
-                int address = buffer.getInt() ^ COOKIE;
-                try {
-                    return InetAddress.getByAddress(ByteBuffer.allocate(4).putInt(address).array()).getHostAddress();
-                } catch (UnknownHostException e) {
-                    return null;
-                }
-            }
-            buffer.position(buffer.position() + padded);
-        }
-        return null;
+        if (data == null || transaction == null) return null;
+        return NightjarDiscoveryJni.stunMappedAddress(data, transaction);
     }
 }

@@ -3,11 +3,14 @@ package com.limelight.computers;
 import android.app.Application;
 import android.content.Context;
 
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+
+import java.io.File;
 
 import static org.junit.Assert.*;
 
@@ -15,6 +18,19 @@ import static org.junit.Assert.*;
 @Config(sdk = 29, application = Application.class)
 public class HostPackedModesTest {
     private final Context context = RuntimeEnvironment.getApplication();
+
+    @After
+    public void tearDown() {
+        HostMetaStores.resetForTests();
+    }
+
+    private void resetStoreForLegacyImport() {
+        HostMetaStores.resetForTests();
+        File meta = new File(context.getFilesDir(), "host_meta.json");
+        if (meta.exists()) {
+            assertTrue(meta.delete());
+        }
+    }
 
     @Test
     public void theLastDescribeIsKeptPerPc() {
@@ -25,9 +41,10 @@ public class HostPackedModesTest {
         assertEquals(0b1111, HostPackedModes.cached(context, "other"));
         HostPackedModes.store(context, "pc", 0b0111);
         assertEquals(0b0111, HostPackedModes.cached(context, "pc"));
-        // Kept across instances of the preferences (another stream, another app start).
-        assertEquals(0b0111, context.getSharedPreferences(HostPackedModes.PREFERENCES, Context.MODE_PRIVATE)
-                .getInt("pc", -1));
+        // Kept across store instances (another stream, another app start).
+        HostMetaStores.closeForTests(context);
+        assertTrue(new File(context.getFilesDir(), "host_meta.json").isFile());
+        assertEquals(0b0111, HostPackedModes.cached(context, "pc"));
     }
 
     @Test
@@ -42,6 +59,7 @@ public class HostPackedModesTest {
         // Only modes a newer host added: none this client knows.
         HostPackedModes.store(context, "pc", 0x10);
         assertEquals(-1, HostPackedModes.cached(context, "pc"));
+        resetStoreForLegacyImport();
         context.getSharedPreferences(HostPackedModes.PREFERENCES, Context.MODE_PRIVATE).edit()
                 .putInt("pc", 0x30).commit();
         assertEquals(-1, HostPackedModes.cached(context, "pc"));
@@ -51,13 +69,36 @@ public class HostPackedModesTest {
     public void modesANewerHostAddsAreLeftOut() {
         HostPackedModes.store(context, "pc", 0x15);
         assertEquals(0b0101, HostPackedModes.cached(context, "pc"));
+        resetStoreForLegacyImport();
         context.getSharedPreferences(HostPackedModes.PREFERENCES, Context.MODE_PRIVATE).edit()
                 .putInt("pc", 0x3A).commit();
         assertEquals(0b1010, HostPackedModes.cached(context, "pc"));
         // A negative value is not a mask, not every mode.
+        resetStoreForLegacyImport();
         context.getSharedPreferences(HostPackedModes.PREFERENCES, Context.MODE_PRIVATE).edit()
                 .putInt("pc", -1).commit();
         assertEquals(-1, HostPackedModes.cached(context, "pc"));
+    }
+
+    @Test
+    public void legacySharedPreferencesMigrateOnceAndStayIdempotent() {
+        context.getSharedPreferences(HostPackedModes.PREFERENCES, Context.MODE_PRIVATE).edit()
+                .putInt("pc", 0b1101)
+                .putBoolean("refused:pc", true)
+                .putString("stamp:pc", "1.0.0/4.0.0")
+                .commit();
+        assertEquals(0b1101, HostPackedModes.cached(context, "pc"));
+        assertTrue(HostPackedModes.refused(context, "pc"));
+
+        HostPackedModes.clearRefusals(context);
+        assertFalse(HostPackedModes.refused(context, "pc"));
+
+        // Even if legacy SharedPreferences had stale entries later, host_meta.json will not re-import them.
+        context.getSharedPreferences(HostPackedModes.PREFERENCES, Context.MODE_PRIVATE).edit()
+                .putBoolean("refused:pc", true)
+                .commit();
+        HostMetaStores.closeForTests(context);
+        assertFalse(HostPackedModes.refused(context, "pc"));
     }
 
     @Test

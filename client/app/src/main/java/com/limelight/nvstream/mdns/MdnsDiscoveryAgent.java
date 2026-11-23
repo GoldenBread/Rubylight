@@ -1,25 +1,37 @@
+/**
+ * Thin Android mDNS discovery base delegating generation tracking, candidate/answered
+ * deduplication, and IPv6 SLAAC/filter ranking to {@link NightjarDiscoveryJni}.
+ */
 package com.limelight.nvstream.mdns;
 
 import com.limelight.LimeLog;
+import com.limelight.nvstream.jni.HandleReaper;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarDiscoveryJni;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
-public abstract class MdnsDiscoveryAgent {
+public abstract class MdnsDiscoveryAgent implements AutoCloseable {
     protected MdnsDiscoveryListener listener;
 
-    protected final HashSet<MdnsComputer> computers = new HashSet<>();
-    // Hosts that answered in an earlier session. Discovery restarts on every PC list resume and
-    // menu, which must not repeat their STUN and serverinfo probes; unanswered hosts are retried.
-    // Each host keeps only the address of its latest answer, which is the one polling uses.
-    private final HashSet<MdnsComputer> answeredComputers = new HashSet<>();
-    private long discoveryGeneration;
+    private final long handle = NightjarDiscoveryJni.mdnsCreate();
+    private final HandleReaper.Token handleToken =
+            HandleReaper.register(this, handle, NightjarDiscoveryJni::mdnsDestroy);
+    private final ConcurrentHashMap<String, InetAddress> addrCache = new ConcurrentHashMap<>();
 
     public MdnsDiscoveryAgent(MdnsDiscoveryListener listener) {
         this.listener = listener;
+    }
+
+    @Override
+    public void close() {
+        handleToken.close();
     }
 
     public abstract void startDiscovery(final int discoveryIntervalMs);
@@ -27,16 +39,11 @@ public abstract class MdnsDiscoveryAgent {
     public abstract void stopDiscovery();
 
     protected final long resetDiscovery() {
-        synchronized (computers) {
-            computers.clear();
-            return ++discoveryGeneration;
-        }
+        return NightjarDiscoveryJni.mdnsReset(handle);
     }
 
     protected final long getDiscoveryGeneration() {
-        synchronized (computers) {
-            return discoveryGeneration;
-        }
+        return NightjarDiscoveryJni.mdnsGeneration(handle);
     }
 
     protected void reportNewComputer(String name, int port, Inet4Address[] v4Addrs, Inet6Address[] v6Addrs) {
@@ -45,18 +52,23 @@ public abstract class MdnsDiscoveryAgent {
 
     protected void reportNewComputer(String name, int port, Inet4Address[] v4Addrs, Inet6Address[] v6Addrs,
                                      long generation) {
-        LimeLog.info("mDNS: "+name+" has "+v4Addrs.length+" IPv4 addresses");
-        LimeLog.info("mDNS: "+name+" has "+v6Addrs.length+" IPv6 addresses");
+        LimeLog.info("mDNS: " + name + " has " + v4Addrs.length + " IPv4 addresses");
+        LimeLog.info("mDNS: " + name + " has " + v6Addrs.length + " IPv6 addresses");
+
+        for (Inet4Address v4 : v4Addrs) {
+            if (v4 != null) addrCache.put(v4.getHostAddress(), v4);
+        }
+        for (Inet6Address v6 : v6Addrs) {
+            if (v6 != null) addrCache.put(v6.getHostAddress(), v6);
+        }
 
         Inet6Address v6GlobalAddr = getBestIpv6Address(v6Addrs);
 
-        // Add a computer object for each IPv4 address reported by the PC
         for (Inet4Address v4Addr : v4Addrs) {
             if (!addComputer(new MdnsComputer(name, v4Addr, v6GlobalAddr, port), generation)) {
                 return;
             }
         }
-        // If there were no IPv4 addresses, use IPv6 for registration
         if (v4Addrs.length == 0) {
             Inet6Address v6LocalAddr = getLocalAddress(v6Addrs);
 
@@ -66,125 +78,98 @@ public abstract class MdnsDiscoveryAgent {
         }
     }
 
-    // Returns false once a newer discovery session owns the cache.
     private boolean addComputer(MdnsComputer computer, long generation) {
-        boolean probe;
-        synchronized (computers) {
-            // Resolution can finish after stop/start. Only this session may populate its cache.
-            if (generation != discoveryGeneration) return false;
-            probe = computers.add(computer) && !answeredComputers.contains(computer);
+        String localKey = keyOf(computer.getLocalAddress());
+        String v6Key = keyOf(computer.getIpv6Address());
+        int decision = NightjarDiscoveryJni.mdnsBeginCandidate(
+                handle, computer.getName(), computer.getPort(), localKey, v6Key, generation);
+        if (decision == 0) {
+            return false;
         }
-        // The probe can block on the network, so it runs without the cache lock.
-        if (probe && listener.notifyComputerAdded(computer)) {
-            synchronized (computers) {
-                // Polling now uses this address. An earlier one of the same host must be probed
-                // again if the host returns to it, or polling would keep trying this one.
-                answeredComputers.removeIf(answered -> answered.getName().equals(computer.getName()));
-                answeredComputers.add(computer);
-            }
+        // The probe can block on the network, so it runs without any Rust or Java lock held.
+        if (decision == 2 && listener.notifyComputerAdded(computer)) {
+            NightjarDiscoveryJni.mdnsMarkAnswered(
+                    handle, computer.getName(), computer.getPort(), localKey, v6Key);
         }
         return true;
     }
 
     // A deleted PC must be able to return the next time discovery finds it.
     public void forgetAnsweredComputers() {
-        synchronized (computers) {
-            answeredComputers.clear();
-        }
+        NightjarDiscoveryJni.mdnsForgetAnswered(handle);
     }
 
     public List<MdnsComputer> getComputerSet() {
-        synchronized (computers) {
-            return new ArrayList<>(computers);
+        Json.Arr arr = Json.parseArray(NightjarDiscoveryJni.mdnsComputers(handle));
+        List<MdnsComputer> out = new ArrayList<>(arr.length());
+        for (int i = 0; i < arr.length(); i++) {
+            Json.Obj item = arr.getObject(i);
+            String name = item.getString("name");
+            int port = item.getInt("port");
+            InetAddress local = resolveCached(item.isNull("local") ? null : item.optString("local", null));
+            InetAddress v6Raw = resolveCached(item.isNull("v6") ? null : item.optString("v6", null));
+            Inet6Address v6 = v6Raw instanceof Inet6Address ? (Inet6Address) v6Raw : null;
+            out.add(new MdnsComputer(name, local, v6, port));
         }
+        return out;
+    }
+
+    private static String keyOf(InetAddress addr) {
+        return addr == null ? null : addr.getHostAddress();
+    }
+
+    private InetAddress resolveCached(String hostAddr) {
+        if (hostAddr == null || hostAddr.isEmpty()) {
+            return null;
+        }
+        InetAddress cached = addrCache.get(hostAddr);
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            return InetAddress.getByName(hostAddr);
+        } catch (UnknownHostException e) {
+            return null;
+        }
+    }
+
+    private static String encodeAddrs(Inet6Address[] addresses) {
+        Json.Arr arr = Json.arr();
+        for (Inet6Address addr : addresses) {
+            arr.add(addr == null ? "" : addr.getHostAddress());
+        }
+        return arr.toString();
     }
 
     protected static Inet6Address getLocalAddress(Inet6Address[] addresses) {
-        for (Inet6Address addr : addresses) {
-            if (addr.isLinkLocalAddress() || addr.isSiteLocalAddress()) {
-                return addr;
-            }
-            // fc00::/7 - ULAs
-            else if ((addr.getAddress()[0] & 0xfe) == 0xfc) {
-                return addr;
-            }
+        if (addresses == null || addresses.length == 0) {
+            return null;
         }
-
-        return null;
+        int[] selected = NightjarDiscoveryJni.mdnsSelectIpv6(encodeAddrs(addresses));
+        if (selected == null || selected.length < 2) {
+            return null;
+        }
+        int idx = selected[1];
+        return idx >= 0 && idx < addresses.length ? addresses[idx] : null;
     }
 
     protected static Inet6Address getLinkLocalAddress(Inet6Address[] addresses) {
-        for (Inet6Address addr : addresses) {
-            if (addr.isLinkLocalAddress()) {
-                LimeLog.info("Found link-local address: "+addr.getHostAddress());
-                return addr;
-            }
+        if (addresses == null || addresses.length == 0) {
+            return null;
         }
-
-        return null;
+        int idx = NightjarDiscoveryJni.mdnsLinkLocalIpv6(encodeAddrs(addresses));
+        return idx >= 0 && idx < addresses.length ? addresses[idx] : null;
     }
 
     protected static Inet6Address getBestIpv6Address(Inet6Address[] addresses) {
-        // First try to find a link local address, so we can match the interface identifier
-        // with a global address (this will work for SLAAC but not DHCPv6).
-        Inet6Address linkLocalAddr = getLinkLocalAddress(addresses);
-
-        // We will try once to match a SLAAC interface suffix, then
-        // pick the first matching address
-        for (int tries = 0; tries < 2; tries++) {
-            // We assume the addresses are already sorted in descending order
-            // of preference from Bonjour.
-            for (Inet6Address addr : addresses) {
-                if (addr.isLinkLocalAddress() || addr.isSiteLocalAddress() || addr.isLoopbackAddress() ||
-                    addr.isAnyLocalAddress() || addr.isMulticastAddress()) {
-                    // Link-local, site-local, and loopback aren't global
-                    LimeLog.info("Ignoring non-global address: "+addr.getHostAddress());
-                    continue;
-                }
-
-                byte[] addrBytes = addr.getAddress();
-
-                // 2002::/16
-                if (addrBytes[0] == 0x20 && addrBytes[1] == 0x02) {
-                    // 6to4 has horrible performance
-                    LimeLog.info("Ignoring 6to4 address: "+addr.getHostAddress());
-                    continue;
-                }
-                // 2001::/32
-                else if (addrBytes[0] == 0x20 && addrBytes[1] == 0x01 && addrBytes[2] == 0x00 && addrBytes[3] == 0x00) {
-                    // Teredo also has horrible performance
-                    LimeLog.info("Ignoring Teredo address: "+addr.getHostAddress());
-                    continue;
-                }
-                // fc00::/7
-                else if ((addrBytes[0] & 0xfe) == 0xfc) {
-                    // ULAs aren't global
-                    LimeLog.info("Ignoring ULA: "+addr.getHostAddress());
-                    continue;
-                }
-
-                // Compare the final 64-bit interface identifier and skip the address
-                // if it doesn't match our link-local address.
-                if (linkLocalAddr != null && tries == 0) {
-                    boolean matched = true;
-
-                    for (int i = 8; i < 16; i++) {
-                        if (linkLocalAddr.getAddress()[i] != addr.getAddress()[i]) {
-                            matched = false;
-                            break;
-                        }
-                    }
-
-                    if (!matched) {
-                        LimeLog.info("Ignoring non-matching global address: "+addr.getHostAddress());
-                        continue;
-                    }
-                }
-
-                return addr;
-            }
+        if (addresses == null || addresses.length == 0) {
+            return null;
         }
-
-        return null;
+        int[] selected = NightjarDiscoveryJni.mdnsSelectIpv6(encodeAddrs(addresses));
+        if (selected == null || selected.length < 1) {
+            return null;
+        }
+        int idx = selected[0];
+        return idx >= 0 && idx < addresses.length ? addresses[idx] : null;
     }
 }

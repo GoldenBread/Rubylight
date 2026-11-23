@@ -9,13 +9,14 @@ import com.limelight.nvstream.http.TestHosts;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.io.File;
 
 import static org.junit.Assert.*;
 
@@ -23,6 +24,11 @@ import static org.junit.Assert.*;
 @Config(sdk = 29, application = Application.class)
 public class HostCapabilityCacheTest {
     private final Context context = RuntimeEnvironment.getApplication();
+
+    @After
+    public void tearDown() {
+        HostMetaStores.resetForTests();
+    }
 
     @Test
     public void lastReportedCapabilitiesSurviveUntilThePcIsForgotten() {
@@ -48,22 +54,18 @@ public class HostCapabilityCacheTest {
 
     @Test
     public void repeatedPollsDoNotRewriteUnchangedCapabilities() {
-        SharedPreferences preferences = context.getSharedPreferences(HostCapabilityCache.PREFERENCES, Context.MODE_PRIVATE);
-        AtomicInteger writes = new AtomicInteger();
-        SharedPreferences.OnSharedPreferenceChangeListener listener = (changed, key) -> writes.incrementAndGet();
-        preferences.registerOnSharedPreferenceChangeListener(listener);
-        try {
-            for (int poll = 0; poll < 5; poll++) {
-                HostCapabilityCache.save(context, "pc", TestHosts.rubylight());
-            }
-            org.robolectric.shadows.ShadowLooper.idleMainLooper();
-            assertEquals(1, writes.get());
-            HostCapabilityCache.save(context, "pc", TestHosts.fixture("butterpollo-serverinfo.xml"));
-            org.robolectric.shadows.ShadowLooper.idleMainLooper();
-            assertEquals(2, writes.get());
-        } finally {
-            preferences.unregisterOnSharedPreferenceChangeListener(listener);
+        File meta = new File(context.getFilesDir(), "host_meta.json");
+        HostCapabilityCache.save(context, "pc", TestHosts.rubylight());
+        assertTrue(meta.isFile());
+        long frozen = 1_500_000_000_000L;
+        assertTrue(meta.setLastModified(frozen));
+        for (int poll = 0; poll < 4; poll++) {
+            HostCapabilityCache.save(context, "pc", TestHosts.rubylight());
         }
+        assertEquals(frozen, meta.lastModified());
+
+        HostCapabilityCache.save(context, "pc", TestHosts.fixture("butterpollo-serverinfo.xml"));
+        assertNotEquals(frozen, meta.lastModified());
     }
 
     /** The 3.0 host with its native capabilities, as the contract reads it. */

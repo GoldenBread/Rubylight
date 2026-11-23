@@ -1451,12 +1451,10 @@ pub fn default_bitrate_kbps(width: u32, height: u32, fps: u32) -> u32 {
     (kbps.round() as u32).clamp(2_000, 150_000)
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Identity {
-    pub unique_id: String,
-    pub certificate_pem: String,
-    pub private_key_pem: String,
-}
+pub use nightjar_policy::hosts::{
+    ALIAS_MAX_CHARS, IdentityFile as Identity, NOTICE_FRAME_WARP_UNAVAILABLE,
+    NOTICE_PACKED_UNAVAILABLE, NOTICE_PYROWAVE_FALLBACK,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1510,13 +1508,6 @@ pub struct HostRecord {
     pub internet_play: Option<String>,
 }
 
-/// PyroWave was chosen and a stream from this PC ran another codec.
-pub const NOTICE_PYROWAVE_FALLBACK: &str = "PYROWAVE_FALLBACK";
-/// Full chroma is on and a stream from this PC starts without it: the PC or this device cannot do it.
-pub const NOTICE_PACKED_UNAVAILABLE: &str = "PACKED_UNAVAILABLE";
-/// Frame Warp is on and a stream from this PC runs without it: the PC does not offer it.
-pub const NOTICE_FRAME_WARP_UNAVAILABLE: &str = "FRAME_WARP_UNAVAILABLE";
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaceCalibration {
     pub pace_mbps: u32,
@@ -1535,9 +1526,6 @@ impl PaceCalibration {
     }
 }
 
-/// The longest name a PC can be given on this device.
-pub const ALIAS_MAX_CHARS: usize = 40;
-
 impl HostRecord {
     /// Whether there is a MAC to wake the PC by: serverinfo's, one its `/wake` listed, or one the
     /// user added. Every wake gate asks this.
@@ -1547,8 +1535,7 @@ impl HostRecord {
 
     /// Keeps `text` as this device's name for the PC. Empty (or blank) restores the PC's own name.
     pub fn set_alias(&mut self, text: &str) {
-        let text: String = text.trim().chars().take(ALIAS_MAX_CHARS).collect();
-        self.alias = (!text.is_empty()).then_some(text);
+        self.alias = nightjar_policy::hosts::HostNames::normalize_alias(Some(text), None);
     }
 
     pub fn settings(&self, global: &Settings) -> Settings {
@@ -1810,21 +1797,19 @@ fn keep_readable_profiles(profiles: &mut serde_json::Value) {
     }
 }
 
+/// Removes unreadable setting values from a `serde_json::Value` object in place.
+pub fn keep_readable_settings_value(values: &mut serde_json::Value) {
+    keep_readable_settings(values);
+}
+
 /// hosts.json with each PC's and game's unreadable settings left out, then the PCs that still
 /// can't be read: the others keep their pairing.
 fn keep_readable_hosts(hosts: &mut serde_json::Value) {
-    let Some(hosts) = hosts.as_array_mut() else { return };
-    for host in hosts.iter_mut() {
-        if let Some(settings) = host.get_mut("settings").filter(|settings| !settings.is_null()) {
-            keep_readable_settings(settings);
-        }
-        match host.get_mut("app_settings") {
-            Some(serde_json::Value::Object(games)) => games.values_mut().for_each(keep_readable_settings),
-            Some(other) => *other = serde_json::Value::Object(serde_json::Map::new()),
-            None => {}
-        }
-    }
-    hosts.retain(|host| serde_json::from_value::<HostRecord>(host.clone()).is_ok());
+    nightjar_policy::hosts::keep_readable_hosts(
+        hosts,
+        keep_readable_settings,
+        |host| serde_json::from_value::<HostRecord>(host.clone()).is_ok(),
+    );
 }
 
 const HOTKEYS_FILE: &str = "stream_hotkeys.json";
@@ -1942,6 +1927,10 @@ impl Store {
     /// The same files, read and never written or removed: every save does nothing.
     pub fn read_only(self) -> Self {
         Self { read_only: true, ..self }
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     fn write<T: Serialize>(&self, path: &Path, value: &T) -> std::io::Result<()> {

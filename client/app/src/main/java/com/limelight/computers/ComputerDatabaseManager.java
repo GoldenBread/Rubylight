@@ -1,33 +1,44 @@
+/**
+ * Persistent host registry adapter backed by Rust {@code HostStore} ({@code hosts.json}) via
+ * {@link NightjarHostsJni}, with one-time migration from SQLite {@code computers4.db} and
+ * {@code LegacyDatabaseReader}/{@code 2}/{@code 3}.
+ */
 package com.limelight.computers;
 
-import java.io.ByteArrayInputStream;
-import java.security.cert.CertificateEncodingException;
-import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Locale;
+import android.content.Context;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteException;
+
+import androidx.annotation.VisibleForTesting;
 
 import com.limelight.LimeLog;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvHTTP;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 import com.limelight.utils.RedactedLog;
-
-import android.content.ContentValues;
-import android.content.Context;
-import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 public class ComputerDatabaseManager {
     private static final String COMPUTER_DB_NAME = "computers4.db";
     private static final String COMPUTER_TABLE_NAME = "Computers";
-    private static final String COMPUTER_UUID_COLUMN_NAME = "UUID";
-    private static final String COMPUTER_NAME_COLUMN_NAME = "ComputerName";
-    private static final String ADDRESSES_COLUMN_NAME = "Addresses";
+
     private interface AddressFields {
         String LOCAL = "local";
         String REMOTE = "remote";
@@ -38,64 +49,152 @@ public class ComputerDatabaseManager {
         String PORT = "port";
     }
 
-    private static final String MAC_ADDRESS_COLUMN_NAME = "MacAddress";
-    private static final String SERVER_CERT_COLUMN_NAME = "ServerCert";
+    private static final ConcurrentHashMap<String, Long> HANDLES = new ConcurrentHashMap<>();
+    private static final Set<String> MIGRATED_DIRS = ConcurrentHashMap.newKeySet();
 
-    private SQLiteDatabase computerDb;
+    private final long handle;
 
     public ComputerDatabaseManager(Context c) {
-        computerDb = c.openOrCreateDatabase(COMPUTER_DB_NAME, 0, null);
-        initializeDb(c);
+        Context app = c.getApplicationContext();
+        this.handle = openAndMigrate(app);
     }
 
     public void close() {
-        computerDb.close();
+        // Store handle is shared per application files directory and closed via resetForTests/process exit.
     }
 
-    private void initializeDb(Context c) {
-        // Create tables if they aren't already there
-        computerDb.execSQL(String.format((Locale)null,
-                "CREATE TABLE IF NOT EXISTS %s(%s TEXT PRIMARY KEY, %s TEXT NOT NULL, %s TEXT NOT NULL, %s TEXT, %s TEXT)",
-                COMPUTER_TABLE_NAME, COMPUTER_UUID_COLUMN_NAME, COMPUTER_NAME_COLUMN_NAME,
-                ADDRESSES_COLUMN_NAME, MAC_ADDRESS_COLUMN_NAME, SERVER_CERT_COLUMN_NAME));
-
-        // Move all computers from the old DB (if any) to the new one
-        migrateComputers(c, "computers.db", LegacyDatabaseReader.migrateAllComputers(c));
-        migrateComputers(c, "computers2.db", LegacyDatabaseReader2.migrateAllComputers(c));
-        migrateComputers(c, "computers3.db", LegacyDatabaseReader3.migrateAllComputers(c));
-    }
-
-    private void migrateComputers(Context c, String source, List<ComputerDetails> computers) {
-        if (computers.isEmpty()) {
-            return;
+    private static long handleFor(File dir) {
+        String key = dir.getAbsolutePath();
+        synchronized (HANDLES) {
+            return HANDLES.computeIfAbsent(key, NightjarHostsJni::hostStoreOpen);
         }
-        computerDb.beginTransaction();
-        try {
-            for (ComputerDetails computer : computers) {
-                if (!updateComputer(computer)) {
-                    return;
+    }
+
+    private static long openAndMigrate(Context app) {
+        File dir = app.getFilesDir();
+        long h = handleFor(dir);
+        if (MIGRATED_DIRS.add(dir.getAbsolutePath()) && !NightjarHostsJni.hostStoreHasMigrated(h)) {
+            migrateLegacy(app, h);
+        }
+        return h;
+    }
+
+    private static void migrateLegacy(Context app, long handle) {
+        List<ComputerDetails> combined = new ArrayList<>();
+        List<String> deleteAfter = new ArrayList<>();
+
+        File v4Db = app.getDatabasePath(COMPUTER_DB_NAME);
+        if (v4Db != null && v4Db.exists()) {
+            combined.addAll(readSqliteV4(v4Db.getPath()));
+        }
+
+        List<ComputerDetails> v1 = LegacyDatabaseReader.migrateAllComputers(app);
+        if (!v1.isEmpty()) {
+            combined.addAll(v1);
+            deleteAfter.add("computers.db");
+        }
+        List<ComputerDetails> v2 = LegacyDatabaseReader2.migrateAllComputers(app);
+        if (!v2.isEmpty()) {
+            combined.addAll(v2);
+            deleteAfter.add("computers2.db");
+        }
+        List<ComputerDetails> v3 = LegacyDatabaseReader3.migrateAllComputers(app);
+        if (!v3.isEmpty()) {
+            combined.addAll(v3);
+            deleteAfter.add("computers3.db");
+        }
+
+        Json.Arr arr = Json.arr();
+        for (ComputerDetails details : combined) {
+            if (details != null && details.uuid != null && !details.uuid.isEmpty()) {
+                arr.add(toJsonObj(details));
+            }
+        }
+        NightjarHostsJni.hostStoreImportLegacy(handle, arr.toString());
+        for (String db : deleteAfter) {
+            app.deleteDatabase(db);
+        }
+    }
+
+    private static List<ComputerDetails> readSqliteV4(String path) {
+        List<ComputerDetails> out = new ArrayList<>();
+        try (SQLiteDatabase db = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY);
+             Cursor c = db.rawQuery("SELECT * FROM " + COMPUTER_TABLE_NAME, null)) {
+            while (c.moveToNext()) {
+                ComputerDetails details = new ComputerDetails();
+                details.uuid = c.getString(0);
+                details.name = c.getString(1);
+                try {
+                    JSONObject addresses = new JSONObject(c.getString(2));
+                    details.localAddress = tupleFromJson(addresses, AddressFields.LOCAL);
+                    details.remoteAddress = tupleFromJson(addresses, AddressFields.REMOTE);
+                    details.manualAddress = tupleFromJson(addresses, AddressFields.MANUAL);
+                    details.ipv6Address = tupleFromJson(addresses, AddressFields.IPv6);
+                } catch (JSONException e) {
+                    LimeLog.warning("Skipping corrupt addresses in legacy DB: " + e.getMessage());
+                }
+                details.externalPort = details.remoteAddress != null
+                        ? details.remoteAddress.port : NvHTTP.DEFAULT_HTTP_PORT;
+                details.macAddress = c.getString(3);
+                byte[] der = c.getBlob(4);
+                if (der != null) {
+                    try {
+                        details.serverCert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                                .generateCertificate(new ByteArrayInputStream(der));
+                    } catch (CertificateException e) {
+                        LimeLog.warning("Skipping corrupt cert in legacy DB: " + e.getMessage());
+                    }
+                }
+                details.state = ComputerDetails.State.UNKNOWN;
+                out.add(details);
+            }
+        } catch (SQLiteException e) {
+            LimeLog.info("No legacy computers4.db rows read: " + e.getMessage());
+        }
+        return out;
+    }
+
+    @VisibleForTesting
+    public static void closeForTests(Context context) {
+        if (context == null) return;
+        File dir = context.getApplicationContext().getFilesDir();
+        if (dir == null) return;
+        String key = dir.getAbsolutePath();
+        synchronized (HANDLES) {
+            Long h = HANDLES.remove(key);
+            MIGRATED_DIRS.remove(key);
+            if (h != null && h != 0L) {
+                NightjarHostsJni.hostStoreDestroy(h);
+            }
+        }
+    }
+
+    @VisibleForTesting
+    public static void resetForTests() {
+        synchronized (HANDLES) {
+            for (Long h : new ArrayList<>(HANDLES.values())) {
+                if (h != null && h != 0L) {
+                    NightjarHostsJni.hostStoreDestroy(h);
                 }
             }
-            computerDb.setTransactionSuccessful();
-        } finally {
-            computerDb.endTransaction();
+            HANDLES.clear();
+            MIGRATED_DIRS.clear();
         }
-        // The only copy must survive a failed read, insert, or commit.
-        c.deleteDatabase(source);
     }
+
     public void deleteComputer(ComputerDetails details) {
-        computerDb.delete(COMPUTER_TABLE_NAME, COMPUTER_UUID_COLUMN_NAME+"=?", new String[]{details.uuid});
+        if (details != null && details.uuid != null) {
+            NightjarHostsJni.hostStoreDelete(handle, details.uuid);
+        }
     }
 
     public static JSONObject tupleToJson(ComputerDetails.AddressTuple tuple) throws JSONException {
         if (tuple == null) {
             return null;
         }
-
         JSONObject json = new JSONObject();
         json.put(AddressFields.ADDRESS, tuple.address);
         json.put(AddressFields.PORT, tuple.port);
-
         return json;
     }
 
@@ -103,7 +202,6 @@ public class ComputerDatabaseManager {
         if (!json.has(name)) {
             return null;
         }
-
         JSONObject address = json.getJSONObject(name);
         return new ComputerDetails.AddressTuple(
                 address.getString(AddressFields.ADDRESS), address.getInt(AddressFields.PORT));
@@ -111,8 +209,7 @@ public class ComputerDatabaseManager {
 
     /**
      * What {@link #updateComputer} saves of a PC, to tell whether a poll found anything to save.
-     * Every column is here: a PC whose columns equal those of the row read is saved as it is.
-     * Addresses and certificates are replaced and never changed in place, so the array stays as taken.
+     * Every persistent field is here: a PC whose columns equal those of the row read is saved as it is.
      */
     static Object[] columns(ComputerDetails details) {
         return new Object[] {
@@ -123,130 +220,104 @@ public class ComputerDatabaseManager {
     }
 
     public boolean updateComputer(ComputerDetails details) {
+        if (details == null) {
+            return false;
+        }
         RedactedLog.addComputerSecrets(details);
-        ContentValues values = new ContentValues();
-        values.put(COMPUTER_UUID_COLUMN_NAME, details.uuid);
-        values.put(COMPUTER_NAME_COLUMN_NAME, details.name);
-
-        try {
-            JSONObject addresses = new JSONObject();
-            addresses.put(AddressFields.LOCAL, tupleToJson(details.localAddress));
-            addresses.put(AddressFields.REMOTE, tupleToJson(details.remoteAddress));
-            addresses.put(AddressFields.MANUAL, tupleToJson(details.manualAddress));
-            addresses.put(AddressFields.IPv6, tupleToJson(details.ipv6Address));
-            values.put(ADDRESSES_COLUMN_NAME, addresses.toString());
-        } catch (JSONException e) {
-            throw new RuntimeException(e);
-        }
-
-        values.put(MAC_ADDRESS_COLUMN_NAME, details.macAddress);
-        try {
-            if (details.serverCert != null) {
-                values.put(SERVER_CERT_COLUMN_NAME, details.serverCert.getEncoded());
-            }
-            else {
-                values.put(SERVER_CERT_COLUMN_NAME, (byte[])null);
-            }
-        } catch (CertificateEncodingException e) {
-            values.put(SERVER_CERT_COLUMN_NAME, (byte[])null);
-            e.printStackTrace();
-        }
-        return -1 != computerDb.insertWithOnConflict(COMPUTER_TABLE_NAME, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        return NightjarHostsJni.hostStoreUpsert(handle, toJsonObj(details).toString());
     }
 
-    private ComputerDetails getComputerFromCursor(Cursor c) {
-        ComputerDetails details = new ComputerDetails();
-
-        details.uuid = c.getString(0);
-        details.name = c.getString(1);
-        try {
-            JSONObject addresses = new JSONObject(c.getString(2));
-            details.localAddress = tupleFromJson(addresses, AddressFields.LOCAL);
-            details.remoteAddress = tupleFromJson(addresses, AddressFields.REMOTE);
-            details.manualAddress = tupleFromJson(addresses, AddressFields.MANUAL);
-            details.ipv6Address = tupleFromJson(addresses, AddressFields.IPv6);
-        } catch (JSONException e) {
-            throw new RuntimeException(e);
-         }
-
-        // External port is persisted in the remote address field
-        if (details.remoteAddress != null) {
-            details.externalPort = details.remoteAddress.port;
-        }
-        else {
-            details.externalPort = NvHTTP.DEFAULT_HTTP_PORT;
-        }
-
-        details.macAddress = c.getString(3);
-
-        try {
-            byte[] derCertData = c.getBlob(4);
-
-            if (derCertData != null) {
-                details.serverCert = (X509Certificate) CertificateFactory.getInstance("X.509")
-                        .generateCertificate(new ByteArrayInputStream(derCertData));
+    public List<ComputerDetails> getAllComputers() {
+        Json.Arr arr = Json.parseArray(NightjarHostsJni.hostStoreAll(handle));
+        LinkedList<ComputerDetails> computerList = new LinkedList<>();
+        for (int i = 0; i < arr.length(); i++) {
+            Json.Obj obj = arr.optObject(i);
+            if (obj != null) {
+                computerList.add(fromJsonObj(obj));
             }
-        } catch (CertificateException e) {
-            e.printStackTrace();
         }
+        return computerList;
+    }
 
-        // This signifies we don't have dynamic state (like pair state)
+    public ComputerDetails getComputerByName(String name) {
+        if (name == null) {
+            return null;
+        }
+        String raw = NightjarHostsJni.hostStoreGetByName(handle, name);
+        return raw == null ? null : fromJsonObj(Json.parseObject(raw));
+    }
+
+    public ComputerDetails getComputerByUUID(String uuid) {
+        if (uuid == null) {
+            return null;
+        }
+        String raw = NightjarHostsJni.hostStoreGetByUuid(handle, uuid);
+        return raw == null ? null : fromJsonObj(Json.parseObject(raw));
+    }
+
+    private static Json.Obj toJsonObj(ComputerDetails details) {
+        Json.Obj obj = Json.obj()
+                .put("uuid", details.uuid == null ? "" : details.uuid)
+                .put("name", details.name == null ? "" : details.name)
+                .put("local", slotObj(details.localAddress))
+                .put("remote", slotObj(details.remoteAddress))
+                .put("manual", slotObj(details.manualAddress))
+                .put("ipv6", slotObj(details.ipv6Address))
+                .put("mac", details.macAddress);
+        if (details.serverCert != null) {
+            try {
+                obj.put("server_cert_b64", Base64.getEncoder().encodeToString(details.serverCert.getEncoded()));
+            } catch (CertificateEncodingException e) {
+                obj.put("server_cert_b64", null);
+            }
+        } else {
+            obj.put("server_cert_b64", null);
+        }
+        return obj;
+    }
+
+    private static Json.Obj slotObj(ComputerDetails.AddressTuple tuple) {
+        if (tuple == null) {
+            return null;
+        }
+        return Json.obj().put("address", tuple.address).put("port", tuple.port);
+    }
+
+    private static ComputerDetails fromJsonObj(Json.Obj obj) {
+        ComputerDetails details = new ComputerDetails();
+        details.uuid = obj.optString("uuid", "");
+        details.name = obj.optString("name", "");
+        details.localAddress = slotFromJson(obj.optObject("local"));
+        details.remoteAddress = slotFromJson(obj.optObject("remote"));
+        details.manualAddress = slotFromJson(obj.optObject("manual"));
+        details.ipv6Address = slotFromJson(obj.optObject("ipv6"));
+        details.externalPort = details.remoteAddress != null
+                ? details.remoteAddress.port : NvHTTP.DEFAULT_HTTP_PORT;
+        details.macAddress = obj.isNull("mac") ? null : obj.optString("mac", null);
+        String certB64 = obj.isNull("server_cert_b64") ? null : obj.optString("server_cert_b64", null);
+        if (certB64 != null && !certB64.isEmpty()) {
+            try {
+                byte[] der = Base64.getDecoder().decode(certB64);
+                details.serverCert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                        .generateCertificate(new ByteArrayInputStream(der));
+            } catch (IllegalArgumentException | CertificateException e) {
+                LimeLog.warning("Corrupt certificate in hosts.json: " + e.getMessage());
+            }
+        }
         details.state = ComputerDetails.State.UNKNOWN;
-
         RedactedLog.addComputerSecrets(details);
         return details;
     }
 
-    public List<ComputerDetails> getAllComputers() {
-        try (final Cursor c = computerDb.rawQuery("SELECT * FROM "+COMPUTER_TABLE_NAME, null)) {
-            LinkedList<ComputerDetails> computerList = new LinkedList<>();
-            while (c.moveToNext()) {
-                computerList.add(getComputerFromCursor(c));
-            }
-            return computerList;
+    private static ComputerDetails.AddressTuple slotFromJson(Json.Obj obj) {
+        if (obj == null) {
+            return null;
         }
-    }
-
-    /**
-     * Get a computer by name
-     * NOTE: It is perfectly valid for multiple computers to have the same name,
-     * this function will only return the first one it finds.
-     * Consider using getComputerByUUID instead.
-     * @param name The name of the computer
-     * @see ComputerDatabaseManager#getComputerByUUID(String) for alternative.
-     * @return The computer details, or null if no computer with that name exists
-     */
-    public ComputerDetails getComputerByName(String name) {
-        try (final Cursor c = computerDb.query(
-                COMPUTER_TABLE_NAME, null, COMPUTER_NAME_COLUMN_NAME+"=?",
-                new String[]{ name }, null, null, null)
-        ) {
-            if (!c.moveToFirst()) {
-                // No matching computer
-                return null;
-            }
-
-            return getComputerFromCursor(c);
+        String address = obj.optString("address", null);
+        int port = obj.optInt("port", 0);
+        if (address == null || port <= 0 || port > 65535) {
+            return null;
         }
-    }
-
-    /**
-     * Get a computer by UUID
-     * @param uuid The UUID of the computer
-     * @see ComputerDatabaseManager#getComputerByName(String) for alternative.
-     * @return The computer details, or null if no computer with that UUID exists
-     */
-    public ComputerDetails getComputerByUUID(String uuid) {
-        try (final Cursor c = computerDb.query(
-                COMPUTER_TABLE_NAME, null, COMPUTER_UUID_COLUMN_NAME+"=?",
-                new String[]{ uuid }, null, null, null)
-        ) {
-            if (!c.moveToFirst()) {
-                // No matching computer
-                return null;
-            }
-
-            return getComputerFromCursor(c);
-        }
+        return new ComputerDetails.AddressTuple(address, port);
     }
 }

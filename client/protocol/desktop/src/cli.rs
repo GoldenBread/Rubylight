@@ -526,7 +526,8 @@ fn list_error(error: &nightjar_core::http::Error, host: &str) -> (String, i32) {
 /// stderr, and the exit code is moonlight-qt's.
 pub fn run_list(list: &List, store: &crate::config::Store) -> i32 {
     use std::io::Write;
-    let records = store.hosts();
+    let host_store = nightjar_core::hosts::HostStore::open(store.dir()).with_read_only(store.is_read_only());
+    let records: Vec<crate::config::HostRecord> = host_store.load_records(crate::config::keep_readable_settings_value);
     let entries = records.iter().enumerate().map(|(index, record)| HostEntry {
         id: index as u64,
         unique_id: &record.unique_id,
@@ -541,14 +542,11 @@ pub fn run_list(list: &List, store: &crate::config::Store) -> i32 {
             return LIST_NO_PC;
         }
     };
-    let identity = match store.identity() {
-        Ok(Some(saved)) => match nightjar_core::http::ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem) {
-            Ok(identity) => std::sync::Arc::new(identity),
-            Err(e) => {
-                eprintln!("this device's pairing key cannot be read ({e}); open Nightjar once");
-                return LIST_NO_PC;
-            }
-        },
+    let identity = match nightjar_core::hosts::IdentityStore::open(store.dir())
+        .with_read_only(store.is_read_only())
+        .load_existing_client()
+    {
+        Ok(Some(identity)) => std::sync::Arc::new(identity),
         Ok(None) => {
             eprintln!("this device has no pairing key yet; pair the PC in Nightjar first");
             return LIST_NO_PC;

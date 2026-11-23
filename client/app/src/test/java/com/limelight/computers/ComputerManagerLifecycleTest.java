@@ -11,6 +11,8 @@ import com.limelight.nativeapi.HostEndpoint;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.http.HostCapabilities;
+import com.limelight.nvstream.http.TestHosts;
 import com.limelight.nvstream.wol.WakeTargets;
 import com.limelight.nvstream.mdns.MdnsComputer;
 import com.limelight.nvstream.mdns.MdnsDiscoveryAgent;
@@ -92,19 +94,33 @@ public class ComputerManagerLifecycleTest {
         ComputerManagerService service = controller.get();
         ComputerDetails computer = new ComputerDetails();
         computer.uuid = "removed-host";
-        String[] files = {"HostStreamProfiles", "HostDisplayChoices", "AdaptiveBitrate", "PyroWaveBitrate",
-                HostCapabilityCache.PREFERENCES, HostNotices.PREFERENCES, HostNames.PREFERENCES};
+        String[] files = {"HostStreamProfiles", "HostDisplayChoices", "AdaptiveBitrate", "PyroWaveBitrate"};
         try {
             for (String file : files) {
                 service.getSharedPreferences(file, 0).edit()
                         .putString(computer.uuid, "saved").putString("another-host", "retained").commit();
             }
+            HostCapabilityCache.save(service, computer.uuid, TestHosts.rubylight());
+            HostCapabilityCache.save(service, "another-host", TestHosts.rubylight());
+            assertTrue(HostNotices.claim(service, computer.uuid, HostNotices.Notice.PYROWAVE_FALLBACK));
+            assertTrue(HostNotices.claim(service, "another-host", HostNotices.Notice.PYROWAVE_FALLBACK));
+            HostNames.set(service, computer.uuid, "Removed PC");
+            HostNames.set(service, "another-host", "Retained PC");
+
             service.removeComputer(computer);
             for (String file : files) {
                 assertFalse(service.getSharedPreferences(file, 0).contains(computer.uuid));
                 assertEquals("retained", service.getSharedPreferences(file, 0).getString("another-host", null));
             }
+            assertSame(HostCapabilities.UNKNOWN, HostCapabilityCache.load(service, computer.uuid));
+            assertEquals(TestHosts.rubylight(), HostCapabilityCache.load(service, "another-host"));
+            assertTrue(HostNotices.claim(service, computer.uuid, HostNotices.Notice.PYROWAVE_FALLBACK));
+            assertFalse(HostNotices.claim(service, "another-host", HostNotices.Notice.PYROWAVE_FALLBACK));
+            assertNull(HostNames.get(service, computer.uuid));
+            assertEquals("Retained PC", HostNames.get(service, "another-host"));
         } finally {
+            HostMetaStores.resetForTests();
+            ComputerDatabaseManager.resetForTests();
             controller.destroy();
         }
     }
@@ -659,8 +675,8 @@ public class ComputerManagerLifecycleTest {
             service.pollNewPc();
             assertEquals("no request goes out", 1, service.asked.getCount());
             Object poll = ReflectionHelpers.getField(service, "wakeTargets");
-            Map<String, ?> asks = ReflectionHelpers.getField(poll, "asks");
-            assertTrue("the refused ask gives its reservation back", asks.isEmpty());
+            assertFalse("the refused ask gives its reservation back",
+                    (Boolean) ReflectionHelpers.callInstanceMethod(poll, "hasPendingAsks"));
         } finally {
             ReflectionHelpers.callInstanceMethod(service, "releaseLocalDatabaseReference");
         }

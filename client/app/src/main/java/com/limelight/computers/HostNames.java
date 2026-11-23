@@ -1,11 +1,12 @@
 package com.limelight.computers;
 
 import android.content.Context;
-import android.content.SharedPreferences;
+
+import com.limelight.nvstream.jni.NightjarHostsJni;
 
 /**
- * The names people give their PCs, kept on this device only. A PC's own name keeps updating from
- * its polls; the alias is shown instead of it while one is set. Removing a PC forgets its alias.
+ * The names people give their PCs, kept on this device only, backed by Rust {@code HostMetaStore}
+ * ({@code host_meta.json}) via {@link NightjarHostsJni}.
  */
 public final class HostNames {
     /** The longest alias, in characters the way people count them. */
@@ -16,16 +17,13 @@ public final class HostNames {
     private HostNames() {
     }
 
-    private static SharedPreferences preferences(Context context) {
-        return context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
-    }
-
     /** The alias for this PC, or null when it shows its own name. */
     public static String get(Context context, String hostUuid) {
         if (context == null || hostUuid == null) {
             return null;
         }
-        String alias = preferences(context).getString(hostUuid, null);
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        String alias = NightjarHostsJni.metaAliasGet(handle, hostUuid);
         return alias == null || alias.isEmpty() ? null : alias;
     }
 
@@ -34,17 +32,7 @@ public final class HostNames {
      * when it is empty or just the PC's own name, which both mean "use the PC's own name".
      */
     public static String normalize(String typed, String ownName) {
-        if (typed == null) {
-            return null;
-        }
-        String alias = typed.trim();
-        if (alias.codePointCount(0, alias.length()) > MAX_LENGTH) {
-            alias = alias.substring(0, alias.offsetByCodePoints(0, MAX_LENGTH)).trim();
-        }
-        if (alias.isEmpty() || (ownName != null && alias.equals(ownName.trim()))) {
-            return null;
-        }
-        return alias;
+        return NightjarHostsJni.metaAliasNormalize(typed, ownName);
     }
 
     /** Stores the alias, or drops it when {@code alias} is null. */
@@ -52,13 +40,8 @@ public final class HostNames {
         if (context == null || hostUuid == null) {
             return;
         }
-        SharedPreferences.Editor editor = preferences(context).edit();
-        if (alias == null || alias.isEmpty()) {
-            editor.remove(hostUuid);
-        } else {
-            editor.putString(hostUuid, alias);
-        }
-        editor.apply();
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        NightjarHostsJni.metaAliasSet(handle, hostUuid, alias);
     }
 
     public static void forget(Context context, String hostUuid) {

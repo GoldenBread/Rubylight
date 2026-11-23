@@ -11,10 +11,12 @@ pub mod fec;
 pub mod frame_warp;
 pub use nightjar_policy::full_chroma;
 pub mod host_loss;
+pub mod hosts;
 pub mod http;
 pub mod internet;
 pub mod input;
 pub mod invite;
+pub mod mdns;
 pub mod pin_lock;
 pub mod priority;
 pub mod report;
@@ -29,6 +31,7 @@ pub mod timing_record;
 pub mod update;
 pub mod usb;
 pub mod video;
+pub mod wol;
 
 #[cfg(test)]
 mod fuzz_tests;

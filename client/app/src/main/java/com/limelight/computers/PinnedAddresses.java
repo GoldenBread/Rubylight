@@ -1,15 +1,14 @@
 package com.limelight.computers;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 
-import com.limelight.LimeLog;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.Json;
+import com.limelight.nvstream.jni.NightjarHostsJni;
 
 /**
- * The address each PC is pinned to, kept on this device only beside the database, as {@link HostNames}
- * keeps aliases. A pinned PC is polled and streamed to only at that address (Moonlight V+ PC's address
- * pinning); none means the automatic pick. Removing a PC forgets its pin.
+ * The address each PC is pinned to, kept on this device only beside the database, backed by Rust
+ * {@code HostMetaStore} ({@code host_meta.json}) via {@link NightjarHostsJni}.
  */
 public final class PinnedAddresses {
     static final String PREFERENCES = "PinnedAddresses";
@@ -17,26 +16,23 @@ public final class PinnedAddresses {
     private PinnedAddresses() {
     }
 
-    private static SharedPreferences preferences(Context context) {
-        return context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
-    }
-
     /** The address this PC is pinned to, or null for the automatic pick. */
     public static ComputerDetails.AddressTuple get(Context context, String hostUuid) {
         if (context == null || hostUuid == null) {
             return null;
         }
-        String stored = preferences(context).getString(hostUuid, null);
-        int split = stored == null ? -1 : stored.lastIndexOf(' ');
-        if (split <= 0) {
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        String raw = NightjarHostsJni.metaPinnedGet(handle, hostUuid);
+        if (raw == null) {
             return null;
         }
-        try {
-            return new ComputerDetails.AddressTuple(stored.substring(0, split), Integer.parseInt(stored.substring(split + 1)));
-        } catch (IllegalArgumentException e) {
-            LimeLog.warning("Pinned address unreadable, connecting automatically: " + e.getMessage());
+        Json.Obj obj = Json.parseObject(raw);
+        String address = obj.optString("address", null);
+        int port = obj.optInt("port", 0);
+        if (address == null || port <= 0 || port > 65535) {
             return null;
         }
+        return new ComputerDetails.AddressTuple(address, port);
     }
 
     /** Pins the PC to {@code address}, or brings back the automatic pick when it is null. */
@@ -44,12 +40,11 @@ public final class PinnedAddresses {
         if (context == null || hostUuid == null) {
             return;
         }
-        SharedPreferences.Editor editor = preferences(context).edit();
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
         if (address == null) {
-            editor.remove(hostUuid);
+            NightjarHostsJni.metaPinnedSet(handle, hostUuid, null, 0);
         } else {
-            editor.putString(hostUuid, address.address + " " + address.port);
+            NightjarHostsJni.metaPinnedSet(handle, hostUuid, address.address, address.port);
         }
-        editor.apply();
     }
 }

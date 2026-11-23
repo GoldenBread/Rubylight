@@ -2,14 +2,15 @@ package com.limelight.computers;
 
 import android.app.Application;
 import android.content.Context;
-import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
 import com.limelight.nativeapi.NativeApiFixtures;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.PairingManager;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -18,6 +19,9 @@ import org.robolectric.android.controller.ServiceController;
 import org.robolectric.annotation.Config;
 import org.robolectric.util.ReflectionHelpers;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.KeyStore;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -43,6 +47,11 @@ public class PollSavesOnlyChangesTest {
     private static final String UUID = "polled-host";
     private static final ComputerDetails.AddressTuple REMOTE = new ComputerDetails.AddressTuple("203.0.113.9", 47989);
     private static final ComputerDetails.AddressTuple LOCAL = new ComputerDetails.AddressTuple("192.168.1.9", 47989);
+
+    @After
+    public void tearDown() {
+        ComputerDatabaseManager.resetForTests();
+    }
 
     /** A PC that answers every poll; what it says of itself is the test's to change. */
     public static class AnsweringManager extends ComputerManagerLifecycleTest.Manager {
@@ -288,8 +297,8 @@ public class PollSavesOnlyChangesTest {
         }
     }
 
-    // What decides whether a poll writes is ComputerDatabaseManager.columns(). A column the table
-    // gains has to be compared there too, or a poll that changes only that column saves nothing.
+    // What decides whether a poll writes is ComputerDatabaseManager.columns(). Every persistent field
+    // saved into hosts.json has to be compared there too, or a poll that changes only that field saves nothing.
     @Test
     public void everyColumnAndAddressOfTheTableIsCompared() throws Exception {
         try (Polls polls = new Polls(NativeApiFixtures.certificate())) {
@@ -297,29 +306,64 @@ public class PollSavesOnlyChangesTest {
             polls.service.answer = polled -> polled.ipv6Address = new ComputerDetails.AddressTuple("2001:db8::9", 47989);
             polls.poll();
 
-            List<String> columns = new ArrayList<>();
-            List<String> addresses = new ArrayList<>();
-            try (SQLiteDatabase database = polls.context.openOrCreateDatabase("computers4.db", 0, null)) {
-                try (Cursor table = database.rawQuery("PRAGMA table_info(Computers)", null)) {
-                    while (table.moveToNext()) {
-                        columns.add(table.getString(table.getColumnIndexOrThrow("name")));
-                    }
-                }
-                try (Cursor row = database.rawQuery("SELECT Addresses FROM Computers WHERE UUID=?", new String[] {UUID})) {
-                    assertTrue(row.moveToFirst());
-                    JSONObject saved = new JSONObject(row.getString(0));
-                    for (java.util.Iterator<String> keys = saved.keys(); keys.hasNext(); ) {
-                        addresses.add(keys.next());
-                    }
+            File hostsFile = new File(polls.context.getFilesDir(), "hosts.json");
+            assertTrue(hostsFile.isFile());
+            String json = new String(Files.readAllBytes(hostsFile.toPath()), StandardCharsets.UTF_8);
+            JSONArray entries = new JSONArray(json);
+            assertEquals(1, entries.length());
+            JSONObject saved = entries.getJSONObject(0);
+            List<String> fields = new ArrayList<>();
+            for (java.util.Iterator<String> keys = saved.keys(); keys.hasNext(); ) {
+                String k = keys.next();
+                if (!saved.isNull(k)) {
+                    fields.add(k);
                 }
             }
-            Collections.sort(columns);
-            Collections.sort(addresses);
+            Collections.sort(fields);
             String hint = "ComputerDatabaseManager.columns() has to compare what is new here";
-            assertEquals(hint, Arrays.asList("Addresses", "ComputerName", "MacAddress", "ServerCert", "UUID"), columns);
-            assertEquals(hint, Arrays.asList("ipv6", "local", "manual", "remote"), addresses);
+            assertTrue(hint + ": " + fields, fields.containsAll(Arrays.asList(
+                    "ipv6_endpoint", "local_endpoint", "mac", "manual_endpoint",
+                    "name", "remote_endpoint", "server_certificate", "unique_id")));
             // The UUID, the name, the four addresses, the MAC address and the certificate.
             assertEquals(hint, 8, ComputerDatabaseManager.columns(polls.saved()).length);
         }
+    }
+
+    @Test
+    public void legacySqliteMigratesOnceAndDeletedHostDoesNotResurrect() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        File dbFile = context.getDatabasePath("computers4.db");
+        dbFile.getParentFile().mkdirs();
+        try (SQLiteDatabase db = SQLiteDatabase.openOrCreateDatabase(dbFile, null)) {
+            db.execSQL("CREATE TABLE Computers (UUID TEXT PRIMARY KEY, ComputerName TEXT NOT NULL, "
+                    + "Addresses TEXT NOT NULL, MacAddress TEXT, ServerCert BLOB)");
+            db.execSQL("INSERT INTO Computers (UUID, ComputerName, Addresses, MacAddress, ServerCert) VALUES (?, ?, ?, ?, ?)",
+                    new Object[] {
+                            "legacy-pc",
+                            "Legacy PC",
+                            "{\"local\":{\"address\":\"192.168.1.50\",\"port\":47989}}",
+                            "11:22:33:44:55:66",
+                            NativeApiFixtures.certificate().getEncoded()
+                    });
+        }
+
+        ComputerDatabaseManager first = new ComputerDatabaseManager(context);
+        ComputerDetails migrated = first.getComputerByUUID("legacy-pc");
+        assertNotNull(migrated);
+        assertEquals("Legacy PC", migrated.name);
+        assertEquals(new ComputerDetails.AddressTuple("192.168.1.50", 47989), migrated.localAddress);
+        assertEquals("11:22:33:44:55:66", migrated.macAddress);
+        assertEquals(NativeApiFixtures.certificate(), migrated.serverCert);
+        assertTrue(new File(context.getFilesDir(), "hosts.json").isFile());
+
+        first.deleteComputer(migrated);
+        assertNull(first.getComputerByUUID("legacy-pc"));
+        first.close();
+        ComputerDatabaseManager.resetForTests();
+
+        assertTrue("legacy SQLite remains intact until future cleanup", dbFile.exists());
+        ComputerDatabaseManager second = new ComputerDatabaseManager(context);
+        assertNull("deleted host must never resurrect from legacy computers4.db", second.getComputerByUUID("legacy-pc"));
+        second.close();
     }
 }

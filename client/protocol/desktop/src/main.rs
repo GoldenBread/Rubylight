@@ -75,6 +75,8 @@ struct App {
     /// on; null while they are on `renderer`.
     gui_overlay: *mut SDL_Renderer,
     store: Store,
+    host_store: nightjar_core::hosts::HostStore,
+    identity_store: nightjar_core::hosts::IdentityStore,
     hosts: Hosts,
     launcher: Launcher,
     latency_bench: latency_bench::Bench,
@@ -625,6 +627,8 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     let store = Store::open().map_err(|e| format!("No config directory: {e}"))?;
     // The first screen's process owns the files; the second only reads them.
     let store = if second_screen::this_process() { store.read_only() } else { store };
+    let host_store = nightjar_core::hosts::HostStore::open(store.dir()).with_read_only(store.is_read_only());
+    let identity_store = nightjar_core::hosts::IdentityStore::open(store.dir()).with_read_only(store.is_read_only());
     let settings = store.settings();
     // Whole frames under VRR Automatic starts on Windows V-Sync for a monitor an earlier run found
     // not refreshing on present, and this run keeps the monitors it finds (`stream::scan_sync`).
@@ -635,7 +639,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     stream::scan_sync::restore(&store.scan_untrusted().displays);
     let profiles = store.profiles();
     let mappings = store.controller_mappings();
-    let hosts = store.hosts();
+    let hosts = host_store.load_records::<config::HostRecord, _>(config::keep_readable_settings_value);
     #[cfg(any(target_os = "macos", windows))]
     let gpu = false; // Start the launcher in SDR (8-bit BGRA on Windows, Metal SDR on macOS); streams switch as needed.
     #[cfg(not(any(target_os = "macos", windows)))]
@@ -855,7 +859,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
             eprintln!("nightjar: pairing links do not come to this window: {e}");
         }
     #[cfg(not(feature = "demo-library"))]
-    let records = store.hosts();
+    let records = host_store.load_records::<config::HostRecord, _>(config::keep_readable_settings_value);
     #[cfg(feature = "demo-library")]
     let records = ui::demo::records();
     // An install from before Home's setup card that has a PC paired made its first pairing long ago.
@@ -910,7 +914,7 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
     let identity = if cfg!(feature = "demo-library") {
         None
     } else {
-        match store.identity() {
+        match identity_store.identity() {
             Ok(Some(saved)) => match ClientIdentity::from_pem(saved.unique_id, &saved.certificate_pem, &saved.private_key_pem) {
                 Ok(identity) => {
                     launcher.identity_ready = true;
@@ -962,6 +966,8 @@ fn run(launch: Option<cli::Launch>, started: open_play::Started, link: Option<St
         gui,
         gui_overlay: std::ptr::null_mut(),
         store,
+        host_store,
+        identity_store,
         hosts,
         launcher,
         latency_bench: Default::default(),

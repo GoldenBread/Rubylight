@@ -143,7 +143,8 @@ impl App {
     }
 
     pub(crate) fn save_hosts(&mut self) {
-        if save_hosts(&self.store, &self.hosts).is_err() {
+        if let Err(e) = self.host_store.save_records(&self.hosts.records()) {
+            eprintln!("nightjar: saving hosts failed: {e}");
             self.save_failed();
         }
     }
@@ -262,7 +263,9 @@ impl App {
 
 /// Saves the PC list, logging a failure (the caller tells the player once: [`App::save_failed`]).
 pub(crate) fn save_hosts(store: &config::Store, hosts: &Hosts) -> std::io::Result<()> {
-    let saved = store.save_hosts(&hosts.records());
+    let saved = nightjar_core::hosts::HostStore::open(store.dir())
+        .with_read_only(store.is_read_only())
+        .save_records(&hosts.records());
     if let Err(e) = &saved {
         eprintln!("nightjar: saving hosts failed: {e}");
     }

@@ -77,6 +77,18 @@ public class StunClientTest {
     }
 
     @Test
+    public void mappedAddressFallbackDecodesWhenXorMappedIsAbsent() {
+        byte[] transaction = new byte[12];
+        Arrays.fill(transaction, (byte) 5);
+        ByteBuffer b = ByteBuffer.allocate(20 + 12);
+        b.putShort((short) 0x0101).putShort((short) 12).putInt(COOKIE).put(transaction);
+        b.putShort((short) 0x0001).putShort((short) 8).put((byte) 0).put((byte) 1);
+        b.putShort((short) 4500);
+        b.putInt((198 << 24) | (51 << 16) | (100 << 8) | 42);
+        assertEquals("198.51.100.42", StunClient.decode(b.array(), transaction));
+    }
+
+    @Test
     public void noAnswerIsNoAddress() throws Exception {
         try (DatagramSocket silent = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
             assertNull(StunClient.query("stun.test", silent.getLocalPort(), 300,

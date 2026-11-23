@@ -1,12 +1,12 @@
 package com.limelight.computers;
 
 import android.content.Context;
-import android.content.SharedPreferences;
+
+import com.limelight.nvstream.jni.NightjarHostsJni;
 
 /**
- * The packed full-chroma modes each PC offered in its last RTSP DESCRIBE, kept per PC. The launch
- * comes before DESCRIBE, so this is what a PC without {@code Packed444Modes} in its serverinfo is
- * known to offer when the next stream decides whether to ask for 10-bit.
+ * The packed full-chroma modes each PC offered in its last RTSP DESCRIBE, backed by Rust
+ * {@code HostMetaStore} ({@code host_meta.json}) via {@link NightjarHostsJni}.
  */
 public final class HostPackedModes {
     static final String PREFERENCES = "HostPacked444Modes";
@@ -16,16 +16,11 @@ public final class HostPackedModes {
     private HostPackedModes() {
     }
 
-    private static SharedPreferences preferences(Context context) {
-        return context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
-    }
-
     /** The modes this PC's last DESCRIBE offered, or -1 when none was seen. */
     public static int cached(Context context, String hostUuid) {
         if (context == null || hostUuid == null) return -1;
-        int stored = preferences(context).getInt(hostUuid, -1);
-        int modes = stored > 0 ? stored & ALL_MODES : 0;
-        return modes > 0 ? modes : -1;
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        return NightjarHostsJni.metaPackedCached(handle, hostUuid);
     }
 
     /**
@@ -36,85 +31,53 @@ public final class HostPackedModes {
      */
     public static void store(Context context, String hostUuid, int describeModes) {
         if (context == null || hostUuid == null || describeModes < 0) return;
-        describeModes &= ALL_MODES;
-        SharedPreferences preferences = preferences(context);
-        if (describeModes > 0) {
-            if (preferences.getInt(hostUuid, -1) != describeModes || preferences.contains(refusedKey(hostUuid))) {
-                preferences.edit().putInt(hostUuid, describeModes).remove(refusedKey(hostUuid)).apply();
-            }
-        } else if (preferences.contains(hostUuid)) {
-            preferences.edit().remove(hostUuid).apply();
-        }
-    }
-
-    private static final String REFUSED_PREFIX = "refused:";
-
-    private static String refusedKey(String hostUuid) {
-        return REFUSED_PREFIX + hostUuid;
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        NightjarHostsJni.metaPackedStore(handle, hostUuid, describeModes);
     }
 
     /**
-     * This PC refused a stream that asked for full chroma. A PC that does not say its modes in
-     * serverinfo is then not asked again at every launch, which would launch the game, be refused
-     * in the handshake and reconnect each time.
+     * This PC refused a stream that asked for full chroma.
      */
     public static void markRefused(Context context, String hostUuid) {
         if (context == null || hostUuid == null) return;
-        SharedPreferences preferences = preferences(context);
-        if (!preferences.getBoolean(refusedKey(hostUuid), false)) {
-            preferences.edit().putBoolean(refusedKey(hostUuid), true).apply();
-        }
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        NightjarHostsJni.metaPackedMarkRefused(handle, hostUuid);
     }
 
     /**
-     * Whether this PC's last answer to a full chroma stream was a refusal. A stream that starts with
-     * full chroma ({@link #store}), {@link #clearRefusals} and an update on either side
-     * ({@link #renew}) end it; serverinfo that names modes outranks it at the launch.
+     * Whether this PC's last answer to a full chroma stream was a refusal.
      */
     public static boolean refused(Context context, String hostUuid) {
-        return context != null && hostUuid != null && preferences(context).getBoolean(refusedKey(hostUuid), false);
+        if (context == null || hostUuid == null) return false;
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        return NightjarHostsJni.metaPackedRefused(handle, hostUuid);
     }
 
-    private static final String UNDER_PREFIX = "under:";
-
     /**
-     * What a PC's answer is given under: this app's version and the PC's own ({@code RustHostVersion};
-     * null for a PC that does not say it). An update on either side may change the answer. Desktop's
-     * {@code full_chroma::stamp}.
+     * What a PC's answer is given under: this app's version and the PC's own.
      */
     public static String stamp(String appVersion, String hostVersion) {
-        return appVersion + "/" + (hostVersion != null ? hostVersion : "");
+        return NightjarHostsJni.metaPackedStamp(appVersion, hostVersion);
     }
 
     /**
-     * A launch that asks about full chroma under {@code stamp} ({@link #stamp}): a refusal given
-     * under other versions ends, so a PC that refused is asked again after this app or the PC was
-     * updated. The known modes stay; serverinfo or the next DESCRIBE corrects them. A refusal saved
-     * before versions were kept is asked again too.
+     * A launch that asks about full chroma under {@code stamp}.
      */
     public static void renew(Context context, String hostUuid, String stamp) {
         if (context == null || hostUuid == null || stamp == null) return;
-        SharedPreferences preferences = preferences(context);
-        if (stamp.equals(preferences.getString(UNDER_PREFIX + hostUuid, null))) return;
-        preferences.edit().putString(UNDER_PREFIX + hostUuid, stamp).remove(refusedKey(hostUuid)).apply();
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        NightjarHostsJni.metaPackedRenew(handle, hostUuid, stamp);
     }
 
-    /** Every PC is asked again: the user switched the setting, which is how to retry after changing a PC. */
+    /** Every PC is asked again: the user switched the setting. */
     public static void clearRefusals(Context context) {
         if (context == null) return;
-        SharedPreferences preferences = preferences(context);
-        SharedPreferences.Editor editor = null;
-        for (String key : preferences.getAll().keySet()) {
-            if (key.startsWith(REFUSED_PREFIX)) {
-                if (editor == null) editor = preferences.edit();
-                editor.remove(key);
-            }
-        }
-        if (editor != null) editor.apply();
+        long handle = HostMetaStores.openSource(context, PREFERENCES);
+        NightjarHostsJni.metaPackedClearRefusals(handle);
     }
 
     /** What the next launch takes the PC to offer: its serverinfo when it says, else the cache, else -1. */
     public static int known(int serverInfoModes, int cachedModes) {
-        return serverInfoModes >= 0 ? serverInfoModes : cachedModes;
+        return NightjarHostsJni.metaPackedKnown(serverInfoModes, cachedModes);
     }
 }

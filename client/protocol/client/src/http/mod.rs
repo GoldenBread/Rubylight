@@ -8,7 +8,7 @@
 
 mod clipboard_image;
 mod coop;
-mod crypto;
+pub(crate) mod crypto;
 pub(crate) mod der;
 mod device_approval;
 mod files;
