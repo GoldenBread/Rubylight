@@ -32,4 +32,20 @@ public class RustBridgeReceiveBufferTest {
     public void theReceiveBufferComesFromTheEngine() {
         assertEquals(INFO, MoonBridge.getVideoReceiveBufferInfo());
     }
+
+    @Test
+    public void unavailableLibraryReturnsSafeDefaultsWithoutThrowing() {
+        NightjarJni.forceUnavailableForTest(new UnsatisfiedLinkError("no library"));
+        try {
+            assertEquals(0L, MoonBridge.getDecoderDrops());
+            assertEquals(0L, MoonBridge.getWireBytesReceived());
+            assertEquals(-1L, MoonBridge.getVideoReceiveBufferInfo());
+            assertEquals(-1L, MoonBridge.getEstimatedRttInfo());
+            assertEquals(Integer.MIN_VALUE, MoonBridge.getPhaseLockLeadUs());
+            assertEquals(-1, MoonBridge.getHostPacked444Modes());
+            assertEquals(MoonBridge.MIC_STATE_OFF, MoonBridge.getMicrophoneState());
+        } finally {
+            NightjarJni.forceUnavailableForTest(null);
+        }
+    }
 }

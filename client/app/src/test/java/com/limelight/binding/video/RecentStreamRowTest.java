@@ -51,6 +51,9 @@ public class RecentStreamRowTest {
         @Implementation protected static long getVideoReceiveBufferInfo() {
             return info;
         }
+        @Implementation protected static long getDecoderDrops() {
+            return 0;
+        }
     }
 
     private ActivityController<Activity> activity;

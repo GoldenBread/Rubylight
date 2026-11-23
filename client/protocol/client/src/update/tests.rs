@@ -240,6 +240,26 @@ impl TlsFixture {
                     }
                     let req_str = String::from_utf8_lossy(&req_buf).into_owned();
                     let path = req_str.split_whitespace().nth(1).unwrap_or("").to_owned();
+                    let content_length = req_str
+                        .lines()
+                        .find_map(|line| {
+                            let (k, v) = line.split_once(':')?;
+                            k.trim()
+                                .eq_ignore_ascii_case("content-length")
+                                .then(|| v.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    let mut remaining = content_length;
+                    let mut body_buf = [0u8; 256];
+                    while remaining > 0 {
+                        let want = remaining.min(body_buf.len());
+                        let n = tls.read(&mut body_buf[..want]).unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        remaining -= n;
+                    }
                     seen.lock().unwrap().push(req_str);
                     match route(&path, port) {
                         TlsReply::Raw(bytes) => {
@@ -260,6 +280,8 @@ impl TlsFixture {
                             let _ = tls.flush();
                         }
                     }
+                    tls.conn.send_close_notify();
+                    let _ = tls.flush();
                 });
             }
         });
