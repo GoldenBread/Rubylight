@@ -1,0 +1,2 @@
+# Virtual gamepad driver recovery
+- **Recover when the virtual gamepad driver stops.** When Windows stops the virtual gamepad driver or refuses the host's handle (`0x80070006` / `0x80070103`), Rubylight now closes the dead handle even on controller disconnect, restarts the failed `Rubylight Virtual Gamepad` device automatically within a bounded retry budget, reports disabled or restart-required device states clearly in the console and log analysis, and repairs a stopped virtual gamepad device when Rubylight setup is re-run.

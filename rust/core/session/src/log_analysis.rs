@@ -57,6 +57,7 @@ const SEND: &str = "the-stream-disconnects-after-a-second-with-os-error-10035";
 const DRIVER: &str = "a-driver-is-missing-or-out-of-date";
 const MODE: &str = "windows-refuses-the-virtual-displays-requested-mode";
 const DEADLINE: &str = "virtual-display-did-not-become-active-before-the-deadline";
+const GAMEPAD: &str = "a-controller-or-other-input-does-nothing";
 
 /// Specific rules come before the general ones that would also match.
 pub const RULES: &[Rule] = &[
@@ -422,6 +423,27 @@ pub const RULES: &[Rule] = &[
         explanation: "Windows left the new virtual display off, often because it recalled a saved layout for the other displays.",
         fix: "Update Rubylight; current versions switch the display on themselves.",
         anchor: DEADLINE,
+        setting: None,
+    },
+    Rule {
+        id: "virtual_gamepad_driver",
+        category: Category::Driver,
+        all: &[],
+        any: &[
+            "the virtual gamepad driver refused the host's handle (0x80070006)",
+            "The virtual gamepad driver (Rubylight Virtual Gamepad) keeps refusing the host's connection (0x80070006)",
+            "Virtual gamepad driver unavailable",
+            "Rubylight Virtual Gamepad stopped",
+            "Rubylight Virtual Gamepad is disabled in Windows",
+            "Rubylight Virtual Gamepad needs a Windows restart",
+            "Rubylight Virtual Gamepad reported a Windows device problem",
+            "Rubylight virtual gamepad driver recovery did not complete",
+        ],
+        at_least: None,
+        title: "The virtual gamepad driver stopped or is unavailable",
+        explanation: "Windows stopped or could not open Rubylight's virtual gamepad driver, so virtual controllers stopped responding.",
+        fix: "Rubylight restarts a stopped driver automatically. If controllers stay unavailable, disable and re-enable Rubylight Virtual Gamepad under System devices in Device Manager, run Rubylight setup again, or restart Windows.",
+        anchor: GAMEPAD,
         setting: None,
     },
 ];

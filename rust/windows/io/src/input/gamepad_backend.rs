@@ -9,6 +9,18 @@ use windows::{
     core::GUID,
 };
 
+pub(super) mod recovery;
+
+/// Starts bounded off-thread PnP recovery for a stopped, failed VHF devnode (#138).
+pub(super) fn recover_driver() -> bool {
+    recovery::request() == recovery::RecoveryState::InProgress
+}
+
+/// Whether bounded VHF devnode recovery is currently running or settling.
+pub(super) fn recovery_in_progress() -> bool {
+    recovery::in_progress()
+}
+
 /// A chosen ViGEmBus pad without the driver: no other pad stands in, which a
 /// tool waiting for this one wouldn't see either (#74).
 #[derive(Debug)]
@@ -21,25 +33,43 @@ impl std::fmt::Display for VigemMissing {
 
 /// What the stream says about a driver that won't open, with what fixes it.
 pub(super) fn unavailable(error: &anyhow::Error) -> String {
+    if error.downcast_ref::<VigemMissing>().is_some() {
+        return unavailable_detail(
+            error,
+            None,
+            recovery::DevnodeState::Unknown,
+            recovery::RecoveryState::Idle,
+        );
+    }
     let recorded = crate::steam::registry_string(
         windows::Win32::System::Registry::HKEY_LOCAL_MACHINE,
         "SOFTWARE\\Rubylight\\VirtualGamepad",
         "Problem",
     );
-    unavailable_text(error, recorded)
+    unavailable_detail(error, recorded, recovery::inspect(), recovery::state())
 }
+#[cfg(test)]
 fn unavailable_text(error: &anyhow::Error, recorded: Option<String>) -> String {
+    unavailable_detail(
+        error,
+        recorded,
+        recovery::DevnodeState::Unknown,
+        recovery::RecoveryState::Idle,
+    )
+}
+fn unavailable_detail(
+    error: &anyhow::Error,
+    recorded: Option<String>,
+    devnode: recovery::DevnodeState,
+    state: recovery::RecoveryState,
+) -> String {
     const IGNORED: &str = "controller input is ignored while keyboard and mouse remain available";
     if let Some(VigemMissing(pad)) = error.downcast_ref::<VigemMissing>() {
         format!(
             "{pad} (ViGEmBus) controller unavailable ({error:#}); {IGNORED}. Rubylight doesn't install ViGEmBus: install it from github.com/nefarius/ViGEmBus/releases, or choose another controller type."
         )
-    } else if let Some(recorded) = recorded.filter(|text| !text.trim().is_empty()) {
-        recorded
     } else {
-        format!(
-            "Virtual gamepad driver unavailable ({error:#}); {IGNORED}. Run Rubylight setup again with the gamepad driver selected to restore it."
-        )
+        recovery::diagnosis(error, recorded, devnode, state)
     }
 }
 
@@ -119,8 +149,17 @@ impl Backend {
         if matches!(profile, VIGEM_X360 | VIGEM_DS4) {
             return Self::vigem(vigem::Client::open(), profile);
         }
-        let mut backend = Self::Vhf(Some(open_interface(VHF_INTERFACE)?));
-        let out = backend.ioctl(0x800, &request(8, None), 28)?;
+        let handle = match open_interface(VHF_INTERFACE) {
+            Ok(handle) => handle,
+            Err(error) => {
+                if matches!(recovery::inspect(), recovery::DevnodeState::Failed(_)) {
+                    let _ = recovery::request();
+                }
+                return Err(error);
+            }
+        };
+        let mut backend = Self::Vhf(Some(handle));
+        let out = backend.call(0x800, &request(8, None), 28)?;
         if out.len() != 28
             || u16::from_le_bytes(out[4..6].try_into().unwrap())
                 != rubylight_vgamepad_proto::protocol::PROTOCOL_VERSION
@@ -131,6 +170,7 @@ impl Backend {
         if !matches!(profile, 0 | VHF_AUTO) && available & (1 << (profile - 1)) == 0 {
             bail!("configured controller profile is unavailable in the installed VHF driver");
         }
+        recovery::healthy();
         Ok((backend, available))
     }
     pub(super) fn name(&self) -> &'static str {

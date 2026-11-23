@@ -952,6 +952,8 @@ class Signing(unittest.TestCase):
         self.assertIn("Join-Path $PSScriptRoot 'nefconc.exe'", installer)
         self.assertIn("Invoke-Restartable @('/remove-device'", installer)
         self.assertIn("Invoke-Restartable @('/delete-driver'", installer)
+        self.assertIn("pnputil /restart-device $device.InstanceId", installer)
+        self.assertIn("'CM_PROB_DISABLED', 'CM_PROB_DISABLED_SERVICE'", installer)
         self.assertIn('(Get-CurrentPackage) -ne $ours', installer)
         for check in ('VerifiedAndReputablePolicyState -eq 1', 'SkuPolicyRequired -eq 1',
                       'UsermodeCodeIntegrityPolicyEnforcementStatus -eq 2', 'DRIVER_UNSUPPORTED: '):

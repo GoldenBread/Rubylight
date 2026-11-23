@@ -960,7 +960,7 @@ fn only_a_plugged_vhf_driver_pad_raises_the_driver_host_and_only_when_asked() {
 /// Held by the tests that check a slot stays stranded, and by those whose driver unplugs any
 /// slot: their `ensure` reclaims every stranded slot, another test's too.
 static STRANDED_SLOTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
-fn stranded_slots() -> std::sync::MutexGuard<'static, ()> {
+pub(super) fn stranded_slots() -> std::sync::MutexGuard<'static, ()> {
     STRANDED_SLOTS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

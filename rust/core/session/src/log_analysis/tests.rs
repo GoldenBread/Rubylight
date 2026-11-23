@@ -143,6 +143,18 @@ const LINES: &[(&str, &str)] = &[
         "virtual_display_deadline",
         "2026-10-17T10:00:03.000000Z  WARN butterpollo::nvhttp: Moonlight session launch failed error=Virtual display did not become active before the deadline app_id=1 resume=false",
     ),
+    (
+        "virtual_gamepad_driver",
+        "2026-11-20T10:00:00.000000Z  WARN butterpollo_win_io::input::gamepad_thread: the virtual gamepad driver refused the host's handle (0x80070006): its controllers are closed and the driver will be opened again device=\"gone\" refusals=1",
+    ),
+    (
+        "virtual_gamepad_driver",
+        "2026-11-20T10:00:01.000000Z  WARN butterpollo_session::session::warnings: Rubylight Virtual Gamepad stopped (Code 43; Not data available (0x80070103)); Rubylight is restarting it while keyboard and mouse remain available. code=\"input_gamepad\"",
+    ),
+    (
+        "virtual_gamepad_driver",
+        "2026-11-20T10:00:02.000000Z  WARN butterpollo_win_io::input::gamepad_backend::recovery: Rubylight virtual gamepad driver recovery did not complete error=Windows deferred virtual gamepad driver recovery until restart",
+    ),
 ];
 
 #[test]

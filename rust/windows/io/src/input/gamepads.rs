@@ -172,12 +172,17 @@ pub(super) struct Slot(u16);
 /// reserved in [`SLOTS`], so no other pad is plugged over one the driver may still hold,
 /// until a later unplug of them succeeds.
 static STRANDED: std::sync::Mutex<BTreeSet<u16>> = std::sync::Mutex::new(BTreeSet::new());
-/// Unplugs the stranded slots that will now, freeing them in `slots`.
-fn reclaim(slots: &mut [bool; 16], mut unplug: impl FnMut(u32) -> Result<()>) {
-    STRANDED
-        .lock()
-        .unwrap()
-        .retain(|&global| match unplug(u32::from(global)) {
+/// Unplugs stranded slots until the driver refuses the handle, freeing any removed slots.
+fn reclaim_until_lost(
+    slots: &mut [bool; 16],
+    mut unplug: impl FnMut(u32) -> Result<()>,
+) -> Option<anyhow::Error> {
+    let mut lost = None;
+    STRANDED.lock().unwrap().retain(|&global| {
+        if lost.is_some() {
+            return true;
+        }
+        match unplug(u32::from(global)) {
             Ok(()) => {
                 tracing::info!(
                     slot = global,
@@ -187,19 +192,27 @@ fn reclaim(slots: &mut [bool; 16], mut unplug: impl FnMut(u32) -> Result<()>) {
                 false
             }
             Err(error) => {
-                tracing::debug!(
-                    slot = global,
-                    error = format!("{error:#}"),
-                    "a virtual controller left by an earlier session still will not unplug"
-                );
+                if gamepad_backend::driver_lost(&error) {
+                    lost = Some(error);
+                } else {
+                    tracing::debug!(
+                        slot = global,
+                        error = format!("{error:#}"),
+                        "a virtual controller left by an earlier session still will not unplug"
+                    );
+                }
                 true
             }
-        });
+        }
+    });
+    lost
 }
-/// Plugs a pad into a free slot of `slots`, reserved first: a driver can take
-/// seconds, and other clients and teardowns need the lock meanwhile. With
-/// `every_slot` a slot the driver refuses is followed by the next; the last
-/// refusal comes back, or None when no slot was free.
+#[cfg(test)]
+fn reclaim(slots: &mut [bool; 16], unplug: impl FnMut(u32) -> Result<()>) {
+    let _ = reclaim_until_lost(slots, unplug);
+}
+/// Plugs a pad into a free slot of `slots`, reserved first while driver calls run.
+/// With `every_slot`, per-slot refusals try the next slot; a lost handle bails at once.
 fn plug_in_free_slot(
     slots: &std::sync::Mutex<[bool; 16]>,
     every_slot: bool,
@@ -221,7 +234,7 @@ fn plug_in_free_slot(
             Ok(()) => return Ok(Some(global)),
             Err(error) => {
                 slots.lock().unwrap()[global as usize] = false;
-                if !every_slot {
+                if !every_slot || gamepad_backend::driver_lost(&error) {
                     return Err(error);
                 }
                 failed = Some(error);
@@ -545,9 +558,11 @@ impl Gamepads {
             self.pointers.retain(|(pad, _), _| u16::from(*pad) != id);
             SLOTS.lock().unwrap()[global as usize] = false;
         }
-        reclaim(&mut SLOTS.lock().unwrap(), |global| {
+        if let Some(error) = reclaim_until_lost(&mut SLOTS.lock().unwrap(), |global| {
             self.backend.unplug(global)
-        });
+        }) {
+            return Err(error);
+        }
         let every_slot = self.backend.every_slot_differs();
         let plugged = plug_in_free_slot(&SLOTS, every_slot, |global| {
             self.backend.plug(u32::from(global), profile)
@@ -629,11 +644,14 @@ impl Gamepads {
                     );
                 }
             }
-            Err(error) => tracing::warn!(
-                controller = id,
-                error = format!("{error:#}"),
-                "the gamepad driver refused the Steam Controller's attributes"
-            ),
+            Err(error) => {
+                self.lost |= gamepad_backend::driver_lost(&error);
+                tracing::warn!(
+                    controller = id,
+                    error = format!("{error:#}"),
+                    "the gamepad driver refused the Steam Controller's attributes"
+                );
+            }
         }
     }
     fn ensure_dualsense(&mut self, id: u16) -> Result<bool> {
@@ -739,9 +757,10 @@ impl Gamepads {
                 for i in (0..16u16).filter(|i| gone & (1 << i) != 0) {
                     let global = self.active[&i];
                     if let Err(error) = self.backend.unplug(u32::from(global)) {
-                        // A pad that would not unplug stays tracked and is
-                        // tried again with the next state; this state still
-                        // goes to the live pad.
+                        if gamepad_backend::driver_lost(&error) {
+                            self.lost = true;
+                            return Err(error);
+                        }
                         self.dropped.insert(i);
                         tracing::debug!(
                             controller = i,
@@ -1060,10 +1079,7 @@ impl Gamepads {
         // A refused handle is no pad to create again: the gamepad thread
         // closes these pads and opens the driver anew.
         self.lost |= lost;
-        // A poll that finds the pad's device gone is what the machine's sleep
-        // leaves behind; create the slot again so a game's rumble works before
-        // the player touches anything.
-        if !removed.is_empty() {
+        if !self.lost && !removed.is_empty() {
             let now = Instant::now();
             for slot in removed {
                 let id = self
@@ -1075,10 +1091,8 @@ impl Gamepads {
                 };
                 let global = self.active[&id];
                 if self.dropped.contains(&id) {
-                    // The client removed this pad, but the driver refused its
-                    // unplug. The device a poll now finds gone may take the
-                    // unplug; creating the pad again would bring it back.
                     if let Err(error) = self.backend.unplug(u32::from(global)) {
+                        self.lost |= gamepad_backend::driver_lost(&error);
                         tracing::debug!(
                             controller = id,
                             error = format!("{error:#}"),
@@ -1093,6 +1107,7 @@ impl Gamepads {
                     continue;
                 }
                 if let Err(error) = self.recreate(id) {
+                    self.lost |= gamepad_backend::driver_lost(&error);
                     tracing::debug!(
                         controller = id,
                         error = format!("{error:#}"),
@@ -1635,126 +1650,13 @@ fn steam_controls_fallback(
         )
     })
 }
-// The driver has one touch surface and two contact slots. Keep this mapping
-// independent of device IO so unsupported surfaces cannot change slot state.
-pub(super) struct GamepadTouchRequest {
-    pub(super) packet: Vec<u8>,
-    id: u8,
-    pointer: u32,
-    pub(super) slot: u8,
-    pub(super) event: u8,
-    /// The driver slot and the contact's position in 0..1, which a ViGEmBus
-    /// DualShock 4 takes instead of the packet.
-    pub(super) global: u32,
-    pub(super) position: [f32; 2],
-}
-impl GamepadTouchRequest {
-    fn submitted(self, pointers: &mut BTreeMap<(u8, u32), u8>) {
-        if self.event == 5 {
-            pointers.retain(|(pad, _), _| *pad != self.id);
-        } else if matches!(self.event, 2 | 4) {
-            pointers.remove(&(self.id, self.pointer));
-        } else {
-            pointers.insert((self.id, self.pointer), self.slot);
-        }
-    }
-}
-/// Moonlight's `LI_CCAP_DUAL_TOUCHPAD` controller capability.
-const CCAP_DUAL_TOUCHPAD: u16 = 0x100;
-
-/// Maps a controller touch onto the driver's single touch surface. With
-/// `dual`, touchpad 0 covers the left half of that surface and touchpad 1 the
-/// right half, and a finger is told apart by its touchpad as well as its id.
-/// The Steam Controller has a pad per contact instead: a client's two
-/// touchpads are its two pads, and one touchpad's halves are stretched onto them.
-fn gamepad_touch_request(
-    pointers: &BTreeMap<(u8, u32), u8>,
-    profile: u16,
-    global: u16,
-    input: &Event,
-    dual: bool,
-) -> Option<GamepadTouchRequest> {
-    let Event::ControllerTouch {
-        id,
-        event,
-        touchpad,
-        pointer,
-        x,
-        y,
-        pressure,
-    } = input
-    else {
-        return None;
-    };
-    let steam = profile == VHF_STEAM_CONTROLLER;
-    if *touchpad > u8::from(dual) || !(matches!(profile, 5 | 6 | VIGEM_DS4) || steam) {
-        return None;
-    }
-    let event = match event {
-        0..=4 => *event,
-        6 => 4,
-        7 => 5,
-        _ => return None,
-    };
-    // Finger ids are small; the top bit tells the second touchpad's apart.
-    let pointer = (*pointer & 0x7fff_ffff) | (u32::from(*touchpad) << 31);
-    let key = (*id, pointer);
-    let slot = if event == 5 {
-        0
-    } else if let Some(slot) = pointers.get(&key) {
-        *slot
-    } else if matches!(event, 0 | 1) {
-        if steam {
-            // The Steam Controller's contact is its pad: 0 left, 1 right,
-            // one finger each; a second finger on a held pad is ignored.
-            let pad = steam_pad::touch_pad(*x, *touchpad, dual);
-            if pointers
-                .iter()
-                .any(|((owner, _), used)| owner == id && *used == pad)
-            {
-                return None;
-            }
-            pad
-        } else {
-            (0..2).find(|slot| {
-                !pointers
-                    .iter()
-                    .any(|((pad, _), used)| pad == id && used == slot)
-            })?
-        }
-    } else {
-        return None;
-    };
-    let mut b = request(22, Some(u32::from(global)));
-    b.extend_from_slice(&[slot, event]);
-    let x = if steam {
-        steam_pad::touch_x(*x, slot, dual)
-    } else if dual {
-        x.clamp(0., 1.) / 2. + f32::from(*touchpad) / 2.
-    } else {
-        *x
-    };
-    for f in [x, *y, *pressure] {
-        b.extend_from_slice(&((f.clamp(0., 1.) * 65535.) as u16).to_le_bytes());
-    }
-    b.extend_from_slice(&[0, 0]);
-    Some(GamepadTouchRequest {
-        packet: b,
-        id: *id,
-        pointer,
-        slot,
-        event,
-        global: u32::from(global),
-        position: [x.clamp(0., 1.), y.clamp(0., 1.)],
-    })
-}
+mod touch;
+pub(super) use touch::GamepadTouchRequest;
+use touch::{CCAP_DUAL_TOUCHPAD, gamepad_touch_request};
 impl Drop for Gamepads {
     fn drop(&mut self) {
         if self.lost {
-            // The driver refuses this handle, so no unplug goes through it:
-            // closing the handle is what releases its pads. A slot the driver
-            // still holds is refused at the next plug, which takes another;
-            // stranded, it would stay reserved here for good.
+            // Closing the refused handle releases its pads without stranding slots.
             let mut slots = SLOTS.lock().unwrap();
             for &global in self.active.values() {
                 slots[global as usize] = false;
@@ -1762,8 +1664,16 @@ impl Drop for Gamepads {
             return;
         }
         for (i, global) in self.active.clone() {
+            if self.lost {
+                SLOTS.lock().unwrap()[global as usize] = false;
+                continue;
+            }
             match self.backend.unplug(u32::from(global)) {
                 Ok(()) => SLOTS.lock().unwrap()[global as usize] = false,
+                Err(error) if gamepad_backend::driver_lost(&error) => {
+                    self.lost = true;
+                    SLOTS.lock().unwrap()[global as usize] = false;
+                }
                 Err(error) => {
                     tracing::warn!(
                         controller = i,
@@ -1771,8 +1681,6 @@ impl Drop for Gamepads {
                         error = format!("{error:#}"),
                         "virtual controller removal failed as its session ended"
                     );
-                    // The driver removes it with this client's handle, or its
-                    // slot stays reserved and is tried again before the next plug.
                     if self.backend.frees_pads_on_close() {
                         SLOTS.lock().unwrap()[global as usize] = false;
                     } else {
@@ -1784,5 +1692,7 @@ impl Drop for Gamepads {
     }
 }
 
+#[cfg(test)]
+mod recovery_tests;
 #[cfg(test)]
 mod tests;

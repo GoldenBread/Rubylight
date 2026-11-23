@@ -154,8 +154,21 @@ function Install-Package {
             if (-not $script:restart -and (Get-CurrentPackage) -ne $ours) { throw "the device uses $(Get-CurrentPackage), not $ours" }
         }
         $device = @(Get-Device)[0]
+        if (-not $script:restart -and $device -and $device.Status -ne 'OK' -and $device.Problem -notin 'CM_PROB_DISABLED', 'CM_PROB_DISABLED_SERVICE') {
+            & pnputil /restart-device $device.InstanceId | Out-Host
+            if ($LASTEXITCODE -eq 3010) { $script:restart = $true }
+            $device = @(Get-Device)[0]
+        }
+        if (-not $script:restart -and $device -and $device.Status -ne 'OK' -and $device.Problem -notin 'CM_PROB_DISABLED', 'CM_PROB_DISABLED_SERVICE' -and $NefConc) {
+            Invoke-Restartable @('/remove-device', $device.InstanceId)
+            if (-not $script:restart) {
+                Invoke-Checked $NefConc @('--create-device-node', '--class-name', 'System', '--class-guid', $classGuid, '--hardware-id', $hardwareId)
+                Add-Package $inf
+            }
+            $device = @(Get-Device)[0]
+        }
         $device | Format-List InstanceId, Status, Problem | Out-Host
-        if (-not $script:restart -and $device.Status -ne 'OK') {
+        if (-not $script:restart -and (-not $device -or $device.Status -ne 'OK')) {
             throw "Windows did not start the virtual gamepad driver ($($device.Status), problem $($device.Problem))"
         }
     } catch {
