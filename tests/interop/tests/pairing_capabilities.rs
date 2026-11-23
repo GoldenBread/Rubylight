@@ -414,6 +414,13 @@ fn expected(feature: Feature) -> Availability {
         Feature::ContinueHere => Supported,
         // Listed always; reading needs View streams, which every permission includes.
         Feature::NeuralFrameGeneration => Supported,
+        // Restart/shutdown and pairing approval are offered, but this client has no grant.
+        Feature::PcRestart | Feature::PcShutdown => {
+            Unsupported(Some(Reason::RestartShutdownPermission))
+        }
+        Feature::PairingApprove => Unsupported(Some(Reason::PairingApprovePermission)),
+        // Update installation requires Host control, which this client lacks.
+        Feature::HostUpdate => Unsupported(None),
     }
 }
 
