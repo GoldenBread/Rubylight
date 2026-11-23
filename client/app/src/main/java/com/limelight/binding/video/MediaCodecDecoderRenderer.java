@@ -198,6 +198,9 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private volatile VulkanRendererBridge handedBackVulkan;
     // The Vulkan notice (why it is unused, or that it replaces the upscaler) is shown once per stream
     private boolean vulkanNoticeShown;
+    // Full-range SDR fallback to Vulkan runs at most once per stream; rebuildForVulkan triggers a clean rebuild.
+    private volatile boolean fullRangeFallbackAttempted;
+    private volatile boolean rebuildForVulkan;
     // Frame Warp (docs/frame-warp.md): this stream's renderer, Vulkan or the GLES presenter, draws the shift.
     // False with the setting off, and then none of the Frame Warp code below runs.
     private volatile boolean frameWarp;
@@ -1448,10 +1451,15 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (prefs.frameWarp) {
             warpOffered = MoonBridge.isFrameWarpStream();
         }
-        VideoRendererChoice choice = VideoRendererChoice.choose(prefs.vulkanRender,
-                (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0, Build.VERSION.SDK_INT,
+        boolean pyroWave = (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0;
+        boolean hdr = currentHdrMode != null ? currentHdrMode : assumesHdr();
+        MediaCodecInfo streamDecoder = pyroWave ? null : decoderFor(videoFormat);
+        boolean fullRangeVulkan = FullRangePolicy.needsVulkanUpFront(
+                getPreferredColorRange() == MoonBridge.COLOR_RANGE_FULL, hdr,
+                streamDecoder == null ? null : streamDecoder.getName());
+        VideoRendererChoice choice = VideoRendererChoice.choose(prefs.vulkanRender, pyroWave, Build.VERSION.SDK_INT,
                 VulkanRendererBridge::isSupported, packing != null, prefs.upscalingMode, warpOffered,
-                Boolean.TRUE.equals(currentHdrMode) || (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0);
+                Boolean.TRUE.equals(currentHdrMode) || (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0, fullRangeVulkan);
         if (choice.frameWarpReason == VideoRendererChoice.FrameWarpReason.HDR) {
             declineFrameWarp(R.string.frame_warp_reason_hdr);
         } else if (choice.frameWarpReason == VideoRendererChoice.FrameWarpReason.FULL_CHROMA) {
@@ -1460,6 +1468,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         if (choice.renderer == VideoRendererChoice.Renderer.VULKAN) {
             wantVulkan = true;
             frameWarp = choice.frameWarp;
+            if (fullRangeVulkan && !prefs.vulkanRender && !choice.frameWarp) {
+                LimeLog.info("Decoder " + streamDecoder.getName() +
+                        " with full color range: using the Vulkan renderer for SDR output");
+            }
             upscalingPolicy.fail(UpscalingPolicy.Reason.DISABLED);
             if (choice.upscalingOverridden) {
                 notifyVulkan(context.getString(R.string.vulkan_overrides_upscaling));
@@ -2628,28 +2640,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     }
 
     public int getPreferredColorSpace() {
-        // Default to Rec 709 which is probably better supported on modern devices.
-        //
-        // We are sticking to Rec 601 on older devices unless the device has an HEVC decoder
-        // to avoid possible regressions (and they are < 5% of installed devices). If we have
-        // an HEVC decoder, we will use Rec 709 (even for H.264) since we can't choose a
-        // colorspace by codec (and it's probably safe to say a SoC with HEVC decoding is
-        // plenty modern enough to handle H.264 VUI colorspace info).
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O || hevcDecoder != null || av1Decoder != null) {
-            return MoonBridge.COLORSPACE_REC_709;
-        }
-        else {
-            return MoonBridge.COLORSPACE_REC_601;
-        }
+        // Default to Rec 709 on Android 8+ or devices with HEVC/AV1 decoders; Rec 601 on older ones.
+        return (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O || hevcDecoder != null || av1Decoder != null) ?
+                MoonBridge.COLORSPACE_REC_709 : MoonBridge.COLORSPACE_REC_601;
     }
 
     public int getPreferredColorRange() {
-        if (prefs.fullRange) {
-            return MoonBridge.COLOR_RANGE_FULL;
-        }
-        else {
-            return MoonBridge.COLOR_RANGE_LIMITED;
-        }
+        return prefs.fullRange ? MoonBridge.COLOR_RANGE_FULL : MoonBridge.COLOR_RANGE_LIMITED;
     }
 
     public int getActiveVideoFormat() {
@@ -2735,27 +2732,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
 
         // Android 7.0 adds color options to the MediaFormat
-        videoFormat.setInteger(MediaFormat.KEY_COLOR_RANGE,
-                getPreferredColorRange() == MoonBridge.COLOR_RANGE_FULL ?
-                MediaFormat.COLOR_RANGE_FULL : MediaFormat.COLOR_RANGE_LIMITED);
-
-        // If the stream is HDR-capable, the decoder will detect transitions in color standards
-        // rather than us hardcoding them into the MediaFormat.
-        if (!assumesHdr()) {
-            // Set color format keys when not in HDR mode, since we know they won't change
-            videoFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
-            switch (getPreferredColorSpace()) {
-                case MoonBridge.COLORSPACE_REC_601:
-                    videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT601_NTSC);
-                    break;
-                case MoonBridge.COLORSPACE_REC_709:
-                    videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709);
-                    break;
-                case MoonBridge.COLORSPACE_REC_2020:
-                    videoFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT2020);
-                    break;
-            }
-        }
+        FullRangePolicy.applyBaseColor(videoFormat, getPreferredColorRange(), getPreferredColorSpace(), assumesHdr());
 
         return videoFormat;
     }
@@ -3527,15 +3504,23 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                     uncheckedHdrStaticInfo = null;
                     // A decoder that hung with its vendor keys is set up anew without them (resetHungDecoder).
                     boolean withoutKeys = restartWithoutVendorKeys;
+                    boolean toVulkan = rebuildForVulkan;
                     String decoderBefore = lowLatencyKeysDecoder;
                     // Planned (size, HDR, input buffer growth): a restart no failure asked for.
                     boolean planned = !recoveryAfterFailure && codecRecoveryType.get() == CR_RECOVERY_TYPE_RESTART;
                     recoveryEscalated = false;
                     try {
+                        if (toVulkan && upscaler != null) {
+                            // Disconnect EGL from renderTarget before Vulkan attaches to it.
+                            upscalingPolicy.fail(UpscalingPolicy.Reason.DISABLED);
+                            closeUpscaler();
+                        }
                         boolean recovered = withoutKeys ?
                                 CodecRecoverySteps.rebuild("it took no input with its vendor low-latency keys", recoveryCodec) :
+                                toVulkan ? CodecRecoverySteps.rebuild("full color range needs the Vulkan renderer", recoveryCodec) :
                                 CodecRecoverySteps.run(codecRecoveryType.get() == CR_RECOVERY_TYPE_RESTART,
                                         restartRecreates, restartReason, recoveryCodec);
+                        if (toVulkan) rebuildForVulkan = false;
                         if (!recovered) {
                             if (renderTarget != null && renderTarget.isValid()) {
                                 // The surface is fine: the decoder refused its configuration.
@@ -4110,7 +4095,29 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         outputFormat = videoDecoder.getOutputFormat();
         LimeLog.info("New output format: " + outputFormat);
         checkUpscalingOutputFormat();
+        checkFullRangeOutputFormat();
         updateShownSize();
+    }
+
+    private void checkFullRangeOutputFormat() {
+        if (fullRangeFallbackAttempted || vulkanHandedBack || vulkanRenderer != null || wantVulkan) return;
+        boolean hdr = currentHdrMode != null ? currentHdrMode : assumesHdr();
+        String reason = FullRangePolicy.outputFallbackReason(getPreferredColorRange() == MoonBridge.COLOR_RANGE_FULL,
+                hdr, dolbyVisionActive, packing != null, (videoFormat & MoonBridge.VIDEO_FORMAT_MASK_PYROWAVE) != 0,
+                activeDecoderName, outputFormat);
+        if (reason == null) return;
+        fullRangeFallbackAttempted = true;
+        if (!FullRangePolicy.canUseVulkan(Build.VERSION.SDK_INT, VulkanRendererBridge::isSupported)) {
+            LimeLog.warning("Decoder " + decoderName() + " " + reason + "; Vulkan renderer is unavailable, keeping direct output");
+            return;
+        }
+        synchronized (codecRecoveryMonitor) {
+            if (stopping) return;
+            wantVulkan = rebuildForVulkan = true;
+            codecRecoveryAttempts = 0;
+            LimeLog.warning("Decoder " + decoderName() + " " + reason + "; switching this stream to the Vulkan renderer");
+            requestRestart("full color range on Vulkan");
+        }
     }
 
     /** How often the game presents: the measured content rate once steady, else the stream's. */
@@ -5187,6 +5194,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 " | " + (pyroWave ? "PyroWave" : activeDecoderName + " " + configuredMime()) +
                 " | " + initialWidth + "x" + initialHeight + " " + refreshRate + " fps" +
                 " HDR " + onOff(Boolean.TRUE.equals(currentHdrMode)) +
+                (prefs.fullRange ? " full range" : "") +
                 " | engine " + StreamEngine.label() +
                 " | low latency " + onOff(lowLatency) + ", vendor " + onOff(prefs.vendorLowLatency) +
                 ", hints " + onOff(prefs.phonePerformanceHints) + ", RFI " + onOff(rfi) +
@@ -5200,7 +5208,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                 (repairs != null ? " | " + repairs.describe() : "") +
                 " | input waits " + inputStalls.total() + ", worst " + inputStalls.totalMaxMs() + " ms" +
                 ", input buffer " + inputBufferBytes + " B, " + receiveBufferStats() +
-                " | output " + (output == null ? "none" : outputDescription(output)) +
+                " | output " + (output == null ? "none" : FullRangePolicy.outputDescription(output)) +
                 (vulkanLine != null ? " | " + vulkanLine : "") +
                 " | hottest " + thermalName(hottestThermalLevel) + ", thermal protection " + onOff(prefs.thermalProtection));
         repairCounts = null;
@@ -5262,17 +5270,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     private static String onOff(boolean on) {
         return on ? "on" : "off";
-    }
-
-    private static String outputDescription(MediaFormat format) {
-        return outputKey(format, MediaFormat.KEY_WIDTH) + "x" + outputKey(format, MediaFormat.KEY_HEIGHT) +
-                " color " + outputKey(format, MediaFormat.KEY_COLOR_FORMAT) +
-                " standard " + outputKey(format, MediaFormat.KEY_COLOR_STANDARD) +
-                " transfer " + outputKey(format, MediaFormat.KEY_COLOR_TRANSFER);
-    }
-
-    private static String outputKey(MediaFormat format, String key) {
-        return format.containsKey(key) ? String.valueOf(format.getInteger(key)) : "?";
     }
 
     @Override

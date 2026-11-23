@@ -264,6 +264,22 @@ public class RecentStreamRowTest {
 
 
     @Test
+    public void theRowSaysFullRangeAndTheOutputsColorRange() {
+        stream("TB375FC", "c2.mtk.hevc.decoder.lowlatency", 128);
+        ReflectionHelpers.<PreferenceConfiguration>getField(renderer, "prefs").fullRange = true;
+        MediaFormat output = MediaFormat.createVideoFormat("video/raw", 2944, 1840);
+        output.setInteger(MediaFormat.KEY_COLOR_FORMAT, 2130708361);
+        output.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709);
+        output.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
+        output.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED);
+        ReflectionHelpers.setField(renderer, "outputFormat", output);
+        renderer.cleanup();
+        String section = RecentStreams.section();
+        assertTrue(section, section.contains("HDR off full range"));
+        assertTrue(section, section.contains("output 2944x1840 color 2130708361 standard 1 transfer 3 range 2"));
+    }
+
+    @Test
     public void aStreamThatNeverStartedLeavesNoRow() {
         ShadowBuild.setModel("AFTMM");
         PreferenceConfiguration prefs = new PreferenceConfiguration();

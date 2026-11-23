@@ -14,7 +14,10 @@ import java.util.function.BooleanSupplier;
  * one: PyroWave's own renderer, which draws it as it is; else Vulkan where it runs, asked for or
  * not, or the GLES presenter without upscaling. Only SDR reaches the GLES path, and packed full
  * chroma has its own; then the stream draws without it and {@link FrameWarpReason} says why.
- * Without Frame Warp the choice is the same as it always was.
+ * Full-range SDR on a decoder whose direct surface path mishandles full range ({@link FullRangePolicy})
+ * likewise chooses Vulkan unasked where it runs, without changing PyroWave, packed 4:4:4 or the
+ * default limited-range path. Without Frame Warp or that full-range condition the choice is the
+ * same as it always was.
  */
 public final class VideoRendererChoice {
     public enum Renderer {
@@ -113,5 +116,27 @@ public final class VideoRendererChoice {
                     FrameWarpReason.HDR);
         }
         return new VideoRendererChoice(Renderer.GLES, plain.reason, upscale, true, FrameWarpReason.NONE);
+    }
+
+    /**
+     * As {@link #choose(boolean, boolean, int, BooleanSupplier, boolean, UpscalingPolicy.Mode, boolean, boolean)},
+     * also choosing Vulkan unasked when {@code fullRangeNeedsVulkan} is true ({@link FullRangePolicy}).
+     * Never overrides PyroWave or packed 4:4:4; when Vulkan is unavailable and was not asked for,
+     * {@link #reason} stays {@link Reason#NONE}.
+     */
+    public static VideoRendererChoice choose(boolean vulkanPreferred, boolean pyroWave, int sdkInt,
+                                             BooleanSupplier vulkanSupported, boolean packed444,
+                                             UpscalingPolicy.Mode upscaling, boolean frameWarp,
+                                             boolean hdrOrTenBit, boolean fullRangeNeedsVulkan) {
+        VideoRendererChoice chosen = choose(vulkanPreferred, pyroWave, sdkInt, vulkanSupported, packed444,
+                upscaling, frameWarp, hdrOrTenBit);
+        if (!fullRangeNeedsVulkan || pyroWave || packed444 || chosen.renderer == Renderer.VULKAN) {
+            return chosen;
+        }
+        if (!vulkanPreferred && !frameWarp && sdkInt >= MIN_SDK && vulkanSupported.getAsBoolean()) {
+            return new VideoRendererChoice(Renderer.VULKAN, Reason.NONE, upscaling != UpscalingPolicy.Mode.OFF,
+                    chosen.frameWarp, chosen.frameWarpReason);
+        }
+        return chosen;
     }
 }
