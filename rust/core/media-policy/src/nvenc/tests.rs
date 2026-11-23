@@ -7,10 +7,16 @@ fn native_444_is_h264_and_hevc_as_the_sdk_defines_it() {
     assert!(av1.contains("AV1 in 4:2:0 only"), "{av1}");
     assert!(av1.contains("Choose HEVC"), "{av1}");
     assert!(sdk_444_refusal(3).is_some());
-    // 8-bit is AYUV on the D3D11 device; 10-bit goes through CUDA as
+    // 8-bit is AYUV (D3D12 compute or D3D11); 10-bit goes through CUDA as
     // three 16-bit planes.
     assert_eq!(input_444(false), Input444::Ayuv);
     assert_eq!(input_444(true), Input444::Planar16);
+    // D3D12 compute covers 4:2:0 (8-bit and 10-bit) and 8-bit native 4:4:4,
+    // leaving 10-bit native 4:4:4 on D3D11 + CUDA.
+    assert!(supports_d3d12_compute(false, false));
+    assert!(supports_d3d12_compute(false, true));
+    assert!(supports_d3d12_compute(true, false));
+    assert!(!supports_d3d12_compute(true, true));
 }
 #[test]
 fn reviewed_driver_negotiation_keeps_older_h264_hevc_and_av1_layouts() {

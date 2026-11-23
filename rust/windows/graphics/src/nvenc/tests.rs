@@ -36,6 +36,8 @@ struct Driver {
     /// What every open answers, as a driver past its session limit does.
     open_status: Option<NVENCSTATUS>,
     reject_initialize: Option<ApiVersion>,
+    /// D3D12 `nvEncInitializeEncoder` refuses this `bufferFormat` with `INVALID_PARAM`.
+    reject_d3d12_format: Option<NV_ENC_BUFFER_FORMAT>,
     reject_output: bool,
     reject_reconfigure: bool,
     /// Reconfigures without a reset are refused.
@@ -344,6 +346,8 @@ unsafe extern "C" fn initialize(
         d.initialized = Some((p, config));
         if d.reject_initialize == Some(api) {
             _NVENCSTATUS_NV_ENC_ERR_INVALID_VERSION
+        } else if d.d3d12 && d.reject_d3d12_format == Some(p.bufferFormat) {
+            _NVENCSTATUS_NV_ENC_ERR_INVALID_PARAM
         } else {
             SUCCESS
         }
@@ -3437,4 +3441,5 @@ fn without_subframe_readback_slice_delivery_stays_off_and_events_stay() -> Resul
     Ok(())
 }
 
+mod d3d12_444;
 mod d3d12_teardown;

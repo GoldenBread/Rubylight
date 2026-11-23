@@ -553,6 +553,26 @@ uint4 yuv444_ayuv(float4 p : SV_Position) : SV_Target { return yuv444Ayuv(p.xy, 
 uint4 menu_yuv444_ayuv(float4 p : SV_Position) : SV_Target { return yuv444Ayuv(p.xy, true); }
 uint yuv444_planes(float4 p : SV_Position) : SV_Target { return yuv444Plane(p.xy, false); }
 uint menu_yuv444_planes(float4 p : SV_Position) : SV_Target { return yuv444Plane(p.xy, true); }
+// 8-bit native 4:4:4 on the D3D12 compute queue (Rubylight #150): writes a
+// DXGI_FORMAT_AYUV target through an R8G8B8A8_UINT UAV (V, U, Y, 0) with the
+// same codes as `yuv444_ayuv`. Reuses u0 (never bound beside `lumaPlane`),
+// keeping every non-root UAV inside feature level 11_0's u0-u7.
+RWTexture2D<uint4> ayuvPlane : register(u0);
+uint4 yuv444AyuvPixel(uint2 at, bool menu) {
+    uint3 c = yuv444Codes(rgb_at(float2(at), menu));
+    return uint4(c.z, c.y, c.x, 0);
+}
+[numthreads(16, 16, 1)]
+void yuv444_ayuv_cs(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= targetSize)) return;
+    ayuvPlane[id.xy] = yuv444AyuvPixel(id.xy, false);
+}
+[numthreads(8, 8, 1)]
+void yuv444_ayuv_menu_cs(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= menuBlocks)) return;
+    uint2 at = menuOriginBlocks + id.xy;
+    ayuvPlane[at] = yuv444AyuvPixel(at, true);
+}
 // Encoder focus (docs/encoder-focus-design.md): `yuv420_cs` plus a still-age
 // per 16x16 block, then the codec blocks' importances AMF reads as its ROI
 // map. Kept apart so the focus-off pipeline stays the shader it was.
@@ -595,6 +615,34 @@ void yuv420_focus_cs(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, u
         h = focusHash(h ^ focusCode(y.w));
         h = focusHash(h ^ focusCode(uv.x));
         InterlockedAdd(focusSum, focusHash(h ^ focusCode(uv.y)));
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (index == 0) {
+        uint at = group.y * focusAgeGrid.x + group.x;
+        uint2 previous = focusAges[at];
+        bool same = focusReset == 0 && previous.x == focusSum;
+        focusAges[at] = uint2(focusSum, same ? min(previous.y + 1, 255) : 0);
+    }
+}
+// Encoder focus for 8-bit native 4:4:4: one 16x16 thread group per 16x16 age
+// block, matching `yuv420_focus_cs`'s `focusAgeGrid` and `focus_map_cs`.
+[numthreads(16, 16, 1)]
+void yuv444_ayuv_focus_cs(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
+    if (index == 0) {
+        focusSum = 0;
+        if (all(group.xy == 0)) {
+            focusMap[0] = 0xffffffff;
+            focusMap[1] = 0;
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (all(id.xy < targetSize)) {
+        uint4 p = yuv444AyuvPixel(id.xy, false);
+        ayuvPlane[id.xy] = p;
+        // `p` holds (V, U, Y, 0) as 8-bit integer codes.
+        uint h = focusHash(index * 0x9e3779b9u ^ (p.z >> focusNoiseBits));
+        h = focusHash(h ^ (p.y >> focusNoiseBits));
+        InterlockedAdd(focusSum, focusHash(h ^ (p.x >> focusNoiseBits)));
     }
     GroupMemoryBarrierWithGroupSync();
     if (index == 0) {

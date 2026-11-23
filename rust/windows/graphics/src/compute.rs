@@ -684,12 +684,82 @@ struct PointerUpload {
     _upload: ID3D12Resource,
     _texture: ID3D12Resource,
 }
-/// RGB to NV12 or P010 on the compute queue, with the same shader as the
-/// D3D11 converter (scaling, letterboxing, HDR and the colour matrix).
+/// Target texture and UAV layout for [`Converter::convert`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutputLayout {
+    /// 8-bit 4:2:0: `DXGI_FORMAT_NV12` resource written through `R8_UNORM` and
+    /// `R8G8_UNORM` plane UAVs.
+    Nv12,
+    /// 10-bit 4:2:0: `DXGI_FORMAT_P010` resource written through `R16_UNORM` and
+    /// `R16G16_UNORM` plane UAVs.
+    P010,
+    /// 8-bit native 4:4:4 (Rubylight #150): `DXGI_FORMAT_AYUV` resource written
+    /// through a single `R8G8B8A8_UINT` UAV (`DXGI_FORMAT_AYUV` itself is
+    /// invalid as a UAV view format and removes the D3D12 device).
+    Ayuv,
+}
+
+impl OutputLayout {
+    pub(crate) const fn for_420(ten_bit: bool) -> Self {
+        if ten_bit { Self::P010 } else { Self::Nv12 }
+    }
+    pub(crate) const fn texture_format(self) -> DXGI_FORMAT {
+        match self {
+            Self::Nv12 => DXGI_FORMAT_NV12,
+            Self::P010 => DXGI_FORMAT_P010,
+            Self::Ayuv => DXGI_FORMAT_AYUV,
+        }
+    }
+    /// View formats for `CreateUnorderedAccessView` on plane 0 (and plane 1 for
+    /// semi-planar 4:2:0). Never returns `DXGI_FORMAT_AYUV` as a UAV format.
+    pub(crate) const fn uav_formats(self) -> &'static [DXGI_FORMAT] {
+        match self {
+            Self::Nv12 => &[DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8G8_UNORM],
+            Self::P010 => &[DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16_UNORM],
+            Self::Ayuv => &[DXGI_FORMAT_R8G8B8A8_UINT],
+        }
+    }
+    pub(crate) const fn uav_count(self) -> u32 {
+        self.uav_formats().len() as u32
+    }
+    pub(crate) const fn shader_entry(self) -> &'static [u8] {
+        match self {
+            Self::Nv12 | Self::P010 => b"yuv420_cs\0",
+            Self::Ayuv => b"yuv444_ayuv_cs\0",
+        }
+    }
+    pub(crate) const fn focus_entry(self) -> &'static [u8] {
+        match self {
+            Self::Nv12 | Self::P010 => b"yuv420_focus_cs\0",
+            Self::Ayuv => b"yuv444_ayuv_focus_cs\0",
+        }
+    }
+    pub(crate) const fn menu_entry(
+        self,
+        packs_chroma: bool,
+        packing: u32,
+    ) -> (&'static [u8], [u32; 2]) {
+        match (self, packs_chroma, packing) {
+            (Self::Ayuv, _, _) => (b"yuv444_ayuv_menu_cs\0", [1, 1]),
+            (_, false, _) => (b"yuv420_menu_cs\0", [2, 2]),
+            (_, true, 2) => (b"chroma_pack_menu_cs\0", [2, 2]),
+            (_, true, _) => (b"chroma_pack_menu_cs\0", [2, 1]),
+        }
+    }
+    pub(crate) const fn dispatch_groups(self, width: u32, height: u32) -> (u32, u32) {
+        match self {
+            Self::Nv12 | Self::P010 => ((width / 2).div_ceil(8), (height / 2).div_ceil(8)),
+            Self::Ayuv => (width.div_ceil(16), height.div_ceil(16)),
+        }
+    }
+}
+
+/// RGB to NV12, P010 or 8-bit AYUV on the compute queue, with the same shader
+/// as the D3D11 converter (scaling, letterboxing, HDR and the colour matrix).
 pub struct Converter {
     compute: Arc<Compute>,
-    /// Luma and chroma in one pass over 2x2 blocks (`yuv420_cs` or
-    /// `chroma_pack_cs`). `None` on a planar-only converter until `convert` or
+    /// Luma and chroma in one pass (`yuv420_cs`, `chroma_pack_cs`, or
+    /// `yuv444_ayuv_cs`). `None` on a planar-only converter until `convert` or
     /// `pack_chroma` needs it.
     yuv: Option<(ID3D12RootSignature, ID3D12PipelineState)>,
     /// PyroWave's three planes (`pyro_cs`), made at creation by
@@ -704,7 +774,7 @@ pub struct Converter {
     pub values: [u32; 20],
     width: u32,
     height: u32,
-    ten_bit: bool,
+    layout: OutputLayout,
     targets: Vec<Target>,
     /// Bounded cache of immutable pointer textures for recurring animation shapes.
     pointers: crate::cursor::ShapeCache<ID3D12Resource>,
@@ -765,6 +835,10 @@ fn require_format_support(
 impl Converter {
     pub(crate) fn pack_chroma(&mut self) -> Result<()> {
         anyhow::ensure!(
+            self.layout != OutputLayout::Ayuv,
+            "packed 4:4:4 does not use AYUV targets"
+        );
+        anyhow::ensure!(
             self.focus.is_none(),
             "encoder focus does not support packed 4:4:4"
         );
@@ -777,29 +851,18 @@ impl Converter {
         self.packs_chroma = true;
         Ok(())
     }
-    /// Probe both plane view formats and the actual planar allocation before
-    /// AMF initializes its D3D12 context, so unsupported devices fall back once.
+    /// Probe view formats and the actual target allocation before AMF or NVENC
+    /// initializes its D3D12 context, so unsupported devices fall back once.
     /// PyroWave uses separate R8/R16 planes and does not need this YUV probe.
     pub(crate) fn prepare_yuv(&mut self) -> Result<()> {
         self.compute.ensure_active()?;
-        let (texture, planes) = if self.ten_bit {
-            (
-                DXGI_FORMAT_P010,
-                [DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16_UNORM],
-            )
-        } else {
-            (
-                DXGI_FORMAT_NV12,
-                [DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8G8_UNORM],
-            )
-        };
         require_format_support(
             &self.compute.device,
-            texture,
+            self.layout.texture_format(),
             D3D12_FORMAT_SUPPORT1_TEXTURE2D,
             D3D12_FORMAT_SUPPORT2_NONE,
         )?;
-        for plane in planes {
+        for &plane in self.layout.uav_formats() {
             require_format_support(
                 &self.compute.device,
                 plane,
@@ -807,17 +870,39 @@ impl Converter {
                 D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE,
             )?;
         }
-        self.target()?;
+        let index = self.target()?;
+        if self.layout == OutputLayout::Ayuv
+            && self.slots[0].fence == 0
+            && self.slots[0].target_view.is_none()
+        {
+            // Confirm the driver accepts an R8G8B8A8_UINT UAV on DXGI_FORMAT_AYUV
+            // before NVENC opens its D3D12 session (Rubylight #150).
+            // SAFETY: Slot 0 has never been submitted (`fence == 0`) and `index` is live.
+            unsafe {
+                self.create_target_uavs(0, index);
+            }
+            if let Some(loss) = crate::device_loss::DeviceLost::d3d12(&self.compute.device) {
+                self.compute.retire();
+                return Err(anyhow::Error::new(loss)
+                    .context("D3D12 device rejected R8G8B8A8_UINT UAV on DXGI_FORMAT_AYUV"));
+            }
+        }
         Ok(())
     }
     pub fn new(compute: Arc<Compute>, width: u32, height: u32, ten_bit: bool) -> Result<Self> {
-        Self::new_with_pipeline(compute, width, height, ten_bit, InitialPipeline::Yuv)
+        Self::new_with_pipeline(
+            compute,
+            width,
+            height,
+            OutputLayout::for_420(ten_bit),
+            InitialPipeline::Yuv,
+        )
     }
     fn new_with_pipeline(
         compute: Arc<Compute>,
         width: u32,
         height: u32,
-        ten_bit: bool,
+        layout: OutputLayout,
         initial: InitialPipeline,
     ) -> Result<Self> {
         compute.ensure_active()?;
@@ -832,7 +917,7 @@ impl Converter {
             let root = root_signature(device, first_uav, uav_count)?;
             let pso = pipeline(device, &root, initial.shader_entry())?;
             let (yuv, planar) = match initial {
-                InitialPipeline::Yuv => (Some((root, pso)), None),
+                InitialPipeline::Yuv | InitialPipeline::Ayuv => (Some((root, pso)), None),
                 InitialPipeline::Planar => (None, Some((root, pso))),
             };
             let heap: ID3D12DescriptorHeap =
@@ -897,7 +982,7 @@ impl Converter {
                 values: [0; 20],
                 width,
                 height,
-                ten_bit,
+                layout,
                 targets: vec![],
                 pointers: Default::default(),
                 uploads: Vec::new(),
@@ -1175,11 +1260,7 @@ impl Converter {
                         Height: self.height,
                         DepthOrArraySize: 1,
                         MipLevels: 1,
-                        Format: if self.ten_bit {
-                            DXGI_FORMAT_P010
-                        } else {
-                            DXGI_FORMAT_NV12
-                        },
+                        Format: self.layout.texture_format(),
                         SampleDesc: DXGI_SAMPLE_DESC {
                             Count: 1,
                             Quality: 0,
@@ -1202,6 +1283,32 @@ impl Converter {
             });
             Ok(self.targets.len() - 1)
         }
+    }
+    /// Write `slot`'s output UAV descriptor(s) at `at(2..)` for `self.targets[index]`.
+    ///
+    /// # Safety
+    /// `slot` is idle on the GPU and `index < self.targets.len()`.
+    unsafe fn create_target_uavs(&mut self, slot: usize, index: usize) {
+        let device = &self.compute.device;
+        let target = &self.targets[index].texture;
+        // SAFETY: `self.heap` is live on `device` and the caller guarantees `slot` is idle.
+        unsafe {
+            let cpu = self.heap.GetCPUDescriptorHandleForHeapStart();
+            for (plane, &uav_format) in self.layout.uav_formats().iter().enumerate() {
+                let handle = D3D12_CPU_DESCRIPTOR_HANDLE {
+                    ptr: cpu.ptr + (slot * VIEWS + 2 + plane) * self.increment as usize,
+                };
+                device.CreateUnorderedAccessView(
+                    target.as_ref(),
+                    None,
+                    Some(&texture_uav(uav_format, plane as u32)),
+                    handle,
+                );
+            }
+        }
+        self.slots[slot].target_view = Some(index);
+        // `convert` overwrites `at(2..)` with its own UAV(s).
+        self.slots[slot].planar_view = None;
     }
     /// Convert `source` (an RGB texture opened on this device) into a new
     /// YUV texture. The values follow the D3D11 converter's constants.
@@ -1227,25 +1334,24 @@ impl Converter {
         self.compute.wait(self.slots[slot].last())?;
         self.slots[slot].capture = None;
         self.reset_hdr_stats(slot);
-        let (entry, block) = match (self.packs_chroma, self.values[11]) {
-            (false, _) => (&b"yuv420_menu_cs\0"[..], [2, 2]),
-            (true, 2) => (&b"chroma_pack_menu_cs\0"[..], [2, 2]),
-            (true, _) => (&b"chroma_pack_menu_cs\0"[..], [2, 1]),
-        };
-        let menu = self.menu_pass(slot, entry, 0, 2, block)?;
+        let (entry, block) = self.layout.menu_entry(self.packs_chroma, self.values[11]);
+        let menu = self.menu_pass(slot, entry, 0, self.layout.uav_count(), block)?;
         let focus_active = self
             .focus
             .as_deref()
             .is_some_and(|focus| focus.settings.is_some());
         if !focus_active && self.yuv.is_none() {
-            let root = root_signature(&self.compute.device, 0, 2)?;
-            let convert = pipeline(&self.compute.device, &root, b"yuv420_cs\0")?;
+            let root = root_signature(&self.compute.device, 0, self.layout.uav_count())?;
+            let convert = pipeline(&self.compute.device, &root, self.layout.shader_entry())?;
             self.yuv = Some((root, convert));
         }
         // SAFETY: The slot's last conversion has finished (waited above), so its constants and
         // views may be rewritten, and every view and barrier names a live resource on this device.
         unsafe {
             self.write_values(slot);
+            if self.slots[slot].target_view != Some(index) {
+                self.create_target_uavs(slot, index);
+            }
             let device = &self.compute.device;
             let cpu = self.heap.GetCPUDescriptorHandleForHeapStart();
             let gpu = self.heap.GetGPUDescriptorHandleForHeapStart();
@@ -1258,28 +1364,6 @@ impl Converter {
                 Some(&texture_srv(DXGI_FORMAT_R8G8B8A8_UNORM)),
                 at(1),
             );
-            let (luma_format, chroma_format) = if self.ten_bit {
-                (DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16_UNORM)
-            } else {
-                (DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8G8_UNORM)
-            };
-            if self.slots[slot].target_view != Some(index) {
-                device.CreateUnorderedAccessView(
-                    target.as_ref(),
-                    None,
-                    Some(&texture_uav(luma_format, 0)),
-                    at(2),
-                );
-                device.CreateUnorderedAccessView(
-                    target.as_ref(),
-                    None,
-                    Some(&texture_uav(chroma_format, 1)),
-                    at(3),
-                );
-                self.slots[slot].target_view = Some(index);
-                // `convert` overwrites `at(2..4)` with its own two UAVs.
-                self.slots[slot].planar_view = None;
-            }
             let Slot {
                 allocator, list, ..
             } = &self.slots[slot];
@@ -1320,11 +1404,8 @@ impl Converter {
             if let Some(focus) = focus {
                 focus.bind(list);
             }
-            list.Dispatch(
-                (self.width / 2).div_ceil(8),
-                (self.height / 2).div_ceil(8),
-                1,
-            );
+            let (groups_x, groups_y) = self.layout.dispatch_groups(self.width, self.height);
+            list.Dispatch(groups_x, groups_y, 1);
             if let Some(focus) = focus {
                 focus.record(list, slot);
             }
@@ -1707,8 +1788,8 @@ impl Converter {
         let age_grid = butterpollo_media_policy::encoder_focus::age_grid(self.width, self.height);
         let grid = (self.width.div_ceil(block), self.height.div_ceil(block));
         let device = &self.compute.device;
-        let root = root_signature_with(device, 0, 2, &focus_parameters())?;
-        let convert = pipeline(device, &root, b"yuv420_focus_cs\0")?;
+        let root = root_signature_with(device, 0, self.layout.uav_count(), &focus_parameters())?;
+        let convert = pipeline(device, &root, self.layout.focus_entry())?;
         let map = pipeline(device, &root, b"focus_map_cs\0")?;
         let ages = focus_buffer(
             device,
@@ -1884,5 +1965,7 @@ fn texture_uav(format: DXGI_FORMAT, plane: u32) -> D3D12_UNORDERED_ACCESS_VIEW_D
     }
 }
 
+#[cfg(test)]
+mod ayuv_tests;
 #[cfg(test)]
 mod tests;

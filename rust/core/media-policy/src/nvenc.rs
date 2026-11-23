@@ -137,8 +137,8 @@ pub fn sdk_444_refusal(codec: u8) -> Option<&'static str> {
 /// GPL-3.0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input444 {
-    /// 8-bit: one packed AYUV texture on the D3D11 device
-    /// (`NV_ENC_BUFFER_FORMAT_AYUV`).
+    /// 8-bit: one packed AYUV texture on the D3D12 compute device or the D3D11
+    /// device (`NV_ENC_BUFFER_FORMAT_AYUV`).
     Ayuv,
     /// 10-bit: the Y, U and V planes stacked in one 16-bit texture three
     /// pictures tall, each code in the upper ten bits, copied through CUDA
@@ -154,6 +154,14 @@ pub const fn input_444(ten_bit: bool) -> Input444 {
     } else {
         Input444::Ayuv
     }
+}
+
+/// Whether NVENC can convert and encode a stream on the D3D12 compute path:
+/// every 4:2:0 or packed 4:4:4 stream, and 8-bit native 4:4:4 (`AYUV`).
+/// 10-bit native 4:4:4 stays on D3D11 + CUDA because NVENC's D3D12 interface
+/// refuses `YUV444_10BIT` ("Invalid buffer format", Rubylight #150).
+pub const fn supports_d3d12_compute(yuv444: bool, ten_bit: bool) -> bool {
+    !(yuv444 && ten_bit)
 }
 
 /// The block edge of NVENC's per-picture QP delta map: a 16x16 macroblock

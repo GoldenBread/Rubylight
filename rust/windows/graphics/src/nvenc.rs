@@ -168,6 +168,17 @@ impl std::fmt::Display for SessionLimit {
 pub fn session_limit(error: &anyhow::Error) -> bool {
     error.downcast_ref::<SessionLimit>().is_some()
 }
+/// Whether NVENC can convert and encode `config` on the D3D12 compute path
+/// (4:2:0, packed 4:4:4, and 8-bit native 4:4:4 AYUV; 10-bit 4:4:4 stays on
+/// D3D11 + CUDA).
+pub(crate) fn supports_compute(config: &Negotiated) -> bool {
+    butterpollo_media_policy::nvenc::supports_d3d12_compute(config.yuv444, config.ten_bit())
+}
+/// Whether a failed D3D12 NVENC creation retries on the D3D11 graphics queue:
+/// yes whenever compute was attempted and the failure is not the session limit.
+pub(crate) fn falls_back_to_d3d11(attempted_compute: bool, error: &anyhow::Error) -> bool {
+    attempted_compute && !session_limit(error)
+}
 fn check_raw(
     status: NVENCSTATUS,
     operation: &'static str,
@@ -1007,6 +1018,9 @@ impl Session {
         // 10-bit stream.
         if self.stream.yuv444 {
             refuse_native_444(&self.stream)?;
+            if self.d3d12.is_some() && !supports_compute(&self.stream) {
+                bail!("NVENC on D3D12 does not support 10-bit 4:4:4; use D3D11 with CUDA");
+            }
             if !self.optional_cap(_NV_ENC_CAPS_NV_ENC_CAPS_SUPPORT_YUV444_ENCODE) {
                 bail!(
                     "this NVIDIA GPU's NVENC reports no {} 4:4:4 encoding (NV_ENC_CAPS_SUPPORT_YUV444_ENCODE is 0). Turn off YUV 4:4:4 on the device to stream 4:2:0",
@@ -2746,7 +2760,12 @@ fn stats<'a>(
 /// A D3D12 session's READBACK buffer: twice an uncompressed picture, within
 /// the largest frame collected.
 fn readback_size(stream: &Negotiated) -> u32 {
-    let samples = u64::from(stream.width) * u64::from(stream.height) * 3 / 2;
+    let pixels = u64::from(stream.width) * u64::from(stream.height);
+    let samples = if stream.yuv444 {
+        pixels * 3
+    } else {
+        pixels * 3 / 2
+    };
     let bytes = samples * if stream.ten_bit() { 2 } else { 1 } * 2;
     bytes.min(MAX_FRAME_BYTES as u64) as u32
 }
@@ -2841,31 +2860,22 @@ impl Encoder {
         refuse_native_444(&coded)?;
         let runtime = Runtime::load()?;
         let mut tuning = Tuning::new(options, &coded)?;
-        // Native 4:4:4 converts on the D3D11 graphics queue (`gpu_color`),
-        // whose AYUV or stacked 16-bit planes NVENC reads as Sunshine feeds
-        // it; the D3D12 compute conversion writes 4:2:0 only.
-        let compute = compute.filter(|_| !coded.yuv444);
-        if coded.yuv444 {
-            use butterpollo_media_policy::nvenc::Input444;
-            let input = match butterpollo_media_policy::nvenc::input_444(coded.ten_bit()) {
-                Input444::Ayuv => "AYUV on the D3D11 device",
-                Input444::Planar16 => "three 16-bit planes copied through CUDA",
-            };
-            tracing::info!(
-                codec = codec_name(coded.codec),
-                ten_bit = coded.ten_bit(),
-                input,
-                "NVENC native 4:4:4 stream: the colour conversion runs on the graphics queue"
-            );
-        }
+        // 8-bit native 4:4:4 (AYUV) can convert on the D3D12 compute queue and
+        // encode on its D3D12 device (Rubylight #150); 10-bit 4:4:4 stays on
+        // D3D11 + CUDA because NVENC's D3D12 interface refuses YUV444_10BIT.
+        let compute = compute.filter(|_| supports_compute(&coded));
         let converter = compute
             .map(|compute| -> Result<_> {
-                let mut converter = crate::compute::Converter::new(
-                    compute,
-                    coded.width,
-                    coded.height,
-                    config.ten_bit(),
-                )?;
+                let mut converter = if coded.yuv444 {
+                    crate::compute::Converter::new_ayuv(compute, coded.width, coded.height)?
+                } else {
+                    crate::compute::Converter::new(
+                        compute,
+                        coded.width,
+                        coded.height,
+                        config.ten_bit(),
+                    )?
+                };
                 if config.chroma_packing != 0 {
                     converter.pack_chroma()?;
                 }
@@ -2873,6 +2883,24 @@ impl Encoder {
                 Ok(Box::new(converter))
             })
             .transpose()?;
+        if coded.yuv444 {
+            use butterpollo_media_policy::nvenc::Input444;
+            let input = match (
+                butterpollo_media_policy::nvenc::input_444(coded.ten_bit()),
+                converter.is_some(),
+            ) {
+                (Input444::Ayuv, true) => "AYUV on the D3D12 compute device",
+                (Input444::Ayuv, false) => "AYUV on the D3D11 device",
+                (Input444::Planar16, _) => "three 16-bit planes copied through CUDA",
+            };
+            tracing::info!(
+                codec = codec_name(coded.codec),
+                ten_bit = coded.ten_bit(),
+                d3d12 = converter.is_some(),
+                input,
+                "NVENC native 4:4:4 stream"
+            );
+        }
         let cuda = if converter.is_none() && coded.yuv444 && coded.ten_bit() {
             Some(cuda::Context::new(&gpu)?)
         } else {
@@ -3259,7 +3287,8 @@ impl Encoder {
 // map, with AMF's rules for which frames carry a map.
 impl Encoder {
     /// Focus on with `settings`, or off. On needs the D3D12 conversion and
-    /// planar 4:2:0, and fails loudly without them, as on AMF.
+    /// non-packed chroma (4:2:0 or 8-bit native 4:4:4), and fails loudly
+    /// without them, as on AMF.
     pub fn set_focus(&mut self, settings: Option<crate::compute::FocusSettings>) -> Result<()> {
         if settings.is_some() {
             anyhow::ensure!(
@@ -3451,7 +3480,7 @@ impl Encoder {
                 Reason::Packed444.message(),
             ));
         }
-        if self.session.cuda.is_some() || self.config.yuv444 {
+        if self.session.cuda.is_some() || !supports_compute(&self.config) {
             return Ok(Probe::unsupported(
                 Reason::D3d12ConversionUnavailable,
                 Reason::D3d12ConversionUnavailable.message(),

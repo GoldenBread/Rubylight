@@ -1,0 +1,2 @@
+# NVENC 8-bit native 4:4:4 on D3D12 compute
+- **8-bit native 4:4:4 on NVIDIA uses the D3D12 compute path.** NVENC 8-bit native 4:4:4 streams (H.264 and HEVC) now convert on the D3D12 compute queue into a packed `AYUV` texture (`R8G8B8A8_UINT` UAV) and encode on the compute device's D3D12 NVENC session, enabling encoder focus and keeping the existing automatic fallback to the D3D11 graphics queue if a driver or GPU refuses it (#150). 10-bit native 4:4:4 stays on D3D11 + CUDA, as NVENC's D3D12 interface refuses `YUV444_10BIT`.

@@ -9,6 +9,8 @@ use super::*;
 pub(super) enum InitialPipeline {
     /// NV12/P010 (or packed 4:4:4 after [`Converter::pack_chroma`]): `yuv420_cs` on `u0..u2`.
     Yuv,
+    /// 8-bit native 4:4:4 AYUV: `yuv444_ayuv_cs` on `u0` without compiling `yuv420_cs`.
+    Ayuv,
     /// PyroWave's three separate planes: `pyro_cs` on `u2..u5` without compiling `yuv420_cs`.
     Planar,
 }
@@ -17,6 +19,7 @@ impl InitialPipeline {
     pub(super) const fn shader_entry(self) -> &'static [u8] {
         match self {
             Self::Yuv => b"yuv420_cs\0",
+            Self::Ayuv => b"yuv444_ayuv_cs\0",
             Self::Planar => b"pyro_cs\0",
         }
     }
@@ -24,6 +27,7 @@ impl InitialPipeline {
     pub(super) const fn uav_range(self) -> (u32, u32) {
         match self {
             Self::Yuv => (0, 2),
+            Self::Ayuv => (0, 1),
             Self::Planar => (2, 3),
         }
     }
@@ -50,7 +54,25 @@ impl Converter {
         height: u32,
         ten_bit: bool,
     ) -> Result<Self> {
-        Self::new_with_pipeline(compute, width, height, ten_bit, InitialPipeline::Planar)
+        Self::new_with_pipeline(
+            compute,
+            width,
+            height,
+            OutputLayout::for_420(ten_bit),
+            InitialPipeline::Planar,
+        )
+    }
+
+    /// A compute converter for 8-bit native 4:4:4 (`DXGI_FORMAT_AYUV`, written
+    /// through an `R8G8B8A8_UINT` UAV): compiles only `yuv444_ayuv_cs` upfront.
+    pub fn new_ayuv(compute: Arc<Compute>, width: u32, height: u32) -> Result<Self> {
+        Self::new_with_pipeline(
+            compute,
+            width,
+            height,
+            OutputLayout::Ayuv,
+            InitialPipeline::Ayuv,
+        )
     }
 
     /// Convert `source` into PyroWave's Y, Cb and Cr planes, full size or

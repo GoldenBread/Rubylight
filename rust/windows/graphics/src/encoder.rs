@@ -330,7 +330,7 @@ impl Encoder {
         } else if backend(&image.gpu, tuning)? == "nvenc" {
             // As on AMF: convert on the compute queue and encode on its D3D12
             // device, or on the graphics queue when that is unavailable.
-            let compute = if !config.yuv444
+            let compute = if crate::nvenc::supports_compute(config)
                 && crate::compute::enabled(tuning)
                 && crate::compute::shareable(&image.texture)
             {
@@ -342,7 +342,7 @@ impl Encoder {
                     }
                 }
             } else {
-                if !config.yuv444 && crate::compute::enabled(tuning) {
+                if crate::nvenc::supports_compute(config) && crate::compute::enabled(tuning) {
                     warnings.set("encoder_conversion", "NVENC compute conversion unavailable: the capture texture cannot be shared. Converting on the graphics queue; lower game GPU load or update the NVIDIA driver if frames are delayed.");
                 }
                 None
@@ -356,7 +356,7 @@ impl Encoder {
             ) {
                 // Past the session limit the graphics queue's device fails
                 // the same way, so it is not tried.
-                Err(error) if compute.is_some() && !crate::nvenc::session_limit(&error) => {
+                Err(error) if crate::nvenc::falls_back_to_d3d11(compute.is_some(), &error) => {
                     warnings.set("encoder_conversion", &format!("NVENC on the compute queue's D3D12 device failed ({error:#}); converting on the graphics queue. Lower game GPU load or update the NVIDIA driver (522.25 or newer) if frames are delayed."));
                     crate::nvenc::Encoder::new_gpu(
                         config,
