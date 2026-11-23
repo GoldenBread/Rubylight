@@ -30,7 +30,7 @@ pub(super) struct State {
     pub supported: bool,
     pub enabled: bool,
     modern: bool,
-    requested: bool,
+    pub requested: bool,
 }
 
 fn modern_state(flags: u32, mode: u32) -> State {

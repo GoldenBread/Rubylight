@@ -490,3 +490,42 @@ fn sdr_white_nits_updates_when_the_check_interval_ticks() {
         280.0
     );
 }
+
+#[test]
+fn refresh_now_replaces_stale_pre_open_snapshot_before_check_interval() {
+    let now = Instant::now();
+    let sdr = description(false, 80.);
+    let hdr = description(true, 1000.);
+    let watched = watched(now, Some(sdr));
+    // First read caches SDR and 100 nits for CHECK_INTERVAL (1 s).
+    let initial = watched.read_with(now, |_| Ok(()));
+    assert_eq!(in_hdr(initial.0.unwrap()), Some(false));
+    assert_eq!(initial.3, 100.0);
+    assert!(watched.is_current());
+
+    // Simulate display finishing an HDR transition during DuplicateOutput1.
+    {
+        let mut cache = watched.cache.lock().unwrap();
+        cache.source.current = false;
+        cache.source.candidates = vec![(identity(), Some(hdr))];
+        cache.source.sdr_white = 480.0;
+    }
+    assert!(!watched.is_current());
+    // Normal hot read would still return the stale cached SDR snapshot.
+    let stale = watched.read_with(now + Duration::from_millis(20), |_| unreachable!());
+    assert_eq!(in_hdr(stale.0.unwrap()), Some(false));
+    assert_eq!(stale.3, 100.0);
+
+    // Forced refresh immediately re-enumerates and updates the published snapshot.
+    let refreshed = watched.refresh_now_with(now + Duration::from_millis(20));
+    assert_eq!(in_hdr(refreshed.0.unwrap()), Some(true));
+    assert_eq!(refreshed.1, hdr.metadata);
+    assert_eq!(refreshed.3, 480.0);
+    assert!(watched.is_current());
+    assert_eq!(watched.cache.lock().unwrap().source.enumerations, 1);
+
+    // Subsequent hot reads immediately see the refreshed HDR snapshot.
+    let next = watched.read_with(now + Duration::from_millis(30), |_| unreachable!());
+    assert_eq!(in_hdr(next.0.unwrap()), Some(true));
+    assert_eq!(next.3, 480.0);
+}

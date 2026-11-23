@@ -154,6 +154,15 @@ impl<S: Source> Cache<S> {
         self.snapshot.clone().map_err(anyhow::Error::msg)
     }
 
+    /// Force a fresh factory enumeration and colour/white-level read right now,
+    /// e.g. after `DuplicateOutput1` returns a surface format that disagrees
+    /// with the pre-open reading during a mode transition.
+    fn refresh_now(&mut self, now: Instant) -> Result<Option<Description>> {
+        self.output = None;
+        self.next_check = now;
+        self.poll(now)
+    }
+
     #[cfg(test)]
     fn metadata(&mut self, now: Instant) -> butterpollo_media_policy::hdr::Metadata {
         let _ = self.poll(now);
@@ -380,6 +389,36 @@ where
                 .spawn(move || watch(watched))
                 .map(drop)
         })
+    }
+
+    /// Whether the cached DXGI factory is still current.
+    pub(super) fn is_current(&self) -> bool {
+        self.cache.lock().unwrap().source.current()
+    }
+
+    /// Immediately re-enumerate DXGI and re-read colour state, publishing the
+    /// result so subsequent reads do not stay stale until `CHECK_INTERVAL`.
+    pub(super) fn refresh_now(self: &Arc<Self>) -> Snapshot {
+        self.refresh_now_with(Instant::now())
+    }
+
+    fn refresh_now_with(&self, now: Instant) -> Snapshot {
+        let snapshot = {
+            let mut cache = self.cache.lock().unwrap();
+            let _ = cache.refresh_now(now);
+            (
+                cache.snapshot.clone(),
+                cache.metadata,
+                cache.refresh,
+                cache.sdr_white_nits,
+            )
+        };
+        let mut published = self.published.lock().unwrap();
+        published.last_read = Some(now);
+        if published.watching {
+            published.snapshot = Some(snapshot.clone());
+        }
+        snapshot
     }
 
     fn read_with(

@@ -30,6 +30,10 @@ use windows::{
     core::{Interface, PCWSTR},
 };
 
+mod duplication;
+pub use duplication::Duplication;
+#[cfg(test)]
+use duplication::duplication_upright;
 mod output;
 pub(crate) use output::{current_refresh_hz, published_refresh_hz};
 mod wgc;
@@ -614,6 +618,21 @@ impl Device {
     pub fn display_in_hdr(&self) -> Option<bool> {
         output::in_hdr(self.color_description().ok().flatten())
     }
+    /// Raw DXGI colour space (`DXGI_OUTPUT_DESC1::ColorSpace`) from the latest check.
+    pub fn color_space(&self) -> Option<DXGI_COLOR_SPACE_TYPE> {
+        self.color_description()
+            .ok()
+            .flatten()
+            .map(|desc| desc.color_space)
+    }
+    fn color_is_current(&self) -> bool {
+        self.color.as_ref().is_none_or(|color| color.is_current())
+    }
+    fn refresh_color(&self) {
+        if let Some(color) = &self.color {
+            let _ = color.refresh_now();
+        }
+    }
     fn color_description(&self) -> Result<Option<output::Description>> {
         self.color
             .as_ref()
@@ -901,254 +920,6 @@ fn duplication_device<D>(
     tracing::warn!("{message}");
     warnings.set("capture_adapter", &message);
     Ok(device)
-}
-pub struct Duplication {
-    gpu: Device,
-    duplicate: IDXGIOutputDuplication,
-    staging: Option<ID3D11Texture2D>,
-    owned: GpuPool,
-    /// The newest desktop publication, shared with the capture worker: a
-    /// pointer-only update re-publishes it with fresh stamps instead of
-    /// copying the desktop again.
-    last_desktop: Option<std::sync::Arc<GpuImage>>,
-    cursor: crate::cursor::State,
-    frame_owned: bool,
-}
-/// Desktop Duplication hands a turned display's frames over as the display
-/// scans them out, sideways or upside down for the stream, so it refuses one
-/// rather than stream it so. Windows Graphics Capture captures it upright.
-fn duplication_upright(rotation: DXGI_MODE_ROTATION, output: &str) -> Result<()> {
-    if matches!(
-        rotation,
-        DXGI_MODE_ROTATION_UNSPECIFIED | DXGI_MODE_ROTATION_IDENTITY
-    ) {
-        return Ok(());
-    }
-    bail!(
-        "{output} is turned in Windows, and Desktop Duplication would stream it sideways. Use capture = auto or wgc, or turn the display upright"
-    )
-}
-impl Duplication {
-    pub fn new(name: &str) -> Result<Self> {
-        Self::new_format(name, false)
-    }
-    pub fn new_format(name: &str, hdr: bool) -> Result<Self> {
-        Self::new_device(Device::new(name)?, hdr)
-    }
-    fn new_device(gpu: Device, hdr: bool) -> Result<Self> {
-        let output = gpu.output()?.clone();
-        // Desktop Duplication works only on the GPU the display is connected
-        // to; WGC also captures it for a device on another GPU.
-        if let Some(mismatch) = GpuMismatch::of(&gpu) {
-            bail!("{}", mismatch.refusal());
-        }
-        let build = crate::process_info::windows_build();
-        use butterpollo_media_policy::os_gate::{Feature, missing};
-        if hdr && let Some(reason) = missing(build, Feature::OutputDesc1) {
-            tracing::warn!("{reason} An HDR stream will be captured as SDR.");
-        }
-        let native_hdr = hdr
-            && gpu
-                .color_description()?
-                .is_some_and(|desc| desc.color_space == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
-        // Always name the formats this host accepts. The legacy call loses
-        // access in a loop whenever Windows composes the output in FP16, as it
-        // does for advanced color or after another virtual display arrives.
-        let formats: &[DXGI_FORMAT] = if native_hdr {
-            &[DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_B8G8R8A8_UNORM]
-        } else {
-            &[DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT]
-        };
-        // SAFETY: `output` and `gpu.device` are live, and `formats` outlives the DuplicateOutput1
-        // call that reads it.
-        let (duplicate, api) = unsafe {
-            // DuplicateOutput1 needs a per-monitor DPI-aware process; fall back
-            // to the legacy call rather than fail where it is refused.
-            let unsupported = missing(build, Feature::DuplicateOutput1);
-            match unsupported
-                .as_ref()
-                .map(|reason| {
-                    Err(windows::core::Error::new(
-                        windows::Win32::Foundation::E_NOTIMPL,
-                        reason.as_str(),
-                    ))
-                })
-                .unwrap_or_else(|| {
-                    output
-                        .cast::<IDXGIOutput5>()
-                        .and_then(|output| output.DuplicateOutput1(&gpu.device, 0, formats))
-                }) {
-                Ok(duplicate) => (duplicate, "DuplicateOutput1"),
-                Err(error) => {
-                    tracing::warn!(%error, "DuplicateOutput1 unavailable; trying legacy Desktop Duplication, which may lose HDR or fail after display changes. Update Windows and the graphics driver or select WGC");
-                    (
-                        output.DuplicateOutput(&gpu.device).with_context(|| {
-                            format!("opening legacy Desktop Duplication after DuplicateOutput1 failed: {error}")
-                        })?,
-                        "DuplicateOutput",
-                    )
-                }
-            }
-        };
-        // SAFETY: `duplicate` is a live output duplication, and GetDesc returns an owned struct.
-        let desc = unsafe { duplicate.GetDesc() };
-        tracing::info!(
-            api,
-            output = %gpu.display.display_name,
-            width = desc.ModeDesc.Width,
-            height = desc.ModeDesc.Height,
-            x = gpu.display.x,
-            y = gpu.display.y,
-            rotation = desc.Rotation.0,
-            format = desc.ModeDesc.Format.0,
-            pixel = ?Pixel::try_from_dxgi(desc.ModeDesc.Format),
-            in_hdr = gpu.display_in_hdr(),
-            sdr_white_nits = gpu.sdr_white_nits(),
-            "Desktop Duplication opened"
-        );
-        duplication_upright(desc.Rotation, &gpu.display.display_name)?;
-        Ok(Self {
-            gpu,
-            duplicate,
-            staging: None,
-            owned: GpuPool::default(),
-            last_desktop: None,
-            cursor: Default::default(),
-            frame_owned: false,
-        })
-    }
-    pub fn next(&mut self, timeout: Duration) -> Result<Option<Image>> {
-        let Some((_, resource)) = self.acquire_frame(timeout.as_millis().min(100) as u32)? else {
-            return Ok(None);
-        };
-        // CPU and GPU callers may alternate on the same duplication object.
-        // A CPU acquisition cannot leave an older GPU desktop cache reusable.
-        self.last_desktop = None;
-        let result = (|| -> Result<Image> {
-            let texture: ID3D11Texture2D = resource.context("empty captured texture")?.cast()?;
-            read_texture(&self.gpu, &texture, &mut self.staging)
-        })();
-        if result.is_err() {
-            let _ = self.release_frame();
-        }
-        result.map(Some)
-    }
-    pub fn next_gpu(&mut self, origin: u64) -> Result<Option<std::sync::Arc<GpuImage>>> {
-        // Keep acquisition nonblocking. A waiting acquisition holds the device's
-        // lock, so another thread's D3D11 call took up to 42 ms meanwhile, and
-        // beside a game it delivered fewer pictures, later, than polling
-        // (`examples/ddx_arrival_probe.rs`).
-        if !self.owned.has_capacity()
-            && self.last_desktop.as_ref().is_some_and(|image| {
-                std::sync::Arc::strong_count(image) == 1
-                    && std::sync::Arc::strong_count(&image.texture) == 2
-            })
-        {
-            // The cache can be the last reader of a snapshot. Let that slot
-            // return before deciding whether a new desktop can be acquired.
-            self.last_desktop = None;
-        }
-        let available = self.owned.has_capacity();
-        if !available {
-            // Acquisition normally reports loss. Backpressure must not hide a
-            // removed device/output while consumers still own its snapshots.
-            if let Some(loss) = crate::device_loss::DeviceLost::d3d11(&self.gpu.device) {
-                return Err(loss.into());
-            }
-            let _ = self.gpu.color_description()?;
-        }
-        let Some((info, resource)) = acquire_snapshot_frame(available, || self.acquire_frame(0))?
-        else {
-            return Ok(None);
-        };
-        let shown = self.cursor.shown();
-        let desktop_updated = info.LastPresentTime != 0;
-        // The picture is a fresh copy, and so the new cache, unless a
-        // pointer-only update re-publishes the cached desktop.
-        let fresh = desktop_updated || self.last_desktop.is_none();
-        let result: Result<_> = (|| {
-            self.cursor.update(&self.gpu, &self.duplicate, &info)?;
-            // A pointer-only update while the pointer stays hidden (mouse-look
-            // in a game) changes nothing on screen. Publishing the picture
-            // again spent the pacing slot of the game's next frame. The frame
-            // is released at the next acquisition.
-            if info.LastPresentTime == 0
-                && self.last_desktop.is_some()
-                && !shown
-                && !self.cursor.shown()
-            {
-                return Ok(None);
-            }
-            let texture: ID3D11Texture2D = resource.context("empty captured texture")?.cast()?;
-            let mut image = self.owned.desktop_snapshot(
-                &self.gpu,
-                &texture,
-                &mut self.last_desktop,
-                desktop_updated,
-            )?;
-            if let Some(image) = image.as_mut() {
-                image.captured =
-                    qpc_timestamps(info.LastPresentTime.max(info.LastMouseUpdateTime)).0;
-                image.acquired = Instant::now();
-                image.cursor = self.cursor.snapshot();
-                image.published = Instant::now();
-                image.origin = origin;
-            }
-            Ok(image)
-        })();
-        if result.is_err() {
-            let _ = self.release_frame();
-        }
-        // An updated desktop is wrapped once and shared: the publication and
-        // the cache a later pointer-only update re-publishes are the same
-        // picture, not a clone of it made each frame.
-        Ok(result?.map(|image| {
-            let image = std::sync::Arc::new(image);
-            if fresh {
-                self.last_desktop = Some(image.clone());
-            }
-            image
-        }))
-    }
-    fn release_frame(&mut self) -> Result<()> {
-        if std::mem::replace(&mut self.frame_owned, false) {
-            // SAFETY: `frame_owned` was set, so this duplication holds an acquired frame that has
-            // not been released.
-            unsafe {
-                self.duplicate.ReleaseFrame()?;
-            }
-        }
-        Ok(())
-    }
-    fn acquire_frame(
-        &mut self,
-        timeout_ms: u32,
-    ) -> Result<Option<(DXGI_OUTDUPL_FRAME_INFO, Option<IDXGIResource>)>> {
-        // Release immediately before acquisition, as recommended by DXGI.
-        // Between polls, Windows tracks dirty regions instead of repeatedly
-        // copying desktop updates into a surface we have already snapshotted.
-        self.release_frame()?;
-        let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
-        let mut resource = None;
-        // SAFETY: `duplicate` is live, the previous frame was released above, and both
-        // out-parameters are live locals.
-        match unsafe {
-            self.duplicate
-                .AcquireNextFrame(timeout_ms, &mut info, &mut resource)
-        } {
-            Ok(()) => {
-                self.frame_owned = true;
-                Ok(Some((info, resource)))
-            }
-            Err(error) if error.code() == DXGI_ERROR_WAIT_TIMEOUT => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
-}
-impl Drop for Duplication {
-    fn drop(&mut self) {
-        let _ = self.release_frame();
-    }
 }
 
 /// An immutable, owned GPU snapshot. The capture pool never overwrites a

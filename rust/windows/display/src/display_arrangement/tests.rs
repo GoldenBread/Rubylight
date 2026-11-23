@@ -1828,16 +1828,10 @@ fn a_streams_display_windows_dropped_is_switched_back_on_before_the_layout() {
 #[test]
 fn reapplying_follows_a_display_windows_listed_under_another_name() {
     let monitor = |device_id: &str, display_name: &str| crate::display::Monitor {
-        device_id: device_id.into(),
-        monitor_device_path: String::new(),
         display_name: display_name.into(),
         friendly_name: String::new(),
         hdr_supported: false,
-        hdr_enabled: false,
-        primary: false,
-        adapter: Default::default(),
-        target: 0,
-        source: 0,
+        ..crate::display::monitor(device_id, 0, false)
     };
     let monitors = [
         monitor("SAM7454", r"\\.\DISPLAY1"),

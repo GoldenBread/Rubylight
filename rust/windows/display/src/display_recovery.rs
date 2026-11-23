@@ -709,12 +709,17 @@ fn recover_inline(path: &Path) -> Result<()> {
             );
         }
         if let Some((previous, applied)) = entry.hdr {
-            let result = if restore_hdr_needed(m.hdr_enabled, applied) {
+            let result = if crate::display::hdr_matches_applied(
+                m.hdr_enabled,
+                m.hdr_requested,
+                applied,
+            ) {
                 tracing::info!(
                     output = %m.display_name,
                     previous,
                     applied,
                     current = m.hdr_enabled,
+                    requested = m.hdr_requested,
                     "restoring HDR after a stream"
                 );
                 crate::display::set_hdr(m, previous)
@@ -724,6 +729,7 @@ fn recover_inline(path: &Path) -> Result<()> {
                     previous,
                     applied,
                     current = m.hdr_enabled,
+                    requested = m.hdr_requested,
                     "leaving HDR as it is; the display no longer has the value the stream applied"
                 );
                 Ok(())
@@ -931,12 +937,6 @@ pub fn wait_and_recover(pid: u32, directory: &Path) -> Result<()> {
         }
     }
     recover(&path)
-}
-/// Whether the display still has the HDR value the stream applied, so the
-/// recorded pre-stream value is the one to put back. A display changed since
-/// (a game's own HDR switch, or the user's) already holds the useful state.
-fn restore_hdr_needed(current: bool, applied: bool) -> bool {
-    current == applied
 }
 /// Whether the mode a stream left on a display is put back. `requested`: the
 /// journal recorded the mode requested before the apply, not the one that

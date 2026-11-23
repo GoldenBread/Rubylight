@@ -438,7 +438,7 @@ impl Encoder {
                 }
             }
         };
-        if config.hdr {
+        if config.hdr || image.pixel == crate::capture::Pixel::RgbaF16 {
             created.set_luminance(image.gpu.sdr_white_nits(), 1.0);
         }
         Ok(created)

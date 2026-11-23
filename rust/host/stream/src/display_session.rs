@@ -23,6 +23,7 @@ use std::{
     time::Duration,
 };
 mod baseline;
+mod mode_report;
 mod remembered;
 mod scale;
 #[cfg(any(test, feature = "test-support"))]
@@ -30,6 +31,7 @@ pub mod test_support;
 mod turn;
 mod window_target;
 use baseline::*;
+use mode_report::{ModeReport, PrimaryStop};
 use scale::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_support::DISPLAYS_SETTLING;
@@ -604,209 +606,6 @@ fn applied_mode(output: &str) -> Result<AppliedMode> {
     ))
 }
 
-/// What the display shows compared with the stream's request, on the card of
-/// the launch that uses the display now. A retained game display moves to
-/// the next launch, which sees the last finding at once.
-#[derive(Clone)]
-struct ModeReport(Arc<Mutex<ModeReportState>>);
-struct ModeReportState {
-    warnings: Arc<Warnings>,
-    requested: RequestedMode,
-    stream_rate: u32,
-    last: Option<std::result::Result<AppliedMode, String>>,
-    /// Why the display could not follow the stream's last turn, until a turn follows.
-    unfollowed: Option<String>,
-    /// A shared virtual display: another stream on it may have raised its
-    /// refresh above the requested one, which serves this stream too.
-    shared: bool,
-    /// The exclusive layout stopped switching a display off because it kept coming back.
-    kept_on: bool,
-    /// Why what Windows recalled when this stream's display arrived could not be put back.
-    /// Nothing repairs it later: a repair after a departure only compares with what is on.
-    unrepaired_at_start: Option<String>,
-    /// Why what Windows recalled when a display left could not be put back, until a repair
-    /// after a later departure goes through.
-    unrepaired: Option<String>,
-    /// Why the stream's display could not be made the primary one again, until it is.
-    primary_refused: Option<String>,
-    /// Why this stream leaves the primary where Windows puts it: Windows refused the layout,
-    /// or kept taking the primary back.
-    primary_stopped: Option<PrimaryStop>,
-    /// The stream already fell back from HDR to SDR and replaced `"display_hdr"` with its own
-    /// fallback explanation, so later mode reports must not overwrite or clear it.
-    hdr_fell_back: bool,
-}
-/// Why the primary watch stopped for the stream, for the card that says so.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PrimaryStop {
-    /// Windows refused the layout, or accepted it without moving the primary.
-    Refused,
-    /// Windows kept taking the primary back after restores.
-    KeptTaking,
-}
-impl ModeReportState {
-    fn report(&self) {
-        match &self.last {
-            Some(Ok(actual)) => {
-                self.warnings.clear("display_verify");
-                let mut requested = self.requested;
-                if self.shared
-                    && requested
-                        .1
-                        .is_some_and(|rate| actual.2.saturating_add(500) >= rate)
-                {
-                    requested.1 = None;
-                }
-                if self.hdr_fell_back {
-                    butterpollo_media_policy::display_policy::report_mode_keeping_hdr(
-                        &self.warnings,
-                        requested,
-                        *actual,
-                        self.stream_rate,
-                    );
-                } else {
-                    butterpollo_media_policy::display_policy::report_mode(
-                        &self.warnings,
-                        requested,
-                        *actual,
-                        self.stream_rate,
-                    );
-                }
-            }
-            Some(Err(error)) => self.warnings.set("display_verify", format!("Could not verify the applied display mode ({error}); refresh and HDR may differ from the request. Check Windows display settings and reconnect.")),
-            None => {}
-        }
-        match &self.unfollowed {
-            Some(error) => self.warnings.set("display_follow", format!("The display could not turn with the stream ({error}); the picture is scaled to fit instead. Check Windows display settings or turn the device back.")),
-            None => self.warnings.clear("display_follow"),
-        }
-        if self.kept_on {
-            self.warnings.set("display_kept_on", "Windows kept switching a monitor back on during the stream, so it stays on until the stream ends. A monitor that loses its signal in standby or scans its inputs (Auto Scan) reconnects like this; turn that off on the monitor, or use the Extended layout.");
-        } else {
-            self.warnings.clear("display_kept_on");
-        }
-        match self.unrepaired.as_ref().or(self.unrepaired_at_start.as_ref()) {
-            Some(error) => self.warnings.set("display_repair", format!("Windows recalled a saved display layout over your displays and it could not be put back ({error}), so a monitor can stay off or at another refresh rate. Check Windows display settings and reconnect.")),
-            None => self.warnings.clear("display_repair"),
-        }
-        match &self.primary_refused {
-            Some(error) => self.warnings.set("display_primary", format!("Windows kept another display as the main screen and the virtual display could not be made the main one again ({error}), so games open on your monitor instead of the stream. Set the virtual display layout to Exclusive for this device, or make the virtual display the main screen in Windows display settings and reconnect.")),
-            None => self.warnings.clear("display_primary"),
-        }
-        if let Some(stop) = self.primary_stopped {
-            let what = match stop {
-                PrimaryStop::Refused => {
-                    "Windows refused to make the virtual display the main screen again"
-                }
-                PrimaryStop::KeptTaking => "Windows kept taking the main screen back",
-            };
-            self.warnings.set("display_primary_kept", format!("{what}, so Rubylight leaves it where Windows puts it for the rest of the stream. Games open on your monitor instead of the stream; choose Exclusive for this device, or keep the virtual display as the main screen in Windows display settings."));
-        } else {
-            self.warnings.clear("display_primary_kept");
-        }
-    }
-}
-impl ModeReport {
-    fn new(warnings: Arc<Warnings>, requested: RequestedMode, stream_rate: u32) -> Self {
-        Self(Arc::new(Mutex::new(ModeReportState {
-            warnings,
-            requested,
-            stream_rate,
-            last: None,
-            unfollowed: None,
-            shared: false,
-            kept_on: false,
-            unrepaired_at_start: None,
-            unrepaired: None,
-            primary_refused: None,
-            primary_stopped: None,
-            hdr_fell_back: false,
-        })))
-    }
-    /// Record that the stream fell back from HDR to SDR so later mode reports do
-    /// not overwrite or clear the fallback explanation on `"display_hdr"`.
-    fn hdr_fell_back(&self) {
-        self.0.lock().unwrap().hdr_fell_back = true;
-    }
-    /// What Windows recalled when this stream's display arrived could not be put back.
-    fn unrepaired_at_start(&self, failure: Option<&str>) {
-        let mut state = self.0.lock().unwrap();
-        state.unrepaired_at_start = failure.map(str::to_owned);
-        state.report();
-    }
-    /// How making the stream's display the primary one again went.
-    fn primary_refused(&self, error: &str) {
-        let mut state = self.0.lock().unwrap();
-        state.primary_refused = Some(error.to_owned());
-        state.report();
-    }
-    /// The stream's display is the primary one.
-    fn primary_restored(&self) {
-        let mut state = self.0.lock().unwrap();
-        if state.primary_refused.take().is_some() {
-            state.report();
-        }
-    }
-    /// The start's display_layout warning was about the primary only, which the stream has
-    /// back: nothing there needs a reconnect.
-    fn start_layout_restored(&self) {
-        self.0.lock().unwrap().warnings.clear("display_layout");
-    }
-    /// The primary watch stopped: this stream leaves the primary where Windows puts it, and
-    /// the card says whether Windows refused the layout or kept taking the primary back.
-    fn primary_gave_up(&self, why: PrimaryStop) {
-        let mut state = self.0.lock().unwrap();
-        state.primary_stopped = Some(why);
-        state.report();
-    }
-    /// How putting back what Windows recalled when a display left went.
-    fn repaired(&self, failure: Option<String>) {
-        let mut state = self.0.lock().unwrap();
-        state.unrepaired = failure;
-        state.report();
-    }
-    /// The layout leaves a display that keeps coming back on for the rest of the stream.
-    fn keep_on(&self) {
-        let mut state = self.0.lock().unwrap();
-        state.kept_on = true;
-        state.report();
-    }
-    /// The display is a shared virtual display: only a refresh below the
-    /// requested one is reported.
-    fn shared(self) -> Self {
-        self.0.lock().unwrap().shared = true;
-        self
-    }
-    fn publish(&self, actual: Result<AppliedMode>) {
-        let mut state = self.0.lock().unwrap();
-        state.last = Some(actual.map_err(|error| format!("{error:#}")));
-        state.report();
-    }
-    fn attach(&self, warnings: Arc<Warnings>) {
-        let mut state = self.0.lock().unwrap();
-        state.warnings = warnings;
-        state.hdr_fell_back = false;
-        state.report();
-    }
-    /// The stream asks for another rate than the launch the display was
-    /// prepared for.
-    fn retime(&self, requested: RequestedMode, stream_rate: u32) {
-        let mut state = self.0.lock().unwrap();
-        state.requested = requested;
-        state.stream_rate = stream_rate;
-    }
-    /// Whether the display followed the stream's last turn.
-    fn followed(&self, result: &Result<()>) {
-        let mut state = self.0.lock().unwrap();
-        state.unfollowed = result.as_ref().err().map(|error| format!("{error:#}"));
-        state.report();
-    }
-    /// The display now runs at a resolution the user chose, which the stream keeps.
-    fn adopt(&self, resolution: (u32, u32)) {
-        self.0.lock().unwrap().requested.0 = Some(resolution);
-    }
-}
-
 /// Whether a monitor's return had displays put back since this stream last looked (`seen`).
 fn wake_layout_passed(seen: &mut u64, now: u64) -> bool {
     std::mem::replace(seen, now) != now
@@ -1261,6 +1060,11 @@ impl Ready {
     /// explanation intact across subsequent mode reports.
     pub fn note_hdr_fallback(&self) {
         self.mode_report.hdr_fell_back();
+    }
+    /// Clears the HDR-to-SDR fallback latch and `"display_hdr"` warning once
+    /// capture reports display HDR active again and the stream returns to HDR.
+    pub fn clear_hdr_fallback(&self) {
+        self.mode_report.hdr_restored();
     }
     /// What the console changed while the stream was paused, for its resume at `stream`: the
     /// frame limiter's policy, the device's HDR profile and whether the layout holds while

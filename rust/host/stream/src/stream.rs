@@ -15,6 +15,7 @@ mod device_recovery;
 mod encoder_tests;
 pub(crate) mod frame_warp;
 mod game_audio;
+mod hdr;
 mod instance_audio;
 mod keyboard_layout;
 mod qos;
@@ -65,53 +66,9 @@ use butterpollo_media_policy::{
 };
 use butterpollo_session::session::Role;
 use butterpollo_win_graphics::device_loss::DeviceLost;
-/// A WebRTC HDR stream carries the display's HDR or nothing: SDR content labelled HDR, or HDR
-/// tone-mapped to SDR, is not what the client asked for, so the session ends with an error.
-/// `display_in_hdr` is the capture's reading of the output's colour space (HDR10 or not); the
-/// frames' pixel format cannot stand in for it, since FP16 frames come from SDR outputs too.
-/// GameStream keeps its own behaviour for this case. `running` tells a display that left HDR
-/// from one that never was in it.
-pub(crate) fn require_hdr_source(
-    s: &Session,
-    display_in_hdr: impl FnOnce() -> Option<bool>,
-    running: bool,
-) -> Result<()> {
-    if s.launch.transport != butterpollo_session::session::Transport::WebRtc || !s.config.hdr {
-        return Ok(());
-    }
-    match display_in_hdr() {
-        Some(true) => Ok(()),
-        Some(false) if running => bail!(
-            "the display left HDR during the stream; the HDR stream ended instead of showing SDR as HDR. Keep Windows HDR on for this display, or start an SDR stream"
-        ),
-        Some(false) => bail!(
-            "HDR was requested but the display is not in HDR; turn on HDR for this display in Windows settings (or set the HDR policy to auto in the host's display settings), or start an SDR stream"
-        ),
-        // A reading that fails mid-stream is the capture's to report (it ends on a colour space
-        // error itself); only a display seen leaving HDR ends the stream here.
-        None if running => Ok(()),
-        None => bail!(
-            "HDR was requested but Windows did not report the display's colour space, so the stream cannot tell HDR from SDR; start an SDR stream"
-        ),
-    }
-}
-
-/// Whether a non-WebRTC stream configured for HDR must fall back to 10-bit SDR
-/// because capture shows the display stayed in SDR (`Some(false)`) with an SDR
-/// surface and RTX HDR is not generating HDR from it.
-pub(crate) fn should_fallback_hdr_to_sdr(
-    transport: butterpollo_session::session::Transport,
-    stream_hdr: bool,
-    source_is_bgra8: bool,
-    display_in_hdr: Option<bool>,
-    rtx_hdr_active: bool,
-) -> bool {
-    transport != butterpollo_session::session::Transport::WebRtc
-        && stream_hdr
-        && source_is_bgra8
-        && display_in_hdr == Some(false)
-        && !rtx_hdr_active
-}
+pub(crate) use hdr::require_hdr_source;
+#[cfg(test)]
+use hdr::should_fallback_hdr_to_sdr;
 
 /// Backoff only after reopening fails; resource release is acknowledged.
 const RECOVERY_RETRY: Duration = Duration::from_millis(150);
@@ -1264,55 +1221,6 @@ impl Media {
         let capture_wake = latest.subscribe(Arc::downgrade(s))?;
         capture_wake.wake_on_recovery(s);
         Ok((latest, capture_wake))
-    }
-    fn set_display_hdr_metadata(
-        &self,
-        s: &Session,
-        display: butterpollo_media_policy::hdr::Metadata,
-    ) -> butterpollo_media_policy::hdr::Metadata {
-        let hdr = s.hdr_active();
-        let previous = s.hdr_metadata.read().unwrap().map(|m| m.wire(hdr));
-        let metadata = s.set_display_hdr_metadata(display);
-        if previous != Some(metadata.wire(hdr)) {
-            let _ = self.control_wake.send(&[1]);
-        }
-        metadata
-    }
-    /// Drops a GameStream session out of HDR to 10-bit SDR when Windows left the
-    /// captured display in SDR with a BGRA8 surface and RTX HDR is not running,
-    /// waking control so clients receive `0x010e` (`enabled=false`).
-    fn fallback_hdr_if_sdr(
-        &self,
-        s: &Session,
-        stream: &mut butterpollo_media_policy::rtsp::Negotiated,
-        image: &GpuImage,
-        rtx_hdr_active: bool,
-    ) -> bool {
-        let display_in_hdr = image.gpu.display_in_hdr();
-        if !should_fallback_hdr_to_sdr(
-            s.launch.transport,
-            stream.hdr,
-            image.pixel == butterpollo_win_graphics::capture::Pixel::Bgra8,
-            display_in_hdr,
-            rtx_hdr_active,
-        ) {
-            return false;
-        }
-        butterpollo_media_policy::stream_policy::stream_sdr_10bit(stream);
-        if s.disable_hdr() {
-            let _ = self.control_wake.send(&[1]);
-        }
-        tracing::warn!(
-            client = %s.launch.client.name,
-            output = %image.gpu.display.display_name,
-            source_pixel = ?image.pixel,
-            "display HDR did not stay active; falling back to 10-bit SDR for this stream"
-        );
-        s.launch.warnings.set(
-            "display_hdr",
-            "Requested display HDR state was not applied; capture source HDR is off, so this stream fell back to SDR. Check Windows HDR and the display policy, or reconnect with HDR disabled.",
-        );
-        true
     }
     fn configure_encoder(
         &self,

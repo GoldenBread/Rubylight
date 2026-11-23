@@ -84,6 +84,7 @@ impl SessionThread<'_> {
         let mut live_at = due;
         let mut rebuild_encoder = false;
         let mut applied_luminance: Option<(f32, f32)> = None;
+        let mut hdr_fallback = butterpollo_media_policy::hdr::HdrFallback::default();
         // Where this thread is, should it stop making progress.
         let progress = crate::stall_watch::register(
             "session",
@@ -1467,15 +1468,11 @@ impl SessionThread<'_> {
                     runtime_revision = runtime_revision.wrapping_add(1);
                 }
                 let (mut image, enhancement_changed) = enhancer.apply(&s, &runtime_config, runtime_revision, raw_image.clone());
-                if m.fallback_hdr_if_sdr(
-                    &s,
-                    &mut stream,
-                    &image,
-                    enhancer.hdr_peak(&runtime_config).is_some(),
-                ) {
-                    prepared.note_hdr_fallback();
+                if m.sync_hdr_state(&s, &mut stream, &raw_image, &prepared, enhancer.hdr_peak(&runtime_config).is_some(), &mut hdr_fallback, Instant::now()) {
                     rebuild_encoder = true;
                     pacer.reset_source_phase();
+                    runtime_revision = runtime_revision.wrapping_add(1);
+                    applied_luminance = None;
                 }
                 if enhancement_changed
                     || (!rebuild_encoder && encoder.as_ref().is_none_or(|encoder| !encoder.accepts_gpu_device(&image)))
@@ -1595,11 +1592,9 @@ impl SessionThread<'_> {
                 let active = encoder
                     .as_mut()
                     .expect("a missing encoder is rebuilt above");
-                // RTX HDR's picture uses its own SDR white and scale; otherwise
-                // match Windows' "SDR content brightness" (DISPLAYCONFIG_SDR_WHITE_LEVEL).
-                let wanted_luminance = enhancer
-                    .luminance()
-                    .or_else(|| stream.hdr.then(|| (image.gpu.sdr_white_nits(), 1.0)));
+                // RTX HDR uses its own SDR white and scale; otherwise follow Windows' SDR brightness for HDR and FP16.
+                let wanted_luminance = enhancer.luminance()
+                    .or_else(|| (stream.hdr || image.pixel == butterpollo_win_graphics::capture::Pixel::RgbaF16).then(|| (image.gpu.sdr_white_nits(), 1.0)));
                 if let Some((white, scale)) = wanted_luminance
                     && (rebuilt || applied_luminance != Some((white, scale)))
                 {

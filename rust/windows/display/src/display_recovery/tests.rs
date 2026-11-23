@@ -1,11 +1,17 @@
 use super::*;
+use crate::display::hdr_matches_applied as restore_hdr_needed;
 
 #[test]
 fn hdr_is_restored_only_while_the_display_has_the_applied_value() {
-    assert!(restore_hdr_needed(true, true));
-    assert!(restore_hdr_needed(false, false));
-    assert!(!restore_hdr_needed(false, true));
-    assert!(!restore_hdr_needed(true, false));
+    assert!(restore_hdr_needed(true, true, true));
+    assert!(restore_hdr_needed(false, false, false));
+    assert!(!restore_hdr_needed(false, false, true));
+    assert!(!restore_hdr_needed(true, true, false));
+    // Windows 11 exclusive-fullscreen SDR app drops active mode while leaving
+    // the HDR user switch armed: applied=true still needs restoring to off,
+    // while applied=false must respect that the user re-enabled HDR.
+    assert!(restore_hdr_needed(false, true, true));
+    assert!(!restore_hdr_needed(false, true, false));
 }
 
 #[test]

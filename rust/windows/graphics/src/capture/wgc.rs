@@ -391,6 +391,7 @@ impl Wgc {
                 height = size.Height,
                 format = format.0,
                 pixel = ?Pixel::try_from_dxgi_raw(format.0),
+                color_space = capture.gpu.color_space().map(|space| space.0),
                 in_hdr = capture.gpu.display_in_hdr(),
                 sdr_white_nits = capture.gpu.sdr_white_nits(),
                 "Windows Graphics Capture opened"

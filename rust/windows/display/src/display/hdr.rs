@@ -49,6 +49,19 @@ pub(super) fn hdr_action(supported: bool, current: bool, requested: Option<bool>
         _ => HdrAction::Keep,
     }
 }
+/// Whether a display still holds the HDR state the stream applied.
+/// On Windows 11, an exclusive-fullscreen SDR app can temporarily drop the
+/// active colour mode to SDR (`hdr_enabled == false`) while Windows' HDR
+/// switch (`hdr_requested == true`) stays armed. Restoring `applied == true`
+/// must still clear that switch so HDR does not snap back on when the app
+/// exits; a user who turned HDR off clears both flags.
+pub(crate) fn hdr_matches_applied(hdr_enabled: bool, hdr_requested: bool, applied: bool) -> bool {
+    if applied {
+        hdr_enabled || hdr_requested
+    } else {
+        !hdr_enabled && !hdr_requested
+    }
+}
 /// Undo a stream's HDR change on the display as it is connected now, if it
 /// still has the value the stream applied. Its adapter and target ids can
 /// change while streaming (a driver reset, a TV that reconnects), so the
@@ -60,29 +73,31 @@ pub(super) fn restore_hdr(
     now: &[Monitor],
     set: impl FnOnce(&Monitor, bool) -> Result<()>,
 ) -> Result<()> {
-    match now
-        .iter()
-        .find(|m| m.device_id == recorded.device_id && m.hdr_enabled == applied)
-    {
+    match now.iter().find(|m| {
+        m.device_id == recorded.device_id
+            && hdr_matches_applied(m.hdr_enabled, m.hdr_requested, applied)
+    }) {
         Some(monitor) => {
             tracing::info!(
                 output = %monitor.display_name,
                 previous,
                 applied,
+                current = monitor.hdr_enabled,
+                requested = monitor.hdr_requested,
                 "restoring HDR after a stream"
             );
             set(monitor, previous)
         }
         None => {
-            let current = now
-                .iter()
-                .find(|m| m.device_id == recorded.device_id)
-                .map(|m| m.hdr_enabled);
+            let found = now.iter().find(|m| m.device_id == recorded.device_id);
+            let current = found.map(|m| m.hdr_enabled);
+            let requested = found.map(|m| m.hdr_requested);
             tracing::info!(
                 output = %recorded.display_name,
                 previous,
                 applied,
                 current = ?current,
+                requested = ?requested,
                 "leaving HDR as it is; the display is gone or no longer has the value the stream applied"
             );
             Ok(())
@@ -158,5 +173,33 @@ mod tests {
         // Monitor without HDR active or missing named output must return None, not primary.
         assert!(hdr_white_target(&monitors, "tv").is_none());
         assert!(hdr_white_target(&monitors, "missing").is_none());
+    }
+
+    #[test]
+    fn restore_hdr_clears_armed_windows_hdr_switch_while_fullscreen_app_holds_sdr() {
+        let recorded = monitor("tv", 1, false);
+        // Exclusive-fullscreen SDR app dropped active_mode (hdr_enabled=false)
+        // while Windows' HDR toggle remained armed (hdr_requested=true).
+        let mut fse_suppressed = monitor("tv", 2, false);
+        fse_suppressed.hdr_requested = true;
+        let mut set = None;
+        restore_hdr(
+            &recorded,
+            false,
+            true,
+            &[fse_suppressed.clone()],
+            |m, enabled| {
+                set = Some((m.adapter.LowPart, enabled));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(set, Some((2, false)));
+
+        // If the stream turned HDR off (applied=false) and the user turned HDR
+        // back on (hdr_requested=true) while an FSE app suppressed active_mode,
+        // teardown respects the user's change instead of turning HDR back on.
+        let untouched = |_: &Monitor, _| -> Result<()> { panic!("must not change HDR") };
+        restore_hdr(&recorded, true, false, &[fse_suppressed], untouched).unwrap();
     }
 }

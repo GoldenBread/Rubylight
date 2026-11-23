@@ -17,12 +17,14 @@ pub(crate) mod end_trace;
 mod hdr;
 mod hotplug;
 mod modes;
+mod monitor;
 mod recovery;
 pub mod rubylight_vdd;
 pub mod self_test;
 mod topology;
 mod virtual_display;
 
+pub(crate) use hdr::hdr_matches_applied;
 pub use hdr::{sdr_white_nits, set_hdr};
 pub use modes::{
     dpi_scale, highest_refresh, largest_scale, mode, output_scale, set_dpi_scale, set_mode,
@@ -67,7 +69,7 @@ fn header(
 }
 
 #[cfg(test)]
-fn monitor(id: &str, adapter: u32, hdr: bool) -> Monitor {
+pub(crate) fn monitor(id: &str, adapter: u32, hdr: bool) -> Monitor {
     Monitor {
         device_id: id.into(),
         monitor_device_path: String::new(),
@@ -75,6 +77,7 @@ fn monitor(id: &str, adapter: u32, hdr: bool) -> Monitor {
         friendly_name: id.into(),
         hdr_supported: true,
         hdr_enabled: hdr,
+        hdr_requested: hdr,
         primary: false,
         adapter: LUID {
             LowPart: adapter,

@@ -1,4 +1,98 @@
-//! Moonlight's HDR mastering metadata and the matching encoder values.
+//! Moonlight's HDR mastering metadata, matching encoder values, and HDR fallback policy.
+use std::time::{Duration, Instant};
+
+/// How long a running HDR stream must continuously observe an SDR display and
+/// BGRA8 capture surface before dropping to ten-bit SDR. Absorbs transient SDR
+/// frames during exclusive-fullscreen and display mode transitions without
+/// flapping encoder configuration or client HDR mode (`0x010e`).
+pub const HDR_FALLBACK_GRACE: Duration = Duration::from_secs(2);
+
+/// Mid-stream HDR/SDR transition decided by [`HdrFallback`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HdrTransition {
+    None,
+    /// Display HDR stayed off with an SDR surface past [`HDR_FALLBACK_GRACE`].
+    FallbackToSdr,
+    /// Display HDR returned with a wide/HDR capture surface after fallback.
+    RestoreHdr,
+}
+
+/// Restore a running stream's HDR fields from its originally negotiated config
+/// after an earlier fallback to ten-bit SDR, preserving any mid-stream size,
+/// frame-rate or bitrate reconfiguration.
+pub fn restore_hdr(stream: &mut crate::rtsp::Negotiated, negotiated: &crate::rtsp::Negotiated) {
+    if negotiated.hdr {
+        stream.hdr = true;
+        stream.sdr_10bit = negotiated.sdr_10bit;
+        stream.hdr_format = negotiated.hdr_format;
+    }
+}
+
+/// Tracks mid-stream HDR-to-SDR fallback debounce and automatic HDR recovery
+/// for non-WebRTC streams that negotiated HDR.
+#[derive(Default, Debug)]
+pub struct HdrFallback {
+    sdr_since: Option<Instant>,
+}
+
+impl HdrFallback {
+    /// Whether a stream must fall back to ten-bit SDR immediately at startup
+    /// (first frame before encoder creation) because capture shows the display
+    /// stayed in SDR with a BGRA8 surface and RTX HDR is not generating HDR.
+    pub fn decide_startup(
+        webrtc: bool,
+        stream_hdr: bool,
+        source_is_bgra8: bool,
+        display_in_hdr: Option<bool>,
+        rtx_hdr_active: bool,
+    ) -> bool {
+        !webrtc && stream_hdr && source_is_bgra8 && display_in_hdr == Some(false) && !rtx_hdr_active
+    }
+
+    /// Evaluate the current captured frame during an active session.
+    ///
+    /// - While encoding HDR, requires continuous SDR frames (`Bgra8` with
+    ///   `display_in_hdr == Some(false)` and no active RTX HDR) for
+    ///   [`HDR_FALLBACK_GRACE`] before falling back to ten-bit SDR.
+    /// - While fallen back to ten-bit SDR on an originally negotiated HDR
+    ///   stream, returns to HDR immediately once capture delivers a non-BGRA8
+    ///   surface and Windows reports the output back in HDR (`Some(true)`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn observe(
+        &mut self,
+        webrtc: bool,
+        negotiated_hdr: bool,
+        stream_hdr: bool,
+        source_is_bgra8: bool,
+        display_in_hdr: Option<bool>,
+        rtx_hdr_active: bool,
+        now: Instant,
+    ) -> HdrTransition {
+        if webrtc || !negotiated_hdr {
+            self.sdr_since = None;
+            return HdrTransition::None;
+        }
+        if stream_hdr {
+            if source_is_bgra8 && display_in_hdr == Some(false) && !rtx_hdr_active {
+                let since = *self.sdr_since.get_or_insert(now);
+                if now.saturating_duration_since(since) >= HDR_FALLBACK_GRACE {
+                    self.sdr_since = None;
+                    return HdrTransition::FallbackToSdr;
+                }
+            } else {
+                self.sdr_since = None;
+            }
+            HdrTransition::None
+        } else {
+            self.sdr_since = None;
+            if !source_is_bgra8 && display_in_hdr == Some(true) {
+                HdrTransition::RestoreHdr
+            } else {
+                HdrTransition::None
+            }
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Metadata {
     pub primaries: [[u16; 2]; 3],
@@ -163,5 +257,166 @@ mod tests {
             .map(|v| u16::from_le_bytes(*v))
             .collect();
         assert_eq!(&fields[8..], [1000, 1000, 0, 0, 0]);
+    }
+
+    #[test]
+    fn hdr_fallback_absorbs_transient_sdr_transitions_and_recovers_when_hdr_returns() {
+        let start = Instant::now();
+        let mut tracker = HdrFallback::default();
+
+        // Transient BGRA8 + in_hdr=false frames shorter than HDR_FALLBACK_GRACE do not drop HDR.
+        assert_eq!(
+            tracker.observe(false, true, true, true, Some(false), false, start),
+            HdrTransition::None
+        );
+        assert_eq!(
+            tracker.observe(
+                false,
+                true,
+                true,
+                true,
+                Some(false),
+                false,
+                start + HDR_FALLBACK_GRACE - Duration::from_millis(1),
+            ),
+            HdrTransition::None
+        );
+
+        // An FP16 frame or unreadable colour space resets the grace window.
+        assert_eq!(
+            tracker.observe(
+                false,
+                true,
+                true,
+                false,
+                Some(false),
+                false,
+                start + HDR_FALLBACK_GRACE,
+            ),
+            HdrTransition::None
+        );
+        let second_sdr = start + HDR_FALLBACK_GRACE + Duration::from_millis(100);
+        assert_eq!(
+            tracker.observe(false, true, true, true, Some(false), false, second_sdr),
+            HdrTransition::None
+        );
+        assert_eq!(
+            tracker.observe(
+                false,
+                true,
+                true,
+                true,
+                None,
+                false,
+                second_sdr + Duration::from_millis(500),
+            ),
+            HdrTransition::None
+        );
+
+        // Continuous SDR past HDR_FALLBACK_GRACE falls back to 10-bit SDR.
+        let sustained = second_sdr + Duration::from_secs(1);
+        assert_eq!(
+            tracker.observe(false, true, true, true, Some(false), false, sustained),
+            HdrTransition::None
+        );
+        assert_eq!(
+            tracker.observe(
+                false,
+                true,
+                true,
+                true,
+                Some(false),
+                false,
+                sustained + HDR_FALLBACK_GRACE,
+            ),
+            HdrTransition::FallbackToSdr
+        );
+
+        // While fallen back, ACM/WCG FP16 (in_hdr=false) or BGRA8 with in_hdr=true do not restore HDR.
+        let after = sustained + HDR_FALLBACK_GRACE + Duration::from_millis(100);
+        assert_eq!(
+            tracker.observe(false, true, false, false, Some(false), false, after),
+            HdrTransition::None
+        );
+        assert_eq!(
+            tracker.observe(false, true, false, true, Some(true), false, after),
+            HdrTransition::None
+        );
+
+        // Once capture delivers FP16/PQ10 with display HDR active, HDR restores immediately.
+        assert_eq!(
+            tracker.observe(false, true, false, false, Some(true), false, after),
+            HdrTransition::RestoreHdr
+        );
+
+        // Originally SDR (including hdrMode=0 / prefer_sdr_10bit) and WebRTC never transition here.
+        assert_eq!(
+            tracker.observe(false, false, false, false, Some(true), false, after),
+            HdrTransition::None
+        );
+        assert_eq!(
+            tracker.observe(
+                true,
+                true,
+                true,
+                true,
+                Some(false),
+                false,
+                after + HDR_FALLBACK_GRACE * 2,
+            ),
+            HdrTransition::None
+        );
+        // Active RTX HDR on BGRA8 never falls back.
+        assert_eq!(
+            tracker.observe(
+                false,
+                true,
+                true,
+                true,
+                Some(false),
+                true,
+                after + HDR_FALLBACK_GRACE * 2,
+            ),
+            HdrTransition::None
+        );
+    }
+
+    #[test]
+    fn restore_hdr_recovers_negotiated_hdr_fields_without_clobbering_reconfigure() {
+        let negotiated = crate::rtsp::Negotiated {
+            width: 2560,
+            height: 1440,
+            fps: 144,
+            codec: 2,
+            hdr: true,
+            sdr_10bit: false,
+            hdr_format: rubylight_protocol::hdr::DV_101,
+            csc_mode: 2,
+            ..Default::default()
+        };
+        let mut stream = negotiated.clone();
+        crate::stream_policy::stream_sdr_10bit(&mut stream);
+        // Simulate a mid-stream 0x5532 mode reconfigure while fallen back to SDR.
+        stream.width = 1920;
+        stream.height = 1080;
+        stream.fps = 120;
+        assert!(!stream.hdr && stream.sdr_10bit && stream.hdr_format == 0);
+
+        restore_hdr(&mut stream, &negotiated);
+        assert!(stream.hdr);
+        assert!(!stream.sdr_10bit);
+        assert_eq!(stream.hdr_format, rubylight_protocol::hdr::DV_101);
+        assert_eq!(stream.color_matrix(), 2);
+        assert_eq!((stream.width, stream.height, stream.fps), (1920, 1080, 120));
+
+        // A stream that never negotiated HDR stays SDR.
+        let sdr_negotiated = crate::rtsp::Negotiated {
+            hdr: false,
+            sdr_10bit: true,
+            ..Default::default()
+        };
+        let mut sdr_stream = sdr_negotiated.clone();
+        restore_hdr(&mut sdr_stream, &sdr_negotiated);
+        assert!(!sdr_stream.hdr && sdr_stream.sdr_10bit);
     }
 }

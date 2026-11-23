@@ -591,16 +591,10 @@ mod tests {
     }
     fn monitor(id: &str, primary: bool) -> Monitor {
         Monitor {
-            device_id: id.into(),
-            monitor_device_path: String::new(),
             display_name: format!(r"\\.\{id}"),
             friendly_name: format!("{id} panel"),
-            hdr_supported: true,
-            hdr_enabled: true,
             primary,
-            adapter: windows::Win32::Foundation::LUID::default(),
-            target: 0,
-            source: 0,
+            ..crate::display::monitor(id, 0, true)
         }
     }
     /// Profiles named `*-cal.icm` carry an MHC2 calibration.
