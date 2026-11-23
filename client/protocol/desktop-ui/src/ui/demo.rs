@@ -795,8 +795,8 @@ mod tests {
         assert!(
             manifest
                 .lines()
-                .any(|line| line.trim() == "demo-library = []"),
-            "the feature adds no dependency"
+                .any(|line| line.trim() == r#"demo-library = ["nightjar-desktop-config/demo-library"]"#),
+            "the feature adds only desktop-config's demo-library"
         );
         let workflow = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../..")

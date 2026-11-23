@@ -2,6 +2,7 @@ package com.limelight.pin;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Application;
@@ -357,5 +358,34 @@ public class PinStoreTest {
         PinStore opened = new PinStore(app);
         assertFalse(opened.hasPin());
         assertFalse(new File(PinStore.storeDir(app), PinStore.LOCK_FILE_NAME).exists());
+    }
+
+    @Test
+    public void cachedStoreOpenBeforeDirExistsSharesCacheAcrossCreation() {
+        File uncreated = new File(tmp.getRoot(), "uncreated_pin_dir/nested");
+        assertFalse(uncreated.exists());
+        long h1 = NightjarPinJni.storeOpen(uncreated.getAbsolutePath(), true);
+        long h2 = 0;
+        try {
+            assertTrue(h1 > 0);
+            assertFalse("opening an uncreated dir must not create it eagerly", uncreated.exists());
+            assertNull(NightjarPinJni.storeSetPin(h1, RIGHT, 1));
+            assertTrue(uncreated.exists());
+
+            h2 = NightjarPinJni.storeOpen(uncreated.getAbsolutePath(), true);
+            assertTrue(h2 > 0);
+            NightjarPinJni.storeSetMode(h1, "app");
+
+            Json.Obj v1 = Json.parseObject(NightjarPinJni.storeViewJson(h1));
+            Json.Obj v2 = Json.parseObject(NightjarPinJni.storeViewJson(h2));
+            assertTrue(v1.optBoolean("has_pin", false));
+            assertTrue(v2.optBoolean("has_pin", false));
+            assertEquals("app", v1.optString("mode", ""));
+            assertEquals("app", v2.optString("mode", ""));
+        } finally {
+            NightjarPinJni.storeEvictCacheForTests(uncreated.getAbsolutePath());
+            if (h2 != 0) NightjarPinJni.storeDestroy(h2);
+            if (h1 != 0) NightjarPinJni.storeDestroy(h1);
+        }
     }
 }

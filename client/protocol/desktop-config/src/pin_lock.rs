@@ -1,7 +1,9 @@
-//! PIN lock policy re-exports from `nightjar-policy::pin` plus an in-memory [`StubPinStore`]
+//! PIN lock policy re-exports from `nightjar-policy::pin` plus an in-memory `StubPinStore`
 //! for `nightjar-desktop-ui` tests and headless demos without pulling `ring` or platform SDKs.
 
+#[cfg(any(test, feature = "demo-library", feature = "test-support"))]
 use std::path::{Path, PathBuf};
+#[cfg(any(test, feature = "demo-library", feature = "test-support"))]
 use std::sync::Mutex;
 
 pub use nightjar_policy::pin::{
@@ -14,12 +16,14 @@ pub use nightjar_policy::pin::{
 /// Lightweight in-memory [`PinStoreBackend`] for `nightjar-desktop-ui` tests and fallback demos.
 /// Production `nightjar-desktop` registers `nightjar_core::pin_lock::PinStore` via
 /// `nightjar_desktop_ui::pin_ui::register_backend`.
+#[cfg(any(test, feature = "demo-library", feature = "test-support"))]
 pub struct StubPinStore {
     path: PathBuf,
     saved: Mutex<Saved>,
     problem: Mutex<Option<Problem>>,
 }
 
+#[cfg(any(test, feature = "demo-library", feature = "test-support"))]
 impl StubPinStore {
     pub fn new(dir: &Path) -> Self {
         Self {
@@ -38,6 +42,7 @@ impl StubPinStore {
     }
 }
 
+#[cfg(any(test, feature = "demo-library", feature = "test-support"))]
 impl PinStoreBackend for StubPinStore {
     fn path(&self) -> &Path {
         &self.path

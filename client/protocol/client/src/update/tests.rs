@@ -582,3 +582,49 @@ fn mock_transport_handles_non_200_and_rate_limit() {
         Err(UpdateError::Network("GitHub answered 502".into()))
     );
 }
+
+#[test]
+fn download_android_apk_rejects_unsafe_asset_name_before_network_or_cleanup() {
+    struct FailIfCalled(Arc<AtomicUsize>);
+    impl Transport for FailIfCalled {
+        fn get(&self, _: &Url, _: bool) -> Result<Response, String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err("transport must not be called".into())
+        }
+    }
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let net = FailIfCalled(hits.clone());
+    let dir = temp_dir("unsafe-name");
+    let sentinel = dir.join("keep.txt");
+    std::fs::write(&sentinel, b"keep").unwrap();
+
+    for bad_name in [
+        "../nightjar-evil.apk",
+        "sub\\nightjar-evil.apk",
+        "C:nightjar-evil.apk",
+        "nightjar-evil..apk",
+    ] {
+        let rel_json = format!(
+            r#"{{"tag_name":"v2.0.0","assets":[{{"name":{},"size":10,"browser_download_url":"https://github.com/RamazanKara/nightjar/releases/download/v2.0.0/x.apk"}},{{"name":"SHA256SUMS-2.0.0.txt","size":10,"browser_download_url":"https://github.com/RamazanKara/nightjar/releases/download/v2.0.0/SHA256SUMS-2.0.0.txt"}}]}}"#,
+            serde_json::to_string(bad_name).unwrap()
+        );
+        let rel = Release::parse(&rel_json).unwrap();
+        let res = download_android_apk_with(
+            &net,
+            allow_localhost,
+            &rel,
+            false,
+            &dir,
+            None,
+            &mut |_, _| {},
+        );
+        assert!(
+            matches!(res, Err(UpdateError::Malformed(_))),
+            "expected Malformed for {bad_name:?}, got {res:?}"
+        );
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    assert!(sentinel.exists(), "clean_dir must not run for unsafe names");
+    let _ = std::fs::remove_dir_all(&dir);
+}

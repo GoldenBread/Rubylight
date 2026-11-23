@@ -8,6 +8,15 @@ const DESKTOP_REPO: &str = "RamazanKara/nightjar";
 /// Desktop releases are around 12 MB.
 const DESKTOP_MAX_SIZE: u64 = 512 << 20;
 
+/// Returns `true` if `name` is a single relative filename without path separators, drive prefixes,
+/// NUL bytes, or `.` / `..` traversal segments.
+pub fn is_safe_asset_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && !name.contains("..")
+        && !name.contains(['/', '\\', '\0', ':'])
+}
+
 /// One downloadable asset attached to a GitHub release.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleaseAsset {
@@ -162,6 +171,9 @@ impl Release {
 
     /// Validates and returns the named Desktop release asset.
     pub fn desktop_asset(&self, name: &str) -> Result<DesktopAsset, DesktopAssetError> {
+        if !is_safe_asset_name(name) {
+            return Err(DesktopAssetError::NoInstaller);
+        }
         let found = self
             .assets
             .iter()
@@ -350,5 +362,51 @@ mod tests {
             None
         );
         assert_eq!(ChecksumFile::hex(&[0, 0xff, 0x10]), "00ff10");
+    }
+
+    #[test]
+    fn is_safe_asset_name_rejects_traversal_separators_and_special_chars() {
+        assert!(is_safe_asset_name("nightjar-0.7.0.apk"));
+        assert!(is_safe_asset_name(
+            "nightjar-desktop-4.1.0-windows-x86_64-setup.exe"
+        ));
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../evil.apk",
+            "..\\evil.exe",
+            "a/b.apk",
+            "a\\b.apk",
+            "C:evil.exe",
+            "evil\0.apk",
+            "nightjar..apk",
+        ] {
+            assert!(!is_safe_asset_name(bad), "must reject {bad:?}");
+        }
+
+        let unsafe_name = "../evil-setup.exe";
+        let rel = Release {
+            tag: "v4.1.0".into(),
+            body: String::new(),
+            html_url: String::new(),
+            draft: false,
+            prerelease: false,
+            assets: vec![ReleaseAsset {
+                name: unsafe_name.into(),
+                url: format!(
+                    "https://github.com/RamazanKara/nightjar/releases/download/v4.1.0/{unsafe_name}"
+                ),
+                size: 1000,
+                digest: Some(
+                    "sha256:ab12000000000000000000000000000000000000000000000000000000000000"
+                        .into(),
+                ),
+            }],
+        };
+        assert_eq!(
+            rel.desktop_asset(unsafe_name),
+            Err(DesktopAssetError::NoInstaller)
+        );
     }
 }

@@ -126,4 +126,31 @@ mod tests {
         #[cfg(not(windows))]
         assert_ne!(boot_id_number("a"), boot_id_number("b"));
     }
+
+    #[test]
+    fn register_wires_pin_lock_open_to_real_pbkdf2_pin_store() {
+        register();
+        let dir = std::env::temp_dir().join(format!("nightjar-pin-clock-real-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        {
+            let lock = nightjar_desktop_ui::pin_ui::PinLock::open(&dir);
+            lock.store.set_pin(b"2468").unwrap();
+            lock.store.flush();
+            let raw = std::fs::read_to_string(dir.join(nightjar_core::pin_lock::FILE)).unwrap();
+            assert!(raw.contains("v1$"), "real PBKDF2 hash stored: {raw}");
+            assert!(!raw.contains("stub"), "must not use StubPinStore: {raw}");
+            assert!(!raw.contains("2468"), "must not store plaintext PIN: {raw}");
+            assert!(matches!(
+                lock.store.try_pin(b"1111"),
+                nightjar_policy::pin::Outcome::Wrong { .. }
+            ));
+            assert_eq!(lock.store.try_pin(b"2468"), nightjar_policy::pin::Outcome::Ok);
+        }
+        {
+            let reopened = nightjar_desktop_ui::pin_ui::PinLock::open(&dir);
+            assert!(reopened.store.has_pin(), "persists across PinLock::open");
+            assert_eq!(reopened.store.try_pin(b"2468"), nightjar_policy::pin::Outcome::Ok);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

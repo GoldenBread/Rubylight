@@ -414,6 +414,10 @@ pub fn setup_arguments(log: &Path) -> Vec<String> {
 }
 
 fn run_setup(part: &Path, asset: &Asset) -> Result<(), Failure> {
+    if !nightjar_policy::update::is_safe_asset_name(&asset.name) {
+        let _ = std::fs::remove_file(part);
+        return Err(Failure::Apply("unsafe setup asset name".into()));
+    }
     // Its asset name: Windows runs only what is called .exe.
     let setup = part.with_file_name(&asset.name);
     std::fs::rename(part, &setup).map_err(|e| {

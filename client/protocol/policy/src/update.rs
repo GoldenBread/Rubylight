@@ -4,7 +4,9 @@
 pub mod release;
 pub mod semver;
 
-pub use release::{ChecksumFile, DesktopAsset, DesktopAssetError, Release, ReleaseAsset};
+pub use release::{
+    ChecksumFile, DesktopAsset, DesktopAssetError, Release, ReleaseAsset, is_safe_asset_name,
+};
 pub use semver::{SemVer, is_strict_stable_tag, newer_stable_tag};
 
 pub const CHECK_INTERVAL_MS: i64 = 12 * 60 * 60 * 1000;

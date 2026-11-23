@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use nightjar_policy::http::TransferCancel;
-use nightjar_policy::update::{ChecksumFile, Release};
+use nightjar_policy::update::{ChecksumFile, Release, is_safe_asset_name};
 use ring::digest::{Context, SHA256, digest};
 
 use net::{OpenError, Transport, Url, api_host, download_host, open};
@@ -260,6 +260,9 @@ pub(crate) fn download_android_apk_with(
     on_progress: &mut dyn FnMut(u64, u64),
 ) -> Result<PathBuf, UpdateError> {
     let apk = release.apk_asset(root).ok_or(UpdateError::NoApk)?;
+    if !is_safe_asset_name(&apk.name) {
+        return Err(UpdateError::Malformed("unsafe asset name".into()));
+    }
     let sums = release.checksum_asset().ok_or(UpdateError::NoChecksums)?;
     if !apk.url.to_ascii_lowercase().starts_with("https://")
         || !sums.url.to_ascii_lowercase().starts_with("https://")

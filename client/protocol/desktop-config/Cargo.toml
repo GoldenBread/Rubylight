@@ -12,6 +12,9 @@ default = []
 # Thread-local language override in downstream crate test suites so parallel tests do not race on
 # the process-wide CURRENT atomic. Only enabled from downstream `[dev-dependencies]`.
 test-lang = []
+# In-memory `StubPinStore` for UI tests and `demo-library`; excluded from production builds.
+demo-library = []
+test-support = []
 
 [dependencies]
 nightjar-policy = { path = "../policy" }

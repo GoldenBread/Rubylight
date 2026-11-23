@@ -343,3 +343,16 @@ fn an_attempt_is_read_once_and_only_from_github() {
     assert_eq!(take_attempt(&path), None);
     assert!(!path.exists());
 }
+
+#[test]
+fn run_setup_rejects_unsafe_asset_names_and_removes_part() {
+    let dir = folder("unsafe-setup");
+    for bad in ["", ".", "..", "../evil.exe", "sub\\evil.exe", "C:evil.exe"] {
+        let part = dir.join("download.part");
+        std::fs::write(&part, b"payload").unwrap();
+        let asset = Asset { name: bad.into(), url: String::new(), digest: String::new(), size: 7 };
+        assert!(matches!(run_setup(&part, &asset), Err(Failure::Apply(_))), "must reject {bad:?}");
+        assert!(!part.exists(), "part must be removed on unsafe name {bad:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

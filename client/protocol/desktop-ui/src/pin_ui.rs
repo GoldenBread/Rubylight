@@ -108,7 +108,10 @@ pub fn register_backend(factory: StoreFactory) {
 pub fn open_store(dir: &Path) -> Arc<dyn PinStoreBackend> {
     match PIN_BACKEND.get() {
         Some(factory) => factory(dir),
+        #[cfg(any(test, feature = "demo-library", feature = "test-support"))]
         None => Arc::new(crate::pin_lock::StubPinStore::new(dir)),
+        #[cfg(not(any(test, feature = "demo-library", feature = "test-support")))]
+        None => panic!("PIN backend not registered; call nightjar_desktop_ui::pin_ui::register_backend first"),
     }
 }
 

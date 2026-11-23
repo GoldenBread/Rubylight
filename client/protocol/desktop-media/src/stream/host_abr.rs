@@ -6,7 +6,6 @@
 use std::sync::{Arc, Mutex};
 
 pub use nightjar_core::http::foundation::HostAbr;
-use nightjar_core::http::foundation::{ABR_FEEDBACK_INTERVAL, AbrAction, AbrConfigured};
 
 /// The hand-off between the thread that asks the PC to turn its controller on and the stream,
 /// which may end while that request is in flight: whichever side comes second turns it off, so
@@ -66,6 +65,8 @@ impl AbrStop {
 
 #[cfg(test)]
 mod tests {
+    use nightjar_core::http::foundation::{AbrAction, AbrConfigured};
+
     use super::*;
 
     #[test]
