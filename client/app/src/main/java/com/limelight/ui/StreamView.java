@@ -48,6 +48,21 @@ public class StreamView extends FrameLayout {
         return textureView;
     }
 
+    /**
+     * Requests a frame rate on the child video view on Android 15+ (API 35+). Android does not
+     * propagate {@code View.setRequestedFrameRate()} from a parent {@code ViewGroup} to its
+     * {@code SurfaceView} or {@code TextureView}, so this targets the video child directly.
+     */
+    public void setVideoRequestedFrameRate(float frameRate) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            return;
+        }
+        android.view.View video = textureView != null ? textureView : surfaceView;
+        if (video != null) {
+            video.setRequestedFrameRate(frameRate);
+        }
+    }
+
     public void setVideoTransform(float scale, float x, float y) {
         android.view.View video = textureView != null ? textureView : surfaceView;
         if (video == null) return;

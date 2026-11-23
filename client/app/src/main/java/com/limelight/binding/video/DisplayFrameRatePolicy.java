@@ -3,8 +3,12 @@ package com.limelight.binding.video;
 import android.content.Context;
 import android.os.Build;
 import android.view.Display;
+import android.view.Window;
+import android.view.WindowManager;
 
 import androidx.annotation.VisibleForTesting;
+
+import com.limelight.LimeLog;
 
 import java.util.List;
 
@@ -272,6 +276,173 @@ public final class DisplayFrameRatePolicy {
 
     public static float maxRefreshRate(Display display) {
         return maxRefreshRate(display, 0, 0);
+    }
+
+    /**
+     * Whether the stream window pins {@code preferredDisplayModeId} directly to the chosen mode
+     * when Android 16 ARR is not running.
+     *
+     * <p>Phones and tablets on Android 12+ (including ColorOS / realme UI and OriginOS) can drop
+     * back to 60 Hz once the Activity's UI views stop redrawing if the window leaves
+     * {@code preferredDisplayModeId} unset, even when the child {@code SurfaceView} votes 120 Hz
+     * via {@code Surface.setFrameRate()} and even when touch boost had the panel at 120 Hz at
+     * launch. Pinning the mode on internal non-TV displays keeps the request in
+     * {@code DisplayModeDirector}, while Android TV and external HDMI displays keep the
+     * {@code Surface.setFrameRate()}-only path for same-resolution refresh switches (avoiding
+     * HDMI blanking and Chromecast 4K 4K24 mode bugs).
+     */
+    public static boolean pinsWindowDisplayMode(int sdk, boolean useArr, boolean useTextureView,
+            boolean television, boolean externalDisplay, boolean modeChanged, boolean resolutionChanged) {
+        if (useArr) return false;
+        if (!television && !externalDisplay) return true;
+        if (!modeChanged) return false;
+        return useTextureView || sdk < Build.VERSION_CODES.S || resolutionChanged;
+    }
+
+    /**
+     * Whether surface frame-rate votes on an internal non-TV {@code SurfaceView} keep the window's
+     * {@code preferredDisplayModeId} aligned with the vote so {@code DisplayModeDirector} neither
+     * blocks a seamless content-rate switch nor drops to 60 Hz when UI views are idle.
+     */
+    public static boolean syncsWindowDisplayModeWithVote(boolean useArr, boolean useTextureView,
+            boolean television, boolean externalDisplay) {
+        return !useArr && !useTextureView && !television && !externalDisplay;
+    }
+
+    /**
+     * The same-resolution display mode on {@code display} matching a surface frame-rate vote, or
+     * {@code null} when none is eligible.
+     */
+    public static RefreshSwitchDiagnosis.PanelMode windowModeForVote(int sdk, float voteHz,
+            boolean mayReduceRefreshRate, boolean seamlessOnly, Display display) {
+        if (display == null) return null;
+        return windowModeForVote(sdk, voteHz, mayReduceRefreshRate, seamlessOnly,
+                RefreshSwitchMonitor.activeMode(display), RefreshSwitchMonitor.modes(display));
+    }
+
+    /**
+     * Pure version of {@link #windowModeForVote(int, float, boolean, boolean, Display)}: chooses a
+     * same-size mode whose refresh is {@code voteHz} or a whole multiple of it. With
+     * {@code seamlessOnly}, only the active mode or its seamless alternatives are considered so a
+     * mid-stream content vote never triggers a blanking switch. {@code mayReduceRefreshRate} picks
+     * the lowest matching rate, otherwise the highest; within the same nominal rate bucket
+     * (e.g. 59.94 vs 60 Hz), the closer multiple wins.
+     */
+    static RefreshSwitchDiagnosis.PanelMode windowModeForVote(int sdk, float voteHz,
+            boolean mayReduceRefreshRate, boolean seamlessOnly,
+            RefreshSwitchDiagnosis.PanelMode active, List<RefreshSwitchDiagnosis.PanelMode> modes) {
+        if (voteHz <= 0 || active == null || modes == null) return null;
+        RefreshSwitchDiagnosis.PanelMode best = null;
+        for (RefreshSwitchDiagnosis.PanelMode mode : modes) {
+            if (!mode.sameSize(active)) continue;
+            if (!RefreshSwitchDiagnosis.holds(voteHz, mode.hz)) continue;
+            if (seamlessOnly && mode.id != active.id) {
+                if (sdk < Build.VERSION_CODES.S || !active.switchesSeamlesslyTo(mode.hz)) continue;
+            }
+            if (best == null || betterWindowMode(mode.hz, best.hz, voteHz, mayReduceRefreshRate)) {
+                best = mode;
+            }
+        }
+        return best;
+    }
+
+    private static boolean betterWindowMode(float candidateHz, float bestHz, float voteHz,
+            boolean mayReduceRefreshRate) {
+        // Two modes within 0.5 Hz of each other represent the same nominal refresh (e.g. 59.94 vs 60);
+        // pick the closer multiple of the voted rate rather than always preferring the higher/lower float.
+        if (Math.abs(candidateHz - bestHz) <= 0.5f) {
+            return multipleError(voteHz, candidateHz) < multipleError(voteHz, bestHz);
+        }
+        return mayReduceRefreshRate ? candidateHz < bestHz : candidateHz > bestHz;
+    }
+
+    private static float multipleError(float base, float rate) {
+        int n = Math.max(1, Math.round(rate / base));
+        return Math.abs(rate - n * base);
+    }
+
+    /**
+     * Updates the video window's display mode, refresh rate and Android 15+ power-savings frame-rate
+     * balance only when a field actually changes.
+     */
+    public static void applyWindowDisplayMode(Window window, int modeId, float refreshRate,
+            boolean powerSavingsBalanced) {
+        if (window == null) return;
+        WindowManager.LayoutParams attributes = window.getAttributes();
+        boolean changed = false;
+        if (attributes.preferredDisplayModeId != modeId) {
+            attributes.preferredDisplayModeId = modeId;
+            changed = true;
+        }
+        if (Float.compare(attributes.preferredRefreshRate, refreshRate) != 0) {
+            attributes.preferredRefreshRate = refreshRate;
+            changed = true;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM &&
+                attributes.isFrameRatePowerSavingsBalanced() != powerSavingsBalanced) {
+            attributes.setFrameRatePowerSavingsBalanced(powerSavingsBalanced);
+            changed = true;
+        }
+        if (changed) window.setAttributes(attributes);
+    }
+
+    /** Applies the chosen non-ARR display mode to {@code window} according to {@link #pinsWindowDisplayMode}. */
+    public static void configureWindowDisplayMode(Window window, Display.Mode currentMode, Display.Mode bestMode,
+            boolean useTextureView, boolean television, boolean externalDisplay) {
+        if (window == null) return;
+        WindowManager.LayoutParams attrs = window.getAttributes();
+        boolean modeChanged = currentMode.getModeId() != bestMode.getModeId();
+        boolean resolutionChanged = currentMode.getPhysicalWidth() != bestMode.getPhysicalWidth() ||
+                currentMode.getPhysicalHeight() != bestMode.getPhysicalHeight();
+        boolean pinWindowMode = pinsWindowDisplayMode(Build.VERSION.SDK_INT, false, useTextureView,
+                television, externalDisplay, modeChanged, resolutionChanged);
+        int targetModeId = pinWindowMode ? bestMode.getModeId() : attrs.preferredDisplayModeId;
+        // On internal non-TV displays, pair preferredRefreshRate with preferredDisplayModeId so
+        // vendor display directors that inspect either field see the chosen rate even after UI views go idle.
+        // A SurfaceTexture is composed into the window, so Surface.setFrameRate() cannot vote for it.
+        float targetHz = (pinWindowMode && !television && !externalDisplay) || useTextureView ?
+                bestMode.getRefreshRate() : attrs.preferredRefreshRate;
+        if (!pinWindowMode && modeChanged) {
+            LimeLog.info("Using setFrameRate() instead of preferredDisplayModeId due to matching resolution");
+        } else if (!pinWindowMode) {
+            LimeLog.info("Current display mode is already the best display mode");
+        }
+        applyWindowDisplayMode(window, targetModeId, targetHz, false);
+    }
+
+    /**
+     * Keeps the window's pinned display mode in step with surface frame-rate votes on internal
+     * non-TV SurfaceView streams, and clears stale mode IDs after a foldable panel change.
+     */
+    public static void syncWindowDisplayMode(Window window, Display display, float targetHz,
+            boolean mayReduceRefreshRate, boolean seamlessOnly, boolean useArr, boolean useTextureView,
+            boolean television, boolean externalDisplay, boolean inPictureInPicture) {
+        if (window == null || display == null || inPictureInPicture ||
+                !syncsWindowDisplayModeWithVote(useArr, useTextureView, television, externalDisplay)) {
+            return;
+        }
+        RefreshSwitchDiagnosis.PanelMode match = windowModeForVote(Build.VERSION.SDK_INT, targetHz,
+                mayReduceRefreshRate, seamlessOnly, display);
+        if (match != null) {
+            applyWindowDisplayMode(window, match.id, match.hz, false);
+            return;
+        }
+        int currentPin = window.getAttributes().preferredDisplayModeId;
+        if (currentPin != 0 && !isSameSizeSupportedMode(display, currentPin)) {
+            applyWindowDisplayMode(window, 0, 0f, false);
+        }
+    }
+
+    private static boolean isSameSizeSupportedMode(Display display, int modeId) {
+        Display.Mode active = display.getMode();
+        for (Display.Mode mode : display.getSupportedModes()) {
+            if (mode.getModeId() == modeId &&
+                    mode.getPhysicalWidth() == active.getPhysicalWidth() &&
+                    mode.getPhysicalHeight() == active.getPhysicalHeight()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

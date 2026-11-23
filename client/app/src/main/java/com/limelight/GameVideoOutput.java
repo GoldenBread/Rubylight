@@ -604,46 +604,40 @@ final class GameVideoOutput {
         return game.prefConfig.reduceRefreshRate;
     }
 
+    private boolean isTelevision() {
+        return game.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEVISION) ||
+                game.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK);
+    }
+
     float prepareDisplayForRendering() {
         Display display = getVideoDisplay();
-        WindowManager.LayoutParams windowLayoutParams = getVideoWindow().getAttributes();
+        boolean television = isTelevision();
         float displayRefreshRate;
-
         boolean arrSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA && display.hasArrSupport();
         game.useArr = com.limelight.binding.video.DisplayFrameRatePolicy.useAdaptiveRefreshRate(
                 Build.VERSION.SDK_INT, game.prefConfig.vrr, arrSupported);
-        logDisplayRefreshPolicy(display, arrSupported);
         if (game.prefConfig.vrr) {
             com.limelight.binding.video.DisplayFrameRatePolicy.ArrState arr =
                     com.limelight.binding.video.DisplayFrameRatePolicy.arrState(Build.VERSION.SDK_INT, true, arrSupported);
-            // Without ARR the stream runs at the screen's top rate, which the overlay's VRR line shows.
-            LimeLog.info(game.useArr ? "VRR: ARR (Android automatic policy)" :
-                    "VRR: max Hz (ARR unavailable: " + arr + ")");
+            LimeLog.info(game.useArr ? "VRR: ARR (Android automatic policy)" : "VRR: max Hz (ARR unavailable: " + arr + ")");
         }
 
         if (game.useArr && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
             // Leave refresh-rate selection and touch boost to Android's automatic ARR policy.
-            windowLayoutParams.preferredDisplayModeId = 0;
-            windowLayoutParams.preferredRefreshRate = 0;
-            getVideoWindow().setAttributes(windowLayoutParams);
+            com.limelight.binding.video.DisplayFrameRatePolicy.applyWindowDisplayMode(getVideoWindow(), 0, 0f, true);
             displayRefreshRate = game.panelMaxRefreshRate;
-        }
-        // Set the optimal display mode explicitly
-        else {
-            Display.Mode bestMode = display.getMode();
+        } else {
+            Display.Mode currentMode = display.getMode();
+            Display.Mode bestMode = currentMode;
             boolean isNativeResolutionStream = PreferenceConfiguration.isNativeResolution(game.prefConfig.width, game.prefConfig.height);
-
-            LimeLog.info("Current display mode: "+bestMode.getPhysicalWidth()+"x"+
-                    bestMode.getPhysicalHeight()+"x"+bestMode.getRefreshRate());
-
-            // The choice itself is DisplayModeChoice's, which the Settings screen's fractional V-Sync
-            // row shares.
+            LimeLog.info("Current display mode: " + bestMode.getPhysicalWidth() + "x" +
+                    bestMode.getPhysicalHeight() + "x" + bestMode.getRefreshRate());
             Display.Mode[] supported = display.getSupportedModes();
             com.limelight.binding.video.DisplayModeChoice.Mode[] candidates =
                     new com.limelight.binding.video.DisplayModeChoice.Mode[supported.length];
             for (int i = 0; i < supported.length; i++) {
-                LimeLog.info("Examining display mode: "+supported[i].getPhysicalWidth()+"x"+
-                        supported[i].getPhysicalHeight()+"x"+supported[i].getRefreshRate());
+                LimeLog.info("Examining display mode: " + supported[i].getPhysicalWidth() + "x" +
+                        supported[i].getPhysicalHeight() + "x" + supported[i].getRefreshRate());
                 candidates[i] = new com.limelight.binding.video.DisplayModeChoice.Mode(
                         supported[i].getPhysicalWidth(), supported[i].getPhysicalHeight(), supported[i].getRefreshRate());
             }
@@ -652,63 +646,26 @@ final class GameVideoOutput {
                             bestMode.getPhysicalHeight(), bestMode.getRefreshRate()),
                     candidates, game.prefConfig.width, game.prefConfig.height, game.prefConfig.fps,
                     game.prefConfig.vrr, isNativeResolutionStream, mayReduceRefreshRate());
-            if (chosen >= 0) {
-                bestMode = supported[chosen];
-            }
-
-            LimeLog.info("Best display mode: "+bestMode.getPhysicalWidth()+"x"+
-                    bestMode.getPhysicalHeight()+"x"+bestMode.getRefreshRate());
-
-            // Only apply new window layout parameters if we've actually changed the display mode
-            if (display.getMode().getModeId() != bestMode.getModeId()) {
-                // If we only changed refresh rate and we're on an OS that supports Surface.setFrameRate()
-                // use that instead of using preferredDisplayModeId to avoid the possibility of triggering
-                // bugs that can cause the system to switch from 4K60 to 4K24 on Chromecast 4K.
-                if (game.prefConfig.useTextureView || Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                        display.getMode().getPhysicalWidth() != bestMode.getPhysicalWidth() ||
-                        display.getMode().getPhysicalHeight() != bestMode.getPhysicalHeight()) {
-                    // Apply the display mode change
-                    windowLayoutParams.preferredDisplayModeId = bestMode.getModeId();
-                    getVideoWindow().setAttributes(windowLayoutParams);
-                }
-                else {
-                    LimeLog.info("Using setFrameRate() instead of preferredDisplayModeId due to matching resolution");
-                }
-            }
-            else {
-                LimeLog.info("Current display mode is already the best display mode");
-            }
-
+            if (chosen >= 0) bestMode = supported[chosen];
+            LimeLog.info("Best display mode: " + bestMode.getPhysicalWidth() + "x" +
+                    bestMode.getPhysicalHeight() + "x" + bestMode.getRefreshRate());
+            com.limelight.binding.video.DisplayFrameRatePolicy.configureWindowDisplayMode(
+                    getVideoWindow(), currentMode, bestMode, game.prefConfig.useTextureView,
+                    television, game.externalPresentation != null);
             displayRefreshRate = bestMode.getRefreshRate();
         }
-
-        if (game.prefConfig.useTextureView && !game.useArr) {
-            // A SurfaceTexture is composed into the window, so Surface.setFrameRate() cannot vote for it.
-            windowLayoutParams.preferredRefreshRate = displayRefreshRate;
-            getVideoWindow().setAttributes(windowLayoutParams);
+        if (game.prefConfig.useTextureView && game.renderView != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            game.renderView.setVideoRequestedFrameRate(game.useArr ? View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT : displayRefreshRate);
         }
+        logDisplayRefreshPolicy(display, arrSupported);
 
         if (!game.prefConfig.useTextureView && game.prefConfig.upscalingMode == UpscalingPolicy.Mode.OFF) {
             // Keep decoder buffers at stream resolution; the compositor scales them to the view.
             game.renderView.getHolder().setFixedSize(game.prefConfig.width, game.prefConfig.height);
         }
         applyVideoScaling();
-
-        // Set the desired refresh rate that will get passed into setFrameRate() later
         game.desiredRefreshRate = displayRefreshRate;
-
-        if (game.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEVISION) ||
-                game.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
-            // TVs may take a few moments to switch refresh rates, and we can probably assume
-            // it will be eventually activated.
-            // TODO: Improve this
-            return displayRefreshRate;
-        }
-        else {
-            // Use the lower of the current refresh rate and the selected refresh rate.
-            // The preferred refresh rate may not actually be applied (ex: Battery Saver mode).
-            return Math.min(getVideoDisplay().getRefreshRate(), displayRefreshRate);
-        }
+        return television ? displayRefreshRate : Math.min(getVideoDisplay().getRefreshRate(), displayRefreshRate);
     }
 
     void hideSystemUi(int delay) {
@@ -1005,6 +962,9 @@ final class GameVideoOutput {
         configureStreamWindow();
         game.panelMaxRefreshRate = com.limelight.binding.video.DisplayFrameRatePolicy.maxRefreshRate(
                 getVideoDisplay(), game.prefConfig.width, game.prefConfig.height);
+        if (!game.useArr && game.appSurfaceFrameRateVote != null) {
+            syncWindowDisplayMode(game.appSurfaceFrameRateVote, appSurfaceSeamlessOnly);
+        }
         scheduleReconfigureCheck();
     }
 
@@ -1090,6 +1050,10 @@ final class GameVideoOutput {
             int exactRate = game.decoderRenderer == null ? 0 : game.decoderRenderer.getStreamFrameRateMilliHz();
             float vote = com.limelight.binding.video.DisplayFrameRatePolicy.arrVote(
                     exactRate > 0 ? exactRate / 1000f : game.prefConfig.fps, game.panelMaxRefreshRate);
+            com.limelight.binding.video.DisplayFrameRatePolicy.applyWindowDisplayMode(getVideoWindow(), 0, 0f, true);
+            if (game.renderView != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                game.renderView.setVideoRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT);
+            }
             applySurfaceFrameRate(surface, vote, Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
             arrHalfRate.reset();
             LimeLog.info("VRR: ARR vote " + vote + " Hz (stream rate, seamless only)");
@@ -1131,9 +1095,9 @@ final class GameVideoOutput {
     private void applySurfaceFrameRate(Surface surface, float frameRate, int changeStrategy) {
         // Tell the OS about our frame rate to allow it to adapt the display refresh rate appropriately
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // The stream's own vote changes the rate even if it's not seamless, since
-            // prepareDisplayForRendering() will not set the display mode on S+ if it only differs
-            // by the refresh rate. It depends on us to trigger the frame rate switch here.
+            // The stream's own vote changes the rate even if it's not seamless, since on TVs and
+            // external outputs prepareDisplayForRendering() will not set the display mode on S+ if
+            // it only differs by the refresh rate. It depends on us to trigger the switch here.
             surface.setFrameRate(frameRate,
                     Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
                     changeStrategy);
@@ -1147,6 +1111,19 @@ final class GameVideoOutput {
             game.appSurfaceFrameRateVote = frameRate;
             appSurfaceSeamlessOnly = true;
         }
+        if (!game.useArr) {
+            if (game.renderView != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                game.renderView.setVideoRequestedFrameRate(frameRate);
+            }
+            syncWindowDisplayMode(frameRate, appSurfaceSeamlessOnly);
+        }
+    }
+
+    private void syncWindowDisplayMode(float targetHz, boolean seamlessOnly) {
+        com.limelight.binding.video.DisplayFrameRatePolicy.syncWindowDisplayMode(getVideoWindow(), getVideoDisplay(),
+                targetHz, mayReduceRefreshRate(), seamlessOnly, game.useArr, game.prefConfig.useTextureView,
+                isTelevision(), game.externalPresentation != null,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && game.isInPictureInPictureMode());
     }
 
     void startRefreshSwitchPolling() {

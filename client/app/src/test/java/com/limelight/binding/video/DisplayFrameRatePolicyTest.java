@@ -358,4 +358,62 @@ public class DisplayFrameRatePolicyTest {
         assertFalse(DisplayFrameRatePolicy.fpsFollowsDisplay(false, 60, 120f));
         assertTrue(DisplayFrameRatePolicy.fpsFollowsDisplay(true, 60, 120f));
     }
+
+    @Test
+    public void internalNonTvDisplaysPinTheWindowModeEvenWhenAlreadyActiveOnAndroid12Plus() {
+        // Phone/tablet without ARR: always pins, even if the panel started at 120 Hz from touch boost.
+        assertTrue(DisplayFrameRatePolicy.pinsWindowDisplayMode(35, false, false, false, false, false, false));
+        assertTrue(DisplayFrameRatePolicy.pinsWindowDisplayMode(35, false, false, false, false, true, false));
+        assertTrue(DisplayFrameRatePolicy.pinsWindowDisplayMode(31, false, true, false, false, false, false));
+        // Android 16 ARR never pins a fixed window mode.
+        assertFalse(DisplayFrameRatePolicy.pinsWindowDisplayMode(36, true, false, false, false, true, true));
+        // TV and external HDMI displays keep the setFrameRate()-only path for same-resolution switches on API 31+.
+        assertFalse(DisplayFrameRatePolicy.pinsWindowDisplayMode(31, false, false, true, false, true, false));
+        assertFalse(DisplayFrameRatePolicy.pinsWindowDisplayMode(35, false, false, true, false, false, false));
+        assertFalse(DisplayFrameRatePolicy.pinsWindowDisplayMode(35, false, false, false, true, true, false));
+        // TV / external still pin when resolution changes, on TextureView, or before Android 12.
+        assertTrue(DisplayFrameRatePolicy.pinsWindowDisplayMode(35, false, false, true, false, true, true));
+        assertTrue(DisplayFrameRatePolicy.pinsWindowDisplayMode(35, false, true, true, false, true, false));
+        assertTrue(DisplayFrameRatePolicy.pinsWindowDisplayMode(30, false, false, true, false, true, false));
+        assertTrue(DisplayFrameRatePolicy.pinsWindowDisplayMode(35, false, false, false, true, true, true));
+
+        assertTrue(DisplayFrameRatePolicy.syncsWindowDisplayModeWithVote(false, false, false, false));
+        assertFalse(DisplayFrameRatePolicy.syncsWindowDisplayModeWithVote(true, false, false, false));
+        assertFalse(DisplayFrameRatePolicy.syncsWindowDisplayModeWithVote(false, true, false, false));
+        assertFalse(DisplayFrameRatePolicy.syncsWindowDisplayModeWithVote(false, false, true, false));
+        assertFalse(DisplayFrameRatePolicy.syncsWindowDisplayModeWithVote(false, false, false, true));
+    }
+
+    @Test
+    public void windowModeForVoteHonoursSeamlessnessReductionAndFractionalMatches() {
+        RefreshSwitchDiagnosis.PanelMode m60 = mode(1, 1080, 2400, 60f, 90f, 120f);
+        RefreshSwitchDiagnosis.PanelMode m90 = mode(2, 1080, 2400, 90f, 60f, 120f);
+        RefreshSwitchDiagnosis.PanelMode m120 = mode(3, 1080, 2400, 120f, 60f, 90f);
+        RefreshSwitchDiagnosis.PanelMode otherSize = mode(4, 1440, 3200, 120f);
+        java.util.List<RefreshSwitchDiagnosis.PanelMode> phone = java.util.Arrays.asList(m60, m90, m120, otherSize);
+
+        assertEquals(3, DisplayFrameRatePolicy.windowModeForVote(35, 120f, false, false, m120, phone).id);
+        assertEquals(3, DisplayFrameRatePolicy.windowModeForVote(35, 60f, false, true, m120, phone).id);
+        assertEquals(1, DisplayFrameRatePolicy.windowModeForVote(35, 60f, true, true, m120, phone).id);
+        assertEquals(2, DisplayFrameRatePolicy.windowModeForVote(35, 90f, false, true, m120, phone).id);
+        assertEquals(2, DisplayFrameRatePolicy.windowModeForVote(35, 45f, true, true, m120, phone).id);
+        assertNull(DisplayFrameRatePolicy.windowModeForVote(35, 50f, true, true, m120, phone));
+
+        // Non-seamless panel: a seamless-only vote never picks a mode that would blank.
+        RefreshSwitchDiagnosis.PanelMode ns60 = mode(1, 1080, 2400, 60f);
+        RefreshSwitchDiagnosis.PanelMode ns120 = mode(2, 1080, 2400, 120f);
+        java.util.List<RefreshSwitchDiagnosis.PanelMode> nonSeamless = java.util.Arrays.asList(ns60, ns120);
+        assertEquals(2, DisplayFrameRatePolicy.windowModeForVote(35, 60f, true, true, ns120, nonSeamless).id);
+        assertNull(DisplayFrameRatePolicy.windowModeForVote(35, 120f, false, true, ns60, nonSeamless));
+        assertEquals(2, DisplayFrameRatePolicy.windowModeForVote(35, 120f, false, false, ns60, nonSeamless).id);
+
+        // Fractional modes in the same nominal bucket prefer the closer multiple.
+        RefreshSwitchDiagnosis.PanelMode m5994 = mode(1, 1080, 2400, 59.94f, 60f, 119.88f, 120f);
+        RefreshSwitchDiagnosis.PanelMode m6000 = mode(2, 1080, 2400, 60f, 59.94f, 119.88f, 120f);
+        RefreshSwitchDiagnosis.PanelMode m11988 = mode(3, 1080, 2400, 119.88f, 59.94f, 60f, 120f);
+        RefreshSwitchDiagnosis.PanelMode m12000 = mode(4, 1080, 2400, 120f, 59.94f, 60f, 119.88f);
+        java.util.List<RefreshSwitchDiagnosis.PanelMode> fractional = java.util.Arrays.asList(m5994, m6000, m11988, m12000);
+        assertEquals(1, DisplayFrameRatePolicy.windowModeForVote(35, 59.94f, true, false, m12000, fractional).id);
+        assertEquals(3, DisplayFrameRatePolicy.windowModeForVote(35, 59.94f, false, false, m12000, fractional).id);
+    }
 }
