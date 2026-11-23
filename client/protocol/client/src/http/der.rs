@@ -296,6 +296,30 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
+/// Decodes a PEM certificate string into X.509 DER bytes.
+pub fn pem_decode_certificate(pem: &str) -> Result<Vec<u8>, Error> {
+    pem_decode(pem, "CERTIFICATE")
+}
+
+/// Encodes X.509 DER certificate bytes into a PEM string.
+pub fn pem_encode_certificate(der_bytes: &[u8]) -> String {
+    pem_encode(der_bytes, "CERTIFICATE")
+}
+
+/// Computes the SHA-256 fingerprint of raw X.509 DER certificate bytes.
+pub fn certificate_sha256_der(der_bytes: &[u8]) -> [u8; 32] {
+    super::crypto::sha256(der_bytes)
+        .try_into()
+        .expect("sha256 is 32 bytes")
+}
+
+/// Computes the SHA-256 fingerprint of a PEM-encoded X.509 certificate, if valid.
+pub fn certificate_sha256_pem(pem: &str) -> Option<[u8; 32]> {
+    pem_decode(pem, "CERTIFICATE")
+        .ok()
+        .and_then(|der_bytes| super::crypto::sha256(&der_bytes).try_into().ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -107,7 +107,7 @@ public class PollSavesOnlyChangesTest {
         final ServiceController<AnsweringManager> controller;
         final AnsweringManager service;
         final CountingDatabase database;
-        final PollingTuple tuple;
+        final ComputerManagerService.TrackedHost tuple;
 
         Polls(X509Certificate certificate) {
             ComputerDetails stored = new ComputerDetails();
@@ -127,7 +127,7 @@ public class PollSavesOnlyChangesTest {
             own.close();
             database = new CountingDatabase(service);
             ReflectionHelpers.setField(service, "dbManager", database);
-            List<PollingTuple> tuples = ReflectionHelpers.getField(service, "pollingTuples");
+            List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
             tuple = tuples.get(0);
             assertEquals(UUID, tuple.computer.uuid);
         }
@@ -135,7 +135,7 @@ public class PollSavesOnlyChangesTest {
         void poll() {
             ReflectionHelpers.callInstanceMethod(service, "runPoll",
                     ReflectionHelpers.ClassParameter.from(ComputerDetails.class, tuple.computer),
-                    ReflectionHelpers.ClassParameter.from(PollingTuple.class, tuple),
+                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, tuple),
                     ReflectionHelpers.ClassParameter.from(int.class, 0));
         }
 
@@ -288,7 +288,7 @@ public class PollSavesOnlyChangesTest {
             found.remoteAddress = REMOTE;
             ReflectionHelpers.callInstanceMethod(polls.service, "runPoll",
                     ReflectionHelpers.ClassParameter.from(ComputerDetails.class, found),
-                    ReflectionHelpers.ClassParameter.from(PollingTuple.class, null),
+                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, null),
                     ReflectionHelpers.ClassParameter.from(int.class, 0));
             assertEquals(Collections.singletonList("new-host"), polls.database.written);
             ComputerDetails saved = polls.database.getComputerByUUID("new-host");

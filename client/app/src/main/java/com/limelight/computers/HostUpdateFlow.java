@@ -3,29 +3,22 @@ package com.limelight.computers;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nativeapi.NativePcPower;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
-import java.util.Objects;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Update the PC's host, as desktop Nightjar's follow_update does: ask the host to install its pending update (POST
- * /update/install), then every {@link #POLL_MS} GET /update how the install goes and whether the PC answers on the new
- * version (pc_power.rs's update_arrived), for up to {@link #WAIT_MS}. The updater's failure, or a PC back on the old
- * version with nothing under way, ends the wait; time spent waiting for another device's stream does not count
- * against {@link #WAIT_MS}, only against {@link #MAX_WAIT_MS}. Host calls and the wait run on {@code worker}; every
- * outcome reaches {@link Ui} on {@code main}.
+ * Update the PC's host via {@link NightjarPolicyJni} {@code UpdateTracker}: POST /update/install, then poll GET /update
+ * every {@link #POLL_MS} up to {@link #WAIT_MS} active wait ({@link #MAX_WAIT_MS} overall including waits).
  */
 final class HostUpdateFlow {
-    /** How long an update may take before Nightjar stops waiting for the PC to come back. */
-    static final long WAIT_MS = 15 * 60_000;
-    /**
-     * The whole wait, the time another device's stream holds the install included: long enough for a film or a long
-     * game session on the TV to end and the update to go in, short enough that a forgotten wait does not poll the PC
-     * for ever.
-     */
-    static final long MAX_WAIT_MS = 3 * 60 * 60_000;
-    static final long POLL_MS = 5_000;
+    static final long WAIT_MS = NightjarPolicyJni.hostUpdateWaitMs();
+    static final long MAX_WAIT_MS = NightjarPolicyJni.hostUpdateMaxWaitMs();
+    static final long POLL_MS = NightjarPolicyJni.hostUpdatePollMs();
 
     interface Sleeper {
         void sleep(long ms) throws InterruptedException;
@@ -103,56 +96,98 @@ final class HostUpdateFlow {
     }
 
     private void follow(NativeApiClient api, String target) {
-        long polls = WAIT_MS / POLL_MS;
-        long most = MAX_WAIT_MS / POLL_MS;
-        long counted = 0;
-        boolean gone = false;
-        String waiting = null;
-        for (long poll = 0; counted < polls && poll < most; poll++) {
-            try {
-                sleeper.sleep(POLL_MS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            if (cancelled.get()) {
-                return;
-            }
-            NativePcPower.Update update;
-            try {
-                update = api.hostUpdate(target);
-            } catch (NativeApiException e) {
-                // Down while it installs.
-                gone = true;
-                counted++;
-                continue;
-            }
-            if (update.arrived) {
-                main.execute(() -> ui.back(target));
-                return;
-            }
-            if (update.failed) {
-                main.execute(() -> ui.updateFailed(update.failure));
-                return;
-            }
-            if (gone && update.gaveUp) {
-                main.execute(() -> ui.cameBackOn(update.currentVersion, update.error));
-                return;
-            }
-            if (!Objects.equals(update.waitingFor, waiting)) {
-                waiting = update.waitingFor;
-                String reason = waiting;
-                if (reason != null) {
-                    main.execute(() -> ui.waiting(reason));
+        int polls = (int) (WAIT_MS / POLL_MS);
+        int most = (int) (MAX_WAIT_MS / POLL_MS);
+        long tracker = NightjarPolicyJni.updateTrackerCreate(target, polls, most);
+        try {
+            while (!cancelled.get()) {
+                try {
+                    sleeper.sleep(POLL_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                if (cancelled.get()) {
+                    return;
+                }
+                String runningVersion = null;
+                String updateJson = null;
+                try {
+                    NativePcPower.Update update = api.hostUpdate(target);
+                    if (update.arrived) {
+                        runningVersion = target;
+                    } else {
+                        updateJson = encodeUpdate(update, target);
+                    }
+                } catch (NativeApiException e) {
+                    // Down while installing: pass updateJson = null so UpdateTracker marks gone = true.
+                }
+                String stepRaw = NightjarPolicyJni.updateTrackerStep(tracker, runningVersion, updateJson);
+                JSONObject step = new JSONObject(stepRaw);
+                String action = step.optString("action", "continue");
+                switch (action) {
+                    case "continue":
+                        break;
+                    case "waiting": {
+                        String reason = step.optString("reason", "");
+                        main.execute(() -> ui.waiting(reason));
+                        break;
+                    }
+                    case "back": {
+                        String version = step.optString("version", target);
+                        main.execute(() -> ui.back(version));
+                        return;
+                    }
+                    case "update_failed": {
+                        String err = step.isNull("error") ? null : step.optString("error", null);
+                        main.execute(() -> ui.updateFailed(err));
+                        return;
+                    }
+                    case "came_back_on": {
+                        String current = step.optString("current_version", "");
+                        String err = step.isNull("error") ? null : step.optString("error", null);
+                        main.execute(() -> ui.cameBackOn(current, err));
+                        return;
+                    }
+                    case "timed_out": {
+                        String version = step.optString("target", target);
+                        main.execute(() -> ui.timedOut(version));
+                        return;
+                    }
+                    default:
+                        break;
                 }
             }
-            if (waiting == null) {
-                counted++;
+        } catch (JSONException e) {
+            if (!cancelled.get()) {
+                main.execute(() -> ui.timedOut(target));
             }
+        } finally {
+            NightjarPolicyJni.updateTrackerDestroy(tracker);
         }
-        if (!cancelled.get()) {
-            main.execute(() -> ui.timedOut(target));
+    }
+
+    private static String encodeUpdate(NativePcPower.Update update, String target) throws JSONException {
+        JSONObject obj = new JSONObject();
+        obj.put("current_version", update.currentVersion == null ? "" : update.currentVersion);
+        obj.put("latest_version", target);
+        if (update.failed) {
+            obj.put("phase", "failed");
+            obj.put("install_now", false);
+            obj.put("error", update.failure);
+        } else if (update.waitingFor != null) {
+            obj.put("phase", "waiting");
+            obj.put("install_now", true);
+            obj.put("waiting_for", update.waitingFor);
+        } else if (update.gaveUp) {
+            obj.put("phase", "idle");
+            obj.put("install_now", false);
+            obj.put("error", update.error);
+        } else {
+            obj.put("phase", "installing");
+            obj.put("install_now", true);
         }
+        return obj.toString();
     }
 
     /** Stops the wait: nothing more is asked or reported. */

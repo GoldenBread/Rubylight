@@ -60,4 +60,61 @@ public final class NightjarHostsJni {
     // Client pairing identity (`identity.json`)
     public static native String identityLoadOrCreate(
             String dirPath, String legacyUniqueId, String legacyCertPem, byte[] legacyKeyPkcs8);
+
+    // Unified HostManager + HostClientPool + ApplistPollerHandle + RNG pairing helpers
+    public static native long hostManagerOpen(
+            String configDir, String uniqueId, String certPem, String keyPem);
+    public static native void hostManagerDestroy(long handle);
+    public static native void hostManagerResetForTests();
+    public static native void hostManagerSetIdentity(
+            long handle, String uniqueId, String certPem, String keyPem);
+    public static native void hostManagerStartPolling(long handle);
+    public static native void hostManagerStopPolling(long handle);
+    public static native String hostManagerNextEvent(long handle, long timeoutMs);
+    public static native boolean hostManagerPollHost(long handle, String uuid, boolean force);
+    public static native String hostManagerUpsertTuple(long handle, String dtoJson);
+    public static native String hostManagerSnapshots(long handle);
+    public static native String hostManagerGetSnapshot(long handle, String uuid);
+    public static native String hostManagerAddComputerBlocking(long handle, String dtoJson);
+    public static native int hostManagerAddComputerForLink(
+            long handle, String dtoJson, byte[] linkCertSha256);
+    public static native boolean hostManagerAddInvitedComputer(
+            long handle, String dtoJson, String internetPlayReply);
+    public static native boolean hostManagerInviteClaimsKnownPc(
+            long handle, String uuid, byte[] linkFpSha256);
+    public static native void hostManagerRemoveComputer(long handle, String uuid);
+    public static native void hostManagerPinAddress(
+            long handle, String uuid, String address, int port);
+    public static native void hostManagerForgetCertificate(long handle, String uuid);
+    public static native void hostManagerSetServerCertificate(
+            long handle, String uuid, byte[] certDer);
+    public static native void hostManagerRenameComputer(long handle, String uuid, String alias);
+    public static native void hostManagerResetNetworkState(long handle);
+    public static native void hostManagerClearPool(long handle);
+    public static native boolean hostManagerIsSiteLocalHost(String host);
+    public static native String hostManagerRefreshExternalIpv4Direct(int externalPort);
+    public static native String hostManagerPollIp(
+            long handle,
+            String uuid,
+            String address,
+            int port,
+            int httpsPort,
+            byte[] certDer,
+            boolean likelyOnline);
+    public static native String hostManagerPollDirect(
+            long handle,
+            String uuid,
+            String slotsJson,
+            boolean online,
+            int activePort,
+            int httpsPort,
+            byte[] certDer);
+
+    public static native long applistPollerStart(
+            long hostManagerHandle, String address, int httpPort, int httpsPort, byte[] certDer);
+    public static native void applistPollerPollNow(long handle);
+    public static native String applistPollerNextUpdate(long handle);
+    public static native void applistPollerStop(long handle);
+
+    public static native String randomPairingPin();
 }

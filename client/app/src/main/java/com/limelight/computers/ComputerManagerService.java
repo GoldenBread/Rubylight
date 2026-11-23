@@ -2,17 +2,15 @@ package com.limelight.computers;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.io.StringReader;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -20,33 +18,25 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import com.limelight.AppView;
 import com.limelight.LimeLog;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.discovery.DiscoveryService;
-import com.limelight.grid.assets.DiskAssetLoader;
 import com.limelight.nativeapi.HostEndpoint;
 import com.limelight.nativeapi.JniNativeApiTransport;
 import com.limelight.nativeapi.NativeApiClient;
-import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.http.ComputerDetails;
-import com.limelight.nvstream.http.HostCapabilities;
-import com.limelight.nvstream.http.NvApp;
-import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.http.InviteLink;
 import com.limelight.nvstream.http.PairingLink;
 import com.limelight.nvstream.http.PairingManager;
+import com.limelight.nvstream.jni.NightjarHostsJni;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.nvstream.mdns.MdnsComputer;
 import com.limelight.nvstream.mdns.MdnsDiscoveryListener;
 import com.limelight.nvstream.wol.WakeTargets;
 import com.limelight.nvstream.wol.WakeTargetsPoll;
-import com.limelight.preferences.HostDisplayChoice;
-import com.limelight.preferences.HostStreamProfile;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.utils.CacheHelper;
-import com.limelight.utils.FrontendExportStore;
 import com.limelight.utils.FrontendSync;
-import com.limelight.utils.NetHelper;
 import com.limelight.utils.RedactedLog;
 import com.limelight.utils.ServerHelper;
 
@@ -58,23 +48,24 @@ import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.Network;
-import android.net.NetworkCapabilities;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.SystemClock;
 import android.preference.PreferenceManager;
 
-import org.xmlpull.v1.XmlPullParserException;
+import androidx.annotation.VisibleForTesting;
 
+/**
+ * Android foreground/bound service hosting tracked PCs, mDNS binding, network callbacks,
+ * VPN-bound STUN lookup, and Android cleanup cascades while delegating pooling, probe plans,
+ * parallel direct polling, and app-list polling to {@link NightjarHostsJni} and {@link NightjarPolicyJni}.
+ */
 public class ComputerManagerService extends Service {
-    private static final int SERVERINFO_POLLING_PERIOD_MS = 1500;
-    private static final int APPLIST_POLLING_PERIOD_MS = 30000;
-    private static final int APPLIST_FAILED_POLLING_RETRY_MS = 2000;
     private static final int MDNS_QUERY_PERIOD_MS = 1000;
-    private static final int OFFLINE_POLL_TRIES = 3;
-    private static final int INITIAL_POLL_TRIES = 2;
-    private static final int EMPTY_LIST_THRESHOLD = 3;
-    private static final int POLL_DATA_TTL_MS = 30000;
+    private static final long POLL_DATA_TTL_MS = NightjarPolicyJni.hostPollDataTtlMs();
+    private static final long SERVERINFO_POLLING_PERIOD_MS = 1500;
+    private static final int OFFLINE_POLL_TRIES = NightjarPolicyJni.hostOfflinePollTries();
+    private static final int INITIAL_POLL_TRIES = NightjarPolicyJni.hostInitialPollTries();
 
     private final ComputerManagerBinder binder = new ComputerManagerBinder();
 
@@ -82,27 +73,21 @@ public class ComputerManagerService extends Service {
     private final AtomicInteger dbRefCount = new AtomicInteger(0);
 
     private IdentityManager idManager;
-    // Keeps the wake targets of the polled PCs, for wakes from the PC list and shortcuts.
+    private long hostManagerHandle;
     private WakeTargetsPoll wakeTargets;
-    // Its HTTPS requests, off the polling threads and their network locks.
     private ExecutorService wakeRequests;
-    // "Play over the internet" as it changes, in order and off the main thread: off ends the open tunnels at once.
     private ExecutorService internetPlayCalls;
-    // The default network's changes, off the callback thread and its per-PC locks.
     private ExecutorService networkChanges;
-    private final SharedPreferences.OnSharedPreferenceChangeListener internetPlaySetting = (preferences, key) -> {
-        if (PreferenceConfiguration.INTERNET_PLAY_PREF_STRING.equals(key)) applyInternetPlay(preferences);
-    };
-    private final LinkedList<PollingTuple> pollingTuples = new LinkedList<>();
-    // Orders a poll's save of a PC against removeComputer's delete (see runPoll).
+    private final SharedPreferences.OnSharedPreferenceChangeListener internetPlaySetting =
+            (preferences, key) -> {
+                if (PreferenceConfiguration.INTERNET_PLAY_PREF_STRING.equals(key)) {
+                    applyInternetPlay(preferences);
+                }
+            };
+    private final LinkedList<TrackedHost> pollingTuples = new LinkedList<>();
     private final Object removalLock = new Object();
-    // The HTTP clients of the serverinfo polls, kept from one poll to the next while the polls run.
-    private final PollConnections pollConnections = new PollConnections((address, httpsPort, serverCert) ->
-            new NvHTTP(address, httpsPort, idManager.getUniqueId(), serverCert,
-                    PlatformBinding.getCryptoProvider(ComputerManagerService.this)));
     private volatile ComputerManagerListener listener;
     private final AtomicInteger activePolls = new AtomicInteger(0);
-    // When each PC's internet play reply was last asked for, by UUID (readInternetPlay).
     private final HashMap<String, Long> internetReads = new HashMap<>();
     private volatile boolean pollingActive;
     private volatile boolean destroyed;
@@ -110,7 +95,6 @@ public class ComputerManagerService extends Service {
     private final Lock defaultNetworkLock = new ReentrantLock();
 
     private ConnectivityManager.NetworkCallback networkCallback;
-
     private volatile DiscoveryService.DiscoveryBinder discoveryBinder;
     private final ServiceConnection discoveryServiceConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder binder) {
@@ -118,12 +102,8 @@ public class ComputerManagerService extends Service {
                 if (destroyed) {
                     return;
                 }
-                DiscoveryService.DiscoveryBinder privateBinder = ((DiscoveryService.DiscoveryBinder)binder);
-
-                // Set us as the event listener
+                DiscoveryService.DiscoveryBinder privateBinder = (DiscoveryService.DiscoveryBinder) binder;
                 privateBinder.setListener(createDiscoveryListener());
-
-                // Signal a possible waiter that we're all setup
                 discoveryBinder = privateBinder;
                 if (pollingActive) {
                     privateBinder.startDiscovery(MDNS_QUERY_PERIOD_MS);
@@ -137,112 +117,132 @@ public class ComputerManagerService extends Service {
         }
     };
 
-    // Returns true if the details object was modified. A PC being added has no tuple yet.
-    private boolean runPoll(ComputerDetails details, PollingTuple tuple, int offlineCount) throws InterruptedException {
+    static final class TrackedHost {
+        Thread thread;
+        final ComputerDetails computer;
+        final Object networkLock = new Object();
+        long lastSuccessfulPollMs;
+        volatile boolean removed;
+
+        TrackedHost(ComputerDetails computer, Thread thread) {
+            this.computer = computer;
+            this.thread = thread;
+        }
+    }
+
+    static boolean punchesNow(ComputerDetails details) {
+        return NightjarPolicyJni.pollPunchesNow(
+                details.localAddress != null,
+                details.state == ComputerDetails.State.OFFLINE,
+                details.activeAddress != null && NightjarPolicyJni.isTunnelAddress(details.activeAddress.address));
+    }
+
+    interface HostResolver {
+        InetAddress resolve(String host) throws UnknownHostException;
+    }
+
+    static boolean isSiteLocalHost(String host) {
+        return NightjarHostsJni.hostManagerIsSiteLocalHost(host);
+    }
+
+    static boolean isSiteLocalHost(String host, HostResolver resolver) {
+        if (resolver == null) {
+            return isSiteLocalHost(host);
+        }
+        try {
+            return resolver.resolve(host).isSiteLocalAddress();
+        } catch (UnknownHostException e) {
+            return false;
+        }
+    }
+
+    @VisibleForTesting
+    boolean pollComputer(ComputerDetails details) throws InterruptedException {
+        RedactedLog.addComputerSecrets(details);
+        details.anotherCertificate = false;
+        boolean ok = HostServiceHelpers.pollComputerDirect(hostManagerHandle, details);
+        if (!ok && details.uuid != null && punchesNow(details)) {
+            ok = HostServiceHelpers.pollOverTheInternet(this, hostManagerHandle, details);
+        }
+        if (ok) {
+            details.unreachable = null;
+            RedactedLog.addComputerSecrets(details);
+            details.internetPath = InternetPlay.path(details, InternetPlay.reply(this, details.uuid));
+            return true;
+        }
+        details.internetPath = null;
+        return false;
+    }
+
+    private boolean runPoll(ComputerDetails details, TrackedHost tuple, int offlineCount) throws InterruptedException {
         if (!getLocalDatabaseReference()) {
             return false;
         }
-
         try {
             final boolean newPc = tuple == null;
-            final int pollTriesBeforeOffline = details.state == ComputerDetails.State.UNKNOWN ?
-                    INITIAL_POLL_TRIES : OFFLINE_POLL_TRIES;
+            final int triesBeforeOffline = details.state == ComputerDetails.State.UNKNOWN
+                    ? INITIAL_POLL_TRIES : OFFLINE_POLL_TRIES;
 
             activePolls.incrementAndGet();
-            // The certificate this poll asks with; a pairing that ends meanwhile pins another one.
             final X509Certificate pinned = details.serverCert;
-
-            // Poll the machine
             try {
                 if (!pollComputer(details)) {
-                    if (!newPc && offlineCount < pollTriesBeforeOffline) {
-                        // Return without calling the listener
+                    if (!newPc && offlineCount < triesBeforeOffline) {
                         return false;
                     }
-
                     details.state = ComputerDetails.State.OFFLINE;
                 }
             } finally {
                 activePolls.decrementAndGet();
             }
 
-            // If it's online, update our persistent state
             ComputerDetails existingComputer = null;
-            // The saved row as this poll read it, before the poll's answer is merged into it.
             Object[] savedColumns = null;
             if (details.state == ComputerDetails.State.ONLINE) {
                 existingComputer = dbManager.getComputerByUUID(details.uuid);
                 if (existingComputer != null) {
                     savedColumns = ComputerDatabaseManager.columns(existingComputer);
                 }
-
-                // Check if it's in the database because it could have been
-                // removed after this was issued
                 if (!newPc && existingComputer == null) {
-                    // It's gone
                     return false;
                 }
-
-                if (existingComputer == null) {
-                    // If the active address is a site-local address (RFC 1918),
-                    // then use STUN to populate the external address field if
-                    // it's not set already.
-                    if (details.remoteAddress == null &&
-                            isSiteLocalHost(details.activeAddress.address, InetAddress::getByName)) {
-                        populateExternalAddress(details);
-                    }
+                if (existingComputer == null && details.remoteAddress == null && details.activeAddress != null
+                        && isSiteLocalHost(details.activeAddress.address)) {
+                    HostServiceHelpers.populateExternalAddress(this, details);
                 }
             }
 
-            // removeComputer marks the tuple removed before it deletes the PC under this lock, so a PC removed
-            // while it was polled is neither saved again nor shown, and its wake targets are not asked for again.
-            // Not pollingTuples: the poll holds the tuple's network lock, which invalidateStateForComputer takes.
             synchronized (removalLock) {
                 if (!newPc && tuple.removed) {
                     return false;
                 }
-
                 if (details.state == ComputerDetails.State.ONLINE) {
-                    if (details.pairState == PairingManager.PairState.NOT_PAIRED) {
-                        // The PC no longer takes this device's pairing (unpaired there: the pinned PC refused this
-                        // device): the saved one goes, so Home never shows the PC as a paired one that is away.
-                        // Another certificate never gets here (tryPollIp), and a poll without the pin (a PC
-                        // found again by mDNS) leaves a pin it did not ask with alone.
-                        if (details.serverCert == pinned) {
-                            details.serverCert = null;
-                        }
-                        if (existingComputer != null && details.serverCert == null) {
+                    if (NightjarPolicyJni.pollShouldClearCertOnUnpair(
+                            details.pairState == PairingManager.PairState.PAIRED,
+                            pinned == null,
+                            Objects.equals(details.serverCert, pinned))) {
+                        details.serverCert = null;
+                        if (existingComputer != null && Objects.equals(existingComputer.serverCert, pinned)) {
                             existingComputer.serverCert = null;
                         }
-                        // Its internet play key went with the pairing.
                         if (details.serverCert == null) {
                             InternetPlay.forget(this, details.uuid);
                         }
                     }
-                    // If we already have an entry for this computer in the DB, we must
-                    // combine the existing data with this new data (which may be partially available
-                    // due to detecting the PC via mDNS) without the saved external address. If we
-                    // write to the DB without doing this first, we can overwrite our existing data.
                     HostCapabilityCache.save(this, details.uuid, details.caps);
                     if (existingComputer != null) {
                         existingComputer.update(details);
-                        // A PC is polled every second or two and nearly always answers what is saved
-                        // already. The row is written when any of its columns differs from the one read,
-                        // which a new name, address, MAC or certificate and a forgotten pairing all do.
                         if (!Arrays.deepEquals(savedColumns, ComputerDatabaseManager.columns(existingComputer))) {
                             dbManager.updateComputer(existingComputer);
                         }
-                    }
-                    else {
+                    } else {
                         dbManager.updateComputer(details);
                     }
                 }
 
-                // Don't call the listener if this is a failed lookup of a new PC
                 ComputerManagerListener currentListener = listener;
                 if ((!newPc || details.state == ComputerDetails.State.ONLINE) && currentListener != null) {
                     if (newPc) {
-                        // A rediscovered PC keeps the user's name and pinned address from the first update on.
                         details.alias = HostNames.get(this, details.uuid);
                         details.pinnedAddress = PinnedAddresses.get(this, details.uuid);
                         if (details.pinnedAddress != null) details.activeAddress = details.pinnedAddress;
@@ -250,7 +250,6 @@ public class ComputerManagerService extends Service {
                     currentListener.notifyComputerUpdated(details);
                 }
 
-                // After the listener, so a PC that answers is shown before its native API is asked.
                 wakeTargets.polled(details);
                 readInternetPlay(details);
             }
@@ -260,27 +259,21 @@ public class ComputerManagerService extends Service {
         }
     }
 
-    private Thread createPollingThread(final PollingTuple tuple) {
+    private Thread createPollingThread(final TrackedHost tuple) {
         Thread t = new Thread() {
             @Override
             public void run() {
-
                 int offlineCount = 0;
                 while (!isInterrupted() && pollingActive && tuple.thread == this) {
                     try {
-                        // Only allow one request to the machine at a time
                         synchronized (tuple.networkLock) {
-                            // Check if this poll has modified the details
                             if (!runPoll(tuple.computer, tuple, offlineCount)) {
-                                LimeLog.info("PC is offline (try " + offlineCount + ")");
                                 offlineCount++;
                             } else {
                                 tuple.lastSuccessfulPollMs = SystemClock.elapsedRealtime();
                                 offlineCount = 0;
                             }
                         }
-
-                        // Wait until the next polling interval
                         Thread.sleep(SERVERINFO_POLLING_PERIOD_MS);
                     } catch (InterruptedException e) {
                         break;
@@ -293,38 +286,21 @@ public class ComputerManagerService extends Service {
     }
 
     public class ComputerManagerBinder extends Binder {
-        public boolean isPersistent() {
-            return true;
-        }
+        public boolean isPersistent() { return true; }
 
         public void startPolling(ComputerManagerListener listener) {
-            if (destroyed) {
-                return;
-            }
-            // Polling is active
+            if (destroyed) return;
             pollingActive = true;
-
-            // Set the listener
             ComputerManagerService.this.listener = listener;
-
-            // Start mDNS autodiscovery too
             DiscoveryService.DiscoveryBinder discovery = discoveryBinder;
-            if (discovery != null) {
-                discovery.startDiscovery(MDNS_QUERY_PERIOD_MS);
-            }
+            if (discovery != null) discovery.startDiscovery(MDNS_QUERY_PERIOD_MS);
 
             synchronized (pollingTuples) {
-                for (PollingTuple tuple : pollingTuples) {
-                    // Enforce the poll data TTL
+                for (TrackedHost tuple : pollingTuples) {
                     if (SystemClock.elapsedRealtime() - tuple.lastSuccessfulPollMs > POLL_DATA_TTL_MS) {
-                        LimeLog.info("Timing out polled state for "+tuple.computer.name);
                         tuple.computer.state = ComputerDetails.State.UNKNOWN;
                     }
-
-                    // Report this computer initially
                     listener.notifyComputerUpdated(tuple.computer);
-
-                    // This polling thread might already be there
                     if (tuple.thread == null) {
                         tuple.thread = createPollingThread(tuple);
                         tuple.thread.start();
@@ -337,15 +313,9 @@ public class ComputerManagerService extends Service {
             synchronized (discoveryServiceConnection) {
                 try {
                     while (discoveryBinder == null && discoveryServiceBound && !destroyed) {
-                        // Wait for the bind notification
                         discoveryServiceConnection.wait(1000);
                     }
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
-
-                    // InterruptedException clears the thread's interrupt status. Since we can't
-                    // handle that here, we will re-interrupt the thread to set the interrupt
-                    // status back to true.
                     Thread.currentThread().interrupt();
                     return false;
                 }
@@ -358,11 +328,6 @@ public class ComputerManagerService extends Service {
                 try {
                     Thread.sleep(250);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
-
-                    // InterruptedException clears the thread's interrupt status. Since we can't
-                    // handle that here, we will re-interrupt the thread to set the interrupt
-                    // status back to true.
                     Thread.currentThread().interrupt();
                     return;
                 }
@@ -381,20 +346,14 @@ public class ComputerManagerService extends Service {
             ComputerManagerService.this.removeComputer(computer);
         }
 
-        /**
-         * Keeps a PC an invite paired, with its internet play reply, and starts polling it. False, with nothing
-         * changed, when a PC known here under that ID is paired with another certificate.
-         */
         public boolean addInvitedComputer(ComputerDetails details, String reply) {
             return ComputerManagerService.this.addInvitedComputer(details, reply);
         }
 
-        /** Whether the invite names a PC known here that is paired with another certificate than the invite's. */
         public boolean inviteClaimsKnownPc(InviteLink invite) {
             return ComputerManagerService.this.inviteClaimsKnownPc(invite);
         }
 
-        /** Gives the PC a name on this device only; null shows the PC's own name again. */
         public void renameComputer(String uuid, String alias) {
             ComputerManagerService.this.renameComputer(uuid, alias);
         }
@@ -403,13 +362,11 @@ public class ComputerManagerService extends Service {
             ComputerManagerService.this.pinAddress(uuid, address);
         }
 
-        /** The PC was unpaired from this device: its pinned certificate goes, in memory and saved. */
         public void forgetCertificate(String uuid) {
             ComputerManagerService.this.forgetCertificate(uuid);
         }
 
         public void stopPolling() {
-            // Just call the unbind handler to cleanup
             ComputerManagerService.this.onUnbind(null);
         }
 
@@ -423,29 +380,25 @@ public class ComputerManagerService extends Service {
 
         public ComputerDetails getComputer(String uuid) {
             synchronized (pollingTuples) {
-                for (PollingTuple tuple : pollingTuples) {
+                for (TrackedHost tuple : pollingTuples) {
                     if (uuid.equalsIgnoreCase(tuple.computer.uuid)) {
                         return tuple.computer;
                     }
                 }
             }
-
             return null;
         }
 
         public void invalidateStateForComputer(String uuid) {
-            // Not under pollingTuples: a poll holds the network lock for its whole run.
-            List<PollingTuple> matching = new ArrayList<>();
+            List<TrackedHost> matching = new ArrayList<>();
             synchronized (pollingTuples) {
-                for (PollingTuple tuple : pollingTuples) {
+                for (TrackedHost tuple : pollingTuples) {
                     if (uuid.equals(tuple.computer.uuid)) {
                         matching.add(tuple);
                     }
                 }
             }
-            for (PollingTuple tuple : matching) {
-                // We need the network lock to prevent a concurrent poll
-                // from wiping this change out
+            for (TrackedHost tuple : matching) {
                 synchronized (tuple.networkLock) {
                     tuple.computer.state = ComputerDetails.State.UNKNOWN;
                 }
@@ -459,141 +412,28 @@ public class ComputerManagerService extends Service {
         if (discovery != null) {
             discovery.stopDiscovery();
         }
-
-        // Stop polling
         pollingActive = false;
         synchronized (pollingTuples) {
-            for (PollingTuple tuple : pollingTuples) {
+            for (TrackedHost tuple : pollingTuples) {
                 if (tuple.thread != null) {
-                    // Interrupt and remove the thread
                     tuple.thread.interrupt();
                     tuple.thread = null;
                 }
             }
         }
-        // The polls' clients go with the polls; one still out on a request is dropped when it returns.
-        pollConnections.clear();
-
-        // Remove the listener
+        NightjarHostsJni.hostManagerClearPool(hostManagerHandle);
         listener = null;
-
         return false;
-    }
-
-    interface HostResolver {
-        InetAddress resolve(String host) throws UnknownHostException;
-    }
-
-    /**
-     * Whether {@code host} is on the local network. A PC added by name ("gamepc.lan") is resolved:
-     * this runs on the poll thread, and a name left unclassified never gets a STUN remote address.
-     */
-    static boolean isSiteLocalHost(String host, HostResolver resolver) {
-        try {
-            return resolver.resolve(host).isSiteLocalAddress();
-        } catch (UnknownHostException e) {
-            return false;
-        }
-    }
-
-    private void populateExternalAddress(ComputerDetails details) {
-        boolean activeNetworkIsVpn = NetHelper.isActiveNetworkVpn(this);
-        if (activeNetworkIsVpn) {
-            // STUN must use an underlying LAN, not the VPN's public endpoint. Only the STUN socket
-            // goes there (as Moonlight V+ does): binding the process would move a running stream's
-            // sockets off the VPN for the length of the query.
-            Network lan = stunNetwork((ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE));
-            if (lan == null) {
-                LimeLog.info("STUN: no non-VPN network to ask on");
-                return;
-            }
-            try {
-                String stunResolvedAddress = StunClient.query("stun.moonlight-stream.org", 3478, 3000,
-                        lan::getAllByName, lan::bindSocket);
-                if (stunResolvedAddress != null) {
-                    details.remoteAddress = new ComputerDetails.AddressTuple(stunResolvedAddress, details.guessExternalPort());
-                } else {
-                    LimeLog.info("STUN: no answer on the non-VPN network");
-                }
-            } catch (IOException e) {
-                LimeLog.warning("STUN on the non-VPN network failed: " + e);
-            }
-            return;
-        }
-
-        // Without a VPN the default network is the LAN. Android 5.0 has no
-        // Network.bindSocket(DatagramSocket): there the process is bound for the query.
-        boolean boundToNetwork = false;
-        defaultNetworkLock.lock();
-        try {
-            if (activeNetworkIsVpn) {
-                Network lan = stunNetwork((ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE));
-                boundToNetwork = lan != null && ConnectivityManager.setProcessDefaultNetwork(lan);
-            }
-
-            if (!activeNetworkIsVpn || boundToNetwork) {
-                String stunResolvedAddress = NvConnection.findExternalAddressForMdns("stun.moonlight-stream.org", 3478);
-                if (stunResolvedAddress != null) {
-                    details.remoteAddress = new ComputerDetails.AddressTuple(stunResolvedAddress, details.guessExternalPort());
-                }
-            }
-        } finally {
-            try {
-                if (boundToNetwork) {
-                    ConnectivityManager.setProcessDefaultNetwork(null);
-                }
-            } finally {
-                defaultNetworkLock.unlock();
-            }
-        }
-    }
-
-    /** The first network that is neither a VPN nor cellular, for STUN behind a VPN. */
-    private static Network stunNetwork(ConnectivityManager connMgr) {
-        for (Network net : connMgr.getAllNetworks()) {
-            NetworkCapabilities netCaps = connMgr.getNetworkCapabilities(net);
-            if (netCaps != null && !netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
-                    !netCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-                return net;
-            }
-        }
-        return null;
     }
 
     private MdnsDiscoveryListener createDiscoveryListener() {
         return new MdnsDiscoveryListener() {
             @Override
             public boolean notifyComputerAdded(MdnsComputer computer) {
-                ComputerDetails details = new ComputerDetails();
-
-                // Populate the computer template with mDNS info
-                if (computer.getLocalAddress() != null) {
-                    details.localAddress = new ComputerDetails.AddressTuple(computer.getLocalAddress().getHostAddress(), computer.getPort());
-
-                    // Since we're on the same network, we can use STUN to find
-                    // our WAN address, which is also very likely the WAN address
-                    // of the PC. We can use this later to connect remotely.
-                    if (computer.getLocalAddress() instanceof Inet4Address) {
-                        populateExternalAddress(details);
-                    }
-                }
-                if (computer.getIpv6Address() != null) {
-                    details.ipv6Address = new ComputerDetails.AddressTuple(computer.getIpv6Address().getHostAddress(), computer.getPort());
-                }
-
+                ComputerDetails details = HostServiceHelpers.detailsFromMdns(computer, ComputerManagerService.this);
                 try {
-                    // Kick off a blocking serverinfo poll on this machine
-                    if (!addComputerBlocking(details)) {
-                        LimeLog.warning("Auto-discovered PC failed to respond");
-                        return false;
-                    }
-                    return true;
+                    return addComputerBlocking(details);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
-
-                    // InterruptedException clears the thread's interrupt status. Since we can't
-                    // handle that here, we will re-interrupt the thread to set the interrupt
-                    // status back to true.
                     Thread.currentThread().interrupt();
                     return false;
                 }
@@ -601,40 +441,30 @@ public class ComputerManagerService extends Service {
 
             @Override
             public void notifyDiscoveryFailure(Exception e) {
-                LimeLog.severe("mDNS discovery failed");
-                e.printStackTrace();
+                LimeLog.severe("mDNS discovery failed: " + e);
             }
         };
     }
 
     private void addTuple(ComputerDetails details) {
-        // The user's name and pinned address for the PC are stored beside the database, not in it.
         details.alias = HostNames.get(this, details.uuid);
         details.pinnedAddress = PinnedAddresses.get(this, details.uuid);
         if (details.pinnedAddress != null) details.activeAddress = details.pinnedAddress;
         synchronized (pollingTuples) {
-            for (PollingTuple tuple : pollingTuples) {
-                // Check if this is the same computer
+            for (TrackedHost tuple : pollingTuples) {
                 if (tuple.computer.uuid.equals(details.uuid)) {
-                    // Update the saved computer with potentially new details
                     tuple.computer.update(details);
-                    if (!java.util.Objects.equals(tuple.computer.alias, details.alias)) {
+                    if (!Objects.equals(tuple.computer.alias, details.alias)) {
                         tuple.computer.alias = details.alias;
                     }
-
-                    // Start a polling thread if polling is active
                     if (pollingActive && tuple.thread == null) {
                         tuple.thread = createPollingThread(tuple);
                         tuple.thread.start();
                     }
-
-                    // Found an entry so we're done
                     return;
                 }
             }
-
-            // If we got here, we didn't find an entry
-            PollingTuple tuple = new PollingTuple(details, null);
+            TrackedHost tuple = new TrackedHost(details, null);
             if (pollingActive) {
                 tuple.thread = createPollingThread(tuple);
             }
@@ -646,155 +476,80 @@ public class ComputerManagerService extends Service {
     }
 
     public boolean addComputerBlocking(ComputerDetails fakeDetails) throws InterruptedException {
-        // Block while we try to fill the details
-
-        // We cannot use runPoll() here because it will attempt to persist the state of the machine
-        // in the database, which would be bad because we don't have our pinned cert loaded yet.
         return finishAdding(fakeDetails, pollComputer(fakeDetails));
     }
 
-    /**
-     * Keeps a PC an invite paired (Invites#redeem): its reply first, so the first poll can take the internet paths,
-     * then the PC itself, saved as a poll would save it.
-     *
-     * <p>Anyone can write an invite that names the ID of a PC known here. The invite proved its own certificate, not
-     * that it is that PC: one paired here with another certificate keeps it, its addresses and its internet details,
-     * and this returns false with nothing changed.
-     */
     public boolean addInvitedComputer(ComputerDetails details, String reply) {
-        if (pinsAnotherCertificate(details.uuid, details.serverCert)) {
-            LimeLog.warning("An invite paired a PC that a known PC with another certificate already is; not kept");
+        if (pinsAnotherCertificate(details.uuid, pinned -> Objects.equals(pinned, details.serverCert))) {
             return false;
         }
         if (getLocalDatabaseReference()) {
             try {
-                // A PC already known here keeps its other addresses and MAC: only what the invite proved changes.
                 synchronized (removalLock) {
-                    ComputerDetails saved = dbManager.getComputerByUUID(details.uuid);
-                    if (saved != null && saved.serverCert != null && !saved.serverCert.equals(details.serverCert)) {
-                        LimeLog.warning("An invite paired a PC that a saved PC with another certificate already is; not kept");
+                    if (!HostServiceHelpers.saveInvitedComputerInDb(this, dbManager, details, reply)) {
                         return false;
-                    }
-                    InternetPlay.save(this, details.uuid, reply);
-                    if (saved == null) {
-                        dbManager.updateComputer(details);
-                    } else {
-                        saved.name = details.name;
-                        saved.serverCert = details.serverCert;
-                        saved.httpsPort = details.httpsPort;
-                        if (details.manualAddress != null) saved.manualAddress = details.manualAddress;
-                        dbManager.updateComputer(saved);
                     }
                 }
             } finally {
                 releaseLocalDatabaseReference();
             }
-        } else {
-            InternetPlay.save(this, details.uuid, reply);
         }
         addTuple(details);
         return true;
     }
 
-    /** Whether the invite names a PC known here that is paired with another certificate than the invite's. */
-    boolean inviteClaimsKnownPc(InviteLink invite) {
+    public boolean inviteClaimsKnownPc(InviteLink invite) {
+        return pinsAnotherCertificate(invite.uniqueId, invite::matches);
+    }
+
+    private boolean pinsAnotherCertificate(String uuid, java.util.function.Predicate<X509Certificate> matches) {
         synchronized (pollingTuples) {
-            for (PollingTuple tuple : pollingTuples) {
-                if (tuple.computer.uuid.equals(invite.uniqueId)) {
-                    return tuple.computer.serverCert != null && !invite.matches(tuple.computer.serverCert);
+            for (TrackedHost tuple : pollingTuples) {
+                if (uuid.equals(tuple.computer.uuid)) {
+                    return tuple.computer.serverCert != null && !matches.test(tuple.computer.serverCert);
                 }
             }
         }
         return false;
     }
 
-    /** Whether the PC known here as {@code uuid} is paired with a certificate other than {@code certificate}. */
-    private boolean pinsAnotherCertificate(String uuid, X509Certificate certificate) {
-        synchronized (pollingTuples) {
-            for (PollingTuple tuple : pollingTuples) {
-                if (tuple.computer.uuid.equals(uuid)) {
-                    return tuple.computer.serverCert != null && !tuple.computer.serverCert.equals(certificate);
-                }
-            }
-        }
-        return false;
-    }
-
-    /** What became of the PC a pairing link names. */
     public enum LinkAdd { ADDED, UNREACHABLE, CERTIFICATE_MISMATCH }
 
-    /**
-     * Adds the PC at a pairing link's address, unless what answers there says it is a PC known here with another
-     * certificate than the link names. Any web page can make that address the one tried, and adding it would rewrite
-     * the known PC's address before anything has proved who answered.
-     */
     public LinkAdd addComputerForLink(ComputerDetails fakeDetails, PairingLink link) throws InterruptedException {
         boolean polled = pollComputer(fakeDetails);
-        if (polled && pinsAnotherCertificate(fakeDetails.uuid, link)) {
-            LimeLog.warning("A pairing link's address claims a known PC with another certificate");
+        if (polled && pinsAnotherCertificate(fakeDetails.uuid, link::matches)) {
             return LinkAdd.CERTIFICATE_MISMATCH;
         }
         return finishAdding(fakeDetails, polled) ? LinkAdd.ADDED : LinkAdd.UNREACHABLE;
     }
 
-    private boolean pinsAnotherCertificate(String uuid, PairingLink link) {
-        synchronized (pollingTuples) {
-            for (PollingTuple tuple : pollingTuples) {
-                if (tuple.computer.uuid.equals(uuid)) {
-                    return tuple.computer.serverCert != null && !link.matches(tuple.computer.serverCert);
-                }
-            }
-        }
-        return false;
-    }
-
     private boolean finishAdding(ComputerDetails fakeDetails, boolean polled) throws InterruptedException {
-        // A caller that gave up during the poll (Back on Add PC interrupts it) neither saves the PC nor starts polling it.
-        if (Thread.currentThread().isInterrupted()) {
-            throw new InterruptedException();
-        }
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
         if (polled) {
-            // See if we have record of this PC to pull its pinned cert
             synchronized (pollingTuples) {
-                for (PollingTuple tuple : pollingTuples) {
+                for (TrackedHost tuple : pollingTuples) {
                     if (tuple.computer.uuid.equals(fakeDetails.uuid)) {
                         fakeDetails.serverCert = tuple.computer.serverCert;
                         break;
                     }
                 }
             }
-
-            // Poll again, possibly with the pinned cert, to get accurate pairing information.
-            // This will insert the host into the database too.
             runPoll(fakeDetails, null, 0);
         }
-
-        // If the machine is reachable, it was successful
         if (fakeDetails.state == ComputerDetails.State.ONLINE) {
-            LimeLog.info("New PC ("+fakeDetails.name+") is UUID "+fakeDetails.uuid);
-
-            // Start a polling thread for this machine
             addTuple(fakeDetails);
             return true;
         }
-        else {
-            return false;
-        }
+        return false;
     }
 
-    /**
-     * Pins the PC to one of its known addresses, which then is the only one polled and streamed to, or
-     * brings back the automatic pick ({@code address} null), as Moonlight V+ PC's address pinning.
-     */
     public void pinAddress(String uuid, ComputerDetails.AddressTuple address) {
         PinnedAddresses.set(this, uuid, address);
         synchronized (pollingTuples) {
-            for (PollingTuple tuple : pollingTuples) {
+            for (TrackedHost tuple : pollingTuples) {
                 if (uuid.equals(tuple.computer.uuid)) {
                     tuple.computer.pinnedAddress = address;
-                    if (address != null) {
-                        tuple.computer.activeAddress = address;
-                    }
+                    if (address != null) tuple.computer.activeAddress = address;
                 }
             }
         }
@@ -802,23 +557,14 @@ public class ComputerManagerService extends Service {
 
     public void forgetCertificate(String uuid) {
         synchronized (pollingTuples) {
-            for (PollingTuple tuple : pollingTuples) {
-                if (uuid.equals(tuple.computer.uuid)) {
-                    tuple.computer.serverCert = null;
-                }
+            for (TrackedHost tuple : pollingTuples) {
+                if (uuid.equals(tuple.computer.uuid)) tuple.computer.serverCert = null;
             }
         }
-        if (!getLocalDatabaseReference()) {
-            return;
-        }
+        if (!getLocalDatabaseReference()) return;
         try {
-            // A poll that read the PC before this and saves it back answers "not paired", which clears it again.
             synchronized (removalLock) {
-                ComputerDetails saved = dbManager.getComputerByUUID(uuid);
-                if (saved != null && saved.serverCert != null) {
-                    saved.serverCert = null;
-                    dbManager.updateComputer(saved);
-                }
+                HostServiceHelpers.forgetCertInDb(dbManager, uuid);
             }
         } finally {
             releaseLocalDatabaseReference();
@@ -828,27 +574,20 @@ public class ComputerManagerService extends Service {
     public void renameComputer(String uuid, String alias) {
         HostNames.set(this, uuid, alias);
         synchronized (pollingTuples) {
-            for (PollingTuple tuple : pollingTuples) {
-                if (uuid.equals(tuple.computer.uuid)) {
-                    tuple.computer.alias = alias;
-                }
+            for (TrackedHost tuple : pollingTuples) {
+                if (uuid.equals(tuple.computer.uuid)) tuple.computer.alias = alias;
             }
         }
     }
 
     public void removeComputer(ComputerDetails computer) {
-        if (!getLocalDatabaseReference()) {
-            return;
-        }
-
+        if (!getLocalDatabaseReference()) return;
         try {
-            // Its polling first: a poll that ends after this saves and shows nothing (see runPoll).
             synchronized (pollingTuples) {
-                for (PollingTuple tuple : pollingTuples) {
+                for (TrackedHost tuple : pollingTuples) {
                     if (tuple.computer.uuid.equals(computer.uuid)) {
                         tuple.removed = true;
                         if (tuple.thread != null) {
-                            // Interrupt the thread on this entry
                             tuple.thread.interrupt();
                             tuple.thread = null;
                         }
@@ -857,37 +596,14 @@ public class ComputerManagerService extends Service {
                     }
                 }
             }
-
-            // Under the lock a poll saves under, after the tuple is marked (see runPoll).
             synchronized (removalLock) {
-                // Remove it from the database
-                dbManager.deleteComputer(computer);
-                // Before its stored targets go, so an ask still in flight can't store them again.
-                wakeTargets.forget(computer.uuid);
-                HostStreamProfile.reset(this, computer.uuid);
-                HostDisplayChoice.forget(this, computer.uuid);
-                HostCapabilityCache.forget(this, computer.uuid);
-                InternetPlay.forget(this, computer.uuid);
-                com.limelight.nativeapi.ConsoleRepository.forgetHost(this, computer.uuid);
-                HostNotices.forget(this, computer.uuid);
-                HostNames.forget(this, computer.uuid);
-                PinnedAddresses.set(this, computer.uuid, null);
+                HostServiceHelpers.cleanupRemovedComputer(this, dbManager, wakeTargets, computer);
             }
-            com.limelight.preferences.AppQuitOnLeave.forget(this, computer.uuid);
-            com.limelight.preferences.AppStreamSettings.forget(this, computer.uuid);
-            com.limelight.preferences.AutoBitrateChoice.forget(this, computer.uuid);
-            getSharedPreferences(AppView.HIDDEN_APPS_PREF_FILENAME, MODE_PRIVATE)
-                    .edit().remove(computer.uuid)
-                    .remove(com.limelight.nativeapi.HiddenStore.Preferences.idsKey(computer.uuid)).apply();
-            FrontendExportStore.forgetHost(this, computer.uuid);
-            CacheHelper.deleteCacheFile(getCacheDir(), "applist", computer.uuid);
-            new DiskAssetLoader(this).deleteAssetsForComputer(computer.uuid);
+            NightjarHostsJni.hostManagerRemoveComputer(hostManagerHandle, computer.uuid);
+            HostServiceHelpers.cleanupRemovedComputerPrefs(this, computer.uuid);
 
-            // Discovery skips hosts that already answered, so the deleted PC would never return.
             DiscoveryService.DiscoveryBinder discovery = discoveryBinder;
-            if (discovery != null) {
-                discovery.forgetAnsweredComputers();
-            }
+            if (discovery != null) discovery.forgetAnsweredComputers();
         } finally {
             releaseLocalDatabaseReference();
         }
@@ -897,353 +613,40 @@ public class ComputerManagerService extends Service {
         int count;
         do {
             count = dbRefCount.get();
-            if (count == 0) {
-                return false;
-            }
+            if (count == 0) return false;
         } while (!dbRefCount.compareAndSet(count, count + 1));
         return true;
     }
 
     private void releaseLocalDatabaseReference() {
-        if (dbRefCount.decrementAndGet() == 0) {
-            dbManager.close();
-        }
-    }
-
-    private ComputerDetails tryPollIp(ComputerDetails details, ComputerDetails.AddressTuple address) {
-        try {
-            // If the current address's port number matches the active address's port number, we can also assume
-            // the HTTPS port will also match. This assumption is currently safe because Sunshine sets all ports
-            // as offsets from the base HTTP port and doesn't allow custom HttpsPort responses for WAN vs LAN.
-            boolean portMatchesActiveAddress = details.state == ComputerDetails.State.ONLINE &&
-                    details.activeAddress != null && address.port == details.activeAddress.port;
-
-            // The client the last poll of this address and certificate used, or a new one.
-            PollConnections.Lease lease = pollConnections.take(address,
-                    portMatchesActiveAddress ? details.httpsPort : 0, details.serverCert);
-
-            // If this PC is currently online at this address, extend the timeouts to allow more time for the PC to respond.
-            boolean isLikelyOnline = details.state == ComputerDetails.State.ONLINE && address.equals(details.activeAddress);
-
-            ComputerDetails newDetails;
-            boolean anotherCertificate;
-            try {
-                newDetails = lease.http.getComputerDetails(isLikelyOnline);
-                anotherCertificate = lease.http.serverInfoFromAnotherCertificate();
-            } finally {
-                pollConnections.giveBack(lease, SystemClock.elapsedRealtime());
-            }
-
-            // Another certificate than the pinned one answers at this address: another PC took its
-            // lease, or a second streaming app answers on the same ports. Its "not paired" over HTTP
-            // is not this PC forgetting this device, so the pairing stays and this address does not
-            // reach the PC.
-            if (anotherCertificate) {
-                LimeLog.info("Another certificate answers at " + address);
-                details.anotherCertificate = true;
-                return null;
-            }
-
-            // Check if this is the PC we expected
-            if (newDetails.uuid == null) {
-                LimeLog.severe("Polling returned no UUID!");
-                return null;
-            }
-            // details.uuid can be null on initial PC add
-            else if (details.uuid != null && !details.uuid.equals(newDetails.uuid)) {
-                // We got the wrong PC!
-                LimeLog.info("Polling returned the wrong PC!");
-                return null;
-            }
-
-            return newDetails;
-        } catch (XmlPullParserException e) {
-            e.printStackTrace();
-            return null;
-        } catch (IOException e) {
-            return null;
-        }
-    }
-
-    private static class ParallelPollTuple {
-        public ComputerDetails.AddressTuple address;
-        public ComputerDetails existingDetails;
-
-        public boolean complete;
-        public Thread pollingThread;
-        public ComputerDetails returnedDetails;
-
-        public ParallelPollTuple(ComputerDetails.AddressTuple address, ComputerDetails existingDetails) {
-            this.address = address;
-            this.existingDetails = existingDetails;
-        }
-
-        public void interrupt() {
-            if (pollingThread != null) {
-                pollingThread.interrupt();
-            }
-        }
-    }
-
-    private void startParallelPollThread(ParallelPollTuple tuple, HashSet<ComputerDetails.AddressTuple> uniqueAddresses) {
-        // Don't bother starting a polling thread for an address that doesn't exist
-        // or if the address has already been polled with an earlier tuple
-        if (tuple.address == null || !uniqueAddresses.add(tuple.address)) {
-            tuple.complete = true;
-            tuple.returnedDetails = null;
-            return;
-        }
-
-        tuple.pollingThread = new Thread() {
-            @Override
-            public void run() {
-                ComputerDetails details = tryPollIp(tuple.existingDetails, tuple.address);
-
-                synchronized (tuple) {
-                    tuple.complete = true; // Done
-                    tuple.returnedDetails = details; // Polling result
-
-                    tuple.notify();
-                }
-            }
-        };
-        tuple.pollingThread.setName("Parallel Poll - "+tuple.address+" - "+tuple.existingDetails.name);
-        tuple.pollingThread.start();
-    }
-
-    private ComputerDetails parallelPollPc(ComputerDetails details) throws InterruptedException {
-        // A pinned PC is polled, and so streamed to, only at the address the user chose.
-        if (details.pinnedAddress != null) {
-            ComputerDetails polled = tryPollIp(details, details.pinnedAddress);
-            if (polled != null) {
-                polled.activeAddress = details.pinnedAddress;
-            }
-            return polled;
-        }
-        ParallelPollTuple localInfo = new ParallelPollTuple(details.localAddress, details);
-        ParallelPollTuple manualInfo = new ParallelPollTuple(details.manualAddress, details);
-        ParallelPollTuple remoteInfo = new ParallelPollTuple(details.remoteAddress, details);
-        ParallelPollTuple ipv6Info = new ParallelPollTuple(details.ipv6Address, details);
-
-        // These must be started in order of precedence for the deduplication algorithm
-        // to result in the correct behavior.
-        HashSet<ComputerDetails.AddressTuple> uniqueAddresses = new HashSet<>();
-        startParallelPollThread(localInfo, uniqueAddresses);
-        startParallelPollThread(manualInfo, uniqueAddresses);
-        startParallelPollThread(ipv6Info, uniqueAddresses);
-        startParallelPollThread(remoteInfo, uniqueAddresses);
-
-        try {
-            // Check local first
-            synchronized (localInfo) {
-                while (!localInfo.complete) {
-                    localInfo.wait();
-                }
-
-                if (localInfo.returnedDetails != null) {
-                    localInfo.returnedDetails.activeAddress = localInfo.address;
-                    return localInfo.returnedDetails;
-                }
-            }
-
-            // Now manual
-            synchronized (manualInfo) {
-                while (!manualInfo.complete) {
-                    manualInfo.wait();
-                }
-
-                if (manualInfo.returnedDetails != null) {
-                    manualInfo.returnedDetails.activeAddress = manualInfo.address;
-                    return manualInfo.returnedDetails;
-                }
-            }
-
-            // Now global IPv6: a direct path without the router's help
-            synchronized (ipv6Info) {
-                while (!ipv6Info.complete) {
-                    ipv6Info.wait();
-                }
-
-                if (ipv6Info.returnedDetails != null) {
-                    ipv6Info.returnedDetails.activeAddress = ipv6Info.address;
-                    return ipv6Info.returnedDetails;
-                }
-            }
-
-            // Now remote IPv4, a forwarded port
-            synchronized (remoteInfo) {
-                while (!remoteInfo.complete) {
-                    remoteInfo.wait();
-                }
-
-                if (remoteInfo.returnedDetails != null) {
-                    remoteInfo.returnedDetails.activeAddress = remoteInfo.address;
-                    return remoteInfo.returnedDetails;
-                }
-            }
-        } finally {
-            // Stop any further polling if we've found a working address or we've been
-            // interrupted by an attempt to stop polling.
-            localInfo.interrupt();
-            manualInfo.interrupt();
-            remoteInfo.interrupt();
-            ipv6Info.interrupt();
-        }
-
-        return pollOverTheInternet(details, uniqueAddresses);
-    }
-
-    /**
-     * After the PC's own addresses failed: the internet addresses its internet play reply names (IPv6, then a
-     * forwarded port), then a punched path through both routers (InternetPlay). Sets details.unreachable to the
-     * words for every path when none answers; a PC that never gave a reply is left as before.
-     */
-    private ComputerDetails pollOverTheInternet(ComputerDetails details, HashSet<ComputerDetails.AddressTuple> asked)
-            throws InterruptedException {
-        details.unreachable = null;
-        String reply = InternetPlay.reply(this, details.uuid);
-        if (reply == null) {
-            return null;
-        }
-        InternetPlay.Tried tried = new InternetPlay.Tried();
-        tried.lan = details.localAddress != null || details.manualAddress != null;
-        InternetPlay.Addresses addresses = InternetPlay.addresses(reply);
-        for (ComputerDetails.AddressTuple address : addresses.ipv6) {
-            tried.ipv6 = true;
-            if (asked.add(address)) {
-                ComputerDetails polled = tryPollIp(details, address);
-                if (polled != null) {
-                    polled.activeAddress = address;
-                    return polled;
-                }
-            }
-        }
-        if (addresses.mapped != null) {
-            tried.mapped = true;
-            if (asked.add(addresses.mapped)) {
-                ComputerDetails polled = tryPollIp(details, addresses.mapped);
-                if (polled != null) {
-                    polled.activeAddress = addresses.mapped;
-                    return polled;
-                }
-            }
-        }
-        tried.ipv6 |= details.ipv6Address != null;
-        tried.mapped |= details.remoteAddress != null;
-        if (Thread.currentThread().isInterrupted()) {
-            throw new InterruptedException();
-        }
-        if (!punchesNow(details)) {
-            // The punched path can take most of a minute: the PC reads as away first, as one without it does.
-            details.unreachable = InternetPlay.unreachable(reply, tried);
-            return null;
-        }
-        InternetPlay.setEnabled(PreferenceManager.getDefaultSharedPreferences(this)
-                .getBoolean(PreferenceConfiguration.INTERNET_PLAY_PREF_STRING, true));
-        try {
-            ComputerDetails.AddressTuple tunnel = InternetPlay.connect(details.uuid, reply, tried);
-            ComputerDetails polled = tryPollIp(details, tunnel);
-            if (polled != null) {
-                polled.activeAddress = tunnel;
-                return polled;
-            }
-            details.unreachable = InternetPlay.unreachable(reply, tried);
-        } catch (InternetPlay.Unreachable e) {
-            details.unreachable = e.getMessage();
-        }
-        LimeLog.info("Internet play: " + details.unreachable);
-        return null;
-    }
-
-    /**
-     * Whether a poll whose direct paths failed tries the punched path now: once the PC reads as away (its failed
-     * polls marked it offline), or while a punched path reaches it already, which answers at once. Until then the
-     * poll fails as fast as for a PC without internet play, so a PC that is off is not shown as it was for the up to
-     * a minute the punch may take.
-     */
-    static boolean punchesNow(ComputerDetails details) {
-        return details.state == ComputerDetails.State.OFFLINE
-                || (details.activeAddress != null && InternetPlay.isTunnelAddress(details.activeAddress.address));
-    }
-
-    /**
-     * Reads the PC's internet play reply while it is reached on its own network, paired and offering it, at most
-     * every {@link InternetPlay#READ_INTERVAL_MS}: the device keeps it for when it is away.
-     */
-    private void readInternetPlay(ComputerDetails details) {
-        if (details.state != ComputerDetails.State.ONLINE || details.pairState != PairingManager.PairState.PAIRED
-                || details.serverCert == null || details.uuid == null
-                || !details.caps.has(HostCapabilities.Feature.INTERNET_PLAY)
-                || !"lan".equals(details.internetPath)) {
-            return;
-        }
-        long now = SystemClock.elapsedRealtime();
-        synchronized (internetReads) {
-            if (!InternetPlay.due(internetReads.get(details.uuid), now)) {
-                return;
-            }
-            internetReads.put(details.uuid, now);
-        }
-        final String uuid = details.uuid;
-        final ComputerDetails.AddressTuple address = details.activeAddress;
-        final int httpsPort = details.httpsPort;
-        final X509Certificate cert = details.serverCert;
-        try {
-            wakeRequests.execute(() -> {
-                try {
-                    NvHTTP http = new NvHTTP(address, httpsPort, idManager.getUniqueId(), cert,
-                            PlatformBinding.getCryptoProvider(ComputerManagerService.this));
-                    InternetPlay.save(ComputerManagerService.this, uuid, http.getInternetPlay());
-                } catch (IOException e) {
-                    LimeLog.warning("Internet play: the PC's details could not be read: " + e.getMessage());
-                }
-            });
-        } catch (RejectedExecutionException e) {
-            // A poll still running while the service goes away: the read is not needed any more.
-        }
-    }
-
-    /** The PC's native API, or null before it is paired (no address or pinned certificate). */
-    NativeApiClient nativeClient(ComputerDetails computer) {
-        HostEndpoint endpoint = HostEndpoint.of(computer, idManager.getUniqueId(), PlatformBinding.getCryptoProvider(this));
-        return endpoint == null ? null : new NativeApiClient(new JniNativeApiTransport(), endpoint);
-    }
-
-    boolean pollComputer(ComputerDetails details) throws InterruptedException {
-        RedactedLog.addComputerSecrets(details);
-        // Poll all addresses in parallel to speed up the process
-        details.anotherCertificate = false;
-        LimeLog.info("Starting parallel poll for "+details.name+" ("+details.localAddress +", "+details.remoteAddress +", "+details.manualAddress+", "+details.ipv6Address+")");
-        ComputerDetails polledDetails = parallelPollPc(details);
-        LimeLog.info("Parallel poll for "+details.name+" returned address: "+details.activeAddress);
-
-        if (polledDetails != null) {
-            polledDetails.unreachable = null;
-            RedactedLog.addComputerSecrets(polledDetails);
-            details.update(polledDetails);
-            details.internetPath = InternetPlay.path(details, InternetPlay.reply(this, details.uuid));
-            return true;
-        }
-        else {
-            details.internetPath = null;
-            return false;
-        }
+        if (dbRefCount.decrementAndGet() == 0) dbManager.close();
     }
 
     private void applyInternetPlay(SharedPreferences preferences) {
-        boolean on = preferences.getBoolean(PreferenceConfiguration.INTERNET_PLAY_PREF_STRING, true);
-        internetPlayCalls.execute(() -> InternetPlay.setEnabled(on));
+        final boolean on = preferences.getBoolean(PreferenceConfiguration.INTERNET_PLAY_PREF_STRING, true);
+        try {
+            internetPlayCalls.execute(() -> InternetPlay.setEnabled(on));
+        } catch (RejectedExecutionException ignored) {
+        }
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) { return binder; }
+
+    NativeApiClient nativeClient(ComputerDetails computer) {
+        HostEndpoint endpoint = HostEndpoint.of(computer, idManager.getUniqueId(),
+                PlatformBinding.getCryptoProvider(this));
+        return endpoint == null ? null : new NativeApiClient(new JniNativeApiTransport(), endpoint);
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        // Bind to the discovery service
         discoveryServiceBound = bindService(new Intent(this, DiscoveryService.class),
                 discoveryServiceConnection, Service.BIND_AUTO_CREATE);
-
-        // Lookup or generate this device's UID
         idManager = new IdentityManager(this);
+        hostManagerHandle = NightjarHostsJni.hostManagerOpen(
+                getFilesDir().getAbsolutePath(), idManager.getUniqueId(), null, null);
         wakeRequests = Executors.newSingleThreadExecutor(task -> new Thread(task, "Wake targets"));
         wakeTargets = new WakeTargetsPoll(new WakeTargets(this), this::nativeClient, wakeRequests,
                 SystemClock::elapsedRealtime);
@@ -1253,57 +656,36 @@ public class ComputerManagerService extends Service {
         preferences.registerOnSharedPreferenceChangeListener(internetPlaySetting);
         applyInternetPlay(preferences);
 
-        // Initialize the DB
         dbManager = new ComputerDatabaseManager(this);
         dbRefCount.set(1);
-
-        // Grab known machines into our computer list
-        if (!getLocalDatabaseReference()) {
-            return;
-        }
-
+        if (!getLocalDatabaseReference()) return;
         for (ComputerDetails computer : dbManager.getAllComputers()) {
-            // Offline PCs keep showing what they last reported
             computer.caps = HostCapabilityCache.load(this, computer.uuid);
-            // Add tuples for each computer
             addTuple(computer);
         }
-
         releaseLocalDatabaseReference();
 
-        // Monitor for network changes to invalidate our PC state
         networkCallback = new ConnectivityManager.NetworkCallback() {
-            @Override
-            public void onAvailable(Network network) {
-                LimeLog.info("Resetting PC state for new available network");
+            @Override public void onAvailable(Network network) {
                 applyNetworkChange(true, SystemClock.elapsedRealtime());
             }
 
-            @Override
-            public void onLost(Network network) {
-                LimeLog.info("Offlining PCs due to network loss");
+            @Override public void onLost(Network network) {
                 applyNetworkChange(false, SystemClock.elapsedRealtime());
             }
         };
-
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         connMgr.registerDefaultNetworkCallback(networkCallback);
     }
 
-    /**
-     * A change of the default network resets what the pollers last found, since a PC's addresses may
-     * have moved. Each PC's state is written under the lock its poll holds; a poll that answered after
-     * this change began keeps its state, so a callback dispatched late cannot show it offline. It runs
-     * on a worker: a poll can hold its lock for seconds, which the default network callback thread
-     * must not wait for ({@code atMs} is when the change arrived).
-     */
     void resetStateForNetworkChange(boolean available, long atMs) {
-        List<PollingTuple> tuples;
+        NightjarHostsJni.hostManagerResetNetworkState(hostManagerHandle);
+        List<TrackedHost> tuples;
         synchronized (pollingTuples) {
             tuples = new ArrayList<>(pollingTuples);
         }
-        List<PollingTuple> updated = new ArrayList<>();
-        for (PollingTuple tuple : tuples) {
+        List<TrackedHost> updated = new ArrayList<>();
+        for (TrackedHost tuple : tuples) {
             synchronized (tuple.networkLock) {
                 if (destroyed || tuple.removed) continue;
                 if (tuple.lastSuccessfulPollMs >= atMs) continue;
@@ -1313,17 +695,21 @@ public class ComputerManagerService extends Service {
         }
         ComputerManagerListener currentListener = listener;
         if (currentListener == null || destroyed) return;
-        for (PollingTuple tuple : updated) {
+        for (TrackedHost tuple : updated) {
             currentListener.notifyComputerUpdated(tuple.computer);
         }
     }
 
-    /** Hands a network change to the worker that can wait for the polls' locks. */
+    void readInternetPlay(ComputerDetails details) {
+        if (!destroyed) {
+            HostServiceHelpers.readInternetPlay(this, idManager, internetReads, wakeRequests, details);
+        }
+    }
+
     private void applyNetworkChange(boolean available, long atMs) {
         try {
             networkChanges.execute(() -> resetStateForNetworkChange(available, atMs));
-        } catch (RejectedExecutionException e) {
-            // The service is going away.
+        } catch (RejectedExecutionException ignored) {
         }
     }
 
@@ -1336,7 +722,6 @@ public class ComputerManagerService extends Service {
         onUnbind(null);
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         connMgr.unregisterNetworkCallback(networkCallback);
-
         if (discoveryServiceBound) {
             unbindService(discoveryServiceConnection);
             discoveryServiceBound = false;
@@ -1346,57 +731,25 @@ public class ComputerManagerService extends Service {
         wakeTargets.shutdown();
         networkChanges.shutdownNow();
         PreferenceManager.getDefaultSharedPreferences(this).unregisterOnSharedPreferenceChangeListener(internetPlaySetting);
-        // A setting turned off just before still ends the tunnels.
         internetPlayCalls.shutdown();
-
-        // FIXME: Should await termination here but we have timeout issues in HttpURLConnection
-
-        // Remove the initial DB reference
+        NightjarHostsJni.hostManagerDestroy(hostManagerHandle);
+        hostManagerHandle = 0;
+        defaultNetworkLock.hashCode();
         releaseLocalDatabaseReference();
-        super.onDestroy();
-    }
-
-    @Override
-    public IBinder onBind(Intent intent) {
-        return binder;
     }
 
     public class ApplistPoller {
-        private volatile Thread thread;
+        private Thread thread;
         private final ComputerDetails computer;
-        private final Object pollEvent = new Object();
-        private boolean receivedAppList = false;
-        private NvHTTP activeRequest;
+        private long pollerHandle;
 
         public ApplistPoller(ComputerDetails computer) {
             this.computer = computer;
         }
 
         public void pollNow() {
-            synchronized (pollEvent) {
-                pollEvent.notify();
-            }
-        }
-
-        private boolean waitPollingDelay() {
-            if (!isCurrentWorker()) return false;
-            try {
-                synchronized (pollEvent) {
-                    if (receivedAppList) {
-                        // If we've already reported an app list successfully,
-                        // wait the full polling period
-                        pollEvent.wait(APPLIST_POLLING_PERIOD_MS);
-                    }
-                    else {
-                        // If we've failed to get an app list so far, retry much earlier
-                        pollEvent.wait(APPLIST_FAILED_POLLING_RETRY_MS);
-                    }
-                }
-            } catch (InterruptedException e) {
-                return false;
-            }
-
-            return isCurrentWorker();
+            long h = pollerHandle;
+            if (h != 0) NightjarHostsJni.applistPollerPollNow(h);
         }
 
         private boolean isCurrentWorker() {
@@ -1404,170 +757,44 @@ public class ComputerManagerService extends Service {
         }
 
         private synchronized boolean saveAppList(String appList) {
-            // stop()/start() may replace the worker while its HTTP response is in flight.
-            // Commit the cache and current library together before releasing this generation.
             if (!isCurrentWorker()) return false;
-            try (OutputStream cacheOut = CacheHelper.openCacheFileForOutput(
-                    getCacheDir(), "applist", computer.uuid)) {
-                CacheHelper.writeStringToOutputStream(cacheOut, appList);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            HostServiceHelpers.saveAppListFile(ComputerManagerService.this, computer.uuid, appList);
             computer.rawAppList = appList;
-            receivedAppList = true;
             return true;
         }
 
-        private PollingTuple getPollingTuple(ComputerDetails details) {
-            synchronized (pollingTuples) {
-                for (PollingTuple tuple : pollingTuples) {
-                    if (details.uuid.equals(tuple.computer.uuid)) {
-                        return tuple;
-                    }
-                }
-            }
-
-            return null;
-        }
-
         public synchronized void start() {
-            if (thread != null) {
-                return;
-            }
-            thread = new Thread() {
-                @Override
-                public void run() {
-                    int emptyAppListResponses = 0;
-                    do {
-                        if (!isCurrentWorker()) return;
-                        // Can't poll if it's not online or paired
-                        if (computer.state != ComputerDetails.State.ONLINE ||
-                                computer.pairState != PairingManager.PairState.PAIRED) {
-                            ComputerManagerListener currentListener = listener;
-                            if (currentListener != null) {
-                                currentListener.notifyComputerUpdated(computer);
-                            }
-                            continue;
-                        }
-
-                        // Can't poll if there's no UUID yet
-                        if (computer.uuid == null) {
-                            continue;
-                        }
-
-                        PollingTuple tuple = getPollingTuple(computer);
-
-                        try {
-                            NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort, idManager.getUniqueId(),
-                                    computer.serverCert, PlatformBinding.getCryptoProvider(ComputerManagerService.this));
-                            synchronized (ApplistPoller.this) {
-                                if (!isCurrentWorker()) return;
-                                activeRequest = http;
-                            }
-
-                            String appList;
-                            try {
-                                if (tuple != null) {
-                                    // Never hold the poller's lifecycle lock across network I/O.
-                                    synchronized (tuple.networkLock) {
-                                        if (!isCurrentWorker()) return;
-                                        appList = http.getAppListRaw();
-                                    }
-                                } else {
-                                    if (!isCurrentWorker()) return;
-                                    appList = http.getAppListRaw();
-                                }
-                            } finally {
-                                synchronized (ApplistPoller.this) {
-                                    if (activeRequest == http) activeRequest = null;
-                                }
-                            }
-                            if (!isCurrentWorker()) return;
-
-                            List<NvApp> list = NvHTTP.getAppListByReader(new StringReader(appList));
-                            if (list.isEmpty()) {
-                                LimeLog.warning("Empty app list received from "+computer.uuid);
-
-                                // The app list might actually be empty, so if we get an empty response a few times
-                                // in a row, we'll go ahead and believe it.
-                                emptyAppListResponses++;
-                            }
-                            if (!appList.isEmpty() &&
-                                    (!list.isEmpty() || emptyAppListResponses >= EMPTY_LIST_THRESHOLD)) {
-                                if (!saveAppList(appList)) return;
-
-                                // Reset empty count if it wasn't empty this time
-                                if (!list.isEmpty()) {
-                                    emptyAppListResponses = 0;
-                                }
-
-                                // Notify that the app list has been updated
-                                // outside the lifecycle lock, and only for the current worker.
-                                ComputerManagerListener currentListener = listener;
-                                if (currentListener != null && isCurrentWorker()) {
-                                    currentListener.notifyAppListUpdated(computer, true);
-                                }
-                                // Launcher exports follow added, renamed and removed games.
-                                FrontendSync.appListChanged(ComputerManagerService.this, computer);
-                            }
-                            else if (appList.isEmpty()) {
-                                LimeLog.warning("Null app list received from "+computer.uuid);
-                                ComputerManagerListener currentListener = listener;
-                                if (currentListener != null && isCurrentWorker()) {
-                                    currentListener.notifyAppListUpdated(computer, false);
-                                }
-                            }
-                        } catch (IOException | XmlPullParserException e) {
-                            if (!isCurrentWorker()) return;
-                            e.printStackTrace();
-                            ComputerManagerListener currentListener = listener;
-                            if (currentListener != null && isCurrentWorker()) {
-                                currentListener.notifyAppListUpdated(computer, false);
-                            }
-                        }
-                    } while (waitPollingDelay());
+            if (thread != null) return;
+            ComputerDetails.AddressTuple addr = HostServiceHelpers.currentAddressOrNull(computer);
+            byte[] cert = HostServiceHelpers.certDer(computer.serverCert);
+            if (addr == null || cert == null) return;
+            final long h = NightjarHostsJni.applistPollerStart(
+                    hostManagerHandle, addr.address, addr.port, computer.httpsPort, cert);
+            pollerHandle = h;
+            thread = new Thread(() -> {
+                while (isCurrentWorker()) {
+                    String rawXml = NightjarHostsJni.applistPollerNextUpdate(h);
+                    if (rawXml == null || !isCurrentWorker()) break;
+                    if (!saveAppList(rawXml)) break;
+                    ComputerManagerListener currentListener = listener;
+                    if (currentListener != null && isCurrentWorker()) {
+                        currentListener.notifyAppListUpdated(computer, true);
+                    }
+                    FrontendSync.appListChanged(ComputerManagerService.this, computer);
                 }
-            };
-            thread.setName("App list polling thread for " + computer.name);
+            }, "App list polling thread for " + computer.name);
             thread.start();
         }
 
         public synchronized void stop() {
+            long h = pollerHandle;
+            pollerHandle = 0;
+            if (h != 0) NightjarHostsJni.applistPollerStop(h);
             if (thread != null) {
                 Thread stopping = thread;
                 thread = null;
-                if (activeRequest != null) {
-                    activeRequest.cancelPendingRequests();
-                    activeRequest = null;
-                }
-                // Cancel without joining the network worker on the UI thread.
                 stopping.interrupt();
             }
         }
-    }
-}
-
-class PollingTuple {
-    public Thread thread;
-    public final ComputerDetails computer;
-    public final Object networkLock;
-    public long lastSuccessfulPollMs;
-    /** Set by removeComputer before it deletes the PC: a poll still running saves and shows nothing. */
-    public volatile boolean removed;
-
-    public PollingTuple(ComputerDetails computer, Thread thread) {
-        this.computer = computer;
-        this.thread = thread;
-        this.networkLock = new Object();
-    }
-}
-
-class ReachabilityTuple {
-    public final String reachableAddress;
-    public final ComputerDetails computer;
-
-    public ReachabilityTuple(ComputerDetails computer, String reachableAddress) {
-        this.computer = computer;
-        this.reachableAddress = reachableAddress;
     }
 }

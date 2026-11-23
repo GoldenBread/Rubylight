@@ -574,7 +574,13 @@ impl Hosts {
                     }
                 // The host forgot this client: drop the pin so the user can pair again. Only the
                 // pinned host's own word counts (its HTTPS answer, or its refusal of this client).
-                if !info.paired && host.record.server_certificate.is_some() && path != InfoPath::Plain {
+                if host.record.server_certificate.is_some()
+                    && nightjar_policy::hosts::should_clear_cert_on_unpair(
+                        info.paired,
+                        path == InfoPath::Plain,
+                        path != InfoPath::CertificateMismatch,
+                    )
+                {
                     host.record.server_certificate = None;
                     host.apps = Apps::NotLoaded;
                     // Its grants (folders, files, USB, co-op) went with the pairing; a read in flight is dropped.
@@ -583,6 +589,7 @@ impl Hosts {
                     host.native_epoch += 1;
                     changed = true;
                 }
+                host.record.sync_slots_from_shared();
                 crate::logfile::add_secrets(&host.record);
                 // Serverinfo alone says nothing of the native features: keep the last native read's.
                 let mut info = *info;
@@ -655,6 +662,7 @@ impl Hosts {
             return false;
         }
         host.record.remote_address = Some(address);
+        host.record.sync_slots_from_shared();
         crate::logfile::add_secrets(&host.record);
         true
     }

@@ -8,6 +8,9 @@ import com.limelight.LimeLog;
 import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nativeapi.NativePairing;
 import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
+
+import org.json.JSONArray;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,15 +20,10 @@ import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 
 /**
- * The devices waiting to pair with the PCs this device may approve for. It has no timer: the screen calls {@link #poll}
- * from its host updates, so nothing runs while nothing is on screen, and a PC without the capability is never asked.
+ * The devices waiting to pair with the PCs this device may approve for, backed by
+ * {@link NightjarPolicyJni} {@code PairingWatchTracker} and BiDi control sanitization.
  */
 public final class PairingWatch {
-    /** The most often a screen's host updates ask. */
-    private static final long INTERVAL_MS = 4000;
-    /** Marks, embeddings, overrides, isolates and line separators. A zero-width joiner stays: emoji need it. */
-    private static final String BIDI_CONTROLS = "[\\u061C\\u200E\\u200F\\u2028-\\u202E\\u2066-\\u2069]";
-
     public interface Reader {
         List<NativePairing.Request> read(ComputerDetails host) throws NativeApiException;
     }
@@ -44,12 +42,9 @@ public final class PairingWatch {
             this.request = request;
         }
 
-        /**
-         * The name, safe beside other text. Its direction controls go first: an override left open reverses the
-         * address after it, and unicodeWrap only closes what it opens. An older host still passes them on.
-         */
+        /** The name, safe beside other text after Rust BiDi-control stripping. */
         public String shownName() {
-            return BidiFormatter.getInstance().unicodeWrap(request.name.replaceAll(BIDI_CONTROLS, ""));
+            return BidiFormatter.getInstance().unicodeWrap(NightjarPolicyJni.stripBidiControls(request.name));
         }
     }
 
@@ -59,11 +54,7 @@ public final class PairingWatch {
     private final Executor main;
     private final LongSupplier clock;
     private final Listener listener;
-    private boolean reading;
-    private boolean stale = true;
-    private long lastRead;
-    private int generation;
-    private List<Waiting> shown = Collections.emptyList();
+    private final long tracker;
 
     public PairingWatch(Reader reader, Predicate<ComputerDetails> asks, Executor worker, Executor main,
                         Listener listener) {
@@ -79,6 +70,7 @@ public final class PairingWatch {
         this.main = main;
         this.clock = clock;
         this.listener = listener;
+        this.tracker = NightjarPolicyJni.pairingWatchCreate();
     }
 
     /** The screen's hosts were polled. A PC that doesn't answer drops out, logged. */
@@ -89,35 +81,31 @@ public final class PairingWatch {
                 asked.add(host);
             }
         }
-        if (asked.isEmpty()) {
-            generation++;
-            reading = false;
-            publish(Collections.emptyList());
+        long command = NightjarPolicyJni.pairingWatchBeginPoll(tracker, clock.getAsLong(), !asked.isEmpty());
+        if (command == 0) {
             return;
         }
-        long now = clock.getAsLong();
-        if (reading || (!stale && now - lastRead < INTERVAL_MS)) {
+        if (command < 0) {
+            listener.onWaiting(Collections.emptyList());
             return;
         }
-        reading = true;
-        stale = false;
-        lastRead = now;
-        final int round = ++generation;
+        final long generation = command;
         worker.execute(() -> {
             final List<Waiting> waiting = new ArrayList<>();
+            JSONArray ids = new JSONArray();
             for (ComputerDetails host : asked) {
                 try {
                     for (NativePairing.Request request : reader.read(host)) {
                         waiting.add(new Waiting(host, request));
+                        ids.put(request.id);
                     }
                 } catch (NativeApiException e) {
                     LimeLog.warning("Devices waiting to pair on " + host.uuid + ": " + e.getMessage());
                 }
             }
             main.execute(() -> {
-                if (round == generation) {
-                    reading = false;
-                    publish(waiting);
+                if (NightjarPolicyJni.pairingWatchFinishPoll(tracker, generation, ids.toString()) == 2) {
+                    listener.onWaiting(waiting);
                 }
             });
         });
@@ -125,32 +113,11 @@ public final class PairingWatch {
 
     /** The next {@link #poll} reads at once: the list just changed. */
     public void refreshSoon() {
-        stale = true;
+        NightjarPolicyJni.pairingWatchRefreshSoon(tracker);
     }
 
     /** The screen left: an answer still on its way is dropped, and the next poll reads at once. */
     public void pause() {
-        generation++;
-        reading = false;
-        stale = true;
-    }
-
-    private void publish(List<Waiting> waiting) {
-        if (!sameRequests(shown, waiting)) {
-            shown = waiting;
-            listener.onWaiting(waiting);
-        }
-    }
-
-    private static boolean sameRequests(List<Waiting> a, List<Waiting> b) {
-        if (a.size() != b.size()) {
-            return false;
-        }
-        for (int i = 0; i < a.size(); i++) {
-            if (!a.get(i).request.id.equals(b.get(i).request.id)) {
-                return false;
-            }
-        }
-        return true;
+        NightjarPolicyJni.pairingWatchPause(tracker);
     }
 }

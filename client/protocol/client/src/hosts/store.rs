@@ -8,7 +8,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nightjar_policy::hosts::{EndpointSlot, SharedHostFields, keep_readable_hosts};
+use nightjar_policy::hosts::{
+    EndpointSlot, HostSlots, SharedHostFields, keep_readable_hosts, sync_shared_from_slots,
+    sync_slots_from_shared,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,6 +54,48 @@ impl HostEntry {
     pub fn set_server_certificate_der(&mut self, der: Option<&[u8]>) {
         self.shared.server_certificate = der.map(|bytes| pem_encode(bytes, "CERTIFICATE"));
     }
+
+    /// Typed Android/shared endpoint slots for this entry.
+    pub fn slots(&self) -> HostSlots {
+        HostSlots {
+            local: self.local_endpoint.clone(),
+            manual: self.manual_endpoint.clone(),
+            ipv6: self.ipv6_endpoint.clone(),
+            remote: self.remote_endpoint.clone(),
+            pinned: self.pinned_endpoint.clone(),
+        }
+    }
+
+    /// Writes `slots` back into this entry's typed endpoint fields.
+    pub fn set_slots(&mut self, slots: &HostSlots) {
+        self.local_endpoint = slots.local.clone();
+        self.manual_endpoint = slots.manual.clone();
+        self.ipv6_endpoint = slots.ipv6.clone();
+        self.remote_endpoint = slots.remote.clone();
+        self.pinned_endpoint = slots.pinned.clone();
+    }
+
+    /// Whether any of the four candidate Android endpoint slots is populated.
+    pub fn has_android_slots(&self) -> bool {
+        self.local_endpoint.is_some()
+            || self.manual_endpoint.is_some()
+            || self.ipv6_endpoint.is_some()
+            || self.remote_endpoint.is_some()
+    }
+
+    /// Recomputes `shared.address`, `shared.http_port`, `shared.remote_address`, `shared.manual`,
+    /// `shared.other_addresses`, `shared.other_http_ports`, and `shared.pinned_address` from slots.
+    pub fn sync_shared_from_slots(&mut self) {
+        let slots = self.slots();
+        sync_shared_from_slots(&mut self.shared, &slots);
+    }
+
+    /// Populates missing typed slots from legacy flat `shared.*` fields.
+    pub fn sync_slots_from_shared(&mut self) {
+        let mut slots = self.slots();
+        sync_slots_from_shared(&self.shared, &mut slots);
+        self.set_slots(&slots);
+    }
 }
 
 /// Synchronized `hosts.json` store for both Desktop (`HostRecord`) and Android (`HostEntry`).
@@ -78,12 +123,36 @@ fn merge_preserving_desktop(existing: &HostEntry, mut incoming: HostEntry) -> Ho
     if incoming.shared.https_port == 0 {
         incoming.shared.https_port = existing.shared.https_port;
     }
-    if incoming.shared.other_addresses.is_empty() {
-        incoming.shared.other_addresses = existing.shared.other_addresses.clone();
+    let mut merged_addrs = Vec::new();
+    for addr in existing
+        .shared
+        .other_addresses
+        .iter()
+        .chain(incoming.shared.other_addresses.iter())
+    {
+        if !addr.is_empty()
+            && *addr != incoming.shared.address
+            && incoming.shared.remote_address.as_deref() != Some(addr.as_str())
+            && !merged_addrs.contains(addr)
+        {
+            merged_addrs.push(addr.clone());
+        }
     }
-    if incoming.shared.other_http_ports.is_empty() {
-        incoming.shared.other_http_ports = existing.shared.other_http_ports.clone();
+    incoming.shared.other_addresses = merged_addrs;
+
+    let mut merged_ports = Vec::new();
+    for &port in existing
+        .shared
+        .other_http_ports
+        .iter()
+        .chain(incoming.shared.other_http_ports.iter())
+    {
+        if port != 0 && port != incoming.shared.http_port && !merged_ports.contains(&port) {
+            merged_ports.push(port);
+        }
     }
+    incoming.shared.other_http_ports = merged_ports;
+
     if incoming.shared.pinned_address.is_none() {
         incoming.shared.pinned_address = existing.shared.pinned_address.clone();
     }
@@ -108,7 +177,10 @@ fn merge_preserving_desktop(existing: &HostEntry, mut incoming: HostEntry) -> Ho
     if incoming.shared.internet_play.is_none() {
         incoming.shared.internet_play = existing.shared.internet_play.clone();
     }
-    if existing.shared.manual && incoming.manual_endpoint.is_some() {
+    if existing.shared.manual
+        && incoming.manual_endpoint.is_some()
+        && incoming.local_endpoint.is_none()
+    {
         incoming.shared.manual = true;
     }
     incoming

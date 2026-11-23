@@ -209,7 +209,7 @@ public class ComputerManagerLifecycleTest {
             found.remoteAddress = address;
             ReflectionHelpers.callInstanceMethod(service, "runPoll",
                     ReflectionHelpers.ClassParameter.from(ComputerDetails.class, found),
-                    ReflectionHelpers.ClassParameter.from(PollingTuple.class, null),
+                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, null),
                     ReflectionHelpers.ClassParameter.from(int.class, 0));
 
             assertEquals(Collections.singletonList("Den PC"), shown);
@@ -332,7 +332,7 @@ public class ComputerManagerLifecycleTest {
             found.remoteAddress = found.activeAddress;
             ReflectionHelpers.callInstanceMethod(service, "runPoll",
                     ReflectionHelpers.ClassParameter.from(ComputerDetails.class, found),
-                    ReflectionHelpers.ClassParameter.from(PollingTuple.class, null),
+                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, null),
                     ReflectionHelpers.ClassParameter.from(int.class, 0));
             awaitWakeRequests(service);
 
@@ -379,7 +379,7 @@ public class ComputerManagerLifecycleTest {
             found.remoteAddress = found.activeAddress;
             ReflectionHelpers.callInstanceMethod(this, "runPoll",
                     ReflectionHelpers.ClassParameter.from(ComputerDetails.class, found),
-                    ReflectionHelpers.ClassParameter.from(PollingTuple.class, null),
+                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, null),
                     ReflectionHelpers.ClassParameter.from(int.class, 0));
             return found;
         }
@@ -441,8 +441,8 @@ public class ComputerManagerLifecycleTest {
             computer.uuid = "network-host";
             computer.state = ComputerDetails.State.ONLINE;
             addTuple(service, computer);
-            List<PollingTuple> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-            PollingTuple tuple = tuples.get(tuples.size() - 1);
+            List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
+            ComputerManagerService.TrackedHost tuple = tuples.get(tuples.size() - 1);
             android.net.ConnectivityManager.NetworkCallback callback =
                     ReflectionHelpers.getField(service, "networkCallback");
 
@@ -511,12 +511,12 @@ public class ComputerManagerLifecycleTest {
         ServiceController<NotPairedManager> controller = Robolectric.buildService(NotPairedManager.class).create();
         NotPairedManager service = controller.get();
         try {
-            List<PollingTuple> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-            PollingTuple tuple = tuples.get(0);
+            List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
+            ComputerManagerService.TrackedHost tuple = tuples.get(0);
             assertNotNull(tuple.computer.serverCert);
             ReflectionHelpers.callInstanceMethod(service, "runPoll",
                     ReflectionHelpers.ClassParameter.from(ComputerDetails.class, tuple.computer),
-                    ReflectionHelpers.ClassParameter.from(PollingTuple.class, tuple),
+                    ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, tuple),
                     ReflectionHelpers.ClassParameter.from(int.class, 0));
             assertNull(tuple.computer.serverCert);
             assertNull("and saved so, for the next start", savedCopy(context, "unpaired-host").serverCert);
@@ -575,13 +575,13 @@ public class ComputerManagerLifecycleTest {
                 List<String> shown = new java.util.concurrent.CopyOnWriteArrayList<>();
                 ReflectionHelpers.setField(service, "listener", (ComputerManagerListener) details ->
                         shown.add(details.uuid));
-                List<PollingTuple> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-                PollingTuple tuple = tuples.get(0);
+                List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
+                ComputerManagerService.TrackedHost tuple = tuples.get(0);
                 java.util.concurrent.atomic.AtomicReference<Boolean> modified = new java.util.concurrent.atomic.AtomicReference<>();
                 // Past its tries, so a poll that gets no answer reports the PC offline.
                 poller = new Thread(() -> modified.set(ReflectionHelpers.callInstanceMethod(service, "runPoll",
                         ReflectionHelpers.ClassParameter.from(ComputerDetails.class, tuple.computer),
-                        ReflectionHelpers.ClassParameter.from(PollingTuple.class, tuple),
+                        ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, tuple),
                         ReflectionHelpers.ClassParameter.from(int.class, 3))));
                 poller.start();
                 assertTrue(service.polling.await(10, TimeUnit.SECONDS));
@@ -623,14 +623,14 @@ public class ComputerManagerLifecycleTest {
         Thread poller = null;
         Thread resetter = null;
         try {
-            List<PollingTuple> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-            PollingTuple tuple = tuples.get(0);
+            List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
+            ComputerManagerService.TrackedHost tuple = tuples.get(0);
             // As the polling thread does: the poll holds the PC's network lock for its whole run.
             poller = new Thread(() -> {
                 synchronized (tuple.networkLock) {
                     ReflectionHelpers.callInstanceMethod(service, "runPoll",
                             ReflectionHelpers.ClassParameter.from(ComputerDetails.class, tuple.computer),
-                            ReflectionHelpers.ClassParameter.from(PollingTuple.class, tuple),
+                            ReflectionHelpers.ClassParameter.from(ComputerManagerService.TrackedHost.class, tuple),
                             ReflectionHelpers.ClassParameter.from(int.class, 3));
                 }
             });
@@ -690,13 +690,13 @@ public class ComputerManagerLifecycleTest {
         computer.uuid = "pc";
         computer.state = ComputerDetails.State.OFFLINE;
         addTuple(service, computer);
-        List<PollingTuple> tuples = ReflectionHelpers.getField(service, "pollingTuples");
-        PollingTuple tuple = tuples.get(0);
+        List<ComputerManagerService.TrackedHost> tuples = ReflectionHelpers.getField(service, "pollingTuples");
+        ComputerManagerService.TrackedHost tuple = tuples.get(0);
         ReflectionHelpers.setField(service, "listener", (ComputerManagerListener) details -> {
             throw new IllegalStateException("Listener failed");
         });
         Method poll = ComputerManagerService.class.getDeclaredMethod("runPoll", ComputerDetails.class,
-                PollingTuple.class, int.class);
+                ComputerManagerService.TrackedHost.class, int.class);
         poll.setAccessible(true);
         try {
             InvocationTargetException failure = assertThrows(InvocationTargetException.class,

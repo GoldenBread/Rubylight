@@ -3,19 +3,19 @@ package com.limelight.computers;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiClient.PowerReply;
 import com.limelight.nativeapi.NativeApiException;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 
 /**
- * Sleep PC: ask the host for a token, let the person confirm, ask again when the token is
- * {@link #TOKEN_REFRESH_MS} old or older (the host keeps it 30 s), then spend it once. Host calls run on {@code worker} and
- * every outcome reaches {@link Ui} on {@code main}; none is dropped.
+ * Sleep PC: ask the host for a token, let the person confirm, ask again when {@link NightjarPolicyJni}
+ * marks the token stale ({@link #TOKEN_REFRESH_MS}, the host keeps it 30 s), then spend it once.
  */
 final class SleepFlow {
     /** A token this old when the person confirms is fetched again: it could expire on the way. */
-    static final long TOKEN_REFRESH_MS = 25_000;
+    static final long TOKEN_REFRESH_MS = NightjarPolicyJni.hostSleepTokenRefreshMs();
 
     interface Client {
         /** The paired host's native API client; throws when it can't be reached that way. */
@@ -83,7 +83,7 @@ final class SleepFlow {
 
     private void sleep(NativeApiClient api, String token, long asked) {
         try {
-            if (clockMs.getAsLong() - asked >= TOKEN_REFRESH_MS) {
+            if (NightjarPolicyJni.sleepTokenIsStale(asked, clockMs.getAsLong(), asked, clockMs.getAsLong())) {
                 PowerReply fresh = api.powerCapabilities();
                 if (fresh.token == null) {
                     main.execute(() -> ui.unavailable(fresh));

@@ -10,6 +10,7 @@ import com.limelight.binding.PlatformBinding;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.InviteLink;
 import com.limelight.nvstream.http.LimelightCryptoProvider;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 import com.limelight.preferences.PreferenceConfiguration;
 
 import org.json.JSONException;
@@ -42,12 +43,12 @@ public final class Invites {
     /** The words for an engine error, in the app's language where it is one of the known ones. */
     public static String errorText(Context context, String english) {
         if (english == null) return context.getString(R.string.invite_failed_title);
-        switch (english) {
-            case NOT_AN_INVITE: return context.getString(R.string.invite_not_a_link);
-            case EXPIRED: return context.getString(R.string.invite_expired);
-            case REFUSED: return context.getString(R.string.invite_refused);
-            case INTERNET_OFF: return context.getString(R.string.invite_internet_off);
-            case KNOWN_PC: return context.getString(R.string.invite_known_pc);
+        switch (NightjarPolicyJni.classifyInviteError(english)) {
+            case 0: return context.getString(R.string.invite_not_a_link);
+            case 1: return context.getString(R.string.invite_expired);
+            case 2: return context.getString(R.string.invite_refused);
+            case 3: return context.getString(R.string.invite_internet_off);
+            case 4: return context.getString(R.string.invite_known_pc);
             default: return english;
         }
     }
@@ -73,7 +74,7 @@ public final class Invites {
         ComputerDetails.AddressTuple answered =
                 new ComputerDetails.AddressTuple(redeemed.getString("address"), redeemed.getInt("port"));
         // A punched path's local end lasts only as long as its tunnel: polls find it again from the kept reply.
-        if (!InternetPlay.isTunnelAddress(answered.address)) details.manualAddress = answered;
+        if (!NightjarPolicyJni.isTunnelAddress(answered.address)) details.manualAddress = answered;
         details.activeAddress = answered;
         details.httpsPort = redeemed.optInt("httpsPort");
         details.serverCert = certificate(redeemed.getString("certificate"));

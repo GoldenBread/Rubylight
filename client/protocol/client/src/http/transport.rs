@@ -144,6 +144,22 @@ pub(crate) struct Cancel {
     sockets: Mutex<Vec<(u64, Arc<Abort>)>>,
 }
 
+/// Thread-safe handle for cancelling a [`super::HostClient`]'s pending or future requests.
+#[derive(Clone)]
+pub struct HostClientCanceller(pub(super) Arc<Cancel>);
+
+impl HostClientCanceller {
+    /// Aborts any in-flight socket I/O and rejects later requests on the linked client.
+    pub fn cancel(&self) {
+        self.0.cancel();
+    }
+
+    /// Whether [`Self::cancel`] or [`super::HostClient::cancel_pending_requests`] was triggered.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+}
+
 impl Cancel {
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);

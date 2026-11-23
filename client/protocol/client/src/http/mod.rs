@@ -15,7 +15,7 @@ mod files;
 mod folders;
 pub mod foundation;
 mod hardware_metrics;
-mod identity;
+pub(crate) mod identity;
 mod internet_play;
 mod launch;
 mod native;
@@ -89,7 +89,10 @@ pub use session_guests::{
     GUEST_PERMISSIONS, GUEST_VIEW, GUESTS_POLL_MS, GuestAction, GuestRequest, INVITED_JOINS_ONLY,
     InviteCreate, InviteCreated, SessionGuest, SessionGuests, guest_ended, join_refused,
 };
-pub use transport::set_app_version;
+pub use der::{
+    certificate_sha256_der, certificate_sha256_pem, pem_decode_certificate, pem_encode_certificate,
+};
+pub use transport::{HostClientCanceller, set_app_version};
 pub use usb::{
     TOKEN_HEADER as USB_TOKEN_HEADER, TUNNEL_PATH as USB_TUNNEL_PATH, UPGRADE as USB_UPGRADE,
     UsbTunnel,
@@ -231,7 +234,7 @@ pub struct HostClient {
     device_name: String,
     second_screen: bool,
     state: Mutex<State>,
-    pub(super) cancel: Cancel,
+    pub(super) cancel: Arc<Cancel>,
 }
 
 #[derive(Clone, Copy)]
@@ -256,7 +259,7 @@ impl HostClient {
             device_name: "Nightjar".into(),
             second_screen: false,
             state: Mutex::new(State::default()),
-            cancel: Cancel::default(),
+            cancel: Arc::new(Cancel::default()),
         })
     }
 
@@ -274,7 +277,7 @@ impl HostClient {
             device_name: "Nightjar".into(),
             second_screen: false,
             state: Mutex::new(State::default()),
-            cancel: Cancel::default(),
+            cancel: Arc::new(Cancel::default()),
         })
     }
 
@@ -342,6 +345,16 @@ impl HostClient {
         self.cancel.cancel();
     }
 
+    /// Whether [`HostClient::cancel_pending_requests`] has been called on this client.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
+    /// Returns a cloneable cancellation handle that can abort requests from another thread.
+    pub fn canceller(&self) -> HostClientCanceller {
+        HostClientCanceller(Arc::clone(&self.cancel))
+    }
+
     /// The same host and pairing, untouched by this client's [`HostClient::cancel_pending_requests`]:
     /// for a request that must still go after the stream ends, such as turning a PC's own bitrate
     /// controller off again.
@@ -359,7 +372,7 @@ impl HostClient {
                 server_certificate: state.server_certificate.clone(),
                 tls: state.tls.clone(),
             }),
-            cancel: Cancel::default(),
+            cancel: Arc::new(Cancel::default()),
         }
     }
 

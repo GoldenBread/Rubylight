@@ -3,21 +3,18 @@ package com.limelight.computers;
 import com.limelight.nativeapi.NativeApiClient;
 import com.limelight.nativeapi.NativeApiException;
 import com.limelight.nativeapi.NativePcPower;
+import com.limelight.nvstream.jni.NightjarPolicyJni;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 
 /**
- * Restart PC or Shut down PC, as {@link SleepFlow}: ask the host (GET /power) for a token, let the person confirm,
- * ask again when the token is {@link SleepFlow#TOKEN_REFRESH_MS} old or older, then spend it once. Once the PC took
- * it, Windows may still refuse: as desktop, GET /power every {@link #REFUSAL_POLL_MS} up to {@link #REFUSAL_READS}
- * times says so in last_refusal; a read that fails means the PC is going down. Host calls run on {@code worker} and
- * every outcome reaches {@link Ui} on {@code main}; none is dropped.
+ * Restart PC or Shut down PC, backed by {@link NightjarPolicyJni} staleness and refusal polling limits.
  */
 final class PcPowerFlow {
-    static final long REFUSAL_POLL_MS = 2_000;
-    static final int REFUSAL_READS = 10;
+    static final long REFUSAL_POLL_MS = NightjarPolicyJni.hostPcPowerRefusalPollMs();
+    static final int REFUSAL_READS = NightjarPolicyJni.hostPcPowerRefusalReads();
 
     interface Ui {
         /**
@@ -95,7 +92,7 @@ final class PcPowerFlow {
 
     private void spend(NativeApiClient api, String token, long asked) {
         try {
-            if (clockMs.getAsLong() - asked >= SleepFlow.TOKEN_REFRESH_MS) {
+            if (NightjarPolicyJni.sleepTokenIsStale(asked, clockMs.getAsLong(), asked, clockMs.getAsLong())) {
                 NativePcPower.Offer fresh = api.pcPower();
                 token = fresh.tokenFor(action);
                 if (token == null) {

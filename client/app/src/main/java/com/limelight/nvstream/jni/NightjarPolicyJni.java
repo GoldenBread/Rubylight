@@ -132,4 +132,64 @@ public final class NightjarPolicyJni {
     public static native boolean updatePolicyIsManagedByStore(String installerPackage);
     public static native boolean updatePolicyIsSelfUpdateAvailable(String installerPackage,
                                                                    boolean githubDistribution);
+
+    // Host polling & lifecycle flow policies (`nightjar_policy::hosts`)
+    public static native long hostPollDataTtlMs();
+    public static native int hostOfflinePollTries();
+    public static native int hostInitialPollTries();
+    public static native long hostApplistPollPeriodMs();
+    public static native long hostApplistRetryPeriodMs();
+    public static native int hostEmptyApplistThreshold();
+    public static native long hostInternetPlayReadIntervalMs();
+    public static native long hostSleepTokenRefreshMs();
+    public static native long hostPcPowerRefusalPollMs();
+    public static native int hostPcPowerRefusalReads();
+    public static native long hostUpdateWaitMs();
+    public static native long hostUpdateMaxWaitMs();
+    public static native long hostUpdatePollMs();
+    public static native long hostPairingWatchIntervalMs();
+
+    public static native boolean sleepTokenIsStale(
+            long monoStartMs, long monoNowMs, long wallStartMs, long wallNowMs);
+    public static native int sleepUnavailableReason(boolean sleepSupported, boolean sleepAllowed);
+    public static native String updateTarget(
+            String currentVersion, String latestVersion, boolean installSupported);
+    public static native long updateTrackerCreate(String target, int pollsLimit, int maxPolls);
+    public static native String updateTrackerStep(
+            long handle, String runningVersion, String updateJson);
+    public static native void updateTrackerDestroy(long handle);
+
+    public static native long pairingWatchCreate();
+    public static native void pairingWatchDestroy(long handle);
+    public static native void pairingWatchRefreshSoon(long handle);
+    public static native void pairingWatchPause(long handle);
+    public static native long pairingWatchBeginPoll(
+            long handle, long nowMs, boolean hasAskedHosts);
+    public static native int pairingWatchFinishPoll(
+            long handle, long generation, String idsJson);
+
+    public static native String stripBidiControls(String input);
+    public static native boolean pairingRefusedStatus(int status);
+    public static native boolean alreadyPaired(
+            boolean isPaired, boolean hasLink, boolean hasPinnedCert);
+    public static native int classifyPairingFailure(
+            int stateOrdinal, boolean fromLink, boolean oneTime, boolean inGame);
+    public static native int classifyPairingHttpRefusal(boolean fromLink, boolean oneTime);
+    public static native int classifyUnpair(
+            int statusOrNeg1, boolean isNotPaired, boolean isUnknownHost, boolean isNotFound);
+    public static native int classifyInviteError(String msg);
+    public static native boolean isTunnelAddress(String ip);
+
+    public static native boolean pollPunchesNow(
+            boolean hasLocal, boolean offline, boolean activeIsTunnel);
+    public static native boolean pollShouldClearCertOnUnpair(
+            boolean paired, boolean infoPathPlain, boolean sameCert);
+    public static native int pollPortMatchesActiveAddress(
+            boolean online, int activePort, int candidatePort, int knownHttpsPort);
+    public static native int pollAcceptApplistResponse(
+            boolean nonEmptyXml, boolean appsEmpty, int emptyCount);
+    public static native long pollNextApplistIntervalMs(boolean receivedAppList);
+    public static native boolean pollInternetPlayReadDue(long lastReadMsOrNeg1, long nowMs);
+    public static native String pollBuildProbePlan(
+            String slotsJson, boolean online, int activePort, int knownHttpsPort);
 }

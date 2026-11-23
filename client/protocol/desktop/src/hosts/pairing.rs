@@ -1,39 +1,38 @@
 //! Pairing with a PC and unpairing: by PIN, by link, and approving another device's request.
+//!
+//! Core pairing classification and execution live in `nightjar_core::hosts::pairing`; this
+//! module translates outcomes into Desktop UI constants (`PAIR_*`, `UNPAIR_*`) and [`Event`].
 
 use super::*;
 
-/// A four-digit PIN from the OS-seeded hasher keys.
-pub fn random_pin() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos()),
-    );
-    format!("{:04}", hasher.finish() % 10_000)
+pub use nightjar_core::hosts::pairing::random_pin;
+use nightjar_policy::hosts::{PairFailureKind, UnpairFailureKind};
+
+/// Whether this record is paired with a certificate other than `certificate`.
+pub(super) fn pins_another(record: &HostRecord, certificate: &[u8; 32]) -> bool {
+    nightjar_core::hosts::pairing::pins_another_pem(record.server_certificate.as_deref(), certificate)
 }
 
-/// Whether this record is paired with a certificate other than `certificate`. One that cannot be
-/// read is another one.
-pub(super) fn pins_another(record: &HostRecord, certificate: &[u8; 32]) -> bool {
-    record
-        .server_certificate
-        .as_deref()
-        .is_some_and(|pem| nightjar_core::http::certificate_sha256(pem).ok().as_ref() != Some(certificate))
+fn format_pair_failure(kind: PairFailureKind) -> String {
+    match kind {
+        PairFailureKind::PinWrong => PAIR_PIN_WRONG.into(),
+        PairFailureKind::OneTimePinWrong => PAIR_OTP_PIN_WRONG.into(),
+        PairFailureKind::LinkPinWrong => PAIR_OTP_PIN_WRONG.into(),
+        PairFailureKind::AlreadyInProgress => PAIR_IN_PROGRESS.into(),
+        PairFailureKind::ServerUnverified => PAIR_UNVERIFIED.into(),
+        PairFailureKind::Declined => PAIR_DECLINED.into(),
+        PairFailureKind::LinkCertMismatch => PAIR_LINK_MISMATCH.into(),
+        PairFailureKind::Network => PAIR_NETWORK.into(),
+        PairFailureKind::InGame => PAIR_IN_GAME.into(),
+        PairFailureKind::Refused | PairFailureKind::Failed => PAIR_DECLINED.into(),
+    }
 }
 
 /// What a pairing attempt that reached the host says to the user.
+#[cfg(test)]
 pub(super) fn pair_outcome(result: PairResult, one_time: bool) -> Result<String, String> {
-    match result {
-        PairResult::Paired { server_certificate_pem } => Ok(server_certificate_pem),
-        PairResult::PinWrong if one_time => Err(PAIR_OTP_PIN_WRONG.into()),
-        PairResult::PinWrong => Err(PAIR_PIN_WRONG.into()),
-        PairResult::AlreadyInProgress => Err(PAIR_IN_PROGRESS.into()),
-        // A PC whose signature does not verify may be another device posing as it: never a nuisance.
-        PairResult::Failed(nightjar_core::http::PairFailure::ServerSignature) => Err(PAIR_UNVERIFIED.into()),
-        PairResult::Failed(nightjar_core::http::PairFailure::Declined(_)) => Err(PAIR_DECLINED.into()),
-    }
+    nightjar_core::hosts::pairing::pair_outcome_kind(result, false, one_time)
+        .map_err(format_pair_failure)
 }
 
 /// An unpair answer that leaves this device unpaired: done, or the PC never knew it.
@@ -45,21 +44,18 @@ pub fn now_unpaired(result: &Result<(), String>) -> bool {
 }
 
 pub(super) fn unpair_error(error: &nightjar_core::http::Error) -> String {
-    use nightjar_core::http::Error;
-    match error {
-        Error::Status { code: 401, .. } | Error::NotPaired => UNPAIR_NOT_PAIRED.into(),
+    match nightjar_core::hosts::pairing::unpair_error_kind(error) {
+        UnpairFailureKind::NotPaired => UNPAIR_NOT_PAIRED.into(),
         _ => UNPAIR_FAILED.into(),
     }
 }
 
 /// A pairing request that failed on the way: a network problem, or whatever the client says.
+#[cfg(test)]
 pub(super) fn pair_error(error: &nightjar_core::http::Error) -> String {
-    match error {
-        nightjar_core::http::Error::Io(_) => PAIR_NETWORK.into(),
-        // Pairing starts without a stored certificate, so only a link's fingerprint refuses one.
-        nightjar_core::http::Error::CertificateMismatch => PAIR_LINK_MISMATCH.into(),
-        other => describe(other),
-    }
+    nightjar_core::hosts::pairing::pair_error_kind(error)
+        .map(format_pair_failure)
+        .unwrap_or_else(|| describe(error))
 }
 
 impl Hosts {
@@ -89,13 +85,14 @@ impl Hosts {
     fn refuse_link(&mut self, id: u64) {
         self.cancel_pairing();
         let result = Err(PAIR_LINK_MISMATCH.into());
-        let _ = self.sender.send(Event::Paired { id, request: self.pairing_generation, result });
+        let _ = self.sender.send(Event::Paired {
+            id,
+            request: self.pairing_generation,
+            result,
+        });
         (self.waker)();
     }
 
-    /// `id` was added for a link and now says it is a PC known here with a certificate other than
-    /// the link names. Any web page can make that address the one tried, and nothing has proved
-    /// who answered, so the known PC keeps its address and this record goes.
     pub(super) fn drop_link_claiming_known_pc(&mut self, id: u64) {
         eprintln!("nightjar: a pairing link's address claims a known PC with another certificate");
         if self.pairing.as_ref().is_some_and(|(pairing, _)| *pairing == id) {
@@ -107,13 +104,14 @@ impl Hosts {
     fn start_pairing(&mut self, id: u64, secret: Secret) {
         self.cancel_pairing();
         let request = self.pairing_generation;
-        // The PCs a link's certificate cannot be: known with another one. The PIN is not spent on
-        // something that says it is one of them.
         let known_otherwise: Vec<String> = match &secret {
             Secret::Link(link) => self
                 .list
                 .iter()
-                .filter(|host| !host.record.unique_id.is_empty() && pins_another(&host.record, &link.cert_sha256))
+                .filter(|host| {
+                    !host.record.unique_id.is_empty()
+                        && pins_another(&host.record, &link.cert_sha256)
+                })
                 .map(|host| host.record.unique_id.clone())
                 .collect(),
             _ => Vec::new(),
@@ -129,23 +127,29 @@ impl Hosts {
         let client = match client_for(&identity, &record, &record.address) {
             Ok(client) => Arc::new(client),
             Err(e) => {
-                let _ = self.sender.send(Event::Paired { id, request, result: Err(e) });
+                let _ = self.sender.send(Event::Paired {
+                    id,
+                    request,
+                    result: Err(e),
+                });
                 return;
             }
         };
         self.pairing = Some((id, client.clone()));
-        let one_time = !matches!(secret, Secret::Pin(_));
+        let core_secret = match secret {
+            Secret::Pin(pin) => nightjar_core::hosts::pairing::PairSecret::Pin(pin),
+            Secret::OneTime { pin, passphrase } => {
+                nightjar_core::hosts::pairing::PairSecret::OneTime { pin, passphrase }
+            }
+            Secret::Link(link) => nightjar_core::hosts::pairing::PairSecret::Link(link),
+        };
         self.spawn("pair", move || {
-            let result = client
-                .server_info_http(true)
-                .and_then(|info| match &secret {
-                    Secret::Link(_) if known_otherwise.contains(&info.unique_id) => Err(nightjar_core::http::Error::CertificateMismatch),
-                    Secret::Pin(pin) => client.pair(&info, pin),
-                    Secret::OneTime { pin, passphrase } => client.pair_with_passphrase(&info, pin, passphrase),
-                    Secret::Link(link) => client.pair_with_link(&info, link),
-                })
-                .map_err(|e| pair_error(&e))
-                .and_then(|result| pair_outcome(result, one_time));
+            let result =
+                nightjar_core::hosts::pairing::execute_pair(&client, &core_secret, &known_otherwise)
+                    .map_err(|err| match err {
+                        Ok(kind) => format_pair_failure(kind),
+                        Err(e) => describe(&e),
+                    });
             Some(Event::Paired { id, request, result })
         });
     }
@@ -166,7 +170,9 @@ impl Hosts {
 
     /// Ends a waiting device's request.
     pub fn deny_pairing(&self, id: u64, request: String, name: String) {
-        self.answer_pairing(id, request, name, true, |client, request| client.deny_pairing(request).map(|_| ()));
+        self.answer_pairing(id, request, name, true, |client, request| {
+            client.deny_pairing(request).map(|_| ())
+        });
     }
 
     fn answer_pairing(
@@ -182,18 +188,29 @@ impl Hosts {
         let identity = self.identity.clone();
         self.spawn("approve-device", move || {
             let result = identity
-                .ok_or_else(|| en("Nightjar has no client identity yet. Restart Nightjar and try again.").to_owned())
+                .ok_or_else(|| {
+                    en("Nightjar has no client identity yet. Restart Nightjar and try again.")
+                        .to_owned()
+                })
                 .and_then(|identity| client_for(&identity, &record, &record.address))
                 .and_then(|client| call(&client, &request).map_err(|e| native_error(&e)));
-            Some(Event::PairingAnswer { id, request, name, denied, result })
+            Some(Event::PairingAnswer {
+                id,
+                request,
+                name,
+                denied,
+                result,
+            })
         });
     }
 
-    /// Asks the PC to forget this device. The local certificate stays until the PC has
-    /// answered (see `drain`), so a failed or unreachable request leaves the PC paired here.
+    /// Asks the PC to forget this device.
     pub fn unpair(&mut self, id: u64) -> Result<(), String> {
         let Some(identity) = self.identity.clone() else {
-            return Err(en("Nightjar has no client identity yet, so it cannot unpair. Restart Nightjar and try again.").into());
+            return Err(en(
+                "Nightjar has no client identity yet, so it cannot unpair. Restart Nightjar and try again.",
+            )
+            .into());
         };
         let Some(host) = self.get(id) else {
             return Ok(());

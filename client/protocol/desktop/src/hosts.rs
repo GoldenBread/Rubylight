@@ -12,13 +12,13 @@ use std::time::{Duration, Instant, SystemTime};
 use nightjar_core::http::native_api::feature;
 use nightjar_core::http::native_api::library::Library;
 use nightjar_core::http::native_api::session::{ActionId, Session};
-#[cfg(test)]
-use nightjar_core::http::Reason;
 use nightjar_core::http::{
-    App, AppControl, Availability, ClientIdentity, Feature, HostClient, HostUpdate, InfoPath, LateRefusal, NativeCapabilities, NativeLibrary, PairResult, PairingRequest,
-    StreamMove,
-    PcPower, PcPowerOffer, PowerError, PowerReply, ServerInfo, DEFAULT_HTTP_PORT,
+    App, AppControl, Availability, ClientIdentity, Feature, HostClient, HostUpdate, InfoPath,
+    LateRefusal, NativeCapabilities, NativeLibrary, PairingRequest, PcPower,
+    ServerInfo, StreamMove, DEFAULT_HTTP_PORT,
 };
+#[cfg(test)]
+use nightjar_core::http::{PairResult, PcPowerOffer, PowerError, PowerReply};
 
 use rubylight_protocol::invite_uri::InviteUri;
 use rubylight_protocol::pairing_uri::PairingUri;
@@ -68,7 +68,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(4);
 /// asked every second for this long (`Host::recheck_until`).
 const RECHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// How often a PC's internet play reply is read again while it is reached on its network.
-const INTERNET_READ_INTERVAL: Duration = Duration::from_secs(600);
+const INTERNET_READ_INTERVAL: Duration = Duration::from_millis(nightjar_policy::hosts::INTERNET_PLAY_READ_INTERVAL_MS);
 const RECHECK_WINDOW: Duration = Duration::from_secs(15);
 const RECHECK_LIBRARY_INTERVAL: Duration = Duration::from_secs(3);
 /// The native library and permissions are read this often; the session on every poll.
@@ -77,8 +77,8 @@ const NATIVE_FULL_INTERVAL: Duration = Duration::from_secs(30);
 /// is asked for again while it is on screen. One the PC has none of stays a title.
 const ART_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const MDNS_SERVICE: &str = "_nvstream._tcp.local.";
-/// A sleep token older than this is asked for again before it is spent: the PC keeps it 30 s.
-const SLEEP_TOKEN_REFRESH: Duration = Duration::from_secs(25);
+#[cfg(test)]
+const SLEEP_TOKEN_REFRESH: Duration = Duration::from_millis(nightjar_policy::hosts::SLEEP_TOKEN_REFRESH_MS);
 
 /// One successful native read.
 pub struct NativeRead {
@@ -359,13 +359,14 @@ impl Host {
     /// never do), `Some(Err(why))` when it does but not for this device.
     #[cfg(test)]
     pub fn sleep_option(&self) -> Option<Result<(), &'static str>> {
-        if self.reach != Reach::Online || !self.paired() {
-            return None;
-        }
-        match self.info.as_ref()?.capabilities.availability(Feature::Sleep) {
-            Availability::Supported => Some(Ok(())),
-            Availability::Unsupported(Some(Reason::SleepPermission)) => Some(Err(SLEEP_NOT_ALLOWED)),
-            _ => None,
+        match nightjar_policy::hosts::sleep_option(
+            self.reach == Reach::Online,
+            self.paired(),
+            self.info.as_ref().map(|i| &i.capabilities),
+        ) {
+            nightjar_policy::hosts::SleepOfferState::Offered => Some(Ok(())),
+            nightjar_policy::hosts::SleepOfferState::PermissionDenied => Some(Err(SLEEP_NOT_ALLOWED)),
+            nightjar_policy::hosts::SleepOfferState::Hidden => None,
         }
     }
 }
@@ -974,9 +975,16 @@ impl Hosts {
     /// Whether a PC of the list has `unique_id` and is paired with a certificate other than the
     /// one that hashes to `certificate`.
     fn invite_claims_known_pc(&self, unique_id: &str, certificate: &[u8; 32]) -> bool {
-        self.list
-            .iter()
-            .any(|h| h.record.unique_id == unique_id && pairing::pins_another(&h.record, certificate))
+        self.list.iter().any(|h| {
+            h.record.unique_id == unique_id
+                && nightjar_policy::hosts::invite_claims_known_pc(
+                    h.record
+                        .server_certificate
+                        .as_deref()
+                        .and_then(nightjar_core::http::certificate_sha256_pem),
+                    *certificate,
+                )
+        })
     }
 
     /// A PC paired from an invite: updates the PC with that ID, or adds it. Its address is where
@@ -1426,74 +1434,40 @@ impl Hosts {
     }
 }
 
-/// Whether a poll whose direct paths failed tries the punched path now: once the PC reads as away
-/// (`away`, a poll before failed), or while a punched path reaches it already (`tunnel_up`), which
-/// answers at once. Until then the poll fails as fast as for a PC without internet play, so a PC
-/// that is off reads as Offline at once instead of after the up to 50 s the punch may take.
+/// Whether a poll whose direct paths failed tries the punched path now.
 fn punches_now(away: bool, tunnel_up: impl FnOnce() -> bool) -> bool {
-    away || tunnel_up()
+    if away {
+        nightjar_policy::hosts::punches_now(false, true, false)
+    } else {
+        nightjar_policy::hosts::punches_now(false, false, tunnel_up())
+    }
 }
 
-/// The addresses a poll tries in turn: the last that answered, the others, then the remote one,
-/// which stays last even where it is listed among the others (a hairpin NAT answers there at
-/// home too).
+/// The addresses a poll tries in turn.
 fn poll_addresses(record: &HostRecord) -> Vec<String> {
-    if let Some(pinned) = &record.pinned_address {
-        return vec![pinned.clone()];
-    }
-    let remote = record.remote_address.as_ref();
-    let mut addresses: Vec<String> = std::iter::once(&record.address)
-        .chain(&record.other_addresses)
-        .filter(|a| Some(*a) != remote)
-        .cloned()
-        .collect();
-    // Then the internet paths in order: the PC's IPv6 addresses, then its forwarded IPv4 port
-    // (the remote address, or the one its internet play reply names).
-    let reply = internet_reply(record);
-    let mut away: Vec<String> = Vec::new();
-    if let Some(reply) = &reply {
-        away.extend(reply.ipv6.iter().map(ToString::to_string));
-    }
-    away.extend(remote.cloned());
-    if let Some(mapped) = reply.as_ref().filter(|r| r.mapped_ports).and_then(|r| r.external_ipv4) {
-        away.push(mapped.to_string());
-    }
-    for address in away {
-        if !addresses.contains(&address) {
-            addresses.push(address);
-        }
-    }
-    addresses
+    nightjar_core::hosts::poll::desktop_poll_addresses(
+        &record.to_shared_fields(),
+        internet_reply(record).as_ref(),
+    )
 }
 
 /// The PC's stored internet play reply, read again.
 fn internet_reply(record: &HostRecord) -> Option<nightjar_core::http::InternetPlay> {
-    record.internet_play.as_deref().and_then(|text| nightjar_core::http::InternetPlay::parse(text).ok())
+    nightjar_core::hosts::poll::parse_internet_reply(record.internet_play.as_deref())
 }
 
-/// Whether `address` reaches the PC from outside its network: its remote address, an internet
-/// address from its reply, or a punched path. Requests go there for now; the PC stays stored
-/// under its own address.
+/// Whether `address` reaches the PC from outside its network.
 fn away_address(record: &HostRecord, address: &str) -> bool {
-    if record.remote_address.as_deref() == Some(address) {
-        return true;
-    }
-    let Ok(ip) = address.parse::<IpAddr>() else { return false };
-    if nightjar_core::internet::is_tunnel(ip) {
-        return true;
-    }
-    internet_reply(record).is_some_and(|reply| match ip {
-        IpAddr::V6(ip) => reply.ipv6.contains(&ip),
-        IpAddr::V4(ip) => reply.external_ipv4 == Some(ip),
-    })
+    nightjar_core::hosts::poll::away_address(
+        &record.to_shared_fields(),
+        internet_reply(record).as_ref(),
+        address,
+    )
 }
 
 /// `text` as an IPv4 address that a PC outside this network can be reached at.
 fn public_ipv4(text: &str) -> Option<String> {
-    let address: Ipv4Addr = text.trim().parse().ok()?;
-    let local = address.is_private() || address.is_loopback() || address.is_link_local() || address.is_unspecified()
-        || address.is_broadcast() || address.is_multicast() || address.is_documentation();
-    (!local).then(|| address.to_string())
+    nightjar_policy::hosts::public_ipv4(text).map(|ip| ip.to_string())
 }
 
 #[cfg(test)]

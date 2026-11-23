@@ -1,9 +1,16 @@
 //! Unified host registry (`hosts.json`), per-host metadata (`host_meta.json`), and client
 //! pairing identity (`identity.json`) persistence shared across Desktop and Android.
 
+pub mod applist;
+pub mod client_pool;
 pub mod identity;
 pub mod io;
+pub mod manager;
+mod manager_ops;
 pub mod meta;
+pub mod pairing;
+pub mod poll;
+pub mod power;
 pub mod store;
 #[cfg(test)]
 mod tests;

@@ -51,6 +51,20 @@ impl<T> Slab<T> {
         }
         lock(&self.entries).remove(&handle).is_some()
     }
+
+    pub(crate) fn take(&self, handle: i64) -> Option<Arc<T>> {
+        if handle <= 0 {
+            return None;
+        }
+        lock(&self.entries).remove(&handle)
+    }
+
+    pub(crate) fn drain_all(&self) -> Vec<Arc<T>> {
+        let mut map = lock(&self.entries);
+        let values: Vec<_> = map.values().cloned().collect();
+        map.clear();
+        values
+    }
 }
 
 /// Handle table for single-threaded or short-lived mutable state behind an inner `Mutex`.

@@ -1,6 +1,13 @@
 //! JNI bridge exports for `NightjarHostsJni` unified `hosts.json` registry (`HostStore`),
 //! mapping Android `ComputerDetails` slots and DER certificates onto `nightjar_core::hosts::HostEntry`.
 
+#[path = "host_flows.rs"]
+pub mod host_flows;
+#[path = "hosts_manager.rs"]
+pub mod hosts_manager;
+#[path = "hosts_poller.rs"]
+pub mod hosts_poller;
+
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jlong, jstring};
@@ -12,7 +19,7 @@ use crate::slab::Slab;
 
 static HOST_STORES: Slab<HostStore> = Slab::new();
 
-fn jstr(env: &mut JNIEnv, value: &JString) -> Option<String> {
+pub(crate) fn jstr(env: &mut JNIEnv, value: &JString) -> Option<String> {
     if value.is_null() {
         return None;
     }
@@ -21,15 +28,15 @@ fn jstr(env: &mut JNIEnv, value: &JString) -> Option<String> {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-struct JniHostDto {
-    uuid: String,
-    name: String,
-    local: Option<EndpointSlot>,
-    remote: Option<EndpointSlot>,
-    manual: Option<EndpointSlot>,
-    ipv6: Option<EndpointSlot>,
-    mac: Option<String>,
-    server_cert_b64: Option<String>,
+pub(crate) struct JniHostDto {
+    pub(crate) uuid: String,
+    pub(crate) name: String,
+    pub(crate) local: Option<EndpointSlot>,
+    pub(crate) remote: Option<EndpointSlot>,
+    pub(crate) manual: Option<EndpointSlot>,
+    pub(crate) ipv6: Option<EndpointSlot>,
+    pub(crate) mac: Option<String>,
+    pub(crate) server_cert_b64: Option<String>,
 }
 
 const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -89,7 +96,7 @@ pub(crate) fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn entry_to_dto(entry: &HostEntry) -> JniHostDto {
+pub(crate) fn entry_to_dto(entry: &HostEntry) -> JniHostDto {
     let has_android_slots = entry.local_endpoint.is_some()
         || entry.remote_endpoint.is_some()
         || entry.manual_endpoint.is_some()
@@ -140,7 +147,7 @@ fn entry_to_dto(entry: &HostEntry) -> JniHostDto {
     }
 }
 
-fn dto_to_entry(dto: JniHostDto) -> HostEntry {
+pub(crate) fn dto_to_entry(dto: JniHostDto) -> HostEntry {
     let mut entry = HostEntry::default();
     entry.shared.unique_id = dto.uuid;
     entry.shared.name = dto.name;
@@ -150,19 +157,8 @@ fn dto_to_entry(dto: JniHostDto) -> HostEntry {
     entry.manual_endpoint = dto.manual.clone();
     entry.ipv6_endpoint = dto.ipv6.clone();
 
-    // Populate shared Desktop fields cleanly from primary endpoints.
-    let primary = dto
-        .local
-        .as_ref()
-        .or(dto.manual.as_ref())
-        .or(dto.remote.as_ref())
-        .or(dto.ipv6.as_ref());
-    if let Some(p) = primary {
-        entry.shared.address = p.address.clone();
-        entry.shared.http_port = p.port;
-    }
-    entry.shared.remote_address = dto.remote.as_ref().map(|r| r.address.clone());
-    entry.shared.manual = dto.manual.is_some() && dto.local.is_none();
+    // Populate shared Desktop fields cleanly via policy (`remote` NEVER promotes to `shared.address`).
+    entry.sync_shared_from_slots();
 
     if let Some(b64) = dto.server_cert_b64.as_deref()
         && let Some(der) = base64_decode(b64)
@@ -451,6 +447,10 @@ mod tests {
         assert!(!store.upsert(dto_to_entry(dto)).unwrap(), "identical second upsert returns false");
 
         let reloaded = store.get_by_uuid("pc-1").unwrap();
+        assert!(
+            reloaded.shared.address.is_empty(),
+            "remote slot must never promote into shared.address"
+        );
         let back = entry_to_dto(&reloaded);
         assert_eq!(back.local, None);
         assert_eq!(back.remote, EndpointSlot::new("203.0.113.99", 47989));

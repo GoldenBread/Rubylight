@@ -1607,6 +1607,94 @@ impl HostRecord {
             if enabled { self.quit_on_leave.insert(key); } else { self.quit_on_leave.remove(&key); }
         }
     }
+
+    /// Exports the shared flat host fields represented in `hosts.json`.
+    pub fn to_shared_fields(&self) -> nightjar_policy::hosts::SharedHostFields {
+        nightjar_policy::hosts::SharedHostFields {
+            unique_id: self.unique_id.clone(),
+            name: self.name.clone(),
+            alias: self.alias.clone(),
+            address: self.address.clone(),
+            http_port: self.http_port,
+            https_port: self.https_port,
+            mac: self.mac.clone(),
+            server_certificate: self.server_certificate.clone(),
+            manual: self.manual,
+            other_addresses: self.other_addresses.clone(),
+            other_http_ports: self.other_http_ports.clone(),
+            pinned_address: self.pinned_address.clone(),
+            remote_address: self.remote_address.clone(),
+            wake_macs: self.wake_macs.clone(),
+            wake_broadcasts: self.wake_broadcasts.clone(),
+            own_wake_macs: self.own_wake_macs.clone(),
+            quit_on_leave: self.quit_on_leave.clone(),
+            notices: self.notices.clone(),
+            full_chroma: self.full_chroma.clone(),
+            internet_play: self.internet_play.clone(),
+        }
+    }
+
+    /// Applies updated flat [`nightjar_policy::hosts::SharedHostFields`] back onto `self`.
+    pub fn apply_shared_fields(&mut self, shared: &nightjar_policy::hosts::SharedHostFields) {
+        self.unique_id = shared.unique_id.clone();
+        self.name = shared.name.clone();
+        self.alias = shared.alias.clone();
+        self.address = shared.address.clone();
+        self.http_port = shared.http_port;
+        self.https_port = shared.https_port;
+        self.mac = shared.mac.clone();
+        self.server_certificate = shared.server_certificate.clone();
+        self.manual = shared.manual;
+        self.other_addresses = shared.other_addresses.clone();
+        self.other_http_ports = shared.other_http_ports.clone();
+        self.pinned_address = shared.pinned_address.clone();
+        self.remote_address = shared.remote_address.clone();
+        self.wake_macs = shared.wake_macs.clone();
+        self.wake_broadcasts = shared.wake_broadcasts.clone();
+        self.own_wake_macs = shared.own_wake_macs.clone();
+        self.quit_on_leave = shared.quit_on_leave.clone();
+        self.notices = shared.notices.clone();
+        self.full_chroma = shared.full_chroma.clone();
+        self.internet_play = shared.internet_play.clone();
+    }
+
+    /// Typed Android endpoint slots preserved in `hosts.json`.
+    pub fn slots(&self) -> nightjar_policy::hosts::HostSlots {
+        nightjar_policy::hosts::HostSlots {
+            local: self.local_endpoint.clone(),
+            remote: self.remote_endpoint.clone(),
+            manual: self.manual_endpoint.clone(),
+            ipv6: self.ipv6_endpoint.clone(),
+            pinned: self.pinned_endpoint.clone(),
+        }
+    }
+
+    /// Writes typed endpoint slots back onto `self`.
+    pub fn set_slots(&mut self, slots: &nightjar_policy::hosts::HostSlots) {
+        self.local_endpoint = slots.local.clone();
+        self.remote_endpoint = slots.remote.clone();
+        self.manual_endpoint = slots.manual.clone();
+        self.ipv6_endpoint = slots.ipv6.clone();
+        self.pinned_endpoint = slots.pinned.clone();
+    }
+
+    /// Recomputes flat shared fields from populated Android endpoint slots.
+    pub fn sync_shared_from_slots(&mut self) {
+        let slots = self.slots();
+        if slots.has_any() {
+            let mut shared = self.to_shared_fields();
+            nightjar_policy::hosts::sync_shared_from_slots(&mut shared, &slots);
+            self.apply_shared_fields(&shared);
+        }
+    }
+
+    /// Populates missing typed slots from legacy flat Desktop fields so cross-device sync is lossless.
+    pub fn sync_slots_from_shared(&mut self) {
+        let mut slots = self.slots();
+        let shared = self.to_shared_fields();
+        nightjar_policy::hosts::sync_slots_from_shared(&shared, &mut slots);
+        self.set_slots(&slots);
+    }
 }
 
 /// The layer a stream setting's value comes from, from the top: the game, the PC, the profile in
