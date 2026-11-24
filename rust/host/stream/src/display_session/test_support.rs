@@ -74,7 +74,7 @@ pub(crate) fn test_prepared(host: &Shared) -> Prepared {
         #[cfg(test)]
         scale_snapshot: None,
         #[cfg(test)]
-        scales_set: Mutex::new(Vec::new()),
+        scales_set: std::sync::Mutex::new(Vec::new()),
         revision: 0,
         machine: DisplaySessionMachine::bare(std::time::Instant::now()),
         mode_report: ModeReport::new(Arc::new(Warnings::default()), (None, None, None), 60_000),

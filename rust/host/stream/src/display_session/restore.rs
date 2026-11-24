@@ -7,12 +7,13 @@ use super::policy::{brings_back_game, take_profile};
 use super::scale::scale_display;
 use super::turn::follow_turn;
 use anyhow::Result;
+#[cfg(test)]
+use butterpollo_media_policy::display_session_machine::{
+    primary_change_arms, primary_watch_applies, resumed_primary_change,
+};
 use butterpollo_media_policy::{
     display_policy::{LayoutAction, LayoutWatch, PrimaryAction, PrimaryChange, primary_moved},
-    display_session_machine::{
-        PausedTickAction, primary_change_arms, primary_taken_back, primary_watch_applies,
-        resumed_primary_change,
-    },
+    display_session_machine::{PausedTickAction, primary_taken_back},
 };
 use butterpollo_win_display::{
     display::{self, Guard},

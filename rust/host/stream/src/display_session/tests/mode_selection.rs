@@ -230,7 +230,7 @@ fn a_faster_stream_request_keeps_only_a_display_that_can_follow_it() {
         layout_snapshot: None,
         size_snapshot: None,
         scale_snapshot: None,
-        scales_set: Mutex::new(Vec::new()),
+        scales_set: std::sync::Mutex::new(Vec::new()),
         revision: 0,
         machine: DisplaySessionMachine::bare(std::time::Instant::now()),
         mode_report: ModeReport::new(Arc::new(Warnings::default()), (None, None, None), 60_000),

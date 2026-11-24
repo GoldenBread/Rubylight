@@ -11,7 +11,7 @@ use butterpollo_win_display::{
     display_arrangement, hdr_profile,
 };
 use butterpollo_win_graphics::vulkan;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod apply;
 mod baseline;
@@ -37,12 +37,13 @@ use mode_report::ModeReport;
 #[cfg(test)]
 use policy::joined_report;
 pub(crate) use policy::{
-    BROWSER_ON_THIS_PC, REMEMBERED_RESOLUTION, REMEMBERED_SCALE, browser_keeps_monitors,
-    display_of_new_owner, launch_display_layout, legacy_host_layout, legacy_layout_notice,
+    BROWSER_ON_THIS_PC, REMEMBERED_RESOLUTION, REMEMBERED_SCALE, display_of_new_owner,
+    launch_display_layout, legacy_host_layout, legacy_layout_notice,
     migrate_legacy_extended_layouts, record_game_display, take_retained_display,
-    virtual_display_layout,
 };
 pub use policy::{LEARNED_OVER, RESUMES_GAME, SET_BY_USER, client_display};
+#[cfg(test)]
+pub(crate) use policy::{browser_keeps_monitors, virtual_display_layout};
 #[cfg(any(test, feature = "test-support"))]
 pub use test_support::DISPLAYS_SETTLING;
 use turn::Follow;
@@ -102,7 +103,7 @@ pub struct Prepared {
     scale_snapshot: Option<u32>,
     /// The scales put back on the display, for lifecycle tests.
     #[cfg(test)]
-    scales_set: Mutex<Vec<i64>>,
+    scales_set: std::sync::Mutex<Vec<i64>>,
     revision: u64,
     /// Pure display session lifecycle state machine (recovery, layout/primary watches,
     /// departure/wake epochs, pause/resume transitions).
@@ -121,7 +122,7 @@ pub struct Prepared {
 impl Prepared {
     /// Nothing prepared: a stream of `output` that holds no display, layout,
     /// profile or lease.
-    pub(super) fn bare(
+    fn bare(
         h: &Shared,
         output: String,
         framegen: Policy,
@@ -155,7 +156,7 @@ impl Prepared {
             #[cfg(test)]
             scale_snapshot: None,
             #[cfg(test)]
-            scales_set: Mutex::new(Vec::new()),
+            scales_set: std::sync::Mutex::new(Vec::new()),
             revision: 0,
             // A game window holds no layout to keep while paused.
             machine: DisplaySessionMachine::launch(
@@ -175,7 +176,7 @@ impl Prepared {
         }
     }
 
-    pub(super) fn capture_target(&self) -> (String, u64) {
+    fn capture_target(&self) -> (String, u64) {
         self._retained.as_ref().map_or_else(
             || (self.output.clone(), self.revision),
             |display| display.capture_target(),
