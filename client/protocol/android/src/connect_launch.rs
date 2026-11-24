@@ -117,6 +117,36 @@ struct AndroidLaunchBridge<'a, 'local> {
     confirm_replace_used: Cell<bool>,
 }
 
+pub(crate) fn read_jstring_result(
+    env: &mut JNIEnv,
+    call: jni::errors::Result<jni::objects::JValueOwned>,
+) -> jni::errors::Result<String> {
+    let obj = match call {
+        Ok(v) => match v.l() {
+            Ok(obj) => obj,
+            Err(e) => {
+                let _ = env.exception_clear();
+                return Err(e);
+            }
+        },
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(e);
+        }
+    };
+    if obj.is_null() {
+        return Ok(String::new());
+    }
+    let js = JString::from(obj);
+    match env.get_string(&js) {
+        Ok(s) => Ok(s.to_string_lossy().into_owned()),
+        Err(e) => {
+            let _ = env.exception_clear();
+            Err(e)
+        }
+    }
+}
+
 impl<'a, 'local> AndroidLaunchBridge<'a, 'local> {
     fn new(env: JNIEnv<'local>, callback: &'a JObject<'local>) -> Self {
         Self {
@@ -130,30 +160,7 @@ impl<'a, 'local> AndroidLaunchBridge<'a, 'local> {
         env: &mut JNIEnv,
         call: jni::errors::Result<jni::objects::JValueOwned>,
     ) -> jni::errors::Result<String> {
-        let obj = match call {
-            Ok(v) => match v.l() {
-                Ok(obj) => obj,
-                Err(e) => {
-                    let _ = env.exception_clear();
-                    return Err(e);
-                }
-            },
-            Err(e) => {
-                let _ = env.exception_clear();
-                return Err(e);
-            }
-        };
-        if obj.is_null() {
-            return Ok(String::new());
-        }
-        let js = JString::from(obj);
-        match env.get_string(&js) {
-            Ok(s) => Ok(s.to_string_lossy().into_owned()),
-            Err(e) => {
-                let _ = env.exception_clear();
-                Err(e)
-            }
-        }
+        read_jstring_result(env, call)
     }
 }
 

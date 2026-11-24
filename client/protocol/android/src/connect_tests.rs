@@ -71,4 +71,68 @@ fn resolve_packet_size_auto_vpn_uses_1024_while_explicit_remote_keeps_1392() {
         resolve_packet_size_values(1, true, false, 8192, true, 1392, true, true, probe_unused),
         [1392, 0]
     );
+    // Non-jumbo LAN keeps 1392 without probing, and custom 1200 stays 1200 even with jumbo on.
+    assert_eq!(
+        resolve_packet_size_values(0, true, false, 8192, true, 1392, false, false, probe_unused),
+        [1392, 0]
+    );
+    assert_eq!(
+        resolve_packet_size_values(0, true, false, 8192, true, 1200, true, false, probe_unused),
+        [1200, 0]
+    );
+    // Explicit Remote skips jumbo even when jumbo_frames = true.
+    assert_eq!(
+        resolve_packet_size_values(2, true, false, 8192, true, 1392, true, false, probe_unused),
+        [1392, 0]
+    );
+}
+
+#[test]
+fn resolve_packet_size_probes_jumbo_for_android_default_1392_on_lan() {
+    let passing = Measurement {
+        expected: 100,
+        sent: 100,
+        received: 100,
+        sender_ms: 2000.0,
+        loss: 0.0,
+        worst_window_loss: 0.0,
+        frames: 120,
+        damaged_frames: 0,
+        excessive_loss_frames: 0,
+        missing_tail_frames: 0,
+        worst_frame_loss: 0.0,
+    };
+
+    for loc_ord in [0, 1] {
+        let mut probed_sizes = Vec::new();
+        let res = resolve_packet_size_values(
+            loc_ord,
+            true,
+            false,
+            8192,
+            true,
+            1392,
+            true,
+            false,
+            |_, size, _, _| {
+                probed_sizes.push(size);
+                Ok(passing.clone())
+            },
+        );
+        assert_eq!(probed_sizes, vec![8160, 1392]);
+        assert_eq!(res, [8192, 0]);
+
+        let fail_res = resolve_packet_size_values(
+            loc_ord,
+            true,
+            false,
+            8192,
+            true,
+            1392,
+            true,
+            false,
+            |_, _, _, _| Err(http::Error::Io(std::io::Error::other("jumbo loss"))),
+        );
+        assert_eq!(fail_res, [1392, 1]);
+    }
 }

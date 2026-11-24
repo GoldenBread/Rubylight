@@ -10,31 +10,48 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.preference.PreferenceManager;
 
 import com.limelight.nvstream.av.video.VideoDecoderRenderer;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.LimelightCryptoProvider;
 import com.limelight.nvstream.http.NvApp;
+import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.nvstream.jni.NightjarSessionJni;
 
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.Implementation;
+import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowConnectivityManager;
 import org.robolectric.shadows.ShadowNetworkCapabilities;
 
+import java.io.IOException;
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.Assert.*;
 
 @RunWith(org.robolectric.RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class,
-        shadows = {NvConnectionRecoveryTest.FakeHost.class, NvConnectionHapticsFlagTest.CapturingBridge.class},
+        shadows = {NvConnectionPacketSizeTest.FakeHost.class, NvConnectionHapticsFlagTest.CapturingBridge.class},
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class NvConnectionPacketSizeTest {
+    @Before
+    public void resetState() {
+        PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication()).edit()
+                .remove("jumbo_frames").commit();
+        FakeHost.probeUdpFailure = null;
+        FakeHost.probeUdpResult = null;
+        FakeHost.probedPacketSizes.clear();
+    }
+
     private static void setActiveNetwork(int transport, boolean notVpn) {
         ConnectivityManager connMgr = (ConnectivityManager) RuntimeEnvironment.getApplication()
                 .getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -49,13 +66,13 @@ public class NvConnectionPacketSizeTest {
         shadow.setNetworkCapabilities(active, caps);
     }
 
-    private static void startStream(String hostAddress, int remoteCfg, int maxPacketSize) throws Exception {
-        NvConnectionRecoveryTest.FakeHost.initial = "<root status_code=\"200\"><appversion>7.1.431.0</appversion>"
-                + "<uniqueid>test-host</uniqueid><HttpsPort>47984</HttpsPort><state>SUNSHINE_SERVER_FREE</state>"
-                + "<currentgame>0</currentgame><currentgameuuid></currentgameuuid><PairStatus>1</PairStatus></root>";
-        NvConnectionRecoveryTest.FakeHost.resumeFailure = null;
-        NvConnectionRecoveryTest.FakeHost.resumeResult = true;
-        NvConnectionRecoveryTest.FakeHost.requests.clear();
+    private static NvConnection startStream(String hostAddress, int remoteCfg, int maxPacketSize,
+            String serverInfoXml) throws Exception {
+        FakeHost.initial = serverInfoXml;
+        FakeHost.resumeFailure = null;
+        FakeHost.resumeResult = true;
+        FakeHost.requests.clear();
+        FakeHost.probedPacketSizes.clear();
         NvConnectionHapticsFlagTest.CapturingBridge.packetSize = -1;
         NvConnectionHapticsFlagTest.CapturingBridge.streamingRemotely = -1;
 
@@ -73,6 +90,14 @@ public class NvConnectionPacketSizeTest {
         connection.start(null, renderer(), listener);
         Thread worker = ConnectionStartup.await(connection);
         assertFalse("Connection startup did not finish", worker.isAlive());
+        return connection;
+    }
+
+    private static void startStream(String hostAddress, int remoteCfg, int maxPacketSize) throws Exception {
+        startStream(hostAddress, remoteCfg, maxPacketSize,
+                "<root status_code=\"200\"><appversion>7.1.431.0</appversion>"
+                        + "<uniqueid>test-host</uniqueid><HttpsPort>47984</HttpsPort><state>SUNSHINE_SERVER_FREE</state>"
+                        + "<currentgame>0</currentgame><currentgameuuid></currentgameuuid><PairStatus>1</PairStatus></root>");
     }
 
     @Test
@@ -116,14 +141,137 @@ public class NvConnectionPacketSizeTest {
     }
 
     @Test
+    public void jumboFramesProbesAndUpgradesOnLanWithDefault1392AndFallsBackOnFailure() throws Exception {
+        String jumboHostXml = "<root status_code=\"200\"><appversion>7.1.431.0</appversion>"
+                + "<uniqueid>test-host</uniqueid><HttpsPort>47984</HttpsPort><state>SUNSHINE_SERVER_FREE</state>"
+                + "<currentgame>0</currentgame><currentgameuuid></currentgameuuid><PairStatus>1</PairStatus>"
+                + "<ServerCodecModeSupport>8388609</ServerCodecModeSupport>"
+                + "<MaxVideoPacket>8192</MaxVideoPacket><PyroWaveHostLinkMbps>1000</PyroWaveHostLinkMbps>"
+                + "<PyroWaveUdpProbeVersion>1</PyroWaveUdpProbeVersion>"
+                + "<PyroWaveUdpHandshakeVersion>1</PyroWaveUdpHandshakeVersion>"
+                + "<PyroWaveUdpProbeBurstVersion>1</PyroWaveUdpProbeBurstVersion>"
+                + "<PyroWaveWireBudgetVersion>1</PyroWaveWireBudgetVersion></root>";
+        PreferenceManager.getDefaultSharedPreferences(RuntimeEnvironment.getApplication()).edit()
+                .putBoolean("jumbo_frames", true).commit();
+        setActiveNetwork(NetworkCapabilities.TRANSPORT_WIFI, true);
+
+        // Auto + LAN + default 1392 + jumboFrames=true probes 8160 and upgrades to 8192.
+        NvConnection autoPass = startStream("192.0.2.1", StreamConfiguration.STREAM_CFG_AUTO, 1392, jumboHostXml);
+        assertEquals(List.of(8160, 1392), FakeHost.probedPacketSizes);
+        assertEquals(8192, NvConnectionHapticsFlagTest.CapturingBridge.packetSize);
+        assertFalse(autoPass.context.jumboFallback);
+
+        // Explicit STREAM_CFG_LOCAL + default 1392 + jumboFrames=true probes 8160 and upgrades to 8192.
+        NvConnection localPass = startStream("192.0.2.1", StreamConfiguration.STREAM_CFG_LOCAL, 1392, jumboHostXml);
+        assertEquals(List.of(8160, 1392), FakeHost.probedPacketSizes);
+        assertEquals(8192, NvConnectionHapticsFlagTest.CapturingBridge.packetSize);
+        assertFalse(localPass.context.jumboFallback);
+
+        // Probe failure on LAN falls back to 1392 with jumboFallback=true.
+        FakeHost.probeUdpFailure = new IOException("probe timeout");
+        try {
+            NvConnection failConn = startStream("192.0.2.1", StreamConfiguration.STREAM_CFG_AUTO, 1392, jumboHostXml);
+            assertEquals(List.of(8160, 1392), FakeHost.probedPacketSizes);
+            assertEquals(1392, NvConnectionHapticsFlagTest.CapturingBridge.packetSize);
+            assertTrue(failConn.context.jumboFallback);
+        } finally {
+            FakeHost.probeUdpFailure = null;
+        }
+
+        // Explicit STREAM_CFG_REMOTE skips jumbo probe and keeps 1392.
+        NvConnection remoteConn = startStream("192.0.2.1", StreamConfiguration.STREAM_CFG_REMOTE, 1392, jumboHostXml);
+        assertTrue(FakeHost.probedPacketSizes.isEmpty());
+        assertEquals(1392, NvConnectionHapticsFlagTest.CapturingBridge.packetSize);
+        assertFalse(remoteConn.context.jumboFallback);
+
+        // Auto + tunnel with jumboFrames=true skips jumbo probe and keeps 1024.
+        NvConnection tunnelConn = startStream("127.78.0.1", StreamConfiguration.STREAM_CFG_AUTO, 1392, jumboHostXml);
+        assertTrue(FakeHost.probedPacketSizes.isEmpty());
+        assertEquals(1024, NvConnectionHapticsFlagTest.CapturingBridge.packetSize);
+        assertFalse(tunnelConn.context.jumboFallback);
+    }
+
+    @Test
     public void jniResolvePacketSizePreflightDistinguishesAutoVpnFromExplicitRemote() {
+        List<Integer> probedSizes = new ArrayList<>();
+        NightjarSessionJni.LinkProbe passingProbe = new NightjarSessionJni.LinkProbe() {
+            @Override public String probeLinkMbps() { return "{\"error\":{\"kind\":\"cancelled\",\"message\":\"\"}}"; }
+            @Override public String probePace(int kbps, int size, int fps, int pace) {
+                probedSizes.add(size);
+                return "{\"ok\":{\"expected\":100,\"sent\":100,\"received\":100,\"sender_ms\":2000.0,"
+                        + "\"loss\":0.0,\"worst_window_loss\":0.0,\"frames\":120,\"damaged_frames\":0,"
+                        + "\"excessive_loss_frames\":0,\"missing_tail_frames\":0,\"worst_frame_loss\":0.0}}";
+            }
+        };
+        NightjarSessionJni.LinkProbe failingProbe = new NightjarSessionJni.LinkProbe() {
+            @Override public String probeLinkMbps() { return "{\"error\":{\"kind\":\"cancelled\",\"message\":\"\"}}"; }
+            @Override public String probePace(int kbps, int size, int fps, int pace) {
+                probedSizes.add(size);
+                return "{\"error\":{\"kind\":\"io\",\"message\":\"probe failed\"}}";
+            }
+        };
+
         int[] autoVpn = NightjarSessionJni.resolvePacketSizePreflight(
-                0, false, true, 8192, true, 1392, false, false, null);
+                0, false, true, 8192, true, 1392, true, false, passingProbe);
         assertArrayEquals(new int[] {1024, 0}, autoVpn);
+        assertTrue(probedSizes.isEmpty());
 
         int[] explicitRemote = NightjarSessionJni.resolvePacketSizePreflight(
-                2, false, true, 8192, true, 1392, false, false, null);
+                2, false, true, 8192, true, 1392, true, false, passingProbe);
         assertArrayEquals(new int[] {1392, 0}, explicitRemote);
+        assertTrue(probedSizes.isEmpty());
+
+        int[] autoLanPass = NightjarSessionJni.resolvePacketSizePreflight(
+                0, true, false, 8192, true, 1392, true, false, passingProbe);
+        assertArrayEquals(new int[] {8192, 0}, autoLanPass);
+        assertEquals(List.of(8160, 1392), probedSizes);
+
+        probedSizes.clear();
+        int[] localLanPass = NightjarSessionJni.resolvePacketSizePreflight(
+                1, true, false, 8192, true, 1392, true, false, passingProbe);
+        assertArrayEquals(new int[] {8192, 0}, localLanPass);
+        assertEquals(List.of(8160, 1392), probedSizes);
+
+        probedSizes.clear();
+        int[] autoLanFail = NightjarSessionJni.resolvePacketSizePreflight(
+                0, true, false, 8192, true, 1392, true, false, failingProbe);
+        assertArrayEquals(new int[] {1392, 1}, autoLanFail);
+        assertEquals(List.of(8160, 1392), probedSizes);
+    }
+
+    @Implements(value = NvHTTP.class, isInAndroidSdk = false)
+    public static class FakeHost {
+        static String initial;
+        static IOException resumeFailure, probeUdpFailure;
+        static PyroWavePace.Result probeUdpResult;
+        static boolean resumeResult;
+        static final List<String> requests = new ArrayList<>();
+        static final List<Integer> probedPacketSizes = new ArrayList<>();
+
+        @Implementation public String getServerInfo(boolean likelyOnline) { return initial; }
+        @Implementation public NvApp getAppByUuid(String uuid) {
+            NvApp app = new NvApp("Game", 73, false);
+            app.setAppUuid(uuid);
+            return app;
+        }
+        @Implementation public PyroWavePace.Result probePyroWaveUdp(int kbps, int packetSize, int fps, int paceKbps)
+                throws IOException {
+            probedPacketSizes.add(packetSize);
+            if (probeUdpFailure != null) throw probeUdpFailure;
+            if (probeUdpResult != null) return probeUdpResult;
+            PyroWavePace.Result r = new PyroWavePace.Result();
+            r.expected = 100; r.sent = 100; r.received = 100; r.senderMs = 2000.0;
+            r.lossPercent = 0.0; r.worstWindowLossPercent = 0.0; r.frames = 120;
+            r.damagedFrames = 0; r.excessiveLossFrames = 0; r.missingTailFrames = 0; r.worstFrameLossPercent = 0.0;
+            return r;
+        }
+        @Implementation public boolean launchApp(ConnectionContext context, String verb, int id, boolean hdr)
+                throws IOException {
+            requests.add(verb);
+            if (resumeFailure != null) throw resumeFailure;
+            return resumeResult;
+        }
+        @Implementation public boolean quitApp() { return true; }
     }
 
     @Test

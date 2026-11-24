@@ -534,18 +534,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarSessionJni_firstB
         }
         let reply = env.with_local_frame(8, |env| {
             let res = env.call_method(&host_callback, "probeLinkMbps", "()Ljava/lang/String;", &[]);
-            let obj = match res {
-                Ok(v) => v.l()?,
-                Err(e) => {
-                    let _ = env.exception_clear();
-                    return Err(e);
-                }
-            };
-            if obj.is_null() {
-                return Ok(String::new());
-            }
-            let js = JString::from(obj);
-            Ok(env.get_string(&js)?.to_string_lossy().into_owned())
+            connect_launch::read_jstring_result(env, res)
         });
         let text = reply.map_err(|_| http::Error::Io(std::io::Error::other("JNI probe error")))?;
         parse_f64_envelope(&text)
@@ -621,11 +610,7 @@ pub(crate) fn resolve_packet_size_values(
         2 => RouteLocation::Remote,
         _ => RouteLocation::Auto,
     };
-    let req = effective_android_requested_packet_size(
-        base_loc,
-        vpn_or_tunnel,
-        requested_packet_size.max(0) as u32,
-    );
+    let req = effective_android_requested_packet_size(requested_packet_size.max(0) as u32);
     let (loc, route_pkt) = location_for_route(base_loc, vpn_or_tunnel);
     let addr = if is_private_addr {
         Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))
@@ -690,18 +675,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarSessionJni_resolv
                         JValue::Int(pace as jint),
                     ],
                 );
-                let obj = match res {
-                    Ok(v) => v.l()?,
-                    Err(e) => {
-                        let _ = env.exception_clear();
-                        return Err(e);
-                    }
-                };
-                if obj.is_null() {
-                    return Ok(String::new());
-                }
-                let js = JString::from(obj);
-                Ok(env.get_string(&js)?.to_string_lossy().into_owned())
+                connect_launch::read_jstring_result(env, res)
             });
             let text =
                 reply.map_err(|_| http::Error::Io(std::io::Error::other("JNI pace probe")))?;

@@ -138,18 +138,13 @@ pub fn location_for_route(location: RouteLocation, vpn_or_tunnel: bool) -> (Rout
 /// Android's `GameStreamUiSetup` default `maxPacketSize` before route detection.
 pub const ANDROID_DEFAULT_PACKET_SIZE: u32 = 1392;
 
-/// Treats Android's default `1392` `maxPacketSize` as unset (`0`) when `Auto` detects
-/// a remote/VPN/tunnel route so `location_for_route` resolves to `1024`, while preserving
-/// explicit user packet sizes and explicit `Local`/`Remote` selections.
-pub const fn effective_android_requested_packet_size(
-    base: RouteLocation,
-    vpn_or_tunnel: bool,
-    requested: u32,
-) -> u32 {
-    if matches!(base, RouteLocation::Auto)
-        && vpn_or_tunnel
-        && requested == ANDROID_DEFAULT_PACKET_SIZE
-    {
+/// Treats Android's stock default `1392` `maxPacketSize` (`GameStreamUiSetup` /
+/// `MicOnlyService`) as unset (`0`) so `location_for_route` resolves `Auto` + VPN/tunnel
+/// to `1024`, `jumbo_preflight` probes `8192` on LAN when `jumbo_frames` is enabled, and
+/// non-jumbo or explicit `Remote` routes fall back to `1392`, while preserving custom
+/// user packet sizes (such as `1200`).
+pub const fn effective_android_requested_packet_size(requested: u32) -> u32 {
+    if requested == ANDROID_DEFAULT_PACKET_SIZE {
         0
     } else {
         requested
@@ -419,38 +414,54 @@ mod tests {
 
     #[test]
     fn android_auto_remote_default_1392_resolves_to_1024_while_explicit_preserved() {
-        let req_auto_vpn = effective_android_requested_packet_size(
-            RouteLocation::Auto,
-            true,
-            ANDROID_DEFAULT_PACKET_SIZE,
-        );
+        let req_auto_vpn = effective_android_requested_packet_size(ANDROID_DEFAULT_PACKET_SIZE);
         assert_eq!(req_auto_vpn, 0);
         let (loc, route_pkt) = location_for_route(RouteLocation::Auto, true);
         assert_eq!(loc, RouteLocation::Remote);
         assert_eq!(route_pkt, 1024);
         assert_eq!(reset_packet_size(route_pkt, req_auto_vpn), 1024);
+        assert_eq!(
+            jumbo_preflight(loc, None, 8192, true, req_auto_vpn, true, false),
+            JumboPreflight::Skip(JumboSkip::Remote)
+        );
 
         // Explicit custom packet size over Auto+VPN stays respected.
-        let req_custom = effective_android_requested_packet_size(RouteLocation::Auto, true, 1200);
+        let req_custom = effective_android_requested_packet_size(1200);
         assert_eq!(reset_packet_size(route_pkt, req_custom), 1200);
 
-        // Explicit Remote or Local keeps 1392.
-        let req_remote = effective_android_requested_packet_size(
-            RouteLocation::Remote,
-            true,
-            ANDROID_DEFAULT_PACKET_SIZE,
-        );
+        // Explicit Remote keeps 1392 and skips jumbo even with jumbo_frames = true.
+        let req_remote = effective_android_requested_packet_size(ANDROID_DEFAULT_PACKET_SIZE);
         let (rem_loc, rem_pkt) = location_for_route(RouteLocation::Remote, true);
         assert_eq!(rem_loc, RouteLocation::Remote);
         assert_eq!(reset_packet_size(rem_pkt, req_remote), 1392);
-
-        let req_local = effective_android_requested_packet_size(
-            RouteLocation::Local,
-            false,
-            ANDROID_DEFAULT_PACKET_SIZE,
+        assert_eq!(
+            jumbo_preflight(rem_loc, None, 8192, true, req_remote, true, false),
+            JumboPreflight::Skip(JumboSkip::Remote)
         );
+
+        // Auto + LAN and explicit Local with default 1392 probe 8192 when jumbo_frames = true
+        // and stay 1392 when jumbo_frames = false.
+        let lan_ip = Some("192.168.1.10".parse().unwrap());
+        let (auto_lan_loc, auto_lan_pkt) = location_for_route(RouteLocation::Auto, false);
+        assert_eq!(auto_lan_loc, RouteLocation::Auto);
+        assert_eq!(auto_lan_pkt, 1392);
+        assert_eq!(
+            jumbo_preflight(auto_lan_loc, lan_ip, 8192, true, req_remote, true, false),
+            JumboPreflight::Probe { candidate: 8192 }
+        );
+        assert_eq!(
+            jumbo_preflight(auto_lan_loc, lan_ip, 8192, true, req_remote, false, false),
+            JumboPreflight::Skip(JumboSkip::NotAsked)
+        );
+        assert_eq!(reset_packet_size(auto_lan_pkt, req_remote), 1392);
+
         let (local_loc, local_pkt) = location_for_route(RouteLocation::Local, false);
         assert_eq!(local_loc, RouteLocation::Local);
-        assert_eq!(reset_packet_size(local_pkt, req_local), 1392);
+        assert_eq!(local_pkt, 1392);
+        assert_eq!(
+            jumbo_preflight(local_loc, lan_ip, 8192, true, req_remote, true, false),
+            JumboPreflight::Probe { candidate: 8192 }
+        );
+        assert_eq!(reset_packet_size(local_pkt, req_remote), 1392);
     }
 }
