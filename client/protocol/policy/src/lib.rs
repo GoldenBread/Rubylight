@@ -13,6 +13,7 @@ pub mod connect_text;
 pub mod connection_test;
 pub mod console;
 pub mod continue_here;
+pub mod controller;
 pub mod controllers;
 pub mod full_chroma;
 pub mod game_info;

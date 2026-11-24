@@ -41,6 +41,7 @@ public class RustEngineJniParityTest {
     static {
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarJni_", NightjarJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarPolicyJni_", NightjarPolicyJni.class);
+        AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarInputJni_", NightjarInputJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarPinJni_", NightjarPinJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarHttpJni_", NightjarHttpJni.class);
         AUTHORIZED_JNI_HOLDERS.put("Java_com_limelight_nvstream_jni_NightjarConsoleJni_", NightjarConsoleJni.class);
@@ -247,6 +248,7 @@ public class RustEngineJniParityTest {
                 "com/limelight/nvstream/jni/NativeApiBridge",
                 "com/limelight/nvstream/jni/FileTransferBridge",
                 "com/limelight/nvstream/jni/NightjarPolicyJni",
+                "com/limelight/nvstream/jni/NightjarInputJni",
                 "com/limelight/nvstream/jni/NightjarPinJni",
                 "com/limelight/nvstream/jni/NightjarHttpJni",
                 "com/limelight/nvstream/jni/NightjarConsoleJni",
@@ -281,6 +283,7 @@ public class RustEngineJniParityTest {
                 "com/limelight/console/CollectionGroups",
                 "com/limelight/console/LibraryOrder",
                 "com/limelight/binding/video/SharpColor",
+                "com/limelight/binding/input/ControllerHandler",
                 "com/limelight/computers/InternetPlay",
                 "com/limelight/computers/ComputerManagerService",
                 "com/limelight/computers/HostActions",
@@ -686,6 +689,7 @@ public class RustEngineJniParityTest {
                 String name = p.getFileName().toString();
                 if (name.equals("NightjarHostsJni.java")
                         || name.equals("NightjarPolicyJni.java")
+                        || name.equals("NightjarInputJni.java")
                         || name.equals("NightjarSessionJni.java")) {
                     continue;
                 }
@@ -693,7 +697,7 @@ public class RustEngineJniParityTest {
             }
         }
         String body = allMain.toString();
-        for (Class<?> holder : new Class<?>[] { NightjarHostsJni.class, NightjarPolicyJni.class, NightjarSessionJni.class }) {
+        for (Class<?> holder : new Class<?>[] { NightjarHostsJni.class, NightjarPolicyJni.class, NightjarInputJni.class, NightjarSessionJni.class }) {
             String cls = holder.getSimpleName();
             TreeSet<String> dead = new TreeSet<>();
             for (Method m : holder.getDeclaredMethods()) {

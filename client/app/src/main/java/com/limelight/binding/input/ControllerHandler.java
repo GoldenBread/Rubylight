@@ -49,6 +49,7 @@ import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.input.ControllerPacket;
 import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.nvstream.jni.MoonBridge;
+import com.limelight.nvstream.jni.NightjarInputJni;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.ui.GameGestures;
 import com.limelight.utils.Vector2d;
@@ -69,8 +70,6 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 
 public class ControllerHandler implements InputManager.InputDeviceListener, UsbDriverListener {
 
-    private static final int MAXIMUM_BUMPER_UP_DELAY_MS = 100;
-
     private static final int START_DOWN_TIME_MOUSE_MODE_MS = 750;
 
     private static final int MINIMUM_BUTTON_DOWN_TIME_MS = 25;
@@ -83,43 +82,25 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private static final int BATTERY_RECHECK_INTERVAL_MS = 120 * 1000;
 
-    @SuppressLint("InlinedApi")
-    private static final Map<Integer, Integer> ANDROID_TO_LI_BUTTON_MAP = Map.ofEntries(
-            Map.entry(KeyEvent.KEYCODE_BUTTON_A, ControllerPacket.A_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_B, ControllerPacket.B_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_X, ControllerPacket.X_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_Y, ControllerPacket.Y_FLAG),
-            Map.entry(KeyEvent.KEYCODE_DPAD_UP, ControllerPacket.UP_FLAG),
-            Map.entry(KeyEvent.KEYCODE_DPAD_DOWN, ControllerPacket.DOWN_FLAG),
-            Map.entry(KeyEvent.KEYCODE_DPAD_LEFT, ControllerPacket.LEFT_FLAG),
-            Map.entry(KeyEvent.KEYCODE_DPAD_RIGHT, ControllerPacket.RIGHT_FLAG),
-            Map.entry(KeyEvent.KEYCODE_DPAD_UP_LEFT, ControllerPacket.UP_FLAG | ControllerPacket.LEFT_FLAG),
-            Map.entry(KeyEvent.KEYCODE_DPAD_UP_RIGHT, ControllerPacket.UP_FLAG | ControllerPacket.RIGHT_FLAG),
-            Map.entry(KeyEvent.KEYCODE_DPAD_DOWN_LEFT, ControllerPacket.DOWN_FLAG | ControllerPacket.LEFT_FLAG),
-            Map.entry(KeyEvent.KEYCODE_DPAD_DOWN_RIGHT, ControllerPacket.DOWN_FLAG | ControllerPacket.RIGHT_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_L1, ControllerPacket.LB_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_R1, ControllerPacket.RB_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_THUMBL, ControllerPacket.LS_CLK_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_THUMBR, ControllerPacket.RS_CLK_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_START, ControllerPacket.PLAY_FLAG),
-            Map.entry(KeyEvent.KEYCODE_MENU, ControllerPacket.PLAY_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_SELECT, ControllerPacket.BACK_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BACK, ControllerPacket.BACK_FLAG),
-            Map.entry(KeyEvent.KEYCODE_BUTTON_MODE, ControllerPacket.SPECIAL_BUTTON_FLAG),
+    private static volatile int[] androidButtonKeycodes;
 
-            // This is the Xbox Series X Share button
-            Map.entry(KeyEvent.KEYCODE_MEDIA_RECORD, ControllerPacket.MISC_FLAG),
+    private static int[] androidButtonKeycodes() {
+        int[] codes = androidButtonKeycodes;
+        if (codes == null) {
+            codes = NightjarInputJni.androidButtonKeycodes();
+            androidButtonKeycodes = codes;
+        }
+        return codes;
+    }
 
-            // This is a weird one, but it's what Android does prior to 4.10 kernels
-            // where DualShock/DualSense touchpads weren't mapped as separate devices.
-            // https://android.googlesource.com/platform/frameworks/base/+/master/data/keyboards/Vendor_054c_Product_0ce6_fallback.kl
-            // https://android.googlesource.com/platform/frameworks/base/+/master/data/keyboards/Vendor_054c_Product_09cc.kl
-            Map.entry(KeyEvent.KEYCODE_BUTTON_1, ControllerPacket.TOUCHPAD_FLAG)
-
-            // FIXME: Paddles?
-    );
-
-    private final Vector2d inputVector = new Vector2d();
+    private final Object fuseLock = new Object();
+    private final int[] axisSetOut = new int[8];
+    private final int[] remapOut = new int[1];
+    private final int[] buttonStepOut = new int[5];
+    private final int[] comboOut = new int[2];
+    private int[] fuseScratch = new int[MAX_GAMEPADS * 6];
+    private final int[] fuseOut = new int[7];
+    private long slotStateHandle;
 
     private final ConcurrentHashMap<Integer, InputDeviceContext> inputDeviceContexts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, UsbDeviceContext> usbDeviceContexts = new ConcurrentHashMap<>();
@@ -288,6 +269,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         // if they are removed.
         initialControllers = getAttachedControllerMask(activityContext);
         if (onscreenOwnPlayerSession) currentControllers |= 1;
+        slotStateHandle = NightjarInputJni.slotStateCreate(
+                initialControllers, onscreenOwnPlayerSession, touchpadButtonSession, steamControlsSession);
 
         // Register ourselves for input device notifications
         inputManager.registerInputDeviceListener(this, null);
@@ -398,7 +381,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      */
     static boolean countsAsExternalController(boolean external, boolean gamepad, boolean remote, boolean keyboard,
                                               boolean handheldControls) {
-        return external && gamepad && !remote && !keyboard && !handheldControls;
+        return NightjarInputJni.countsAsExternalController(external, gamepad, remote, keyboard, handheldControls);
     }
 
     /**
@@ -496,6 +479,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         // stop() unregistered every motion listener, and an event the thread is still handing to one
         // finds the stream stopped. The thread drops what it had queued and ends.
         motionSensorThread.quit();
+        if (slotStateHandle != 0L) {
+            NightjarInputJni.slotStateDestroy(slotStateHandle);
+            slotStateHandle = 0L;
+        }
     }
 
     /** Stops a pad's rotation on the host, ordered after any sensor sample being sent (see {@link #motionSendLock}). */
@@ -755,7 +742,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             inputContext.emulatingButtonFlags = 0;
             inputContext.pendingExit = false;
         }
-        if (context.assignedControllerNumber && controllerSlotsWithInput.get(context.controllerNumber) != 0 &&
+        if (context.assignedControllerNumber && NightjarInputJni.slotHasInput(slotStateHandle, context.controllerNumber) &&
                 (prefConfig.sendControllers || context == defaultContext)) {
             // Bypass fusion while the other contexts sharing this number are being cleared.
             // Only a slot the host has seen input on can hold anything: a neutral report for
@@ -956,7 +943,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * where each pad has its own number, and more than the L3 and R3 that exist to join a pad.
      */
     static boolean onscreenOwnsPlayerOne(PreferenceConfiguration config) {
-        return config.onscreenOwnPlayer && config.multiController && config.onscreenController && !config.onlyL3R3;
+        return NightjarInputJni.onscreenOwnsPlayerOne(
+                config.onscreenOwnPlayer, config.multiController, config.onscreenController, config.onlyL3R3);
     }
 
     /**
@@ -1007,13 +995,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             currentControllers &= ~(1 << context.controllerNumber);
         }
 
-        // If this device sent data as a gamepad, zero the values before removing.
-        // We must do this after clearing the currentControllers entry so this
-        // causes the device to be removed on the server PC.
-        short activeControllerMask = getActiveControllerMask();
-        if (prefConfig.sendControllers && context.assignedControllerNumber && (controllerSlotsWithInput.get(context.controllerNumber) != 0 ||
-                !hasPendingControllerArrival(context.controllerNumber) ||
-                (activeControllerMask & (1 << context.controllerNumber)) == 0)) {
+        int released = NightjarInputJni.releaseReservedSlot(
+                slotStateHandle, context.controllerNumber, context.reservedControllerNumber,
+                context.assignedControllerNumber, prefConfig.sendControllers, prefConfig.multiController,
+                prefConfig.onscreenController, layoutGamepadUsed, hasBuiltInPlayerOne(),
+                hasPendingControllerArrival(context.controllerNumber));
+        short activeControllerMask = (short) (released & 0xFFFF);
+        if ((released & (1 << 16)) != 0) {
             // A cleared slot can retire a pre-launch prepared pad even before arrival.
             // A new active shared slot waits for its capabilities, without retrying on removal.
             conn.sendControllerInput(context.controllerNumber, activeControllerMask,
@@ -1022,7 +1010,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     (short) 0, (short) 0,
                     (short) 0, (short) 0);
         }
-        if (context.assignedControllerNumber && (activeControllerMask & (1 << context.controllerNumber)) == 0) {
+        if ((released & (1 << 17)) != 0) {
             controllerSlotsWithInput.set(context.controllerNumber, 0);
         }
         if (context.assignedControllerNumber && !slotStillAssigned(context, context.controllerNumber)) {
@@ -1091,56 +1079,18 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             InputDeviceContext devContext = (InputDeviceContext) context;
 
             LimeLog.info(devContext.name+" ("+context.id+") needs a controller number assigned");
-            // With the on-screen controls on controller 1, built-in buttons on a device of their own (some
-            // handhelds put Start, Select and Home on one) join the built-in pad: a number of their own would
-            // show the PC one more controller mid-game. Without a built-in pad they are a pad of their own.
             InputDeviceContext builtInPad = onscreenOwnPlayerSession && !devContext.external && !devContext.hasJoystickAxes ?
                     builtInPad(true) : null;
-            if (!devContext.external && !onscreenOwnPlayerSession) {
-                LimeLog.info("Built-in buttons hardcoded as controller 0");
-                // Shared, never reserved, as upstream: tablets and TV boxes have built-in or
-                // virtual devices that look like gamepads (#29, #30). Reserving player 1 for
-                // them pushed the real controller to player 2. getActiveControllerMask()
-                // still reports player 1 while a built-in device sits on it.
+            int builtInSlot = builtInPad != null ? builtInPad.controllerNumber : -1;
+            boolean hasGamepadBtns = devContext.inputDevice != null && hasGamepadButtons(devContext.inputDevice);
+            boolean hasAdjacentAssoc = prefConfig.multiController && !devContext.hasJoystickAxes && hasGamepadBtns &&
+                    (isAssociatedJoystick(devContext.inputDevice, InputDevice.getDevice(devContext.id + 1)) ||
+                            isAssociatedJoystick(devContext.inputDevice, InputDevice.getDevice(devContext.id - 1)));
+            int decision = NightjarInputJni.assignInputDeviceSlot(
+                    slotStateHandle, devContext.external, devContext.hasJoystickAxes,
+                    hasGamepadBtns, hasAdjacentAssoc, prefConfig.multiController, builtInSlot);
+            if ((decision & (1 << 10)) != 0) {
                 context.controllerNumber = 0;
-            }
-            else if (builtInPad != null) {
-                LimeLog.info("Built-in buttons join the built-in pad "+builtInPad.name);
-                context.controllerNumber = builtInPad.controllerNumber;
-            }
-            else if (prefConfig.multiController && (devContext.hasJoystickAxes ||
-                    (hasGamepadButtons(devContext.inputDevice) &&
-                            !isAssociatedJoystick(devContext.inputDevice, InputDevice.getDevice(devContext.id + 1)) &&
-                            !isAssociatedJoystick(devContext.inputDevice, InputDevice.getDevice(devContext.id - 1))))) {
-                context.controllerNumber = 0;
-
-                LimeLog.info("Reserving the next available controller number");
-                for (short i = 0; i < MAX_GAMEPADS; i++) {
-                    if ((currentControllers & (1 << i)) == 0) {
-                        // Found an unused controller value
-                        currentControllers |= (1 << i);
-
-                        // Take this value out of the initial gamepad set
-                        initialControllers &= ~(1 << i);
-
-                        context.controllerNumber = i;
-                        context.reservedControllerNumber = true;
-                        break;
-                    }
-                }
-                if (!context.reservedControllerNumber) {
-                    return;
-                }
-            }
-            else if (!devContext.hasJoystickAxes) {
-                // If this device doesn't have joystick axes, it may be an input device associated
-                // with another joystick (like a PS4 touchpad). We'll propagate that joystick's
-                // controller number to this associated device.
-
-                context.controllerNumber = 0;
-
-                // For the DS4 case, the associated joystick is the next device after the touchpad.
-                // We'll try the opposite case too, just to be a little future-proof.
                 InputDevice associatedDevice = InputDevice.getDevice(devContext.id + 1);
                 if (!isAssociatedJoystick(devContext.inputDevice, associatedDevice)) {
                     associatedDevice = InputDevice.getDevice(devContext.id - 1);
@@ -1149,48 +1099,44 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                         associatedDevice = null;
                     }
                 }
-
                 if (associatedDevice != null) {
                     InputDeviceContext associatedDeviceContext = inputDeviceContexts.get(associatedDevice.getId());
-
-                    // Create a new context for the associated device if one doesn't exist
                     if (associatedDeviceContext == null) {
                         associatedDeviceContext = createInputDeviceContextForDevice(associatedDevice);
                         inputDeviceContexts.put(associatedDevice.getId(), associatedDeviceContext);
                     }
-
-                    // Assign a controller number for the associated device if one isn't assigned
                     if (!associatedDeviceContext.assignedControllerNumber) {
                         assignControllerNumberIfNeeded(associatedDeviceContext);
                         if (!associatedDeviceContext.assignedControllerNumber) {
                             return;
                         }
                     }
-
-                    // Propagate the associated controller number
                     context.controllerNumber = associatedDeviceContext.controllerNumber;
-
                     LimeLog.info("Propagated controller number from "+associatedDeviceContext.name);
                 }
-                else if (onscreenOwnPlayerSession) {
-                    // Controller 1 is the on-screen controls' alone.
-                    for (short i = 1; i < MAX_GAMEPADS; i++) {
-                        if ((currentControllers & (1 << i)) == 0) {
-                            currentControllers |= (1 << i);
-                            initialControllers &= ~(1 << i);
-                            context.controllerNumber = i;
-                            context.reservedControllerNumber = true;
-                            break;
-                        }
-                    }
-                    if (!context.reservedControllerNumber) {
+                else {
+                    int fb = NightjarInputJni.resolveAssociatedFallbackSlot(slotStateHandle);
+                    if ((fb & (1 << 9)) == 0) {
                         return;
+                    }
+                    context.controllerNumber = (short) (fb & 0xFF);
+                    if ((fb & (1 << 8)) != 0) {
+                        context.reservedControllerNumber = true;
+                        currentControllers |= (1 << context.controllerNumber);
+                        initialControllers &= ~(1 << context.controllerNumber);
                     }
                 }
             }
+            else if ((decision & (1 << 9)) == 0) {
+                return;
+            }
             else {
-                LimeLog.info("Not reserving a controller number");
-                context.controllerNumber = 0;
+                context.controllerNumber = (short) (decision & 0xFF);
+                if ((decision & (1 << 8)) != 0) {
+                    context.reservedControllerNumber = true;
+                    currentControllers |= (1 << context.controllerNumber);
+                    initialControllers &= ~(1 << context.controllerNumber);
+                }
             }
 
             // If the gamepad doesn't have motion sensors, use the on-device sensors as a fallback for player 1
@@ -1200,30 +1146,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
         }
         else {
-            if (prefConfig.multiController) {
-                context.controllerNumber = 0;
-
-                LimeLog.info("Reserving the next available controller number");
-                for (short i = 0; i < MAX_GAMEPADS; i++) {
-                    if ((currentControllers & (1 << i)) == 0) {
-                        // Found an unused controller value
-                        currentControllers |= (1 << i);
-
-                        // Take this value out of the initial gamepad set
-                        initialControllers &= ~(1 << i);
-
-                        context.controllerNumber = i;
-                        context.reservedControllerNumber = true;
-                        break;
-                    }
-                }
-                if (!context.reservedControllerNumber) {
-                    return;
-                }
+            int decision = NightjarInputJni.assignUsbDeviceSlot(slotStateHandle, prefConfig.multiController);
+            if ((decision & (1 << 9)) == 0) {
+                return;
             }
-            else {
-                LimeLog.info("Not reserving a controller number");
-                context.controllerNumber = 0;
+            context.controllerNumber = (short) (decision & 0xFF);
+            if ((decision & (1 << 8)) != 0) {
+                context.reservedControllerNumber = true;
+                currentControllers |= (1 << context.controllerNumber);
+                initialControllers &= ~(1 << context.controllerNumber);
             }
         }
 
@@ -1298,24 +1229,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private static boolean isExternal(InputDevice dev) {
-        // The ASUS Tinker Board inaccurately reports Bluetooth gamepads as internal,
-        // causing shouldIgnoreBack() to believe it should pass through back as a
-        // navigation event for any attached gamepads.
-        if (Build.MODEL.equals("Tinker Board")) {
-            return true;
-        }
-
-        String deviceName = dev.getName();
-        if (deviceName.contains("gpio") || // This is the back button on Shield portable consoles
-                deviceName.contains("joy_key") || // These are the gamepad buttons on the Archos Gamepad 2
-                deviceName.contains("keypad") || // These are gamepad buttons on the XPERIA Play
-                deviceName.equalsIgnoreCase("NVIDIA Corporation NVIDIA Controller v01.01") || // Gamepad on Shield Portable
-                deviceName.equalsIgnoreCase("NVIDIA Corporation NVIDIA Controller v01.02") || // Gamepad on Shield Portable (?)
-                deviceName.equalsIgnoreCase("GR0006") // Gamepad on Logitech G Cloud
-        )
-        {
-            LimeLog.info(dev.getName()+" is internal by hardcoded mapping");
-            return false;
+        int override = NightjarInputJni.isExternalOverride(Build.MODEL, dev.getName());
+        if (override >= 0) {
+            return override == 1;
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -1342,45 +1258,22 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private boolean shouldIgnoreBack(InputDevice dev) {
-        String devName = dev.getName();
-
-        // The Serval has a Select button but the framework doesn't
-        // know about that because it uses a non-standard scancode.
-        if (devName.contains("Razer Serval")) {
-            return true;
-        }
-
-        // Classify this device as a remote by name if it has no joystick axes
-        if (!hasJoystickAxes(dev) && devName.toLowerCase().contains("remote")) {
-            return true;
-        }
-
-        // Otherwise, dynamically try to determine whether we should allow this
-        // back button to function for navigation.
-        //
-        // First, check if this is an internal device we're being called on.
-        if (!isExternal(dev)) {
+        boolean external = isExternal(dev);
+        boolean internalGamepad = false;
+        boolean internalSelect = false;
+        if (!external) {
             boolean[] internal = findInternalGamepadAndSelect();
-            boolean foundInternalGamepad = internal[0];
-            boolean foundInternalSelect = internal[1];
-
-            // Allow the back button to function for navigation if we either:
-            // a) have no internal gamepad (most phones)
-            // b) have an internal gamepad but also have an internal select button (GPD XD)
-            // but not:
-            // c) have an internal gamepad but no internal select button (NVIDIA SHIELD Portable)
-            return !foundInternalGamepad || foundInternalSelect;
+            internalGamepad = internal[0];
+            internalSelect = internal[1];
         }
-        else {
-            // For external devices, we want to pass through the back button if the device
-            // has no gamepad axes or gamepad buttons.
-            return !hasJoystickAxes(dev) && !hasGamepadButtons(dev);
-        }
+        return NightjarInputJni.shouldIgnoreBack(
+                dev.getName(), hasJoystickAxes(dev), hasGamepadButtons(dev),
+                external, internalGamepad, internalSelect);
     }
 
     /** Back sends Guide when the option is on, except the Back with modifiers some remote apps type for B. */
     static boolean isBackAsGuide(boolean backAsGuide, int keyCode, int flags) {
-        return backAsGuide && keyCode == KeyEvent.KEYCODE_BACK && (flags & KeyEvent.FLAG_SOFT_KEYBOARD) == 0;
+        return NightjarInputJni.isBackAsGuide(backAsGuide, keyCode, flags);
     }
 
     /**
@@ -1388,7 +1281,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * the pad's Select, which the user then gives up. Only a pad that uses Back as Start keeps it.
      */
     static boolean isPadBackAsGuide(boolean backAsGuide, int keyCode, int flags, boolean backIsStart) {
-        return isBackAsGuide(backAsGuide, keyCode, flags) && !backIsStart;
+        return NightjarInputJni.isPadBackAsGuide(backAsGuide, keyCode, flags, backIsStart);
     }
 
     /**
@@ -1401,10 +1294,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     public static boolean isHandheldSystemBack(int keyCode, int flags, int source, boolean virtualDevice,
                                                boolean external, boolean alphabeticKeyboard, boolean gamepad,
                                                boolean backIsSpareButton) {
-        return keyCode == KeyEvent.KEYCODE_BACK && backIsSpareButton &&
-                (flags & (KeyEvent.FLAG_VIRTUAL_HARD_KEY | KeyEvent.FLAG_FALLBACK | KeyEvent.FLAG_SOFT_KEYBOARD)) == 0 &&
-                (source & InputDevice.SOURCE_CLASS_POINTER) == 0 &&
-                (virtualDevice || (!external && !alphabeticKeyboard && !gamepad));
+        return NightjarInputJni.isHandheldSystemBack(
+                keyCode, flags, source, virtualDevice, external, alphabeticKeyboard, gamepad, backIsSpareButton);
     }
 
     /**
@@ -1413,7 +1304,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * pads Android lists as external, such as a Retroid's, count like any attached gamepad.
      */
     static boolean backIsSpareButton(boolean internalGamepad, boolean internalSelect, boolean anyGamepad) {
-        return anyGamepad && (!internalGamepad || internalSelect);
+        return NightjarInputJni.backIsSpareButton(internalGamepad, internalSelect, anyGamepad);
     }
 
     /**
@@ -1622,189 +1513,75 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             context.hasJoystickAxes = true;
         }
 
-        // This is hack to deal with the Nvidia Shield's modifications that causes the DS4 clickpad
-        // to work as a duplicate Select button instead of a unique button we can handle separately.
-        context.isDualShockStandaloneTouchpad =
-                context.vendorId == 0x054c && // Sony
-                devName.endsWith(" Touchpad") &&
-                dev.getSources() == (InputDevice.SOURCE_KEYBOARD | InputDevice.SOURCE_MOUSE);
-
         InputDevice.MotionRange leftTriggerRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_LTRIGGER);
         InputDevice.MotionRange rightTriggerRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RTRIGGER);
         InputDevice.MotionRange brakeRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_BRAKE);
         InputDevice.MotionRange gasRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_GAS);
         InputDevice.MotionRange throttleRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_THROTTLE);
-        if (leftTriggerRange != null && rightTriggerRange != null)
-        {
-            // Some controllers use LTRIGGER and RTRIGGER (like Ouya)
-            context.leftTriggerAxis = MotionEvent.AXIS_LTRIGGER;
-            context.rightTriggerAxis = MotionEvent.AXIS_RTRIGGER;
-        }
-        else if (brakeRange != null && gasRange != null)
-        {
-            // Others use GAS and BRAKE (like Moga)
-            context.leftTriggerAxis = MotionEvent.AXIS_BRAKE;
-            context.rightTriggerAxis = MotionEvent.AXIS_GAS;
-        }
-        else if (brakeRange != null && throttleRange != null)
-        {
-            // Others use THROTTLE and BRAKE (like Xiaomi)
-            context.leftTriggerAxis = MotionEvent.AXIS_BRAKE;
-            context.rightTriggerAxis = MotionEvent.AXIS_THROTTLE;
-        }
-        else
-        {
-            InputDevice.MotionRange rxRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RX);
-            InputDevice.MotionRange ryRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RY);
-            if (rxRange != null && ryRange != null && devName != null) {
-                if (dev.getVendorId() == 0x054c) { // Sony
-                    if (dev.hasKeys(KeyEvent.KEYCODE_BUTTON_C)[0]) {
-                        LimeLog.info("Detected non-standard DualShock 4 mapping");
-                        context.isNonStandardDualShock4 = true;
-                    } else {
-                        LimeLog.info("Detected DualShock 4 (Linux standard mapping)");
-                        context.usesLinuxGamepadStandardFaceButtons = true;
-                    }
-                }
-
-                if (context.isNonStandardDualShock4) {
-                    // The old DS4 driver uses RX and RY for triggers
-                    context.leftTriggerAxis = MotionEvent.AXIS_RX;
-                    context.rightTriggerAxis = MotionEvent.AXIS_RY;
-
-                    // DS4 has Select and Mode buttons (possibly mapped non-standard)
-                    context.hasSelect = true;
-                    context.hasMode = true;
-                }
-                else {
-                    // If it's not a non-standard DS4 controller, it's probably an Xbox controller or
-                    // other sane controller that uses RX and RY for right stick and Z and RZ for triggers.
-                    context.rightStickXAxis = MotionEvent.AXIS_RX;
-                    context.rightStickYAxis = MotionEvent.AXIS_RY;
-
-                    // While it's likely that Z and RZ are triggers, we may have digital trigger buttons
-                    // instead. We must check that we actually have Z and RZ axes before assigning them.
-                    if (getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_Z) != null &&
-                            getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RZ) != null) {
-                        context.leftTriggerAxis = MotionEvent.AXIS_Z;
-                        context.rightTriggerAxis = MotionEvent.AXIS_RZ;
-                    }
-                }
-
-                // Triggers always idle negative on axes that are centered at zero
-                context.triggersIdleNegative = true;
-            }
-        }
-
-        if (context.rightStickXAxis == -1 && context.rightStickYAxis == -1) {
-            InputDevice.MotionRange zRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_Z);
-            InputDevice.MotionRange rzRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RZ);
-
-            // Most other controllers use Z and RZ for the right stick
-            if (zRange != null && rzRange != null) {
-                context.rightStickXAxis = MotionEvent.AXIS_Z;
-                context.rightStickYAxis = MotionEvent.AXIS_RZ;
-            }
-            else {
-                InputDevice.MotionRange rxRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RX);
-                InputDevice.MotionRange ryRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RY);
-
-                // Try RX and RY now
-                if (rxRange != null && ryRange != null) {
-                    context.rightStickXAxis = MotionEvent.AXIS_RX;
-                    context.rightStickYAxis = MotionEvent.AXIS_RY;
-                }
-            }
-        }
-
-        // Some devices have "hats" for d-pads
+        InputDevice.MotionRange rxRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RX);
+        InputDevice.MotionRange ryRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RY);
+        InputDevice.MotionRange zRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_Z);
+        InputDevice.MotionRange rzRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_RZ);
         InputDevice.MotionRange hatXRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_HAT_X);
         InputDevice.MotionRange hatYRange = getMotionRangeForJoystickAxis(dev, MotionEvent.AXIS_HAT_Y);
         if (hatXRange != null && hatYRange != null) {
             context.hatXAxis = MotionEvent.AXIS_HAT_X;
             context.hatYAxis = MotionEvent.AXIS_HAT_Y;
         }
+        boolean hasRxRy = rxRange != null && ryRange != null;
+        boolean hasButtonC = hasRxRy && devName != null && dev.getVendorId() == 0x054c &&
+                dev.hasKeys(KeyEvent.KEYCODE_BUTTON_C)[0];
+        boolean hasStartOrMenu = true;
+        if (devName != null && devName.contains("ASUS Gamepad")) {
+            boolean[] hasStartKey = dev.hasKeys(KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_MENU, 0);
+            hasStartOrMenu = hasStartKey[0] || hasStartKey[1];
+        }
+        context.ignoreBack = shouldIgnoreBack(dev);
+
+        int[] classifyInts = new int[6];
+        float[] classifyFloat = new float[1];
+        NightjarInputJni.classifyInputDevice(
+                context.vendorId, context.productId, devName,
+                dev.getSources() == (InputDevice.SOURCE_KEYBOARD | InputDevice.SOURCE_MOUSE),
+                leftTriggerRange != null && rightTriggerRange != null,
+                brakeRange != null && gasRange != null,
+                brakeRange != null && throttleRange != null,
+                gasRange != null,
+                hasRxRy,
+                zRange != null && rzRange != null,
+                hasButtonC,
+                context.hatXAxis != -1 && context.hatYAxis != -1,
+                hasStartOrMenu,
+                context.hasSelect,
+                context.hasMode,
+                context.ignoreBack,
+                triggerDeadzone,
+                classifyInts,
+                classifyFloat);
+        context.rightStickXAxis = classifyInts[0];
+        context.rightStickYAxis = classifyInts[1];
+        context.leftTriggerAxis = classifyInts[2];
+        context.rightTriggerAxis = classifyInts[3];
+        int quirks = classifyInts[4];
+        context.isDualShockStandaloneTouchpad = (quirks & NightjarInputJni.QUIRK_DS4_STANDALONE_TOUCHPAD) != 0;
+        context.usesLinuxGamepadStandardFaceButtons = (quirks & NightjarInputJni.QUIRK_LINUX_STD_FACE) != 0;
+        context.isNonStandardDualShock4 = (quirks & NightjarInputJni.QUIRK_NON_STD_DS4) != 0;
+        context.isServal = (quirks & NightjarInputJni.QUIRK_SERVAL) != 0;
+        context.isNonStandardXboxBtController = (quirks & NightjarInputJni.QUIRK_NON_STD_XBOX_BT) != 0;
+        context.backIsStart = (quirks & NightjarInputJni.QUIRK_BACK_IS_START) != 0;
+        context.modeIsSelect = (quirks & NightjarInputJni.QUIRK_MODE_IS_SELECT) != 0;
+        context.searchIsMode = (quirks & NightjarInputJni.QUIRK_SEARCH_IS_MODE) != 0;
+        int boolBits = classifyInts[5];
+        context.triggersIdleNegative = (boolBits & 1) != 0;
+        context.hasSelect = (boolBits & 2) != 0;
+        context.hasMode = (boolBits & 4) != 0;
+        context.triggerDeadzone = classifyFloat[0];
 
         if (context.leftStickXAxis != -1 && context.leftStickYAxis != -1) {
             context.leftStickDeadzoneRadius = (float) stickDeadzone;
         }
-
         if (context.rightStickXAxis != -1 && context.rightStickYAxis != -1) {
             context.rightStickDeadzoneRadius = (float) stickDeadzone;
-        }
-
-        // The axis' reported flat is ignored: Linux HID gives every axis a generic 1/16 of its
-        // range, which would hide the first 6% of trigger travel.
-        context.triggerDeadzone = triggerDeadzone;
-
-        // The ADT-1 controller needs a similar fixup to the ASUS Gamepad
-        if (dev.getVendorId() == 0x18d1 && dev.getProductId() == 0x2c40) {
-            context.backIsStart = true;
-            context.modeIsSelect = true;
-            context.triggerDeadzone = Math.max(triggerDeadzone, QUIRK_TRIGGER_DEADZONE);
-            context.hasSelect = true;
-            context.hasMode = false;
-        }
-
-        context.ignoreBack = shouldIgnoreBack(dev);
-
-        if (devName != null) {
-            // For the Nexus Player (and probably other ATV devices), we should
-            // use the back button as start since it doesn't have a start/menu button
-            // on the controller
-            if (devName.contains("ASUS Gamepad")) {
-                boolean[] hasStartKey = dev.hasKeys(KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_MENU, 0);
-                if (!hasStartKey[0] && !hasStartKey[1]) {
-                    context.backIsStart = true;
-                    context.modeIsSelect = true;
-                    context.hasSelect = true;
-                    context.hasMode = false;
-                }
-
-                // The ASUS Gamepad has triggers that sit far forward and are prone to false presses
-                // so we increase the deadzone on them to minimize this
-                context.triggerDeadzone = Math.max(triggerDeadzone, QUIRK_TRIGGER_DEADZONE);
-            }
-            // SHIELD controllers will use small stick deadzones
-            else if (devName.contains("SHIELD") || devName.contains("NVIDIA Controller")) {
-                // The big Nvidia button on the Shield controllers acts like a Search button. It
-                // summons the Google Assistant on the Shield TV. On my Pixel 4, it seems to do
-                // nothing, so we can hijack it to act like a mode button.
-                if (devName.contains("NVIDIA Controller v01.03") || devName.contains("NVIDIA Controller v01.04")) {
-                    context.searchIsMode = true;
-                    context.hasMode = true;
-                }
-            }
-            // The Serval has a couple of unknown buttons that are start and select. It also has
-            // a back button which we want to ignore since there's already a select button.
-            else if (devName.contains("Razer Serval")) {
-                context.isServal = true;
-
-                // Serval has Select and Mode buttons (possibly mapped non-standard)
-                context.hasMode = true;
-                context.hasSelect = true;
-            }
-            // The Xbox One S Bluetooth controller has some mappings that need fixing up.
-            // However, Microsoft released a firmware update with no change to VID/PID
-            // or device name that fixed the mappings for Android. Since there's
-            // no good way to detect this, we'll use the presence of GAS/BRAKE axes
-            // that were added in the latest firmware. If those are present, the only
-            // required fixup is ignoring the select button.
-            else if (devName.equals("Xbox Wireless Controller")) {
-                if (gasRange == null) {
-                    context.isNonStandardXboxBtController = true;
-
-                    // Xbox One S has Select and Mode buttons (possibly mapped non-standard)
-                    context.hasMode = true;
-                    context.hasSelect = true;
-                }
-            }
-        }
-
-        // Thrustmaster Score A gamepad home button reports directly to android as
-        // KEY_HOMEPAGE event on another event channel
-        if (dev.getVendorId() == 0x044f && dev.getProductId() == 0xb328) {
-            context.hasMode = false;
         }
 
         LimeLog.info("Analog stick deadzone: "+context.leftStickDeadzoneRadius+" "+context.rightStickDeadzoneRadius);
@@ -1850,23 +1627,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private static byte maxByMagnitude(byte a, byte b) {
-        if ((a & 0xFF) > (b & 0xFF)) {
-            return a;
-        }
-        else {
-            return b;
-        }
+        return NightjarInputJni.maxByMagnitudeByte(a, b);
     }
 
     private static short maxByMagnitude(short a, short b) {
-        int absA = Math.abs(a);
-        int absB = Math.abs(b);
-        if (absA > absB) {
-            return a;
-        }
-        else {
-            return b;
-        }
+        return NightjarInputJni.maxByMagnitudeShort(a, b);
     }
 
     // Slot assignment changes both masks under this lock, on the main thread or the connection
@@ -1954,9 +1719,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * attached pad appears. A real Xbox pad has Microsoft's ID, and a USB pad is in the list.
      */
     static boolean looksLikeHandheldControls(String name, int vendorId, boolean onlyGamepad, boolean attachedUsb) {
-        return !attachedUsb && onlyGamepad && name != null &&
-                name.toLowerCase(java.util.Locale.ROOT).contains("xbox") &&
-                vendorId != 0x045e && vendorId != 0;
+        return NightjarInputJni.looksLikeHandheldControls(name, vendorId, onlyGamepad, attachedUsb);
     }
 
     /**
@@ -1966,18 +1729,26 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * slot announces player 1 instead.
      */
     private boolean announcesOnscreenPad() {
-        if (onscreenOwnPlayerSession) return true;
-        if (!showsTouchpadButton() && !steamControlsSession) return false;
-        // With Controllers Off no physical pad reaches the PC, so none holds player 1 there; only
-        // on-screen controls that are on send anything.
-        if (!prefConfig.sendControllers) return prefConfig.onscreenController || layoutGamepadUsed;
-        for (InputDeviceContext context : inputDeviceContexts.values()) {
-            if (context.assignedControllerNumber && context.controllerNumber == 0) return false;
+        boolean hasSlotZeroDevice = false;
+        if (prefConfig.sendControllers) {
+            for (InputDeviceContext context : inputDeviceContexts.values()) {
+                if (context.assignedControllerNumber && context.controllerNumber == 0) {
+                    hasSlotZeroDevice = true;
+                    break;
+                }
+            }
+            if (!hasSlotZeroDevice) {
+                for (UsbDeviceContext context : usbDeviceContexts.values()) {
+                    if (context.assignedControllerNumber && context.controllerNumber == 0) {
+                        hasSlotZeroDevice = true;
+                        break;
+                    }
+                }
+            }
         }
-        for (UsbDeviceContext context : usbDeviceContexts.values()) {
-            if (context.assignedControllerNumber && context.controllerNumber == 0) return false;
-        }
-        return true;
+        return NightjarInputJni.announcesOnscreenPad(
+                slotStateHandle, prefConfig.sendControllers, prefConfig.onscreenController,
+                layoutGamepadUsed, hasSlotZeroDevice);
     }
 
     private void sendOnscreenPadArrival() {
@@ -1987,7 +1758,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     // Its own player without the Touchpad button: the host's default pad, announced for its number.
     private byte onscreenPadType() {
-        return showsTouchpadButton() ? MoonBridge.LI_CTYPE_PS : MoonBridge.LI_CTYPE_UNKNOWN;
+        return NightjarInputJni.onscreenPadType(showsTouchpadButton());
     }
 
     private int onscreenPadButtons() {
@@ -1996,13 +1767,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     /** The on-screen controller's buttons for its arrival: the Touchpad button and the back buttons with their settings. */
     static int onscreenPadButtons(boolean touchpadButton, boolean steamControls) {
-        int buttons = touchpadButton ? ONSCREEN_PAD_BUTTONS : ONSCREEN_PAD_BUTTONS & ~ControllerPacket.TOUCHPAD_FLAG;
-        return steamControls ? buttons | SteamControls.BUTTONS : buttons;
+        return NightjarInputJni.onscreenPadButtons(touchpadButton, steamControls);
     }
 
     /** The on-screen controller's capabilities for its arrival: none but the Steam Controller controls'. */
     static short onscreenPadCapabilities(boolean steamControls) {
-        return steamControls ? SteamControls.CAPABILITIES : 0;
+        return NightjarInputJni.onscreenPadCapabilities(steamControls);
     }
 
     /**
@@ -2010,37 +1780,24 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * player 1's, when the on-screen controls share it rather than being their own player.
      */
     static boolean carriesSteamControls(boolean steamControls, boolean onscreenOwnPlayer, short controllerNumber) {
-        return steamControls && !onscreenOwnPlayer && controllerNumber == 0;
-    }
-
-    private boolean carriesSteamControls(short controllerNumber) {
-        return carriesSteamControls(steamControlsSession, onscreenOwnPlayerSession, controllerNumber);
+        return NightjarInputJni.carriesSteamControls(steamControls, onscreenOwnPlayer, controllerNumber);
     }
 
     /** A pad's arrival capabilities with the on-screen Steam Controller controls it carries; a pin to Xbox still drops the touchpad. */
     private short withSteamControls(short controllerNumber, short capabilities, ControllerButtonMap map) {
-        if (!carriesSteamControls(controllerNumber)) return capabilities;
-        return arrivalCapabilities((short) (capabilities | SteamControls.CAPABILITIES), map);
+        return NightjarInputJni.withSteamControlsCapabilities(
+                steamControlsSession, onscreenOwnPlayerSession, controllerNumber, capabilities, map.connectAs());
     }
 
     private int withSteamControlButtons(short controllerNumber, int buttons) {
-        return carriesSteamControls(controllerNumber) ? buttons | SteamControls.BUTTONS : buttons;
+        return NightjarInputJni.withSteamControlsButtons(
+                steamControlsSession, onscreenOwnPlayerSession, controllerNumber, buttons);
     }
 
     private synchronized short getActiveControllerMask() {
-        if (!prefConfig.sendControllers) {
-            // Controllers Off: physical pads keep their numbers here (local actions, the pad mouse)
-            // but the PC hears only of the on-screen gamepad, which is player 1.
-            return (short) (prefConfig.onscreenController || layoutGamepadUsed || onscreenOwnPlayerSession ? 1 : 0);
-        }
-        if (prefConfig.multiController) {
-            return (short)(currentControllers | initialControllers |
-                    (prefConfig.onscreenController || layoutGamepadUsed || hasBuiltInPlayerOne() ? 1 : 0));
-        }
-        else {
-            // Only Player 1 is active with multi-controller disabled
-            return 1;
-        }
+        return NightjarInputJni.activeControllerMask(
+                slotStateHandle, prefConfig.sendControllers, prefConfig.multiController,
+                prefConfig.onscreenController, layoutGamepadUsed, hasBuiltInPlayerOne());
     }
 
     /**
@@ -2058,8 +1815,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * choose a DualShock 4 or DualSense for this type.
      */
     static byte arrivalType(byte type, ControllerButtonMap map) {
-        if (map.isConnectAsPinned()) return map.connectAs();
-        return (map.targetButtonFlags() & ControllerPacket.TOUCHPAD_FLAG) != 0 ? MoonBridge.LI_CTYPE_PS : type;
+        return NightjarInputJni.arrivalType(type, map.connectAs(), map.targetButtonFlags());
     }
 
     /**
@@ -2067,7 +1823,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * motion arrives as unknown so the host creates a pad that has motion; a pinned type wins.
      */
     static byte inputDeviceArrivalType(byte detected, boolean hasMotion, ControllerButtonMap map) {
-        return arrivalType(motionOverridesType(detected, hasMotion, map) ? MoonBridge.LI_CTYPE_UNKNOWN : detected, map);
+        return NightjarInputJni.inputDeviceArrivalType(detected, hasMotion, map.connectAs(), map.targetButtonFlags());
     }
 
     /**
@@ -2075,14 +1831,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * hosts such as Rubylight turn any pad that reports them into a DualSense, which would undo the pin.
      */
     static boolean dropsMotionAndTouchpad(ControllerButtonMap map) {
-        return map.connectAs() == MoonBridge.LI_CTYPE_XBOX;
+        return NightjarInputJni.dropsMotionAndTouchpad(map.connectAs());
     }
 
     /** The capabilities a pad arrives with: without motion and touchpad when pinned as Xbox. */
     static short arrivalCapabilities(short capabilities, ControllerButtonMap map) {
-        if (!dropsMotionAndTouchpad(map)) return capabilities;
-        return (short) (capabilities & ~(MoonBridge.LI_CCAP_ACCEL | MoonBridge.LI_CCAP_GYRO |
-                MoonBridge.LI_CCAP_TOUCHPAD | MoonBridge.LI_CCAP_DUAL_TOUCHPAD));
+        return NightjarInputJni.arrivalCapabilities(capabilities, map.connectAs());
     }
 
     /**
@@ -2091,9 +1845,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      */
     static boolean takesDeviceMotion(boolean fallbackToDevice, short controllerNumber, short padCapabilities,
                                      ControllerButtonMap map) {
-        return fallbackToDevice && controllerNumber == 0 &&
-                (padCapabilities & (MoonBridge.LI_CCAP_ACCEL | MoonBridge.LI_CCAP_GYRO)) == 0 &&
-                !dropsMotionAndTouchpad(map);
+        return NightjarInputJni.takesDeviceMotion(fallbackToDevice, controllerNumber, padCapabilities, map.connectAs());
     }
 
     /** Whether a pad already streams this device's motion sensors, which only one pad may. */
@@ -2110,7 +1862,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     /** Whether motion changes the type the pad arrives as, which the user is told about. */
     static boolean motionOverridesType(byte detected, boolean hasMotion, ControllerButtonMap map) {
-        return detected != MoonBridge.LI_CTYPE_PS && hasMotion && !map.isConnectAsPinned();
+        return NightjarInputJni.motionOverridesType(detected, hasMotion, map.connectAs());
     }
 
     /**
@@ -2118,22 +1870,21 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * A button mapped to the touchpad already clicks it, so the combo would only swallow Select and LB.
      */
     static boolean needsClickpadEmulation(ControllerButtonMap map) {
-        return (map.targetButtonFlags() & ControllerPacket.TOUCHPAD_FLAG) == 0;
+        return NightjarInputJni.needsClickpadEmulation(map.targetButtonFlags());
     }
 
     static boolean updateMappedButton(Map<Integer, Integer> pressedButtons, int physicalKey, int target, boolean down) {
-        if (target == KeyEvent.KEYCODE_MENU) target = KeyEvent.KEYCODE_BUTTON_START;
-        else if (target == KeyEvent.KEYCODE_BACK) target = KeyEvent.KEYCODE_BUTTON_SELECT;
-        if (target == ControllerButtonMap.DISABLED || !ControllerButtonMap.isTarget(target)) {
+        int normalized = NightjarInputJni.normalizeMappedTarget(target);
+        if (normalized == 0) {
             return true;
         }
         if (down) {
-            boolean alreadyPressed = pressedButtons.containsValue(target);
-            pressedButtons.put(physicalKey, target);
+            boolean alreadyPressed = pressedButtons.containsValue(normalized);
+            pressedButtons.put(physicalKey, normalized);
             return !alreadyPressed;
         }
         pressedButtons.remove(physicalKey);
-        return !pressedButtons.containsValue(target);
+        return !pressedButtons.containsValue(normalized);
     }
 
     /**
@@ -2141,19 +1892,14 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * swaps Select+LB for the touchpad in inputMap, so this swaps them back from pressedButtons.
      */
     static int heldButtons(InputDeviceContext context) {
-        int held = context.inputMap;
-        if ((context.emulatingButtonFlags & EMULATING_TOUCHPAD) != 0) {
-            if (!context.pressedButtons.containsValue(ControllerButtonMap.TARGET_TOUCHPAD)) {
-                held &= ~ControllerPacket.TOUCHPAD_FLAG;
-            }
-            if (context.pressedButtons.containsValue(KeyEvent.KEYCODE_BUTTON_SELECT)) {
-                held |= ControllerPacket.BACK_FLAG;
-            }
-            if (context.pressedButtons.containsValue(KeyEvent.KEYCODE_BUTTON_L1)) {
-                held |= ControllerPacket.LB_FLAG;
-            }
+        if ((context.emulatingButtonFlags & EMULATING_TOUCHPAD) == 0) {
+            return context.inputMap;
         }
-        return held;
+        return NightjarInputJni.heldButtons(
+                context.inputMap, context.emulatingButtonFlags,
+                context.pressedButtons.containsValue(ControllerButtonMap.TARGET_TOUCHPAD),
+                context.pressedButtons.containsValue(KeyEvent.KEYCODE_BUTTON_SELECT),
+                context.pressedButtons.containsValue(KeyEvent.KEYCODE_BUTTON_L1));
     }
 
     private static boolean areBatteryCapacitiesEqual(float first, float second) {
@@ -2301,6 +2047,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
+    private int packFusionContext(int count, int buttons, byte lt, byte rt, short lx, short ly, short rx, short ry) {
+        int base = count * 6;
+        if (base + 6 > fuseScratch.length) {
+            fuseScratch = java.util.Arrays.copyOf(fuseScratch, fuseScratch.length * 2);
+        }
+        fuseScratch[base] = buttons;
+        fuseScratch[base + 1] = (lt & 0xFF) | ((rt & 0xFF) << 8);
+        fuseScratch[base + 2] = lx;
+        fuseScratch[base + 3] = ly;
+        fuseScratch[base + 4] = rx;
+        fuseScratch[base + 5] = ry;
+        return count + 1;
+    }
+
     private void sendControllerInputPacket(GenericControllerContext originalContext) {
         // Controllers set to Off: no physical controller reaches the PC (the on-screen gamepad still does).
         boolean physical = prefConfig.sendControllers;
@@ -2312,7 +2072,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         for (UsbDeviceContext context : physical ? usbDeviceContexts.values() : Collections.<UsbDeviceContext>emptyList()) {
             if (context.assignedControllerNumber && context.controllerNumber == originalContext.controllerNumber &&
                     !context.ensureControllerArrival() && (context == originalContext ||
-                    controllerSlotsWithInput.get(originalContext.controllerNumber) == 0)) {
+                    !NightjarInputJni.slotHasInput(slotStateHandle, originalContext.controllerNumber))) {
                 // A new slot must wait for its USB capabilities. A context already
                 // using a shared slot must still be able to release its held input.
                 return;
@@ -2321,73 +2081,58 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Take the context's controller number and fuse all inputs with the same number
         short controllerNumber = originalContext.controllerNumber;
-        int inputMap = 0;
-        byte leftTrigger = 0;
-        byte rightTrigger = 0;
-        short leftStickX = 0;
-        short leftStickY = 0;
-        short rightStickX = 0;
-        short rightStickY = 0;
+        int inputMap;
+        byte leftTrigger;
+        byte rightTrigger;
+        short leftStickX;
+        short leftStickY;
+        short rightStickX;
+        short rightStickY;
 
-        // In order to properly handle controllers that are split into multiple devices,
-        // we must aggregate all controllers with the same controller number into a single
-        // device before we send it.
-        for (GenericControllerContext context : physical ? inputDeviceContexts.values() : Collections.<GenericControllerContext>emptyList()) {
-            if (context.assignedControllerNumber &&
-                    context.controllerNumber == controllerNumber &&
-                    context.mouseEmulationActive == originalContext.mouseEmulationActive) {
-                context.axisMap.apply(context.inputMap, context.leftTrigger, context.rightTrigger,
-                        context.leftStickX, context.leftStickY, context.rightStickX, context.rightStickY, context.mappedReport);
-                ControllerAxisMap.Report mapped = context.mappedReport;
-                inputMap |= mapped.buttons;
-                leftTrigger = maxByMagnitude(leftTrigger, mapped.lt);
-                rightTrigger = maxByMagnitude(rightTrigger, mapped.rt);
-                leftStickX = maxByMagnitude(leftStickX, mapped.lx);
-                leftStickY = maxByMagnitude(leftStickY, mapped.ly);
-                rightStickX = maxByMagnitude(rightStickX, mapped.rx);
-                rightStickY = maxByMagnitude(rightStickY, mapped.ry);
+        synchronized (fuseLock) {
+            int count = 0;
+            for (GenericControllerContext context : physical ? inputDeviceContexts.values() : Collections.<GenericControllerContext>emptyList()) {
+                if (context.assignedControllerNumber &&
+                        context.controllerNumber == controllerNumber &&
+                        context.mouseEmulationActive == originalContext.mouseEmulationActive) {
+                    context.axisMap.apply(context.inputMap, context.leftTrigger, context.rightTrigger,
+                            context.leftStickX, context.leftStickY, context.rightStickX, context.rightStickY, context.mappedReport);
+                    ControllerAxisMap.Report mapped = context.mappedReport;
+                    count = packFusionContext(count, mapped.buttons, mapped.lt, mapped.rt,
+                            mapped.lx, mapped.ly, mapped.rx, mapped.ry);
+                }
             }
-        }
-        for (UsbDeviceContext context : physical ? usbDeviceContexts.values() : Collections.<UsbDeviceContext>emptyList()) {
-            if (context.assignedControllerNumber && !context.arrivalPending &&
-                    context.controllerNumber == controllerNumber &&
-                    context.mouseEmulationActive == originalContext.mouseEmulationActive) {
-                context.axisMap.apply(context.inputMap, context.leftTrigger, context.rightTrigger,
-                        context.leftStickX, context.leftStickY, context.rightStickX, context.rightStickY, context.mappedReport);
-                ControllerAxisMap.Report mapped = context.mappedReport;
-                inputMap |= mapped.buttons;
-                leftTrigger = maxByMagnitude(leftTrigger, mapped.lt);
-                rightTrigger = maxByMagnitude(rightTrigger, mapped.rt);
-                leftStickX = maxByMagnitude(leftStickX, mapped.lx);
-                leftStickY = maxByMagnitude(leftStickY, mapped.ly);
-                rightStickX = maxByMagnitude(rightStickX, mapped.rx);
-                rightStickY = maxByMagnitude(rightStickY, mapped.ry);
+            for (UsbDeviceContext context : physical ? usbDeviceContexts.values() : Collections.<UsbDeviceContext>emptyList()) {
+                if (context.assignedControllerNumber && !context.arrivalPending &&
+                        context.controllerNumber == controllerNumber &&
+                        context.mouseEmulationActive == originalContext.mouseEmulationActive) {
+                    context.axisMap.apply(context.inputMap, context.leftTrigger, context.rightTrigger,
+                            context.leftStickX, context.leftStickY, context.rightStickX, context.rightStickY, context.mappedReport);
+                    ControllerAxisMap.Report mapped = context.mappedReport;
+                    count = packFusionContext(count, mapped.buttons, mapped.lt, mapped.rt,
+                            mapped.lx, mapped.ly, mapped.rx, mapped.ry);
+                }
             }
-        }
-        if (defaultContext.controllerNumber == controllerNumber) {
-            inputMap |= defaultContext.inputMap;
-            leftTrigger = maxByMagnitude(leftTrigger, defaultContext.leftTrigger);
-            rightTrigger = maxByMagnitude(rightTrigger, defaultContext.rightTrigger);
-            leftStickX = maxByMagnitude(leftStickX, defaultContext.leftStickX);
-            leftStickY = maxByMagnitude(leftStickY, defaultContext.leftStickY);
-            rightStickX = maxByMagnitude(rightStickX, defaultContext.rightStickX);
-            rightStickY = maxByMagnitude(rightStickY, defaultContext.rightStickY);
-            inputMap |= layoutInputMap;
-            leftTrigger = maxByMagnitude(leftTrigger, layoutLeftTrigger);
-            rightTrigger = maxByMagnitude(rightTrigger, layoutRightTrigger);
-            leftStickX = maxByMagnitude(leftStickX, layoutLeftStickX);
-            leftStickY = maxByMagnitude(leftStickY, layoutLeftStickY);
-            rightStickX = maxByMagnitude(rightStickX, layoutRightStickX);
-            rightStickY = maxByMagnitude(rightStickY, layoutRightStickY);
-        }
-        if (physical && handheldContext != defaultContext && handheldContext.controllerNumber == controllerNumber) {
-            inputMap |= handheldContext.inputMap;
-            leftTrigger = maxByMagnitude(leftTrigger, handheldContext.leftTrigger);
-            rightTrigger = maxByMagnitude(rightTrigger, handheldContext.rightTrigger);
-            leftStickX = maxByMagnitude(leftStickX, handheldContext.leftStickX);
-            leftStickY = maxByMagnitude(leftStickY, handheldContext.leftStickY);
-            rightStickX = maxByMagnitude(rightStickX, handheldContext.rightStickX);
-            rightStickY = maxByMagnitude(rightStickY, handheldContext.rightStickY);
+            if (defaultContext.controllerNumber == controllerNumber) {
+                count = packFusionContext(count, defaultContext.inputMap, defaultContext.leftTrigger, defaultContext.rightTrigger,
+                        defaultContext.leftStickX, defaultContext.leftStickY, defaultContext.rightStickX, defaultContext.rightStickY);
+                count = packFusionContext(count, layoutInputMap, layoutLeftTrigger, layoutRightTrigger,
+                        layoutLeftStickX, layoutLeftStickY, layoutRightStickX, layoutRightStickY);
+            }
+            if (physical && handheldContext != defaultContext && handheldContext.controllerNumber == controllerNumber) {
+                count = packFusionContext(count, handheldContext.inputMap, handheldContext.leftTrigger, handheldContext.rightTrigger,
+                        handheldContext.leftStickX, handheldContext.leftStickY, handheldContext.rightStickX, handheldContext.rightStickY);
+            }
+            NightjarInputJni.fuseControllerInputs(
+                    fuseScratch, count, steamControlsSession, controllerNumber,
+                    steamPadTouchX, originalContext.mouseEmulationActive, fuseOut);
+            inputMap = fuseOut[0];
+            leftTrigger = (byte) fuseOut[1];
+            rightTrigger = (byte) fuseOut[2];
+            leftStickX = (short) fuseOut[3];
+            leftStickY = (short) fuseOut[4];
+            rightStickX = (short) fuseOut[5];
+            rightStickY = (short) fuseOut[6];
         }
 
         short activeControllerMask = getActiveControllerMask();
@@ -2449,23 +2194,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     (short)0, (byte)0, (byte)0, (short)0, (short)0, (short)0, (short)0);
         }
         else {
-            // The Steam Controller controls' pad arrives with SC26 buttons, so a PC that makes it a
-            // Steam Controller takes its clicks from the click flags alone and stops deriving a
-            // trigger's from its pull. The controls send every click that loses: the pads' from a
-            // tap, and a trigger's derived here by the PC's own rule while the pull is past the
-            // end-stop. Every pad the PC hears with those controls is number 0, its own or the one
-            // they share.
-            if (steamControlsSession && controllerNumber == 0) {
-                if ((leftTrigger & 0xFF) >= SteamControls.TRIGGER_CLICK_THRESHOLD) {
-                    inputMap |= SteamControls.LEFT_TRIGGER_CLICK_FLAG;
-                }
-                if ((rightTrigger & 0xFF) >= SteamControls.TRIGGER_CLICK_THRESHOLD) {
-                    inputMap |= SteamControls.RIGHT_TRIGGER_CLICK_FLAG;
-                }
-                // A physical pad's Touchpad button clicks the pad its finger is on (the right pad
-                // when none has touched): the click flags switch off the driver's own pad click.
-                inputMap = SteamControls.withTouchpadClick(inputMap, steamPadTouchX);
-            }
             conn.sendControllerInput(controllerNumber, activeControllerMask,
                     inputMap,
                     leftTrigger, rightTrigger,
@@ -2473,276 +2201,44 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     rightStickX, rightStickY);
         }
         if (conn.canSendControllerInput() && (activeControllerMask & (1 << controllerNumber)) != 0) {
+            NightjarInputJni.markSlotHasInput(slotStateHandle, controllerNumber);
             controllerSlotsWithInput.set(controllerNumber, 1);
         }
     }
 
-    private final int REMAP_IGNORE = -1;
     private final int REMAP_CONSUME = -2;
 
     // Return a valid keycode, -2 to consume, or -1 to not consume the event
     // Device MAY BE NULL
     private int handleRemapping(InputDeviceContext context, KeyEvent event) {
-        // Back as Guide also takes the Back that handhelds otherwise leave to Android
-        if (isPadBackAsGuide(prefConfig.backAsGuide, event.getKeyCode(), event.getFlags(), context.backIsStart)) {
-            return KeyEvent.KEYCODE_BUTTON_MODE;
-        }
+        int quirks = 0;
+        if (context.ignoreBack) quirks |= NightjarInputJni.QUIRK_IGNORE_BACK;
+        if (context.hasShare) quirks |= NightjarInputJni.QUIRK_HAS_SHARE;
+        if (context.isDualShockStandaloneTouchpad) quirks |= NightjarInputJni.QUIRK_DS4_STANDALONE_TOUCHPAD;
+        if (context.usesLinuxGamepadStandardFaceButtons) quirks |= NightjarInputJni.QUIRK_LINUX_STD_FACE;
+        if (context.isNonStandardDualShock4) quirks |= NightjarInputJni.QUIRK_NON_STD_DS4;
+        if (context.isServal) quirks |= NightjarInputJni.QUIRK_SERVAL;
+        if (context.isNonStandardXboxBtController) quirks |= NightjarInputJni.QUIRK_NON_STD_XBOX_BT;
+        if (context.hatXAxis == -1 && context.hatYAxis == -1) quirks |= NightjarInputJni.QUIRK_NO_HAT;
+        if (context.backIsStart) quirks |= NightjarInputJni.QUIRK_BACK_IS_START;
+        if (context.modeIsSelect) quirks |= NightjarInputJni.QUIRK_MODE_IS_SELECT;
+        if (context.searchIsMode) quirks |= NightjarInputJni.QUIRK_SEARCH_IS_MODE;
 
-        // Don't capture the back button if configured
-        if (context.ignoreBack) {
-            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
-                return REMAP_IGNORE;
-            }
-        }
-
-        // If we know this gamepad has a share button and receive an unmapped
-        // KEY_RECORD event, report that as a share button press.
-        if (context.hasShare) {
-            if (event.getKeyCode() == KeyEvent.KEYCODE_UNKNOWN &&
-                    event.getScanCode() == 167) {
-                return KeyEvent.KEYCODE_MEDIA_RECORD;
-            }
-        }
-
-        // The Shield's key layout files map the DualShock 4 clickpad button to
-        // BUTTON_SELECT instead of something sane like BUTTON_1 as the standard AOSP
-        // mapping does. If we get a button from a Sony device reported as BUTTON_SELECT
-        // that matches the keycode used by hid-sony for the clickpad or it's from the
-        // separate touchpad input device, remap it to BUTTON_1 to match the current AOSP
-        // layout and trigger our touchpad button logic.
-        if (context.vendorId == 0x054c &&
-                event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_SELECT &&
-                (event.getScanCode() == 317 || context.isDualShockStandaloneTouchpad)) {
-            return KeyEvent.KEYCODE_BUTTON_1;
-        }
-
-        // Override mode button for 8BitDo controllers
-        if (context.vendorId == 0x2dc8 && event.getScanCode() == 306) {
-            return KeyEvent.KEYCODE_BUTTON_MODE;
-        }
-
-        // This mapping was adding in Android 10, then changed based on
-        // kernel changes (adding hid-nintendo) in Android 11. If we're
-        // on anything newer than Pie, just use the built-in mapping.
-        if ((context.vendorId == 0x057e && context.productId == 0x2009 && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) || // Switch Pro controller
-                (context.vendorId == 0x0f0d && context.productId == 0x00c1)) { // HORIPAD for Switch
-            switch (event.getScanCode()) {
-                case 0x130:
-                    return KeyEvent.KEYCODE_BUTTON_A;
-                case 0x131:
-                    return KeyEvent.KEYCODE_BUTTON_B;
-                case 0x132:
-                    return KeyEvent.KEYCODE_BUTTON_X;
-                case 0x133:
-                    return KeyEvent.KEYCODE_BUTTON_Y;
-                case 0x134:
-                    return KeyEvent.KEYCODE_BUTTON_L1;
-                case 0x135:
-                    return KeyEvent.KEYCODE_BUTTON_R1;
-                case 0x136:
-                    return KeyEvent.KEYCODE_BUTTON_L2;
-                case 0x137:
-                    return KeyEvent.KEYCODE_BUTTON_R2;
-                case 0x138:
-                    return KeyEvent.KEYCODE_BUTTON_SELECT;
-                case 0x139:
-                    return KeyEvent.KEYCODE_BUTTON_START;
-                case 0x13A:
-                    return KeyEvent.KEYCODE_BUTTON_THUMBL;
-                case 0x13B:
-                    return KeyEvent.KEYCODE_BUTTON_THUMBR;
-                case 0x13D:
-                    return KeyEvent.KEYCODE_BUTTON_MODE;
-            }
-        }
-
-        if (context.usesLinuxGamepadStandardFaceButtons) {
-            // Android's Generic.kl swaps BTN_NORTH and BTN_WEST
-            switch (event.getScanCode()) {
-                case 304:
-                    return KeyEvent.KEYCODE_BUTTON_A;
-                case 305:
-                    return KeyEvent.KEYCODE_BUTTON_B;
-                case 307:
-                    return KeyEvent.KEYCODE_BUTTON_Y;
-                case 308:
-                    return KeyEvent.KEYCODE_BUTTON_X;
-            }
-        }
-
-        if (context.isNonStandardDualShock4) {
-            switch (event.getScanCode()) {
-                case 304:
-                    return KeyEvent.KEYCODE_BUTTON_X;
-                case 305:
-                    return KeyEvent.KEYCODE_BUTTON_A;
-                case 306:
-                    return KeyEvent.KEYCODE_BUTTON_B;
-                case 307:
-                    return KeyEvent.KEYCODE_BUTTON_Y;
-                case 308:
-                    return KeyEvent.KEYCODE_BUTTON_L1;
-                case 309:
-                    return KeyEvent.KEYCODE_BUTTON_R1;
-                /*
-                **** Using analog triggers instead ****
-                case 310:
-                    return KeyEvent.KEYCODE_BUTTON_L2;
-                case 311:
-                    return KeyEvent.KEYCODE_BUTTON_R2;
-                */
-                case 312:
-                    return KeyEvent.KEYCODE_BUTTON_SELECT;
-                case 313:
-                    return KeyEvent.KEYCODE_BUTTON_START;
-                case 314:
-                    return KeyEvent.KEYCODE_BUTTON_THUMBL;
-                case 315:
-                    return KeyEvent.KEYCODE_BUTTON_THUMBR;
-                case 316:
-                    return KeyEvent.KEYCODE_BUTTON_MODE;
-                default:
-                    return REMAP_CONSUME;
-            }
-        }
-        // If this is a Serval controller sending an unknown key code, it's probably
-        // the start and select buttons
-        else if (context.isServal && event.getKeyCode() == KeyEvent.KEYCODE_UNKNOWN) {
-            switch (event.getScanCode())  {
-                case 314:
-                    return KeyEvent.KEYCODE_BUTTON_SELECT;
-                case 315:
-                    return KeyEvent.KEYCODE_BUTTON_START;
-            }
-        }
-        else if (context.isNonStandardXboxBtController) {
-            switch (event.getScanCode()) {
-                case 306:
-                    return KeyEvent.KEYCODE_BUTTON_X;
-                case 307:
-                    return KeyEvent.KEYCODE_BUTTON_Y;
-                case 308:
-                    return KeyEvent.KEYCODE_BUTTON_L1;
-                case 309:
-                    return KeyEvent.KEYCODE_BUTTON_R1;
-                case 310:
-                    return KeyEvent.KEYCODE_BUTTON_SELECT;
-                case 311:
-                    return KeyEvent.KEYCODE_BUTTON_START;
-                case 312:
-                    return KeyEvent.KEYCODE_BUTTON_THUMBL;
-                case 313:
-                    return KeyEvent.KEYCODE_BUTTON_THUMBR;
-                case 139:
-                    return KeyEvent.KEYCODE_BUTTON_MODE;
-                default:
-                    // Other buttons are mapped correctly
-            }
-
-            // The Xbox button is sent as MENU
-            if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
-                return KeyEvent.KEYCODE_BUTTON_MODE;
-            }
-        }
-        else if (context.vendorId == 0x0b05 && // ASUS
-                     (context.productId == 0x7900 || // Kunai - USB
-                      context.productId == 0x7902)) // Kunai - Bluetooth
-        {
-            // ROG Kunai has special M1-M4 buttons that are accessible via the
-            // joycon-style detachable controllers that we should map to Start
-            // and Select.
-            switch (event.getScanCode()) {
-                case 264:
-                case 266:
-                    return KeyEvent.KEYCODE_BUTTON_START;
-
-                case 265:
-                case 267:
-                    return KeyEvent.KEYCODE_BUTTON_SELECT;
-            }
-        }
-
-        if (context.hatXAxis == -1 &&
-                 context.hatYAxis == -1 &&
-                 /* FIXME: There's no good way to know for sure if xpad is bound
-                    to this device, so we won't use the name to validate if these
-                    scancodes should be mapped to DPAD
-
-                    context.isXboxController &&
-                  */
-                 event.getKeyCode() == KeyEvent.KEYCODE_UNKNOWN) {
-            // If there's not a proper Xbox controller mapping, we'll translate the raw d-pad
-            // scan codes into proper key codes
-            switch (event.getScanCode())
-            {
-            case 704:
-                return KeyEvent.KEYCODE_DPAD_LEFT;
-            case 705:
-                return KeyEvent.KEYCODE_DPAD_RIGHT;
-            case 706:
-                return KeyEvent.KEYCODE_DPAD_UP;
-            case 707:
-                return KeyEvent.KEYCODE_DPAD_DOWN;
-            }
-        }
-
-        // Past here we can fixup the keycode and potentially trigger
-        // another special case so we need to remember what keycode we're using
-        int keyCode = event.getKeyCode();
-
-        // This is a hack for (at least) the "Tablet Remote" app
-        // which sends BACK with META_ALT_ON instead of KEYCODE_BUTTON_B
-        if (keyCode == KeyEvent.KEYCODE_BACK &&
-                !event.hasNoModifiers() &&
-                (event.getFlags() & KeyEvent.FLAG_SOFT_KEYBOARD) != 0)
-        {
-            keyCode = KeyEvent.KEYCODE_BUTTON_B;
-        }
-
-        if (keyCode == KeyEvent.KEYCODE_BUTTON_START ||
-                keyCode == KeyEvent.KEYCODE_MENU) {
-            // Ensure that we never use back as start if we have a real start
+        int mapped = NightjarInputJni.remapKeyEvent(
+                prefConfig.backAsGuide, event.getKeyCode(), event.getScanCode(),
+                event.getFlags(), event.hasNoModifiers(), context.vendorId, context.productId,
+                Build.VERSION.SDK_INT, quirks, remapOut);
+        if ((remapOut[0] & 1) != 0) {
             context.backIsStart = false;
         }
-        else if (keyCode == KeyEvent.KEYCODE_BUTTON_SELECT) {
-            // Don't use mode as select if we have a select
+        if ((remapOut[0] & 2) != 0) {
             context.modeIsSelect = false;
         }
-        else if (context.backIsStart && keyCode == KeyEvent.KEYCODE_BACK) {
-            // Emulate the start button with back
-            return KeyEvent.KEYCODE_BUTTON_START;
-        }
-        else if (context.modeIsSelect && keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
-            // Emulate the select button with mode
-            return KeyEvent.KEYCODE_BUTTON_SELECT;
-        }
-        else if (context.searchIsMode && keyCode == KeyEvent.KEYCODE_SEARCH) {
-            // Emulate the mode button with search
-            return KeyEvent.KEYCODE_BUTTON_MODE;
-        }
-
-        return keyCode;
+        return mapped;
     }
 
     private int handleFlipFaceButtons(int keyCode) {
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_BUTTON_A:
-                return KeyEvent.KEYCODE_BUTTON_B;
-            case KeyEvent.KEYCODE_BUTTON_B:
-                return KeyEvent.KEYCODE_BUTTON_A;
-            case KeyEvent.KEYCODE_BUTTON_X:
-                return KeyEvent.KEYCODE_BUTTON_Y;
-            case KeyEvent.KEYCODE_BUTTON_Y:
-                return KeyEvent.KEYCODE_BUTTON_X;
-            default:
-                return keyCode;
-        }
-    }
-
-    private Vector2d populateCachedVector(float x, float y) {
-        // Reinitialize our cached Vector2d object
-        inputVector.initialize(x, y);
-        return inputVector;
+        return NightjarInputJni.flipFaceButtonKeyCode(keyCode);
     }
 
     // A fixed 1% centre zone always remains so a resting stick reads as neutral and packet
@@ -2757,11 +2253,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     static final float QUIRK_TRIGGER_DEADZONE = 0.30f;
 
     static float applyTriggerDeadzone(float value, float deadzone) {
-        return value <= deadzone ? 0 : value;
-    }
-
-    private void handleDeadZone(Vector2d stickVector, float deadzoneRadius) {
-        applyStickDeadzone(stickVector, deadzoneRadius);
+        return NightjarInputJni.applyTriggerDeadzone(value, deadzone);
     }
 
     // Positive radius: inputs inside it are dropped. We're not normalizing here because we let the
@@ -2770,94 +2262,41 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     // Zero or negative radius (anti-deadzone, as in Artemis): the magnitude is remapped from
     // [0.01, 1] to [|radius|, 1], so small movements jump past a controller's or game's own deadzone.
     static void applyStickDeadzone(Vector2d stickVector, float deadzoneRadius) {
-        double magnitude = stickVector.getMagnitude();
-        if (deadzoneRadius > 0) {
-            if (magnitude <= deadzoneRadius) {
-                stickVector.initialize(0, 0);
-            }
-            return;
-        }
-        if (magnitude <= MIN_STICK_DEADZONE) {
-            stickVector.initialize(0, 0);
-            return;
-        }
-        double anti = -deadzoneRadius;
-        double remapped = anti + magnitude * (1 - anti);
-        if (remapped >= 1 || magnitude >= 1) {
-            return;
-        }
-        stickVector.scalarMultiply(remapped / magnitude);
+        float[] out = new float[2];
+        NightjarInputJni.applyStickDeadzone(stickVector.getX(), stickVector.getY(), deadzoneRadius, out);
+        stickVector.initialize(out[0], out[1]);
     }
 
     private void handleAxisSet(InputDeviceContext context, float lsX, float lsY, float rsX,
                                float rsY, float lt, float rt, float hatX, float hatY) {
-
-        if (context.leftStickXAxis != -1 && context.leftStickYAxis != -1) {
-            Vector2d leftStickVector = populateCachedVector(lsX, lsY);
-
-            handleDeadZone(leftStickVector, context.leftStickDeadzoneRadius);
-
-            context.leftStickX = (short) (leftStickVector.getX() * 0x7FFE);
-            context.leftStickY = (short) (-leftStickVector.getY() * 0x7FFE);
-        }
-
-        if (context.rightStickXAxis != -1 && context.rightStickYAxis != -1) {
-            Vector2d rightStickVector = populateCachedVector(rsX, rsY);
-
-            handleDeadZone(rightStickVector, context.rightStickDeadzoneRadius);
-
-            context.rightStickX = (short) (rightStickVector.getX() * 0x7FFE);
-            context.rightStickY = (short) (-rightStickVector.getY() * 0x7FFE);
-        }
-
-        if (context.leftTriggerAxis != -1 && context.rightTriggerAxis != -1) {
-            // Android sends an initial 0 value for trigger axes even if the trigger
-            // should be negative when idle. After the first touch, the axes will go back
-            // to normal behavior, so ignore triggersIdleNegative for each trigger until
-            // first touch.
-            if (lt != 0) {
-                context.leftTriggerAxisUsed = true;
-            }
-            if (rt != 0) {
-                context.rightTriggerAxisUsed = true;
-            }
-            if (context.triggersIdleNegative) {
-                if (context.leftTriggerAxisUsed) {
-                    lt = (lt + 1) / 2;
-                }
-                if (context.rightTriggerAxisUsed) {
-                    rt = (rt + 1) / 2;
-                }
-            }
-
-            lt = applyTriggerDeadzone(lt, context.triggerDeadzone);
-            rt = applyTriggerDeadzone(rt, context.triggerDeadzone);
-
-            context.leftTrigger = (byte)(lt * 0xFF);
-            context.rightTrigger = (byte)(rt * 0xFF);
-        }
-
-        if (context.hatXAxis != -1 && context.hatYAxis != -1) {
-            context.inputMap &= ~(ControllerPacket.LEFT_FLAG | ControllerPacket.RIGHT_FLAG);
-            if (hatX < -0.5) {
-                context.inputMap |= ControllerPacket.LEFT_FLAG;
-                context.hatXAxisUsed = true;
-            }
-            else if (hatX > 0.5) {
-                context.inputMap |= ControllerPacket.RIGHT_FLAG;
-                context.hatXAxisUsed = true;
-            }
-
-            context.inputMap &= ~(ControllerPacket.UP_FLAG | ControllerPacket.DOWN_FLAG);
-            if (hatY < -0.5) {
-                context.inputMap |= ControllerPacket.UP_FLAG;
-                context.hatYAxisUsed = true;
-            }
-            else if (hatY > 0.5) {
-                context.inputMap |= ControllerPacket.DOWN_FLAG;
-                context.hatYAxisUsed = true;
-            }
-        }
+        NightjarInputJni.normalizeAxisSet(
+                lsX, lsY, rsX, rsY, lt, rt, hatX, hatY,
+                context.leftStickXAxis != -1 && context.leftStickYAxis != -1,
+                context.rightStickXAxis != -1 && context.rightStickYAxis != -1,
+                context.leftTriggerAxis != -1 && context.rightTriggerAxis != -1,
+                context.hatXAxis != -1 && context.hatYAxis != -1,
+                context.leftStickDeadzoneRadius,
+                context.rightStickDeadzoneRadius,
+                context.triggerDeadzone,
+                context.triggersIdleNegative,
+                context.leftTriggerAxisUsed,
+                context.rightTriggerAxisUsed,
+                context.hatXAxisUsed,
+                context.hatYAxisUsed,
+                context.inputMap,
+                axisSetOut);
+        context.inputMap = axisSetOut[0];
+        context.leftTrigger = (byte) axisSetOut[1];
+        context.rightTrigger = (byte) axisSetOut[2];
+        context.leftStickX = (short) axisSetOut[3];
+        context.leftStickY = (short) axisSetOut[4];
+        context.rightStickX = (short) axisSetOut[5];
+        context.rightStickY = (short) axisSetOut[6];
+        int usedBits = axisSetOut[7];
+        context.leftTriggerAxisUsed = (usedBits & 1) != 0;
+        context.rightTriggerAxisUsed = (usedBits & 2) != 0;
+        context.hatXAxisUsed = (usedBits & 4) != 0;
+        context.hatYAxisUsed = (usedBits & 8) != 0;
 
         sendControllerInputPacket(context);
     }
@@ -3053,14 +2492,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private Vector2d convertRawStickAxisToPixelMovement(short stickX, short stickY) {
+        float[] out = new float[2];
+        NightjarInputJni.mouseStickCurve(stickX, stickY, out);
         Vector2d vector = new Vector2d();
-        vector.initialize(stickX, stickY);
-        vector.scalarMultiply(1 / 32766.0f);
-        vector.scalarMultiply(4);
-        if (vector.getMagnitude() > 0) {
-            // Move faster as the stick is pressed further from center
-            vector.scalarMultiply(Math.pow(vector.getMagnitude(), 2));
-        }
+        vector.initialize(out[0], out[1]);
         return vector;
     }
 
@@ -3489,9 +2924,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private static String launchController(short slot, byte type, short capabilities, int buttons) {
-        // The launch protocol accepts named controller types only. Generic Android pads use Xbox.
-        if (type == MoonBridge.LI_CTYPE_UNKNOWN) type = MoonBridge.LI_CTYPE_XBOX;
-        return slot + ":" + type + ":" + (capabilities & 0xffff) + ":" + Integer.toUnsignedString(buttons);
+        return NightjarInputJni.formatLaunchController(slot, type, capabilities, buttons);
     }
 
     private InputDeviceContext prepareInputDevice(int deviceId) {
@@ -3522,7 +2955,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (device == null) continue;
                 boolean external = isExternal(device);
                 boolean sticks = hasJoystickAxes(device);
-                if (pass == 0 ? external && sticks : pass == 1 ? external && !sticks : !external) {
+                if (NightjarInputJni.launchPassForInputDevice(external, sticks) == pass) {
                     prepareInputDevice(id);
                 }
             }
@@ -3979,249 +3412,50 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private static boolean isHandledButtonUp(InputDeviceContext context, int keyCode, int scanCode) {
-        switch (keyCode) {
-        case KeyEvent.KEYCODE_BUTTON_MODE:
-        case KeyEvent.KEYCODE_BUTTON_START:
-        case KeyEvent.KEYCODE_MENU:
-        case KeyEvent.KEYCODE_BACK:
-        case KeyEvent.KEYCODE_BUTTON_SELECT:
-        case KeyEvent.KEYCODE_DPAD_LEFT:
-        case KeyEvent.KEYCODE_DPAD_RIGHT:
-        case KeyEvent.KEYCODE_DPAD_UP:
-        case KeyEvent.KEYCODE_DPAD_DOWN:
-        case KeyEvent.KEYCODE_DPAD_UP_LEFT:
-        case KeyEvent.KEYCODE_DPAD_UP_RIGHT:
-        case KeyEvent.KEYCODE_DPAD_DOWN_LEFT:
-        case KeyEvent.KEYCODE_DPAD_DOWN_RIGHT:
-        case KeyEvent.KEYCODE_BUTTON_B:
-        case KeyEvent.KEYCODE_DPAD_CENTER:
-        case KeyEvent.KEYCODE_BUTTON_A:
-        case KeyEvent.KEYCODE_BUTTON_X:
-        case KeyEvent.KEYCODE_BUTTON_Y:
-        case KeyEvent.KEYCODE_BUTTON_L1:
-        case KeyEvent.KEYCODE_BUTTON_R1:
-        case KeyEvent.KEYCODE_BUTTON_THUMBL:
-        case KeyEvent.KEYCODE_BUTTON_THUMBR:
-        case KeyEvent.KEYCODE_MEDIA_RECORD:
-        case KeyEvent.KEYCODE_BUTTON_1:
-        case KeyEvent.KEYCODE_BUTTON_L2:
-        case KeyEvent.KEYCODE_BUTTON_R2:
-        case ControllerButtonMap.TARGET_TOUCHPAD:
-        case ControllerButtonMap.TARGET_MISC:
-        case ControllerButtonMap.TARGET_PADDLE1:
-        case ControllerButtonMap.TARGET_PADDLE2:
-        case ControllerButtonMap.TARGET_PADDLE3:
-        case ControllerButtonMap.TARGET_PADDLE4:
-            return true;
-        case KeyEvent.KEYCODE_UNKNOWN:
-            return context.hasPaddles && (scanCode == 0x2c4 || scanCode == 0x2c5 || scanCode == 0x2c6 || scanCode == 0x2c7);
-        default:
-            return false;
-        }
+        return NightjarInputJni.isHandledGamepadKey(keyCode, scanCode, context.hasPaddles);
     }
 
     private boolean finishButtonUp(InputDeviceContext context, int keyCode, long eventTime, int scanCode) {
-        switch (keyCode) {
-        case KeyEvent.KEYCODE_BUTTON_MODE:
-            context.inputMap &= ~ControllerPacket.SPECIAL_BUTTON_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_START:
-        case KeyEvent.KEYCODE_MENU:
-            // Sometimes we'll get a spurious key up event on controller disconnect.
-            // Make sure it's real by checking that the key is actually down before taking
-            // any action.
-            if ((context.inputMap & ControllerPacket.PLAY_FLAG) != 0 &&
-                    eventTime - context.startDownTime > ControllerHandler.START_DOWN_TIME_MOUSE_MODE_MS &&
-                    prefConfig.mouseEmulation) {
-                context.toggleMouseEmulation();
-            }
-            context.inputMap &= ~ControllerPacket.PLAY_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BACK:
-        case KeyEvent.KEYCODE_BUTTON_SELECT:
-            context.inputMap &= ~ControllerPacket.BACK_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_LEFT:
-            if (context.hatXAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap &= ~ControllerPacket.LEFT_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_RIGHT:
-            if (context.hatXAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap &= ~ControllerPacket.RIGHT_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_UP:
-            if (context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap &= ~ControllerPacket.UP_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_DOWN:
-            if (context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap &= ~ControllerPacket.DOWN_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_UP_LEFT:
-            if (context.hatXAxisUsed && context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap &= ~(ControllerPacket.UP_FLAG | ControllerPacket.LEFT_FLAG);
-            break;
-        case KeyEvent.KEYCODE_DPAD_UP_RIGHT:
-            if (context.hatXAxisUsed && context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap &= ~(ControllerPacket.UP_FLAG | ControllerPacket.RIGHT_FLAG);
-            break;
-        case KeyEvent.KEYCODE_DPAD_DOWN_LEFT:
-            if (context.hatXAxisUsed && context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap &= ~(ControllerPacket.DOWN_FLAG | ControllerPacket.LEFT_FLAG);
-            break;
-        case KeyEvent.KEYCODE_DPAD_DOWN_RIGHT:
-            if (context.hatXAxisUsed && context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap &= ~(ControllerPacket.DOWN_FLAG | ControllerPacket.RIGHT_FLAG);
-            break;
-        case KeyEvent.KEYCODE_BUTTON_B:
-            context.inputMap &= ~ControllerPacket.B_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_CENTER:
-        case KeyEvent.KEYCODE_BUTTON_A:
-            context.inputMap &= ~ControllerPacket.A_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_X:
-            context.inputMap &= ~ControllerPacket.X_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_Y:
-            context.inputMap &= ~ControllerPacket.Y_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_L1:
-            context.inputMap &= ~ControllerPacket.LB_FLAG;
-            context.lastLbUpTime = eventTime;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_R1:
-            context.inputMap &= ~ControllerPacket.RB_FLAG;
-            context.lastRbUpTime = eventTime;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_THUMBL:
-            context.inputMap &= ~ControllerPacket.LS_CLK_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_THUMBR:
-            context.inputMap &= ~ControllerPacket.RS_CLK_FLAG;
-            break;
-        case KeyEvent.KEYCODE_MEDIA_RECORD: // Xbox Series X Share button
-            context.inputMap &= ~ControllerPacket.MISC_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_1: // PS4/PS5 touchpad button (prior to 4.10)
-            context.inputMap &= ~ControllerPacket.TOUCHPAD_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_L2:
-            if (context.leftTriggerAxisUsed) {
-                // Suppress this digital event if an analog trigger is active
-                return true;
-            }
-            context.leftTrigger = 0;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_R2:
-            if (context.rightTriggerAxisUsed) {
-                // Suppress this digital event if an analog trigger is active
-                return true;
-            }
-            context.rightTrigger = 0;
-            break;
-        case KeyEvent.KEYCODE_UNKNOWN:
-            // Paddles aren't mapped in any of the Android key layout files,
-            // so we need to handle the evdev key codes directly.
-            if (context.hasPaddles) {
-                switch (scanCode) {
-                    case 0x2c4: // BTN_TRIGGER_HAPPY5
-                        context.inputMap &= ~ControllerPacket.PADDLE1_FLAG;
-                        break;
-                    case 0x2c5: // BTN_TRIGGER_HAPPY6
-                        context.inputMap &= ~ControllerPacket.PADDLE2_FLAG;
-                        break;
-                    case 0x2c6: // BTN_TRIGGER_HAPPY7
-                        context.inputMap &= ~ControllerPacket.PADDLE3_FLAG;
-                        break;
-                    case 0x2c7: // BTN_TRIGGER_HAPPY8
-                        context.inputMap &= ~ControllerPacket.PADDLE4_FLAG;
-                        break;
-                    default:
-                        return false;
-                }
-            }
-            else {
-                return false;
-            }
-            break;
-        case ControllerButtonMap.TARGET_TOUCHPAD:
-        case ControllerButtonMap.TARGET_MISC:
-        case ControllerButtonMap.TARGET_PADDLE1:
-        case ControllerButtonMap.TARGET_PADDLE2:
-        case ControllerButtonMap.TARGET_PADDLE3:
-        case ControllerButtonMap.TARGET_PADDLE4:
-            // A user mapping to an extended button, which has no Android key code
-            context.inputMap &= ~ControllerButtonMap.buttonFlag(keyCode);
-            break;
-        default:
+        NightjarInputJni.buttonUpStep(
+                context.inputMap, context.leftTrigger, context.rightTrigger,
+                context.hasPaddles, context.hatXAxisUsed, context.hatYAxisUsed,
+                context.leftTriggerAxisUsed, context.rightTriggerAxisUsed,
+                keyCode, scanCode, buttonStepOut);
+        int status = buttonStepOut[0];
+        if (status == 1) {
+            return true;
+        }
+        if (status == 2) {
             return false;
         }
-
-        // Check if we're emulating the select button
-        if ((context.emulatingButtonFlags & ControllerHandler.EMULATING_SELECT) != 0)
-        {
-            // If either start or LB is up, select comes up too
-            if ((context.inputMap & ControllerPacket.PLAY_FLAG) == 0 ||
-                (context.inputMap & ControllerPacket.LB_FLAG) == 0)
-            {
-                context.inputMap &= ~ControllerPacket.BACK_FLAG;
-
-                context.emulatingButtonFlags &= ~ControllerHandler.EMULATING_SELECT;
-            }
+        int stepFlags = buttonStepOut[4];
+        if ((stepFlags & 1) != 0 &&
+                eventTime - context.startDownTime > ControllerHandler.START_DOWN_TIME_MOUSE_MODE_MS &&
+                prefConfig.mouseEmulation) {
+            context.toggleMouseEmulation();
+        }
+        context.inputMap = buttonStepOut[1];
+        context.leftTrigger = (byte) buttonStepOut[2];
+        context.rightTrigger = (byte) buttonStepOut[3];
+        if ((stepFlags & 2) != 0) {
+            context.lastLbUpTime = eventTime;
+        }
+        if ((stepFlags & 4) != 0) {
+            context.lastRbUpTime = eventTime;
         }
 
-        // Check if we're emulating the special button
-        if ((context.emulatingButtonFlags & ControllerHandler.EMULATING_SPECIAL) != 0)
-        {
-            // If either start or select and RB is up, the special button comes up too
-            if ((context.inputMap & ControllerPacket.PLAY_FLAG) == 0 ||
-                ((context.inputMap & ControllerPacket.BACK_FLAG) == 0 &&
-                 (context.inputMap & ControllerPacket.RB_FLAG) == 0))
-            {
-                context.inputMap &= ~ControllerPacket.SPECIAL_BUTTON_FLAG;
-
-                context.emulatingButtonFlags &= ~ControllerHandler.EMULATING_SPECIAL;
-            }
-        }
-
-        // Check if we're emulating the touchpad button
-        if ((context.emulatingButtonFlags & ControllerHandler.EMULATING_TOUCHPAD) != 0)
-        {
-            // If either select or LB is up, touchpad comes up too. The emulation took both
-            // out of inputMap, so ask which buttons are still held.
-            int held = heldButtons(context);
-            if ((held & ControllerPacket.BACK_FLAG) == 0 ||
-                    (held & ControllerPacket.LB_FLAG) == 0)
-            {
-                context.inputMap &= ~ControllerPacket.TOUCHPAD_FLAG;
-
-                context.emulatingButtonFlags &= ~ControllerHandler.EMULATING_TOUCHPAD;
-            }
+        if ((context.emulatingButtonFlags & (EMULATING_SELECT | EMULATING_SPECIAL | EMULATING_TOUCHPAD)) != 0) {
+            boolean hasTargetTouchpad = (context.emulatingButtonFlags & EMULATING_TOUCHPAD) != 0 &&
+                    context.pressedButtons.containsValue(ControllerButtonMap.TARGET_TOUCHPAD);
+            boolean hasSelectHeld = (context.emulatingButtonFlags & EMULATING_TOUCHPAD) != 0 &&
+                    context.pressedButtons.containsValue(KeyEvent.KEYCODE_BUTTON_SELECT);
+            boolean hasLbHeld = (context.emulatingButtonFlags & EMULATING_TOUCHPAD) != 0 &&
+                    context.pressedButtons.containsValue(KeyEvent.KEYCODE_BUTTON_L1);
+            NightjarInputJni.applyEmulatedCombosOnUp(
+                    context.inputMap, context.emulatingButtonFlags,
+                    hasTargetTouchpad, hasSelectHeld, hasLbHeld, comboOut);
+            context.inputMap = comboOut[0];
+            context.emulatingButtonFlags = comboOut[1];
         }
 
         sendControllerInputPacket(context);
@@ -4426,160 +3660,30 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             return true;
         }
 
-        switch (keyCode) {
-        case KeyEvent.KEYCODE_BUTTON_MODE:
-            context.hasMode = true;
-            context.inputMap |= ControllerPacket.SPECIAL_BUTTON_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_START:
-        case KeyEvent.KEYCODE_MENU:
-            if (event.getRepeatCount() == 0) {
-                context.startDownTime = event.getEventTime();
-            }
-            context.inputMap |= ControllerPacket.PLAY_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BACK:
-        case KeyEvent.KEYCODE_BUTTON_SELECT:
-            context.hasSelect = true;
-            context.inputMap |= ControllerPacket.BACK_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_LEFT:
-            if (context.hatXAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap |= ControllerPacket.LEFT_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_RIGHT:
-            if (context.hatXAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap |= ControllerPacket.RIGHT_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_UP:
-            if (context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap |= ControllerPacket.UP_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_DOWN:
-            if (context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap |= ControllerPacket.DOWN_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_UP_LEFT:
-            if (context.hatXAxisUsed && context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap |= ControllerPacket.UP_FLAG | ControllerPacket.LEFT_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_UP_RIGHT:
-            if (context.hatXAxisUsed && context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap |= ControllerPacket.UP_FLAG | ControllerPacket.RIGHT_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_DOWN_LEFT:
-            if (context.hatXAxisUsed && context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap |= ControllerPacket.DOWN_FLAG | ControllerPacket.LEFT_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_DOWN_RIGHT:
-            if (context.hatXAxisUsed && context.hatYAxisUsed) {
-                // Suppress this duplicate event if we have a hat
-                return true;
-            }
-            context.inputMap |= ControllerPacket.DOWN_FLAG | ControllerPacket.RIGHT_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_B:
-            context.inputMap |= ControllerPacket.B_FLAG;
-            break;
-        case KeyEvent.KEYCODE_DPAD_CENTER:
-        case KeyEvent.KEYCODE_BUTTON_A:
-            context.inputMap |= ControllerPacket.A_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_X:
-            context.inputMap |= ControllerPacket.X_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_Y:
-            context.inputMap |= ControllerPacket.Y_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_L1:
-            context.inputMap |= ControllerPacket.LB_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_R1:
-            context.inputMap |= ControllerPacket.RB_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_THUMBL:
-            context.inputMap |= ControllerPacket.LS_CLK_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_THUMBR:
-            context.inputMap |= ControllerPacket.RS_CLK_FLAG;
-            break;
-        case KeyEvent.KEYCODE_MEDIA_RECORD: // Xbox Series X Share button
-            context.inputMap |= ControllerPacket.MISC_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_1: // PS4/PS5 touchpad button (prior to 4.10)
-            context.inputMap |= ControllerPacket.TOUCHPAD_FLAG;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_L2:
-            if (context.leftTriggerAxisUsed) {
-                // Suppress this digital event if an analog trigger is active
-                return true;
-            }
-            context.leftTrigger = (byte)0xFF;
-            break;
-        case KeyEvent.KEYCODE_BUTTON_R2:
-            if (context.rightTriggerAxisUsed) {
-                // Suppress this digital event if an analog trigger is active
-                return true;
-            }
-            context.rightTrigger = (byte)0xFF;
-            break;
-        case KeyEvent.KEYCODE_UNKNOWN:
-            // Paddles aren't mapped in any of the Android key layout files,
-            // so we need to handle the evdev key codes directly.
-            if (context.hasPaddles) {
-                switch (event.getScanCode()) {
-                    case 0x2c4: // BTN_TRIGGER_HAPPY5
-                        context.inputMap |= ControllerPacket.PADDLE1_FLAG;
-                        break;
-                    case 0x2c5: // BTN_TRIGGER_HAPPY6
-                        context.inputMap |= ControllerPacket.PADDLE2_FLAG;
-                        break;
-                    case 0x2c6: // BTN_TRIGGER_HAPPY7
-                        context.inputMap |= ControllerPacket.PADDLE3_FLAG;
-                        break;
-                    case 0x2c7: // BTN_TRIGGER_HAPPY8
-                        context.inputMap |= ControllerPacket.PADDLE4_FLAG;
-                        break;
-                    default:
-                        return false;
-                }
-            }
-            else {
-                return false;
-            }
-            break;
-        case ControllerButtonMap.TARGET_TOUCHPAD:
-        case ControllerButtonMap.TARGET_MISC:
-        case ControllerButtonMap.TARGET_PADDLE1:
-        case ControllerButtonMap.TARGET_PADDLE2:
-        case ControllerButtonMap.TARGET_PADDLE3:
-        case ControllerButtonMap.TARGET_PADDLE4:
-            // A user mapping to an extended button, which has no Android key code
-            context.inputMap |= ControllerButtonMap.buttonFlag(keyCode);
-            break;
-        default:
+        NightjarInputJni.buttonDownStep(
+                context.inputMap, context.leftTrigger, context.rightTrigger,
+                context.hasPaddles, context.hatXAxisUsed, context.hatYAxisUsed,
+                context.leftTriggerAxisUsed, context.rightTriggerAxisUsed,
+                keyCode, event.getScanCode(), buttonStepOut);
+        int status = buttonStepOut[0];
+        if (status == 1) {
+            return true;
+        }
+        if (status == 2) {
             return false;
+        }
+        context.inputMap = buttonStepOut[1];
+        context.leftTrigger = (byte) buttonStepOut[2];
+        context.rightTrigger = (byte) buttonStepOut[3];
+        int stepFlags = buttonStepOut[4];
+        if ((stepFlags & 1) != 0) {
+            context.hasSelect = true;
+        }
+        if ((stepFlags & 2) != 0) {
+            context.hasMode = true;
+        }
+        if ((stepFlags & 4) != 0 && event.getRepeatCount() == 0) {
+            context.startDownTime = event.getEventTime();
         }
 
         // Wait for the menu combo to lift so it cannot activate a menu item. It goes by the
@@ -4589,54 +3693,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             context.pendingExit = true;
         }
 
-        // Start+LB acts like select for controllers with one button
-        if (!context.hasSelect) {
-            if (context.inputMap == (ControllerPacket.PLAY_FLAG | ControllerPacket.LB_FLAG) ||
-                    (context.inputMap == ControllerPacket.PLAY_FLAG &&
-                            event.getEventTime() - context.lastLbUpTime <= MAXIMUM_BUMPER_UP_DELAY_MS))
-            {
-                context.inputMap &= ~(ControllerPacket.PLAY_FLAG | ControllerPacket.LB_FLAG);
-                context.inputMap |= ControllerPacket.BACK_FLAG;
-
-                context.emulatingButtonFlags |= ControllerHandler.EMULATING_SELECT;
-            }
-        }
-        else if (context.needsClickpadEmulation) {
-            // Select+LB acts like the clickpad when we're faking a PS4 controller for motion support
-            if (context.inputMap == (ControllerPacket.BACK_FLAG | ControllerPacket.LB_FLAG) ||
-                    (context.inputMap == ControllerPacket.BACK_FLAG &&
-                            event.getEventTime() - context.lastLbUpTime <= MAXIMUM_BUMPER_UP_DELAY_MS))
-            {
-                context.inputMap &= ~(ControllerPacket.BACK_FLAG | ControllerPacket.LB_FLAG);
-                context.inputMap |= ControllerPacket.TOUCHPAD_FLAG;
-
-                context.emulatingButtonFlags |= ControllerHandler.EMULATING_TOUCHPAD;
-            }
-        }
-
-        // If there is a physical select button, we'll use Start+Select as the special button combo
-        // otherwise we'll use Start+RB.
-        if (!context.hasMode) {
-            if (context.hasSelect) {
-                if (context.inputMap == (ControllerPacket.PLAY_FLAG | ControllerPacket.BACK_FLAG)) {
-                    context.inputMap &= ~(ControllerPacket.PLAY_FLAG | ControllerPacket.BACK_FLAG);
-                    context.inputMap |= ControllerPacket.SPECIAL_BUTTON_FLAG;
-
-                    context.emulatingButtonFlags |= ControllerHandler.EMULATING_SPECIAL;
-                }
-            }
-            else {
-                if (context.inputMap == (ControllerPacket.PLAY_FLAG | ControllerPacket.RB_FLAG) ||
-                        (context.inputMap == ControllerPacket.PLAY_FLAG &&
-                                event.getEventTime() - context.lastRbUpTime <= MAXIMUM_BUMPER_UP_DELAY_MS))
-                {
-                    context.inputMap &= ~(ControllerPacket.PLAY_FLAG | ControllerPacket.RB_FLAG);
-                    context.inputMap |= ControllerPacket.SPECIAL_BUTTON_FLAG;
-
-                    context.emulatingButtonFlags |= ControllerHandler.EMULATING_SPECIAL;
-                }
-            }
-        }
+        NightjarInputJni.applyEmulatedCombosOnDown(
+                context.inputMap, context.emulatingButtonFlags,
+                context.hasSelect, context.hasMode, context.needsClickpadEmulation,
+                event.getEventTime(), context.lastLbUpTime, context.lastRbUpTime, comboOut);
+        context.inputMap = comboOut[0];
+        context.emulatingButtonFlags = comboOut[1];
 
         // We don't need to send repeat key down events, but the platform
         // sends us events that claim to be repeats but they're from different
@@ -4802,25 +3864,16 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         buttons &= ~context.heldFromMenu;
         context.lastButtons = buttons;
 
-        Vector2d leftStickVector = populateCachedVector(leftStickX, leftStickY);
-
-        handleDeadZone(leftStickVector, context.leftStickDeadzoneRadius);
-
-        context.leftStickX = (short) (leftStickVector.getX() * 0x7FFE);
-        context.leftStickY = (short) (-leftStickVector.getY() * 0x7FFE);
-
-        Vector2d rightStickVector = populateCachedVector(rightStickX, rightStickY);
-
-        handleDeadZone(rightStickVector, context.rightStickDeadzoneRadius);
-
-        context.rightStickX = (short) (rightStickVector.getX() * 0x7FFE);
-        context.rightStickY = (short) (-rightStickVector.getY() * 0x7FFE);
-
-        leftTrigger = applyTriggerDeadzone(leftTrigger, context.triggerDeadzone);
-        rightTrigger = applyTriggerDeadzone(rightTrigger, context.triggerDeadzone);
-
-        context.leftTrigger = (byte)(leftTrigger * 0xFF);
-        context.rightTrigger = (byte)(rightTrigger * 0xFF);
+        NightjarInputJni.normalizeUsbAxes(
+                leftStickX, leftStickY, rightStickX, rightStickY, leftTrigger, rightTrigger,
+                context.leftStickDeadzoneRadius, context.rightStickDeadzoneRadius,
+                context.triggerDeadzone, context.usbAxesOut);
+        context.leftStickX = (short) context.usbAxesOut[0];
+        context.leftStickY = (short) context.usbAxesOut[1];
+        context.rightStickX = (short) context.usbAxesOut[2];
+        context.rightStickY = (short) context.usbAxesOut[3];
+        context.leftTrigger = (byte) context.usbAxesOut[4];
+        context.rightTrigger = (byte) context.usbAxesOut[5];
 
         context.inputMap = context.clickpadButtons(buttons);
 
@@ -5470,37 +4523,21 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     break;
             }
 
-            supportedButtonFlags = 0;
-            for (Map.Entry<Integer, Integer> entry : ANDROID_TO_LI_BUTTON_MAP.entrySet()) {
-                if (inputDevice.hasKeys(entry.getKey())[0]) {
-                    supportedButtonFlags |= entry.getValue();
-                }
+            int[] keyCodes = androidButtonKeycodes();
+            boolean[] hasKeys = new boolean[keyCodes.length];
+            for (int i = 0; i < keyCodes.length; i++) {
+                hasKeys[i] = inputDevice.hasKeys(keyCodes[i])[0];
             }
-
-            // Add non-standard button flags that may not be mapped in the Android kl file
-            if (hasPaddles) {
-                supportedButtonFlags |=
-                        ControllerPacket.PADDLE1_FLAG |
-                        ControllerPacket.PADDLE2_FLAG |
-                        ControllerPacket.PADDLE3_FLAG |
-                        ControllerPacket.PADDLE4_FLAG;
-            }
-            if (hasShare) {
-                supportedButtonFlags |= ControllerPacket.MISC_FLAG;
-            }
-            // Extended buttons the user's button map sends
-            supportedButtonFlags |= buttonMap.targetButtonFlags();
-
-            if (getMotionRangeForJoystickAxis(inputDevice, MotionEvent.AXIS_HAT_X) != null) {
-                supportedButtonFlags |= ControllerPacket.LEFT_FLAG | ControllerPacket.RIGHT_FLAG;
-            }
-            if (getMotionRangeForJoystickAxis(inputDevice, MotionEvent.AXIS_HAT_Y) != null) {
-                supportedButtonFlags |= ControllerPacket.UP_FLAG | ControllerPacket.DOWN_FLAG;
-            }
+            boolean hasHatX = getMotionRangeForJoystickAxis(inputDevice, MotionEvent.AXIS_HAT_X) != null;
+            boolean hasHatY = getMotionRangeForJoystickAxis(inputDevice, MotionEvent.AXIS_HAT_Y) != null;
+            boolean hasTouchpadSource =
+                    (inputDevice.getSources() & InputDevice.SOURCE_TOUCHPAD) == InputDevice.SOURCE_TOUCHPAD;
+            boolean hasClickpad = hasTouchpadSource && hasButtonUnderTouchpad(inputDevice, type);
+            int baseSupportedButtons = NightjarInputJni.computeBaseSupportedButtons(
+                    hasKeys, hasPaddles, hasShare, buttonMap.targetButtonFlags(),
+                    hasHatX, hasHatY, hasClickpad);
 
             short capabilities = 0;
-
-            // Most of the advanced InputDevice capabilities came in Android S
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (quadVibrators) {
                     capabilities |= MoonBridge.LI_CCAP_RUMBLE | MoonBridge.LI_CCAP_TRIGGER_RUMBLE;
@@ -5508,78 +4545,50 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 else if (vibratorManager != null || vibrator != null) {
                     capabilities |= MoonBridge.LI_CCAP_RUMBLE;
                 }
-
-                // Calling InputDevice.getBatteryState() to see if a battery is present
-                // performs a Binder transaction that can cause ANRs on some devices.
-                // To avoid this, we will just claim we can report battery state for all
-                // external gamepad devices on Android S. If it turns out that no battery
-                // is actually present, we'll just report unknown battery state to the host.
                 if (external) {
                     capabilities |= MoonBridge.LI_CCAP_BATTERY_STATE;
                 }
-
                 if (hasRgbLed) {
                     capabilities |= MoonBridge.LI_CCAP_RGB_LED;
                 }
             }
-
-            // Report analog triggers if we have at least one trigger axis
             if (leftTriggerAxis != -1 || rightTriggerAxis != -1) {
                 capabilities |= MoonBridge.LI_CCAP_ANALOG_TRIGGERS;
             }
-
-            // Report sensors if the input device has them or we're using built-in sensors for a built-in controller
             if (sensorManager != null && sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null) {
                 capabilities |= MoonBridge.LI_CCAP_ACCEL;
             }
             if (sensorManager != null && sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null) {
                 capabilities |= MoonBridge.LI_CCAP_GYRO;
             }
-
-            if (motionOverridesType(type, sensorManager != null, buttonMap)) {
-                // Override the detected controller type if we're emulating motion sensors on an Xbox controller
-                mainThreadHandler.post(() -> Toast.makeText(activityContext,
-                        R.string.toast_controller_type_changed, Toast.LENGTH_LONG).show());
-
-                // Remember that we should enable the clickpad emulation combo (Select+LB) for this device
-                needsClickpadEmulation = needsClickpadEmulation(buttonMap);
-            }
-            else if (buttonMap.connectAs() == MoonBridge.LI_CTYPE_PS && type != MoonBridge.LI_CTYPE_PS) {
-                // Pinned as PlayStation without being one: Select+LB clicks the touchpad it lacks
-                needsClickpadEmulation = needsClickpadEmulation(buttonMap);
-            }
-            // A pinned type wins; otherwise the true type unless motion or a touchpad mapping changes it
-            reportedType = inputDeviceArrivalType(type, sensorManager != null, buttonMap);
-
-            // We can perform basic rumble with any vibrator
             if (vibrator != null) {
                 capabilities |= MoonBridge.LI_CCAP_RUMBLE;
             }
-
-            // Shield controllers use special APIs for rumble and battery state
             if (sceManager.isRecognizedDevice(inputDevice)) {
                 capabilities |= MoonBridge.LI_CCAP_RUMBLE | MoonBridge.LI_CCAP_BATTERY_STATE;
             }
-
-            if ((inputDevice.getSources() & InputDevice.SOURCE_TOUCHPAD) == InputDevice.SOURCE_TOUCHPAD) {
+            if (hasTouchpadSource) {
                 capabilities |= MoonBridge.LI_CCAP_TOUCHPAD;
-
-                // Use the platform API or internal heuristics to determine if this has a clickpad
-                if (hasButtonUnderTouchpad(inputDevice, type)) {
-                    supportedButtonFlags |= ControllerPacket.TOUCHPAD_FLAG;
-                }
             }
 
-            if (carriesTouchpadButton(this)) {
-                reportedType = MoonBridge.LI_CTYPE_PS;
-                supportedButtonFlags |= ControllerPacket.TOUCHPAD_FLAG;
+            int[] arrivalOut = new int[4];
+            NightjarInputJni.computeInputDeviceArrival(
+                    type, baseSupportedButtons, capabilities, sensorManager != null,
+                    buttonMap.connectAs(), buttonMap.targetButtonFlags(),
+                    carriesTouchpadButton(this), steamControlsSession, onscreenOwnPlayerSession,
+                    controllerNumber, arrivalOut);
+            reportedType = (byte) arrivalOut[0];
+            reportedCapabilities = (short) arrivalOut[1];
+            supportedButtonFlags = arrivalOut[2];
+            int arrivalFlags = arrivalOut[3];
+            if ((arrivalFlags & 1) != 0) {
+                mainThreadHandler.post(() -> Toast.makeText(activityContext,
+                        R.string.toast_controller_type_changed, Toast.LENGTH_LONG).show());
             }
-
-            capabilities = arrivalCapabilities(capabilities, buttonMap);
-            // The on-screen Steam Controller controls sharing this pad's slot.
-            capabilities = withSteamControls((short) controllerNumber, capabilities, buttonMap);
-            supportedButtonFlags = withSteamControlButtons((short) controllerNumber, supportedButtonFlags);
-            reportedCapabilities = capabilities;
+            if ((arrivalFlags & 2) != 0) {
+                needsClickpadEmulation = (arrivalFlags & 4) != 0;
+            }
+            capabilities = reportedCapabilities;
             // A built-in device sharing player 1 with an external pad stays quiet, so the host
             // keeps the external pad's type, touchpad and motion.
             if (!external && sharesSlotWithExternalPad(this)) return;
@@ -5731,6 +4740,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Select+LB held as the touchpad click: those of the two not let go yet, which stay silent until released
         int clickpadSwallowed;
+        final int[] usbAxesOut = new int[6];
+        final int[] clickpadOut = new int[2];
         // Last raw driver report, used when a deferred Guide tap release fires after MINIMUM_BUTTON_DOWN_TIME_MS.
         int lastRawButtons;
         float lastRawLeftStickX, lastRawLeftStickY, lastRawRightStickX, lastRawRightStickY;
@@ -5784,15 +4795,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
          * Android-mapped pad.
          */
         int clickpadButtons(int buttons) {
-            boolean fakedAsPs = buttonMap.connectAs() == MoonBridge.LI_CTYPE_PS ||
-                    motionOverridesType(device.getType(), deviceSensors != null, buttonMap);
-            if (!fakedAsPs || device.getType() == MoonBridge.LI_CTYPE_PS || !needsClickpadEmulation(buttonMap)) {
-                return buttons;
-            }
-            final int combo = ControllerPacket.BACK_FLAG | ControllerPacket.LB_FLAG;
-            if (clickpadSwallowed == 0 && buttons == combo) clickpadSwallowed = combo;
-            clickpadSwallowed &= buttons;
-            return (buttons & ~clickpadSwallowed) | (clickpadSwallowed == combo ? ControllerPacket.TOUCHPAD_FLAG : 0);
+            NightjarInputJni.applyUsbClickpad(
+                    buttons, clickpadSwallowed, device.getType(), buttonMap.connectAs(),
+                    deviceSensors != null, needsClickpadEmulation(buttonMap), clickpadOut);
+            clickpadSwallowed = clickpadOut[1];
+            return clickpadOut[0];
         }
 
         /** The driver's capabilities as the host is told them: without motion and touchpad when pinned as Xbox. */

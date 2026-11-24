@@ -36,6 +36,7 @@ pub mod pin;
 mod platform;
 pub mod policy;
 pub mod policy_connect;
+pub mod policy_input;
 pub mod policy_quality;
 pub mod policy_recovery;
 pub mod policy_roaming;
@@ -66,12 +67,11 @@ use nightjar_core::input::InputQueue;
 use nightjar_core::session::{HostInfo, NetworkChange, SessionConfig};
 use rubylight_protocol::control::{HostTimingRequest, LinkNoticeRequest, Reconfigure};
 
-use crate::extras::input_result;
 pub(crate) use bridge::{jbool, string};
 
 /// Runs an input call on the session: 0 or the C API's error code (-2 without a stream).
 fn input(f: impl FnOnce(&mut InputQueue) -> Result<(), nightjar_core::input::InputError>) -> jint {
-    engine::with_session(-2, |s| input_result(s.input(f)))
+    engine::with_session(-2, |s| extras::input_result(s.input(f)))
 }
 
 #[unsafe(no_mangle)]
