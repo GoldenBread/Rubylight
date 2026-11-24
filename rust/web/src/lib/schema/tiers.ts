@@ -1,35 +1,9 @@
-// Which tier each setting belongs to (the host console's All settings):
-//
-//   home         the Settings home (MAIN_SECTIONS in main.ts)
-//   everyday     shown in its topic tab: every key not listed anywhere
-//   always-on    ALWAYS_ON in main.ts: on for everyone, in Advanced > Debug switches
-//   diagnostic   DIAGNOSTICS in main.ts: troubleshooting, also in Debug switches
-//   games-page   GAMES_PAGE_KEYS below: a launcher's options, which the Games page links to
-//
-// A setting whose value differs from its default also shows in its topic tab
-// (settings-schema.ts tabLayout), so nothing a user changed is hidden. The
-// comment above each run of keys names the tab and group the keys come from.
-import { ALWAYS_ON, DIAGNOSTICS, MAIN_KEYS } from './main';
+// Which tier each setting belongs to (the host console's All settings).
+// Tier lists are generated from rust/core/config/settings.toml into tiers.gen.ts.
+import { ALWAYS_ON, DIAGNOSTICS, GAMES_PAGE_KEY_SET, MAIN_KEYS } from './tiers.gen';
 
-/** The launchers' option groups: the Games page links to each, so the Games tab keeps them out of the way. */
-export const GAMES_PAGE_KEYS: readonly string[] = [
-  // Games › Steam options
-  'steam_enabled', 'steam_include_tools', 'steam_exclude_games',
-  // Games › Epic Games options
-  'library_epic_enabled', 'epic_exclude_games',
-  // Games › Battle.net options
-  'library_battlenet_enabled', 'battlenet_exclude_games',
-  // Games › Microsoft Store and Xbox options
-  'library_microsoft_enabled', 'microsoft_exclude_games',
-  // Games › EA app options
-  'library_ea_enabled', 'ea_exclude_games',
-  // Games › Ubisoft Connect options
-  'library_ubisoft_enabled', 'ubisoft_exclude_games',
-  // Games › GOG options
-  'library_gog_enabled', 'gog_exclude_games',
-];
+export { GAMES_PAGE_KEYS, GAMES_PAGE_KEY_SET } from './tiers.gen';
 
-export const GAMES_PAGE_KEY_SET: ReadonlySet<string> = new Set(GAMES_PAGE_KEYS);
 const HOME_KEY_SET: ReadonlySet<string> = new Set(MAIN_KEYS);
 
 export type Tier = 'home' | 'everyday' | 'always-on' | 'diagnostic' | 'games-page';

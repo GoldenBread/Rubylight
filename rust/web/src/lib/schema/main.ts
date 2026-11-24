@@ -1,137 +1,23 @@
 // What the Settings home shows, and how All settings folds the rest
-// (docs: unified/ux/direction.md 2.2-2.3). The keys are the schema's own;
-// this file only chooses and orders them.
+// (docs: unified/ux/direction.md 2.2-2.3). The tier/group tables are generated
+// from rust/core/config/settings.toml into tiers.gen.ts.
 import type { ConfigValue } from '../api';
 import { SETTING } from '../stream-presets';
 import { VIRTUAL_DISPLAY_OS, type Option, type Setting } from '../settings-types';
+import { DEBUG_GROUP, ORIGIN_CATEGORY } from './tiers.gen';
 
-export interface MainSection {
-  id: string;
-  title: string;
-  description: string;
-  /** Schema keys in the order they show. */
-  keys: readonly string[];
-}
-
-/**
- * The Settings home: what a typical player changes in week one, phrased as
- * an outcome, with every option safe. At most 12 keys in all. Its sections
- * are the first All settings tabs, with the same ids and names
- * (settings-schema.ts settingGroups), so each links to the rest of its topic.
- */
-export const MAIN_SECTIONS: readonly MainSection[] = [
-  {
-    id: 'pc',
-    title: 'This PC',
-    description: 'Its name, waking it from a device, and updates.',
-    // Updates shows in the Updates panel, above the release status.
-    keys: ['sunshine_name', 'updates'],
-  },
-  {
-    id: 'picture',
-    title: 'Picture',
-    description: 'Stream quality, resolution and what happens to your screens while you play.',
-    keys: ['stream_preset', 'virtual_display_mode', 'dd_resolution_option', 'virtual_display_layout'],
-  },
-  {
-    id: 'sound',
-    title: 'Sound & controls',
-    description: 'What your devices can hear and use on this PC.',
-    keys: ['stream_audio', 'stream_mic', 'controller'],
-  },
-  {
-    id: 'games',
-    title: 'Games',
-    description: 'What happens to a game when you stop playing.',
-    keys: ['terminate_on_pause'],
-  },
-];
-
-/** The main keys the home shows in its Updates panel rather than among its section's rows. */
-export const UPDATE_KEYS: readonly string[] = ['updates'];
-
-export const MAIN_KEYS: readonly string[] = MAIN_SECTIONS.flatMap((section) => section.keys);
-export const MAIN_BUDGET = 12;
-
-/**
- * Right for everyone, no added latency, no PC side effect, stock Moonlight
- * unaffected and verified: on with no switch of their own. Their keys stay
- * readable and show only in All settings, Advanced, Debug switches (and in
- * their topic tab once turned off, like any changed setting).
- */
-export const ALWAYS_ON: readonly string[] = [
-  // Network
-  'qr_pairing', 'client_roaming', 'bandwidth_probe',
-  // Sound & controls
-  'audio_passthrough', 'audio_surround_714',
-  // Picture: capture, codecs, HDR, frame pacing, bitrate and NVENC
-  'idd_push_fence_ring', 'wgc_direct_encoder_input', 'gpu_compute_conversion',
-  'packed_444', 'pyrowave',
-  'hdr_dolby_vision', 'hdr_hlg',
-  'wgc_pacing_smoothing', 'stream_reconfigure', 'frame_warp',
-  'keyframe_loss_pacing',
-  'nvenc_frame_budget_guard', 'nvenc_realtime_hags',
-];
-/**
- * Settings only for troubleshooting, whose values are not choices a player
- * makes: shown only in All settings, Advanced, Debug switches, with their own
- * descriptions (and in their topic tab once changed).
- */
-export const DIAGNOSTICS: readonly string[] = ['capture_poll_interval_us', 'capture_predictive_poll', 'wgc_slot_aligned_publish', 'video_max_batch_size_kb', 'pyrowave_encode_overlap'];
-export const DEBUG_GROUP = 'Debug switches';
-/** Where a Debug switch shows once turned off, when that is not the category it is filed under: QR pairing sits beside Allow pairing. */
-const ORIGIN_CATEGORY: Readonly<Record<string, Setting['category']>> = { qr_pairing: 'network' };
-
-/** The groups All settings starts collapsed and lists last in their tab. */
-export const TRAILING_GROUPS: ReadonlySet<string> = new Set([
-  // Settings written as JSON, each folded under its own name.
-  'Mode substitutions',
-  'Key remapping',
-  'Capture troubleshooting',
-  'AMD AMF',
-  'NVIDIA NVENC',
-  'RTSS',
-  'Ports and addresses',
-  'Console',
+export {
+  ALWAYS_ON,
   DEBUG_GROUP,
-]);
-
-/**
- * Groups All settings also starts folded, in their usual place: the ones after
- * the everyday rows that most people leave alone. A customized group starts
- * open, and a link to one of its settings opens it.
- *
- * The launcher groups are here because the Games page already carries each
- * launcher's switch and its own "Options" link. Capture and Remote monitors
- * say themselves that they are for troubleshooting or an extra screen, and
- * Steam Deck and back grips is hardware tuning in an everyday tab. Bitrate and
- * network, Keyboard, Mouse, pen and touch and Hardware metrics are mostly
- * tuning whose defaults are the measured ones.
- */
-export const FOLDED_GROUPS: ReadonlySet<string> = new Set([
-  'HDR',
-  'Frame pacing',
-  'Frame limiter',
-  'After a stream',
-  'Capture',
-  'Remote monitors',
-  'Steam options',
-  'Epic Games options',
-  'Battle.net options',
-  'Microsoft Store and Xbox options',
-  'EA app options',
-  'Ubisoft Connect options',
-  'GOG options',
-  'Playnite',
-  'Playnite launch focus',
-  'Game folders',
-  'Lossless Scaling',
-  'Steam Deck and back grips',
-  'Bitrate and network',
-  'Keyboard',
-  'Mouse, pen and touch',
-  'Hardware metrics',
-]);
+  DIAGNOSTICS,
+  FOLDED_GROUPS,
+  MAIN_BUDGET,
+  MAIN_KEYS,
+  MAIN_SECTIONS,
+  TRAILING_GROUPS,
+  UPDATE_KEYS,
+  type MainSection,
+} from './tiers.gen';
 
 /** An always-on setting as All settings shows it: in Debug switches, for troubleshooting. */
 export function asDebugSwitch(setting: Setting): Setting {

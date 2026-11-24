@@ -1124,6 +1124,7 @@ A backup without secrets keeps this PC's pairing identity, paired devices, permi
 
 Every setting in the console, with its key and the default an unset key uses, in the console's tabs. Each topic tab shows all of its settings, in groups; groups most people leave alone start collapsed. The settings that are on for everyone and the troubleshooting ones are under Advanced, in Debug switches, and show in their topic tab once changed. A launcher's options (Steam, Epic Games and the others) are on the Games page. Settings on the **Settings** home are in bold. Keys without a console field are under [Settings outside the console](#settings-outside-the-console). Search the console for a key to find its field; search finds every setting.
 
+<!-- BEGIN GENERATED SETTINGS -->
 ### This PC
 
 | Setting | Key | Default | What it does |
@@ -1446,6 +1447,7 @@ On for everyone, or for troubleshooting only. Turning one off is rarely needed.
 | Picture › Capture troubleshooting: Align capture with encoding | `wgc_slot_aligned_publish` | `false` | With Windows Graphics Capture, holds a new frame until just before the next encode if a newer one could arrive first. Try it if the display refreshes much faster than the stream. |
 | Picture › Bitrate and network: Send batch size | `video_max_batch_size_kb` | `64` (64 KiB) | For troubleshooting; leave it at 64 KiB. The largest burst of video packets sent at once: smaller batches can help a device that drops bursts, and need more send calls on this PC. |
 | Picture › Codecs: Overlap PyroWave frames | `pyrowave_encode_overlap` | `false` | For troubleshooting; leave it off. Prepares the next PyroWave frame while the GPU still encodes the current one: two frames are on the GPU at once, each with its own copy of the picture. Off encodes one frame at a time, as earlier versions did; at 4K and 120 fps the overlap measured no lower latency. Applies to the next stream. |
+<!-- END GENERATED SETTINGS -->
 
 ## Further reference
 

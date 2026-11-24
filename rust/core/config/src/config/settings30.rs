@@ -1,27 +1,9 @@
 //! The settings of the 3.0 extensions, defined ahead of their features: the
-//! console lists them in `web/src/lib/schema/extensions.ts`, hidden until
-//! each workstream ships its feature. A value the
-//! host can't use is reported through [`invalid`] and the default applies,
-//! so a launch never fails because of one of these settings.
-use super::{Config, invalid, unquote};
-use std::path::PathBuf;
-
-/// Every 3.0 setting with its default, as `sunshine.conf` would spell it.
-pub const SETTINGS_30: &[(&str, &str)] = &[
-    ("audio_surround_714", "true"),
-    ("pen_barrel_roll", "true"),
-    ("touch_mode", "client"),
-    ("touch_sensitivity", "100"),
-    ("touch_gestures", "true"),
-    ("client_cursor", "true"),
-    ("webhooks", "[]"),
-    ("qr_pairing", "true"),
-    ("dd_rotation_option", "disabled"),
-    ("dd_manual_rotation", "0"),
-    // Nucleus Co-op background streaming and co-op.
-    ("nucleus_path", ""),
-    ("nucleus_coop_players", "4"),
-];
+//! console lists them in `web/src/lib/schema/extensions.gen.ts`, hidden until
+//! each workstream ships its feature. A value the host can't use is reported
+//! through `invalid` and the default applies, so a launch never fails because
+//! of one of these settings.
+pub use super::catalog_gen::SETTINGS_30;
 
 /// `touch_mode`: how touches reach the PC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,103 +26,11 @@ pub enum DisplayAdjust {
     Manual,
 }
 
-impl Config {
-    /// The setting's text, or `default` when it is unset or empty.
-    fn text30<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
-        unquote(self.get(key, default).trim()).trim()
-    }
-    /// The value of `key` among `choices`, or the first choice's value.
-    fn choice30<T: Copy>(&self, key: &str, choices: &[(&str, T)]) -> T {
-        let value = self.text30(key, choices[0].0);
-        match choices.iter().find(|(name, _)| *name == value) {
-            Some(&(_, choice)) => choice,
-            None => {
-                invalid(key, value);
-                choices[0].1
-            }
-        }
-    }
-    /// The integer `key` when `accept` takes it, otherwise `default`.
-    fn integer30(&self, key: &str, default: i64, accept: impl Fn(i64) -> bool) -> i64 {
-        let value = self.integer(key, default);
-        if accept(value) {
-            value
-        } else {
-            invalid(key, self.get(key, ""));
-            default
-        }
-    }
-
-    /// 7.1.4 surround sound (on by default).
-    pub fn audio_surround_714(&self) -> bool {
-        self.boolean("audio_surround_714", true)
-    }
-    /// Stylus barrel roll, 0x5500000B (on by default).
-    pub fn pen_barrel_roll(&self) -> bool {
-        self.boolean("pen_barrel_roll", true)
-    }
-    /// `touch_mode`: `client` (the default), `mouse` or `trackpad`.
-    pub fn touch_mode(&self) -> TouchMode {
-        self.choice30(
-            "touch_mode",
-            &[
-                ("client", TouchMode::Client),
-                ("mouse", TouchMode::Mouse),
-                ("trackpad", TouchMode::Trackpad),
-            ],
-        )
-    }
-    /// Pointer movement for a swipe in mouse or trackpad mode, in percent
-    /// (25 to 400, 100 by default).
-    pub fn touch_sensitivity(&self) -> u16 {
-        self.integer30("touch_sensitivity", 100, |n| (25..=400).contains(&n)) as u16
-    }
-    /// Multi-finger touch gestures as scrolling and clicks (on by default).
-    pub fn touch_gestures(&self) -> bool {
-        self.boolean("touch_gestures", true)
-    }
-    /// Let a device draw the cursor itself (on by default).
-    pub fn client_cursor(&self) -> bool {
-        self.boolean("client_cursor", true)
-    }
-    /// Pairing by QR code instead of a PIN (off by default).
-    pub fn qr_pairing(&self) -> bool {
-        self.boolean("qr_pairing", true)
-    }
-    /// `dd_rotation_option`: `disabled` (the default), `auto` or `manual`.
-    pub fn dd_rotation_option(&self) -> DisplayAdjust {
-        self.display_adjust("dd_rotation_option")
-    }
-    /// `dd_manual_rotation`: 0 (the default), 90, 180 or 270 degrees clockwise.
-    pub fn dd_manual_rotation(&self) -> u16 {
-        self.integer30("dd_manual_rotation", 0, |n| matches!(n, 0 | 90 | 180 | 270)) as u16
-    }
-    fn display_adjust(&self, key: &str) -> DisplayAdjust {
-        self.choice30(
-            key,
-            &[
-                ("disabled", DisplayAdjust::Disabled),
-                ("auto", DisplayAdjust::Auto),
-                ("manual", DisplayAdjust::Manual),
-            ],
-        )
-    }
-    /// The Nucleus Co-op folder: `nucleus_path`, or None for an earlier
-    /// Rubylight's install, if any.
-    pub fn nucleus_path(&self) -> Option<PathBuf> {
-        let value = self.text30("nucleus_path", "");
-        (!value.is_empty()).then(|| PathBuf::from(value))
-    }
-    /// The most players a co-op session gets (1 to 4, 4 by default); the
-    /// game's handler and the free controller slots can allow fewer.
-    pub fn nucleus_coop_players(&self) -> u32 {
-        self.integer30("nucleus_coop_players", 4, |n| (1..=4).contains(&n)) as u32
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::Config;
     use super::*;
+    use std::path::PathBuf;
 
     /// The keys a device or an app may override.
     const PER_DEVICE: &[&str] = &[
@@ -319,7 +209,7 @@ mod tests {
         "nucleus_coop_players",
     ];
 
-    /// Each setting's key and default in extensions.ts, with LF or CRLF line
+    /// Each setting's key and default in extensions.gen.ts, with LF or CRLF line
     /// ends (CI checks the repository out with CRLF). A key is the one that
     /// starts its line: a select's `fixed: { ..., key: '...' }` names another
     /// setting, which has its own entry.
@@ -350,7 +240,7 @@ mod tests {
 
     #[test]
     fn the_console_schema_lists_exactly_these_settings_with_these_defaults() {
-        let schema = include_str!("../../../../web/src/lib/schema/extensions.ts");
+        let schema = include_str!("../../../../web/src/lib/schema/extensions.gen.ts");
         let mut documented = SETTINGS_30.to_vec();
         documented.sort();
         assert_eq!(schema_settings(schema), documented);

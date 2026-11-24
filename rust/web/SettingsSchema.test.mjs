@@ -1199,3 +1199,31 @@ test('the retired switches have no row, and the minimum QPs are off by default',
     assert.match(settings.get(key).description, /0 is off/, key);
   }
 });
+
+test('the generated web schema matches the declarative TOML catalog in rust/core/config/settings.toml', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const toml = await readFile(new URL('../core/config/settings.toml', import.meta.url), 'utf8');
+  const blocks = toml.split(/^\[\[setting\]\]$/m).slice(1);
+  const consoleKeys = [];
+  const restartKeys = [];
+  for (const block of blocks) {
+    const key = block.match(/^key = "([^"]+)"$/m)?.[1];
+    const part = block.match(/^part = "([^"]+)"$/m)?.[1];
+    assert.ok(key && part, block.slice(0, 80));
+    if (part !== 'outside_console') {
+      consoleKeys.push(key);
+      if (/^restart = true$/m.test(block)) restartKeys.push(key);
+    }
+  }
+  assert.deepEqual(
+    parts.map(setting => setting.key),
+    consoleKeys,
+    'web schema parts must match settings.toml console settings in exact order',
+  );
+  assert.deepEqual(
+    parts.filter(setting => setting.restart).map(setting => setting.key).sort(),
+    restartKeys.sort(),
+    'restart flags must match settings.toml',
+  );
+  assert.equal(parts.length, 278);
+});

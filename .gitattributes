@@ -18,8 +18,11 @@ rust/core/media-policy/src/audio_dsp/*.bin binary
 # change then appears twice, which strings/tests.rs every_table_is_clean rejects.
 client/protocol/desktop-config/src/strings/*.rs merge=union
 client/protocol/desktop-config/src/strings/tests.rs !merge
-# Generated docs: `python tools/generated_docs.py install` registers the driver,
-# which takes one side's generated table on a conflict inside it; regenerate it
-# afterwards with `python tools/generated_docs.py`.
+# Generated docs and host settings catalog: `python tools/generated_docs.py install`
+# registers the driver, which takes one side's generated output on a conflict inside
+# it; regenerate it afterwards with `python tools/generated_docs.py`.
 client/docs/settings.md merge=rubylight-generated
 client/docs/devices.md merge=rubylight-generated
+docs/configuration.md merge=rubylight-generated
+rust/core/config/src/config/*_gen.rs merge=rubylight-generated
+rust/web/src/lib/schema/*.gen.ts merge=rubylight-generated

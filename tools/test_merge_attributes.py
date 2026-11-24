@@ -175,8 +175,44 @@ class GeneratedDocs(unittest.TestCase):
 
     def test_dev_check_runs_the_doc_check_for_its_sources(self):
         paths = ['client/app/src/main/res/xml/preferences.xml', 'client/site/data/device-results.json', 'docs/configuration.md']
-        self.assertEqual([d.path for d in generated_docs.affected(paths)], ['client/docs/settings.md', 'client/docs/devices.md'])
-        self.assertEqual(generated_docs.affected(['docs/configuration.md']), [])
+        self.assertEqual(
+            [d.path for d in generated_docs.affected(paths)],
+            ['client/docs/settings.md', 'client/docs/devices.md', 'docs/configuration.md'],
+        )
+        self.assertEqual([d.path for d in generated_docs.affected(['docs/configuration.md'])], ['docs/configuration.md'])
+        self.assertEqual(generated_docs.affected(['docs/architecture.md']), [])
+        toml_targets = [d.path for d in generated_docs.affected(['rust/core/config/settings.toml'])]
+        self.assertIn('rust/core/config/src/config/catalog_gen.rs', toml_targets)
+        self.assertIn('rust/web/src/lib/schema/rules.gen.ts', toml_targets)
+        self.assertIn('docs/configuration.md', toml_targets)
+
+    def test_configuration_md_conflict_inside_markers_merges_cleanly(self):
+        self.doc = 'docs/configuration.md'
+        self.repo.write(self.doc, GENERATED.format(intro='base', a='1', b='1', outro='base'))
+        self.repo.commit('add configuration.md')
+        out = self.two(dict(intro='base', a='2', b='1', outro='base'), dict(intro='base', a='3', b='1', outro='theirs'))
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        merged = self.repo.read(self.doc)
+        self.assertIn('| A | 2 |', merged)
+        self.assertIn('Outro theirs.', merged)
+        self.assertNotIn('<<<<<<<', merged)
+
+    def test_whole_file_generated_module_conflict_merges_as_ours(self):
+        self.doc = 'rust/core/config/src/config/retired_gen.rs'
+        self.repo.write(self.doc, '//! Generated.\npub const X: &str = "base";\n')
+        self.repo.commit('add retired_gen.rs')
+        self.repo.git('checkout', '-q', '-b', 'a')
+        self.repo.write(self.doc, '//! Generated.\npub const X: &str = "ours";\n')
+        self.repo.commit('a')
+        self.repo.git('checkout', '-q', '-b', 'b', 'main')
+        self.repo.write(self.doc, '//! Generated.\npub const X: &str = "theirs";\n')
+        self.repo.commit('b')
+        self.repo.git('checkout', '-q', 'a')
+        out = self.repo.git('merge', '--no-edit', 'b', check=False)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        merged = self.repo.read(self.doc)
+        self.assertIn('"ours"', merged)
+        self.assertNotIn('<<<<<<<', merged)
 
 
 if __name__ == '__main__':
