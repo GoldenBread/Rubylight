@@ -123,9 +123,21 @@ fn pyrowave_on(va: &Va, config: &Negotiated, picture_is_hdr: bool) -> Result<Eng
     )?))
 }
 
-/// Holds the stream's GPU video clock at its top level, warning in the console when the host
-/// may not ([`crate::encoder_clock::RULE`]).
-fn raise_clock(va: &Va, warnings: &dyn WarningSink) -> Option<crate::encoder_clock::Raised> {
+/// The setting that holds the GPU's clocks up while a stream runs.
+const LATENCY_OVER_POWER: &str = "vaapi_latency_over_power";
+
+/// Holds the stream's GPU clocks at their top level unless [`LATENCY_OVER_POWER`] is off,
+/// warning in the console when the host may not ([`crate::encoder_clock::RULE`]).
+fn raise_clock(
+    va: &Va,
+    tuning: &butterpollo_config::config::Config,
+    warnings: &dyn WarningSink,
+) -> Option<crate::encoder_clock::Raised> {
+    if !tuning.boolean(LATENCY_OVER_POWER, true) {
+        warnings.clear("encoder_clock");
+        tracing::info!("{LATENCY_OVER_POWER} is off: the GPU's clocks are left to the firmware");
+        return None;
+    }
     let device = va.sysfs_device()?;
     match crate::encoder_clock::raise(&device) {
         Ok(raised) => {
@@ -300,7 +312,7 @@ impl Encoder {
         warnings.clear("hdr_dynamic_metadata");
         warnings.clear("encoder_vpe");
         let mut encoder = Self::new_gpu_options(config, image, tuning)?;
-        encoder._clock = raise_clock(image.gpu.va(), warnings.as_ref());
+        encoder._clock = raise_clock(image.gpu.va(), tuning, warnings.as_ref());
         Ok(encoder)
     }
     /// Encodes a captured picture where it is, at `bitrate` kilobits a second.

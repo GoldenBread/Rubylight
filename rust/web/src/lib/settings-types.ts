@@ -162,6 +162,12 @@ export const NATIVE_ENCODERS = '@native_encoders';
 export const VIRTUAL_DISPLAY_OS = '@virtual_display_os';
 
 /**
+ * Not a setting: visibleWhen also gets the host's operating system ('windows',
+ * 'linux') under this name, absent where the host does not say.
+ */
+export const HOST_PLATFORM = '@host_platform';
+
+/**
  * Not a setting: visibleWhen also gets the image enhancements this host
  * offers ('rtx_hdr', 'rtx_video') under this name. Only a host with the
  * NVIDIA components on an NVIDIA GPU whose driver supports them offers any.

@@ -1,6 +1,6 @@
 // Generated from rust/core/config/settings.toml by tools/generated_docs.py; do not edit by hand.
 import { type Setting } from '../settings-types';
-import { amf, amfUsageCaution, coderWords, nvenc, on, read, switchWords, tristate } from './rules.gen';
+import { amf, amfUsageCaution, coderWords, linuxHost, nvenc, on, read, switchWords, tristate } from './rules.gen';
 
 export const settings: Setting[] = [
   {
@@ -437,6 +437,17 @@ export const settings: Setting[] = [
     inactiveHint: 'Applies when NVIDIA NVENC encodes, as Automatic does on NVIDIA graphics cards.',
     visibleWhen: nvenc,
     advanced: true,
+  },
+  {
+    key: 'vaapi_latency_over_power',
+    label: 'Full GPU clocks while streaming',
+    description: 'Holds an AMD graphics card at its high performance level while a stream runs, so the encoder works at full clocks when a game or the desktop barely loads the GPU. Leave it on.',
+    details: 'At 1080p and 60 fps a frame then takes about a quarter of the time, for about 40 W more while a light picture streams; a game that loads the GPU raises its clocks by itself. The automatic level comes back when the stream ends. Needs the udev rule rust/linux/packaging/udev/70-rubylight-encoder-clock.rules.',
+    category: 'encoders',
+    group: 'AMD on Linux',
+    control: { kind: 'toggle' },
+    default: true,
+    visibleWhen: linuxHost,
   },
   {
     key: 'nvenc_vbv_increase',

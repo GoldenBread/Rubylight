@@ -6,6 +6,7 @@
 // they are shown or compared.
 import type { Config, ConfigValue, Gpu, Metadata, PrepCommand } from '../../lib/api';
 import {
+  HOST_PLATFORM,
   NATIVE_ENCODERS,
   NVIDIA_COMPONENT,
   NVIDIA_ENHANCEMENTS,
@@ -297,6 +298,7 @@ export function withHostGates(values: Record<string, ConfigValue>, metadata: Met
   values[NVIDIA_ENHANCEMENTS] = nvidiaEnhancements(metadata?.features);
   values[NVIDIA_COMPONENT] = componentGate(metadata?.nvidia_enhancements?.component);
   values[NVIDIA_REASONS] = metadata?.nvidia_enhancements?.errors ?? {};
+  if (typeof metadata?.platform === 'string') values[HOST_PLATFORM] = metadata.platform;
   const os = metadata?.features?.virtual_display_os;
   if (typeof os === 'boolean') values[VIRTUAL_DISPLAY_OS] = os;
   return values;

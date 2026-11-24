@@ -141,7 +141,7 @@ export interface NvidiaEnhancements {
 
 export interface Metadata {
   status: true;
-  platform: 'windows';
+  platform: 'windows' | 'linux';
   version: string;
   host_name: string;
   pc_address: string;

@@ -100,7 +100,7 @@ Release builds, HEVC through gamescope to the headless client, 30 Mbit/s at 1080
 | 3840x2160 60 fps, firmware's clocks | 12.87 / 22.2 / 23.0 | 55.9 fps | |
 | 3840x2160 60 fps, `high` | 5.37 / 5.4 / 5.5 | 60 fps | |
 
-The idle GPU drew 15.6 W. At 2160p the headless client's software decoder took 52 fps in both runs; the host's own output rate is the figure above. Forcing only the video clocks (`manual`, then the top index in `pp_dpm_vclk` and `pp_dpm_vclk1`) did not hold them up: the clock files read 24 and 513 MHz during the stream, host time 6.6 ms. `profile_peak` measured the same as `high`, 1.7 ms. Holding `high` costs about 40 W while a stream of a light picture runs; a game that loads the GPU raises its clocks by itself. `RUBYLIGHT_ENCODER_CLOCK=firmware` in the host's environment leaves the clocks to the firmware, for measurements.
+The idle GPU drew 15.6 W. At 2160p the headless client's software decoder took 52 fps in both runs; the host's own output rate is the figure above. Forcing only the video clocks (`manual`, then the top index in `pp_dpm_vclk` and `pp_dpm_vclk1`) did not hold them up: the clock files read 24 and 513 MHz during the stream, host time 6.6 ms. `profile_peak` measured the same as `high`, 1.7 ms. Holding `high` costs about 40 W while a stream of a light picture runs; a game that loads the GPU raises its clocks by itself. The setting `vaapi_latency_over_power` (**Full GPU clocks while streaming**, on by default, like NVIDIA's `nvenc_latency_over_power`) turns it off. The measurements above set it off for the firmware's runs.
 
 The Windows host meets the same kind of problem on NVIDIA, where a driver profile keeps the GPU's clocks up while it encodes (`rust/windows/graphics/src/nvidia_profile.rs`).
 

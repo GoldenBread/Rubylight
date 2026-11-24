@@ -7,7 +7,7 @@
 //! returned [`Raised`] puts `auto` back when the last stream ends. Forcing only the video
 //! clocks (`manual` with `pp_dpm_vclk`) did not hold them up on an RX 7800 XT and gained 5%.
 //!
-//! The file is root's. `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules` lets the
+//! The `vaapi_latency_over_power` setting (on by default) turns it off. The file is root's. `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules` lets the
 //! `video` group write it; without it [`raise`] fails with the rule's name and the stream runs
 //! at the firmware's clocks, as before.
 //!
@@ -81,13 +81,6 @@ fn write(path: &Path, value: &str) -> Result<()> {
 /// else set its level (anything but `auto`), which is then theirs. Several streams share one
 /// raise.
 pub fn raise(device: &Path) -> Result<Option<Raised>> {
-    // For A/B measurements of the raise against the firmware's own choice.
-    if std::env::var("RUBYLIGHT_ENCODER_CLOCK").is_ok_and(|value| value == "firmware") {
-        tracing::info!(
-            "RUBYLIGHT_ENCODER_CLOCK=firmware: the GPU's clocks are left to the firmware"
-        );
-        return Ok(None);
-    }
     raise_in(device, &journal_folder())
 }
 

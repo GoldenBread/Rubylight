@@ -151,6 +151,7 @@ pub const GLOBAL: &[Setting] = console_settings! {
         "amd_av1_latency_mode", "AV1 latency mode", Choice(&["none", "power_saving", "realtime", "lowest"]);
         "amd_split_frame", "Split-frame encoding (HEVC and AV1)", Choice(&["auto", "enabled", "disabled"]);
         "amd_ltr_frames", "Long-term reference frames", Number;
+        "vaapi_latency_over_power", "Full GPU clocks while streaming (Linux, AMD)", Bool;
     ]
     "NVIDIA encoding" => [
         "nvenc_preset", "NVENC preset (1 fastest to 7 slowest)", Number;

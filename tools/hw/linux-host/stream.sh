@@ -9,6 +9,7 @@
 # folder. The client's own variables pass through, e.g. BUTTERPOLLO_TEST_TIMING_CSV=FILE for
 # the timing record and NIGHTJAR_CLI_INPUT_SCRIPT=3 with
 #   APP="target/probes/release/input_recorder OUT" (rust/linux/probes) for input in a stream.
+#   HOST_CONF="vaapi_latency_over_power = false" adds lines to the sunshine.conf of the host.
 set -eu
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 WORK=${WORK:-${TMPDIR:-/tmp}/rubylight-linux-stream}
@@ -28,6 +29,7 @@ system_tray = false
 updates = off
 pyrowave = false
 sunshine_name = linux-test
+${HOST_CONF:-}
 EOF
 APP=${APP:-"ffplay -hide_banner -loglevel warning -fs -f lavfi -i 'testsrc2=size=${W}x${H}:rate=${FPS}[out0];sine=frequency=440:sample_rate=48000[out1]'"}
 python3 - "$P" "$APP" <<'EOF'

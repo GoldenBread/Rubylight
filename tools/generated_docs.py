@@ -642,7 +642,7 @@ def render_web_rules(cat, _existing):
     lines = [
         '// Generated from rust/core/config/settings.toml by tools/generated_docs.py; do not edit by hand.',
         "import type { ConfigValue } from '../api';",
-        "import { NATIVE_ENCODERS, VIRTUAL_DISPLAY_OS, offersEnhancement, type Aliases, type Option } from '../settings-types';",
+        "import { HOST_PLATFORM, NATIVE_ENCODERS, VIRTUAL_DISPLAY_OS, offersEnhancement, type Aliases, type Option } from '../settings-types';",
         "import { toList } from '../../components/settings/values';",
         '',
         'export type Values = Record<string, ConfigValue>;',
@@ -707,6 +707,8 @@ def render_web_rules(cat, _existing):
         "export const rtxHdr = (values: Values): boolean => offersEnhancement(values, 'rtx_hdr');",
         'export const virtualDisplayOs = (values: Values): boolean => values[VIRTUAL_DISPLAY_OS] !== false;',
         "export const VIRTUAL_DISPLAY_OS_GATE = (): string => 'Needs Windows 11 23H2 or later';",
+        '/** The Linux host\'s own settings show on a Linux host only. */',
+        "export const linuxHost = (values: Values): boolean => values[HOST_PLATFORM] === 'linux';",
         '',
         'export function rtss(values: Values): boolean {',
         "  const name = read(values, 'frame_limiter_provider', 'auto').toLowerCase().replace(/[^a-z0-9]/g, '');",

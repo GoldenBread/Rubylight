@@ -320,6 +320,7 @@ keys = [
   "nvenc_min_qp_hevc",
   "nvenc_min_qp_av1",
   "nvenc_latency_over_power",
+  "vaapi_latency_over_power",
   "dd_mode_remapping",
   "rtss_install_path",
   "rtss_frame_limit_type",
@@ -683,6 +684,7 @@ global_order = [
   "amd_av1_latency_mode",
   "amd_split_frame",
   "amd_ltr_frames",
+  "vaapi_latency_over_power",
   "nvenc_preset",
   "nvenc_rate_control",
   "nvenc_target_quality",
@@ -4094,6 +4096,21 @@ inactive_hint = "Applies when NVIDIA NVENC encodes, as Automatic does on NVIDIA 
 control = { kind = "toggle" }
 visible_when = { ref = "nvenc" }
 console = { group = "NVIDIA encoding", label = "Force VSync on for virtual display streams", control = "bool" }
+
+[[setting]]
+key = "vaapi_latency_over_power"
+part = "video_encoders"
+type = "bool"
+default = true
+category = "encoders"
+group = "AMD on Linux"
+label = "Full GPU clocks while streaming"
+description = "Holds an AMD graphics card at its high performance level while a stream runs, so the encoder works at full clocks when a game or the desktop barely loads the GPU. Leave it on."
+details = "At 1080p and 60 fps a frame then takes about a quarter of the time, for about 40 W more while a light picture streams; a game that loads the GPU raises its clocks by itself. The automatic level comes back when the stream ends. Needs the udev rule rust/linux/packaging/udev/70-rubylight-encoder-clock.rules."
+doc_summary = "On a Linux host, holds the AMD graphics card at its `high` performance level while a stream runs, so the encoder works at full clocks when a game or the desktop barely loads the GPU; `auto` comes back when the stream ends. Needs `rust/linux/packaging/udev/70-rubylight-encoder-clock.rules`. Costs about 40 W while a light picture streams. Leave it on."
+control = { kind = "toggle" }
+visible_when = { ref = "linuxHost" }
+console = { group = "AMD encoding", label = "Full GPU clocks while streaming (Linux, AMD)", control = "bool" }
 
 [[setting]]
 key = "nvenc_vbv_increase"
