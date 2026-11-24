@@ -39,7 +39,7 @@ use crate::{
     state,
 };
 use anyhow::{Context, Result, anyhow, bail};
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -47,6 +47,17 @@ use std::{
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard, PoisonError},
 };
+
+mod paths;
+mod types;
+
+pub use paths::{app_key, check_path, expand, file_key, paths};
+use paths::{normal, store_name};
+pub use types::{
+    BACKUPS, Begun, FileSwap, Journal, Report, Running, Step, StillRunning, Swap, Watched,
+    still_running,
+};
+use types::{Mode, Unread, is_missing};
 
 /// The app setting: a list of paths.
 pub const SETTING: &str = "game-settings-files";
@@ -58,306 +69,12 @@ pub const JOURNAL_FILE: &str = "journal.json";
 pub const MAX_FILES: usize = 16;
 /// The largest file taken: settings, not saves or caches.
 pub const MAX_FILE_BYTES: u64 = 16 << 20;
-const MAX_PATH: usize = 1024;
 
 /// Held through every journal change, so two swaps never interleave.
 static LOCK: Mutex<()> = Mutex::new(());
 fn lock() -> MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(PoisonError::into_inner)
 }
-
-/// The paths an app lists, checked; none when it lists none.
-pub fn paths(extra: &BTreeMap<String, Value>) -> Result<Vec<String>> {
-    let list = match extra.get(SETTING) {
-        None | Some(Value::Null) => return Ok(Vec::new()),
-        Some(Value::Array(list)) => list,
-        Some(_) => bail!("{SETTING} must be a list of paths"),
-    };
-    let mut paths = Vec::new();
-    let mut seen = BTreeSet::new();
-    for path in list {
-        let path = path
-            .as_str()
-            .with_context(|| format!("{SETTING} must be a list of paths"))?
-            .trim();
-        if path.is_empty() {
-            continue;
-        }
-        check_path(path)?;
-        if !seen.insert(normal(path)) {
-            bail!("{path} is listed twice");
-        }
-        paths.push(path.to_owned());
-    }
-    if paths.len() > MAX_FILES {
-        bail!("at most {MAX_FILES} game settings files per app");
-    }
-    Ok(paths)
-}
-
-/// Check a path as written: one line, a drive letter or a `%VAR%` first, no network or device
-/// path, no `..`, and every `%` part of a `%NAME%`.
-pub fn check_path(path: &str) -> Result<()> {
-    let path = path.trim();
-    if path.is_empty() {
-        bail!("no file is named");
-    }
-    if path.chars().count() > MAX_PATH || path.chars().any(char::is_control) {
-        bail!("{path}: a path is one line of at most {MAX_PATH} characters");
-    }
-    let names = variables(path)?;
-    if !path.starts_with('%') {
-        check_absolute(path)?;
-    } else if names.is_empty() {
-        bail!(
-            "{path}: start with a drive letter, such as C:\\, or a %NAME% such as %LOCALAPPDATA%"
-        );
-    }
-    let bare = names.iter().fold(path.to_owned(), |rest, name| {
-        rest.replace(&format!("%{name}%"), "x")
-    });
-    if bare.get(2..).is_some_and(|rest| rest.contains(':')) {
-        bail!("{path}: a colon belongs only after the drive letter");
-    }
-    if path.split(['\\', '/']).any(|part| part.trim() == "..") {
-        bail!("{path}: .. is not taken; name the file's own folder");
-    }
-    if path.ends_with(['\\', '/']) {
-        bail!("{path} names a folder; name the settings file in it");
-    }
-    Ok(())
-}
-
-/// The `%NAME%` parts of `path`, in order. An unpaired `%` is an error.
-fn variables(path: &str) -> Result<Vec<String>> {
-    let parts: Vec<&str> = path.split('%').collect();
-    if parts.len().is_multiple_of(2) {
-        bail!("{path}: a % has no closing %; environment variables are written %NAME%");
-    }
-    parts
-        .iter()
-        .skip(1)
-        .step_by(2)
-        .map(|name| {
-            if name.is_empty()
-                || !name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '(' | ')' | '-'))
-            {
-                bail!("{path}: %{name}% is not an environment variable name");
-            }
-            Ok((*name).to_owned())
-        })
-        .collect()
-}
-
-/// A drive letter, a colon and a slash first.
-fn check_absolute(path: &str) -> Result<()> {
-    let bytes = path.as_bytes();
-    if matches!(bytes.first(), Some(b'\\' | b'/')) {
-        bail!("{path}: network and device paths are not taken; start with a drive letter");
-    }
-    let drive = bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'\\' | b'/');
-    if !drive {
-        bail!(
-            "{path}: start with a drive letter, such as C:\\, or a %NAME% such as %LOCALAPPDATA%"
-        );
-    }
-    Ok(())
-}
-
-/// `path` with its `%NAME%` parts replaced by `lookup` (the Windows user's environment), checked
-/// again as a file on a drive. A name that is not set is an error.
-pub fn expand(path: &str, lookup: impl Fn(&str) -> Option<String>) -> Result<PathBuf> {
-    check_path(path)?;
-    let path = path.trim();
-    let mut expanded = String::new();
-    for (index, part) in path.split('%').enumerate() {
-        if index % 2 == 0 {
-            expanded.push_str(part);
-        } else {
-            let value = lookup(part)
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| anyhow!("{path}: %{part}% is not set for the Windows user"))?;
-            expanded.push_str(value.trim().trim_end_matches(['\\', '/']));
-        }
-    }
-    check_absolute(&expanded).with_context(|| format!("{path} becomes {expanded}"))?;
-    if expanded.get(2..).is_some_and(|rest| rest.contains(':'))
-        || expanded.split(['\\', '/']).any(|part| part.trim() == "..")
-    {
-        bail!("{path} becomes {expanded}, which is not a plain file path");
-    }
-    Ok(PathBuf::from(expanded.replace('/', "\\")))
-}
-
-/// A path compared without regard to ASCII case or slashes.
-fn normal(path: &str) -> String {
-    path.trim().replace('/', "\\").to_ascii_lowercase()
-}
-
-/// A name for the store: letters, digits, `.`, `-` and `_` only, with a hash of the original when
-/// anything had to change.
-fn store_name(name: &str) -> String {
-    let clean: String = name
-        .chars()
-        .filter(|c| !c.is_control())
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .take(64)
-        .collect();
-    let clean = clean.trim_matches('.').to_owned();
-    if !clean.is_empty() && clean == name {
-        clean
-    } else {
-        format!("{clean}-{:08x}", crc32fast::hash(name.as_bytes()))
-    }
-}
-
-/// The store's name for a file as the app lists it: its file name and a hash of the whole path.
-pub fn file_key(path: &str) -> String {
-    let normal = normal(path);
-    let name = normal.rsplit('\\').next().unwrap_or_default();
-    let clean: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .take(64)
-        .collect();
-    format!("{clean}-{:08x}", crc32fast::hash(normal.as_bytes()))
-}
-
-/// The store's name for an app: its `uuid`, else its id.
-pub fn app_key(app: &state::App) -> String {
-    app.extra
-        .get("uuid")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|uuid| !uuid.is_empty())
-        .map_or_else(|| app.id().to_string(), str::to_ascii_lowercase)
-}
-
-/// Where a swapped file is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Step {
-    /// The original is kept; the device's copy may be going in. Finishing puts the original back.
-    Placing,
-    /// The file is the device's (its copy, or on its first launch the file as it was). Finishing
-    /// saves it as the device's copy, then puts the original back.
-    Playing,
-    /// Saved as the device's copy; the original goes back.
-    Saved,
-    Done,
-}
-
-/// A file of a swap.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileSwap {
-    /// As the app lists it.
-    pub written: String,
-    /// Expanded.
-    pub path: PathBuf,
-    pub key: String,
-    pub step: Step,
-}
-
-/// A launch's swap, until every file is back.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Swap {
-    pub id: String,
-    pub app: String,
-    #[serde(default)]
-    pub app_name: String,
-    pub device: String,
-    #[serde(default)]
-    pub device_name: String,
-    pub files: Vec<FileSwap>,
-    /// The game's processes seen while it ran: the files stay while one runs.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub processes: Vec<Watched>,
-    /// Why the last try to finish it failed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-impl Swap {
-    fn holds(&self, path: &Path) -> bool {
-        let path = normal(&path.to_string_lossy());
-        self.files
-            .iter()
-            .any(|file| file.step != Step::Done && normal(&file.path.to_string_lossy()) == path)
-    }
-    fn who(&self) -> String {
-        let device = if self.device_name.is_empty() {
-            &self.device
-        } else {
-            &self.device_name
-        };
-        format!("{} from {device}", self.app_name)
-    }
-}
-
-/// The swaps not finished yet.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Journal {
-    #[serde(default)]
-    pub version: u32,
-    #[serde(default)]
-    pub swaps: Vec<Swap>,
-}
-
-/// What a launch or a finish did, by file as listed.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Report {
-    /// The device's copy went in.
-    pub placed: Vec<String>,
-    /// The device had no copy: the file stays and becomes its copy at the end.
-    pub first: Vec<String>,
-    /// Saved as the device's copy.
-    pub saved: Vec<String>,
-    /// The original is back.
-    pub restored: Vec<String>,
-    /// Done, but worth saying loudly (a file the game removed).
-    pub warnings: Vec<String>,
-    /// The game was never seen, so its close could not be waited for: why, for the console.
-    pub unwatched: Option<String>,
-}
-
-/// A launch's swap, begun.
-#[derive(Debug)]
-pub struct Begun {
-    pub id: String,
-    pub report: Report,
-}
-
-/// A process of a swap's game.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Watched {
-    pub pid: u32,
-    /// Its creation time, which tells a later process with the same id apart.
-    pub started: u64,
-    /// Its program, for messages.
-    pub program: String,
-}
-
-/// Which of a swap's processes still runs, if one does: its program, or why that is not known.
-pub type Running = Box<dyn Fn(&[Watched]) -> Option<String> + Send + Sync>;
-
-/// Originals put back that stay as backups, newest first: `original/<key>`, then `.1`, `.2`.
-pub const BACKUPS: usize = 3;
 
 /// The copies and the journal under a config folder.
 pub struct Store {
@@ -887,17 +604,6 @@ impl Store {
     }
 }
 
-/// How a swap ends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mode {
-    /// Its app stopped: the files are saved as the device's copies.
-    Finish,
-    /// Its launch failed before the game ran: only the originals go back.
-    Cancel,
-    /// The user puts the files back although the game may still run.
-    Release,
-}
-
 /// Make room for a new newest backup at `newest`: each older one moves down, the oldest goes.
 fn rotate(newest: &Path) -> std::io::Result<()> {
     let numbered = |n: usize| {
@@ -916,38 +622,6 @@ fn rotate(newest: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
-}
-
-/// Marks a finish refused because the swap's game still runs.
-#[derive(Debug)]
-pub struct StillRunning;
-impl std::fmt::Display for StillRunning {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the game still runs")
-    }
-}
-impl std::error::Error for StillRunning {}
-/// Whether a finish was refused because the swap's game still runs.
-pub fn still_running(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<StillRunning>().is_some()
-}
-
-/// A [`Store::read_game`] error: the message, and whether the file does not exist.
-#[derive(Debug)]
-struct Unread {
-    missing: bool,
-    message: String,
-}
-impl std::fmt::Display for Unread {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-impl std::error::Error for Unread {}
-fn is_missing(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<Unread>()
-        .is_some_and(|unread| unread.missing)
 }
 
 /// A settings file: a file of at most [`MAX_FILE_BYTES`].
