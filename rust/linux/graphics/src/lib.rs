@@ -23,6 +23,7 @@ pub mod image;
 pub mod nvidia_enhance;
 pub mod nvidia_profile;
 pub mod overlay;
+pub mod packed444;
 pub mod present_timing;
 pub mod pyrowave;
 pub mod radeon;

@@ -618,11 +618,14 @@ impl PipeWire {
             config.get("adapter_name", ""),
             config.get("adapter_pnp_id", ""),
         )?;
+        // Set by the stream for a packed 4:4:4 picture (`capture_config` in the stream crate).
+        let full_chroma =
+            config.boolean(butterpollo_media_policy::capture_policy::FULL_CHROMA, false);
         let capture = match &desktop {
             Some((cast, node)) => {
-                pw_capture::PipeWireCapture::open_portal(cast, *node, probe.va())?
+                pw_capture::PipeWireCapture::open_portal(cast, *node, probe.va(), full_chroma)?
             }
-            None => pw_capture::PipeWireCapture::open(node, probe.va())?,
+            None => pw_capture::PipeWireCapture::open(node, probe.va(), full_chroma)?,
         };
         let size = capture.size;
         let found = node::nodes()

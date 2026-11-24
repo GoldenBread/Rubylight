@@ -1,6 +1,12 @@
 //! Capture publication and idle-wait policy, independent of Windows/GPU APIs.
 use std::time::{Duration, Instant};
 
+/// The capture setting a stream sets, in its capture's own copy of the settings, when the
+/// encoder needs the picture's full chroma: a packed 4:4:4 stream. A Linux capture then keeps
+/// its frames in RGB instead of converting them to 4:2:0; the Windows capture is RGB anyway.
+/// Not a user setting.
+pub const FULL_CHROMA: &str = "capture_full_chroma";
+
 /// Preserve short active polls and pending GPU handoffs. After 100 ms without
 /// a frame, notifications can interrupt a longer wait; the 10 ms bound still
 /// services helper commands, stop and device checks.

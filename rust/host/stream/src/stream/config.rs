@@ -2,6 +2,22 @@
 use super::*;
 use butterpollo_session::config_ext::ConfigExt;
 
+/// A stream's settings as its capture reads them: marked with whether the stream's encoder
+/// needs the picture's full chroma (a packed 4:4:4 stream), whatever the settings say.
+pub(super) fn with_full_chroma(config: &Config, full_chroma: bool) -> Config {
+    let mut config = config.clone();
+    config.values.insert(
+        butterpollo_media_policy::capture_policy::FULL_CHROMA.into(),
+        full_chroma.to_string(),
+    );
+    config
+}
+
+/// Whether a capture's settings ask for full chroma ([`with_full_chroma`]).
+pub(super) fn full_chroma(config: &Config) -> bool {
+    config.boolean(butterpollo_media_policy::capture_policy::FULL_CHROMA, false)
+}
+
 /// Whether `overrides` set the peak brightness, under its name before or
 /// after it moved out of RTX HDR.
 pub(super) fn sets_peak(overrides: &serde_json::Map<String, serde_json::Value>) -> bool {
@@ -501,6 +517,20 @@ pub(super) fn video_max_batch_size_kb(config: &Config) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A packed 4:4:4 stream's capture keeps full chroma, so it is never shared with a 4:2:0
+    /// stream's; the stream decides, not a setting of the same name.
+    #[test]
+    fn a_full_chroma_capture_is_its_own() {
+        let key = |config: &Config| {
+            CaptureKey::new("wgc", "display", false, &capture_config(config), "", false)
+        };
+        let plain = Config::default();
+        assert_eq!(key(&plain), key(&with_full_chroma(&plain, false)));
+        assert_ne!(key(&plain), key(&with_full_chroma(&plain, true)));
+        let set = Config::parse("capture_full_chroma=true").unwrap();
+        assert!(!full_chroma(&with_full_chroma(&set, false)));
+    }
 
     fn negotiated(width: u32, height: u32) -> butterpollo_media_policy::rtsp::Negotiated {
         butterpollo_media_policy::rtsp::Negotiated {

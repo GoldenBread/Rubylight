@@ -75,10 +75,16 @@ impl Va {
 
     /// The sysfs folder of the render node's GPU (`/sys/dev/char/<major>:<minor>/device`).
     pub fn sysfs_device(&self) -> Option<std::path::PathBuf> {
+        let (major, minor) = self.render_node()?;
+        std::fs::canonicalize(format!("/sys/dev/char/{major}:{minor}/device")).ok()
+    }
+
+    /// The render node's device number, which Vulkan reports for the same GPU
+    /// (`VK_EXT_physical_device_drm`).
+    pub fn render_node(&self) -> Option<(u32, u32)> {
         use std::os::unix::fs::MetadataExt;
         let rdev = self._node.metadata().ok()?.rdev();
-        let (major, minor) = (libc::major(rdev), libc::minor(rdev));
-        std::fs::canonicalize(format!("/sys/dev/char/{major}:{minor}/device")).ok()
+        Some((libc::major(rdev), libc::minor(rdev)))
     }
     pub fn vendor(&self) -> String {
         // SAFETY: an initialized display; the string lives as long as it does.
@@ -163,9 +169,52 @@ impl Va {
         height: u32,
         count: usize,
     ) -> Result<Vec<VASurfaceID>> {
-        let mut attrib = int_attrib(VASurfaceAttribPixelFormat, pixel as i32);
+        self.create(rt_format, pixel, (width, height), count, false)
+    }
+
+    /// Surfaces laid out linearly (DRM modifier 0): rows of samples one after the other, which
+    /// the packed 4:4:4 pass reads and writes as plain buffers. The driver's own layout is
+    /// tiled.
+    pub fn create_linear_surfaces(
+        &self,
+        rt_format: u32,
+        pixel: u32,
+        width: u32,
+        height: u32,
+        count: usize,
+    ) -> Result<Vec<VASurfaceID>> {
+        self.create(rt_format, pixel, (width, height), count, true)
+    }
+
+    fn create(
+        &self,
+        rt_format: u32,
+        pixel: u32,
+        (width, height): (u32, u32),
+        count: usize,
+        linear: bool,
+    ) -> Result<Vec<VASurfaceID>> {
+        let mut modifiers = [0u64];
+        let mut list = VADRMFormatModifierList {
+            num_modifiers: 1,
+            modifiers: modifiers.as_mut_ptr(),
+        };
+        let mut attribs = [
+            int_attrib(VASurfaceAttribPixelFormat, pixel as i32),
+            VASurfaceAttrib {
+                type_: VASurfaceAttribDRMFormatModifiers,
+                flags: VA_SURFACE_ATTRIB_SETTABLE,
+                value: VAGenericValue {
+                    type_: VAGenericValueTypePointer,
+                    value: _VAGenericValue__bindgen_ty_1 {
+                        p: std::ptr::from_mut(&mut list).cast(),
+                    },
+                },
+            },
+        ];
         let mut surfaces = vec![VA_INVALID_SURFACE; count];
-        // SAFETY: `surfaces` has room for `count` ids; one attribute is passed.
+        // SAFETY: `surfaces` has room for `count` ids; the attributes, and the modifier list
+        // the second points to, live until the call returns.
         let status = unsafe {
             vaCreateSurfaces(
                 self.dpy,
@@ -174,8 +223,8 @@ impl Va {
                 height,
                 surfaces.as_mut_ptr(),
                 count as u32,
-                &mut attrib,
-                1,
+                attribs.as_mut_ptr(),
+                if linear { 2 } else { 1 },
             )
         };
         check(self.dpy, status, "vaCreateSurfaces")?;

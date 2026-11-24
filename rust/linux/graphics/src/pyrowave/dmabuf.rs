@@ -60,6 +60,15 @@ impl DmaBuf {
 /// Exports `surface` as one DMA-BUF with its planes composed in a single layer. The surface
 /// must be finished by the GPU work that wrote it (`vaSyncSurface`) before the picture is read.
 pub fn export_surface(surface: &Pooled) -> Result<DmaBuf> {
+    export(surface, va::VA_EXPORT_SURFACE_READ_ONLY)
+}
+
+/// [`export_surface`] for a picture the importer writes (the packed 4:4:4 pass's target).
+pub fn export_surface_writable(surface: &Pooled) -> Result<DmaBuf> {
+    export(surface, va::VA_EXPORT_SURFACE_READ_WRITE)
+}
+
+fn export(surface: &Pooled, access: u32) -> Result<DmaBuf> {
     let display = surface.va().dpy;
     // SAFETY: a plain-data descriptor the call fills in.
     let mut desc: va::VADRMPRIMESurfaceDescriptor = unsafe { std::mem::zeroed() };
@@ -71,7 +80,7 @@ pub fn export_surface(surface: &Pooled) -> Result<DmaBuf> {
             display,
             surface.id(),
             va::VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
-            va::VA_EXPORT_SURFACE_READ_ONLY | va::VA_EXPORT_SURFACE_COMPOSED_LAYERS,
+            access | va::VA_EXPORT_SURFACE_COMPOSED_LAYERS,
             std::ptr::from_mut(&mut desc).cast(),
         )
     };

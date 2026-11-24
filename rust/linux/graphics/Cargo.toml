@@ -17,7 +17,7 @@ butterpollo-media-policy = { path = "../../core/media-policy" }
 rubylight-protocol = { path = "../../../client/protocol/core" }
 rubylight-vdisplay-proto = { path = "../../drivers/rubylight-vdisplay-proto" }
 libloading = "0.8"
-ash = { version = "0.38", default-features = false, features = ["std"] }
+ash = { version = "0.38", default-features = false, features = ["std", "loaded"] }
 libc = "0.2"
 pipewire = "0.10"
 

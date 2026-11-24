@@ -1,4 +1,7 @@
-//! The optional codec probes (PyroWave and packed 4:4:4) and their typed failures. Linux has no hardware encoder to probe yet, so each probe fails at once with an error that is none of the retryable ones.
+//! The optional codec probes (PyroWave and packed 4:4:4) and their typed failures. Both run in
+//! the host's process: PyroWave on Vulkan compute, packed 4:4:4 on the VA-API encoder with a
+//! Vulkan compute pass ([`crate::packed444`]). A probe that cannot run fails with an error that
+//! is none of the retryable ones.
 use crate::user_helper::UserLauncher;
 use anyhow::{Result, ensure};
 use butterpollo_config::config::Config;
@@ -76,12 +79,14 @@ pub fn pyrowave_with(
     crate::pyrowave::probe_flags(&crate::pyrowave::Options::default())
 }
 
-/// Probe one packed 4:4:4 mode. An invalid request is refused as such; a valid
-/// one fails with a plain error, so clients are not offered the mode.
+/// Probe one packed 4:4:4 mode: three pictures (a key picture and two that refer to it)
+/// packed and encoded as a stream of the mode would be. An invalid request is refused as such;
+/// a mode this host cannot encode (10-bit, the layered version) fails with why, so clients are
+/// not offered it.
 pub fn packed_with(
-    _config: &Config,
+    config: &Config,
     stream: &Negotiated,
-    _stop: &dyn Fn() -> bool,
+    stop: &dyn Fn() -> bool,
     _launcher: &dyn UserLauncher,
 ) -> Result<()> {
     stream.validate()?;
@@ -89,7 +94,39 @@ pub fn packed_with(
         rubylight_protocol::packed444::supported(stream.chroma_packing),
         "invalid packed probe request"
     );
-    Err(crate::unsupported("Packed 4:4:4 encoding"))
+    if stop() {
+        return Err(Interrupted.into());
+    }
+    let mut encoder =
+        crate::encoder::Encoder::new_options(stream, config.get("output_name", ""), config)?;
+    // Columns of alternating colours: the chroma a 4:2:0 picture would average away.
+    let (width, height) = (stream.width, stream.height);
+    let bytes = (0..width * height)
+        .flat_map(|i| match i % 3 {
+            0 => [0, 0, 255, 255],
+            1 => [255, 0, 0, 255],
+            _ => [0, 255, 0, 255],
+        })
+        .collect();
+    let image = crate::capture::Image {
+        width,
+        height,
+        stride: width as usize * 4,
+        bytes,
+        captured: std::time::Instant::now(),
+        pixel: crate::capture::Pixel::Bgra8,
+    };
+    for picture in 0..3 {
+        if stop() {
+            return Err(Interrupted.into());
+        }
+        let encoded = encoder.encode(&image, picture == 0, stream.bitrate_kbps.max(1000))?;
+        ensure!(
+            !encoded.is_empty(),
+            "the packed encoder gave no picture {picture}"
+        );
+    }
+    Ok(())
 }
 
 /// The probe's worker process. The Linux host never starts one; run by hand it

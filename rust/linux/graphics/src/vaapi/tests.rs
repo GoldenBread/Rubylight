@@ -249,6 +249,74 @@ fn pictures_that_are_not_whole_blocks_decode_cropped() {
     encode_and_decode(2, "obu", 1920, 1080);
 }
 
+/// Packed 4:4:4 is version 1 at 8 bits in HEVC or AV1: the rest is refused with why, before a
+/// GPU is asked. With a GPU, the startup probe encodes each 8-bit mode and refuses the others.
+#[test]
+fn packed_444_is_8_bit_version_1() {
+    let packed = |codec, version, ten_bit| Negotiated {
+        chroma_packing: version,
+        sdr_10bit: ten_bit,
+        ..negotiated(codec, 640, 480, 30)
+    };
+    for codec in [1, 2] {
+        assert!(crate::encoder::format_of(&packed(codec, 1, false), false).is_ok());
+        let layered = crate::encoder::format_of(&packed(codec, 2, true), false).unwrap_err();
+        assert!(format!("{layered:#}").contains("version 2"), "{layered:#}");
+        let ten_bit = crate::encoder::format_of(&packed(codec, 1, true), false).unwrap_err();
+        assert!(format!("{ten_bit:#}").contains("10-bit"), "{ten_bit:#}");
+    }
+    // H.264 has no packed mode.
+    assert!(crate::encoder::format_of(&packed(0, 1, false), false).is_err());
+    if crate::vaapi::node::nodes().is_empty() {
+        return skip("no AMD or NVIDIA render node");
+    }
+    let probe = |config: &Negotiated| {
+        crate::codec_probe::packed_with(&Config::default(), config, &|| false, &NoLauncher)
+    };
+    for codec in [1, 2] {
+        if let Err(error) = probe(&packed(codec, 1, false)) {
+            return skip(&format!("the GPU cannot pack codec {codec}: {error:#}"));
+        }
+        assert!(probe(&packed(codec, 1, true)).is_err());
+    }
+}
+
+/// The packed probe opens no pipe and starts no child.
+struct NoLauncher;
+impl crate::user_helper::UserLauncher for NoLauncher {
+    fn pipe_server(
+        &self,
+        _: &str,
+    ) -> anyhow::Result<(Box<dyn crate::user_helper::HelperPipe>, String)> {
+        anyhow::bail!("unused")
+    }
+    fn pipe_client(
+        &self,
+        _: &str,
+        _: u32,
+        _: &str,
+    ) -> anyhow::Result<Box<dyn crate::user_helper::HelperPipe>> {
+        anyhow::bail!("unused")
+    }
+    fn spawn_user(
+        &self,
+        _: &std::path::Path,
+        _: &[std::ffi::OsString],
+    ) -> anyhow::Result<Box<dyn crate::user_helper::UserChild>> {
+        anyhow::bail!("unused")
+    }
+    fn spawn_user_piped(
+        &self,
+        _: &std::path::Path,
+        _: &[std::ffi::OsString],
+    ) -> anyhow::Result<crate::user_helper::PipedUserChild> {
+        anyhow::bail!("unused")
+    }
+    fn user_sid(&self) -> Option<String> {
+        None
+    }
+}
+
 #[test]
 fn unavailable_encodings_fail_visibly() {
     let mut config = negotiated(1, 640, 480, 30);

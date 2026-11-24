@@ -18,6 +18,8 @@ pub struct Pool {
     /// as encoders read it.
     pub width: u32,
     pub height: u32,
+    /// Surfaces laid out linearly ([`Va::create_linear_surfaces`]).
+    linear: bool,
     free: Mutex<Vec<VASurfaceID>>,
     /// Surfaces made so far, free or in use.
     made: AtomicUsize,
@@ -47,22 +49,64 @@ impl Pool {
         first: usize,
         limit: usize,
     ) -> Result<Arc<Self>> {
+        Self::with_layout(va, (rt_format, pixel, false), (width, height), first, limit)
+    }
+
+    /// [`Pool::new`] with linearly laid out surfaces, for the packed 4:4:4 pass.
+    pub fn new_linear(
+        va: &Arc<Va>,
+        rt_format: u32,
+        pixel: u32,
+        width: u32,
+        height: u32,
+        first: usize,
+        limit: usize,
+    ) -> Result<Arc<Self>> {
+        Self::with_layout(va, (rt_format, pixel, true), (width, height), first, limit)
+    }
+
+    fn with_layout(
+        va: &Arc<Va>,
+        (rt_format, pixel, linear): (u32, u32, bool),
+        (width, height): (u32, u32),
+        first: usize,
+        limit: usize,
+    ) -> Result<Arc<Self>> {
         let (width, height) = (aligned(width), aligned(height));
-        let free = if first > 0 {
-            va.create_surfaces(rt_format, pixel, width, height, first)?
-        } else {
-            Vec::new()
-        };
-        Ok(Arc::new(Self {
+        let pool = Self {
             va: va.clone(),
             rt_format,
             pixel,
             width,
             height,
-            made: AtomicUsize::new(free.len()),
-            free: Mutex::new(free),
+            linear,
+            made: AtomicUsize::new(0),
+            free: Mutex::new(Vec::new()),
             limit,
-        }))
+        };
+        let free = if first > 0 {
+            pool.make(first)?
+        } else {
+            Vec::new()
+        };
+        pool.made.store(free.len(), Ordering::Relaxed);
+        *pool.free.lock().unwrap_or_else(PoisonError::into_inner) = free;
+        Ok(Arc::new(pool))
+    }
+
+    fn make(&self, count: usize) -> Result<Vec<VASurfaceID>> {
+        let (rt, pixel, width, height) = (self.rt_format, self.pixel, self.width, self.height);
+        if self.linear {
+            self.va
+                .create_linear_surfaces(rt, pixel, width, height, count)
+        } else {
+            self.va.create_surfaces(rt, pixel, width, height, count)
+        }
+    }
+
+    /// Whether the surfaces are laid out linearly.
+    pub fn linear(&self) -> bool {
+        self.linear
     }
 
     /// A free surface, a new one while the pool is under its limit, or `None` when all are in
@@ -80,8 +124,7 @@ impl Pool {
                     return None;
                 }
                 let made = self
-                    .va
-                    .create_surfaces(self.rt_format, self.pixel, self.width, self.height, 1)
+                    .make(1)
                     .inspect_err(|error| tracing::warn!(%error, "a surface could not be made"))
                     .ok()?;
                 self.made.fetch_add(1, Ordering::Relaxed);
@@ -111,6 +154,10 @@ impl Pooled {
         &self.pool.va
     }
     /// The surface's pixel format as a fourcc.
+    /// Whether the surface is laid out linearly ([`Pool::new_linear`]).
+    pub fn linear(&self) -> bool {
+        self.pool.linear
+    }
     pub fn pixel(&self) -> u32 {
         self.pool.pixel
     }

@@ -68,6 +68,17 @@ pub(super) struct Options {
     /// Buffers in memory (MemFd or MemPtr) that are uploaded to the GPU, for a producer that
     /// offers no DMA-BUF the GPU can import.
     pub(super) shm: bool,
+    /// Frames kept in RGB, in linear surfaces, for a packed 4:4:4 stream: only RGB formats are
+    /// asked for, and each frame is copied rather than converted to NV12.
+    pub(super) full_chroma: bool,
+}
+
+/// The surfaces frames are converted into: NV12, or linear BGRX for full chroma.
+fn pool(va: &Arc<Va>, width: u32, height: u32, full_chroma: bool) -> Result<Arc<Pool>> {
+    if full_chroma {
+        return Pool::new_linear(va, VA_RT_FORMAT_RGB32, BGRX, width, height, 3, POOL_LIMIT);
+    }
+    Pool::new(va, VA_RT_FORMAT_YUV420, NV12, width, height, 3, POOL_LIMIT)
 }
 
 /// The path frames take to the GPU, as [`PipeWireCapture::path`] names it.
@@ -111,17 +122,27 @@ pub struct PipeWireCapture {
 
 impl PipeWireCapture {
     /// Starts capturing `node` and waits until the producer has said what its picture is.
-    pub fn open(node: u32, va: &Arc<Va>) -> Result<Self> {
-        Self::open_with(node, None, va, Options::default())
+    pub fn open(node: u32, va: &Arc<Va>, full_chroma: bool) -> Result<Self> {
+        let options = Options {
+            full_chroma,
+            ..Options::default()
+        };
+        Self::open_with(node, None, va, options)
     }
 
     /// Starts capturing a monitor the desktop portal shares. DMA-BUFs go first; when the
     /// compositor and the GPU cannot agree on one (no common modifier, or the GPU cannot
     /// import it) the frames come through memory and are uploaded, which is logged.
-    pub fn open_portal(session: &Arc<ScreenCast>, node: u32, va: &Arc<Va>) -> Result<Self> {
+    pub fn open_portal(
+        session: &Arc<ScreenCast>,
+        node: u32,
+        va: &Arc<Va>,
+        full_chroma: bool,
+    ) -> Result<Self> {
         let desktop = Options {
             desktop: true,
             shm: false,
+            full_chroma,
         };
         let first = session
             .open_remote()
@@ -291,7 +312,7 @@ impl Local {
         info.parse(param)
             .map_err(|e| anyhow!("unreadable video format: {e:?}"))?;
         let pixel = match info.format() {
-            VideoFormat::NV12 if !self.options.shm => NV12,
+            VideoFormat::NV12 if !self.options.shm && !self.options.full_chroma => NV12,
             VideoFormat::BGRx => BGRX,
             VideoFormat::BGRA => BGRA,
             VideoFormat::RGBx => RGBX,
@@ -322,15 +343,7 @@ impl Local {
             width,
             height,
             modifier: info.modifier(),
-            pool: Pool::new(
-                &self.va,
-                VA_RT_FORMAT_YUV420,
-                NV12,
-                width,
-                height,
-                3,
-                POOL_LIMIT,
-            )?,
+            pool: pool(&self.va, width, height, self.options.full_chroma)?,
             converter: Converter::new(&self.va, width, height)?,
             upload: if self.options.shm {
                 Some(Pool::new(
@@ -507,9 +520,13 @@ impl Local {
             };
             (input, source)
         };
-        format
-            .converter
-            .convert(input, source, size, output.id(), size)?;
+        if self.options.full_chroma {
+            format.converter.scale_rgb(input, size, output.id(), size)?;
+        } else {
+            format
+                .converter
+                .convert(input, source, size, output.id(), size)?;
+        }
         // The producer may draw into this buffer again as soon as it is back; wait for the
         // conversion to have read it.
         va.sync(output.id())?;
@@ -744,11 +761,12 @@ fn run(
             .map(|&format| offer(format, options.shm))
             .collect::<Result<_>>()?
     } else {
-        vec![
-            offer(VideoFormat::NV12, false)?,
-            offer(VideoFormat::BGRx, false)?,
-            offer(VideoFormat::BGRA, false)?,
-        ]
+        // NV12 first, unless the stream needs the full chroma an NV12 picture has lost.
+        let nv12 = (!options.full_chroma).then_some(VideoFormat::NV12);
+        nv12.into_iter()
+            .chain([VideoFormat::BGRx, VideoFormat::BGRA])
+            .map(|format| offer(format, false))
+            .collect::<Result<_>>()?
     };
     let mut params = offers
         .iter()

@@ -88,6 +88,38 @@ impl Converter {
     }
 
     /// Converts a BT.709 picture into desktop RGB, for reading a captured frame back.
+    /// Copies an RGB picture into another RGB surface, scaled to `output_size`, colours as they
+    /// are: what the packed 4:4:4 pass reads.
+    pub fn scale_rgb(
+        &self,
+        input: VASurfaceID,
+        input_size: (u32, u32),
+        output: VASurfaceID,
+        output_size: (u32, u32),
+    ) -> Result<()> {
+        let region = |(width, height): (u32, u32)| VARectangle {
+            x: 0,
+            y: 0,
+            width: width as u16,
+            height: height as u16,
+        };
+        let (from, to) = (region(input_size), region(output_size));
+        // SAFETY: plain data; zero is a valid start for every field.
+        let mut params: VAProcPipelineParameterBuffer = unsafe { std::mem::zeroed() };
+        params.surface = input;
+        params.surface_region = &raw const from;
+        params.output_region = &raw const to;
+        params.surface_color_standard = VAProcColorStandardSRGB;
+        params.output_color_standard = VAProcColorStandardSRGB;
+        params.input_color_properties.color_range = VA_SOURCE_RANGE_FULL as u8;
+        params.output_color_properties.color_range = VA_SOURCE_RANGE_FULL as u8;
+        let mut buffers =
+            [self
+                .va
+                .param_buffer(self.context, VAProcPipelineParameterBufferType, &mut params)?];
+        self.va.submit(self.context, output, &mut buffers)
+    }
+
     pub fn to_rgb(
         &self,
         input: VASurfaceID,

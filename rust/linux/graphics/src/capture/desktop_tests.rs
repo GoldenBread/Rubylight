@@ -176,6 +176,7 @@ fn memory_buffers_are_uploaded_and_encoded() {
         let options = Options {
             desktop: true,
             shm: true,
+            ..Options::default()
         };
         let capture = PipeWireCapture::open_with(id as u32, None, &va, options)
             .expect("open the memory capture");
@@ -275,6 +276,7 @@ fn desktop_offers_take_dmabufs() {
         let options = Options {
             desktop: true,
             shm: false,
+            ..Options::default()
         };
         let capture = PipeWireCapture::open_with(session.node.expect("a node"), None, &va, options)
             .expect("open the DMA-BUF capture");

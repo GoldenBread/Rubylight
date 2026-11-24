@@ -3,9 +3,10 @@
 //! a captured picture where it is in GPU memory, or a BGRA picture from system memory for the
 //! codec probe. Encoding is synchronous: a call returns the picture it encoded, so nothing is
 //! ever pending. 10-bit streams (HEVC Main10, AV1) are converted from the 8-bit picture by video
-//! processing. HDR streams and 4:4:4 fail when the encoder is created on a captured picture; the
-//! codec probe may ask for the HDR tags to find out the encoder takes them. The encoded-frame
-//! types are as the senders read them.
+//! processing. A packed 4:4:4 stream (8-bit HEVC or AV1, [`crate::packed444`]) encodes the
+//! packed picture of an RGB capture. HDR streams and native 4:4:4 fail when the encoder is
+//! created on a captured picture; the codec probe may ask for the HDR tags to find out the
+//! encoder takes them. The encoded-frame types are as the senders read them.
 use crate::{
     capture::{Device, GpuImage, Image, Pixel},
     vaapi::{
@@ -170,7 +171,21 @@ pub(crate) fn format_of(config: &Negotiated, picture_is_hdr: bool) -> Result<(Co
         bail!(NO_HDR_CAPTURE);
     }
     if config.yuv444 {
-        bail!("4:4:4 encoding is not available on a Linux host yet");
+        bail!(
+            "native 4:4:4 encoding is not available on a Linux host: the GPU's video encoder takes 4:2:0 only; Nightjar's packed 4:4:4 carries full chroma instead"
+        );
+    }
+    if config.chroma_packing != 0 {
+        config.validate()?;
+        if config.chroma_packing != rubylight_protocol::packed444::VERSION {
+            bail!(
+                "packed 4:4:4 version {} (layered, for 10-bit streams) is not available on a Linux host yet",
+                config.chroma_packing
+            );
+        }
+        if config.ten_bit() {
+            bail!("10-bit packed 4:4:4 is not available on a Linux host yet; 8-bit is");
+        }
     }
     let codec = match config.codec {
         0 => Codec::H264,
@@ -208,14 +223,26 @@ impl Encoder {
             });
         }
         let (codec, format) = format_of(config, picture_is_hdr)?;
-        let backend = Backend::new(
-            va,
-            codec,
-            format,
-            config.width,
-            config.height,
-            config.fps.max(1),
-        )
+        let backend = if config.chroma_packing != 0 {
+            // The samples carry the colours the client asked for; the client rebuilds the
+            // picture with them, not with the bitstream's.
+            Backend::new_packed(
+                va,
+                codec,
+                (config.width, config.height),
+                config.fps.max(1),
+                (config.color_matrix(), config.full_range()),
+            )
+        } else {
+            Backend::new(
+                va,
+                codec,
+                format,
+                config.width,
+                config.height,
+                config.fps.max(1),
+            )
+        }
         .with_context(|| {
             format!(
                 "the {} encoder could not start on {} ({}x{} at {} fps)",
