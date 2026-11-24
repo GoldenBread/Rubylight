@@ -15,13 +15,10 @@ mod wait;
 
 pub use batch::{Batch, DatagramWait, send_datagram, send_datagram_pass, send_datagram_with_wait};
 pub use changes::InterfaceChanges;
-#[cfg(test)]
-pub(crate) use interfaces::parse_routes4;
 pub use interfaces::{
     LanInterface, default_gateways, host_name, lan_addresses, lan_interfaces, local_mac,
     unicast_addresses,
 };
-pub(crate) use interfaces::{Route4, prefixed_addresses, routes4};
 pub use reply::ReplySocket;
 pub use route::{Link, routed_link, routed_link_bps, routed_mtu, routed_same_link};
 pub use segments::{Segments, Sent};

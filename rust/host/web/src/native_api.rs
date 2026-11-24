@@ -402,72 +402,66 @@ async fn capabilities(State(h): State<Shared>, Extension(c): Extension<Connectio
                     .unique_id
                     .clone(),
             },
-            features: extensions::native_for_platform(
-                [
-                    feature::LIBRARY,
-                    feature::SESSION,
-                    feature::CLOSE_GAME,
-                    feature::SESSION_LAUNCHER,
-                    feature::WAKE,
-                    // Night mode and headphone surround of the caller's own stream.
-                    feature::AUDIO_NIGHT_MODE,
-                    feature::AUDIO_HEADPHONE_SURROUND,
-                    // Microphone-only sessions; launching one needs Launch apps.
-                    feature::MIC_ONLY,
-                    // Taking over the game's stream; pressing it needs View and Launch apps.
-                    feature::CONTINUE_HERE,
-                    // Each device needs its own Restart and shut down PC grant.
-                    feature::POWER_RESTART,
-                    feature::POWER_SHUTDOWN,
-                ]
-                .into_iter()
-                // A game's frame generation; reading needs View streams, a write
-                // Host control too. Whether this PC's GPU can run it is in the
-                // answer, which the first time of a host start asks.
-                .chain(neural.then_some(feature::NEURAL_FRAME_GENERATION))
-                // The Radeon endpoints answer only where the host started its Radeon worker.
-                // Not on Linux, where the worker runs with no driver behind it.
-                .chain(
-                    (h.radeon.worker().is_some() && !extensions::on_linux())
-                        .then_some([
-                            feature::RADEON_READ,
-                            feature::RADEON_WRITE,
-                            feature::RADEON_PROFILE,
-                        ])
-                        .into_iter()
-                        .flatten(),
-                )
-                // File transfer answers only while the host's setting is on.
-                .chain(
-                    file_transfer
-                        .then_some([feature::FILES_UPLOAD, feature::FILES_DOWNLOAD])
-                        .into_iter()
-                        .flatten(),
-                )
-                // The couch menu, for a device that may see its sessions.
-                .chain(
-                    (couch_menu && (client.allows(VIEW) || client.allows(LAUNCH)))
-                        .then_some(feature::COUCH_MENU),
-                )
-                // Stream Doctor 2.0, for a device that may see its stream.
-                .chain(
-                    (client.allows(VIEW) || client.allows(LAUNCH))
-                        .then_some(feature::STREAM_DOCTOR_V2),
-                )
-                // While this host can run Nucleus Co-op sessions.
-                .chain(coop.then_some(feature::COOP))
-                // Where the host installs its own updates; installing needs Host control.
-                .chain(update.then_some(feature::UPDATE))
-                // While new devices may pair; approving needs Host control.
-                .chain(pairing.then_some(feature::PAIRING_APPROVE))
-                // While another device may join the running game as a guest.
-                .chain(guests.then_some(feature::SESSION_GUESTS))
-                .chain(pairing.then_some(feature::GUEST_INVITES))
-                .chain(extension_features)
-                .collect(),
-                extensions::on_linux(),
-            )
+            features: [
+                feature::LIBRARY,
+                feature::SESSION,
+                feature::CLOSE_GAME,
+                feature::SESSION_LAUNCHER,
+                feature::WAKE,
+                // Night mode and headphone surround of the caller's own stream.
+                feature::AUDIO_NIGHT_MODE,
+                feature::AUDIO_HEADPHONE_SURROUND,
+                // Microphone-only sessions; launching one needs Launch apps.
+                feature::MIC_ONLY,
+                // Taking over the game's stream; pressing it needs View and Launch apps.
+                feature::CONTINUE_HERE,
+                // Each device needs its own Restart and shut down PC grant.
+                feature::POWER_RESTART,
+                feature::POWER_SHUTDOWN,
+            ]
             .into_iter()
+            // A game's frame generation; reading needs View streams, a write
+            // Host control too. Whether this PC's GPU can run it is in the
+            // answer, which the first time of a host start asks.
+            .chain(neural.then_some(feature::NEURAL_FRAME_GENERATION))
+            // The Radeon endpoints answer only where the host started its Radeon worker.
+            // Not on Linux, where the worker runs with no driver behind it.
+            .chain(
+                (h.radeon.worker().is_some() && !extensions::on_linux())
+                    .then_some([
+                        feature::RADEON_READ,
+                        feature::RADEON_WRITE,
+                        feature::RADEON_PROFILE,
+                    ])
+                    .into_iter()
+                    .flatten(),
+            )
+            // File transfer answers only while the host's setting is on.
+            .chain(
+                file_transfer
+                    .then_some([feature::FILES_UPLOAD, feature::FILES_DOWNLOAD])
+                    .into_iter()
+                    .flatten(),
+            )
+            // The couch menu, for a device that may see its sessions.
+            .chain(
+                (couch_menu && (client.allows(VIEW) || client.allows(LAUNCH)))
+                    .then_some(feature::COUCH_MENU),
+            )
+            // Stream Doctor 2.0, for a device that may see its stream.
+            .chain(
+                (client.allows(VIEW) || client.allows(LAUNCH)).then_some(feature::STREAM_DOCTOR_V2),
+            )
+            // While this host can run Nucleus Co-op sessions.
+            .chain(coop.then_some(feature::COOP))
+            // Where the host installs its own updates; installing needs Host control.
+            .chain(update.then_some(feature::UPDATE))
+            // While new devices may pair; approving needs Host control.
+            .chain(pairing.then_some(feature::PAIRING_APPROVE))
+            // While another device may join the running game as a guest.
+            .chain(guests.then_some(feature::SESSION_GUESTS))
+            .chain(pairing.then_some(feature::GUEST_INVITES))
+            .chain(extension_features)
             .map(String::from)
             .collect(),
             permissions: Permissions {

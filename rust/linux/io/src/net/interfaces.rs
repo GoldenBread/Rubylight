@@ -3,7 +3,7 @@
 use super::route::{ethernet, hardware, lowers};
 use anyhow::{Context, Result};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
@@ -28,7 +28,7 @@ pub fn local_mac(address: IpAddr) -> Result<String> {
         return Ok(butterpollo_session::wake::format_mac(None));
     }
     Ok(butterpollo_session::wake::reported_mac(
-        &crate::wake::adapters()?,
+        &Vec::new(), // TEMPORARY-WAKE &crate::wake::adapters()?,
         address,
         // No adapter's wake settings have been read: each is as yet unknown.
         |_| None,
@@ -41,20 +41,6 @@ struct Address {
     /// The interface is up and has a carrier (`IFF_UP` and `IFF_RUNNING`).
     running: bool,
     address: IpAddr,
-    /// The prefix length of the address's netmask.
-    prefix: u8,
-}
-
-/// Every interface's addresses with their prefix lengths, by interface name.
-pub(crate) fn prefixed_addresses() -> std::io::Result<BTreeMap<String, Vec<(IpAddr, u8)>>> {
-    let mut found: BTreeMap<String, Vec<(IpAddr, u8)>> = BTreeMap::new();
-    for row in addresses()? {
-        found
-            .entry(row.interface)
-            .or_default()
-            .push((row.address, row.prefix));
-    }
-    Ok(found)
 }
 
 /// Every IPv4 and IPv6 address of every interface.
@@ -74,26 +60,16 @@ fn addresses() -> std::io::Result<Vec<Address>> {
             let Some(socket) = row.ifa_addr.as_ref() else {
                 continue;
             };
-            let family = i32::from(socket.sa_family);
-            // The netmask, when listed, is a socket address of the same family.
-            let read = |address: *const libc::sockaddr| match family {
+            let address = match i32::from(socket.sa_family) {
                 libc::AF_INET => {
-                    let v4 = &*address.cast::<libc::sockaddr_in>();
-                    Some(IpAddr::V4(Ipv4Addr::from(v4.sin_addr.s_addr.to_ne_bytes())))
+                    let v4 = &*row.ifa_addr.cast::<libc::sockaddr_in>();
+                    IpAddr::V4(Ipv4Addr::from(v4.sin_addr.s_addr.to_ne_bytes()))
                 }
                 libc::AF_INET6 => {
-                    let v6 = &*address.cast::<libc::sockaddr_in6>();
-                    Some(IpAddr::V6(Ipv6Addr::from(v6.sin6_addr.s6_addr)))
+                    let v6 = &*row.ifa_addr.cast::<libc::sockaddr_in6>();
+                    IpAddr::V6(Ipv6Addr::from(v6.sin6_addr.s6_addr))
                 }
-                _ => None,
-            };
-            let Some(address) = read(row.ifa_addr) else {
-                continue;
-            };
-            let prefix = match (!row.ifa_netmask.is_null()).then(|| read(row.ifa_netmask)) {
-                Some(Some(IpAddr::V4(mask))) => u32::from(mask).count_ones() as u8,
-                Some(Some(IpAddr::V6(mask))) => u128::from(mask).count_ones() as u8,
-                _ => 0,
+                _ => continue,
             };
             let wanted = (libc::IFF_UP | libc::IFF_RUNNING) as u32;
             found.push(Address {
@@ -102,7 +78,6 @@ fn addresses() -> std::io::Result<Vec<Address>> {
                     .into_owned(),
                 running: row.ifa_flags & wanted == wanted,
                 address,
-                prefix,
             });
         }
         libc::freeifaddrs(list);
@@ -131,13 +106,13 @@ pub fn unicast_addresses() -> Result<Vec<IpAddr>> {
 
 /// One IPv4 route of the kernel's main table.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Route4 {
-    pub(crate) interface: String,
+pub(super) struct Route4 {
+    pub(super) interface: String,
     /// The router the route goes through; None for a route straight to its destination.
-    pub(crate) gateway: Option<Ipv4Addr>,
+    pub(super) gateway: Option<Ipv4Addr>,
     /// The route is to everywhere (0.0.0.0/0).
-    pub(crate) default: bool,
-    pub(crate) metric: u32,
+    pub(super) default: bool,
+    pub(super) metric: u32,
 }
 
 /// `RTF_UP` and `RTF_GATEWAY`: the route is usable, and goes through a router.
@@ -146,7 +121,7 @@ const GATEWAY: u32 = 2;
 
 /// The routes in `/proc/net/route`'s text: a line of column names, then one line per route
 /// with its addresses as the hexadecimal of the bytes in memory.
-pub(crate) fn parse_routes4(text: &str) -> Vec<Route4> {
+pub(super) fn parse_routes4(text: &str) -> Vec<Route4> {
     let address = |field: &str| {
         u32::from_str_radix(field, 16)
             .ok()
@@ -209,7 +184,7 @@ pub(super) fn parse_gateways6(text: &str) -> Vec<IpAddr> {
         .collect()
 }
 
-pub(crate) fn routes4() -> Result<Vec<Route4>> {
+fn routes4() -> Result<Vec<Route4>> {
     let text = std::fs::read_to_string("/proc/net/route").context("reading /proc/net/route")?;
     Ok(parse_routes4(&text))
 }

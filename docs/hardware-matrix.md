@@ -332,7 +332,4 @@ Test PC: an RX 7800 XT (Navi 32, RDNA 3, VCN 4) with a Ryzen 7 5700X3D, CachyOS 
 | Microphone | Supported | Device tests of the PipeWire source; no client sent a microphone. |
 | Clipboard | Supported | Tests; gamescope's X selections and, on the desktop, wl-clipboard. |
 | Sleep inhibit, power actions | Supported | Tests against logind. |
-| Wake-on-LAN (the MAC in `/serverinfo`, `/wake` targets) | Supported | Tests read this PC's adapters: the wired NIC's MAC is the one reported for its address. The NIC's own wake setting is not read (it needs `CAP_NET_ADMIN`); no wake from sleep or off tried. |
-| Hardware metrics | Supported | CPU usage, and each amdgpu GPU's usage, clocks, temperatures, voltage, fan, power and VRAM from sysfs, read live in a test. No client display checked. |
-| Dual screen mode, session launcher | Unsupported | Not offered: no second display to give a second screen, and no window list to find a launcher in. |
 | NVIDIA, Intel, GNOME, wlroots, X11 desktops | Unsupported | Not built or not run. |
