@@ -76,15 +76,17 @@ pub(crate) fn hold_off_wake_watch() -> display_arrangement::WakeWatchOff {
     display_arrangement::hold_off_wake_watch()
 }
 
+/// The capture target of the game's gamescope session on Linux: the capture waits for the
+/// newest session the host started to offer its picture.
+const GAMESCOPE_TARGET: &str = "gamescope";
+/// The capture target of the user's own desktop on Linux, through the desktop portal.
+const DESKTOP_TARGET: &str = "desktop";
+
 /// Prepare a stream's display. While Windows shows the lock or sign-in
 /// screen it allows display configuration only from that screen's desktop,
 /// so the work moves there (issue #6). If the virtual display or its layout
 /// still cannot be set up, the stream shows the physical display, as
 /// Vibepollo does while Windows is locked.
-/// The capture target of the game's gamescope session on Linux: the capture waits for the
-/// newest session to offer its picture.
-const GAMESCOPE_TARGET: &str = "gamescope";
-
 pub fn prepare_stream(
     h: &Shared,
     launch: &Launch,
@@ -105,17 +107,25 @@ pub fn prepare_stream(
             launch.warnings.clone(),
         );
     }
-    // Otherwise, on Linux, the game draws into its own gamescope session
-    // (`os_ext::game_command`), which the capture finds by itself once the game has started:
-    // no display of the system is prepared or changed.
+    // Otherwise, on Linux, an app with a command draws into its own gamescope session
+    // (`os_ext::game_command`), which the capture finds by itself once the game has started,
+    // and one without (the desktop) streams the user's desktop: no display of the system is
+    // prepared or changed either way.
     if cfg!(target_os = "linux") {
-        tracing::info!("streaming the game's gamescope session");
+        let desktop =
+            crate::stream::launch_app(h, launch).is_none_or(|app| app.cmd.trim().is_empty());
+        let target = if desktop {
+            DESKTOP_TARGET
+        } else {
+            GAMESCOPE_TARGET
+        };
+        tracing::info!(target, "streaming on Linux");
         return Ready::window(
             h,
             stream,
             config,
-            GAMESCOPE_TARGET.into(),
-            Box::new(|| Ok(GAMESCOPE_TARGET.into())),
+            target.into(),
+            Box::new(move || Ok(target.into())),
             launch.warnings.clone(),
         );
     }

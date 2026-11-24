@@ -38,7 +38,12 @@ fn encode(codec: u8, hdr: bool, ten_bit: bool, metadata: Option<Metadata>) -> Op
     let mut config = negotiated(codec, WIDTH, HEIGHT, 60);
     config.hdr = hdr;
     config.sdr_10bit = ten_bit;
-    let mut encoder = match Encoder::new_options(&config, "", &Config::default()) {
+    let open = if hdr {
+        Encoder::new_options_hdr
+    } else {
+        Encoder::new_options
+    };
+    let mut encoder = match open(&config, "", &Config::default()) {
         Ok(encoder) => encoder,
         Err(error) => {
             skip(&format!("the GPU has no such encoder: {error:#}"));

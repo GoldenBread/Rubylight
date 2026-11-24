@@ -252,11 +252,14 @@ fn pictures_that_are_not_whole_blocks_decode_cropped() {
 #[test]
 fn unavailable_encodings_fail_visibly() {
     let mut config = negotiated(1, 640, 480, 30);
-    // A stream of HDR pictures: the capture gives none. The codec probe may ask for the tags.
+    // A stream of HDR pictures: the capture gives none, so neither a stream nor the codec
+    // probe opens one, and the host offers clients no HDR codec.
     config.hdr = true;
     let error = crate::encoder::format_of(&config, false).expect_err("HDR fails");
     assert!(format!("{error:#}").contains("no HDR picture"));
     assert!(crate::encoder::format_of(&config, true).is_ok());
+    let probe = Encoder::new_options(&config, "", &Config::default());
+    assert!(probe.is_err_and(|error| format!("{error:#}").contains("no HDR picture")));
     config.hdr = false;
     config.yuv444 = true;
     assert!(Encoder::new_options(&config, "", &Config::default()).is_err());

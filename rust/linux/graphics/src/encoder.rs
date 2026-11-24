@@ -78,12 +78,71 @@ impl Drop for Encoded {
 /// The encoder of one stream. It offers none of the advanced features (frame caps, reference
 /// invalidation, focus, overlays) and answers their queries as an encoder without them.
 pub struct Encoder {
-    backend: Backend,
+    engine: Engine,
     adapter: String,
     /// The device the encoder's surfaces live on.
     device: usize,
     /// When the last encode call handed its picture to the encoder.
     submitted: Option<Instant>,
+    /// The GPU's video clock, held at its top level while a stream's encoder lives
+    /// (`encoder_clock`); none for probes.
+    _clock: Option<crate::encoder_clock::Raised>,
+}
+
+/// What encodes: a VA-API session for H.264, HEVC and AV1, or PyroWave on Vulkan.
+enum Engine {
+    Va(Backend),
+    Pyro(crate::pyrowave::Encoder),
+}
+
+/// The codec number PyroWave has in a negotiation.
+const PYROWAVE: u8 = 3;
+
+/// Opens a PyroWave encoder on the GPU of `va`. It encodes SDR 4:2:0 and 4:4:4.
+fn pyrowave_on(va: &Va, config: &Negotiated, picture_is_hdr: bool) -> Result<Engine> {
+    if config.hdr || config.ten_bit() {
+        bail!(if picture_is_hdr {
+            "PyroWave HDR and 10-bit are not available on a Linux host yet"
+        } else {
+            NO_HDR_CAPTURE
+        });
+    }
+    let gpu = va.sysfs_device().and_then(|device| {
+        let read = |file: &str| {
+            let text = std::fs::read_to_string(device.join(file)).ok()?;
+            u32::from_str_radix(text.trim().trim_start_matches("0x"), 16).ok()
+        };
+        Some((read("vendor")?, read("device")?))
+    });
+    let options = crate::pyrowave::Options {
+        gpu,
+        ..Default::default()
+    };
+    Ok(Engine::Pyro(crate::pyrowave::Encoder::new(
+        config, &options,
+    )?))
+}
+
+/// Holds the stream's GPU video clock at its top level, warning in the console when the host
+/// may not ([`crate::encoder_clock::RULE`]).
+fn raise_clock(va: &Va, warnings: &dyn WarningSink) -> Option<crate::encoder_clock::Raised> {
+    let device = va.sysfs_device()?;
+    match crate::encoder_clock::raise(&device) {
+        Ok(raised) => {
+            warnings.clear("encoder_clock");
+            raised
+        }
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "the video encoder clock could not be raised");
+            warnings.set(
+                "encoder_clock",
+                &format!(
+                    "The GPU's video encoder runs at its low clock at 60 fps and below, about twice as slow per frame, because the host may not raise it ({error:#})."
+                ),
+            );
+            None
+        }
+    }
 }
 
 /// Why an HDR stream is refused when it opens on a captured picture.
@@ -92,9 +151,8 @@ pub const NO_HDR_CAPTURE: &str = "HDR is not available on a Linux host yet: the 
     wrong. Stream it as 10-bit SDR instead, or turn HDR off in the client";
 
 /// The codec and picture format a negotiation asks for, or why this host cannot encode it.
-/// `picture_is_hdr` is whether the pictures to come carry HDR: a stream's do not, as the
-/// capture is SDR, so an HDR stream is refused; the codec probe's test picture only checks that
-/// the 10-bit encoder works, so it may ask for the HDR tags.
+/// `picture_is_hdr` is whether the pictures to come carry HDR. None do yet, as the capture is
+/// SDR, so an HDR stream is refused, and the codec probe, refused too, offers no HDR codec.
 pub(crate) fn format_of(config: &Negotiated, picture_is_hdr: bool) -> Result<(Codec, Format)> {
     if config.hdr && !picture_is_hdr {
         bail!(NO_HDR_CAPTURE);
@@ -128,6 +186,15 @@ impl Encoder {
         config: &Negotiated,
         picture_is_hdr: bool,
     ) -> Result<Self> {
+        if config.codec == PYROWAVE {
+            return Ok(Self {
+                engine: pyrowave_on(va, config, picture_is_hdr)?,
+                adapter: device.display.adapter.clone(),
+                device: device.key(),
+                submitted: None,
+                _clock: None,
+            });
+        }
         let (codec, format) = format_of(config, picture_is_hdr)?;
         let backend = Backend::new(
             va,
@@ -148,10 +215,11 @@ impl Encoder {
             )
         })?;
         Ok(Self {
-            backend,
+            engine: Engine::Va(backend),
             adapter: device.display.adapter.clone(),
             device: device.key(),
             submitted: None,
+            _clock: None,
         })
     }
 
@@ -193,7 +261,9 @@ impl Encoder {
     }
     /// The HDR10 metadata a stream with HDR pictures carries; SDR streams carry none.
     pub fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
-        self.backend.set_hdr_metadata(metadata);
+        if let Engine::Va(backend) = &mut self.engine {
+            backend.set_hdr_metadata(metadata);
+        }
     }
     /// The receiver's display peak, for dynamic metadata that names a target
     /// display.
@@ -229,7 +299,9 @@ impl Encoder {
         warnings.clear("encoder_intra_refresh");
         warnings.clear("hdr_dynamic_metadata");
         warnings.clear("encoder_vpe");
-        Self::new_gpu_options(config, image, tuning)
+        let mut encoder = Self::new_gpu_options(config, image, tuning)?;
+        encoder._clock = raise_clock(image.gpu.va(), warnings.as_ref());
+        Ok(encoder)
     }
     /// Encodes a captured picture where it is, at `bitrate` kilobits a second.
     pub fn encode_gpu(
@@ -243,7 +315,14 @@ impl Encoder {
             .surface()
             .context("the picture is not on a VA-API surface")?;
         self.submitted = Some(started);
-        let output = self.backend.encode_surface(
+        let backend = match &mut self.engine {
+            Engine::Va(backend) => backend,
+            Engine::Pyro(pyro) => {
+                let picture = crate::pyrowave::export_surface(surface)?;
+                return pyro.encode_dmabuf(&picture, image.captured, idr, bitrate);
+            }
+        };
+        let output = backend.encode_surface(
             surface,
             (image.width, image.height),
             idr,
@@ -317,16 +396,23 @@ impl Encoder {
     }
     /// The encoder family, as the encoder setting names it.
     pub fn backend(&self) -> &'static str {
-        "vaapi"
+        match self.engine {
+            Engine::Va(_) => "vaapi",
+            Engine::Pyro(_) => "pyrowave",
+        }
     }
     /// Whether a loss report can be answered with a picture that refers to an older one.
     pub fn supports_invalidation(&self) -> bool {
-        self.backend.supports_invalidation()
+        matches!(&self.engine, Engine::Va(backend) if backend.supports_invalidation())
     }
     /// Pictures numbered `first` to `last` on the wire did not arrive: the next picture refers
     /// to one from before them. False asks for a keyframe, as no picture held is that old.
     pub fn invalidate_ref_frames(&mut self, first: u64, last: u64) -> bool {
-        self.backend.invalidate(first, last)
+        match &mut self.engine {
+            Engine::Va(backend) => backend.invalidate(first, last),
+            // Every PyroWave picture stands alone: nothing to refer back to.
+            Engine::Pyro(_) => false,
+        }
     }
     /// Whether the repair needs a keyframe as a backstop. An older picture is a plain
     /// reference every decoder follows, so it does not.
@@ -350,7 +436,9 @@ impl Encoder {
     pub fn join_slices(&mut self) {}
     /// A recreated encoder must keep the wire frame numbers used by RFI.
     pub fn set_next_frame(&mut self, frame: u64) {
-        self.backend.set_next_frame(frame);
+        if let Engine::Va(backend) = &mut self.engine {
+            backend.set_next_frame(frame);
+        }
     }
     pub fn new(config: &Negotiated, display: &str) -> Result<Self> {
         Self::new_options(
@@ -366,13 +454,32 @@ impl Encoder {
         display: &str,
         tuning: &butterpollo_config::config::Config,
     ) -> Result<Self> {
-        format_of(config, true)?;
+        Self::opened(config, display, tuning, false)
+    }
+    /// [`Self::new_options`] for pictures that carry HDR, which no capture gives yet: the
+    /// 10-bit tests' HDR tags. The codec probe does not offer HDR, so a client never asks a
+    /// stream for an HDR picture this host cannot capture.
+    #[cfg(test)]
+    pub(crate) fn new_options_hdr(
+        config: &Negotiated,
+        display: &str,
+        tuning: &butterpollo_config::config::Config,
+    ) -> Result<Self> {
+        Self::opened(config, display, tuning, true)
+    }
+    fn opened(
+        config: &Negotiated,
+        display: &str,
+        tuning: &butterpollo_config::config::Config,
+        picture_is_hdr: bool,
+    ) -> Result<Self> {
+        format_of(config, picture_is_hdr)?;
         let device = Device::new_adapter(
             display,
             tuning.get("adapter_name", ""),
             tuning.get("adapter_pnp_id", ""),
         )?;
-        Self::on(device.va(), &device, config, true)
+        Self::on(device.va(), &device, config, picture_is_hdr)
     }
     /// Encodes a BGRA picture in system memory, at `bitrate` kilobits a second.
     pub fn encode(&mut self, image: &Image, idr: bool, bitrate: u32) -> Result<Vec<Encoded>> {
@@ -384,7 +491,11 @@ impl Encoder {
         }
         let started = Instant::now();
         self.submitted = Some(started);
-        let output = self.backend.encode_bgra(
+        let backend = match &mut self.engine {
+            Engine::Va(backend) => backend,
+            Engine::Pyro(pyro) => return pyro.encode(image, idr, bitrate),
+        };
+        let output = backend.encode_bgra(
             (image.width, image.height, image.stride, &image.bytes),
             idr,
             bitrate.saturating_mul(1000),

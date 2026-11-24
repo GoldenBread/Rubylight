@@ -62,12 +62,18 @@ impl Crashed {
 
 /// Probe PyroWave. On Linux no worker is started and `stop` is never asked:
 /// the probe fails with a plain error, which the host does not try again.
+/// The PyroWave modes this host encodes: one 640x480 frame in each, in this process. The
+/// Windows host probes in a child, which keeps an AMD encoder hang out of the host; on Linux
+/// PyroWave runs on Vulkan compute, not the video encoder, and its library is loaded once.
 pub fn pyrowave_with(
     _config: &Config,
-    _stop: &dyn Fn() -> bool,
+    stop: &dyn Fn() -> bool,
     _launcher: &dyn UserLauncher,
 ) -> Result<u32> {
-    Err(crate::unsupported("PyroWave encoding"))
+    if stop() {
+        return Err(Interrupted.into());
+    }
+    crate::pyrowave::probe_flags(&crate::pyrowave::Options::default())
 }
 
 /// Probe one packed 4:4:4 mode. An invalid request is refused as such; a valid
@@ -132,16 +138,21 @@ mod tests {
                 None
             }
         }
-        let Err(error) = pyrowave_with(&Config::default(), &|| true, &NoLauncher) else {
-            panic!("PyroWave cannot be found on Linux yet")
-        };
-        assert!(
-            !error.is::<SessionNotReady>()
-                && !error.is::<TimedOut>()
-                && !error.is::<Crashed>()
-                && !error.is::<Interrupted>()
-        );
-        assert!(error.to_string().contains("not available on a Linux host"));
+        // A stop already asked for interrupts the probe before it opens anything.
+        let stopped = pyrowave_with(&Config::default(), &|| true, &NoLauncher).unwrap_err();
+        assert!(stopped.is::<Interrupted>());
+        // Otherwise it finds PyroWave's two SDR modes, or fails with an error the host does not
+        // retry: no library beside the host, or no Vulkan device.
+        match pyrowave_with(&Config::default(), &|| false, &NoLauncher) {
+            Ok(flags) => assert_eq!(flags & !0x0180_0000, 0, "{flags:#x}"),
+            Err(error) => assert!(
+                !error.is::<SessionNotReady>()
+                    && !error.is::<TimedOut>()
+                    && !error.is::<Crashed>()
+                    && !error.is::<Interrupted>(),
+                "{error:#}"
+            ),
+        }
         assert_eq!(
             SessionNotReady::new("nobody is signed in").to_string(),
             "nobody is signed in"

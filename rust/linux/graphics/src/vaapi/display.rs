@@ -73,6 +73,13 @@ impl Va {
         Ok(Self { dpy, _node: file })
     }
 
+    /// The sysfs folder of the render node's GPU (`/sys/dev/char/<major>:<minor>/device`).
+    pub fn sysfs_device(&self) -> Option<std::path::PathBuf> {
+        use std::os::unix::fs::MetadataExt;
+        let rdev = self._node.metadata().ok()?.rdev();
+        let (major, minor) = (libc::major(rdev), libc::minor(rdev));
+        std::fs::canonicalize(format!("/sys/dev/char/{major}:{minor}/device")).ok()
+    }
     pub fn vendor(&self) -> String {
         // SAFETY: an initialized display; the string lives as long as it does.
         let text = unsafe { vaQueryVendorString(self.dpy) };

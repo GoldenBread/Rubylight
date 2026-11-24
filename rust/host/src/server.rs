@@ -287,6 +287,9 @@ async fn run_logged(
             "game audio devices from an interrupted stream were not all restored; retrying"
         );
     }
+    // A video encoder clock an interrupted Linux stream left raised goes back to automatic.
+    #[cfg(target_os = "linux")]
+    butterpollo_win_graphics::encoder_clock::recover();
     if let Some(journal) = h.recover_session() {
         tracing::warn!(
             state = ?journal.state,

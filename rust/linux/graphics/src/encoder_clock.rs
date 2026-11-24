@@ -41,13 +41,6 @@ pub struct Raised {
     journal: PathBuf,
 }
 
-/// The sysfs device folder of a DRM render node or card (`/dev/dri/renderD128`).
-pub fn device_of(node: &Path) -> Option<PathBuf> {
-    let name = node.file_name()?;
-    let device = Path::new("/sys/class/drm").join(name).join("device");
-    device.join(LEVEL).exists().then_some(device)
-}
-
 /// Where the journal lives: `$XDG_STATE_HOME/rubylight`, else `~/.local/state/rubylight`.
 fn journal_folder() -> PathBuf {
     std::env::var_os("XDG_STATE_HOME")
@@ -93,27 +86,31 @@ fn write(path: &Path, value: &str) -> Result<()> {
     })
 }
 
-/// Pins the video clocks of the GPU at `device` (a sysfs device folder, [`device_of`]) to
-/// their top level while the returned value lives. Several streams share one raise.
-pub fn raise(device: &Path) -> Result<Raised> {
+/// Pins the video clocks of the GPU at `device` (its sysfs device folder) to their top level
+/// while the returned value lives; `None` when the GPU has no such control, or when someone
+/// else set its level (anything but `auto`), which is then theirs. Several streams share one
+/// raise.
+pub fn raise(device: &Path) -> Result<Option<Raised>> {
     raise_in(device, &journal_folder())
 }
 
-fn raise_in(device: &Path, journal_folder: &Path) -> Result<Raised> {
+fn raise_in(device: &Path, journal_folder: &Path) -> Result<Option<Raised>> {
+    if !device.join(LEVEL).exists() {
+        return Ok(None);
+    }
     let journal = journal_of(journal_folder, device);
     let mut holders = HOLDERS.lock().unwrap();
     if let Some((_, count)) = holders.iter_mut().find(|(held, _)| held == device) {
         *count += 1;
-        return Ok(Raised {
+        return Ok(Some(Raised {
             device: device.to_owned(),
             journal,
-        });
+        }));
     }
     let level = read(&device.join(LEVEL))?;
     if level != AUTO {
-        bail!(
-            "the GPU's performance level is {level}, set by someone else; its video clock is left as it is"
-        );
+        tracing::info!(%level, "the GPU's performance level was set by someone else; its video clock is left as it is");
+        return Ok(None);
     }
     let domains: Vec<(PathBuf, u32)> = DOMAINS
         .iter()
@@ -142,14 +139,19 @@ fn raise_in(device: &Path, journal_folder: &Path) -> Result<Raised> {
     }
     holders.push((device.to_owned(), 1));
     tracing::info!(device = %device.display(), "video encoder clock raised for the stream");
-    Ok(Raised {
+    Ok(Some(Raised {
         device: device.to_owned(),
         journal,
-    })
+    }))
 }
 
-/// Puts the automatic level back and removes the journal.
+/// Puts the automatic level back and removes the journal. A level already automatic needs no
+/// write: a raise refused before it changed anything leaves no journal behind.
 fn restore(device: &Path, journal: &Path) {
+    if read(&device.join(LEVEL)).is_ok_and(|level| level == AUTO) {
+        let _ = std::fs::remove_file(journal);
+        return;
+    }
     match write(&device.join(LEVEL), AUTO) {
         Ok(()) => {
             let _ = std::fs::remove_file(journal);
@@ -245,7 +247,7 @@ mod tests {
         let root = root("share");
         let device = device(&root, AUTO);
         let journal = root.join("state");
-        let first = raise_in(&device, &journal).unwrap();
+        let first = raise_in(&device, &journal).unwrap().unwrap();
         assert_eq!(read(&device.join(LEVEL)).unwrap(), MANUAL);
         assert_eq!(read(&device.join("pp_dpm_vclk")).unwrap(), "2");
         assert_eq!(read(&device.join("pp_dpm_vclk1")).unwrap(), "2");
@@ -253,7 +255,7 @@ mod tests {
             journal_of(&journal, &device).exists(),
             "journaled while raised"
         );
-        let second = raise_in(&device, &journal).unwrap();
+        let second = raise_in(&device, &journal).unwrap().unwrap();
         drop(first);
         assert_eq!(
             read(&device.join(LEVEL)).unwrap(),
@@ -270,10 +272,11 @@ mod tests {
     fn a_level_someone_else_set_is_left_alone() {
         let root = root("other");
         let device = device(&root, "high");
-        let error = raise_in(&device, &root.join("state")).unwrap_err();
+        assert!(raise_in(&device, &root.join("state")).unwrap().is_none());
         assert!(
-            format!("{error:#}").contains("set by someone else"),
-            "{error:#}"
+            raise_in(&root.join("no-gpu"), &root.join("state"))
+                .unwrap()
+                .is_none()
         );
         assert_eq!(read(&device.join(LEVEL)).unwrap(), "high");
         std::fs::remove_dir_all(&root).unwrap();
@@ -290,6 +293,24 @@ mod tests {
         recover_in(&journal);
         assert_eq!(read(&device.join(LEVEL)).unwrap(), AUTO);
         assert!(!journal_of(&journal, &device).exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_raise_the_host_may_not_make_leaves_nothing_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = root("denied");
+        let device = device(&root, AUTO);
+        let journal = root.join("state");
+        let level = device.join(LEVEL);
+        std::fs::set_permissions(&level, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let error = raise_in(&device, &journal).unwrap_err();
+        assert!(format!("{error:#}").contains(RULE), "{error:#}");
+        assert!(
+            !journal_of(&journal, &device).exists(),
+            "nothing changed, nothing to restore"
+        );
+        assert_eq!(read(&level).unwrap(), AUTO);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

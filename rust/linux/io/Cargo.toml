@@ -22,7 +22,7 @@ rubylight-vdisplay-proto = { path = "../../drivers/rubylight-vdisplay-proto" }
 rubylight-vgamepad-proto = { path = "../../drivers/rubylight-vgamepad-proto" }
 libloading = "0.8"
 x11rb = { version = "0.13", features = ["xtest", "xfixes"] }
-zbus = { version = "5.19", default-features = false, features = ["tokio", "blocking-api"] }
+zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
 pipewire = "0.10"
 
 [features]
