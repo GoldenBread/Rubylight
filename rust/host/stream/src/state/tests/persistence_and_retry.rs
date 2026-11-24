@@ -69,6 +69,7 @@ fn settings_of_removed_encoders_and_limiters_migrate_with_one_warning() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn nvidia_settings_a_2_6_host_left_pending_are_reported_at_start() {
     use super::super::test_support::Fixture;

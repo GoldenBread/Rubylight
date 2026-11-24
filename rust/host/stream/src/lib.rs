@@ -61,6 +61,8 @@ pub mod stream;
 pub mod stream_focus;
 pub mod stream_notice;
 pub mod telemetry;
+#[cfg(test)]
+mod test_commands;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_log;
 pub mod timing_record;

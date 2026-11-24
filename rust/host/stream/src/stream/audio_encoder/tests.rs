@@ -68,7 +68,11 @@ fn pcm_goes_out_as_s16le_packets_and_opus_is_not_a_passthrough() {
 
 #[test]
 fn opus_and_pcm_need_no_ffmpeg_and_dolby_without_it_is_refused_by_name() {
-    let nowhere = Path::new("C:\\no-ffmpeg-here");
+    let nowhere = Path::new(if cfg!(windows) {
+        "C:\\no-ffmpeg-here"
+    } else {
+        "/no-ffmpeg-here"
+    });
     for channels in [2, 6, 8, 12] {
         check(nowhere, 0, channels).unwrap();
         check(nowhere, CODEC_OPUS, channels).unwrap();
@@ -77,7 +81,11 @@ fn opus_and_pcm_need_no_ffmpeg_and_dolby_without_it_is_refused_by_name() {
     let error = format!("{:#}", check(nowhere, CODEC_AC3, 2).unwrap_err());
     assert!(
         error.starts_with("this host cannot encode Dolby Digital (AC3) for 2 audio channels")
-            && error.contains("avutil-60.dll"),
+            && error.contains(if cfg!(windows) {
+                "avutil-60.dll"
+            } else {
+                "libavutil.so.60"
+            }),
         "{error}"
     );
     // More channels than the codec carries are refused before FFmpeg is looked for.

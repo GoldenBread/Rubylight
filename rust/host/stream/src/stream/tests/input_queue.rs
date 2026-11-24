@@ -142,8 +142,7 @@ fn a_program_another_program_started_is_checked_off_the_stream_thread() {
     *f.host.current_app.lock().unwrap() = Some(app);
     // A "game" started after the launch by a program other than the
     // desktop (this test), as a store client starts one.
-    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-    let program = format!(r"{root}\System32\PING.EXE");
+    let (program, program_args) = crate::test_commands::background_program();
     /// Ends the stand-in game however the test ends.
     struct Game(std::process::Child);
     impl Drop for Game {
@@ -154,7 +153,7 @@ fn a_program_another_program_started_is_checked_off_the_stream_thread() {
     }
     let game = Game(
         std::process::Command::new(&program)
-            .args(["-n", "30", "127.0.0.1"])
+            .args(&program_args)
             .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap(),

@@ -33,6 +33,7 @@ fn read(file: &Path) -> String {
     std::fs::read_to_string(file).unwrap()
 }
 
+#[cfg(windows)]
 #[test]
 fn a_launch_swaps_the_devices_copy_in_and_the_app_stopping_puts_the_pcs_back() {
     let f = Fixture::new();
@@ -60,6 +61,7 @@ fn a_launch_swaps_the_devices_copy_in_and_the_app_stopping_puts_the_pcs_back() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn a_launch_without_a_device_or_files_swaps_nothing_and_a_missing_file_fails_it() {
     let f = Fixture::new();
@@ -91,6 +93,7 @@ fn a_launch_without_a_device_or_files_swaps_nothing_and_a_missing_file_fails_it(
     assert!(format!("{unset:#}").contains("not set"), "{unset:#}");
 }
 
+#[cfg(windows)]
 #[test]
 fn a_game_that_outlives_its_app_keeps_the_files_until_it_closes() {
     let f = Fixture::new();
@@ -129,6 +132,7 @@ fn a_game_that_outlives_its_app_keeps_the_files_until_it_closes() {
     assert_eq!(read(&copy), "tv-exit");
 }
 
+#[cfg(windows)]
 #[test]
 fn a_swap_stuck_on_a_process_is_put_back_from_the_console() {
     let f = Fixture::new();
@@ -182,6 +186,7 @@ fn a_game_guarded_against_process_queries_counts_as_running_while_listed() {
     assert!(!alive(&game, 0, || false), "gone");
 }
 
+#[cfg(windows)]
 #[test]
 fn a_swap_that_never_saw_its_game_warns_in_the_console() {
     let f = Fixture::new();
@@ -209,6 +214,7 @@ fn a_swap_that_never_saw_its_game_warns_in_the_console() {
     assert!(!warned(&f.host), "cleared once the game was seen");
 }
 
+#[cfg(windows)]
 #[test]
 fn a_game_moved_to_another_device_saves_its_settings_for_the_device_now_playing() {
     let f = Fixture::new();
@@ -244,6 +250,7 @@ fn a_game_moved_to_another_device_saves_its_settings_for_the_device_now_playing(
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn a_cancelled_launch_saves_no_copy_for_the_device() {
     let f = Fixture::new();
@@ -259,6 +266,7 @@ fn a_cancelled_launch_saves_no_copy_for_the_device() {
     assert!(!store(&f.host.directory).saved(&key, "tv", "%GameDir%\\Settings.ini"));
 }
 
+#[cfg(windows)]
 #[test]
 fn what_a_crash_left_is_put_back_by_the_retry() {
     let f = Fixture::new();

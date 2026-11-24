@@ -281,12 +281,17 @@ fn a_host_that_cannot_find_its_executable_fails_loudly() {
     // A bare file name has no folder, which is not the working directory.
     let bare = exe_directory(Ok(PathBuf::from("butterpollo.exe"))).unwrap_err();
     assert!(format!("{bare:#}").contains("has no folder"), "{bare:#}");
+    let (exe, folder) = if cfg!(windows) {
+        (
+            r"C:\Program Files\Rubylight\butterpollo.exe",
+            r"C:\Program Files\Rubylight",
+        )
+    } else {
+        ("/opt/rubylight/butterpollo", "/opt/rubylight")
+    };
     assert_eq!(
-        exe_directory(Ok(PathBuf::from(
-            r"C:\Program Files\Rubylight\butterpollo.exe"
-        )))
-        .unwrap(),
-        PathBuf::from(r"C:\Program Files\Rubylight")
+        exe_directory(Ok(PathBuf::from(exe))).unwrap(),
+        PathBuf::from(folder)
     );
 }
 

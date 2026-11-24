@@ -5,11 +5,14 @@ use super::*;
 
 /// The settings locks as this process holds them, or only the
 /// cross-process one, as the uninstaller or another host holds it.
+#[cfg(windows)]
 type Hold = fn() -> Box<dyn std::any::Any>;
+#[cfg(windows)]
 const HOLDERS: [Hold; 2] = [
     || Box::new(settings_lock().unwrap()),
     || Box::new(native::lock::setup_lock(settings_wait()).unwrap()),
 ];
+#[cfg(windows)]
 /// `run`, on another thread, signals only after this test lets go of what
 /// `hold` took.
 fn waits_for_the_settings_lock<T: Send + 'static>(
@@ -32,6 +35,7 @@ fn waits_for_the_settings_lock<T: Send + 'static>(
     thread.join().unwrap()
 }
 
+#[cfg(windows)]
 #[test]
 fn restore_and_the_unrecorded_check_wait_for_the_settings_lock() {
     let directory = scratch();
@@ -74,6 +78,7 @@ fn restore_and_the_unrecorded_check_wait_for_the_settings_lock() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn the_uninstallers_restore_fails_closed() {
     use std::sync::atomic::{AtomicU32, Ordering::SeqCst};

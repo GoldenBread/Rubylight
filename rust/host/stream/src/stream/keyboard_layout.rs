@@ -34,7 +34,7 @@ pub(super) struct PeerLayout {
 }
 
 impl PeerLayout {
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     fn with_layouts(layouts: Layouts) -> Self {
         Self {
             layouts,
@@ -139,7 +139,8 @@ impl PeerLayout {
     }
 }
 
-#[cfg(test)]
+// Linux: reading a keyboard layout is not available on a Linux host yet.
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};

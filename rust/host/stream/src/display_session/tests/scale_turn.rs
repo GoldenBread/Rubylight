@@ -589,6 +589,8 @@ fn a_window_output_streams_that_window_and_a_display_name_does_not() {
     }
 }
 
+// Linux: window capture is not available on a Linux host yet.
+#[cfg(windows)]
 #[test]
 fn a_closed_configured_window_refuses_the_stream_with_the_reason() {
     // No window has this handle; a minimised, reused or misplaced one is

@@ -88,7 +88,7 @@ fn shutdown_releases_the_audio_route_before_the_games_undo_commands() {
     app.cmd.clear();
     app.prep = vec![butterpollo_session::state::PrepCommand {
         r#do: String::new(),
-        undo: "ping -n 3 127.0.0.1 >nul".into(),
+        undo: crate::test_commands::wait(3),
         elevated: false,
         extra: Default::default(),
     }];

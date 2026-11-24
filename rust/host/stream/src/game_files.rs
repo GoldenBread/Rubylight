@@ -663,6 +663,8 @@ mod tests {
         check(&app).unwrap();
     }
 
+    // Linux: file names compare case-insensitively on Windows only.
+    #[cfg(windows)]
     #[test]
     fn saving_refuses_a_managed_file_that_is_also_a_swapped_settings_file() {
         let f = Fixture::new();

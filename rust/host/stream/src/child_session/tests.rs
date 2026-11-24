@@ -339,6 +339,7 @@ fn this_pcs_check_tells_a_folder_setup_never_made_from_a_file() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn the_record_read_is_the_one_whose_owner_was_checked() {
     // Checked by its path, then read by its path, another file could take its place in
@@ -428,6 +429,7 @@ fn the_record_is_made_for_administrators_only() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn a_data_root_administrators_do_not_own_is_never_saved_into() {
     // Its owner could change its permissions and swap the record's folder in it.

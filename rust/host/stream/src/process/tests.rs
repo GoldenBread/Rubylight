@@ -35,6 +35,7 @@ fn swapped_settings_files_wait_for_the_game_not_for_its_launcher_or_shell() {
         assert!(!watches_program(program), "{program}");
     }
 }
+#[cfg(windows)]
 /// Issue #82: a game started through Playnite is no process of the app's, so none was
 /// recorded for its swapped settings files and every stream of one ended with the "no
 /// process was seen" warning.
@@ -240,8 +241,7 @@ fn quitting_closes_a_store_launched_game_but_not_the_store_or_older_programs() {
 /// An app that runs `ping` for a while, so its job has a process to name.
 fn app_with_a_child() -> RunningApp {
     let mut app = App::desktop();
-    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-    app.cmd = format!(r#""{root}\System32\PING.EXE" -n 30 127.0.0.1"#);
+    app.cmd = crate::test_commands::background_command();
     RunningApp::with_environment(&app, BTreeMap::new()).unwrap()
 }
 
@@ -252,7 +252,7 @@ fn the_process_stopped_notice_arrives_before_undo_commands() {
     let mut app = app_with_a_child();
     app.undo.push(PrepCommand {
         r#do: String::new(),
-        undo: "ping -n 3 127.0.0.1 >nul".into(),
+        undo: crate::test_commands::wait(3),
         elevated: false,
         extra: Default::default(),
     });

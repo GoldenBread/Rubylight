@@ -152,13 +152,27 @@ fn component_files() -> Vec<String> {
 /// A junction at `link` to `target`, as another account sharing a folder
 /// could plant one.
 fn junction(link: &Path, target: &Path) {
-    // cmd takes a `/` in a path for an option.
-    let made = std::process::Command::new("cmd")
-        .args(["/C", "mklink", "/J"])
-        .args([link, target].map(|path| path.to_string_lossy().replace('/', "\\")))
-        .output()
-        .unwrap();
-    assert!(made.status.success(), "{made:?}");
+    #[cfg(windows)]
+    {
+        // cmd takes a `/` in a path for an option.
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .args([link, target].map(|path| path.to_string_lossy().replace('/', "\\")))
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+/// Removes the link itself, as [`junction`] made it.
+fn remove_junction(link: &Path) {
+    if cfg!(windows) {
+        std::fs::remove_dir(link).unwrap();
+    } else {
+        std::fs::remove_file(link).unwrap();
+    }
 }
 
 fn release_assets(adapter: &[u8]) -> BTreeMap<String, Vec<u8>> {
@@ -354,13 +368,7 @@ fn a_component_behind_a_link_is_refused() {
     std::fs::write(elsewhere.join("kept.txt"), b"kept").unwrap();
     std::fs::create_dir_all(&root).unwrap();
     let link = root.join("4.5.0-0123456789abcdef");
-    let made = std::process::Command::new("cmd")
-        .args(["/C", "mklink", "/J"])
-        .arg(&link)
-        .arg(&elsewhere)
-        .output()
-        .unwrap();
-    assert!(made.status.success(), "{made:?}");
+    junction(&link, &elsewhere);
     Record {
         version: VERSION.into(),
         folder: "4.5.0-0123456789abcdef".into(),
@@ -386,13 +394,7 @@ async fn a_component_folder_that_is_a_link_is_never_cleared() {
     std::fs::create_dir_all(elsewhere.join("4.0.0-0123456789abcdef")).unwrap();
     std::fs::write(elsewhere.join("precious.txt"), b"kept").unwrap();
     std::fs::write(elsewhere.join(RECORD), b"{}").unwrap();
-    let made = std::process::Command::new("cmd")
-        .args(["/C", "mklink", "/J"])
-        .arg(&root)
-        .arg(&elsewhere)
-        .output()
-        .unwrap();
-    assert!(made.status.success(), "{made:?}");
+    junction(&root, &elsewhere);
 
     let error = clean(&root, None).unwrap_err();
     assert!(format!("{error:#}").contains("link"), "{error:#}");
@@ -414,7 +416,7 @@ async fn a_component_folder_that_is_a_link_is_never_cleared() {
         names(&elsewhere),
         ["4.0.0-0123456789abcdef", RECORD, "precious.txt"]
     );
-    std::fs::remove_dir(&root).unwrap();
+    remove_junction(&root);
 }
 
 /// An elevated host holds the component's folder and everything from there up
@@ -493,12 +495,14 @@ fn a_link_above_the_data_root_is_refused() {
     })
     .unwrap_err();
     assert!(format!("{error:#}").contains("is a link"), "{error:#}");
-    std::fs::remove_dir(&linked).unwrap();
+    remove_junction(&linked);
 }
 
 /// A folder held open cannot be renamed out from under the files that were
 /// checked in it: Windows refuses the rename while the handle does not share
 /// deletion, and allows it once the hold goes.
+// Linux: a folder held open is renamed away freely; Windows refuses while the handle holds it.
+#[cfg(windows)]
 #[test]
 fn a_held_folder_cannot_be_renamed_away() {
     let f = crate::state::test_support::Fixture::new();
@@ -521,6 +525,8 @@ fn a_held_folder_cannot_be_renamed_away() {
 /// The component's folder and the folders between it and the host's data root
 /// are held from the check on, so a swap of the path cannot reach the load;
 /// renaming either of them fails while the component is in use.
+// Linux: a folder held open is renamed away freely; Windows refuses while the handle holds it.
+#[cfg(windows)]
 #[test]
 fn a_checked_component_holds_its_folders_in_place() {
     let f = crate::state::test_support::Fixture::new();
