@@ -246,23 +246,9 @@ fn gamescope_frames_are_captured_and_encoded() {
 
     let result = std::panic::catch_unwind(|| {
         let warnings: Arc<dyn butterpollo_media_policy::WarningSink> = Arc::new(Quiet);
-        // Another gamescope session on this PC may be newer than ours: then the session's
-        // node is named directly, which is the target a stream gets from `Session::capture_target`.
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let node = loop {
-            if let Some(node) = butterpollo_linux_io::gamescope::read(&folder).and_then(|s| s.node)
-            {
-                break node;
-            }
-            assert!(Instant::now() < deadline, "gamescope offered no node");
-            std::thread::sleep(Duration::from_millis(50));
-        };
-        let ours = butterpollo_linux_io::gamescope::current().is_some_and(|s| s.folder == folder);
-        let target = if ours {
-            "gamescope".to_string()
-        } else {
-            butterpollo_linux_io::gamescope::capture_target(node)
-        };
+        // The host's own target: the newest session this process started, which is this one
+        // even when another gamescope runs on the PC.
+        let target = "gamescope".to_string();
         eprintln!("capture target: {target}");
         let mut capture = Capture::open_for_stream_with_env(
             &target,

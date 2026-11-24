@@ -15,6 +15,7 @@
 
 mod decode;
 mod harness;
+mod input_script;
 mod media;
 mod report;
 
@@ -419,6 +420,7 @@ fn run() -> i32 {
                 }
             })
         });
+    input_script::start(session.input_handle(), state.clone());
     // NIGHTJAR_CLI_LOOK: the look pattern every 4 ms, from the first decoded picture on (the
     // stream runs and the host counts what arrives), its time counted from then.
     let look = look_seed.map(|seed| {

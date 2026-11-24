@@ -154,26 +154,31 @@ pub fn read(folder: &Path) -> Option<Session> {
     })
 }
 
-/// The newest session that still runs.
+/// The newest session this process started that still runs. Sessions other programs or
+/// another host started are never chosen, so a second gamescope on the PC cannot take the
+/// stream's picture or input.
 pub fn current() -> Option<Session> {
     current_in(&root())
 }
 
 /// [`current`] among the sessions in `root`.
 fn current_in(root: &Path) -> Option<Session> {
-    let mut folders: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(root)
+    let own = format!("{}-", std::process::id());
+    let mut folders: Vec<(u64, PathBuf)> = std::fs::read_dir(root)
         .ok()?
         .flatten()
         .filter_map(|entry| {
-            let modified = entry.metadata().ok()?.modified().ok()?;
-            Some((modified, entry.path()))
+            let name = entry.file_name();
+            let number = name.to_str()?.strip_prefix(&own)?.parse().ok()?;
+            Some((number, entry.path()))
         })
         .collect();
     folders.sort_by_key(|folder| std::cmp::Reverse(folder.0));
     folders.iter().find_map(|(_, folder)| read(folder))
 }
 
-/// Waits up to `timeout` for a session to run and name its PipeWire node.
+/// Waits up to `timeout` for a session of this process ([`current`]) to run and name its
+/// PipeWire node.
 pub fn wait_for_node(timeout: std::time::Duration) -> Result<Session> {
     wait_for_node_in(&root(), timeout)
 }
@@ -280,6 +285,34 @@ mod tests {
         assert_eq!(node_in_log("nothing here"), None);
         assert_eq!(node_of(&capture_target(7)), Some(7));
         assert_eq!(node_of("gamescope"), None);
+    }
+
+    #[test]
+    fn only_a_running_session_of_this_process_is_current() {
+        let root = std::env::temp_dir().join(format!("gamescope-own-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // Every session names this test process as gamescope, which runs.
+        let session = |name: &str, node: u32| {
+            let folder = root.join(name);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("pid"), std::process::id().to_string()).unwrap();
+            let line = format!("stream available on node ID: {node}\n");
+            std::fs::write(folder.join("gamescope.log"), line).unwrap();
+        };
+        let own = std::process::id();
+        session(&format!("{own}-1"), 11);
+        session(&format!("{own}-2"), 12);
+        // Another host's session, made last and with a higher number.
+        session(&format!("{}-9", own.wrapping_add(1)), 99);
+        session("not-a-session", 98);
+        assert_eq!(current_in(&root).and_then(|s| s.node), Some(12));
+        std::fs::write(root.join(format!("{own}-2/pid")), "0").unwrap();
+        assert_eq!(
+            current_in(&root).and_then(|s| s.node),
+            Some(11),
+            "an ended one is skipped"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
