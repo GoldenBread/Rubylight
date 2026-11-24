@@ -146,6 +146,19 @@ impl ControlCipher {
 
     /// A client's encrypted control `packet`: its sequence, kind and payload.
     pub fn open(&self, packet: &[u8]) -> Result<(u32, u16, Vec<u8>)> {
+        let mut scratch = Vec::with_capacity(packet.len().saturating_sub(24));
+        let (seq, kind, _) = self.open_into(packet, &mut scratch)?;
+        scratch.drain(..4);
+        Ok((seq, kind, scratch))
+    }
+
+    /// [`Self::open`] decrypting into `scratch` and borrowing the payload
+    /// (`&scratch[4..]`) with no per-packet allocation or header shift.
+    pub fn open_into<'a>(
+        &self,
+        packet: &[u8],
+        scratch: &'a mut Vec<u8>,
+    ) -> Result<(u32, u16, &'a [u8])> {
         if packet.len() < 28 || u16::from_le_bytes(packet[..2].try_into().unwrap()) != 1 {
             bail!("short encrypted control packet");
         }
@@ -156,16 +169,15 @@ impl ControlCipher {
         let seq = u32::from_le_bytes(packet[4..8].try_into().unwrap());
         let (iv, iv_len) = control_iv(seq, self.v2, b'C');
         let (tag, sealed) = (&packet[8..24], &packet[24..]);
-        let mut b = self.gcm.open(&iv[..iv_len], tag, sealed)?;
-        if b.len() < 4 {
+        let plain = self.gcm.open_into(&iv[..iv_len], tag, sealed, scratch)?;
+        if plain.len() < 4 {
             bail!("short decrypted control header");
         }
-        let kind = u16::from_le_bytes(b[..2].try_into().unwrap());
-        if u16::from_le_bytes(b[2..4].try_into().unwrap()) as usize != b.len() - 4 {
+        let kind = u16::from_le_bytes(plain[..2].try_into().unwrap());
+        if u16::from_le_bytes(plain[2..4].try_into().unwrap()) as usize != plain.len() - 4 {
             bail!("decrypted control length mismatch");
         }
-        b.drain(..4);
-        Ok((seq, kind, b))
+        Ok((seq, kind, &plain[4..]))
     }
 }
 
@@ -197,16 +209,43 @@ impl ControlCiphers {
 /// of each authenticated message. Never advance it on a forged packet.
 pub struct LegacyInput {
     pub iv: [u8; 16],
+    cached: Option<([u8; 16], crypto::GcmKey)>,
 }
 
 impl LegacyInput {
     pub fn new(key_id: u32) -> Self {
         let mut iv = [0; 16];
         iv[..4].copy_from_slice(&key_id.to_be_bytes());
-        Self { iv }
+        Self { iv, cached: None }
+    }
+
+    fn gcm(&mut self, key: &[u8; 16]) -> &crypto::GcmKey {
+        if self
+            .cached
+            .as_ref()
+            .is_some_and(|(cached_key, _)| !crypto::equal(cached_key, key))
+        {
+            self.cached = None;
+        }
+        &self
+            .cached
+            .get_or_insert_with(|| (*key, crypto::GcmKey::sized(key, true)))
+            .1
     }
 
     pub fn open(&mut self, key: &[u8; 16], payload: &[u8]) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.open_into(key, payload, &mut out)?;
+        Ok(out)
+    }
+
+    /// [`Self::open`] decrypting into `scratch` with a cached AES-GCM key.
+    pub fn open_into<'a>(
+        &mut self,
+        key: &[u8; 16],
+        payload: &[u8],
+        scratch: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8]> {
         if payload.len() < 20 {
             bail!("short legacy input message");
         }
@@ -215,13 +254,64 @@ impl LegacyInput {
             bail!("legacy input length mismatch");
         }
         let tagged = &payload[4..];
-        let plain = crypto::gcm_open(key, &self.iv, &tagged[..16], &tagged[16..])?;
+        let iv = self.iv;
+        self.gcm(key)
+            .open_into(&iv, &tagged[..16], &tagged[16..], scratch)?;
         if len >= 32 {
             self.iv.copy_from_slice(&tagged[len - 16..]);
         }
-        Ok(plain)
+        Ok(scratch.as_slice())
     }
 }
 
 #[cfg(test)]
 mod control_cipher_tests;
+
+#[cfg(test)]
+mod open_into_tests {
+    use super::*;
+
+    #[test]
+    fn control_and_legacy_open_into_match_allocating_open() {
+        let key_a = [0x11u8; 16];
+        let key_b = [0x22u8; 16];
+        for v2 in [false, true] {
+            let cipher = ControlCipher::new(&key_a, v2);
+            let mut scratch = Vec::with_capacity(64);
+            let ptr = scratch.as_ptr();
+            for seq in 0..4u32 {
+                let (iv, iv_len) = control_iv(seq, v2, b'C');
+                let mut plain = 0x0206u16.to_le_bytes().to_vec();
+                let body = b"mouse move";
+                plain.extend_from_slice(&(body.len() as u16).to_le_bytes());
+                plain.extend_from_slice(body);
+                let (tag, sealed) = crypto::gcm_seal(&key_a, &iv[..iv_len], &plain).unwrap();
+                let mut pkt = 1u16.to_le_bytes().to_vec();
+                pkt.extend_from_slice(&((20 + plain.len()) as u16).to_le_bytes());
+                pkt.extend_from_slice(&seq.to_le_bytes());
+                pkt.extend_from_slice(&tag);
+                pkt.extend_from_slice(&sealed);
+                let (got_seq, got_kind, got_body) = cipher.open_into(&pkt, &mut scratch).unwrap();
+                assert_eq!((got_seq, got_kind, got_body), (seq, 0x0206, &body[..]));
+                assert_eq!(scratch.as_ptr(), ptr, "scratch must not reallocate");
+            }
+        }
+        // LegacyInput caches GcmKey, rotates cleanly on key change, and keeps IV on forged packets.
+        let mut legacy = LegacyInput::new(0x0102_0304);
+        let mut scratch = Vec::with_capacity(64);
+        for key in [key_a, key_a, key_b] {
+            let iv_before = legacy.iv;
+            let body = b"legacy input body 16+ bytes!!";
+            let (tag, ct) = crypto::gcm_seal(&key, &iv_before, body).unwrap();
+            let mut msg = ((16 + ct.len()) as u32).to_be_bytes().to_vec();
+            msg.extend_from_slice(&tag);
+            msg.extend_from_slice(&ct);
+            let mut forged = msg.clone();
+            forged[4] ^= 1;
+            assert!(legacy.open_into(&key, &forged, &mut scratch).is_err());
+            assert_eq!(legacy.iv, iv_before, "forged packet must not advance IV");
+            assert_eq!(legacy.open_into(&key, &msg, &mut scratch).unwrap(), body);
+            assert_eq!(legacy.iv, ct[ct.len() - 16..]);
+        }
+    }
+}
