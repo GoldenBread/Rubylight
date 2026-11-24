@@ -540,8 +540,10 @@ impl Harness {
         }
         let weak = Arc::downgrade(self.media.as_ref().unwrap());
         self.media.take();
-        // The microphone's blocking receive can outlive Media until its timeout.
-        until("media workers and sockets stopped", WAIT, || {
+        // The microphone's blocking receive can outlive Media until its timeout. Three times
+        // WAIT, as for the termination above: on the fork's Linux CI runners, 5 s ran out in
+        // two runs of four, and each passed again unchanged.
+        until("media workers and sockets stopped", WAIT * 3, || {
             weak.upgrade().is_none() && reserve(self.ports).is_ok()
         })
         .await;
