@@ -17,6 +17,7 @@ mod decode;
 mod harness;
 mod input_script;
 mod media;
+mod packed;
 mod report;
 
 use std::fs::File;
@@ -283,13 +284,13 @@ fn run() -> i32 {
         );
     }
     stream.audio_capabilities = CAPABILITY_DIRECT_SUBMIT;
-
+    let picture = packed::request(&mut stream);
     let host = env("BUTTERPOLLO_TEST_HOST");
     let options = Options {
         requested_format,
         requested_hdr,
-        requested_width: stream.width,
-        requested_height: stream.height,
+        requested_width: picture.0,
+        requested_height: picture.1,
         decoder_threads,
         hardware,
         hardware_device: env("BUTTERPOLLO_TEST_HW_DEVICE"),
