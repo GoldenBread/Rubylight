@@ -110,6 +110,10 @@ impl Pooled {
     pub fn va(&self) -> &Arc<Va> {
         &self.pool.va
     }
+    /// The surface's pixel format as a fourcc.
+    pub fn pixel(&self) -> u32 {
+        self.pool.pixel
+    }
 }
 
 impl Drop for Pooled {

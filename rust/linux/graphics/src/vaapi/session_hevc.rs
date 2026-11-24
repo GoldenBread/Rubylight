@@ -4,13 +4,35 @@
 use super::{
     ffi::*,
     hevc_headers::{self, Stream},
-    session::Session,
+    session::{Picture, Session},
 };
 use anyhow::Result;
 
 /// The lowest main-tier level that fits a picture size and rate, as `general_level_idc` (30
 /// times the level).
 pub fn level_idc(width: u32, height: u32, fps: u32) -> u8 {
+    level(width, height, fps).0
+}
+
+/// How many pictures the level lets a decoder keep, the one being decoded included, minus
+/// that one: the most references the stream can hold (table A.8's `MaxDpbSize`).
+pub fn dpb_frames(width: u32, height: u32, fps: u32) -> usize {
+    let samples = u64::from(width) * u64::from(height);
+    let max = level(width, height, fps).1;
+    let size = if samples <= max / 4 {
+        16
+    } else if samples <= max / 2 {
+        12
+    } else if samples <= max * 3 / 4 {
+        8
+    } else {
+        6
+    };
+    size - 1
+}
+
+/// The level and its `MaxLumaPs`.
+fn level(width: u32, height: u32, fps: u32) -> (u8, u64) {
     let samples = u64::from(width) * u64::from(height);
     let rate = samples * u64::from(fps);
     // (level_idc, MaxLumaPs, MaxLumaSr) from table A.8 and A.10.
@@ -28,35 +50,43 @@ pub fn level_idc(width: u32, height: u32, fps: u32) -> u8 {
     LEVELS
         .iter()
         .find(|&&(_, max_samples, max_rate)| samples <= max_samples && rate <= max_rate)
-        .map_or(186, |&(idc, _, _)| idc)
+        .map_or((186, 35_651_584), |&(idc, max_samples, _)| {
+            (idc, max_samples)
+        })
 }
 
 impl Session {
     pub(super) fn hevc_buffers(
         &mut self,
-        keyframe: bool,
-        rate_changed: bool,
-        bits_per_second: u32,
+        picture: &Picture,
         buffers: &mut Vec<VABufferID>,
     ) -> Result<()> {
+        let Picture {
+            keyframe,
+            rate_changed,
+            bits_per_second,
+            current,
+            held,
+            hdr,
+        } = *picture;
         let va = self.va.clone();
         let (width, height) = self.coded;
-        let current = self.recon[(self.frame % 2) as usize];
-        let previous = self.recon[((self.frame + 1) % 2) as usize];
         let order = self.order as i32;
         let stream = Stream {
             width,
             height,
             fps: self.fps,
-            depth: 8,
+            depth: self.format.depth,
             level_idc: level_idc(width, height, self.fps),
             crop: (width - self.width, height - self.height),
+            references: self.references.capacity() as u32,
+            color: self.format.color(),
         };
 
         if keyframe {
             // SAFETY: plain data; zero is a valid start for every field.
             let mut seq: VAEncSequenceParameterBufferHEVC = unsafe { std::mem::zeroed() };
-            seq.general_profile_idc = 1;
+            seq.general_profile_idc = if self.format.depth > 8 { 2 } else { 1 };
             seq.general_level_idc = stream.level_idc;
             seq.general_tier_flag = 0;
             seq.intra_period = u32::MAX;
@@ -65,7 +95,10 @@ impl Session {
             seq.bits_per_second = bits_per_second;
             seq.pic_width_in_luma_samples = width as u16;
             seq.pic_height_in_luma_samples = height as u16;
+            let depth = u32::from(self.format.depth - 8);
             seq.seq_fields.value = 1 // chroma_format_idc: 4:2:0
+                | depth << 3 // bit_depth_luma_minus8
+                | depth << 6 // bit_depth_chroma_minus8
                 | 1 << 10 // strong_intra_smoothing_enabled_flag
                 | 1 << 11 // amp_enabled_flag
                 | 1 << 12 // sample_adaptive_offset_enabled_flag
@@ -102,12 +135,23 @@ impl Session {
             flags: VA_PICTURE_HEVC_INVALID,
             va_reserved: [0; 4],
         };
-        let reference = VAPictureHEVC {
-            picture_id: previous,
-            pic_order_cnt: order - 1,
-            flags: VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE,
-            va_reserved: [0; 4],
-        };
+        let orders: Vec<u32> = held.iter().map(|h| h.order).collect();
+        // Every held picture is kept; the newest, the last, is the one this picture refers to.
+        let frames: Vec<VAPictureHEVC> = held
+            .iter()
+            .enumerate()
+            .map(|(index, h)| VAPictureHEVC {
+                picture_id: h.surface,
+                pic_order_cnt: h.order as i32,
+                flags: if index + 1 == held.len() {
+                    VA_PICTURE_HEVC_RPS_ST_CURR_BEFORE
+                } else {
+                    0
+                },
+                va_reserved: [0; 4],
+            })
+            .collect();
+        let reference = frames.last().copied().unwrap_or(invalid);
 
         // SAFETY: plain data.
         let mut pic: VAEncPictureParameterBufferHEVC = unsafe { std::mem::zeroed() };
@@ -118,8 +162,8 @@ impl Session {
             va_reserved: [0; 4],
         };
         pic.reference_frames = [invalid; 15];
-        if !keyframe {
-            pic.reference_frames[0] = reference;
+        for (slot, frame) in pic.reference_frames.iter_mut().zip(&frames) {
+            *slot = *frame;
         }
         pic.coded_buf = self.coded_buf;
         pic.collocated_ref_pic_index = 0xff;
@@ -159,10 +203,22 @@ impl Session {
             | 1 << 5 // slice_sao_luma_flag
             | 1 << 6 // slice_sao_chroma_flag
             | 1 << 12; // slice_loop_filter_across_slices_enabled_flag
+        if let Some(m) = hdr {
+            // 0.00002 steps and 0.0001 nit, as the metadata already is.
+            let sei = hevc_headers::hdr_sei(
+                m.primaries,
+                m.white,
+                u32::from(m.maximum_nits) * 10_000,
+                u32::from(m.minimum),
+                m.max_cll,
+                m.max_fall,
+            );
+            self.packed(buffers, VAEncPackedHeaderRawData, &sei)?;
+        }
         self.packed(
             buffers,
             VAEncPackedHeaderSlice,
-            &hevc_headers::slice_header(keyframe, self.order),
+            &hevc_headers::slice_header(keyframe, self.order, &orders),
         )?;
         buffers.push(va.param_buffer(self.context, VAEncSliceParameterBufferType, &mut slice)?);
         Ok(())
@@ -179,5 +235,12 @@ mod tests {
         assert_eq!(level_idc(2560, 1440, 120), 153);
         assert_eq!(level_idc(3840, 2160, 60), 153);
         assert_eq!(level_idc(3840, 2160, 120), 156);
+    }
+
+    #[test]
+    fn the_level_bounds_the_pictures_held() {
+        assert_eq!(super::dpb_frames(1920, 1088, 60), 5);
+        assert_eq!(super::dpb_frames(3840, 2160, 60), 5);
+        assert_eq!(super::dpb_frames(1280, 720, 60), 11);
     }
 }

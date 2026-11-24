@@ -22,7 +22,7 @@ impl butterpollo_media_policy::WarningSink for Quiet {
     fn clear(&self, _code: &str) {}
 }
 
-fn negotiated(codec: u8, width: u32, height: u32, fps: u32) -> Negotiated {
+pub(super) fn negotiated(codec: u8, width: u32, height: u32, fps: u32) -> Negotiated {
     Negotiated {
         width,
         height,
@@ -34,7 +34,7 @@ fn negotiated(codec: u8, width: u32, height: u32, fps: u32) -> Negotiated {
 }
 
 /// A picture with a moving gradient and hard edges, so every frame differs from the last.
-fn picture(width: u32, height: u32, step: u32) -> Image {
+pub(super) fn picture(width: u32, height: u32, step: u32) -> Image {
     let mut bytes = Vec::with_capacity(width as usize * height as usize * 4);
     for y in 0..height {
         for x in 0..width {
@@ -53,30 +53,52 @@ fn picture(width: u32, height: u32, step: u32) -> Image {
     }
 }
 
-fn skip(reason: &str) {
+pub(super) fn skip(reason: &str) {
     eprintln!("skipped: {reason}");
 }
 
-fn tool(name: &str) -> bool {
+pub(super) fn tool(name: &str) -> bool {
     Command::new(name)
         .arg("-version")
         .output()
         .is_ok_and(|output| output.status.success())
 }
 
-fn scratch(name: &str) -> PathBuf {
+pub(super) fn scratch(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("rubylight-graphics-{}-{name}", std::process::id()))
 }
 
 /// The NAL unit types of a byte stream, in order: `type & 0x1f` for H.264, `type >> 1 & 0x3f`
 /// for HEVC.
-fn nal_types(stream: &[u8], hevc: bool) -> Vec<u8> {
+pub(super) fn nal_types(stream: &[u8], hevc: bool) -> Vec<u8> {
     stream
         .windows(4)
         .enumerate()
         .filter(|(_, w)| w[..3] == [0, 0, 1])
         .map(|(_, w)| if hevc { w[3] >> 1 & 0x3f } else { w[3] & 0x1f })
         .collect()
+}
+
+/// The OBU types of an AV1 stream, in order. Every OBU here has a size field.
+pub(super) fn obu_types(stream: &[u8]) -> Vec<u8> {
+    let mut kinds = Vec::new();
+    let mut at = 0;
+    while at < stream.len() {
+        kinds.push(stream[at] >> 3 & 0xf);
+        let (mut size, mut shift) = (0usize, 0);
+        at += 1;
+        loop {
+            let byte = stream[at];
+            at += 1;
+            size |= usize::from(byte & 0x7f) << shift;
+            shift += 7;
+            if byte & 0x80 == 0 {
+                break;
+            }
+        }
+        at += size;
+    }
+    kinds
 }
 
 /// The number of pictures FFmpeg decodes from `file` (a raw `format` stream), or its error.
@@ -146,18 +168,27 @@ fn encode_and_decode(codec: u8, format: &str, width: u32, height: u32) {
         assert_eq!(packets.len(), 1);
         assert_eq!(packets[0].idr, step == 0);
         // Parameter sets travel with each IDR picture and only with those.
-        let kinds = nal_types(&packets[0].bytes, codec == 1);
-        let (sets, idr) = if codec == 1 {
-            (&[32, 33, 34][..], 19)
+        if codec == 2 {
+            // Each temporal unit starts with its delimiter; the sequence header (1) comes with
+            // the key frame only.
+            let kinds = obu_types(&packets[0].bytes);
+            assert_eq!(kinds[0], 2, "{kinds:?}");
+            assert_eq!(kinds.contains(&1), step == 0, "{kinds:?}");
+            assert!(kinds.iter().any(|kind| [3, 6].contains(kind)), "{kinds:?}");
         } else {
-            (&[7, 8][..], 5)
-        };
-        if step == 0 {
-            assert!(kinds.starts_with(sets), "{kinds:?}");
-            assert!(kinds.contains(&idr), "{kinds:?}");
-        } else {
-            assert!(sets.iter().all(|set| !kinds.contains(set)), "{kinds:?}");
-            assert!(!kinds.contains(&idr), "{kinds:?}");
+            let kinds = nal_types(&packets[0].bytes, codec == 1);
+            let (sets, idr) = if codec == 1 {
+                (&[32, 33, 34][..], 19)
+            } else {
+                (&[7, 8][..], 5)
+            };
+            if step == 0 {
+                assert!(kinds.starts_with(sets), "{kinds:?}");
+                assert!(kinds.contains(&idr), "{kinds:?}");
+            } else {
+                assert!(sets.iter().all(|set| !kinds.contains(set)), "{kinds:?}");
+                assert!(!kinds.contains(&idr), "{kinds:?}");
+            }
         }
         stream.extend_from_slice(&packets[0].bytes);
     }
@@ -169,6 +200,9 @@ fn encode_and_decode(codec: u8, format: &str, width: u32, height: u32) {
     stream.extend_from_slice(&packets[0].bytes);
     let file = scratch(&format!("{format}-{width}x{height}.bin"));
     std::fs::write(&file, &stream).unwrap();
+    if let Ok(keep) = std::env::var("KEEP_STREAMS") {
+        let _ = std::fs::write(format!("{keep}/{format}-{width}x{height}.bin"), &stream);
+    }
     let decoded = probe_stream(&file, format);
     let _ = std::fs::remove_file(&file);
     let mean = times.iter().skip(1).sum::<Duration>() / (times.len() as u32 - 1);
@@ -180,7 +214,17 @@ fn encode_and_decode(codec: u8, format: &str, width: u32, height: u32) {
         times[0].as_secs_f64() * 1000.0
     );
     let (size, count) = decoded.expect("the stream decodes");
-    assert_eq!((size, count), ((width, height), frames as usize + 1));
+    if codec == 2 {
+        // The video engine codes AV1 in blocks of a few rows more than a picture of 1080 rows;
+        // the frame header's render size says where the picture ends.
+        assert!(
+            size.0 == width && (height..=height + 2).contains(&size.1),
+            "{size:?}"
+        );
+        assert_eq!(count, frames as usize + 1);
+    } else {
+        assert_eq!((size, count), ((width, height), frames as usize + 1));
+    }
 }
 
 #[test]
@@ -194,24 +238,34 @@ fn hevc_pictures_decode() {
 }
 
 #[test]
+fn av1_pictures_decode() {
+    encode_and_decode(2, "obu", 640, 480);
+}
+
+#[test]
 fn pictures_that_are_not_whole_blocks_decode_cropped() {
     encode_and_decode(0, "h264", 1920, 1080);
     encode_and_decode(1, "hevc", 1920, 1080);
+    encode_and_decode(2, "obu", 1920, 1080);
 }
 
 #[test]
 fn unavailable_encodings_fail_visibly() {
-    let mut av1 = negotiated(2, 640, 480, 30);
-    let error = Encoder::new_options(&av1, "", &Config::default())
+    let mut config = negotiated(1, 640, 480, 30);
+    // A stream of HDR pictures: the capture gives none. The codec probe may ask for the tags.
+    config.hdr = true;
+    let error = crate::encoder::format_of(&config, false).expect_err("HDR fails");
+    assert!(format!("{error:#}").contains("no HDR picture"));
+    assert!(crate::encoder::format_of(&config, true).is_ok());
+    config.hdr = false;
+    config.yuv444 = true;
+    assert!(Encoder::new_options(&config, "", &Config::default()).is_err());
+    config.yuv444 = false;
+    config.codec = 3;
+    let error = Encoder::new_options(&config, "", &Config::default())
         .err()
-        .expect("AV1 fails");
-    assert!(format!("{error:#}").contains("AV1 encoding is not available"));
-    av1.codec = 1;
-    av1.hdr = true;
-    assert!(Encoder::new_options(&av1, "", &Config::default()).is_err());
-    av1.hdr = false;
-    av1.yuv444 = true;
-    assert!(Encoder::new_options(&av1, "", &Config::default()).is_err());
+        .expect("codec 3 fails");
+    assert!(format!("{error:#}").contains("not available"));
 }
 
 /// Captures a headless gamescope session running a test client, encodes what arrives and checks
@@ -333,6 +387,28 @@ fn gamescope_frames_are_captured_and_encoded() {
         let _ = std::fs::remove_file(&file);
         assert_eq!((size, frames), ((640, 360), 4));
         drop(small);
+        // Ten-bit streams are converted from the captured 8-bit picture on the GPU, at the
+        // capture's size and scaled; an HDR stream is refused, as the picture is SDR.
+        for (codec, format, size) in [(1, "hevc", (1280, 720)), (2, "obu", (640, 360))] {
+            let mut config = negotiated(codec, size.0, size.1, 60);
+            config.sdr_10bit = true;
+            let mut ten = Encoder::new_gpu(&config, &last).expect("ten-bit encoder");
+            let mut bytes = Vec::new();
+            for step in 0..4 {
+                bytes.extend_from_slice(
+                    &ten.encode_gpu(&last, step == 0, 4000).expect("ten-bit")[0].bytes,
+                );
+            }
+            let text = super::tenbit_tests::describe(&bytes, format, "gpu10");
+            assert!(text.contains("\"pix_fmt\": \"yuv420p10le\""), "{text}");
+        }
+        let mut hdr = negotiated(1, 1280, 720, 60);
+        hdr.hdr = true;
+        let refused = Encoder::new_gpu(&hdr, &last).err().expect("HDR is refused");
+        assert!(
+            format!("{refused:#}").contains("no HDR picture"),
+            "{refused:#}"
+        );
         // When the session ends the capture says so.
         drop(encoder);
         kill_session(&folder);
@@ -359,5 +435,39 @@ fn kill_session(folder: &std::path::Path) {
     if let Some(session) = butterpollo_linux_io::gamescope::read(folder) {
         // SAFETY: a signal to the session's gamescope process, which this test started.
         unsafe { libc::kill(session.pid as i32, libc::SIGTERM) };
+    }
+}
+
+/// Mean and 95th percentile of the time one picture takes to encode at 1920x1080 and 60 fps,
+/// including its upload and conversion. Run it with `--release --nocapture`.
+#[test]
+#[ignore = "needs a GPU; measures"]
+fn encode_time_1080p() {
+    if crate::vaapi::node::nodes().is_empty() {
+        return skip("no AMD or NVIDIA render node");
+    }
+    let pictures: Vec<Image> = (0..16).map(|step| picture(1920, 1080, step)).collect();
+    for (codec, name) in [(0, "H.264"), (1, "HEVC"), (2, "AV1")] {
+        let config = negotiated(codec, 1920, 1080, 60);
+        let Ok(mut encoder) = Encoder::new_options(&config, "", &Config::default()) else {
+            return skip("the GPU has no such encoder");
+        };
+        let mut times = Vec::new();
+        for step in 0..300 {
+            let began = Instant::now();
+            encoder
+                .encode(&pictures[step % 16], step == 0, 20_000)
+                .expect("encode");
+            if step >= 20 {
+                times.push(began.elapsed());
+            }
+        }
+        times.sort();
+        let mean = times.iter().sum::<Duration>() / times.len() as u32;
+        eprintln!(
+            "{name} 1080p: mean {:.2} ms, p95 {:.2} ms",
+            mean.as_secs_f64() * 1000.0,
+            times[times.len() * 95 / 100].as_secs_f64() * 1000.0
+        );
     }
 }

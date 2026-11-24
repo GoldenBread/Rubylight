@@ -1,4 +1,6 @@
-//! Wake-on-LAN readiness, idle time and keeping the PC awake on Linux. Reading how long the PC slept and running a child with a deadline work; adapters, NIC wake settings, power capabilities, sleeping the PC and waking the display are not available yet, so the host acts as if the PC had no adapter to arm and no idle time to read.
+//! Wake-on-LAN readiness, idle time and keeping the PC awake on Linux. Keeping it awake (a logind inhibitor), sleeping it, the idle time and waking the display work (`display`), as does reading how long the PC slept and running a child with a deadline; adapters, NIC wake settings and power capabilities are not available yet, so the host acts as if the PC had no adapter to arm.
+
+mod display;
 
 use anyhow::{Context, Result};
 use butterpollo_session::wake::{Adapter, ApplyReport, FixPlan, NicReport, SystemFacts};
@@ -123,9 +125,10 @@ pub fn slept_ms() -> Result<u64> {
     Ok(boot.saturating_sub(awake) / 1_000_000)
 }
 
-/// Seconds since the last input in this session. Linux does not read it yet.
+/// Seconds since the last input in this session, as the desktop or logind reports it. Fails
+/// where none of them knows.
 pub fn idle_seconds() -> Result<u32> {
-    Err(crate::unsupported("Reading the idle time"))
+    display::idle_seconds()
 }
 
 /// Set in `--idle-seconds`' exit code when it failed; the low 16 bits carry the error.
@@ -143,20 +146,23 @@ pub fn idle_exit_code() -> u32 {
     }
 }
 
-/// Puts the PC to sleep and returns after it resumes.
+/// Puts the PC to sleep and returns after it resumes (logind's `Suspend`).
 pub fn suspend() -> Result<()> {
-    Err(crate::unsupported("Sleeping the PC"))
+    crate::power::suspend()
 }
 
-/// A request to keep the PC awake, held until dropped. It keeps nothing awake yet.
+/// A request to keep the PC awake, held until dropped: a systemd-logind inhibitor for sleep
+/// and idle actions, which `systemd-inhibit --list` shows with its reason.
 pub struct PowerRequest {
-    _reason: (),
+    _inhibitor: zbus::zvariant::OwnedFd,
 }
 
 impl PowerRequest {
     pub fn system_required(reason: &str) -> Result<Self> {
-        let _ = reason;
-        Ok(Self { _reason: () })
+        let inhibitor = crate::power::logind::inhibit("sleep:idle", "Rubylight", reason)?;
+        Ok(Self {
+            _inhibitor: inhibitor,
+        })
     }
 }
 
@@ -169,15 +175,52 @@ pub fn should_wake(idle_seconds: u32) -> bool {
     idle_seconds >= WAKE_IDLE_SECONDS
 }
 
-/// Wake an off console display. Linux does not wake it yet.
+/// Wake an off console display: simulated user activity on the desktop, nothing for a headless
+/// gamescope session.
 pub fn wake_console(reason: &str) -> Result<()> {
-    let _ = reason;
-    Err(crate::unsupported("Waking the display"))
+    display::wake_console(reason)
 }
 
 /// Wake the console display only when [`should_wake`] says so. Returns whether a wake was
-/// sent: never, as the idle time is not read.
+/// sent; false as well where the idle time cannot be read.
 pub fn wake_console_if_idle(reason: &str) -> bool {
-    let _ = reason;
-    false
+    let idle = idle_seconds().unwrap_or(0);
+    if !should_wake(idle) {
+        return false;
+    }
+    match wake_console(reason) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(reason, error = %format!("{error:#}"), "could not wake the console display");
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The inhibitor shows in logind's list while held and is gone after.
+    #[test]
+    #[ignore = "talks to systemd-logind"]
+    fn a_power_request_is_an_inhibitor() {
+        let listed = || {
+            let out = std::process::Command::new("systemd-inhibit")
+                .arg("--list")
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).contains("rubylight-test-reason")
+        };
+        let request = PowerRequest::system_required("rubylight-test-reason").unwrap();
+        assert!(listed());
+        drop(request);
+        assert!(!listed());
+    }
+
+    #[test]
+    fn the_display_wakes_after_a_minute_idle() {
+        assert!(!should_wake(WAKE_IDLE_SECONDS - 1));
+        assert!(should_wake(WAKE_IDLE_SECONDS));
+    }
 }

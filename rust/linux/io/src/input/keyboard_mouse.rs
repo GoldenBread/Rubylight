@@ -1,9 +1,11 @@
-//! Keyboard and mouse injection into the game's gamescope session. The session's Xwayland
+//! Keyboard and mouse injection into the game's gamescope session, or, when the stream's target
+//! is the user's own desktop, into the desktop through `/dev/uinput`. The session's Xwayland
 //! may start after the stream does, so the connection is made when a session shows up and
 //! made again when another replaces it; input meanwhile is dropped with a debug log.
 
 use super::{
     Event,
+    evdev_desktop::DesktopInput,
     keymap::{char_keysym, keysym, scale_absolute, scroll_notches, x_button},
     xserver::XServer,
 };
@@ -28,6 +30,9 @@ const MODIFIERS: [(u8, [u16; 3], u16); 3] = [
 
 #[derive(Default)]
 pub(super) struct KeyboardMouse {
+    /// The desktop's virtual devices, while the stream's target is the desktop (this replaces
+    /// the X connection).
+    desktop: Option<DesktopInput>,
     server: Option<XServer>,
     looked_up: Option<Instant>,
     /// The display that failed, so its error is raised once.
@@ -46,6 +51,25 @@ pub(super) struct KeyboardMouse {
 }
 
 impl KeyboardMouse {
+    /// Input for a stream whose capture target is `output`: the desktop's devices for
+    /// `desktop` and `desktop:<n>`, the gamescope session's X server otherwise.
+    pub(super) fn for_output(output: &str) -> Self {
+        let mut keyboard_mouse = Self::default();
+        keyboard_mouse.set_output(output);
+        keyboard_mouse
+    }
+    /// Follows a change of the stream's target.
+    pub(super) fn set_output(&mut self, output: &str) {
+        match (crate::portal::desktop_target(output), &mut self.desktop) {
+            (Some(monitor), None) => self.desktop = Some(DesktopInput::new(monitor)),
+            (Some(_), Some(_)) => {}
+            (None, Some(desktop)) => {
+                let _ = desktop.release();
+                self.desktop = None;
+            }
+            (None, None) => {}
+        }
+    }
     /// The connection to the newest gamescope session, made or remade when due.
     fn server(&mut self, warnings: &Warnings) -> Option<&XServer> {
         let due = self.looked_up.is_none_or(|at| at.elapsed() >= LOOKUP);
@@ -90,6 +114,9 @@ impl KeyboardMouse {
     }
     /// Inject one event. None is sent before [`Self::finish`].
     pub(super) fn apply(&mut self, e: &Event, policy: &Policy, warnings: &Warnings) -> Result<()> {
+        if let Some(desktop) = &mut self.desktop {
+            return desktop.apply(e, policy);
+        }
         if self.server(warnings).is_none() {
             return Ok(());
         }
@@ -244,6 +271,9 @@ impl KeyboardMouse {
     }
     /// Sends what the events of a pass queued.
     pub(super) fn finish(&mut self) -> Result<()> {
+        if let Some(desktop) = &mut self.desktop {
+            return desktop.finish();
+        }
         let Some(server) = &self.server else {
             return Ok(());
         };
@@ -256,6 +286,9 @@ impl KeyboardMouse {
     }
     /// Lets go of every held key and button.
     pub(super) fn release(&mut self) -> Result<()> {
+        if let Some(desktop) = &mut self.desktop {
+            return desktop.release();
+        }
         let keys = std::mem::take(&mut self.keys);
         let buttons = std::mem::take(&mut self.buttons);
         self.sources.clear();

@@ -1,4 +1,4 @@
-//! Displays, GPUs and screen capture as the host names them. On Linux the GPUs are the AMD and NVIDIA render nodes, and a capture takes the picture of a gamescope session (the target `gamescope`) or of a PipeWire node (`pipewire-node:<id>`) as DMA-BUFs that VA-API converts into surfaces the encoder reads in place. No desktop display or window is listed or captured yet.
+//! Displays, GPUs and screen capture as the host names them. On Linux the GPUs are the AMD and NVIDIA render nodes, and a capture takes the picture of a gamescope session (the target `gamescope`), of a PipeWire node (`pipewire-node:<id>`) or of the user's own desktop through the portal (`desktop`, `desktop:<monitor>`) as DMA-BUFs that VA-API converts into surfaces the encoder reads in place; a desktop falls back to memory buffers uploaded by the CPU. No window is captured yet.
 use crate::vaapi::{
     Va,
     node::{self, Node},
@@ -13,6 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod desktop;
+#[cfg(test)]
+mod desktop_tests;
 pub mod idd_push;
 mod pw_capture;
 
@@ -49,9 +52,9 @@ pub struct Display {
 /// Process-wide display scaling awareness. Nothing needs setting on Linux.
 pub fn enable_dpi_awareness() {}
 
-/// The displays of the desktop. None is listed on Linux yet.
+/// The displays of the desktop session, named `desktop:<index>`; none without a session.
 pub fn displays() -> Result<Vec<Display>> {
-    Ok(Vec::new())
+    Ok(desktop::displays())
 }
 
 /// The display `name` names among `choices`: the primary (else the first) for an empty name,
@@ -77,6 +80,7 @@ fn select_display<'a>(choices: &'a [Display], name: &str) -> Result<Option<&'a D
 pub fn display_present(name: &str) -> bool {
     name.starts_with(WINDOW_TARGET_PREFIX)
         || name == GAMESCOPE_TARGET
+        || desktop::present(name)
         || butterpollo_linux_io::gamescope::node_of(name).is_some()
         || displays().is_ok_and(|choices| select_display(&choices, name).is_ok_and(|d| d.is_some()))
 }
@@ -576,7 +580,25 @@ impl PipeWire {
         if hdr {
             return Err(crate::unsupported("HDR capture"));
         }
-        let (node, session) = if name == GAMESCOPE_TARGET {
+        let desktop = match desktop::parse(name) {
+            Some(index) => {
+                let cast = butterpollo_linux_io::portal::ScreenCast::open(
+                    index.is_some(),
+                    butterpollo_linux_io::portal::DIALOG_WAIT,
+                )?;
+                let monitor = desktop::pick(&cast.monitors, index)?;
+                tracing::info!(
+                    node = monitor.node,
+                    ?monitor,
+                    "desktop capture of a portal monitor"
+                );
+                Some((cast, monitor.node))
+            }
+            None => None,
+        };
+        let (node, session) = if let Some((_, node)) = &desktop {
+            (*node, None)
+        } else if name == GAMESCOPE_TARGET {
             let session = butterpollo_linux_io::gamescope::wait_for_node(GAMESCOPE_WAIT)?;
             (
                 session
@@ -588,7 +610,7 @@ impl PipeWire {
             (node, None)
         } else {
             bail!(
-                "this Linux host captures the target \"{GAMESCOPE_TARGET}\" or \"pipewire-node:<id>\", not {name:?}"
+                "this Linux host captures the targets \"{GAMESCOPE_TARGET}\", \"desktop\", \"desktop:<monitor>\" or \"pipewire-node:<id>\", not {name:?}"
             );
         };
         let probe = Device::new_adapter(
@@ -596,7 +618,12 @@ impl PipeWire {
             config.get("adapter_name", ""),
             config.get("adapter_pnp_id", ""),
         )?;
-        let capture = pw_capture::PipeWireCapture::open(node, probe.va())?;
+        let capture = match &desktop {
+            Some((cast, node)) => {
+                pw_capture::PipeWireCapture::open_portal(cast, *node, probe.va())?
+            }
+            None => pw_capture::PipeWireCapture::open(node, probe.va())?,
+        };
         let size = capture.size;
         let found = node::nodes()
             .iter()
@@ -663,6 +690,14 @@ impl Capture {
     pub fn resume_pointer(&mut self, _pointer: Pointer) -> Result<()> {
         Ok(())
     }
+    /// How frames reach the GPU: `"dmabuf"` (imported in place), `"shm"` (memory buffers
+    /// uploaded by the CPU, a desktop's fallback) or `"none"` yet.
+    pub fn buffer_path(&self) -> &'static str {
+        match self {
+            Self::Closed => "none",
+            Self::PipeWire(capture) => capture.capture.path(),
+        }
+    }
     /// The backend's name, as the capture setting names it.
     pub fn backend(&self) -> &'static str {
         match self {
@@ -689,7 +724,7 @@ impl Capture {
     pub fn wait_interval(&self, _idle: Duration, poll: Duration) -> Duration {
         poll
     }
-    /// Opens the capture of a stream, with the host's bridges: the target `gamescope` or
+    /// Opens the capture of a stream, with the host's bridges: the target `gamescope`, `desktop`, `desktop:<n>` or
     /// `pipewire-node:<id>`. A window target is refused, as is any other.
     pub fn open_for_stream_with_env(
         name: &str,

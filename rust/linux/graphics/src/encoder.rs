@@ -1,14 +1,17 @@
-//! The video encoder of a stream. On Linux it is a VA-API session (H.264 High and HEVC Main,
-//! 8-bit 4:2:0, constant bitrate, one reference picture) that encodes a captured picture where
-//! it is in GPU memory, or a BGRA picture from system memory for the codec probe. Encoding is
-//! synchronous: a call returns the picture it encoded, so nothing is ever pending. AV1, HDR and
-//! 4:4:4 fail when the encoder is created. The encoded-frame types are as the senders read them.
+//! The video encoder of a stream. On Linux it is a VA-API session (H.264 High, HEVC Main and
+//! AV1 profile 0, 8-bit 4:2:0, constant bitrate, one reference picture per picture) that encodes
+//! a captured picture where it is in GPU memory, or a BGRA picture from system memory for the
+//! codec probe. Encoding is synchronous: a call returns the picture it encoded, so nothing is
+//! ever pending. 10-bit streams (HEVC Main10, AV1) are converted from the 8-bit picture by video
+//! processing. HDR streams and 4:4:4 fail when the encoder is created on a captured picture; the
+//! codec probe may ask for the HDR tags to find out the encoder takes them. The encoded-frame
+//! types are as the senders read them.
 use crate::{
     capture::{Device, GpuImage, Image, Pixel},
     vaapi::{
         Va,
         encoder::{Backend, Output},
-        session::Codec,
+        session::{Codec, Format},
     },
 };
 use anyhow::{Context, Result, bail};
@@ -83,36 +86,67 @@ pub struct Encoder {
     submitted: Option<Instant>,
 }
 
-/// The codec a negotiation asks for, or why this host cannot encode it.
-fn codec_of(config: &Negotiated) -> Result<Codec> {
-    if config.hdr || config.sdr_10bit {
-        bail!("10-bit and HDR encoding is not available on a Linux host yet");
+/// Why an HDR stream is refused when it opens on a captured picture.
+pub const NO_HDR_CAPTURE: &str = "HDR is not available on a Linux host yet: the capture gives \
+    no HDR picture (gamescope's stream is SDR), and an SDR picture sent as HDR would look \
+    wrong. Stream it as 10-bit SDR instead, or turn HDR off in the client";
+
+/// The codec and picture format a negotiation asks for, or why this host cannot encode it.
+/// `picture_is_hdr` is whether the pictures to come carry HDR: a stream's do not, as the
+/// capture is SDR, so an HDR stream is refused; the codec probe's test picture only checks that
+/// the 10-bit encoder works, so it may ask for the HDR tags.
+pub(crate) fn format_of(config: &Negotiated, picture_is_hdr: bool) -> Result<(Codec, Format)> {
+    if config.hdr && !picture_is_hdr {
+        bail!(NO_HDR_CAPTURE);
     }
     if config.yuv444 {
         bail!("4:4:4 encoding is not available on a Linux host yet");
     }
-    match config.codec {
-        0 => Ok(Codec::H264),
-        1 => Ok(Codec::Hevc),
-        2 => bail!("AV1 encoding is not available on a Linux host yet"),
+    let codec = match config.codec {
+        0 => Codec::H264,
+        1 => Codec::Hevc,
+        2 => Codec::Av1,
         other => bail!("codec {other} is not available on a Linux host yet"),
+    };
+    let depth = if config.ten_bit() { 10 } else { 8 };
+    if depth == 10 && codec == Codec::H264 {
+        bail!("H.264 has no 10-bit mode on this host; choose HEVC or AV1");
     }
+    Ok((
+        codec,
+        Format {
+            depth,
+            hdr: config.hdr,
+        },
+    ))
 }
 
 impl Encoder {
-    fn on(va: &Arc<Va>, device: &Device, config: &Negotiated) -> Result<Self> {
-        let codec = codec_of(config)?;
-        let backend = Backend::new(va, codec, config.width, config.height, config.fps.max(1))
-            .with_context(|| {
-                format!(
-                    "the {} encoder could not start on {} ({}x{} at {} fps)",
-                    codec.name(),
-                    device.display.adapter,
-                    config.width,
-                    config.height,
-                    config.fps
-                )
-            })?;
+    fn on(
+        va: &Arc<Va>,
+        device: &Device,
+        config: &Negotiated,
+        picture_is_hdr: bool,
+    ) -> Result<Self> {
+        let (codec, format) = format_of(config, picture_is_hdr)?;
+        let backend = Backend::new(
+            va,
+            codec,
+            format,
+            config.width,
+            config.height,
+            config.fps.max(1),
+        )
+        .with_context(|| {
+            format!(
+                "the {} encoder could not start on {} ({}x{} at {} fps)",
+                codec.name(),
+                device.display.adapter,
+                config.width,
+                config.height,
+                config.fps
+            )
+        })?;
         Ok(Self {
             backend,
             adapter: device.display.adapter.clone(),
@@ -128,7 +162,7 @@ impl Encoder {
             framing: None,
             unit: Unit::Whole,
             idr: output.idr,
-            after_invalidation: false,
+            after_invalidation: output.recovered,
             frame_cap_bytes: None,
             reencoded: false,
             frame_cap_target: None,
@@ -157,7 +191,10 @@ impl Encoder {
     pub fn keyframe_cap_scale(&self) -> f64 {
         1.
     }
-    pub fn set_hdr_metadata(&mut self, _metadata: butterpollo_media_policy::hdr::Metadata) {}
+    /// The HDR10 metadata a stream with HDR pictures carries; SDR streams carry none.
+    pub fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
+        self.backend.set_hdr_metadata(metadata);
+    }
     /// The receiver's display peak, for dynamic metadata that names a target
     /// display.
     pub fn set_hdr_target(&mut self, _nits: u16) {}
@@ -178,7 +215,7 @@ impl Encoder {
         image: &GpuImage,
         _tuning: &butterpollo_config::config::Config,
     ) -> Result<Self> {
-        Self::on(image.gpu.va(), &image.gpu, config)
+        Self::on(image.gpu.va(), &image.gpu, config, false)
     }
     /// [`Self::new_gpu_options`], with the session's warnings.
     pub fn new_gpu_reported(
@@ -282,12 +319,17 @@ impl Encoder {
     pub fn backend(&self) -> &'static str {
         "vaapi"
     }
+    /// Whether a loss report can be answered with a picture that refers to an older one.
     pub fn supports_invalidation(&self) -> bool {
-        false
+        self.backend.supports_invalidation()
     }
-    pub fn invalidate_ref_frames(&mut self, _first: u64, _last: u64) -> bool {
-        false
+    /// Pictures numbered `first` to `last` on the wire did not arrive: the next picture refers
+    /// to one from before them. False asks for a keyframe, as no picture held is that old.
+    pub fn invalidate_ref_frames(&mut self, first: u64, last: u64) -> bool {
+        self.backend.invalidate(first, last)
     }
+    /// Whether the repair needs a keyframe as a backstop. An older picture is a plain
+    /// reference every decoder follows, so it does not.
     pub fn needs_recovery_confirmation(&self) -> bool {
         false
     }
@@ -307,7 +349,9 @@ impl Encoder {
     /// back whole.
     pub fn join_slices(&mut self) {}
     /// A recreated encoder must keep the wire frame numbers used by RFI.
-    pub fn set_next_frame(&mut self, _frame: u64) {}
+    pub fn set_next_frame(&mut self, frame: u64) {
+        self.backend.set_next_frame(frame);
+    }
     pub fn new(config: &Negotiated, display: &str) -> Result<Self> {
         Self::new_options(
             config,
@@ -322,13 +366,13 @@ impl Encoder {
         display: &str,
         tuning: &butterpollo_config::config::Config,
     ) -> Result<Self> {
-        codec_of(config)?;
+        format_of(config, true)?;
         let device = Device::new_adapter(
             display,
             tuning.get("adapter_name", ""),
             tuning.get("adapter_pnp_id", ""),
         )?;
-        Self::on(device.va(), &device, config)
+        Self::on(device.va(), &device, config, true)
     }
     /// Encodes a BGRA picture in system memory, at `bitrate` kilobits a second.
     pub fn encode(&mut self, image: &Image, idr: bool, bitrate: u32) -> Result<Vec<Encoded>> {

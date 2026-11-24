@@ -32,6 +32,7 @@ pub mod mic;
 pub mod net;
 pub mod nucleus;
 pub mod playnite;
+pub mod portal;
 pub mod power;
 pub mod process;
 pub mod rtss;

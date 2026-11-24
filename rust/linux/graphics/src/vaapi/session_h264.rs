@@ -4,35 +4,46 @@
 use super::{
     ffi::*,
     h264_headers::{self, Stream},
-    session::Session,
+    session::{Picture, Session},
 };
 use anyhow::Result;
 
 /// The lowest level that fits a picture size and rate, as `level_idc` (10 times the level).
 pub fn level_idc(width: u32, height: u32, fps: u32) -> u8 {
+    level(width, height, fps).0
+}
+
+/// The level and its decoded picture buffer, in 16x16 blocks.
+fn level(width: u32, height: u32, fps: u32) -> (u8, u64) {
     let blocks = u64::from(width / 16) * u64::from(height / 16);
     let rate = blocks * u64::from(fps);
-    // (level_idc, MaxFS, MaxMBPS) from table A-1.
-    const LEVELS: [(u8, u64, u64); 11] = [
-        (30, 1_620, 40_500),
-        (31, 3_600, 108_000),
-        (32, 5_120, 216_000),
-        (40, 8_192, 245_760),
-        (42, 8_704, 522_240),
-        (50, 22_080, 589_824),
-        (51, 36_864, 983_040),
-        (52, 36_864, 2_073_600),
-        (60, 139_264, 4_177_920),
-        (61, 139_264, 8_355_840),
-        (62, 139_264, 16_711_680),
+    // (level_idc, MaxFS, MaxMBPS, MaxDpbMbs) from table A-1.
+    const LEVELS: [(u8, u64, u64, u64); 11] = [
+        (30, 1_620, 40_500, 8_100),
+        (31, 3_600, 108_000, 18_000),
+        (32, 5_120, 216_000, 20_480),
+        (40, 8_192, 245_760, 32_768),
+        (42, 8_704, 522_240, 34_816),
+        (50, 22_080, 589_824, 110_400),
+        (51, 36_864, 983_040, 184_320),
+        (52, 36_864, 2_073_600, 184_320),
+        (60, 139_264, 4_177_920, 696_320),
+        (61, 139_264, 8_355_840, 696_320),
+        (62, 139_264, 16_711_680, 696_320),
     ];
     LEVELS
         .iter()
-        .find(|&&(_, max_blocks, max_rate)| blocks <= max_blocks && rate <= max_rate)
-        .map_or(62, |&(idc, _, _)| idc)
+        .find(|&&(_, max_blocks, max_rate, _)| blocks <= max_blocks && rate <= max_rate)
+        .map_or((62, 696_320), |&(idc, _, _, dpb)| (idc, dpb))
 }
 
-fn picture(id: VASurfaceID, frame_num: u32, flags: u32) -> VAPictureH264 {
+/// How many pictures the level lets a decoder keep: the most references the stream can hold.
+pub fn dpb_frames(width: u32, height: u32, fps: u32) -> usize {
+    let blocks = (u64::from(width / 16) * u64::from(height / 16)).max(1);
+    (level(width, height, fps).1 / blocks).clamp(1, 16) as usize
+}
+
+fn picture_of(id: VASurfaceID, frame_num: u32, flags: u32) -> VAPictureH264 {
     VAPictureH264 {
         picture_id: id,
         frame_idx: frame_num,
@@ -47,22 +58,28 @@ fn picture(id: VASurfaceID, frame_num: u32, flags: u32) -> VAPictureH264 {
 impl Session {
     pub(super) fn h264_buffers(
         &mut self,
-        keyframe: bool,
-        rate_changed: bool,
-        bits_per_second: u32,
+        picture: &Picture,
         buffers: &mut Vec<VABufferID>,
     ) -> Result<()> {
+        let Picture {
+            keyframe,
+            rate_changed,
+            bits_per_second,
+            current,
+            held,
+            hdr: _,
+        } = *picture;
         let va = self.va.clone();
         let (width, height) = self.coded;
-        let current = self.recon[(self.frame % 2) as usize];
-        let previous = self.recon[((self.frame + 1) % 2) as usize];
-        let frame_num = self.order & ((1 << h264_headers::LOG2_MAX_FRAME_NUM) - 1);
+        let mask = (1 << h264_headers::LOG2_MAX_FRAME_NUM) - 1;
+        let frame_num = self.order & mask;
         let stream = Stream {
             width,
             height,
             fps: self.fps,
             level_idc: level_idc(width, height, self.fps),
             crop: (width - self.width, height - self.height),
+            references: self.references.capacity() as u32,
         };
 
         if keyframe {
@@ -73,7 +90,7 @@ impl Session {
             seq.intra_idr_period = u32::MAX;
             seq.ip_period = 1;
             seq.bits_per_second = bits_per_second;
-            seq.max_num_ref_frames = 1;
+            seq.max_num_ref_frames = stream.references;
             seq.picture_width_in_mbs = (width / 16) as u16;
             seq.picture_height_in_mbs = (height / 16) as u16;
             seq.seq_fields.value = 1 // chroma_format_idc: 4:2:0
@@ -118,18 +135,29 @@ impl Session {
             BottomFieldOrderCnt: 0,
             va_reserved: [0; 4],
         };
-        let reference = picture(
-            previous,
-            frame_num.wrapping_sub(1) & ((1 << h264_headers::LOG2_MAX_FRAME_NUM) - 1),
-            VA_PICTURE_H264_SHORT_TERM_REFERENCE,
-        );
+        let frames: Vec<VAPictureH264> = held
+            .iter()
+            .map(|h| {
+                picture_of(
+                    h.surface,
+                    h.order & mask,
+                    VA_PICTURE_H264_SHORT_TERM_REFERENCE,
+                )
+            })
+            .collect();
+        // The picture refers to the newest one held, which a loss report may have made older
+        // than the one before.
+        let (reference, distance) = match (frames.last(), held.last()) {
+            (Some(&frame), Some(newest)) => (frame, self.order - newest.order),
+            _ => (invalid, 1),
+        };
 
         // SAFETY: plain data.
         let mut pic: VAEncPictureParameterBufferH264 = unsafe { std::mem::zeroed() };
-        pic.CurrPic = picture(current, frame_num, 0);
+        pic.CurrPic = picture_of(current, frame_num, 0);
         pic.ReferenceFrames = [invalid; 16];
-        if !keyframe {
-            pic.ReferenceFrames[0] = reference;
+        for (slot, frame) in pic.ReferenceFrames.iter_mut().zip(&frames) {
+            *slot = *frame;
         }
         pic.coded_buf = self.coded_buf;
         pic.frame_num = frame_num as u16;
@@ -159,7 +187,7 @@ impl Session {
         self.packed(
             buffers,
             VAEncPackedHeaderSlice,
-            &h264_headers::slice_header(keyframe, frame_num, self.idr_count),
+            &h264_headers::slice_header(keyframe, frame_num, self.idr_count, distance),
         )?;
         buffers.push(va.param_buffer(self.context, VAEncSliceParameterBufferType, &mut slice)?);
         Ok(())
@@ -176,5 +204,12 @@ mod tests {
         assert_eq!(level_idc(1920, 1088, 60), 42);
         assert_eq!(level_idc(2560, 1440, 60), 51);
         assert_eq!(level_idc(3840, 2160, 60), 52);
+    }
+
+    #[test]
+    fn the_level_bounds_the_pictures_held() {
+        assert_eq!(super::dpb_frames(1920, 1088, 60), 4);
+        assert_eq!(super::dpb_frames(3840, 2160, 60), 5);
+        assert_eq!(super::dpb_frames(1280, 720, 60), 5);
     }
 }

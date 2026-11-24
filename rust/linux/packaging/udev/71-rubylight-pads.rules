@@ -1,0 +1,6 @@
+# Gives the signed-in user's games the input devices of the controllers Rubylight emulates
+# (rust/linux/io/src/input/hid_pad.rs names each `rubylight-<pid>/ds<slot>`): the kernel's
+# DualSense driver makes a motion-sensor and a touchpad device beside the gamepad, and only
+# the gamepad gets the seat's access by default. Install with
+#   sudo install -m 644 71-rubylight-pads.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+SUBSYSTEM=="input", ATTRS{phys}=="rubylight-*", TAG+="uaccess"

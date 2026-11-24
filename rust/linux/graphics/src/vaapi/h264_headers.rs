@@ -17,6 +17,8 @@ pub struct Stream {
     pub level_idc: u8,
     /// Pixels cut from the right and bottom of the coded picture (even).
     pub crop: (u32, u32),
+    /// Pictures held as references: `max_num_ref_frames`.
+    pub references: u32,
 }
 
 /// Bits of `frame_num`: counts wrap at 65536 pictures.
@@ -46,8 +48,10 @@ fn sps(s: &Stream) -> Vec<u8> {
     b.flag(false); // seq_scaling_matrix_present_flag
     b.ue(LOG2_MAX_FRAME_NUM - 4);
     b.ue(2); // pic_order_cnt_type: output order is decoding order
-    b.ue(1); // max_num_ref_frames
-    b.flag(false); // gaps_in_frame_num_value_allowed_flag
+    b.ue(s.references); // max_num_ref_frames
+    // A decoder that never got the pictures a loss report named counts them as missing, not as
+    // a broken stream.
+    b.flag(true); // gaps_in_frame_num_value_allowed_flag
     b.ue(s.width / 16 - 1); // pic_width_in_mbs_minus1
     b.ue(s.height / 16 - 1); // pic_height_in_map_units_minus1
     b.flag(true); // frame_mbs_only_flag
@@ -85,7 +89,7 @@ fn sps(s: &Stream) -> Vec<u8> {
     b.ue(15); // log2_max_mv_length_horizontal
     b.ue(15); // log2_max_mv_length_vertical
     b.ue(0); // max_num_reorder_frames
-    b.ue(1); // max_dec_frame_buffering
+    b.ue(s.references); // max_dec_frame_buffering
     b.align();
     b.bytes
 }
@@ -142,8 +146,9 @@ pub fn picture_set() -> Vec<u8> {
 /// `cabac_alignment_one_bit` bits are written here).
 ///
 /// `frame_num` counts pictures from the last IDR picture; `idr_id` tells successive IDR
-/// pictures apart.
-pub fn slice_header(keyframe: bool, frame_num: u32, idr_id: u32) -> Vec<u8> {
+/// pictures apart. A P picture refers to the one `distance` pictures before it: 1 for the
+/// previous picture, which is the first in the default order, more for an older one.
+pub fn slice_header(keyframe: bool, frame_num: u32, idr_id: u32, distance: u32) -> Vec<u8> {
     let mut b = Bits::default();
     b.ue(0); // first_mb_in_slice
     b.ue(if keyframe { SLICE_I } else { SLICE_P });
@@ -156,7 +161,14 @@ pub fn slice_header(keyframe: bool, frame_num: u32, idr_id: u32) -> Vec<u8> {
         b.ue(idr_id & 0xffff); // idr_pic_id
     } else {
         b.flag(false); // num_ref_idx_active_override_flag
-        b.flag(false); // ref_pic_list_modification_flag_l0
+        if distance > 1 {
+            b.flag(true); // ref_pic_list_modification_flag_l0
+            b.ue(0); // modification_of_pic_nums_idc: subtract from the current picture
+            b.ue(distance - 1); // abs_diff_pic_num_minus1
+            b.ue(3); // end of the modifications
+        } else {
+            b.flag(false); // ref_pic_list_modification_flag_l0
+        }
     }
     // dec_ref_pic_marking(): every picture is a reference.
     if keyframe {
@@ -199,6 +211,7 @@ mod tests {
             fps: 60,
             level_idc: 42,
             crop: (0, 8),
+            references: 4,
         }
     }
 
@@ -228,18 +241,26 @@ mod tests {
 
     #[test]
     fn slice_headers_name_their_picture_type() {
-        let idr = slice_header(true, 0, 0);
+        let idr = slice_header(true, 0, 0, 1);
         assert_eq!(idr[4] & 0x1f, NAL_IDR);
-        let p = slice_header(false, 5, 0);
+        let p = slice_header(false, 5, 0, 1);
         assert_eq!(p[4] & 0x1f, NAL_SLICE);
-        assert_ne!(slice_header(false, 5, 0), slice_header(false, 6, 0));
-        assert_ne!(slice_header(true, 0, 0), slice_header(true, 0, 1));
+        assert_ne!(slice_header(false, 5, 0, 1), slice_header(false, 6, 0, 1));
+        assert_ne!(slice_header(true, 0, 0, 1), slice_header(true, 0, 1, 1));
+    }
+
+    #[test]
+    fn an_older_reference_is_named_in_the_slice_header() {
+        let plain = slice_header(false, 9, 0, 1);
+        let older = slice_header(false, 9, 0, 3);
+        assert!(older.len() >= plain.len());
+        assert_ne!(plain, older);
     }
 
     #[test]
     fn a_slice_header_ends_on_a_byte_with_ones_for_cabac() {
         // The CABAC alignment bits are ones: the header's last byte ends in them.
-        let p = slice_header(false, 1, 0);
+        let p = slice_header(false, 1, 0, 1);
         assert!(!CABAC || p.last().is_some_and(|last| last & 1 == 1));
     }
 }

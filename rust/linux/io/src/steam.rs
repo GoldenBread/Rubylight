@@ -4,6 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
+mod library;
+pub use library::{User, discover, users};
+
 /// The folders below `home` that hold a Steam installation, by how Steam was installed:
 /// natively (with its two usual links), as a Flatpak, and as a Snap.
 const BELOW_HOME: [&str; 6] = [
@@ -51,4 +54,23 @@ fn installations(candidates: Vec<PathBuf>) -> Vec<PathBuf> {
         }
     }
     roots
+}
+
+/// Steam apps that are tools on Linux and never games, beside what the shared filter
+/// ([`butterpollo_session::steam::importable`]) drops: Proton's anti-cheat runtimes,
+/// Steam Linux Runtime and Steamworks components, by app id.
+const LINUX_TOOLS: [u32; 11] = [
+    // Steam Linux Runtime 1.0 (scout), 2.0 (soldier), 3.0 (sniper), 4.0.
+    1070560, 1391110, 1628350, 4183110,
+    // Proton EasyAntiCheat Runtime and Proton BattlEye Runtime.
+    1826330, 1161040,
+    // Proton Hotfix, Proton Experimental, Steamworks Common Redistributables.
+    2180100, 1493710, 228980, // Steamworks Shared and the Steam client itself.
+    1007, 221410,
+];
+
+/// Whether `game` is a game, not a tool Steam installs for its own use: the shared rules
+/// (tools, Proton and runtimes by name, DLC) and the tool app ids Linux adds.
+pub fn importable(game: &butterpollo_session::steam::Game) -> bool {
+    butterpollo_session::steam::importable(game, false) && !LINUX_TOOLS.contains(&game.appid)
 }

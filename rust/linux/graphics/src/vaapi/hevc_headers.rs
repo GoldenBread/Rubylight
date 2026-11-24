@@ -21,6 +21,10 @@ pub struct Stream {
     pub level_idc: u8,
     /// Pixels cut from the right and bottom of the coded picture, in luma samples (even).
     pub crop: (u32, u32),
+    /// Pictures held as references.
+    pub references: u32,
+    /// `colour_primaries`, `transfer_characteristics` and `matrix_coeffs` of the VUI.
+    pub color: (u8, u8, u8),
 }
 
 /// Bits of `slice_pic_order_cnt_lsb`: counts wrap at 65536 pictures.
@@ -31,6 +35,7 @@ const NAL_SPS: u8 = 33;
 const NAL_PPS: u8 = 34;
 pub const NAL_TRAIL_R: u8 = 1;
 pub const NAL_IDR_W_RADL: u8 = 19;
+const NAL_PREFIX_SEI: u8 = 39;
 
 pub const SLICE_P: u32 = 1;
 pub const SLICE_I: u32 = 2;
@@ -65,7 +70,7 @@ fn vps(s: &Stream) -> Vec<u8> {
     b.put(16, 0xffff);
     profile_tier_level(&mut b, s);
     b.flag(true); // vps_sub_layer_ordering_info_present_flag
-    b.ue(1); // vps_max_dec_pic_buffering_minus1
+    b.ue(s.references); // vps_max_dec_pic_buffering_minus1
     b.ue(0); // vps_max_num_reorder_pics
     b.ue(0); // vps_max_latency_increase_plus1
     b.put(6, 0); // vps_max_layer_id
@@ -102,7 +107,7 @@ fn sps(s: &Stream) -> Vec<u8> {
     b.ue(u32::from(s.depth - 8)); // bit_depth_chroma_minus8
     b.ue(LOG2_MAX_POC_LSB - 4);
     b.flag(true); // sps_sub_layer_ordering_info_present_flag
-    b.ue(1); // sps_max_dec_pic_buffering_minus1
+    b.ue(s.references); // sps_max_dec_pic_buffering_minus1
     b.ue(0); // sps_max_num_reorder_pics
     b.ue(0); // sps_max_latency_increase_plus1
     b.ue(0); // log2_min_luma_coding_block_size_minus3: 8
@@ -127,9 +132,9 @@ fn sps(s: &Stream) -> Vec<u8> {
         b.put(3, 5); // video_format: unspecified
         b.flag(false); // video_full_range_flag
         b.flag(true); // colour_description_present_flag
-        b.put(8, 1); // colour_primaries: BT.709
-        b.put(8, 1); // transfer_characteristics: BT.709
-        b.put(8, 1); // matrix_coeffs: BT.709
+        b.put(8, u32::from(s.color.0)); // colour_primaries
+        b.put(8, u32::from(s.color.1)); // transfer_characteristics
+        b.put(8, u32::from(s.color.2)); // matrix_coeffs
         b.flag(false); // chroma_loc_info_present_flag
         b.flag(false); // neutral_chroma_indication_flag
         b.flag(false); // field_seq_flag
@@ -191,9 +196,10 @@ pub fn parameter_sets(s: &Stream) -> Vec<u8> {
     out
 }
 
-/// The header of a picture's only slice. `order` counts pictures from the
-/// last IDR picture; a P picture refers to the picture before it.
-pub fn slice_header(keyframe: bool, order: u32) -> Vec<u8> {
+/// The header of a picture's only slice. `order` counts pictures from the last IDR picture.
+/// `held` are the orders of the pictures kept as references, oldest first: the picture refers
+/// to the newest and only keeps the others for later pictures.
+pub fn slice_header(keyframe: bool, order: u32, held: &[u32]) -> Vec<u8> {
     let mut b = Bits::default();
     b.flag(true); // first_slice_segment_in_pic_flag
     if keyframe {
@@ -204,11 +210,15 @@ pub fn slice_header(keyframe: bool, order: u32) -> Vec<u8> {
     if !keyframe {
         b.put(LOG2_MAX_POC_LSB, order & ((1 << LOG2_MAX_POC_LSB) - 1));
         b.flag(false); // short_term_ref_pic_set_sps_flag
-        // st_ref_pic_set(0): the picture before this one, used by it.
-        b.ue(1); // num_negative_pics
+        // st_ref_pic_set(0): the pictures held, newest first, the newest used by this one.
+        b.ue(held.len() as u32); // num_negative_pics
         b.ue(0); // num_positive_pics
-        b.ue(0); // delta_poc_s0_minus1
-        b.flag(true); // used_by_curr_pic_s0_flag
+        let mut before = order;
+        for (index, &poc) in held.iter().rev().enumerate() {
+            b.ue(before - poc - 1); // delta_poc_s0_minus1
+            b.flag(index == 0); // used_by_curr_pic_s0_flag
+            before = poc;
+        }
     }
     b.flag(true); // slice_sao_luma_flag
     b.flag(true); // slice_sao_chroma_flag
@@ -229,9 +239,62 @@ pub fn slice_header(keyframe: bool, order: u32) -> Vec<u8> {
     out
 }
 
+/// The HDR10 metadata of a stream as one prefix SEI NAL unit: the mastering display colour
+/// volume (H.265 D.2.28) and the content light level (D.2.35). `primaries` are red, green and
+/// blue in 0.00002 steps; the SEI lists green, blue and red. `maximum` and `minimum` are the
+/// mastering display's luminance in 0.0001 nit.
+pub fn hdr_sei(
+    primaries: [[u16; 2]; 3],
+    white: [u16; 2],
+    maximum: u32,
+    minimum: u32,
+    max_cll: u16,
+    max_fall: u16,
+) -> Vec<u8> {
+    let mut b = Bits::default();
+    b.put(8, 137); // payloadType: mastering_display_colour_volume
+    b.put(8, 24); // payloadSize
+    for [x, y] in [primaries[1], primaries[2], primaries[0]] {
+        b.put(16, u32::from(x)); // display_primaries_x
+        b.put(16, u32::from(y)); // display_primaries_y
+    }
+    b.put(16, u32::from(white[0])); // white_point_x
+    b.put(16, u32::from(white[1])); // white_point_y
+    b.put(32, maximum); // max_display_mastering_luminance
+    b.put(32, minimum); // min_display_mastering_luminance
+    b.put(8, 144); // payloadType: content_light_level_info
+    b.put(8, 4); // payloadSize
+    b.put(16, u32::from(max_cll)); // max_content_light_level
+    b.put(16, u32::from(max_fall)); // max_pic_average_light_level
+    b.align(); // rbsp_trailing_bits
+    let mut out = Vec::with_capacity(48);
+    nal(&[NAL_PREFIX_SEI << 1, 1], &b.bytes, &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hdr_sei_is_one_prefix_unit_with_both_messages() {
+        let sei = hdr_sei(
+            [[34000, 16000], [13250, 34500], [7500, 3000]],
+            [15635, 16450],
+            10_000_000,
+            1,
+            1000,
+            400,
+        );
+        assert_eq!(&sei[..6], &[0, 0, 0, 1, NAL_PREFIX_SEI << 1, 1]);
+        // 137 and its 24 bytes; 144 and its 4; the trailing byte.
+        // The minimum luminance's zero bytes take one emulation prevention byte.
+        assert_eq!(sei.len(), 6 + 2 + 24 + 2 + 4 + 1 + 1);
+        assert_eq!(sei[6], 137);
+        assert_eq!(sei[6 + 2 + 24 + 1], 144);
+        // Green first: 13250.
+        assert_eq!(&sei[8..10], &13250u16.to_be_bytes());
+    }
 
     #[test]
     fn parameter_sets_come_in_order() {
@@ -242,6 +305,8 @@ mod tests {
             depth: 8,
             level_idc: 153,
             crop: (0, 0),
+            references: 4,
+            color: (1, 1, 1),
         };
         let bytes = parameter_sets(&s);
         let kinds: Vec<u8> = bytes
@@ -264,6 +329,8 @@ mod tests {
             depth: 8,
             level_idc: 123,
             crop: (0, 0),
+            references: 4,
+            color: (1, 1, 1),
         };
         let cropped = Stream {
             crop: (0, 8),
@@ -274,12 +341,18 @@ mod tests {
 
     #[test]
     fn slice_headers_name_their_picture_type() {
-        let idr = slice_header(true, 0);
+        let idr = slice_header(true, 0, &[]);
         assert_eq!(idr[4] >> 1, NAL_IDR_W_RADL);
-        let p = slice_header(false, 5);
+        let p = slice_header(false, 5, &[4]);
         assert_eq!(p[4] >> 1, NAL_TRAIL_R);
         // first_slice 1, pps id ue(0)=1, slice_type P ue(1)=010, then 16 bits of count.
         assert_eq!(p[6] >> 3, 0b11010);
-        assert_ne!(slice_header(false, 5), slice_header(false, 6));
+        assert_ne!(slice_header(false, 5, &[4]), slice_header(false, 6, &[5]));
+        // Holding more pictures, or only older ones, changes the set.
+        assert_ne!(
+            slice_header(false, 5, &[4]),
+            slice_header(false, 5, &[3, 4])
+        );
+        assert_ne!(slice_header(false, 5, &[4]), slice_header(false, 5, &[2]));
     }
 }

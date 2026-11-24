@@ -1,13 +1,24 @@
 //! A virtual Xbox 360 pad on `/dev/uinput`: what games open as a joystick. Moonlight's
 //! controller state (an XInput button mask, two sticks and two triggers) is written as evdev
-//! events with the layout of the kernel's `xpad` driver and its USB ids, so SDL maps it.
+//! events with the layout of the kernel's `xpad` driver and its USB ids, so SDL maps it. The
+//! pad has force feedback: a game's rumble effects are served by [`super::ff`] and reach the
+//! client as rumble.
 
+use super::{
+    feedback::Sink,
+    ff::{self, EV_FF, FF_GAIN, FF_RUMBLE},
+};
 use anyhow::{Context, Result};
 use std::{
     fs::{File, OpenOptions},
     io::Write,
     mem::size_of,
     os::fd::AsRawFd,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::JoinHandle,
 };
 
 const fn ioc(dir: u32, kind: u8, nr: u8, size: usize) -> libc::c_ulong {
@@ -20,6 +31,7 @@ const UI_ABS_SETUP: libc::c_ulong = ioc(1, b'U', 4, size_of::<AbsSetup>());
 const UI_SET_EVBIT: libc::c_ulong = ioc(1, b'U', 100, 4);
 const UI_SET_KEYBIT: libc::c_ulong = ioc(1, b'U', 101, 4);
 const UI_SET_ABSBIT: libc::c_ulong = ioc(1, b'U', 103, 4);
+const UI_SET_FFBIT: libc::c_ulong = ioc(1, b'U', 107, 4);
 /// `UI_GET_SYSNAME`: the sysfs name of the new device, such as `input23`.
 const UI_GET_SYSNAME: libc::c_ulong = ioc(2, b'U', 44, 64);
 
@@ -113,17 +125,23 @@ impl State {
 
 /// One plugged-in virtual pad.
 pub(super) struct Pad {
-    file: File,
+    file: Arc<File>,
     state: State,
+    /// Set to end the force feedback thread, which outlives the device by the kernel's last
+    /// requests.
+    stop: Arc<AtomicBool>,
+    feedback: Option<JoinHandle<()>>,
     /// The device's sysfs name, such as `input23`; the device tests find it with this.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) sysname: String,
 }
 
 impl Pad {
-    /// Creates the pad. Fails with the reason when `/dev/uinput` cannot be opened for writing.
-    pub(super) fn create(id: u16) -> Result<Self> {
+    /// Creates pad `id`, whose rumble goes to `sink`. Fails with the reason when `/dev/uinput`
+    /// cannot be opened.
+    pub(super) fn create(id: u16, sink: Arc<Sink>) -> Result<Self> {
         let file = OpenOptions::new()
+            .read(true)
             .write(true)
             .open("/dev/uinput")
             .context("cannot open /dev/uinput for writing; virtual gamepads need access to it (a udev rule giving the host's user write access)")?;
@@ -148,6 +166,9 @@ impl Pad {
         let setup = || -> std::io::Result<()> {
             call(UI_SET_EVBIT, libc::c_ulong::from(EV_KEY))?;
             call(UI_SET_EVBIT, libc::c_ulong::from(EV_ABS))?;
+            call(UI_SET_EVBIT, libc::c_ulong::from(EV_FF))?;
+            call(UI_SET_FFBIT, libc::c_ulong::from(FF_RUMBLE))?;
+            call(UI_SET_FFBIT, libc::c_ulong::from(FF_GAIN))?;
             for (_, key) in BUTTONS {
                 call(UI_SET_KEYBIT, libc::c_ulong::from(key))?;
             }
@@ -173,7 +194,7 @@ impl Pad {
                 product: 0x028e,
                 version: 0x0110,
                 name,
-                ff_effects_max: 0,
+                ff_effects_max: ff::MAX_EFFECTS,
             };
             pointer(UI_DEV_SETUP, (&raw const device).cast())?;
             call(UI_DEV_CREATE, 0)
@@ -186,9 +207,14 @@ impl Pad {
         } else {
             String::new()
         };
+        let file = Arc::new(file);
+        let stop = Arc::new(AtomicBool::new(false));
+        let feedback = Some(ff::serve(file.clone(), id, sink, stop.clone()));
         let mut pad = Self {
             file,
             state: State::default(),
+            stop,
+            feedback,
             sysname,
         };
         pad.write_state(State::default())?;
@@ -229,7 +255,7 @@ impl Pad {
             event(EV_ABS, code, *value);
         }
         event(EV_SYN, 0, 0);
-        self.file
+        (&*self.file)
             .write_all(&bytes)
             .context("cannot write to the virtual gamepad")
     }
@@ -237,8 +263,14 @@ impl Pad {
 
 impl Drop for Pad {
     fn drop(&mut self) {
-        // SAFETY: the file is an open uinput device; destroying it unplugs the pad.
+        // SAFETY: the file is an open uinput device; destroying it unplugs the pad. The
+        // feedback thread still answers the effect erasures that closing a game's handle
+        // makes the kernel wait for, so it stops after.
         unsafe { libc::ioctl(self.file.as_raw_fd(), UI_DEV_DESTROY) };
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.feedback.take() {
+            drop(thread.join());
+        }
     }
 }
 
@@ -268,5 +300,6 @@ mod tests {
         assert_eq!(UI_DEV_SETUP, 0x405c_5503);
         assert_eq!(UI_ABS_SETUP, 0x401c_5504);
         assert_eq!(UI_GET_SYSNAME, 0x8040_552c);
+        assert_eq!(UI_SET_FFBIT, 0x4004_556b);
     }
 }

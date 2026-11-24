@@ -1,12 +1,13 @@
 //! The encoding backend of the host's [`Encoder`](crate::encoder::Encoder): a VA-API session
 //! plus what feeds it. A captured picture is encoded where it is when it already has the
 //! encoder's size; a CPU picture is uploaded into an RGB surface first, and a picture of
-//! another size is scaled, both by video processing into an NV12 surface of the encoder's own.
+//! another size is scaled, both by video processing into a surface of the encoder's own format
+//! (NV12, or P010 for a ten-bit stream, which video processing also makes of an 8-bit picture).
 use super::{
     Va,
     ffi::VASurfaceID,
     pool::{Pool, Pooled},
-    session::{Codec, Session},
+    session::{Codec, Format, Session},
     vpp::{Converter, Source},
 };
 use anyhow::{Context, Result};
@@ -26,8 +27,8 @@ pub struct Backend {
 /// What converting a CPU picture or scaling a captured one needs.
 struct Convert {
     converter: Converter,
-    /// NV12 surfaces of the encoder's size, which the session reads.
-    nv12: Arc<Pool>,
+    /// Surfaces of the encoder's size and format, which the session reads.
+    target: Arc<Pool>,
     /// BGRX surfaces a CPU picture is uploaded into, made with the first CPU picture.
     rgb: Option<Arc<Pool>>,
 }
@@ -36,11 +37,20 @@ struct Convert {
 pub struct Output {
     pub bytes: Vec<u8>,
     pub idr: bool,
+    /// The picture is the first after a loss report and refers to a picture from before it.
+    pub recovered: bool,
 }
 
 impl Backend {
-    pub fn new(va: &Arc<Va>, codec: Codec, width: u32, height: u32, fps: u32) -> Result<Self> {
-        let session = Session::new(va, codec, width, height, fps)?;
+    pub fn new(
+        va: &Arc<Va>,
+        codec: Codec,
+        format: Format,
+        width: u32,
+        height: u32,
+        fps: u32,
+    ) -> Result<Self> {
+        let session = Session::new(va, codec, format, width, height, fps)?;
         Ok(Self {
             va: va.clone(),
             session,
@@ -53,12 +63,13 @@ impl Backend {
     fn convert(&mut self) -> Result<&mut Convert> {
         if self.convert.is_none() {
             let (width, height) = self.size;
+            let format = self.session.format;
             self.convert = Some(Convert {
                 converter: Converter::new(&self.va, width, height)?,
-                nv12: Pool::new(
+                target: Pool::new(
                     &self.va,
-                    super::ffi::VA_RT_FORMAT_YUV420,
-                    super::NV12,
+                    format.rt_format(),
+                    format.pixel(),
                     width,
                     height,
                     2,
@@ -79,12 +90,14 @@ impl Backend {
         idr: bool,
         bits_per_second: u32,
     ) -> Result<Output> {
-        let (surface_id, held): (VASurfaceID, Option<Pooled>) = if picture == self.size {
+        // A picture is encoded where it is when it has the stream's size and bit depth.
+        let as_is = picture == self.size && surface.pixel() == self.session.format.pixel();
+        let (surface_id, held): (VASurfaceID, Option<Pooled>) = if as_is {
             (surface.id(), None)
         } else {
             let size = self.size;
             let convert = self.convert()?;
-            let target = convert.nv12.take().context("no surface for scaling")?;
+            let target = convert.target.take().context("no surface for conversion")?;
             convert
                 .converter
                 .convert(surface.id(), Source::Video, picture, target.id(), size)?;
@@ -129,7 +142,7 @@ impl Backend {
         };
         let source = rgb.take().context("no surface for the upload")?;
         va.upload_bgra(source.id(), width, height, stride, bytes)?;
-        let target = convert.nv12.take().context("no surface for conversion")?;
+        let target = convert.target.take().context("no surface for conversion")?;
         convert
             .converter
             .convert(source.id(), Source::Rgb, (width, height), target.id(), size)?;
@@ -146,6 +159,26 @@ impl Backend {
         Ok(Output {
             bytes: crate::frame_pool::copy(&self.scratch),
             idr: keyframe,
+            recovered: self.session.recovered,
         })
+    }
+
+    /// Whether pictures can be told to refer to older ones after a loss.
+    pub fn supports_invalidation(&self) -> bool {
+        self.session.supports_invalidation()
+    }
+
+    /// Pictures `first` to `last` were lost; false when only a keyframe repairs that.
+    pub fn invalidate(&mut self, first: u64, last: u64) -> bool {
+        self.session.invalidate(first, last)
+    }
+
+    /// The wire number the next picture gets.
+    pub fn set_next_frame(&mut self, wire: u64) {
+        self.session.set_next_frame(wire);
+    }
+
+    pub fn set_hdr_metadata(&mut self, metadata: butterpollo_media_policy::hdr::Metadata) {
+        self.session.set_hdr_metadata(metadata);
     }
 }
