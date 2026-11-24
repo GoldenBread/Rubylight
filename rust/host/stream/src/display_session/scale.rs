@@ -1,7 +1,11 @@
 //! Display scale for a stream: the virtual display's, a kept or remembered scale, and the
 //! physical display's calibration.
-use super::*;
+use super::REMEMBERED_SCALE;
+use anyhow::Result;
+use butterpollo_config::config::Config;
 use butterpollo_session::config_ext::ConfigExt;
+use butterpollo_win_display::hdr_profile;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The scale a stream's display gets: the configured virtual display scale for a
 /// virtual display or a remote monitor's retained one, and 0 (leave it alone) for a

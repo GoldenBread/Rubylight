@@ -1,6 +1,11 @@
 //! What a device keeps from a stream: its chosen layout, resolution and scale. A device's second
 //! screen keeps its own resolution and scale and learns no layout: the layout is the device's.
+use super::apply::applied_mode;
+use super::policy::has_user_layout;
+#[cfg(not(test))]
+use super::scale::scale_display;
 use super::*;
+use anyhow::Result;
 use butterpollo_session::state::{device_uuid, screen_setting};
 
 impl Prepared {
@@ -26,11 +31,10 @@ impl Prepared {
         };
         // Another stream's display has just left and Windows' recall is not put back
         // yet: what is on now is an entry from the database, nobody's choice.
-        if departure_unsettled(
-            self.departures,
-            display_arrangement::departures(),
-            &self.layout_watch,
-        ) {
+        if self
+            .machine
+            .departure_unsettled(display_arrangement::departures())
+        {
             tracing::debug!(output = %self.output, "a display has just left; not learning the layout the stream ended with");
             return;
         }

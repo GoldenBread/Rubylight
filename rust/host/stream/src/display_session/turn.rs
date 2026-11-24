@@ -1,5 +1,7 @@
 //! Turning a physical display with the stream, and following a device that turns.
-use super::*;
+use anyhow::{Context, Result};
+use butterpollo_config::config::Config;
+use butterpollo_win_display::display::Guard;
 
 /// How a stream turns its physical display (`dd_rotation_option`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

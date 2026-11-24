@@ -140,6 +140,7 @@ pub mod codec_support;
 pub mod congestion;
 pub mod display_caps;
 pub mod display_policy;
+pub mod display_session_machine;
 pub mod dovi;
 pub mod edid;
 pub mod encoder_backlog;

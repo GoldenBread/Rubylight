@@ -1,5 +1,10 @@
 //! Test support helpers for [`super`] display preparation and retained virtual displays.
+use super::policy::stream_mode;
 use super::*;
+use butterpollo_config::config::Config;
+use butterpollo_media_policy::rtsp::Negotiated;
+use butterpollo_session::session::Warnings;
+use butterpollo_win_io::limiter;
 
 thread_local! {
     /// Makes this thread's [`displays_settling`] answer true.
@@ -71,18 +76,7 @@ pub(crate) fn test_prepared(host: &Shared) -> Prepared {
         #[cfg(test)]
         scales_set: Mutex::new(Vec::new()),
         revision: 0,
-        recovery: Recovery::new(),
-        layout_watch: Default::default(),
-        primary_watch: Default::default(),
-        departures: 0,
-        wake_layouts: 0,
-        console_session: None,
-        secure_desktop: false,
-        displays_seen: None,
-        shown_primary: None,
-        paused_change: None,
-        start_primary_mismatch: false,
-        hold_layout_while_paused: false,
+        machine: DisplaySessionMachine::bare(std::time::Instant::now()),
         mode_report: ModeReport::new(Arc::new(Warnings::default()), (None, None, None), 60_000),
         recovery_scale: 0,
         recovery_dimensions: (640, 480),

@@ -1,41 +1,13 @@
 //! The saved display layout that streams share and restore, like the arrangement and
 //! display settings leases.
-use super::*;
+use crate::state::Shared;
+use anyhow::Result;
+use butterpollo_config::config::Config;
+use std::sync::{Arc, Mutex};
 
-/// Streams share the saved layout's restoration, like the arrangement and
-/// display settings leases: the first records it for crash recovery and the
-/// last restores it. One client's end must not switch off another client's
-/// display or reset its mode and HDR, nor clear the journal under it.
-pub(super) struct Baseline<T> {
-    users: usize,
-    held: Option<T>,
-}
-
-impl<T> Baseline<T> {
-    pub(super) const fn new() -> Self {
-        Self {
-            users: 0,
-            held: None,
-        }
-    }
-    /// The first user records the layout; later users join it.
-    pub(super) fn acquire(&mut self, record: impl FnOnce() -> Result<T>) -> Result<()> {
-        if self.users == 0 {
-            self.held = Some(record()?);
-        }
-        self.users += 1;
-        Ok(())
-    }
-    /// Only the last user restores the layout.
-    pub(super) fn release(&mut self, restore: impl FnOnce(T)) {
-        self.users -= 1;
-        if self.users == 0
-            && let Some(held) = self.held.take()
-        {
-            restore(held);
-        }
-    }
-}
+/// Streams share the saved layout's restoration, backed by the pure crash-restore
+/// baseline journal in `butterpollo-media-policy`.
+pub(super) type Baseline<T> = butterpollo_media_policy::display_session_machine::BaselineJournal<T>;
 
 pub(super) type SavedLayout = (butterpollo_win_display::display::Snapshot, Vec<String>);
 
