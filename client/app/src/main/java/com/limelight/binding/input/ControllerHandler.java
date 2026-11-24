@@ -2083,7 +2083,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             int mouseStep;
             int leftBtn;
             int rightBtn;
-            synchronized (originalContext) {
+            synchronized (originalContext.mousePacketLock) {
                 NightjarInputJni.mousePacketStep(
                         inputMap, originalContext.mouseEmulationLastInputMap,
                         prefConfig.mouseEmulationFixedStep, originalContext.mouseEmulationStep,
@@ -3919,7 +3919,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         public short leftStickX = 0x0000;
         public short leftStickY = 0x0000;
 
-        public boolean mouseEmulationActive;
+        public volatile boolean mouseEmulationActive;
         // The quit combo was held; the stream ends once every button is up.
         boolean quitComboPending;
         // The physical buttons held, before user mapping, face-button flipping and the Select,
@@ -3944,6 +3944,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         public final int mouseEmulationReportPeriod = 50;
         private final int[] mouseTickOut = new int[7];
         private final int[] mousePacketOut = new int[5];
+        final Object mousePacketLock = new Object();
 
         public final Runnable mouseEmulationRunnable = new Runnable() {
             @Override
@@ -3955,7 +3956,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     return;
                 }
 
-                int fixedStep = mouseEmulationFixedStepHeld ? mouseEmulationStep : 0;
+                int fixedStep;
+                synchronized (mousePacketLock) {
+                    fixedStep = mouseEmulationFixedStepHeld ? mouseEmulationStep : 0;
+                }
                 int scrollStickMode = prefConfig.analogStickForScrolling == PreferenceConfiguration.AnalogStickForScrolling.RIGHT ? 1
                         : prefConfig.analogStickForScrolling == PreferenceConfiguration.AnalogStickForScrolling.LEFT ? 2 : 0;
                 NightjarInputJni.mouseTickStep(
@@ -3989,19 +3993,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 return;
             }
             mainThreadHandler.removeCallbacks(mouseEmulationRunnable);
+            boolean active = !mouseEmulationActive;
+            mouseEmulationActive = active;
             releaseMouseButtons();
-            mouseEmulationActive = !mouseEmulationActive;
-            Toast.makeText(activityContext, mouseEmulationActive ? R.string.stream_mouse_mode_on :
+            Toast.makeText(activityContext, active ? R.string.stream_mouse_mode_on :
                     R.string.stream_mouse_mode_off, Toast.LENGTH_SHORT).show();
 
-            if (mouseEmulationActive) {
+            if (active) {
                 mainThreadHandler.postDelayed(mouseEmulationRunnable, mouseEmulationReportPeriod);
             }
         }
 
         public void destroy() {
-            releaseMouseButtons();
             mouseEmulationActive = false;
+            releaseMouseButtons();
             mainThreadHandler.removeCallbacks(mouseEmulationRunnable);
             mainThreadHandler.removeCallbacks(guideHoldRunnable);
             guideHold.reset();
@@ -4013,14 +4018,18 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         private void releaseMouseButtons() {
-            if ((mouseEmulationLastInputMap & ControllerPacket.A_FLAG) != 0) {
+            int lastInputMap;
+            synchronized (mousePacketLock) {
+                lastInputMap = mouseEmulationLastInputMap;
+                mouseEmulationLastInputMap = 0;
+                mouseEmulationFixedStepHeld = false;
+            }
+            if ((lastInputMap & ControllerPacket.A_FLAG) != 0) {
                 conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
             }
-            if ((mouseEmulationLastInputMap & ControllerPacket.B_FLAG) != 0) {
+            if ((lastInputMap & ControllerPacket.B_FLAG) != 0) {
                 conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
             }
-            mouseEmulationLastInputMap = 0;
-            mouseEmulationFixedStepHeld = false;
         }
 
         public void sendControllerArrival() {}
@@ -4370,10 +4379,21 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             this.hatXAxisUsed = oldContext.hatXAxisUsed && hatXAxis == oldContext.hatXAxis;
             this.hatYAxisUsed = oldContext.hatYAxisUsed && hatYAxis == oldContext.hatYAxis;
             this.mouseEmulationActive = oldContext.mouseEmulationActive;
-            this.mouseEmulationLastInputMap = oldContext.mouseEmulationLastInputMap;
-            this.mouseEmulationFixedStepHeld = oldContext.mouseEmulationFixedStepHeld;
-            this.mouseEmulationStep = oldContext.mouseEmulationStep;
-            oldContext.mouseEmulationLastInputMap = 0;
+            int oldMouseLastInputMap;
+            boolean oldMouseFixedStepHeld;
+            int oldMouseStep;
+            synchronized (oldContext.mousePacketLock) {
+                oldMouseLastInputMap = oldContext.mouseEmulationLastInputMap;
+                oldMouseFixedStepHeld = oldContext.mouseEmulationFixedStepHeld;
+                oldMouseStep = oldContext.mouseEmulationStep;
+                oldContext.mouseEmulationLastInputMap = 0;
+                oldContext.mouseEmulationFixedStepHeld = false;
+            }
+            synchronized (this.mousePacketLock) {
+                this.mouseEmulationLastInputMap = oldMouseLastInputMap;
+                this.mouseEmulationFixedStepHeld = oldMouseFixedStepHeld;
+                this.mouseEmulationStep = oldMouseStep;
+            }
             synchronized (oldContext) {
                 // Take ownership of the sensor and light sessions
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

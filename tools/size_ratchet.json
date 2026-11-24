@@ -11,7 +11,7 @@
     "client/app/src/main/java/com/limelight/GameVideoOutput.java": 1346,
     "client/app/src/main/java/com/limelight/PcView.java": 1236,
     "client/app/src/main/java/com/limelight/binding/audio/AndroidAudioRenderer.java": 1089,
-    "client/app/src/main/java/com/limelight/binding/input/ControllerHandler.java": 4606,
+    "client/app/src/main/java/com/limelight/binding/input/ControllerHandler.java": 4626,
     "client/app/src/main/java/com/limelight/binding/input/pad/PadControlView.java": 1023,
     "client/app/src/main/java/com/limelight/binding/input/pad/PadEditor.java": 1157,
     "client/app/src/main/java/com/limelight/binding/input/pad/PadLayout.java": 1286,
