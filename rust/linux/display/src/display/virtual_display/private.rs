@@ -302,7 +302,8 @@ impl Manager {
         } else {
             request.arrangement
         };
-        let scale = request.scale_percent.map(|p| f64::from(p) / 100.0);
+        // Without a scale KWin picks one from the connector's made-up size (1.7 for 1280x720).
+        let scale = Some(request.scale_percent.map_or(1.0, |p| f64::from(p) / 100.0));
         let args = kscreen::apply_args(&layout, connector, &mode_id, scale, arrangement);
         self.desktop
             .apply(&args)
@@ -357,6 +358,7 @@ impl Manager {
                 .outputs
                 .retain(|o| present.output(&o.name).is_some());
             names.retain(|n| present.output(n).is_some());
+            kscreen::renumber_modes(&mut snapshot, present);
         }
         let args = kscreen::restore_args(&snapshot, &names);
         match self.desktop.apply(&args) {

@@ -295,6 +295,37 @@ pub fn apply_args(
     args
 }
 
+/// Points each saved output's mode at the id `present` gives that mode now. KScreen numbers
+/// modes afresh when an output comes or goes (DP-1's 1920x1080@60 was mode 51, then 99 while a
+/// virtual output was on), so a saved id can name another mode. Modes alike in name, size and
+/// rate differ in timings KScreen does not show (DP-1 lists 1920x1080@60 at 60 Hz twice: its
+/// preferred mode first, another later); KScreen keeps their order, so the one at the same rank
+/// among them is taken. A mode `present` no longer lists is left out, and the output keeps the
+/// mode it has.
+pub fn renumber_modes(snapshot: &mut Layout, present: &Layout) {
+    let alike = |a: &Mode, b: &Mode| {
+        a.name == b.name
+            && a.size.width == b.size.width
+            && a.size.height == b.size.height
+            && (a.refresh_rate - b.refresh_rate).abs() < 0.001
+    };
+    for saved in &mut snapshot.outputs {
+        let Some(at) = saved
+            .modes
+            .iter()
+            .position(|m| m.id == saved.current_mode_id)
+        else {
+            continue;
+        };
+        let mode = &saved.modes[at];
+        let rank = saved.modes[..at].iter().filter(|m| alike(m, mode)).count();
+        let now = present
+            .output(&saved.name)
+            .and_then(|o| o.modes.iter().filter(|m| alike(m, mode)).nth(rank));
+        saved.current_mode_id = now.map(|m| m.id.clone()).unwrap_or_default();
+    }
+}
+
 /// The arguments that put the desktop back as `snapshot` saw it and switch off the virtual
 /// outputs `virtual_names` (they were not in the snapshot, or were off). Outputs come on first
 /// and go off last, so the desktop is never empty in between.
@@ -434,6 +465,55 @@ mod tests {
         layout.outputs[0].scale = 2.0;
         let args = apply_args(&layout, "Virtual-1", "100", None, Arrangement::Extended);
         assert!(args.contains(&"output.Virtual-1.position.960,0".into()));
+    }
+
+    #[test]
+    fn a_saved_mode_is_named_by_its_id_now() {
+        let mut saved = layout();
+        let mut present = layout();
+        let dp = present
+            .outputs
+            .iter_mut()
+            .find(|o| o.name == "DP-1")
+            .unwrap();
+        let wanted = dp.modes.iter().find(|m| m.id == "3").unwrap().clone();
+        for mode in &mut dp.modes {
+            mode.id = format!("9{}", mode.id);
+        }
+        renumber_modes(&mut saved, &present);
+        let dp = saved.output("DP-1").unwrap();
+        assert_eq!(dp.current_mode_id, "93");
+        let present_mode = present
+            .output("DP-1")
+            .unwrap()
+            .modes
+            .iter()
+            .find(|m| m.id == "93");
+        assert_eq!(present_mode.map(|m| m.name.clone()), Some(wanted.name));
+        // Of two alike modes, the one at the same rank: the second stays the second.
+        let mut twin = layout();
+        let dp = twin.outputs.iter_mut().find(|o| o.name == "DP-1").unwrap();
+        let mut copy = dp.modes.iter().find(|m| m.id == "3").unwrap().clone();
+        copy.id = "7".into();
+        dp.modes.push(copy);
+        dp.current_mode_id = "7".into();
+        let mut renumbered = twin.clone();
+        for mode in &mut renumbered
+            .outputs
+            .iter_mut()
+            .find(|o| o.name == "DP-1")
+            .unwrap()
+            .modes
+        {
+            mode.id = format!("9{}", mode.id);
+        }
+        renumber_modes(&mut twin, &renumbered);
+        assert_eq!(twin.output("DP-1").unwrap().current_mode_id, "97");
+        // A mode the output no longer lists is not set.
+        let mut gone = layout();
+        present.outputs.retain(|o| o.name != "DP-1");
+        renumber_modes(&mut gone, &present);
+        assert_eq!(gone.output("DP-1").unwrap().current_mode_id, "");
     }
 
     #[test]

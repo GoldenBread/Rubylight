@@ -1,5 +1,6 @@
 //! Tests of the private display's life and of availability, against a fake broker, a fake
-//! KScreen and a temporary sysfs tree. Nothing here touches a real display, socket or sysfs.
+//! KScreen and a temporary sysfs tree. Nothing here touches a real display, socket or sysfs,
+//! except the ignored live test at the end, which changes this PC's monitors.
 use super::broker::fake::{Fake, connector, serve, temp_dir};
 use super::broker::{Broker, Trust};
 use super::kscreen::{Layout, Mode, Output, Pos, Size};
@@ -487,4 +488,84 @@ fn availability_needs_a_pool_and_a_socket_this_user_may_use() {
     assert_eq!(status_for(Ok(()))["ready"], true);
     drop(fake);
     std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// What KScreen shows of the enabled outputs, for comparing a layout before and after; modes
+/// by name, as KScreen renumbers them.
+fn shown(layout: &Layout) -> Vec<String> {
+    let mut shown: Vec<String> = layout
+        .outputs
+        .iter()
+        .filter(|o| o.enabled)
+        .map(|o| {
+            let rank = o.modes.iter().position(|m| m.id == o.current_mode_id);
+            let mode = rank.map(|rank| &o.modes[rank]);
+            format!(
+                "{} mode #{} {} ({} Hz) at {},{} scale {} priority {}",
+                o.name,
+                rank.unwrap_or(usize::MAX),
+                mode.map_or("?", |m| m.name.as_str()),
+                mode.map_or(0.0, |m| m.refresh_rate),
+                o.pos.x,
+                o.pos.y,
+                o.scale,
+                o.priority
+            )
+        })
+        .collect();
+    shown.sort();
+    shown
+}
+
+/// On this PC, with Vibepollo's pool and broker: a 1280x720 display at 60 Hz in the layout
+/// `RUBYLIGHT_LIVE_LAYOUT` names (default exclusive), held `RUBYLIGHT_LIVE_HOLD` seconds
+/// (default 5), then dropped; the monitors must be back as they were. It changes the
+/// desktop: run it only on a PC whose user agreed.
+#[test]
+#[ignore = "changes this PC's monitors"]
+fn live_a_private_display_comes_and_goes() {
+    let layout = std::env::var("RUBYLIGHT_LIVE_LAYOUT").unwrap_or_else(|_| "exclusive".into());
+    let hold: u64 = std::env::var("RUBYLIGHT_LIVE_HOLD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
+    eprintln!("status {}", virtual_display_status());
+    assert!(virtual_display_available(), "{}", virtual_display_status());
+    let before = kscreen::query().unwrap();
+    let started = std::time::Instant::now();
+    let display = VirtualDisplay::create_with(&PrivateRequest {
+        stable_id: "rubylight-live-test".into(),
+        width: 1280,
+        height: 720,
+        refresh_millihz: 60_000,
+        arrangement: Arrangement::parse(&layout).unwrap(),
+        scale_percent: None,
+    })
+    .unwrap();
+    eprintln!("{} up in {:?}", display.name, started.elapsed());
+    let during = kscreen::query().unwrap();
+    eprintln!("during {:#?}", shown(&during));
+    let output = during.output(&display.name).expect("the output is listed");
+    assert!(output.enabled);
+    assert_eq!(
+        joinable_mode("rubylight-live-test"),
+        Some((1280, 720, 60_000))
+    );
+    std::thread::sleep(Duration::from_secs(hold));
+    let name = display.name.clone();
+    let started = std::time::Instant::now();
+    drop(display);
+    eprintln!("dropped in {:?}", started.elapsed());
+    // KScreen takes a moment to list the outputs again.
+    let mut after = kscreen::query().unwrap();
+    for _ in 0..30 {
+        if shown(&after) == shown(&before) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        after = kscreen::query().unwrap();
+    }
+    eprintln!("after {:#?}", shown(&after));
+    assert_eq!(shown(&after), shown(&before));
+    assert!(after.output(&name).is_none_or(|o| !o.enabled));
 }
