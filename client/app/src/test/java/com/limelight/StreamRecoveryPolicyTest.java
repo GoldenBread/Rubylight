@@ -154,4 +154,15 @@ public class StreamRecoveryPolicyTest {
         assertEquals(-1, NightjarPolicyJni.recoveryNextDelay(Integer.MAX_VALUE, 1000, 2000, -1)[0]);
         assertEquals(-1, NightjarPolicyJni.recoveryNextDelay(1, 90000, 1000, -1)[0]);
     }
+
+    @Test public void userTripSaturatesLargeTimestampsAndPreservesNegativeLeftAt() {
+        long[] large = NightjarPolicyJni.recoveryAfterUserTrip(2, Long.MAX_VALUE - 100L, 1000L, 2000L);
+        assertEquals(2, large[0]);
+        assertEquals(Long.MAX_VALUE, large[1]);
+        assertEquals(-1, NightjarPolicyJni.recoveryNextDelay((int) large[0], large[1], 3000L, -1L)[0]);
+
+        long[] negLeft = NightjarPolicyJni.recoveryAfterUserTrip(2, 1000L, -500L, 5000L);
+        assertEquals(2, negLeft[0]);
+        assertEquals(6500L, negLeft[1]);
+    }
 }

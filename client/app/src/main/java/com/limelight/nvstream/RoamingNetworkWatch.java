@@ -23,14 +23,26 @@ import java.util.List;
  * {@link NightjarPolicyJni}.
  */
 final class RoamingNetworkWatch {
+    interface EngineProbe {
+        int networkChanged(boolean metered);
+    }
+
     private final ConnectivityManager connMgr;
     private final long trackerHandle;
     private final HandleReaper.Token reaper;
-    private final ConnectivityManager.NetworkCallback callback;
+    final ConnectivityManager.NetworkCallback callback;
+    private final EngineProbe engineProbe;
+    private boolean stopped;
 
     private RoamingNetworkWatch(ConnectivityManager connMgr, Network streamNetwork,
                                 NvConnectionListener listener) {
+        this(connMgr, streamNetwork, listener, RoamingNetworkWatch::askEngine);
+    }
+
+    RoamingNetworkWatch(ConnectivityManager connMgr, Network streamNetwork,
+                        NvConnectionListener listener, EngineProbe engineProbe) {
         this.connMgr = connMgr;
+        this.engineProbe = engineProbe;
         this.trackerHandle = NightjarPolicyJni.roamingCreate(
                 streamNetwork != null, streamNetwork != null ? streamNetwork.getNetworkHandle() : 0L);
         this.reaper = HandleReaper.register(this, trackerHandle, NightjarPolicyJni::roamingDestroy);
@@ -57,39 +69,39 @@ final class RoamingNetworkWatch {
 
             @Override
             public void onLost(Network network) {
-                boolean lost;
                 synchronized (RoamingNetworkWatch.this) {
-                    lost = NightjarPolicyJni.roamingOnLost(trackerHandle, network.getNetworkHandle());
-                }
-                if (lost) {
-                    LimeLog.warning("The stream's network was lost");
-                    listener.streamNetworkLost();
+                    if (stopped) {
+                        return;
+                    }
+                    if (NightjarPolicyJni.roamingOnLost(trackerHandle, network.getNetworkHandle())) {
+                        LimeLog.warning("The stream's network was lost");
+                        // Under the lock, so stop() returning means no report is still on its way.
+                        listener.streamNetworkLost();
+                    }
                 }
             }
 
             private void handleCapabilities(Network network, NetworkCapabilities caps) {
                 long networkId = network.getNetworkHandle();
                 boolean notMetered = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
-                int step;
-                boolean metered;
-                boolean returned;
-                int change;
-                boolean emitReturn;
                 synchronized (RoamingNetworkWatch.this) {
-                    step = NightjarPolicyJni.roamingOnCapabilities(trackerHandle, networkId, notMetered);
+                    if (stopped) {
+                        return;
+                    }
+                    int step = NightjarPolicyJni.roamingOnCapabilities(trackerHandle, networkId, notMetered);
                     if (step == NightjarPolicyJni.ROAMING_CAP_IGNORE) {
                         return;
                     }
-                    metered = step == NightjarPolicyJni.ROAMING_CAP_ASK_METERED
+                    boolean metered = step == NightjarPolicyJni.ROAMING_CAP_ASK_METERED
                             || step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_METERED;
-                    returned = step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_NOT_METERED
+                    boolean returned = step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_NOT_METERED
                             || step == NightjarPolicyJni.ROAMING_CAP_RETURNED_ASK_METERED;
-                    change = askEngine(metered);
-                    emitReturn = NightjarPolicyJni.roamingRecordChange(
-                            trackerHandle, networkId, metered, returned, change, System.nanoTime() / 1_000_000L);
-                }
-                if (emitReturn) {
-                    listener.streamNetworkReturned(change, metered);
+                    // Under the lock, so stop() returning means no report is still on its way.
+                    int change = engineProbe.networkChanged(metered);
+                    if (NightjarPolicyJni.roamingRecordChange(
+                            trackerHandle, networkId, metered, returned, change, System.nanoTime() / 1_000_000L)) {
+                        listener.streamNetworkReturned(change, metered);
+                    }
                 }
             }
 
@@ -98,20 +110,20 @@ final class RoamingNetworkWatch {
                 String addressesKey = canonicalAddresses(properties);
                 boolean nat64 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && properties.getNat64Prefix() != null;
                 long nowMs = System.nanoTime() / 1_000_000L;
-                int change;
-                boolean metered;
-                boolean emitReturn;
                 synchronized (RoamingNetworkWatch.this) {
+                    if (stopped) {
+                        return;
+                    }
                     int step = NightjarPolicyJni.roamingOnAddresses(trackerHandle, networkId, addressesKey, nat64, nowMs);
                     if (step == NightjarPolicyJni.ROAMING_ADDR_IGNORE) {
                         return;
                     }
-                    metered = step == NightjarPolicyJni.ROAMING_ADDR_ASK_METERED;
-                    change = askEngine(metered);
-                    emitReturn = NightjarPolicyJni.roamingRecordAddressChange(trackerHandle, change);
-                }
-                if (emitReturn) {
-                    listener.streamNetworkReturned(change, metered);
+                    boolean metered = step == NightjarPolicyJni.ROAMING_ADDR_ASK_METERED;
+                    // Under the lock, so stop() returning means no report is still on its way.
+                    int change = engineProbe.networkChanged(metered);
+                    if (NightjarPolicyJni.roamingRecordAddressChange(trackerHandle, change)) {
+                        listener.streamNetworkReturned(change, metered);
+                    }
                 }
             }
         };
@@ -156,13 +168,21 @@ final class RoamingNetworkWatch {
             connMgr.registerDefaultNetworkCallback(watch.callback);
         } catch (RuntimeException e) {
             LimeLog.warning("Roaming: could not follow network changes, not roaming: " + e);
-            watch.reaper.close();
+            synchronized (watch) {
+                watch.stopped = true;
+                NightjarPolicyJni.roamingStop(watch.trackerHandle);
+                watch.reaper.close();
+            }
             return null;
         }
         return watch;
     }
 
     synchronized void stop() {
+        if (stopped) {
+            return;
+        }
+        stopped = true;
         NightjarPolicyJni.roamingStop(trackerHandle);
         try {
             connMgr.unregisterNetworkCallback(callback);

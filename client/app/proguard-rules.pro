@@ -52,7 +52,7 @@
 -keepclassmembers interface com.limelight.nvstream.jni.NightjarHostsJni$FlowStepListener {
     void onStep(java.lang.String);
 }
-# Looked up by name from protocol/android/src/policy_recovery.rs.
+# Looked up by name from protocol/android/src/policy_roaming.rs.
 -keepclassmembers interface com.limelight.nvstream.jni.NightjarJni$HostLossCallback {
     java.lang.String gatewayToward();
     boolean isStopped();

@@ -13,13 +13,22 @@ use nightjar_core::route::{RouteWaitOutcome, route_problem, wait_for_route};
 use nightjar_policy::recovery::{PEER_TIMEOUT_MS, reconnects_at_once};
 use nightjar_policy::roaming::{AddressesStep, CapabilitiesStep, RoamingTracker};
 
-use crate::engine;
 use crate::native_api;
 use crate::policy::{jbool, non_neg_u32, non_neg_u64};
 use crate::policy_recovery::new_jstring;
 use crate::slab::{MutexSlab, Slab};
 
-static ROAMING_SLAB: MutexSlab<RoamingTracker> = MutexSlab::new();
+struct RoamingEntry {
+    tracker: RoamingTracker,
+    shift_ms: Option<i64>,
+}
+
+fn shifted_u64(shift_ms: &mut Option<i64>, now_ms: jlong) -> u64 {
+    let base = *shift_ms.get_or_insert_with(|| now_ms.min(0));
+    (i128::from(now_ms) - i128::from(base)).max(0) as u64
+}
+
+static ROAMING_SLAB: MutexSlab<RoamingEntry> = MutexSlab::new();
 static HOST_LOSS_STOP_SLAB: Slab<AtomicBool> = Slab::new();
 
 fn parse_ip(env: &mut JNIEnv, text: &JString) -> Option<IpAddr> {
@@ -32,19 +41,25 @@ fn call_string_no_arg(
     method: &str,
 ) -> Option<String> {
     let mut env = env.borrow_mut();
-    let res = env.call_method(target, method, "()Ljava/lang/String;", &[]);
-    let Ok(val) = res else {
-        let _ = env.exception_clear();
-        return None;
-    };
-    let Ok(obj) = val.l() else {
-        return None;
-    };
-    if obj.is_null() {
-        return None;
+    let res = env.with_local_frame(4, |env| {
+        let val = env.call_method(target, method, "()Ljava/lang/String;", &[])?;
+        let obj = val.l()?;
+        if obj.is_null() {
+            return Ok::<Option<String>, jni::errors::Error>(None);
+        }
+        let jstr = JString::from(obj);
+        let text: String = env.get_string(&jstr)?.into();
+        Ok(Some(text))
+    });
+    match res {
+        Ok(text) => text,
+        Err(_) => {
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
+            }
+            None
+        }
     }
-    let jstr = JString::from(obj);
-    env.get_string(&jstr).ok().map(Into::into)
 }
 
 fn call_bool_no_arg(
@@ -66,18 +81,17 @@ fn call_bool_no_arg(
 
 fn call_void_str(env: &RefCell<JNIEnv<'_>>, target: &JObject<'_>, method: &str, msg: &str) {
     let mut env = env.borrow_mut();
-    let Ok(jmsg) = env.new_string(msg) else {
-        return;
-    };
-    if env
-        .call_method(
+    let res = env.with_local_frame(4, |env| {
+        let jmsg = env.new_string(msg)?;
+        env.call_method(
             target,
             method,
             "(Ljava/lang/String;)V",
             &[JValue::Object(&jmsg)],
-        )
-        .is_err()
-    {
+        )?;
+        Ok::<(), jni::errors::Error>(())
+    });
+    if res.is_err() && env.exception_check().unwrap_or(false) {
         let _ = env.exception_clear();
     }
 }
@@ -144,7 +158,6 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_hostLossWatch
             || call_bool_no_arg(&env_cell, &callback, "isStopped", true)
     };
     let log = |line: &str| call_void_str(&env_cell, &callback, "log", line);
-    let _ = engine::with_session(false, |s| s.host_said_goodbye());
     watch_goodbye(SocketAddr::new(ip, port), &gateway, &stopped, &log).code()
 }
 
@@ -193,32 +206,39 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_routeWait(
     };
     let probe = || -> Option<String> {
         let mut env = env_cell.borrow_mut();
-        let Ok(jhost) = env.new_string(&host) else {
-            return Some("JNI string allocation failed".into());
-        };
-        let res = env.call_method(
-            &callback,
-            "probe",
-            "(Ljava/lang/String;I)Ljava/lang/String;",
-            &[JValue::Object(&jhost), JValue::Int(port)],
-        );
-        let Ok(val) = res else {
-            let _ = env.exception_clear();
-            return None;
-        };
-        let Ok(obj) = val.l() else {
-            return None;
-        };
-        if obj.is_null() {
-            return None;
+        let res = env.with_local_frame(8, |env| {
+            let jhost = env.new_string(&host)?;
+            let val = env.call_method(
+                &callback,
+                "probe",
+                "(Ljava/lang/String;I)Ljava/lang/String;",
+                &[JValue::Object(&jhost), JValue::Int(port)],
+            )?;
+            let obj = val.l()?;
+            if obj.is_null() {
+                return Ok::<Option<String>, jni::errors::Error>(None);
+            }
+            let jstr = JString::from(obj);
+            let msg: String = env.get_string(&jstr)?.into();
+            Ok(Some(msg))
+        });
+        match res {
+            Ok(problem) => problem,
+            Err(_) => {
+                if env.exception_check().unwrap_or(false) {
+                    let _ = env.exception_clear();
+                    Some("route probe threw an exception".to_owned())
+                } else {
+                    Some("JNI route probe failed".to_owned())
+                }
+            }
         }
-        let jstr = JString::from(obj);
-        env.get_string(&jstr).ok().map(Into::into)
     };
     let cancelled = || call_bool_no_arg(&env_cell, &callback, "isCancelled", true);
     let sleep_ms = |ms: u64| -> bool {
         let mut env = env_cell.borrow_mut();
-        match env.call_method(&callback, "sleep", "(J)Z", &[JValue::Long(ms as jlong)]) {
+        let clamped = ms.min(i64::MAX as u64) as jlong;
+        match env.call_method(&callback, "sleep", "(J)Z", &[JValue::Long(clamped)]) {
             Ok(v) => v.z().unwrap_or(false),
             Err(_) => {
                 let _ = env.exception_clear();
@@ -282,7 +302,10 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_roaming
     stream_network_id: jlong,
 ) -> jlong {
     let start = (has_stream_network != JNI_FALSE).then_some(stream_network_id as u64);
-    ROAMING_SLAB.insert(RoamingTracker::new(start))
+    ROAMING_SLAB.insert(RoamingEntry {
+        tracker: RoamingTracker::new(start),
+        shift_ms: None,
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -303,8 +326,11 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_roaming
     not_metered: jboolean,
 ) -> jint {
     ROAMING_SLAB
-        .with(handle, |t| {
-            match t.begin_capabilities(network_id as u64, not_metered != JNI_FALSE) {
+        .with(handle, |entry| {
+            match entry
+                .tracker
+                .begin_capabilities(network_id as u64, not_metered != JNI_FALSE)
+            {
                 CapabilitiesStep::Ignore => 0,
                 CapabilitiesStep::Ask {
                     metered: false,
@@ -340,15 +366,18 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_roaming
 ) -> jboolean {
     jbool(
         ROAMING_SLAB
-            .with(handle, |t| {
-                t.finish_capabilities(
-                    network_id as u64,
-                    metered != JNI_FALSE,
-                    returned != JNI_FALSE,
-                    change,
-                    non_neg_u64(now_ms),
-                )
-                .is_some()
+            .with(handle, |entry| {
+                let shifted = shifted_u64(&mut entry.shift_ms, now_ms);
+                entry
+                    .tracker
+                    .finish_capabilities(
+                        network_id as u64,
+                        metered != JNI_FALSE,
+                        returned != JNI_FALSE,
+                        change,
+                        shifted,
+                    )
+                    .is_some()
             })
             .unwrap_or(false),
     )
@@ -366,12 +395,13 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_roaming
 ) -> jint {
     let key = native_api::string(&mut env, &addresses_key).unwrap_or_default();
     ROAMING_SLAB
-        .with(handle, |t| {
-            match t.begin_addresses(
+        .with(handle, |entry| {
+            let shifted = shifted_u64(&mut entry.shift_ms, now_ms);
+            match entry.tracker.begin_addresses(
                 network_id as u64,
                 &key,
                 nat64 != JNI_FALSE,
-                non_neg_u64(now_ms),
+                shifted,
             ) {
                 AddressesStep::Ignore => -1,
                 AddressesStep::Ask { metered: false } => 0,
@@ -390,7 +420,9 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_roaming
 ) -> jboolean {
     jbool(
         ROAMING_SLAB
-            .with(handle, |t| t.finish_addresses(change).is_some())
+            .with(handle, |entry| {
+                entry.tracker.finish_addresses(change).is_some()
+            })
             .unwrap_or(false),
     )
 }
@@ -404,7 +436,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_roaming
 ) -> jboolean {
     jbool(
         ROAMING_SLAB
-            .with(handle, |t| t.lost(network_id as u64))
+            .with(handle, |entry| entry.tracker.lost(network_id as u64))
             .unwrap_or(false),
     )
 }
@@ -415,12 +447,13 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_roaming
     _: JClass,
     handle: jlong,
 ) {
-    ROAMING_SLAB.with(handle, RoamingTracker::stop);
+    ROAMING_SLAB.with(handle, |entry| entry.tracker.stop());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nightjar_policy::roaming::{NETWORK_CARRIES_ON, RECHECK_MS};
     use std::net::{Ipv4Addr, TcpListener};
 
     #[test]
@@ -437,5 +470,85 @@ mod tests {
             .store(true, Ordering::Release);
         assert!(HOST_LOSS_STOP_SLAB.get(h).unwrap().load(Ordering::Acquire));
         assert!(HOST_LOSS_STOP_SLAB.remove(h));
+    }
+
+    #[test]
+    fn roaming_recheck_expires_with_negative_nanotime() {
+        let mut entry = RoamingEntry {
+            tracker: RoamingTracker::new(Some(1)),
+            shift_ms: None,
+        };
+        assert!(entry.tracker.lost(1));
+        assert_eq!(
+            entry.tracker.begin_capabilities(2, true),
+            CapabilitiesStep::Ask {
+                metered: false,
+                returned: true
+            }
+        );
+        let t0 = shifted_u64(&mut entry.shift_ms, -50_000);
+        assert!(
+            entry
+                .tracker
+                .finish_capabilities(2, false, true, NETWORK_CARRIES_ON, t0)
+                .is_some()
+        );
+        // Before RECHECK_MS (10_000 ms), address change is still asked.
+        let t1 = shifted_u64(&mut entry.shift_ms, -45_000);
+        assert_eq!(
+            entry.tracker.begin_addresses(2, "192.168.1.20", false, t1),
+            AddressesStep::Ask { metered: false }
+        );
+        // At -30_000 (20_000 ms elapsed > RECHECK_MS), recheck must expire.
+        let t2 = shifted_u64(&mut entry.shift_ms, -30_000);
+        assert!(t2 - t0 > RECHECK_MS);
+        assert_eq!(
+            entry.tracker.begin_addresses(2, "192.168.1.21", false, t2),
+            AddressesStep::Ignore
+        );
+    }
+
+    #[test]
+    fn roaming_recheck_expires_crossing_zero() {
+        let mut entry = RoamingEntry {
+            tracker: RoamingTracker::new(Some(1)),
+            shift_ms: None,
+        };
+        assert!(entry.tracker.lost(1));
+        assert_eq!(
+            entry.tracker.begin_capabilities(2, true),
+            CapabilitiesStep::Ask {
+                metered: false,
+                returned: true
+            }
+        );
+        let t0 = shifted_u64(&mut entry.shift_ms, -5_000);
+        assert!(
+            entry
+                .tracker
+                .finish_capabilities(2, false, true, NETWORK_CARRIES_ON, t0)
+                .is_some()
+        );
+        // At +4_000 (9_000 ms elapsed <= RECHECK_MS), address change is still asked.
+        let t1 = shifted_u64(&mut entry.shift_ms, 4_000);
+        assert_eq!(
+            entry.tracker.begin_addresses(2, "192.168.1.20", false, t1),
+            AddressesStep::Ask { metered: false }
+        );
+        // Crossing zero from -5_000 to +6_000 (11_000 ms elapsed > RECHECK_MS) must expire.
+        let t2 = shifted_u64(&mut entry.shift_ms, 6_000);
+        assert!(t2 - t0 > RECHECK_MS);
+        assert_eq!(
+            entry.tracker.begin_addresses(2, "192.168.1.21", false, t2),
+            AddressesStep::Ignore
+        );
+    }
+
+    #[test]
+    fn shifted_u64_handles_extreme_i64_values() {
+        let mut shift = None;
+        assert_eq!(shifted_u64(&mut shift, i64::MIN), 0);
+        assert_eq!(shifted_u64(&mut shift, i64::MIN + 15_000), 15_000);
+        assert_eq!(shifted_u64(&mut shift, i64::MAX), u64::MAX);
     }
 }

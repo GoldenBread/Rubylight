@@ -8,7 +8,62 @@ use nightjar_policy::launch::{self, InputOnlyBlocker, InputOnlyMode, Role};
 use nightjar_policy::recovery::{self, MAX_ATTEMPTS, StreamRecoveryPolicy, TRIP_RESUME_DELAY_MS, WINDOW_MS};
 
 use crate::native_api;
-use crate::policy::{jbool, non_neg_u32, non_neg_u64};
+use crate::policy::{jbool, non_neg_u32, non_neg_u64, shifted_u64};
+
+fn jlong_sat(v: u64) -> jlong {
+    v.min(i64::MAX as u64) as jlong
+}
+
+fn next_delay_values(
+    attempts: jint,
+    started_at_ms: jlong,
+    now_ms: jlong,
+    connected_at_ms: jlong,
+) -> [i64; 3] {
+    let mut policy = StreamRecoveryPolicy::new(non_neg_u32(attempts), non_neg_u64(started_at_ms));
+    let delay = policy
+        .next_delay(non_neg_u64(now_ms), connected_opt(connected_at_ms))
+        .map(jlong_sat)
+        .unwrap_or(-1);
+    [
+        delay,
+        i64::from(policy.attempts()),
+        jlong_sat(policy.started_at_ms()),
+    ]
+}
+
+fn reset_after_stable_values(
+    attempts: jint,
+    started_at_ms: jlong,
+    now_ms: jlong,
+    connected_at_ms: jlong,
+) -> [i64; 2] {
+    let mut policy = StreamRecoveryPolicy::new(non_neg_u32(attempts), non_neg_u64(started_at_ms));
+    policy.reset_after_stable_connection(non_neg_u64(now_ms), connected_opt(connected_at_ms));
+    [
+        i64::from(policy.attempts()),
+        jlong_sat(policy.started_at_ms()),
+    ]
+}
+
+fn after_user_trip_values(
+    attempts: jint,
+    started_at_ms: jlong,
+    left_at_ms: jlong,
+    now_ms: jlong,
+) -> [i64; 2] {
+    let shift = left_at_ms.min(now_ms).min(0).unsigned_abs();
+    let policy = StreamRecoveryPolicy::after_user_trip(
+        non_neg_u32(attempts),
+        non_neg_u64(started_at_ms),
+        shifted_u64(left_at_ms, shift),
+        shifted_u64(now_ms, shift),
+    );
+    [
+        i64::from(policy.attempts()),
+        jlong_sat(policy.started_at_ms()),
+    ]
+}
 
 pub(crate) fn long_array(env: &mut JNIEnv, values: &[i64]) -> jlongArray {
     let Ok(arr) = env.new_long_array(values.len() as i32) else {
@@ -74,19 +129,8 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_recover
     now_ms: jlong,
     connected_at_ms: jlong,
 ) -> jlongArray {
-    let mut policy = StreamRecoveryPolicy::new(non_neg_u32(attempts), non_neg_u64(started_at_ms));
-    let delay = policy
-        .next_delay(non_neg_u64(now_ms), connected_opt(connected_at_ms))
-        .map(|d| d as i64)
-        .unwrap_or(-1);
-    long_array(
-        &mut env,
-        &[
-            delay,
-            i64::from(policy.attempts()),
-            policy.started_at_ms() as i64,
-        ],
-    )
+    let values = next_delay_values(attempts, started_at_ms, now_ms, connected_at_ms);
+    long_array(&mut env, &values)
 }
 
 #[unsafe(no_mangle)]
@@ -98,12 +142,8 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_recover
     now_ms: jlong,
     connected_at_ms: jlong,
 ) -> jlongArray {
-    let mut policy = StreamRecoveryPolicy::new(non_neg_u32(attempts), non_neg_u64(started_at_ms));
-    policy.reset_after_stable_connection(non_neg_u64(now_ms), connected_opt(connected_at_ms));
-    long_array(
-        &mut env,
-        &[i64::from(policy.attempts()), policy.started_at_ms() as i64],
-    )
+    let values = reset_after_stable_values(attempts, started_at_ms, now_ms, connected_at_ms);
+    long_array(&mut env, &values)
 }
 
 #[unsafe(no_mangle)]
@@ -115,16 +155,8 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_recover
     left_at_ms: jlong,
     now_ms: jlong,
 ) -> jlongArray {
-    let policy = StreamRecoveryPolicy::after_user_trip(
-        non_neg_u32(attempts),
-        non_neg_u64(started_at_ms),
-        non_neg_u64(left_at_ms),
-        non_neg_u64(now_ms),
-    );
-    long_array(
-        &mut env,
-        &[i64::from(policy.attempts()), policy.started_at_ms() as i64],
-    )
+    let values = after_user_trip_values(attempts, started_at_ms, left_at_ms, now_ms);
+    long_array(&mut env, &values)
 }
 
 #[unsafe(no_mangle)]
@@ -134,7 +166,10 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarPolicyJni_recover
     attempts: jint,
     connected_for_ms: jlong,
 ) -> jlong {
-    recovery::trip_connected_before(non_neg_u32(attempts), non_neg_u64(connected_for_ms)) as jlong
+    jlong_sat(recovery::trip_connected_before(
+        non_neg_u32(attempts),
+        non_neg_u64(connected_for_ms),
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -582,5 +617,36 @@ mod tests {
         let mut p = StreamRecoveryPolicy::after_user_trip(2, 1_000, 20_000, 50_000);
         assert_eq!((p.attempts(), p.started_at_ms()), (2, 31_000));
         assert_eq!(p.next_delay(60_000, None), Some(4_000));
+    }
+
+    #[test]
+    fn after_user_trip_saturates_large_started_at_without_wrapping_negative() {
+        let res = after_user_trip_values(2, i64::MAX - 100, 1_000, 2_000);
+        assert_eq!(res, [2, i64::MAX]);
+        assert_eq!(next_delay_values(res[0] as jint, res[1], 3_000, -1)[0], -1);
+    }
+
+    #[test]
+    fn after_user_trip_handles_negative_left_at_and_now() {
+        assert_eq!(after_user_trip_values(2, 1_000, -500, 5_000), [2, 6_500]);
+        assert_eq!(after_user_trip_values(2, 1_000, -5_000, -2_000), [2, 4_000]);
+        assert_eq!(after_user_trip_values(2, 1_000, -2_000, -5_000), [2, 1_000]);
+        assert_eq!(
+            after_user_trip_values(2, 1_000, i64::MIN, i64::MAX),
+            [2, i64::MAX]
+        );
+    }
+
+    #[test]
+    fn recovery_helpers_never_wrap_u64_to_negative_i64() {
+        assert_eq!(jlong_sat(u64::MAX), i64::MAX);
+        let next = next_delay_values(1, i64::MAX, i64::MAX, -1);
+        assert!(next[2] >= 0);
+        let reset = reset_after_stable_values(2, i64::MAX, 5_000, -1);
+        assert_eq!(reset, [2, i64::MAX]);
+        assert_eq!(
+            jlong_sat(recovery::trip_connected_before(1, u64::MAX)),
+            i64::MAX
+        );
     }
 }
