@@ -261,7 +261,7 @@ pub fn negotiate_two_step(
 
     let mut common_formats = negotiate_video_formats(offered, cfg.host_scm);
     let mut yuv444_over_sdr10 = false;
-    if cfg.sdr10 {
+    if keep_sdr10 {
         let without10 = without_ten_bit(offered);
         let common_without10 = negotiate_video_formats(without10, cfg.host_scm);
         if yuv444_wins(common_without10) {
@@ -274,7 +274,7 @@ pub fn negotiate_two_step(
     let prepared = platform.prepare_video_formats(common_formats, cfg.host_scm);
     let mut negotiated = negotiate_video_formats(prepared, cfg.host_scm);
     let negotiated_10bit = (negotiated & VIDEO_FORMAT_MASK_10BIT) != 0;
-    let negotiated_hdr = negotiated_10bit && !cfg.sdr10;
+    let negotiated_hdr = negotiated_10bit && !keep_sdr10;
     let (hdr_format, adjusted) = if negotiated_hdr {
         platform.pick_hdr_format(cfg.host_hdr_formats, negotiated, packed_444, cfg.frame_warp)
     } else {
@@ -293,7 +293,7 @@ pub fn negotiate_two_step(
 
     if yuv444_over_sdr10 {
         notices.push(NegotiationNotice::Sdr10GivenWayToYuv444);
-    } else if cfg.sdr10 {
+    } else if keep_sdr10 {
         if !negotiated_10bit {
             notices.push(NegotiationNotice::Sdr10NotAccepted);
         } else {
@@ -407,5 +407,52 @@ mod tests {
         assert!(out.native_444);
         assert!(!out.packed_444);
         assert_eq!(out.video_capabilities, 0x42);
+    }
+
+    struct PackedStubPlatform;
+    impl PlatformVideoFormats for PackedStubPlatform {
+        fn prepare_packed_modes(&mut self, _probe_formats: u32) -> u8 {
+            1
+        }
+        fn prepare_video_formats(&mut self, common_formats: u32, _host_scm: u32) -> u32 {
+            common_formats
+        }
+        fn pick_hdr_format(&mut self, _: i32, negotiated: u32, _: bool, _: bool) -> (i32, u32) {
+            (0, negotiated)
+        }
+        fn video_capabilities(&mut self, _: u32, _: i32) -> u32 {
+            0
+        }
+    }
+
+    #[test]
+    fn two_step_sdr10_with_packed_pick_does_not_emit_sdr10_not_accepted() {
+        let mut p = PackedStubPlatform;
+        let out = negotiate_two_step(
+            TwoStepConfig {
+                initial_formats: VIDEO_FORMAT_H264 | VIDEO_FORMAT_H265 | VIDEO_FORMAT_H265_MAIN10,
+                host_scm: SCM_H264 | SCM_HEVC | SCM_HEVC_MAIN10,
+                host_hdr_formats: 0,
+                frame_warp: false,
+                sharp_color: true,
+                sdr10: true,
+                pyrowave: false,
+                packed_engine: true,
+                host_packed: Some(1),
+                packed_refused_before: false,
+            },
+            &mut p,
+        );
+        assert!(out.packed_444);
+        assert!(!out.keep_sdr10);
+        assert!(!out.negotiated_10bit);
+        assert!(!out.negotiated_hdr);
+        assert!(
+            out.notices
+                .contains(&NegotiationNotice::Sdr10GivenWayToPacked)
+        );
+        assert!(out.notices.contains(&NegotiationNotice::PackedAvailable));
+        assert!(!out.notices.contains(&NegotiationNotice::Sdr10NotAccepted));
+        assert!(!out.notices.contains(&NegotiationNotice::HdrUnavailable));
     }
 }

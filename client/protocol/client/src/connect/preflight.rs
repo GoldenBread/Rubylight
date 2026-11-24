@@ -135,6 +135,27 @@ pub fn location_for_route(location: RouteLocation, vpn_or_tunnel: bool) -> (Rout
     }
 }
 
+/// Android's `GameStreamUiSetup` default `maxPacketSize` before route detection.
+pub const ANDROID_DEFAULT_PACKET_SIZE: u32 = 1392;
+
+/// Treats Android's default `1392` `maxPacketSize` as unset (`0`) when `Auto` detects
+/// a remote/VPN/tunnel route so `location_for_route` resolves to `1024`, while preserving
+/// explicit user packet sizes and explicit `Local`/`Remote` selections.
+pub const fn effective_android_requested_packet_size(
+    base: RouteLocation,
+    vpn_or_tunnel: bool,
+    requested: u32,
+) -> u32 {
+    if matches!(base, RouteLocation::Auto)
+        && vpn_or_tunnel
+        && requested == ANDROID_DEFAULT_PACKET_SIZE
+    {
+        0
+    } else {
+        requested
+    }
+}
+
 /// Result of running the jumbo UDP probe against a host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct JumboProbeOutcome {
@@ -394,5 +415,42 @@ mod tests {
             40_000
         );
         assert_eq!(first_bitrate_kbps(40_000, true, || Ok(25.0)), 20_000);
+    }
+
+    #[test]
+    fn android_auto_remote_default_1392_resolves_to_1024_while_explicit_preserved() {
+        let req_auto_vpn = effective_android_requested_packet_size(
+            RouteLocation::Auto,
+            true,
+            ANDROID_DEFAULT_PACKET_SIZE,
+        );
+        assert_eq!(req_auto_vpn, 0);
+        let (loc, route_pkt) = location_for_route(RouteLocation::Auto, true);
+        assert_eq!(loc, RouteLocation::Remote);
+        assert_eq!(route_pkt, 1024);
+        assert_eq!(reset_packet_size(route_pkt, req_auto_vpn), 1024);
+
+        // Explicit custom packet size over Auto+VPN stays respected.
+        let req_custom = effective_android_requested_packet_size(RouteLocation::Auto, true, 1200);
+        assert_eq!(reset_packet_size(route_pkt, req_custom), 1200);
+
+        // Explicit Remote or Local keeps 1392.
+        let req_remote = effective_android_requested_packet_size(
+            RouteLocation::Remote,
+            true,
+            ANDROID_DEFAULT_PACKET_SIZE,
+        );
+        let (rem_loc, rem_pkt) = location_for_route(RouteLocation::Remote, true);
+        assert_eq!(rem_loc, RouteLocation::Remote);
+        assert_eq!(reset_packet_size(rem_pkt, req_remote), 1392);
+
+        let req_local = effective_android_requested_packet_size(
+            RouteLocation::Local,
+            false,
+            ANDROID_DEFAULT_PACKET_SIZE,
+        );
+        let (local_loc, local_pkt) = location_for_route(RouteLocation::Local, false);
+        assert_eq!(local_loc, RouteLocation::Local);
+        assert_eq!(reset_packet_size(local_pkt, req_local), 1392);
     }
 }

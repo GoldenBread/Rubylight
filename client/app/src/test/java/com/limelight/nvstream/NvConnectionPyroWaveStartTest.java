@@ -2,13 +2,22 @@ package com.limelight.nvstream;
 
 import android.app.Application;
 
+import com.limelight.nvstream.av.video.VideoDecoderRenderer;
+import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.http.LimelightCryptoProvider;
+import com.limelight.nvstream.http.NvApp;
+import com.limelight.nvstream.http.TestHosts;
 import com.limelight.nvstream.jni.MoonBridge;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
+import java.lang.reflect.Proxy;
+
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 
 /**
  * The bitrate a stream starts at once the host chose its format: PyroWave's own when it streams
@@ -16,7 +25,7 @@ import static org.junit.Assert.assertEquals;
  */
 @RunWith(org.robolectric.RobolectricTestRunner.class)
 @Config(sdk = 29, application = Application.class,
-        shadows = com.limelight.PcViewLifecycleTest.NoNativeMoonBridge.class,
+        shadows = {NvConnectionRecoveryTest.FakeHost.class, NvConnectionHapticsFlagTest.CapturingBridge.class},
         instrumentedPackages = "com.limelight.nvstream.jni")
 public class NvConnectionPyroWaveStartTest {
     private static final int HEVC = MoonBridge.VIDEO_FORMAT_H265;
@@ -86,5 +95,52 @@ public class NvConnectionPyroWaveStartTest {
         assertEquals(20000, start(PYROWAVE, 1920, 1080, 60, 20000, false, 100000));
         // A chosen rate above the limit was the user's own call before; it stays.
         assertEquals(300000, start(PYROWAVE, 1920, 1080, 60, 300000, false, 100000));
+    }
+
+    @Test
+    public void pyroWaveStartBitrateSurvivesFullStartAppAndLaunch() throws Exception {
+        for (int[] caseData : new int[][] {{0, 398132}, {50000, 50000}}) {
+            NvConnectionRecoveryTest.FakeHost.initial = TestHosts.serverInfo("vibepollo-serverinfo.xml")
+                    .replace("</root>", "<BandwidthProbeVersion>1</BandwidthProbeVersion></root>");
+            NvConnectionRecoveryTest.FakeHost.resumeFailure = null;
+            NvConnectionRecoveryTest.FakeHost.resumeResult = true;
+            NvConnectionRecoveryTest.FakeHost.requests.clear();
+            NvConnectionHapticsFlagTest.CapturingBridge.bitrate = -1;
+
+            NvApp app = new NvApp("Game", 73, false);
+            app.setAppUuid("game-a");
+            NvConnection connection = new NvConnection(RuntimeEnvironment.getApplication(),
+                    new ComputerDetails.AddressTuple("192.0.2.1", 47989), 47984, "device",
+                    new StreamConfiguration.Builder().setApp(app).setResolution(1920, 1080).setRefreshRate(60)
+                            .setBitrate(20000).setAutomaticBitrate(true).setProbeFirstBitrate(true)
+                            .setBitrateLimit(caseData[0]).setSupportedVideoFormats(PYROWAVE).build(),
+                    crypto(), null);
+            NvConnectionListener listener = (NvConnectionListener) Proxy.newProxyInstance(
+                    NvConnectionListener.class.getClassLoader(), new Class<?>[] {NvConnectionListener.class},
+                    (proxy, method, args) -> null);
+            connection.start(null, new VideoDecoderRenderer() {
+                @Override public int setup(int format, int width, int height, int rate) { return -1; }
+                @Override public void start() {}
+                @Override public void stop() {}
+                @Override public void cleanup() {}
+                @Override public int getCapabilities() { return 0; }
+                @Override public void setHdrMode(boolean enabled, byte[] metadata) {}
+                @Override public int submitDecodeUnit(byte[] data, int length, int type, int frame, int frameType,
+                        char latency, long received, long queued, long receivedNs, long presentationUs) { return 0; }
+            }, listener);
+            Thread worker = ConnectionStartup.await(connection);
+            assertFalse("Connection startup did not finish", worker.isAlive());
+            assertEquals(caseData[1], NvConnectionHapticsFlagTest.CapturingBridge.bitrate);
+            assertEquals(caseData[1], connection.getStartBitrateKbps());
+        }
+    }
+
+    private static LimelightCryptoProvider crypto() {
+        return new LimelightCryptoProvider() {
+            @Override public java.security.cert.X509Certificate getClientCertificate() { return null; }
+            @Override public java.security.PrivateKey getClientPrivateKey() { return null; }
+            @Override public byte[] getPemEncodedClientCertificate() { return new byte[0]; }
+            @Override public String encodeBase64String(byte[] data) { return ""; }
+        };
     }
 }

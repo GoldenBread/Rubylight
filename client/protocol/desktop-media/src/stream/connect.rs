@@ -6,7 +6,9 @@ use super::*;
 use nightjar_core::connect::{
     launch as core_launch, lifecycle as core_lifecycle, preflight as core_preflight,
 };
-use nightjar_policy::connect_text::{self, HttpCauseKey, StageKey, StartCauseKey, TerminationTextKey};
+use nightjar_policy::connect_text::{
+    self, HttpCauseKey, StageKey, StartCauseKey, TerminationTextKey,
+};
 
 mod attempts;
 pub use attempts::Attempts;
@@ -14,24 +16,30 @@ mod early;
 mod run;
 pub use early::env_flag;
 pub(super) use early::{
-    BEAM_RACE_NOT_WIRED, BEAM_RACE_NO_GPU, BeamRace, EARLY_NO_RECORDS, EarlyState, beam_race,
-    early_decode, early_state, flag_value, race_request, race_runs, takes_rfi,
-    video_capabilities,
+    BEAM_RACE_NO_GPU, BEAM_RACE_NOT_WIRED, BeamRace, EARLY_NO_RECORDS, EarlyState, beam_race,
+    early_decode, early_state, flag_value, race_request, race_runs, takes_rfi, video_capabilities,
 };
 #[cfg(test)]
 pub(super) use early::{MAX_RACE_SLICES, RaceRequest, beam_race_for, beam_slices, slices_override};
 mod worker;
-pub use worker::{CONNECT_TIMEOUT, ConnectFailed, Connecting, LEAVE_WAIT, connect_overdue, end_all_before};
+use worker::ConnectError;
 #[cfg(test)]
 pub use worker::end_before;
 #[cfg(test)]
 pub(super) use worker::wait_for_previous;
-use worker::ConnectError;
+pub use worker::{
+    CONNECT_TIMEOUT, ConnectFailed, Connecting, LEAVE_WAIT, connect_overdue, end_all_before,
+};
 
 #[cfg(test)]
-pub(super) use core_preflight::{asks_for_jumbo, facts_packet_size, jumbo_config_size, reset_packet_size, resume_packet_size, JumboPreflight, JumboSkip};
+pub(super) use core_preflight::{
+    JumboPreflight, JumboSkip, asks_for_jumbo, facts_packet_size, jumbo_config_size,
+    reset_packet_size, resume_packet_size,
+};
 #[cfg(not(test))]
-use core_preflight::{facts_packet_size, reset_packet_size, resume_packet_size, JumboPreflight, JumboSkip};
+use core_preflight::{
+    JumboPreflight, JumboSkip, facts_packet_size, reset_packet_size, resume_packet_size,
+};
 
 fn to_route_location(location: Location) -> core_preflight::RouteLocation {
     match location {
@@ -54,7 +62,10 @@ fn initial_stage_text() -> &'static str {
 }
 
 fn reconnecting_stage_text(attempt: usize) -> String {
-    trf("Reconnecting · attempt {} of {}", &[&attempt, &nightjar_policy::recovery::MAX_ATTEMPTS])
+    trf(
+        "Reconnecting · attempt {} of {}",
+        &[&attempt, &nightjar_policy::recovery::MAX_ATTEMPTS],
+    )
 }
 
 fn stage_text(stage: Stage) -> &'static str {
@@ -132,11 +143,12 @@ fn map_connect_error(e: nightjar_core::connect::ConnectError) -> ConnectError {
         HttpCauseKey::ConnectionRefused => en("The PC refused the connection."),
         HttpCauseKey::ConnectionLost => en("The connection to the PC was lost."),
     });
-    let message = if e.local_failure == Some(nightjar_core::connect::LocalLaunchFailure::SessionChanged) {
-        APP_GONE.to_owned()
-    } else {
-        e.message
-    };
+    let message =
+        if e.local_failure == Some(nightjar_core::connect::LocalLaunchFailure::SessionChanged) {
+            APP_GONE.to_owned()
+        } else {
+            e.message
+        };
     ConnectError {
         message,
         retryable: e.retryable,
@@ -167,7 +179,8 @@ fn check_resume(
     core_launch::check_resume(join, paired, running, offered, read).map_err(map_connect_error)
 }
 
-const APP_GONE: &str = "The original app is no longer running on the PC. Choose an app to start a new stream.";
+const APP_GONE: &str =
+    "The original app is no longer running on the PC. Choose an app to start a new stream.";
 
 fn resume_refused(join: bool, code: i32, message: &str) -> Option<String> {
     use nightjar_policy::continue_here::{ResumeRefusal, resume_refusal};
@@ -179,11 +192,17 @@ fn resume_refused(join: bool, code: i32, message: &str) -> Option<String> {
     })
 }
 
-const RECOVERY_STOPPED: &str = en("Automatic reconnecting stopped. Your game was not quit; check the connection and try again.");
+const RECOVERY_STOPPED: &str = en(
+    "Automatic reconnecting stopped. Your game was not quit; check the connection and try again.",
+);
 const RECOVERY_UNREACHABLE: &str = en("The PC could not be reached.");
 
 fn recovery_gave_up(last_failure: Option<&str>) -> String {
-    nightjar_policy::recovery::recovery_gave_up(last_failure, tr(RECOVERY_UNREACHABLE), tr(RECOVERY_STOPPED))
+    nightjar_policy::recovery::recovery_gave_up(
+        last_failure,
+        tr(RECOVERY_UNREACHABLE),
+        tr(RECOVERY_STOPPED),
+    )
 }
 
 fn connect_with_recovery(
@@ -193,26 +212,35 @@ fn connect_with_recovery(
 ) -> Result<(Session, Facts), ConnectError> {
     loop {
         if let Some(recovery) = &mut plan.recovery {
-            let delay = recovery
-                .next_delay(recovery::now_ms())
-                .ok_or_else(|| ConnectError::from(recovery_gave_up(lock(&shared.last_failure).as_deref())))?;
+            let delay = recovery.next_delay(recovery::now_ms()).ok_or_else(|| {
+                ConnectError::from(recovery_gave_up(lock(&shared.last_failure).as_deref()))
+            })?;
             shared.notify(Notice::Reconnecting(recovery.attempts() as usize));
             let until = Instant::now() + Duration::from_millis(delay);
             while Instant::now() < until {
                 if interrupt.is_interrupted() {
                     return Err("Cancelled.".into());
                 }
-                std::thread::sleep(Duration::from_millis(20).min(until.saturating_duration_since(Instant::now())));
+                std::thread::sleep(
+                    Duration::from_millis(20).min(until.saturating_duration_since(Instant::now())),
+                );
             }
             let port = if plan.record.http_port == 0 {
                 nightjar_core::http::DEFAULT_HTTP_PORT
             } else {
                 plan.record.http_port
             };
-            wait_for_route(&plan.record.address, port, recovery.remaining(recovery::now_ms()), interrupt)?;
+            wait_for_route(
+                &plan.record.address,
+                port,
+                recovery.remaining(recovery::now_ms()),
+                interrupt,
+            )?;
         }
         match connect(plan, shared.clone(), interrupt) {
-            Err(error) if error.retryable && plan.recovery.is_some() && !interrupt.is_interrupted() => {
+            Err(error)
+                if error.retryable && plan.recovery.is_some() && !interrupt.is_interrupted() =>
+            {
                 eprintln!("nightjar: recovery: attempt failed: {}", error.message);
                 *lock(&shared.last_failure) = error.cause.map(|cause| tr(cause).to_owned());
                 lock(&shared.frames).clear();
@@ -240,7 +268,9 @@ fn wait_for_route(
                 if interrupt.is_interrupted() {
                     return false;
                 }
-                std::thread::sleep(Duration::from_millis(20).min(until.saturating_duration_since(Instant::now())));
+                std::thread::sleep(
+                    Duration::from_millis(20).min(until.saturating_duration_since(Instant::now())),
+                );
             }
             true
         },
@@ -335,7 +365,13 @@ pub(super) fn pyrowave_link_text(
 ) -> String {
     trf(
         "PyroWave at {}×{}, {} fps asks for {} Mbps; that may be more than this link carries ({} Mbps). Lower the resolution or frame rate, or use HEVC or AV1.",
-        &[&width, &height, &fps, &notice.asked_kbps.div_ceil(1000), &notice.cap_kbps.div_ceil(1000)],
+        &[
+            &width,
+            &height,
+            &fps,
+            &notice.asked_kbps.div_ceil(1000),
+            &notice.cap_kbps.div_ceil(1000),
+        ],
     )
 }
 
@@ -385,7 +421,8 @@ pub(super) fn roaming_config(settings: &Settings, watching: bool) -> RoamingConf
 }
 
 pub(super) const NETWORK_LOST: &str = en("Network lost.");
-pub(super) const NETWORK_LOST_RECONNECTING: &str = en("Network lost. Reconnecting as soon as it is back…");
+pub(super) const NETWORK_LOST_RECONNECTING: &str =
+    en("Network lost. Reconnecting as soon as it is back…");
 
 pub(super) fn roam_watch(
     settings: &Settings,
@@ -397,17 +434,24 @@ pub(super) fn roam_watch(
     } else {
         " and roaming is off"
     };
-    let Some(remote) = (address, 47989).to_socket_addrs().ok().and_then(|mut found| found.next()) else {
-        eprintln!("nightjar: roaming: {address} did not resolve, network changes go unwatched{unwatched}");
+    let Some(remote) = (address, 47989)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut found| found.next())
+    else {
+        eprintln!(
+            "nightjar: roaming: {address} did not resolve, network changes go unwatched{unwatched}"
+        );
         return None;
     };
     let shared = Arc::downgrade(shared);
     let on_change = move |event| {
         let notice = match event {
             crate::network::LinkEvent::Lost => Notice::NetworkLost,
-            crate::network::LinkEvent::Changed { metered, after_loss } => {
-                Notice::NetworkChanged(NetworkHint { metered }, after_loss)
-            }
+            crate::network::LinkEvent::Changed {
+                metered,
+                after_loss,
+            } => Notice::NetworkChanged(NetworkHint { metered }, after_loss),
         };
         shared.upgrade().map(|s| s.notify(notice)).is_some()
     };
@@ -504,7 +548,9 @@ pub(super) fn pyrowave_start_line(
     } else {
         format!("a {link_mbps} Mbps link")
     };
-    format!("PyroWave: starting at {bitrate_kbps} kbps, its default for {width}x{height} at {fps} fps and {link}")
+    format!(
+        "PyroWave: starting at {bitrate_kbps} kbps, its default for {width}x{height} at {fps} fps and {link}"
+    )
 }
 
 pub(super) fn lost_notice(settings: &Settings, on_its_own: bool) -> &'static str {
@@ -569,13 +615,17 @@ pub(super) fn audio_configuration(
 
 pub use super::host_client_for;
 
-
 pub(super) fn not_paired_text() -> String {
     tr("This PC is not paired.").into()
 }
 
 pub(super) fn input_only_small_refused_text(why: &str) -> String {
-    format!("{why} {}", tr("Input-only on this PC uses a small ordinary stream, and the PC refused it. Some PCs allow only one stream at a time: end the other stream or allow more in the PC’s settings."))
+    format!(
+        "{why} {}",
+        tr(
+            "Input-only on this PC uses a small ordinary stream, and the PC refused it. Some PCs allow only one stream at a time: end the other stream or allow more in the PC’s settings."
+        )
+    )
 }
 
 pub(super) fn connect(
@@ -591,8 +641,8 @@ fn recent_game(plan: &LaunchPlan) -> Option<config::Recent> {
 }
 
 #[cfg(test)]
-mod tests;
+mod attempts_tests;
 #[cfg(test)]
 mod replace_tests;
 #[cfg(test)]
-mod attempts_tests;
+mod tests;

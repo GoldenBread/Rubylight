@@ -131,7 +131,13 @@ impl<'a, 'local> AndroidLaunchBridge<'a, 'local> {
         call: jni::errors::Result<jni::objects::JValueOwned>,
     ) -> jni::errors::Result<String> {
         let obj = match call {
-            Ok(v) => v.l()?,
+            Ok(v) => match v.l() {
+                Ok(obj) => obj,
+                Err(e) => {
+                    let _ = env.exception_clear();
+                    return Err(e);
+                }
+            },
             Err(e) => {
                 let _ = env.exception_clear();
                 return Err(e);
@@ -141,12 +147,21 @@ impl<'a, 'local> AndroidLaunchBridge<'a, 'local> {
             return Ok(String::new());
         }
         let js = JString::from(obj);
-        Ok(env.get_string(&js)?.to_string_lossy().into_owned())
+        match env.get_string(&js) {
+            Ok(s) => Ok(s.to_string_lossy().into_owned()),
+            Err(e) => {
+                let _ = env.exception_clear();
+                Err(e)
+            }
+        }
     }
 }
 
 impl LaunchTransport for AndroidLaunchBridge<'_, '_> {
     fn server_info(&self, fast: bool) -> Result<ServerInfo, http::Error> {
+        if self.callback.is_null() {
+            return Err(http::Error::Cancelled);
+        }
         let mut env = self.env.borrow_mut();
         let res = env.with_local_frame(8, |env| {
             let call = env.call_method(
@@ -172,6 +187,9 @@ impl LaunchTransport for AndroidLaunchBridge<'_, '_> {
     }
 
     fn has_ended_session(&self) -> bool {
+        if self.callback.is_null() {
+            return false;
+        }
         let mut env = self.env.borrow_mut();
         let res = env.with_local_frame(4, |env| {
             match env.call_method(self.callback, "hasEndedSession", "()Z", &[]) {
@@ -192,12 +210,21 @@ impl LaunchTransport for AndroidLaunchBridge<'_, '_> {
         hdr: bool,
         confirm_replace: bool,
     ) -> Result<Option<Launched>, http::Error> {
+        if self.callback.is_null() {
+            return Err(http::Error::Cancelled);
+        }
         if confirm_replace {
             self.confirm_replace_used.set(true);
         }
         let mut env = self.env.borrow_mut();
         let res = env.with_local_frame(8, |env| {
-            let j_verb = env.new_string(verb)?;
+            let j_verb = match env.new_string(verb) {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = env.exception_clear();
+                    return Err(e);
+                }
+            };
             let call = env.call_method(
                 self.callback,
                 "launch",
@@ -228,6 +255,9 @@ impl LaunchTransport for AndroidLaunchBridge<'_, '_> {
     }
 
     fn quit_app(&self) -> Result<bool, http::Error> {
+        if self.callback.is_null() {
+            return Err(http::Error::Cancelled);
+        }
         let mut env = self.env.borrow_mut();
         let res = env.with_local_frame(8, |env| {
             let call = env.call_method(self.callback, "quitApp", "()Ljava/lang/String;", &[]);
@@ -239,6 +269,9 @@ impl LaunchTransport for AndroidLaunchBridge<'_, '_> {
     }
 
     fn is_stopped(&self) -> bool {
+        if self.callback.is_null() {
+            return false;
+        }
         let mut env = self.env.borrow_mut();
         let res = env.with_local_frame(4, |env| {
             match env.call_method(self.callback, "isStopped", "()Z", &[]) {
@@ -255,6 +288,9 @@ impl LaunchTransport for AndroidLaunchBridge<'_, '_> {
 
 impl ConfirmReplace for AndroidLaunchBridge<'_, '_> {
     fn confirm_replace(&self, terminate_only: bool) -> ConfirmChoice {
+        if self.callback.is_null() {
+            return ConfirmChoice::Rejected;
+        }
         let mut env = self.env.borrow_mut();
         let res = env.with_local_frame(4, |env| {
             let call = env.call_method(

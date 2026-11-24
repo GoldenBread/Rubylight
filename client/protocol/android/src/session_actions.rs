@@ -113,23 +113,20 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarSessionJni_server
     current_game_uuid: JString,
 ) -> jboolean {
     let uuid = jstr(&mut env, &current_game_uuid).unwrap_or_default();
-    let state_tag = if session_idle != 0 {
-        "SUNSHINE_SERVER_FREE"
-    } else {
-        "SUNSHINE_SERVER_BUSY"
-    };
     let perm = if has_view_launch_perm != 0 {
-        (PERMISSION_VIEW | PERMISSION_LAUNCH) as i64
+        PERMISSION_VIEW | PERMISSION_LAUNCH
     } else {
         0
     };
-    let xml = format!(
-        "<root status_code=\"200\"><PairStatus>{}</PairStatus><Permission>{perm}</Permission><state>{state_tag}</state><currentgame>{current_game}</currentgame><currentgameuuid>{uuid}</currentgameuuid></root>",
-        i32::from(paired != 0),
+    let info = ServerInfo::synthetic(
+        paired != 0,
+        current_game,
+        &uuid,
+        session_idle != 0,
+        false,
+        false,
+        Some(perm),
     );
-    let Ok(info) = ServerInfo::parse_partial(&xml, 47989) else {
-        return JNI_FALSE;
-    };
     jb(serverinfo_confirms_ended_session(
         stop_requested != 0,
         app_role_from_ordinal(role_ordinal),

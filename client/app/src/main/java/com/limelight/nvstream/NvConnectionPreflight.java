@@ -436,10 +436,13 @@ final class NvConnectionPreflight {
             if (pyrowaveNotices.length() > 0) context.connListener.displayTransientMessage(pyrowaveNotices.toString());
         }
 
-        context.negotiatedRemoteStreaming = context.streamConfig.getRemote() == StreamConfiguration.STREAM_CFG_AUTO
-                ? detectServerConnectionType(appContext, context) : context.streamConfig.getRemote();
-        int locationOrd = context.negotiatedRemoteStreaming == StreamConfiguration.STREAM_CFG_LOCAL ? 1
-                : context.negotiatedRemoteStreaming == StreamConfiguration.STREAM_CFG_REMOTE ? 2 : 0;
+        int rawRemote = context.streamConfig.getRemote();
+        context.negotiatedRemoteStreaming = rawRemote == StreamConfiguration.STREAM_CFG_AUTO
+                ? detectServerConnectionType(appContext, context) : rawRemote;
+        int locationOrd = rawRemote == StreamConfiguration.STREAM_CFG_LOCAL ? 1
+                : rawRemote == StreamConfiguration.STREAM_CFG_REMOTE ? 2 : 0;
+        boolean vpnOrTunnel = rawRemote == StreamConfiguration.STREAM_CFG_AUTO
+                && context.negotiatedRemoteStreaming == StreamConfiguration.STREAM_CFG_REMOTE;
         boolean jumboFrames = PreferenceConfiguration.jumboFrames(appContext);
         NightjarSessionJni.LinkProbe paceProbe = new NightjarSessionJni.LinkProbe() {
             @Override public String probeLinkMbps() { return "{\"error\":{\"kind\":\"cancelled\",\"message\":\"\"}}"; }
@@ -459,9 +462,10 @@ final class NvConnectionPreflight {
         };
         int[] pktRes = NightjarSessionJni.resolvePacketSizePreflight(
                 locationOrd, context.negotiatedRemoteStreaming != StreamConfiguration.STREAM_CFG_REMOTE,
-                context.negotiatedRemoteStreaming == StreamConfiguration.STREAM_CFG_REMOTE,
+                vpnOrTunnel,
                 context.hostCaps.maxVideoPacket(), details.supportsPyroWavePaceCalibration(),
-                context.streamConfig.getMaxPacketSize(), jumboFrames, false, paceProbe);
+                context.streamConfig.getMaxPacketSize(), jumboFrames,
+                context.streamConfig.isResumeOnly(), paceProbe);
         context.negotiatedPacketSize = pktRes != null && pktRes.length >= 1
                 ? pktRes[0] : context.streamConfig.getMaxPacketSize();
         context.jumboFallback = pktRes != null && pktRes.length >= 2 && pktRes[1] != 0;

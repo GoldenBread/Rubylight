@@ -17,9 +17,9 @@ use nightjar_core::connect::negotiate::{
     negotiate_video_formats, pyro_wave_hdr_lost, sharp_color_input,
 };
 use nightjar_core::connect::preflight::{
-    JumboPreflight, RouteLocation, first_bitrate_kbps, jumbo_preflight, location_for_route,
-    probes_first_bitrate, pyro_wave_link_notice, pyro_wave_start_kbps, reset_packet_size,
-    run_jumbo_probe,
+    JumboPreflight, RouteLocation, effective_android_requested_packet_size, first_bitrate_kbps,
+    jumbo_preflight, location_for_route, probes_first_bitrate, pyro_wave_link_notice,
+    pyro_wave_start_kbps, reset_packet_size, run_jumbo_probe,
 };
 use nightjar_core::http::{self, pace::Measurement};
 use nightjar_core::sharp_color::{Pick, Why};
@@ -109,23 +109,15 @@ pub(crate) fn build_server_info(
     has_bandwidth_probe: bool,
     host_confirms_replacement: bool,
 ) -> ServerInfo {
-    let state = if session_idle {
-        "SUNSHINE_SERVER_FREE"
-    } else {
-        "SUNSHINE_SERVER_BUSY"
-    };
-    let mut xml = format!(
-        "<root status_code=\"200\"><PairStatus>{}</PairStatus><state>{state}</state><currentgame>{current_game}</currentgame><currentgameuuid>{current_game_uuid}</currentgameuuid>",
-        i32::from(paired),
-    );
-    if has_bandwidth_probe {
-        xml.push_str("<BandwidthProbeVersion>1</BandwidthProbeVersion>");
-    }
-    if host_confirms_replacement {
-        xml.push_str("<RustHostVersion>3.0.0</RustHostVersion>");
-    }
-    xml.push_str("</root>");
-    ServerInfo::parse_partial(&xml, 47989).expect("valid serverinfo xml")
+    ServerInfo::synthetic(
+        paired,
+        current_game,
+        current_game_uuid,
+        session_idle,
+        has_bandwidth_probe,
+        host_confirms_replacement,
+        None,
+    )
 }
 
 // --- HardwareMetricsPoller (Slab) ---
@@ -613,6 +605,52 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarSessionJni_pyroWa
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_packet_size_values(
+    location_ordinal: i32,
+    is_private_addr: bool,
+    vpn_or_tunnel: bool,
+    offered_mtu: i32,
+    burst_probe: bool,
+    requested_packet_size: i32,
+    jumbo_frames: bool,
+    auto_reconnect: bool,
+    probe_fn: impl FnMut(u32, u32, u32, u32) -> Result<Measurement, http::Error>,
+) -> [i32; 2] {
+    let base_loc = match location_ordinal {
+        1 => RouteLocation::Local,
+        2 => RouteLocation::Remote,
+        _ => RouteLocation::Auto,
+    };
+    let req = effective_android_requested_packet_size(
+        base_loc,
+        vpn_or_tunnel,
+        requested_packet_size.max(0) as u32,
+    );
+    let (loc, route_pkt) = location_for_route(base_loc, vpn_or_tunnel);
+    let addr = if is_private_addr {
+        Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))
+    } else {
+        Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)))
+    };
+    let plan = jumbo_preflight(
+        loc,
+        addr,
+        offered_mtu.max(0) as u16,
+        burst_probe,
+        req,
+        jumbo_frames,
+        auto_reconnect,
+    );
+    match plan {
+        JumboPreflight::Skip(_) => [reset_packet_size(route_pkt, req), 0],
+        JumboPreflight::Probe { candidate } => {
+            let outcome = run_jumbo_probe(candidate, route_pkt, req, jumbo_frames, probe_fn);
+            [outcome.packet_size, i32::from(outcome.fallback_notice)]
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarSessionJni_resolvePacketSizePreflight(
     mut env: JNIEnv,
@@ -627,78 +665,50 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarSessionJni_resolv
     auto_reconnect: jboolean,
     host_callback: JObject,
 ) -> jintArray {
-    let base_loc = match location_ordinal {
-        1 => RouteLocation::Local,
-        2 => RouteLocation::Remote,
-        _ => RouteLocation::Auto,
-    };
-    let (loc, route_pkt) = location_for_route(base_loc, vpn_or_tunnel != 0);
-    let addr = if is_private_addr != 0 {
-        Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))
-    } else {
-        Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)))
-    };
-    let req = requested_packet_size.max(0) as u32;
-    let plan = jumbo_preflight(
-        loc,
-        addr,
-        offered_mtu.max(0) as u16,
+    let out = resolve_packet_size_values(
+        location_ordinal,
+        is_private_addr != 0,
+        vpn_or_tunnel != 0,
+        offered_mtu,
         burst_probe != 0,
-        req,
+        requested_packet_size,
         jumbo_frames != 0,
         auto_reconnect != 0,
-    );
-    match plan {
-        JumboPreflight::Skip(_) => {
-            let pkt = reset_packet_size(route_pkt, req);
-            int_array(&env, &[pkt, 0])
-        }
-        JumboPreflight::Probe { candidate } => {
-            let outcome = run_jumbo_probe(
-                candidate,
-                route_pkt,
-                req,
-                jumbo_frames != 0,
-                |kbps, size, fps, pace| {
-                    if host_callback.is_null() {
-                        return Err(http::Error::Cancelled);
+        |kbps, size, fps, pace| {
+            if host_callback.is_null() {
+                return Err(http::Error::Cancelled);
+            }
+            let reply = env.with_local_frame(8, |env| {
+                let res = env.call_method(
+                    &host_callback,
+                    "probePace",
+                    "(IIII)Ljava/lang/String;",
+                    &[
+                        JValue::Int(kbps as jint),
+                        JValue::Int(size as jint),
+                        JValue::Int(fps as jint),
+                        JValue::Int(pace as jint),
+                    ],
+                );
+                let obj = match res {
+                    Ok(v) => v.l()?,
+                    Err(e) => {
+                        let _ = env.exception_clear();
+                        return Err(e);
                     }
-                    let reply = env.with_local_frame(8, |env| {
-                        let res = env.call_method(
-                            &host_callback,
-                            "probePace",
-                            "(IIII)Ljava/lang/String;",
-                            &[
-                                JValue::Int(kbps as jint),
-                                JValue::Int(size as jint),
-                                JValue::Int(fps as jint),
-                                JValue::Int(pace as jint),
-                            ],
-                        );
-                        let obj = match res {
-                            Ok(v) => v.l()?,
-                            Err(e) => {
-                                let _ = env.exception_clear();
-                                return Err(e);
-                            }
-                        };
-                        if obj.is_null() {
-                            return Ok(String::new());
-                        }
-                        let js = JString::from(obj);
-                        Ok(env.get_string(&js)?.to_string_lossy().into_owned())
-                    });
-                    let text = reply
-                        .map_err(|_| http::Error::Io(std::io::Error::other("JNI pace probe")))?;
-                    parse_pace_envelope(&text)
-                },
-            );
-            int_array(
-                &env,
-                &[outcome.packet_size, i32::from(outcome.fallback_notice)],
-            )
-        }
-    }
+                };
+                if obj.is_null() {
+                    return Ok(String::new());
+                }
+                let js = JString::from(obj);
+                Ok(env.get_string(&js)?.to_string_lossy().into_owned())
+            });
+            let text =
+                reply.map_err(|_| http::Error::Io(std::io::Error::other("JNI pace probe")))?;
+            parse_pace_envelope(&text)
+        },
+    );
+    int_array(&env, &out)
 }
 
 pub(crate) fn parse_envelope(text: &str) -> Result<Value, http::Error> {
@@ -764,20 +774,5 @@ fn parse_pace_envelope(text: &str) -> Result<Measurement, http::Error> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn metrics_poller_slab_handles_terminal_403_and_clear() {
-        let handle = METRICS_POLLERS.insert(HardwareMetricsPoller::new());
-        let poller = METRICS_POLLERS.get(handle).expect("poller");
-        let r#gen = poller.due(1000, true).expect("due");
-        let (show, _, unavail) =
-            poller.finish_step_sample(r#gen, 1100, Err(HardwareStepError::Unavailable));
-        assert!(!show);
-        assert!(unavail);
-        assert!(poller.is_unavailable());
-        METRICS_POLLERS.remove(handle);
-        assert!(METRICS_POLLERS.get(handle).is_none());
-    }
-}
+#[path = "connect_tests.rs"]
+mod tests;

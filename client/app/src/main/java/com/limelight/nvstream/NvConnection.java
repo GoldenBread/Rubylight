@@ -247,7 +247,23 @@ public class NvConnection {
         }
         long nowMs = System.nanoTime() / 1_000_000L;
         int generation = NightjarSessionJni.metricsPollerDue(handle, nowMs, true);
-        if (generation < 0) generation = 0;
+        if (generation < 0) {
+            if (NightjarSessionJni.metricsPollerIsUnavailable(handle)) {
+                synchronized (this) {
+                    if (hardwareMetricsPoller == poller) {
+                        hardwareMetricsUnavailable = true;
+                        stopHardwareMetricsPolling();
+                    }
+                }
+            } else {
+                synchronized (this) {
+                    if (hardwareMetricsPoller == poller) {
+                        poller.schedule(() -> pollHardwareMetrics(poller, listener), 50, TimeUnit.MILLISECONDS);
+                    }
+                }
+            }
+            return;
+        }
 
         HardwareMetrics metrics = null;
         int httpStatus = 0;

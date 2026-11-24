@@ -224,7 +224,7 @@ final class NvConnectionLaunch {
         };
         boolean probeFirst = context.streamConfig.probesFirstBitrate();
         return NightjarSessionJni.firstBitrateKbps(
-                context.streamConfig.getBitrate(), probeFirst,
+                context.startBitrateKbps, probeFirst,
                 probeFirst, context.streamConfig.isResumeOnly(),
                 app.getControl().ordinal(), NvConnectionActions.roleOrdinal(app.getRole()),
                 app.isSmallStreamInputOnly(), context.negotiatedVideoFormats, paired,

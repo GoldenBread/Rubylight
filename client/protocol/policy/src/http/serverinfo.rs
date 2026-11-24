@@ -210,6 +210,87 @@ impl ServerInfo {
         self.capabilities
             .trusted_codec_mode_support(self.server_codec_mode_support)
     }
+
+    /// Constructs a synthetic `ServerInfo` from known fields without XML round-tripping.
+    pub fn synthetic(
+        paired: bool,
+        current_game: i32,
+        current_game_uuid: &str,
+        session_idle: bool,
+        has_bandwidth_probe: bool,
+        host_confirms_replacement: bool,
+        permission: Option<u32>,
+    ) -> Self {
+        let state = if session_idle {
+            "SUNSHINE_SERVER_FREE"
+        } else {
+            "SUNSHINE_SERVER_BUSY"
+        };
+        let evidence = Evidence {
+            paired,
+            rust_host_version: host_confirms_replacement.then(|| "3.0.0".to_owned()),
+            permission: permission.map_or(-1, i64::from),
+            hardware_metrics_version: -1,
+            network_path_version: -1,
+            cursor_shape_version: -1,
+            frame_warp_version: -1,
+            native_api_version: -1,
+            power_action_version: -1,
+            hdr_formats: -1,
+            fec_control_version: -1,
+            bandwidth_probe_version: if has_bandwidth_probe { 1 } else { -1 },
+            audio_codecs: -1,
+            audio_layouts: -1,
+            text_input_version: -1,
+            keyboard_layout_version: -1,
+            pen_barrel_roll_version: -1,
+            controller_identity_version: -1,
+            pipeline_rates_version: -1,
+            display_scale_version: -1,
+            second_screen_version: -1,
+            internet_play_version: -1,
+            current_game_uuid: true,
+            ..Default::default()
+        };
+        Self {
+            raw: String::new(),
+            hostname: "UNKNOWN".to_owned(),
+            unique_id: String::new(),
+            app_version: None,
+            gfe_version: None,
+            gpu_type: None,
+            https_port: DEFAULT_HTTPS_PORT,
+            external_port: super::DEFAULT_HTTP_PORT,
+            mac_address: None,
+            local_ip: None,
+            external_ip: None,
+            paired,
+            state: state.to_owned(),
+            session_idle,
+            current_game: if session_idle { 0 } else { current_game },
+            current_game_uuid: (!current_game_uuid.is_empty())
+                .then(|| current_game_uuid.to_owned()),
+            server_codec_mode_support: 0,
+            max_luma_pixels_h264: 0,
+            max_luma_pixels_hevc: 0,
+            permission,
+            server_commands: Vec::new(),
+            encoder_bitrate_supported: false,
+            encoder_bitrate_kbps: 0,
+            initial_encoder_bitrate_kbps: 0,
+            frame_limiter_enabled: false,
+            virtual_display_frame_limiter_enabled: false,
+            frame_limiter_fps_limit_millihz: 0,
+            pyrowave_host_link_mbps: 0,
+            pyrowave_bandwidth_probe_bytes: 0,
+            pyrowave_burst_probe: false,
+            pyrowave_critical_fec_percentage: 0,
+            pyrowave_min_parity_shards: 0,
+            packed444_modes: None,
+            capabilities: HostCapabilities::from_evidence(evidence),
+            last_failure: None,
+        }
+    }
 }
 
 pub fn parse_version_quad(version: &str) -> Result<[i32; 4], Error> {

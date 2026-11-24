@@ -130,6 +130,51 @@ public class NvConnectionHardwareMetricsTest {
         }
     }
 
+    @Test
+    public void pollReturnsEarlyWithoutSendingHttpWhenNotDueOrUnavailable() throws Exception {
+        NvConnection connection = supportedConnection();
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1);
+        AtomicInteger httpCalls = new AtomicInteger();
+        Http telemetry = new Http() {
+            @Override public HardwareMetrics getHardwareMetrics() throws IOException {
+                httpCalls.incrementAndGet();
+                return super.getHardwareMetrics();
+            }
+        };
+        telemetry.sample = sample(10_000);
+        field(connection, "hardwareMetricsHttp", telemetry);
+        field(connection, "hardwareMetricsPoller", executor);
+        AtomicInteger deliveries = new AtomicInteger();
+        Method poll = NvConnection.class.getDeclaredMethod("pollHardwareMetrics",
+                java.util.concurrent.ScheduledExecutorService.class, Consumer.class);
+        poll.setAccessible(true);
+        try {
+            // First poll succeeds and schedules 10s later (nowMs < next_ms).
+            poll.invoke(connection, executor, (Consumer<HardwareMetrics>) m -> deliveries.incrementAndGet());
+            assertEquals(1, httpCalls.get());
+            assertEquals(1, deliveries.get());
+
+            // Immediate early re-invocation returns -1 from metricsPollerDue -> must NOT poll HTTP.
+            poll.invoke(connection, executor, (Consumer<HardwareMetrics>) m -> deliveries.incrementAndGet());
+            assertEquals(1, httpCalls.get());
+            assertEquals(1, deliveries.get());
+
+            // When unavailable is latched, polling returns early and stops the poller without HTTP.
+            Field handleField = NvConnection.class.getDeclaredField("hardwareMetricsPollerHandle");
+            handleField.setAccessible(true);
+            long handle = (Long) handleField.get(connection);
+            int gen = com.limelight.nvstream.jni.NightjarSessionJni.metricsPollerDue(
+                    handle, Long.MAX_VALUE / 4, true);
+            com.limelight.nvstream.jni.NightjarSessionJni.metricsPollerFinishStep(
+                    handle, gen, Long.MAX_VALUE / 4, false, 0L, 0, 403, false);
+            poll.invoke(connection, executor, (Consumer<HardwareMetrics>) m -> deliveries.incrementAndGet());
+            assertEquals(1, httpCalls.get());
+            assertTrue(executor.isShutdown());
+        } finally {
+            connection.stop();
+        }
+    }
+
     private static HardwareMetrics sample(int interval) {
         return new HardwareMetrics(1, interval, Map.of(), List.of());
     }

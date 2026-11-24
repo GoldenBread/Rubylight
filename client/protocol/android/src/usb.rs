@@ -238,7 +238,7 @@ fn to_json(attachments: &[Attachment]) -> Value {
 /// Opens the device Java's `UsbDeviceConnection` has open at `path`; `fd` stays Java's.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn open(fd: i32, path: &str) -> Result<Arc<dyn UsbDevice>, String> {
-    use nightjar_core::usb::usbfs::{linux::Usbfs, UsbfsDevice};
+    use nightjar_core::usb::usbfs::{UsbfsDevice, linux::Usbfs};
     let kernel = Usbfs::from_fd(fd).map_err(|e| format!("its descriptor did not copy: {e}"))?;
     Ok(Arc::new(UsbfsDevice::open(kernel, path)?))
 }
@@ -348,8 +348,8 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_NightjarJni_usbList(
 mod tests {
     use super::*;
     use nightjar_core::control::ClientMessage;
-    use nightjar_core::usb::fake::FakeDevice;
     use nightjar_core::usb::Blocking;
+    use nightjar_core::usb::fake::FakeDevice;
 
     fn sent_to(log: Arc<Mutex<Vec<UsbMessage>>>, refuse: Option<SendError>) -> Forwarder {
         Forwarder::new(

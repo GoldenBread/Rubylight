@@ -283,6 +283,8 @@ public class NvConnectionHapticsFlagTest {
         static Integer gracePeriodMs;
         static int videoCapabilities = -1;
         static int bitrate = -1;
+        static int packetSize = -1;
+        static int streamingRemotely = -1;
         // What startConnection returns (-1 stops before the stream) and the DESCRIBE's packed modes after it.
         static int startResult = -1;
         static int hostPacked444Modes = -1;
@@ -318,6 +320,8 @@ public class NvConnectionHapticsFlagTest {
             CapturingBridge.hostFeatures = hostFeatures;
             CapturingBridge.videoCapabilities = videoCapabilities;
             CapturingBridge.bitrate = bitrate;
+            CapturingBridge.packetSize = packetSize;
+            CapturingBridge.streamingRemotely = streamingRemotely;
             CapturingBridge.linkMbps = pyrowaveLinkMbps;
             CapturingBridge.paceMbps = pyrowavePaceMbps;
             CapturingBridge.clientWireless = clientWireless;

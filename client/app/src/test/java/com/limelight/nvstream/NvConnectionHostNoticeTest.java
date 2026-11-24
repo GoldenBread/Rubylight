@@ -537,4 +537,30 @@ public class NvConnectionHostNoticeTest {
         assertEquals(com.limelight.nvstream.http.HostCapabilities.NATIVE_PYROWAVE_RECORDS,
                 NvConnectionHapticsFlagTest.CapturingBridge.hostFeatures);
     }
+
+    @Test
+    public void tenBitSdrGivingWayToPackedDoesNotEmitSdr10NotAccepted() throws Exception {
+        Application app = RuntimeEnvironment.getApplication();
+        String packedPrecedence = app.getString(R.string.stream_sdr10_unavailable,
+                app.getString(R.string.stream_sdr10_reason_packed));
+        String notAccepted = app.getString(R.string.startup_sdr10_not_accepted);
+        int offered = MoonBridge.VIDEO_FORMAT_H264 | MoonBridge.VIDEO_FORMAT_H265
+                | MoonBridge.VIDEO_FORMAT_H265_MAIN10;
+        String withPacked = SUNSHINE.replace("</root>", "<Packed444Modes>1</Packed444Modes></root>");
+        try {
+            sessionPacked = true;
+            sessionSharpColor = true;
+            List<String> first = stream(withPacked, false, offered, true);
+            assertEquals(Collections.singletonList(packedPrecedence), first);
+            assertFalse(first.contains(notAccepted));
+            assertTrue(lastContext().streamConfig.isPacked444());
+            assertFalse(lastContext().streamConfig.isSdr10Bit());
+            assertFalse(NvConnectionRecoveryTest.FakeHost.lastHdr);
+            // Notice latch stays claimed (not reset by a spurious sdr10_not_accepted).
+            assertEquals(Collections.emptyList(), stream(withPacked, false, offered, true));
+        } finally {
+            sessionPacked = false;
+            sessionSharpColor = false;
+        }
+    }
 }
