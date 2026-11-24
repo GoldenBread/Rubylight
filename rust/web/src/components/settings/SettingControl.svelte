@@ -1,13 +1,12 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
-  import Button from '../Button.svelte';
-  import Icon from '../Icon.svelte';
   import PathPicker from '../PathPicker.svelte';
+  import FoldersControl from './FoldersControl.svelte';
+  import ListControl from './ListControl.svelte';
+  import SelectControl from './SelectControl.svelte';
   import Switch from './Switch.svelte';
-  import type { ConfigValue, PrepCommand } from '../../lib/api';
+  import type { ConfigValue } from '../../lib/api';
   import type { Option, Setting } from '../../lib/settings-types';
-  import { session } from '../../lib/session.svelte';
-  import { folderErrors, hasFolderErrors, newFolder, readFolders, type SharedFolder } from '../../lib/shared-folders';
   import {
     jsonText,
     numberError,
@@ -15,12 +14,8 @@
     sameValue,
     textError,
     timeOfDay,
-    toCommands,
-    toList,
     toNumber,
-    toServerCommands,
     toText,
-    type ServerCommand,
   } from './values';
 
   let {
@@ -64,116 +59,12 @@
   /** The control's own messages first, then the row's description. */
   const describe = (...ids: (string | false | undefined)[]) => [...ids, describedby].filter(Boolean).join(' ') || undefined;
 
-  // ---------- choices: select, display, audio, adapter ----------
-
-  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-
-  /** The device ID choices of an adapter control are this prefix and the ID. */
-  const PNP = 'pnp:';
-  /** The card names more than one listed GPU has: those are told apart by device ID. */
-  const sharedNames = $derived.by(() => {
-    const seen = new Set<string>();
-    const shared = new Set<string>();
-    for (const gpu of session.metadata?.gpus ?? []) {
-      const name = gpu.name.toLowerCase();
-      if (!name) continue;
-      if (seen.has(name)) shared.add(name);
-      seen.add(name);
-    }
-    return shared;
-  });
-  /** What the control shows as chosen: the saved device ID when there is one, else the name. */
-  const selected = $derived.by(() => {
-    const id = control.kind === 'adapter' ? (pnp?.value.trim() ?? '') : '';
-    if (!id) return current;
-    return PNP + id;
-  });
-
-  const choices = $derived.by((): Option[] => {
-    const meta = session.metadata;
-    const options: Option[] = [];
-    switch (control.kind) {
-      case 'select':
-        if (!control.options.some((option) => option.value === '') && (current === '' || toText(setting.default) === '')) {
-          options.push({ value: '', label: 'Not set' });
-        }
-        options.push(...control.options);
-        break;
-      case 'display':
-        options.push({ value: '', label: 'Automatic' });
-        for (const display of meta?.capture_status?.displays ?? []) {
-          const name = display.display_name;
-          if (!name) continue;
-          // The host also matches the device id; keep the stored spelling selected.
-          const matches = current !== '' && [name, display.device_id].some((field) => field && same(field, current));
-          const choice = matches ? current : name;
-          if (options.some((option) => option.value === choice)) continue;
-          const text = display.friendly_name || `Display ${options.length}`;
-          options.push({ value: choice, label: display.primary ? `${text} · primary` : text });
-        }
-        break;
-      case 'audio':
-        options.push({ value: '', label: 'System default' });
-        for (const sink of meta?.audio_sinks ?? []) {
-          // The host matches the id, name, description or adapter name.
-          const matches =
-            current !== '' && [sink.id, sink.name, sink.description, sink.adapter].some((field) => field && same(field, current));
-          const choice = matches ? current : sink.id;
-          if (!choice || options.some((option) => option.value === choice)) continue;
-          const marks: string[] = [];
-          if (sink.default) marks.push('default');
-          if (sink.virtual_sink && !sink.name.toLowerCase().includes('steam streaming speakers')) {
-            marks.push('Steam Streaming Speakers');
-          }
-          options.push({ value: choice, label: [sink.name || sink.description || 'Unnamed audio device', ...marks].join(' · ') });
-        }
-        break;
-      case 'adapter': {
-        options.push({ value: '', label: 'Automatic' });
-        const listed = new Set<string>();
-        const counts = new Map<string, number>();
-        for (const gpu of meta?.gpus ?? []) {
-          const name = gpu.name;
-          if (!name) continue;
-          const shared = sharedNames.has(name.toLowerCase()) && !!gpu.pnp_id && !!pnp;
-          if (shared) {
-            // Two cards with one name: each is its own choice, kept by its device ID.
-            const nth = (counts.get(name.toLowerCase()) ?? 0) + 1;
-            counts.set(name.toLowerCase(), nth);
-            const id = gpu.pnp_id as string;
-            options.push({ value: selected !== '' && same(selected, PNP + id) ? selected : PNP + id, label: `${name} (${nth})` });
-          } else if (!listed.has(name.toLowerCase())) {
-            listed.add(name.toLowerCase());
-            options.push({ value: selected !== '' && same(selected, name) ? selected : name, label: name });
-          }
-        }
-        break;
-      }
-      default:
-        return [];
-    }
-    if (!options.some((option) => option.value === selected)) {
-      const missing = {
-        value: selected,
-        label: selected === '' ? 'Not set' : `Saved custom choice: ${selected.startsWith(PNP) ? selected.slice(PNP.length) : selected}`,
-      };
-      options.splice(options[0]?.value === '' ? 1 : 0, 0, missing);
-    }
-    return options;
-  });
-
-  const listsHost = $derived(control.kind === 'display' || control.kind === 'audio' || control.kind === 'adapter');
-
-  const hostError = $derived.by(() => {
-    const meta = session.metadata;
-    if (!meta) return '';
-    if (control.kind === 'display') {
-      return meta.capture_status?.error ? `Could not list displays: ${meta.capture_status.error}` : '';
-    }
-    if (control.kind === 'adapter') return meta.gpu_error ? `Could not list graphics cards: ${meta.gpu_error}` : '';
-    if (control.kind === 'audio') return meta.audio_error ? `Could not list audio devices: ${meta.audio_error}` : '';
-    return '';
-  });
+  const isSelect = $derived(
+    control.kind === 'select' || control.kind === 'display' || control.kind === 'audio' || control.kind === 'adapter',
+  );
+  const isList = $derived(
+    control.kind === 'list' || control.kind === 'commands' || control.kind === 'server-commands' || control.kind === 'flags',
+  );
 
   // ---------- number ----------
 
@@ -315,49 +206,6 @@
     }
   }
 
-  // ---------- rows: list, commands, server-commands ----------
-
-  const items = $derived(control.kind === 'list' ? toList(value) : []);
-  const commands = $derived(control.kind === 'commands' ? toCommands(value) : []);
-  const serverCommands = $derived(control.kind === 'server-commands' ? toServerCommands(value) : []);
-
-  let rowsElement = $state<HTMLElement>();
-
-  async function addRow(next: unknown[]) {
-    onchange(next);
-    await tick();
-    const rows = rowsElement?.querySelectorAll('[data-row]');
-    rows?.[rows.length - 1]?.querySelector('input')?.focus();
-  }
-
-  const without = <T,>(list: T[], index: number) => list.filter((_, at) => at !== index);
-
-  function setItem(index: number, text: string) {
-    onchange(items.map((item, at) => (at === index ? text : item)));
-  }
-  function setCommand(index: number, change: Partial<PrepCommand>) {
-    onchange(commands.map((row, at) => (at === index ? { ...row, ...change } : row)));
-  }
-  function setServerCommand(index: number, change: Partial<ServerCommand>) {
-    onchange(serverCommands.map((row, at) => (at === index ? { ...row, ...change } : row)));
-  }
-
-  // ---------- folders ----------
-
-  const folderList = $derived(control.kind === 'folders' ? readFolders(value) : { folders: [], problem: '' });
-  const folders = $derived(folderList.folders);
-  const folderProblems = $derived(folderErrors(folders));
-
-  // The rows are kept while they have errors, so each one shows where it is
-  // wrong; the draft also marks the setting invalid, which holds the save.
-  function setFolders(next: SharedFolder[]) {
-    onchange(next);
-    oninvalid?.(hasFolderErrors(next) ? JSON.stringify(next) : null);
-  }
-  function setFolder(index: number, change: Partial<SharedFolder>) {
-    setFolders(folders.map((folder, at) => (at === index ? { ...folder, ...change } : folder)));
-  }
-
   // ---------- json ----------
 
   let jsonDraft = $state(untrack(() => invalidText ?? jsonText(value)));
@@ -393,40 +241,12 @@
       oninvalid?.(text);
     }
   }
-
-  /** A choice in the menu. A card that shares its name with another is kept by device ID, the rest by name. */
-  function choose(choice: string) {
-    if (control.kind === 'adapter' && pnp) {
-      if (choice.startsWith(PNP)) {
-        const id = choice.slice(PNP.length);
-        const gpu = (session.metadata?.gpus ?? []).find((gpu) => gpu.pnp_id && same(gpu.pnp_id, id));
-        pnp.onchange(id);
-        if (gpu) onchange(gpu.name);
-        return;
-      }
-      if (pnp.value.trim()) pnp.onchange(null);
-    }
-    onchange(choice);
-  }
 </script>
 
 {#if control.kind === 'toggle'}
   <Switch {id} {describedby} checked={value === true} onchange={(checked) => onchange(checked)} />
-{:else if control.kind === 'select' || listsHost}
-  <select
-    {id}
-    class="select"
-    aria-describedby={describe(!!hostError && `${id}-host`)}
-    onchange={(event) => choose(event.currentTarget.value)}
-  >
-    {#each choices as option (option.value)}
-      <option value={option.value} selected={option.value === selected}>{option.label}</option>
-    {/each}
-    {#if listsHost && session.metadata === null}
-      <option disabled value={'\u0000loading'}>Loading…</option>
-    {/if}
-  </select>
-  {#if hostError}<p class="note" id="{id}-host">{hostError}</p>{/if}
+{:else if isSelect}
+  <SelectControl {setting} {id} {value} {onchange} {describedby} {pnp} />
 {:else if control.kind === 'number' || control.kind === 'text'}
   {#if presets.length}
     <select
@@ -458,6 +278,27 @@
   {/if}
   {#if !presets.length || custom}
     {@render field()}
+  {/if}
+{:else if isList}
+  <ListControl {setting} {id} {value} {onchange} {describedby} />
+{:else if control.kind === 'folders'}
+  <FoldersControl {id} {value} {onchange} {oninvalid} />
+{:else if control.kind === 'json'}
+  <textarea
+    {id}
+    class="textarea"
+    rows={jsonRows}
+    spellcheck="false"
+    autocomplete="off"
+    aria-invalid={jsonError ? 'true' : undefined}
+    aria-describedby={describe(!!jsonError && `${id}-json`)}
+    value={jsonDraft}
+    oninput={(event) => editJson(event.currentTarget.value)}
+  ></textarea>
+  {#if jsonError}
+    <p class="error" id="{id}-json">
+      Not valid JSON: {jsonError}. Use double quotes around text, commas between entries, and matching brackets.
+    </p>
   {/if}
 {/if}
 
@@ -508,254 +349,11 @@
 {/if}
 {/snippet}
 
-{#if control.kind === 'list'}
-  <div class="rows" {id} bind:this={rowsElement}>
-    {#each items as item, index}
-      <div class="item" data-row>
-        <input
-          class="input mono"
-          aria-label="{label}, item {index + 1}"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder={control.placeholder}
-          value={item}
-          oninput={(event) => setItem(index, event.currentTarget.value)}
-        />
-        <button
-          type="button"
-          class="remove"
-          aria-label="Remove item {index + 1}"
-          title="Remove"
-          onclick={() => onchange(without(items, index))}
-        >
-          <Icon name="x" size={15} />
-        </button>
-      </div>
-    {:else}
-      <p class="none">No entries.</p>
-    {/each}
-    <div><Button size="sm" icon="plus" onclick={() => addRow([...items, ''])}>Add</Button></div>
-  </div>
-{:else if control.kind === 'commands'}
-  <div class="rows" {id} bind:this={rowsElement}>
-    {#each commands as row, index}
-      <div class="command" data-row>
-        <label class="cell">
-          <span class="cell-label">{setting.key === 'global_state_cmd' ? 'On resume' : 'Before launch'}<span class="visually-hidden">, command {index + 1}</span></span>
-          <input
-            class="input mono"
-            autocomplete="off"
-            spellcheck="false"
-            value={row.do}
-            oninput={(event) => setCommand(index, { do: event.currentTarget.value })}
-          />
-        </label>
-        <label class="cell">
-          <span class="cell-label">{setting.key === 'global_state_cmd' ? 'On pause' : 'After exit'}<span class="visually-hidden">, command {index + 1}</span></span>
-          <input
-            class="input mono"
-            autocomplete="off"
-            spellcheck="false"
-            value={row.undo}
-            oninput={(event) => setCommand(index, { undo: event.currentTarget.value })}
-          />
-        </label>
-        <div class="command-foot">
-          <label class="check">
-            <input
-              type="checkbox"
-              checked={row.elevated}
-              onchange={(event) => setCommand(index, { elevated: event.currentTarget.checked })}
-            />
-            As administrator
-          </label>
-          <button
-            type="button"
-            class="remove"
-            aria-label="Remove command {index + 1}"
-            title="Remove"
-            onclick={() => onchange(without(commands, index))}
-          >
-            <Icon name="x" size={15} />
-          </button>
-        </div>
-      </div>
-    {:else}
-      <p class="none">No commands.</p>
-    {/each}
-    <div>
-      <Button size="sm" icon="plus" onclick={() => addRow([...commands, { do: '', undo: '', elevated: false }])}>
-        Add command
-      </Button>
-    </div>
-  </div>
-{:else if control.kind === 'server-commands'}
-  <div class="rows" {id} bind:this={rowsElement}>
-    {#each serverCommands as row, index}
-      <div class="command" data-row>
-        <label class="cell">
-          <span class="cell-label">Name<span class="visually-hidden">, command {index + 1}</span></span>
-          <input
-            class="input"
-            autocomplete="off"
-            value={row.name}
-            oninput={(event) => setServerCommand(index, { name: event.currentTarget.value })}
-          />
-        </label>
-        <label class="cell">
-          <span class="cell-label">Command<span class="visually-hidden">{` ${index + 1}`}</span></span>
-          <input
-            class="input mono"
-            autocomplete="off"
-            spellcheck="false"
-            value={row.cmd}
-            oninput={(event) => setServerCommand(index, { cmd: event.currentTarget.value })}
-          />
-        </label>
-        <div class="command-foot">
-          <label class="check">
-            <input
-              type="checkbox"
-              checked={row.elevated}
-              onchange={(event) => setServerCommand(index, { elevated: event.currentTarget.checked })}
-            />
-            As administrator
-          </label>
-          <button
-            type="button"
-            class="remove"
-            aria-label="Remove command {index + 1}"
-            title="Remove"
-            onclick={() => onchange(without(serverCommands, index))}
-          >
-            <Icon name="x" size={15} />
-          </button>
-        </div>
-      </div>
-    {:else}
-      <p class="none">No PC commands.</p>
-    {/each}
-    <div>
-      <Button size="sm" icon="plus" onclick={() => addRow([...serverCommands, { name: '', cmd: '', elevated: false }])}>
-        Add command
-      </Button>
-    </div>
-  </div>
-{:else if control.kind === 'flags'}
-  <div class="rows" {id} role="group" aria-label={label}>
-    {#each control.options as option (option.value)}
-      {@const on = toList(value).includes(option.value)}
-      <div class="item">
-        <span>{option.label}</span>
-        <Switch
-          id="{id}-{option.value}"
-          {describedby}
-          checked={on}
-          onchange={(checked) => {
-            const rest = toList(value).filter((item) => item !== option.value);
-            onchange(
-              (control.kind === 'flags' ? control.options : [])
-                .map((candidate) => candidate.value)
-                .filter((name) => (name === option.value ? checked : rest.includes(name))),
-            );
-          }}
-        />
-      </div>
-    {/each}
-  </div>
-{:else if control.kind === 'folders'}
-  <div class="rows" {id} bind:this={rowsElement}>
-    {#if folderList.problem}
-      <p class="error" id="{id}-unreadable">
-        The saved list can’t be read, so no folder is shared: {folderList.problem}. Adding a folder here replaces it.
-      </p>
-    {/if}
-    {#each folders as folder, index}
-      {@const problem = folderProblems[index] ?? { name: '', path: '', id: '' }}
-      <div class="command" data-row>
-        <div class="cell">
-          <label class="cell-label" for="{id}-{index}-name">Name<span class="visually-hidden">, folder {index + 1}</span></label>
-          <input
-            id="{id}-{index}-name"
-            class="input"
-            autocomplete="off"
-            aria-invalid={problem.name ? 'true' : undefined}
-            aria-describedby={problem.name ? `${id}-${index}-name-error` : undefined}
-            value={folder.name}
-            oninput={(event) => setFolder(index, { name: event.currentTarget.value })}
-          />
-          {#if problem.name}<p class="error cell-error" id="{id}-{index}-name-error">{problem.name}</p>{/if}
-        </div>
-        <div class="cell">
-          <label class="cell-label" for="{id}-{index}-path">Path<span class="visually-hidden">, folder {index + 1}</span></label>
-          <PathPicker kind="directory" value={folder.path} onpick={(path) => setFolder(index, { path })}>
-            <input
-              id="{id}-{index}-path"
-              class="input mono"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="D:\Games"
-              aria-invalid={problem.path ? 'true' : undefined}
-              aria-describedby={problem.path ? `${id}-${index}-path-error` : undefined}
-              value={folder.path}
-              oninput={(event) => setFolder(index, { path: event.currentTarget.value })}
-            />
-          </PathPicker>
-          {#if problem.path}<p class="error cell-error" id="{id}-{index}-path-error">{problem.path}</p>{/if}
-        </div>
-        <div class="command-foot">
-          {#if problem.id}
-            <p class="error">{problem.id}</p>
-          {:else}
-            <span class="note">{folder.id ? `Id: ${folder.id}` : 'Gets an id from its name when saved'}</span>
-          {/if}
-          <button
-            type="button"
-            class="remove"
-            aria-label="Remove folder {index + 1}"
-            title="Remove"
-            onclick={() => setFolders(without(folders, index))}
-          >
-            <Icon name="x" size={15} />
-          </button>
-        </div>
-      </div>
-    {:else}
-      <p class="none">No folders are shared.</p>
-    {/each}
-    <div>
-      <Button size="sm" icon="plus" onclick={() => addRow([...folders, newFolder()])}>Add folder</Button>
-    </div>
-  </div>
-{:else if control.kind === 'json'}
-  <textarea
-    {id}
-    class="textarea"
-    rows={jsonRows}
-    spellcheck="false"
-    autocomplete="off"
-    aria-invalid={jsonError ? 'true' : undefined}
-    aria-describedby={describe(!!jsonError && `${id}-json`)}
-    value={jsonDraft}
-    oninput={(event) => editJson(event.currentTarget.value)}
-  ></textarea>
-  {#if jsonError}
-    <p class="error" id="{id}-json">
-      Not valid JSON: {jsonError}. Use double quotes around text, commas between entries, and matching brackets.
-    </p>
-  {/if}
-{/if}
-
 <style>
-  .note,
-  .error,
-  .none {
-    font-size: var(--text-xs);
-    color: var(--muted);
-    line-height: 1.45;
-  }
   .error {
+    font-size: var(--text-xs);
     color: var(--danger);
+    line-height: 1.45;
   }
   [aria-invalid='true'] {
     border-color: var(--danger);
@@ -786,80 +384,5 @@
     font-size: var(--text-sm);
     color: var(--muted);
     pointer-events: none;
-  }
-  .rows {
-    display: grid;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .item {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .command {
-    display: grid;
-    gap: 6px;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--sunken);
-    min-width: 0;
-  }
-  .cell {
-    display: grid;
-    grid-template-columns: 76px minmax(0, 1fr);
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .cell-error {
-    grid-column: 2;
-  }
-  .cell-label {
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    color: var(--ink-2);
-  }
-  .command-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .check {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: var(--text-sm);
-    cursor: pointer;
-  }
-  .check input {
-    margin: 0;
-    accent-color: var(--ink-2);
-  }
-  .remove {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    background: none;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .remove:hover {
-    background: var(--danger-soft);
-    color: var(--danger);
-  }
-  @media (max-width: 520px) {
-    .cell {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-1);
-    }
-    .cell-error {
-      grid-column: 1;
-    }
   }
 </style>

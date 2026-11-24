@@ -2,11 +2,15 @@
   import { onMount, tick } from 'svelte';
   import Button from '../components/Button.svelte';
   import Disclosure from '../components/Disclosure.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
-  import Icon from '../components/Icon.svelte';
   import PageHeader from '../components/PageHeader.svelte';
   import Panel from '../components/Panel.svelte';
+  import GameSourcesPanel from '../components/settings/GameSourcesPanel.svelte';
+  import PresetNote from '../components/settings/PresetNote.svelte';
+  import SaveBar from '../components/settings/SaveBar.svelte';
   import SettingRow from '../components/settings/SettingRow.svelte';
+  import SettingsContentsTrack from '../components/settings/SettingsContentsTrack.svelte';
+  import SettingsResults from '../components/settings/SettingsResults.svelte';
+  import SettingsSidebar from '../components/settings/SettingsSidebar.svelte';
   import Switch from '../components/settings/Switch.svelte';
   import UnknownKeys from '../components/settings/UnknownKeys.svelte';
   import LimiterPanel from '../components/maintenance/LimiterPanel.svelte';
@@ -18,49 +22,22 @@
   import NvidiaPanel from '../components/maintenance/NvidiaPanel.svelte';
   import InternetPlayPanel from '../components/maintenance/InternetPlayPanel.svelte';
   import { reason } from '../components/maintenance/util';
-  import { matchesSetting, matchesWords, searchWords } from '../components/settings/search';
+  import { matchesWords, searchWords } from '../components/settings/search';
+  import * as page from '../components/settings/settings-page';
   import {
-    applyChanges,
-    askedFor,
-    caution,
-    computeChanges,
-    currentValues,
-    differsFromDefault,
-    foldStatus,
-    isSet,
-    effective,
-    has,
-    normalise,
-    NOT_SETTINGS,
-    sameValue,
-    settingsOnly,
-    toText,
-    withHostGates,
-    type Edits,
+    applyChanges, askedFor, caution, computeChanges, currentValues, differsFromDefault,
+    foldStatus, has, isSet, sameValue, settingsOnly, withHostGates, type Edits,
   } from '../components/settings/values';
   import { api, type Config, type ConfigValue, type WebSession } from '../lib/api';
-  import { confirm, failed, notify } from '../lib/feedback.svelte';
-  import { guardNavigation, match, navigate, query as queryParam, route } from '../lib/router.svelte';
+  import { failed, notify } from '../lib/feedback.svelte';
+  import { match, navigate, query as queryParam, route } from '../lib/router.svelte';
   import { refreshMetadata, session } from '../lib/session.svelte';
   import {
-    categoriesOf,
-    GAME_SOURCES,
-    groupAnchor,
-    movedAnchor,
-    placeOf,
-    schema,
-    settingGroups,
-    tabLayout,
-    tabOf,
-    topicGroup,
-    topicTab,
-    type LayoutGroup,
-    type SettingsTab,
-    type TabId,
+    GAME_SOURCES, groupAnchor, movedAnchor, placeOf, schema, settingGroups,
+    tabLayout, tabOf, topicGroup, type LayoutGroup, type SettingsTab,
   } from '../lib/settings-schema';
   import { DEBUG_GROUP, FOLDED_GROUPS, TRAILING_GROUPS } from '../lib/schema/main';
   import { GAMES_PAGE_KEY_SET } from '../lib/schema/tiers';
-  import SaveBar from '../components/settings/SaveBar.svelte';
   import { SETTING as PRESET, covered, presetById, presetId, presetNotice, withPreset } from '../lib/stream-presets';
   import type { Setting } from '../lib/settings-types';
 
@@ -116,25 +93,10 @@
   let restarting = $state(false);
   let latestLoad = 0;
 
-  // Configuration keys are for people editing the settings file or following
-  // a guide; the choice is remembered in this browser.
-  const KEYS = 'butterpollo.settings.show-keys';
-  let showKeys = $state(readShowKeys());
-  function readShowKeys(): boolean {
-    try {
-      return localStorage.getItem(KEYS) === 'true';
-    } catch {
-      return false;
-    }
-  }
+  let showKeys = $state(page.readShowKeys());
   function setShowKeys(show: boolean) {
     showKeys = show;
-    try {
-      if (show) localStorage.setItem(KEYS, 'true');
-      else localStorage.removeItem(KEYS);
-    } catch {
-      // Storage may be unavailable (private windows); the switch still works for this visit.
-    }
+    page.writeShowKeys(show);
   }
 
   const config = $derived(stored ?? {});
@@ -156,43 +118,11 @@
   );
   const pending = $derived(new Set([...Object.keys(changes), ...Object.keys(invalid)]));
   const invalidCount = $derived(Object.keys(invalid).length);
+  const changedIn = $derived(page.countChangedByTab(pending, byKey));
+  const unknownKeys = $derived(page.findUnknownKeys(config, edits, byKey));
 
-  const changedIn = $derived.by(() => {
-    const counts: Partial<Record<TabId, number>> = {};
-    for (const key of pending) {
-      const found = byKey.get(key);
-      const id = found ? topicTab(found) : 'advanced';
-      counts[id] = (counts[id] ?? 0) + 1;
-    }
-    return counts;
-  });
-
-  /** Stored or newly added keys the schema does not describe. */
-  const unknownKeys = $derived(
-    [...new Set([...Object.keys(config), ...Object.keys(edits)])]
-      .filter((key) => !byKey.has(key) && !NOT_SETTINGS.has(key))
-      .sort(),
-  );
-
-  function visible(setting: Setting): boolean {
-    if (!setting.visibleWhen) return true;
-    try {
-      return setting.visibleWhen(values);
-    } catch {
-      return true;
-    }
-  }
-
-  /** Empty although the current choices make the host need a value. */
-  function missing(setting: Setting): boolean {
-    const value = values[setting.key];
-    if (value !== null && value !== undefined && String(value).trim() !== '') return false;
-    try {
-      return setting.requiredWhen?.(values) ?? false;
-    } catch {
-      return false;
-    }
-  }
+  const visible = (setting: Setting) => page.isSettingVisible(setting, values);
+  const missing = (setting: Setting) => page.isSettingMissing(setting, values);
 
   type Group = LayoutGroup;
 
@@ -204,18 +134,6 @@
 
   /** A setting edited inside another one's row (Setting.partOf) is listed as that row. */
   const listed = (setting: Setting): Setting => (setting.partOf ? (defaults.get(setting.partOf) ?? setting) : setting);
-  /** The setting a row's daily choice keeps its time in (Setting.partOf). */
-  const dailyPart = (setting: Setting): Setting | undefined =>
-    setting.control.kind === 'number' && setting.control.daily ? defaults.get(setting.control.daily.key) : undefined;
-
-  /** The setting a row's select reveals for its fixed choice (Setting.partOf). */
-  const fixedPart = (setting: Setting): Setting | undefined =>
-    setting.control.kind === 'select' && setting.control.fixed ? defaults.get(setting.control.fixed.key) : undefined;
-
-  /** The setting a row's graphics card choice keeps its device ID in (Setting.partOf). */
-  const pnpPart = (setting: Setting): Setting | undefined =>
-    setting.control.kind === 'adapter' && setting.control.pnp ? defaults.get(setting.control.pnp) : undefined;
-
   const asked = (setting: Setting) => askedFor(setting, edits, config, pending);
   // Keep a pending control reachable if editing its parent makes it inactive.
   const reachable = (setting: Setting) => visible(setting) || pending.has(setting.key);
@@ -231,78 +149,28 @@
   const tabEmpty = $derived(layout.groups.length === 0);
 
   /** The tab's sections in page order, for its sticky contents: groups, and the panels that are not settings. */
-  const sections = $derived([
-    ...(active.id === 'advanced' ? [SECURITY] : []),
-    ...tabGroups.map((group) => group.name || active.label),
-    ...(debugGroup ? [DEBUG_GROUP] : []),
-    ...(active.id === 'picture' ? [INTEGRATIONS] : []),
-    ...(active.id === 'advanced' ? [CUSTOM_KEYS] : []),
-  ]);
-  /** Every anchor a link can name on this tab: its sections. */
-  const anchors = $derived(sections);
+  const sections = $derived(
+    page.buildTabSections(active.id, active.label, tabGroups, !!debugGroup, {
+      security: SECURITY,
+      debug: DEBUG_GROUP,
+      integrations: INTEGRATIONS,
+      customKeys: CUSTOM_KEYS,
+    }),
+  );
 
   // ---------- the sticky contents: where the page is, and jumps to a section ----------
 
   let frame = $state<HTMLDivElement>();
-  let track = $state<HTMLElement>();
-  /** The height of the console's own sticky header above the page (on narrow windows), and of the contents bar. */
   let headerHeight = $state(0);
   let contentsHeight = $state(0);
   let current = $state('');
 
-  function measure() {
-    // The console's navigation sticks to the top of narrow windows; the contents stick below it.
-    const aside = document.querySelector('aside');
-    headerHeight = aside && getComputedStyle(aside).position === 'sticky' ? Math.round(aside.getBoundingClientRect().height) : 0;
-  }
-
-  /** The section at the top of the window, under the sticky bars. */
-  function spy() {
-    if (!frame) return;
-    const line = headerHeight + contentsHeight + 24;
-    let found = sections[0] ?? '';
-    for (const name of sections) {
-      const element = document.getElementById(groupAnchor(name));
-      if (element && element.getBoundingClientRect().top <= line) found = name;
-    }
-    current = found;
-  }
-
-  // Keep the current section's link in view in a contents bar that scrolls sideways.
-  $effect(() => {
-    const link = current && track?.querySelector<HTMLElement>(`[data-section="${CSS.escape(current)}"]`);
-    if (!link || !track) return;
-    const { left, right } = link.getBoundingClientRect();
-    const bar = track.getBoundingClientRect();
-    if (left < bar.left || right > bar.right - 32) track.scrollLeft += left - bar.left - 16;
-  });
-
-  onMount(() => {
-    measure();
-    // The header grows while its menu is open on a narrow window.
-    const aside = document.querySelector('aside');
-    const observer = typeof ResizeObserver === 'function' && aside ? new ResizeObserver(() => measure()) : null;
-    if (aside) observer?.observe(aside);
-    let frameRequest = 0;
-    const onScroll = () => {
-      cancelAnimationFrame(frameRequest);
-      frameRequest = requestAnimationFrame(spy);
-    };
-    const onResize = () => {
-      measure();
-      onScroll();
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onResize);
-    return () => {
-      cancelAnimationFrame(frameRequest);
-      observer?.disconnect();
-      window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onResize);
-    };
-  });
-
-  const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const measure = () => { headerHeight = page.measureStickyHeader(); };
+  const spy = () => {
+    const found = page.activeSection(frame, sections, headerHeight, contentsHeight);
+    if (found !== null) current = found;
+  };
+  onMount(() => page.observeStickyHeader(measure, spy));
 
   /** Show a section: open it if it folds, then bring it under the sticky bars. */
   async function reveal(name: string, smooth = true) {
@@ -310,39 +178,18 @@
     if (name === INTEGRATIONS) integrationsOpen = true;
     if (name === CUSTOM_KEYS) customOpen = true;
     await tick();
-    const element = document.getElementById(groupAnchor(name));
-    if (!element) return;
-    element.scrollIntoView({ block: 'start', behavior: smooth && !reducedMotion() ? 'smooth' : 'auto' });
-    current = name;
-    if (!smooth) hold(element);
-  }
-
-  /** On arrival, keep a section in place while the panels above it finish loading, until the user scrolls. */
-  function hold(element: HTMLElement) {
-    if (typeof ResizeObserver !== 'function' || !frame) return;
-    const observer = new ResizeObserver(() => element.scrollIntoView({ block: 'start' }));
-    const events = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
-    const stop = () => {
-      observer.disconnect();
-      clearTimeout(timer);
-      for (const name of events) window.removeEventListener(name, stop, true);
-    };
-    const timer = setTimeout(stop, 2000);
-    for (const name of events) window.addEventListener(name, stop, { capture: true, passive: true });
-    observer.observe(frame);
+    if (page.scrollSectionIntoView(frame, name, smooth)) current = name;
   }
 
   function jump(event: MouseEvent, name: string) {
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (!page.isPlainClick(event)) return;
     event.preventDefault();
     history.replaceState(history.state, '', `#${groupAnchor(name)}`);
     void reveal(name);
   }
 
-  // A link to one setting (?setting=key, from the Settings home's search)
-  // opens its group, then brings the row into view and marks it. A link to a
-  // section (#updates) opens and shows that section.
-  // A setting the current choices hide is shown through search instead.
+  // A link to one setting (?setting=key, from the Settings home's search) opens its group and marks it.
+  // A link to a section (#updates) opens and shows that section; hidden settings fall back to search.
   let jumped = '';
   $effect(() => {
     const target = route.path + route.search;
@@ -351,40 +198,24 @@
     const key = new URLSearchParams(route.search).get('setting');
     if (!key) {
       const anchor = location.hash.slice(1);
-      // A link to a launcher's options lists that group in full.
-      const launcher = anchor ? described.find((item) => GAMES_PAGE_KEY_SET.has(item.key) && groupAnchor(topicGroup(item)) === anchor) : undefined;
-      if (launcher && topicTab(launcher) === active.id) launcherOpen[topicGroup(launcher)] = true;
-      const name = anchor && anchors.find((candidate) => groupAnchor(candidate) === anchor);
+      const launcherGroup = page.findAnchorLauncherGroup(anchor, active.id, described);
+      if (launcherGroup) launcherOpen[launcherGroup] = true;
+      const name = anchor && sections.find((candidate) => groupAnchor(candidate) === anchor);
       if (name) void reveal(name, false);
       return;
     }
     const picked = byKey.get(key);
     if (picked) {
-      // Where the setting shows: its group opens, and a launcher's group lists in full.
       if (GAMES_PAGE_KEY_SET.has(key)) launcherOpen[topicGroup(picked)] = true;
       foldOpen[placeOf(picked).group] = true;
     }
-    void tick().then(() => {
-      const row = document.querySelector<HTMLElement>(`[data-setting="${CSS.escape(key)}"]`);
-      if (!row) {
-        query = key;
-        return;
-      }
-      row.scrollIntoView({ block: 'center' });
-      row.querySelector<HTMLElement>('input, select, textarea, button')?.focus({ preventScroll: true });
-      const mark = getComputedStyle(row).getPropertyValue('--accent-soft').trim();
-      if (mark && !reducedMotion()) row.animate([{ backgroundColor: mark }, { backgroundColor: 'transparent' }], { duration: 1800, easing: 'ease-out' });
-    });
+    void tick().then(() => { if (!page.focusSettingRow(key)) query = key; });
   });
 
   // ---------- panels that are not settings ----------
 
   let integrationsOpen = $state(false);
-  /** The NVIDIA components panel: on a PC with an NVIDIA graphics card, or wherever they are installed. */
-  const nvidiaShown = $derived.by(() => {
-    const component = session.metadata?.nvidia_enhancements?.component;
-    return !!component && (component.nvidia_gpu || component.installed || component.state !== 'missing');
-  });
+  const nvidiaShown = $derived(page.isNvidiaPanelShown(session.metadata));
   let customOpen = $state<boolean | null>(null);
   // Custom keys open by themselves while there are any.
   const customShown = $derived(customOpen ?? unknownKeys.length > 0);
@@ -425,34 +256,13 @@
   function setCustomizedOnly(checked: boolean) {
     customizedOnly = checked;
     review = 'all';
-    reviewKeys = checked
-      ? [...described.filter((setting) => differsFromDefault(setting, edits, config) || pending.has(setting.key)).map((setting) => setting.key), ...unknownKeys]
-      : [];
+    reviewKeys = checked ? page.customizedReviewKeys(described, edits, config, pending, unknownKeys) : [];
   }
 
-  const results = $derived.by(() => {
-    if (!browsingResults) return [];
-    return tabs
-      .map((tab) => ({
-        tab,
-        settings: [
-          ...new Set(
-            described
-              .filter(
-                (setting) =>
-                  placeOf(setting).tab === tab.id &&
-                  inReview(setting.key) && categoriesOf(setting).some((shownUnder) => matchesSetting(setting, shownUnder, words)),
-              )
-              .map(listed),
-          ),
-        ],
-        unknown: tab.id === 'advanced' ? unknownKeys.filter((key) => inReview(key) && matchesWords(key, words)) : [],
-      }))
-      .filter((result) => result.settings.length > 0 || result.unknown.length > 0);
-  });
-  const resultCount = $derived(new Set(results.flatMap((result) => [
-    ...result.settings.map((setting) => setting.key), ...result.unknown,
-  ])).size);
+  const results = $derived.by(() =>
+    browsingResults ? page.buildSearchResults(tabs, described, unknownKeys, words, inReview, listed) : [],
+  );
+  const resultCount = $derived(page.countSearchResults(results));
 
   async function reviewChanges(mode: 'changed' | 'invalid') {
     query = '';
@@ -485,17 +295,9 @@
     refreshMetadata().catch(() => {});
   });
 
-  function edit(key: string, value: ConfigValue) {
-    edits[key] = value;
-  }
-  function reset(key: string) {
-    edits[key] = null;
-    delete invalid[key];
-  }
-  function undo(key: string) {
-    delete edits[key];
-    delete invalid[key];
-  }
+  function edit(key: string, value: ConfigValue) { edits[key] = value; }
+  function reset(key: string) { edits[key] = null; delete invalid[key]; }
+  function undo(key: string) { delete edits[key]; delete invalid[key]; }
   function setInvalid(key: string, text: string | null) {
     if (text === null) delete invalid[key];
     else invalid[key] = text;
@@ -505,14 +307,7 @@
     else delete edits[key];
   }
   async function discard() {
-    const count = pending.size;
-    const ok = await confirm({
-      title: 'Discard unsaved changes?',
-      message: `${count} unsaved ${count === 1 ? 'change is' : 'changes are'} lost. Rubylight keeps its current settings.`,
-      confirm: 'Discard',
-      danger: true,
-    });
-    if (!ok) return;
+    if (!(await page.confirmDiscardChanges(pending.size))) return;
     edits = {};
     invalid = {};
     review = 'all';
@@ -520,7 +315,7 @@
 
   function open(id: string, event?: MouseEvent) {
     if (event) {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (!page.isPlainClick(event)) return;
       event.preventDefault();
     }
     query = '';
@@ -555,12 +350,7 @@
   }
 
   async function restart() {
-    const ok = await confirm({
-      title: 'Restart Rubylight?',
-      message: 'Streams in progress disconnect. This console reconnects by itself when Rubylight is back.',
-      confirm: 'Restart',
-    });
-    if (!ok) return;
+    if (!(await page.confirmRestartHost())) return;
     restarting = true;
     try {
       await api.host.restart();
@@ -573,63 +363,25 @@
     }
   }
 
-  // Leaving the page with unsaved changes asks first; switching tabs
-  // keeps the edits.
   $effect(() => {
     if (pending.size === 0) return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
-    window.addEventListener('beforeunload', warn);
-    const unguard = guardNavigation((to) =>
-      // Other tabs keep the edits; the Settings home is another page.
-      to.startsWith('/settings/')
-        ? true
-        : confirm({
-            title: 'Leave without saving?',
-            message: `${pending.size} unsaved ${pending.size === 1 ? 'change is' : 'changes are'} lost.`,
-            confirm: 'Leave',
-            danger: true,
-          }),
-    );
-    return () => {
-      window.removeEventListener('beforeunload', warn);
-      unguard();
-    };
+    return page.installUnsavedGuard(() => pending.size);
   });
 </script>
 
 {#snippet row(setting: Setting, inactive: boolean)}
-  {@const fixedSetting = fixedPart(setting)}
-  {@const pnpSetting = pnpPart(setting)}
-  {@const part = dailyPart(setting) ?? fixedSetting ?? pnpSetting}
+  {@const model = page.buildRowModel(setting, defaults, edits, config, changes, invalid, values, { edit, reset, setInvalid })}
+  {@const part = model.part}
   <SettingRow
     {setting}
-    value={normalise(setting, effective(setting, edits, config))}
-    stored={has(config, setting.key) || (!!part && has(config, part.key))}
-    changed={has(changes, setting.key) || (!!part && has(changes, part.key))}
-    resetting={edits[setting.key] === null && has(config, setting.key)}
-    differs={differsFromDefault(setting, edits, config) || (!!part && differsFromDefault(part, edits, config))}
-    fixed={fixedSetting
-      ? {
-          setting: fixedSetting,
-          value: normalise(fixedSetting, effective(fixedSetting, edits, config)),
-          missing: missing(fixedSetting),
-          invalidText: invalid[fixedSetting.key],
-          onchange: (value) => edit(fixedSetting.key, value),
-          oninvalid: (text) => setInvalid(fixedSetting.key, text),
-        }
-      : undefined}
-    pnp={pnpSetting
-      ? {
-          value: toText(normalise(pnpSetting, effective(pnpSetting, edits, config))),
-          onchange: (value) => (value === null ? reset(pnpSetting.key) : edit(pnpSetting.key, value)),
-        }
-      : undefined}
-    daily={part && part === dailyPart(setting)
-      ? {
-          value: toText(normalise(part, effective(part, edits, config))),
-          onchange: (value) => (value === null ? reset(part.key) : edit(part.key, value)),
-        }
-      : undefined}
+    value={model.value}
+    stored={model.stored}
+    changed={model.changed}
+    resetting={model.resetting}
+    differs={model.differs}
+    fixed={model.fixed}
+    pnp={model.pnp}
+    daily={model.daily}
     showKey={showKeys || (searching && matchesWords(setting.key, words))}
     {inactive}
     unavailable={inactive ? setting.hostGated?.(values) : undefined}
@@ -638,26 +390,12 @@
     caution={caution(setting, values)}
     invalidText={invalid[setting.key]}
     onchange={(value) => edit(setting.key, value)}
-    onreset={() => {
-      reset(setting.key);
-      if (part) reset(part.key);
-    }}
-    onundo={() => {
-      undo(setting.key);
-      if (part) undo(part.key);
-    }}
+    onreset={() => { reset(setting.key); if (part) reset(part.key); }}
+    onundo={() => { undo(setting.key); if (part) undo(part.key); }}
     oninvalid={(text) => setInvalid(setting.key, text)}
   />
   {#if setting.key === PRESET}
-    {#if presetProblem}
-      <p class="preset-note preset-error" role="alert" data-preset-error><strong>Not a preset.</strong> {presetProblem}</p>
-    {/if}
-    <p class="preset-note" data-preset-note>
-      {preset.description}
-      {#if handSet.length > 0}
-        <strong>Custom:</strong> set by hand, so they win over the preset: {handSet.map((item) => item.label).join(', ')}.
-      {/if}
-    </p>
+    <PresetNote description={preset.description} problem={presetProblem} {handSet} />
   {/if}
 {/snippet}
 
@@ -671,17 +409,7 @@
 {/snippet}
 
 {#snippet otherKeys(keys: string[], adding: boolean)}
-  <UnknownKeys
-    {keys}
-    stored={config}
-    {edits}
-    {changes}
-    {isDescribed}
-    {adding}
-    onedit={edit}
-    onremove={removeUnknown}
-    onundo={undo}
-  />
+  <UnknownKeys {keys} stored={config} {edits} {changes} {isDescribed} {adding} onedit={edit} onremove={removeUnknown} onundo={undo} />
 {/snippet}
 
 {#snippet viewLogs()}<Button size="sm" href="/logs" icon="logs">View logs</Button>{/snippet}
@@ -690,16 +418,7 @@
   {@const name = item.name || active.label}
   {@const anchor = groupAnchor(name)}
   {#if item.name === GAME_SOURCES}
-    <!-- The launchers' options: each has its switch and its Options link on the Games page. -->
-    <Panel id={anchor} title={name} level={3} flush>
-      <div class="sources">
-        <p class="muted">
-          Steam, Epic Games, Battle.net, Microsoft Store and Xbox, EA app, Ubisoft Connect and GOG: what each adds, and its options, are on the
-          Games page under Where your games come from.
-        </p>
-        <Button size="sm" href="/library" icon="library">Open Games</Button>
-      </div>
-    </Panel>
+    <GameSourcesPanel id={anchor} title={name} />
   {:else if active.id === 'pc' && item.name === 'Updates'}
     <!-- The update settings above the release status they act on, as on the Settings home. -->
     <UpdatesPanel id={anchor} title={name}>
@@ -717,7 +436,7 @@
       title={name}
       level={3}
       flush
-      meta={`${item.settings.length} ${item.settings.length === 1 ? 'setting' : 'settings'}${fold.customized ? `, ${fold.customized} customized` : ''}${fold.unsaved ? `, ${fold.unsaved} unsaved` : ''}`}
+      meta={page.foldMetaText(item.settings.length, fold)}
       open={(foldOpen[item.name] ?? fold.customized > 0) || fold.mustOpen}
       ontoggle={(open) => (foldOpen[item.name] = open)}
     >
@@ -750,57 +469,15 @@
   style:--sticky-offset="{headerHeight + contentsHeight + 16}px"
 >
   <div class="layout">
-    <div class="side">
-      <div class="search">
-        <Icon name="search" size={16} />
-        <input
-          class="input"
-          type="search"
-          placeholder="Search settings"
-          aria-label="Search settings"
-          autocomplete="off"
-          spellcheck="false"
-          bind:value={query}
-          oninput={() => (review = 'all')}
-        />
-      </div>
-
-      <label class="picker">
-        <span>Settings tab</span>
-        <select aria-label="Settings tab" class="select" onchange={(event) => open(event.currentTarget.value)}>
-          {#if browsingResults}<option value="" disabled selected>All tabs</option>{/if}
-          {#each tabs as tab (tab.id)}
-            {@const count = changedIn[tab.id] ?? 0}
-            <option value={tab.id} selected={!browsingResults && tab.id === active.id}>
-              {tab.label}{count ? ` (${count} unsaved)` : ''}
-            </option>
-          {/each}
-        </select>
-      </label>
-
-      <nav class="tabs" aria-label="Settings tabs">
-        <ul>
-          {#each tabs as tab (tab.id)}
-            {@const count = changedIn[tab.id] ?? 0}
-            <li>
-              <a
-                href="/settings/{tab.id}"
-                aria-current={!browsingResults && tab.id === active.id ? 'page' : undefined}
-                onclick={(event) => open(tab.id, event)}
-              >
-                <span class="name">
-                  {tab.label}
-                  {#if count}
-                    <span class="dot" aria-hidden="true"></span>
-                    <span class="visually-hidden">, {count} unsaved</span>
-                  {/if}
-                </span>
-              </a>
-            </li>
-          {/each}
-        </ul>
-      </nav>
-    </div>
+    <SettingsSidebar
+      bind:query
+      {tabs}
+      activeId={active.id}
+      {browsingResults}
+      {changedIn}
+      onopen={open}
+      onsearchinput={() => (review = 'all')}
+    />
 
     <div class="content" bind:this={contentElement} tabindex="-1">
       {#if loadError}
@@ -813,60 +490,28 @@
       {#if stored === null}
         {#if !loadError}<p class="placeholder muted">Loading settings…</p>{/if}
       {:else if browsingResults}
-        <div class="results-heading">
-          <div>
-            <h2>{review === 'invalid' ? 'Review errors' : review === 'changed' ? 'Review changes' : listingCustomized ? 'Customized settings' : 'Search results'}</h2>
-            <p class="muted" role="status">
-              {#if review !== 'all' && pending.size === 0}
-                No unsaved changes.
-              {:else if review === 'invalid' && invalidCount === 0}
-                All errors corrected. Review your values, then save your changes.
-              {:else}
-                {resultCount} {resultCount === 1 ? 'setting' : 'settings'}{searching ? ` matching “${query.trim()}”` : ' across all tabs'}
-              {/if}
-            </p>
-          </div>
-          <Button size="sm" variant="ghost" onclick={() => open(active.id)}>All settings</Button>
-        </div>
-        {#if results.length === 0}
-          <Panel>
-            <EmptyState icon="search" title={review === 'invalid' ? 'All corrections complete' : review === 'changed' ? 'No unsaved changes' : listingCustomized ? 'All settings are at their defaults' : 'No settings match'}>
-              <p>{review === 'invalid' ? 'You can save your changes now.' : review === 'changed' ? 'Your settings are up to date.' : listingCustomized ? 'Settings you change from their defaults appear here.' : 'Search looks at names, config keys, descriptions, topics and menu choices.'}</p>
-            </EmptyState>
-          </Panel>
-        {:else}
-          {#each results as result (result.tab.id)}
-            <Panel title={result.tab.label} flush>
-              {#snippet actions()}
-                <Button size="sm" variant="ghost" onclick={() => open(result.tab.id)}>
-                  Open<span class="visually-hidden">{` ${result.tab.label}`}</span>
-                </Button>
-              {/snippet}
-              <div class="rows">
-                {#each result.settings as setting (setting)}
-                  {@render row(setting, !visible(setting))}
-                {/each}
-              </div>
-              {#if result.unknown.length}
-                {@render otherKeys(result.unknown, false)}
-              {/if}
-            </Panel>
-          {/each}
-        {/if}
+        <SettingsResults
+          {review}
+          {listingCustomized}
+          pendingCount={pending.size}
+          {invalidCount}
+          {resultCount}
+          {searching}
+          {query}
+          emptyTitle={review === 'invalid' ? 'All corrections complete' : review === 'changed' ? 'No unsaved changes' : listingCustomized ? 'All settings are at their defaults' : 'No settings match'}
+          emptyMessage={review === 'invalid' ? 'You can save your changes now.' : review === 'changed' ? 'Your settings are up to date.' : listingCustomized ? 'Settings you change from their defaults appear here.' : 'Search looks at names, config keys, descriptions, topics and menu choices.'}
+          {results}
+          isVisible={visible}
+          onclose={() => open(active.id)}
+          onopentab={(id) => open(id)}
+          {row}
+          {otherKeys}
+        />
       {:else}
         <h2 class="visually-hidden">{active.label}</h2>
         {#if sections.length > 1}
           <nav class="contents" aria-label="{active.label} sections" bind:clientHeight={contentsHeight}>
-            <div class="track" bind:this={track}>
-              {#each sections as name (name)}
-                <a
-                  href="#{groupAnchor(name)}"
-                  data-section={name}
-                  aria-current={current === name ? 'location' : undefined}
-                  onclick={(event) => jump(event, name)}
-                >{name}</a>
-              {/each}
-            </div>
+            <SettingsContentsTrack {sections} {current} onjump={jump} />
           </nav>
         {/if}
 
@@ -893,7 +538,6 @@
         {#if debugGroup}
           {@render group(debugGroup)}
         {/if}
-
 
         {#if active.id === 'picture'}
           <!-- Installs and status, not settings keys. -->
@@ -952,14 +596,6 @@
 {/if}
 
 <style>
-  .preset-note {
-    margin: 0;
-    padding: 0 var(--space-5) var(--space-3);
-    color: var(--muted);
-    font-size: var(--text-sm);
-  }
-  .preset-note strong { color: var(--ink); }
-  .preset-error, .preset-error strong { color: var(--danger); }
   .frame {
     /* The layout follows the room the page has, whatever the shell around it. */
     container-type: inline-size;
@@ -971,73 +607,6 @@
     gap: var(--space-5);
     align-items: start;
   }
-  .side {
-    display: grid;
-    gap: var(--space-3);
-    min-width: 0;
-  }
-  /* As wide as the search on the Settings home, so the two pages line up. */
-  .search {
-    max-width: 640px;
-    position: relative;
-    color: var(--muted);
-  }
-  .search :global(svg) {
-    position: absolute;
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    pointer-events: none;
-  }
-  .search .input {
-    padding-left: var(--space-6);
-  }
-  .picker {
-    display: none;
-    gap: 6px;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-  }
-  .tabs ul {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .tabs a {
-    display: grid;
-    gap: 1px;
-    padding: var(--space-3) 14px;
-    min-height: var(--control-height);
-    border-radius: var(--radius);
-    color: var(--ink-2);
-    text-decoration: none;
-  }
-  .tabs a:hover {
-    background: var(--panel);
-    color: var(--ink);
-  }
-  .tabs a[aria-current='page'] {
-    background: var(--panel);
-    color: var(--ink);
-    box-shadow: inset 0 -3px 0 var(--accent);
-  }
-  .name {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: var(--weight-medium);
-    font-size: var(--text-sm);
-  }
-  .dot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--accent);
-  }
   .content {
     display: grid;
     gap: var(--space-4);
@@ -1045,9 +614,7 @@
     min-width: 0;
     scroll-margin-top: var(--space-4);
   }
-  .content:focus {
-    outline: none;
-  }
+  .content:focus { outline: none; }
   /* The tab's sections, under the console's own sticky header on narrow windows.
      Wrapped on wide pages; one row that scrolls sideways on narrow ones. */
   .contents {
@@ -1060,51 +627,6 @@
     padding: var(--space-2);
     background: var(--bg);
     border-bottom: 1px solid var(--line);
-  }
-  .track {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px var(--space-1);
-  }
-  .track::-webkit-scrollbar {
-    display: none;
-  }
-  .contents a {
-    display: inline-flex;
-    align-items: center;
-    flex: none;
-    min-height: var(--control-height);
-    padding: 0 14px;
-    border: 1px solid transparent;
-    border-radius: var(--radius-pill);
-    color: var(--ink-2);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    text-decoration: none;
-    white-space: nowrap;
-    transition: background var(--duration-fast), color var(--duration-fast);
-  }
-  .contents a:hover {
-    background: var(--panel);
-    color: var(--ink);
-  }
-  .contents a[aria-current='location'] {
-    border-color: var(--line-strong);
-    background: var(--panel);
-    color: var(--ink);
-  }
-  .sources {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-5);
-  }
-  .sources p {
-    margin: 0;
-    max-width: 62ch;
-    font-size: var(--text-sm);
   }
   .security {
     display: grid;
@@ -1121,43 +643,13 @@
     align-items: start;
   }
   @container (min-width: 900px) {
-    .pair {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+    .pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
-  .results-heading {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-  }
-  .results-heading h2 {
-    font-size: var(--text-lg);
-  }
-  .results-heading p {
-    font-size: var(--text-sm);
-  }
-  .load-error {
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-  .placeholder {
-    padding: var(--space-5);
-    font-size: var(--text-sm);
-  }
-  .rows {
-    display: grid;
-  }
-  .rows > :global(.setting + .setting) {
-    border-top: 1px solid var(--line);
-  }
-  .integration-panels {
-    display: grid;
-    gap: var(--space-4);
-    min-width: 0;
-  }
+  .load-error { align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .placeholder { padding: var(--space-5); font-size: var(--text-sm); }
+  .rows { display: grid; }
+  .rows > :global(.setting + .setting) { border-top: 1px solid var(--line); }
+  .integration-panels { display: grid; gap: var(--space-4); min-width: 0; }
   .show-keys {
     display: inline-flex;
     align-items: center;
@@ -1169,40 +661,10 @@
     cursor: pointer;
   }
   @container (max-width: 720px) {
-    .layout {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-4);
-    }
-    .side {
-      position: static;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      align-items: end;
-    }
-    .picker {
-      display: grid;
-    }
-    .tabs {
-      display: none;
-    }
-    /* The names that do not fit fade out at the edge, a sign that the row scrolls. */
-    .track {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      scrollbar-width: none;
-      padding-right: var(--space-6);
-      mask-image: linear-gradient(to left, transparent, #000 var(--space-6));
-    }
+    .layout { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
   }
   @media (max-width: 520px) {
-    .side {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .show-keys {
-      min-height: var(--control-height);
-    }
-    .contents {
-      margin-inline: calc(-1 * var(--space-4));
-      padding-inline: var(--space-4);
-    }
+    .show-keys { min-height: var(--control-height); }
+    .contents { margin-inline: calc(-1 * var(--space-4)); padding-inline: var(--space-4); }
   }
 </style>

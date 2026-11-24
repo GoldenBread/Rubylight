@@ -5,6 +5,10 @@
   import Toggle from '../Toggle.svelte';
   import AccessChoice from './AccessChoice.svelte';
   import CommandList from './CommandList.svelte';
+  import DeviceCouchOverrides from './DeviceCouchOverrides.svelte';
+  import DeviceDisplayOverrides from './DeviceDisplayOverrides.svelte';
+  import DeviceFoldersSection from './DeviceFoldersSection.svelte';
+  import DevicePermissions from './DevicePermissions.svelte';
   import { accessOf, coopJoinAfterAccess, coopJoinAfterSwitch, withAccess, type Access } from './access';
   import { api, PERM, type Client, type DisplayDevice } from '../../lib/api';
   import { joinsCoop } from '../../lib/coop-view';
@@ -13,23 +17,16 @@
     changes,
     COUCH_KEYBOARD_CHORDS,
     COUCH_OPEN_WITH_OPTIONS,
-    DISPLAY_OVERRIDE_OPTIONS,
     GAMEPAD_OPTIONS,
     LTR_FRAME_OPTIONS,
     validCouchHold,
     validReleaseDelay,
-    PERMISSION_GROUPS,
-    learnedLayoutLabel,
     savingEndsStream,
     toDraft,
-    VIRTUAL_DISPLAY_LAYOUTS,
-    VIRTUAL_DISPLAY_MODES,
     validDisplayMode,
-    type DisplayOverride,
     type Draft,
   } from './device';
-  import { link } from '../../lib/router.svelte';
-  import { grantRows, readFolders, withGrant, type FolderAccess, type SharedFolder } from '../../lib/shared-folders';
+  import { readFolders, type SharedFolder } from '../../lib/shared-folders';
   import { presets } from '../../lib/stream-presets';
 
   let {
@@ -151,31 +148,6 @@
       });
   });
 
-  const folderRows = $derived(grantRows(sharedFolders ?? [], draft.shared_folders));
-
-  function setFolderAccess(id: string, access: string) {
-    draft.shared_folders = withGrant(draft.shared_folders, id, access === 'read' || access === 'write' ? (access as FolderAccess) : '');
-  }
-
-  const displayOptions = $derived.by(() => {
-    const current = draft.output_name_override;
-    const options: { value: string; label: string }[] = [];
-    for (const display of displays ?? []) {
-      // The host matches the override against the device id or the display name.
-      const isCurrent =
-        current !== '' &&
-        [display.device_id, display.display_name].some((value) => value.toLowerCase() === current.toLowerCase());
-      const value = isCurrent ? current : display.device_id || display.display_name;
-      if (!value || options.some((option) => option.value === value)) continue;
-      const name = display.friendly_name || `Display ${options.length + 1}`;
-      options.push({ value, label: display.primary ? `${name}, primary` : name });
-    }
-    if (current && !options.some((option) => option.value === current)) {
-      options.unshift({ value: current, label: displays ? 'Saved display (not connected)' : 'Saved display' });
-    }
-    return options;
-  });
-
   const profileOptions = $derived.by(() => {
     const current = draft.hdr_profile;
     const options = (profiles ?? []).map((filename) => ({ value: filename, label: filename }));
@@ -185,23 +157,10 @@
     return options;
   });
 
-  const layoutHint = $derived(
-    VIRTUAL_DISPLAY_LAYOUTS.find((layout) => layout.value === draft.virtual_display_layout)?.hint ??
-      'What your monitors do while this device streams on a virtual display.',
-  );
-
-  /** The layout a stream learned for this device, as the editor names it, while the host's layout still lets it apply. */
-  const learnedLayout = $derived(learnedLayoutLabel(draft, hostLayout));
-
   const presetHint = $derived(
     presets.find((preset) => preset.id === draft.stream_preset)?.description ??
       'Fills in the encoder settings you have not set yourself, for this device’s streams. Leave it on Use the host setting, which follows the preset in Settings, unless this device needs its own.',
   );
-  /** A stored display override none of its choices shows, as the preset select does. */
-  function unknownDisplay(key: DisplayOverride): boolean {
-    const value = draft.display[key];
-    return value !== '' && !DISPLAY_OVERRIDE_OPTIONS[key].some((option) => option.value === value);
-  }
   const presetUnknown = $derived(draft.stream_preset !== '' && !presets.some((preset) => preset.id === draft.stream_preset));
   // An invalid display mode or an unknown preset opens its section, as with Custom permissions.
   // Nothing closes it again: typing a mode that turns valid must not snap it shut under the cursor.
@@ -244,10 +203,6 @@
   $effect(() => {
     if (gamepadUnknown) controllerOpen = true;
   });
-
-  function setPermission(bit: number, granted: boolean) {
-    draft.perm = granted ? draft.perm | bit : draft.perm & ~bit;
-  }
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
@@ -308,221 +263,19 @@
       File transfer and Restart and shut down PC are granted on their own, never with Everything.
     </p>
     <details bind:open={permissionsOpen}><summary>Custom permissions</summary>
-    <div class="groups">
-      {#each PERMISSION_GROUPS as group (group.name)}
-        <fieldset>
-          <legend>{group.name}</legend>
-          {#each group.items as item (item.bit)}
-            <label class="check">
-              <input
-                type="checkbox"
-                checked={(draft.perm & item.bit) === item.bit}
-                onchange={(event) => setPermission(item.bit, event.currentTarget.checked)}
-              />
-              {item.label}{#if item.detail}: {item.detail}{/if}
-            </label>
-          {/each}
-          {#if group.name === 'Other'}
-            <!-- Not a permission bit: the host keeps it as its own setting for this device. -->
-            <label class="check">
-              <input type="checkbox" bind:checked={draft.host_control} />
-              Host control: change graphics driver settings, close games, install a Rubylight update and manage guests from this device
-            </label>
-            <label class="check">
-              <input type="checkbox" bind:checked={draft.pairing_approve} />
-              Approve new devices: pair another device from this device
-            </label>
-            {#if sleepUnavailable}
-              <p class="note">Sleep PC is unavailable: {sleepUnavailable}.</p>
-            {:else}
-              <label class="check">
-                <input type="checkbox" bind:checked={draft.allow_sleep} />
-                Sleep PC: put this PC to sleep from this device while nothing is running
-              </label>
-            {/if}
-            <label class="check">
-              <input type="checkbox" bind:checked={draft.allow_restart_shutdown} />
-              Restart and shut down PC: from this device while nothing is running
-            </label>
-            <label class="check">
-              <input type="checkbox" bind:checked={draft.allow_usb} />
-              USB devices: attach USB devices plugged into this device to this PC during a stream, while USB forwarding is on in Settings
-            </label>
-          {/if}
-        </fieldset>
-      {/each}
-    </div>
+      <DevicePermissions bind:draft {sleepUnavailable} />
     </details>
   </section>
 
   <details class="override" bind:open={foldersOpen}><summary>Shared folders</summary>
   <section>
-    {#if sharedFolders === null}
-      <p class="note">Loading folders…</p>
-    {:else}
-      {#if foldersError}<p class="error">{foldersError}</p>{/if}
-      {#if folderRows.length === 0}
-        <p class="note">
-          This PC shares no folders. Add them under Shared folders in <a href="/settings/network" use:link>Settings, Network</a>.
-        </p>
-      {:else}
-        <div class="form-grid">
-          {#each folderRows as row (row.id)}
-            <Field
-              label={row.gone ? `${row.id} (no longer shared)` : row.name}
-              id="{uid}-folder-{row.id}"
-              hint={row.gone ? 'The PC shares no folder with this id now. Choose No access to remove the grant.' : row.path}
-            >
-              <select
-                id="{uid}-folder-{row.id}"
-                class="select"
-                value={row.access}
-                onchange={(event) => setFolderAccess(row.id, event.currentTarget.value)}
-              >
-                <option value="">No access</option>
-                <option value="read">Read: browse and download</option>
-                <option value="write">Read and write: also upload</option>
-              </select>
-            </Field>
-          {/each}
-        </div>
-      {/if}
-      <p class="note">
-        Folders are shared only here: Everything and the file transfer permissions don’t include them. Taking a folder
-        away, or write access to it, disconnects the device.
-      </p>
-    {/if}
+    <DeviceFoldersSection {uid} bind:draft {sharedFolders} {foldersError} />
   </section>
   </details>
 
   <details class="override" bind:open={displayOpen}><summary>Display overrides</summary>
   <section>
-    <p class="note">“Use the host setting” follows the value in Settings.</p>
-    <div class="form-grid">
-      <Field
-        label="Display"
-        id="{uid}-display"
-        hint="The monitor to stream when this device does not use a virtual display."
-        error={displaysError || undefined}
-      >
-        <select id="{uid}-display" class="select" bind:value={draft.output_name_override}>
-          <option value="">Use the host setting</option>
-          {#if displays === null}
-            <option disabled value="-">Loading displays…</option>
-          {/if}
-          {#each displayOptions as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </Field>
-      <Field
-        label="Display mode"
-        id="{uid}-display-mode"
-        hint="The resolution and refresh rate of the display this device streams, as width × height × refresh rate, such as 2560x1600x120. The stream keeps the size and frame rate the device asks for, so a game can render at 1440p on a 4K stream. Leave it empty to use the mode the device asks for."
-        error={modeInvalid ? 'Enter width × height × refresh rate, such as 1920x1080x59.94.' : undefined}
-      >
-        <input
-          id="{uid}-display-mode"
-          class="input mono"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Use the device’s display mode"
-          bind:value={draft.display_mode}
-        />
-      </Field>
-      <Field
-        label="Virtual display mode"
-        id="{uid}-mode"
-        hint="Whether this device streams a virtual display of its own, sized for it, one shared with the other devices, or a monitor. Leave it on Use the host setting unless this device needs another choice than your other devices."
-      >
-        <select id="{uid}-mode" class="select" bind:value={draft.virtual_display_mode}>
-          <option value="">Use the host setting</option>
-          {#each VIRTUAL_DISPLAY_MODES as mode (mode.value)}
-            <option value={mode.value}>{mode.label}</option>
-          {/each}
-        </select>
-      </Field>
-      <Field label="Virtual display layout" id="{uid}-layout" hint={layoutHint}>
-        <select
-          id="{uid}-layout"
-          class="select"
-          bind:value={draft.virtual_display_layout}
-          onchange={() => (draft.virtual_display_layout_set_by_user = true)}
-        >
-          <option value="">Use the host setting</option>
-          {#each VIRTUAL_DISPLAY_LAYOUTS as layout (layout.value)}
-            <option value={layout.value}>{layout.label}</option>
-          {/each}
-        </select>
-        {#if learnedLayout}
-          <p class="learned">
-            Learned from your last stream: {learnedLayout}.
-            <button type="button" class="link" onclick={() => (draft.virtual_display_layout = '')}>Clear</button>
-            it to follow the host setting again.
-          </p>
-        {/if}
-      </Field>
-      <Field
-        label="Rotate the display"
-        id="{uid}-rotation"
-        hint="Match the device gives this device's virtual display its portrait or landscape shape, and turns a monitor to it, also when the device turns during the stream. A monitor turns back after the stream and needs Windows Graphics Capture."
-        error={unknownDisplay('dd_rotation_option') ? `“${draft.display.dd_rotation_option}” is not a choice, so the host ignores it. Choose one.` : undefined}
-      >
-        <select id="{uid}-rotation" class="select" bind:value={draft.display.dd_rotation_option}>
-          <option value="">Use the host setting</option>
-          {#if unknownDisplay('dd_rotation_option')}
-            <option value={draft.display.dd_rotation_option}>{draft.display.dd_rotation_option} (not a choice)</option>
-          {/if}
-          {#each DISPLAY_OVERRIDE_OPTIONS.dd_rotation_option as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </Field>
-      {#if draft.display.dd_rotation_option === 'manual'}
-        <Field
-          label="Rotation"
-          id="{uid}-angle"
-          hint="The angle the display turns to, clockwise. A virtual display is made in the turned shape instead."
-          error={unknownDisplay('dd_manual_rotation') ? `${draft.display.dd_manual_rotation} is not an angle the host takes. Choose one.` : undefined}
-        >
-          <select id="{uid}-angle" class="select" bind:value={draft.display.dd_manual_rotation}>
-            <option value="">Use the host setting</option>
-            {#if unknownDisplay('dd_manual_rotation')}
-              <option value={draft.display.dd_manual_rotation}>{draft.display.dd_manual_rotation} (not an angle)</option>
-            {/if}
-            {#each DISPLAY_OVERRIDE_OPTIONS.dd_manual_rotation as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
-        </Field>
-      {/if}
-      <Field
-        label="Display scale"
-        id="{uid}-scale"
-        hint="The Windows scale (text and app size) of this device's stream display; a fixed percentage Windows does not offer at that resolution stops its streams from starting. Set here, it also scales a monitor, which gets its own scale back after the stream. A scale the device asks for itself (Nightjar's PC display scaling) comes first on its virtual display."
-        error={unknownDisplay('dd_virtual_display_scale') ? `${draft.display.dd_virtual_display_scale} is not a scale the host takes. Choose one.` : undefined}
-      >
-        <select id="{uid}-scale" class="select" bind:value={draft.display.dd_virtual_display_scale}>
-          <option value="">Use the host setting</option>
-          {#if unknownDisplay('dd_virtual_display_scale')}
-            <option value={draft.display.dd_virtual_display_scale}>{draft.display.dd_virtual_display_scale} (not a scale)</option>
-          {/if}
-          {#each DISPLAY_OVERRIDE_OPTIONS.dd_virtual_display_scale as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </Field>
-    </div>
-    <Toggle
-      label="Always use a virtual display"
-      hint="Streams a virtual display sized for this device, even when the host streams a monitor."
-      bind:checked={draft.always_use_virtual_display}
-    />
-    <Toggle
-      label="Remember the resolution and scale I pick"
-      hint={`When you change the resolution or the scale of this device's own virtual display in Windows during a stream, such as 1440p at 200% under a 4K stream, the next streams start at them. The stream keeps the resolution the device asks for, and the refresh rate and VRR follow the stream as usual. A display mode above comes first, and a Virtual display scale set in the host settings comes before the kept scale.${draft.remember_display_mode && draft.remembered_resolution ? ` Kept now: ${draft.remembered_resolution}${draft.remembered_scale ? ` at ${draft.remembered_scale}%` : ''}.` : draft.remember_display_mode && draft.remembered_scale ? ` Kept now: ${draft.remembered_scale}% scale.` : ''}`}
-      bind:checked={draft.remember_display_mode}
-    />
+    <DeviceDisplayOverrides {uid} bind:draft {displays} {displaysError} {hostLayout} {modeInvalid} />
   </section>
   </details>
 
@@ -557,97 +310,7 @@
 
   <details class="override" bind:open={couchOpen}><summary>Couch menu</summary>
   <section>
-    <div class="form-grid">
-      <Field
-        label="Couch menu"
-        id="{uid}-couch"
-        hint="The menu the PC draws over this device's stream, in place of Couch menu in Settings. Choose Off for a device whose games use the buttons that open it."
-      >
-        <select id="{uid}-couch" class="select" bind:value={draft.couch.couch_menu}>
-          <option value="">Use the host setting</option>
-          <option value="on">On</option>
-          <option value="off">Off</option>
-        </select>
-      </Field>
-      <Field
-        label="Open the couch menu with"
-        id="{uid}-couch-open"
-        hint="The ways to open it on this device, in place of the host's. Leave it on Use the host setting unless this device needs its own."
-        error={openWithUnknown ? `“${draft.couch.couch_menu_open_with}” is not a choice, so the host ignores it. Choose one.` : undefined}
-      >
-        <select id="{uid}-couch-open" class="select" bind:value={draft.couch.couch_menu_open_with}>
-          <option value="">Use the host setting</option>
-          {#if openWithUnknown}
-            <option value={draft.couch.couch_menu_open_with}>{draft.couch.couch_menu_open_with} (not a choice)</option>
-          {/if}
-          {#each COUCH_OPEN_WITH_OPTIONS as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </Field>
-      <Field
-        label="Controller chord"
-        id="{uid}-couch-chord"
-        hint="The buttons held together on one controller, joined with +, such as l3+r3 or select. Leave it empty to use the host's."
-      >
-        <input
-          id="{uid}-couch-chord"
-          class="input mono"
-          type="text"
-          placeholder="l3+r3"
-          autocomplete="off"
-          bind:value={draft.couch.couch_menu_controller_chord}
-        />
-      </Field>
-      <Field
-        label="Controller chord hold"
-        id="{uid}-couch-hold"
-        hint="How long the chord is held before the menu opens, 300 to 3000 ms. Leave it empty to use the host's 1000."
-        error={holdInvalid ? 'Enter a whole number from 300 to 3000, or leave it empty.' : undefined}
-      >
-        <input
-          id="{uid}-couch-hold"
-          class="input num"
-          type="text"
-          inputmode="numeric"
-          placeholder="1000"
-          aria-invalid={holdInvalid ? 'true' : undefined}
-          bind:value={draft.couch.couch_menu_hold_ms}
-        />
-      </Field>
-      <Field
-        label="Corner hold"
-        id="{uid}-couch-corner"
-        hint="How long a touch, pen or mouse button holds the top-left corner before the menu opens, 500 to 3000 ms. Leave it empty to use the host's 1500."
-        error={cornerInvalid ? 'Enter a whole number from 500 to 3000, or leave it empty.' : undefined}
-      >
-        <input
-          id="{uid}-couch-corner"
-          class="input num"
-          type="text"
-          inputmode="numeric"
-          placeholder="1500"
-          aria-invalid={cornerInvalid ? 'true' : undefined}
-          bind:value={draft.couch.couch_menu_corner_hold_ms}
-        />
-      </Field>
-      <Field
-        label="Keyboard chord"
-        id="{uid}-couch-keys"
-        hint="The keys that open the menu from this device's keyboard, in place of the host's."
-        error={chordUnknown ? `“${draft.couch.couch_menu_keyboard_chord}” is not a choice, so the host ignores it. Choose one.` : undefined}
-      >
-        <select id="{uid}-couch-keys" class="select" bind:value={draft.couch.couch_menu_keyboard_chord}>
-          <option value="">Use the host setting</option>
-          {#if chordUnknown}
-            <option value={draft.couch.couch_menu_keyboard_chord}>{draft.couch.couch_menu_keyboard_chord} (not a choice)</option>
-          {/if}
-          {#each COUCH_KEYBOARD_CHORDS as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </Field>
-    </div>
+    <DeviceCouchOverrides {uid} bind:draft {openWithUnknown} {chordUnknown} {holdInvalid} {cornerInvalid} />
   </section>
   </details>
 
@@ -850,69 +513,11 @@
     color: var(--muted);
     line-height: 1.45;
   }
-  .learned {
-    font-size: var(--text-xs);
-    color: var(--muted);
-    line-height: 1.45;
-  }
-  .learned .link {
-    border: 0;
-    padding: 0;
-    background: none;
-    color: var(--ink-2);
-    font-size: inherit;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    cursor: pointer;
-    min-width: 0;
-    min-height: 0;
-  }
-  .learned .link:hover {
-    color: var(--ink);
-  }
-  .error {
-    font-size: var(--text-xs);
-    color: var(--danger);
-    line-height: 1.45;
-  }
   .note code {
     color: var(--ink-2);
   }
   .toggle-cell {
     align-self: center;
-  }
-  .groups {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    gap: var(--space-3);
-  }
-  fieldset {
-    display: grid;
-    gap: 6px;
-    align-content: start;
-    margin: 0;
-    padding: var(--space-2) var(--space-3) var(--space-3);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--panel);
-    min-width: 0;
-  }
-  legend {
-    padding: 0 var(--space-1);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    color: var(--muted);
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-sm);
-    cursor: pointer;
-  }
-  .check input {
-    margin: 0;
-    accent-color: var(--ink-2);
   }
   .command-lists {
     display: grid;
