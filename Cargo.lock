@@ -499,6 +499,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "butterpollo-linux-display"
+version = "6.3.2"
+dependencies = [
+ "anyhow",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-media-policy",
+ "butterpollo-session",
+ "libc",
+ "libloading",
+ "rubylight-vdisplay-proto",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "butterpollo-linux-graphics"
+version = "6.3.2"
+dependencies = [
+ "anyhow",
+ "butterpollo-config",
+ "butterpollo-crypto",
+ "butterpollo-media-policy",
+ "libc",
+ "libloading",
+ "rubylight-protocol",
+ "rubylight-vdisplay-proto",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "butterpollo-linux-io"
+version = "6.3.2"
+dependencies = [
+ "anyhow",
+ "butterpollo-config",
+ "butterpollo-input-policy",
+ "butterpollo-media-policy",
+ "butterpollo-session",
+ "libc",
+ "libloading",
+ "rubylight-protocol",
+ "rubylight-vdisplay-proto",
+ "rubylight-vgamepad-proto",
+ "serde",
+ "serde_json",
+ "socket2 0.6.5",
+ "tracing",
+]
+
+[[package]]
 name = "butterpollo-media-policy"
 version = "6.4.5"
 dependencies = [
@@ -727,6 +781,7 @@ dependencies = [
  "anyhow",
  "butterpollo-config",
  "butterpollo-crypto",
+ "butterpollo-linux-display",
  "butterpollo-media-policy",
  "butterpollo-session",
  "libloading",
@@ -746,6 +801,7 @@ dependencies = [
  "anyhow",
  "butterpollo-config",
  "butterpollo-crypto",
+ "butterpollo-linux-graphics",
  "butterpollo-media-policy",
  "butterpollo-win-abi",
  "half",
@@ -768,6 +824,7 @@ dependencies = [
  "anyhow",
  "butterpollo-config",
  "butterpollo-input-policy",
+ "butterpollo-linux-io",
  "butterpollo-media-policy",
  "butterpollo-session",
  "libloading",

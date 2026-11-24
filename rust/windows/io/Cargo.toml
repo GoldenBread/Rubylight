@@ -86,15 +86,19 @@ windows = { version = "0.62.2", features = [
 
 [features]
 # `UserFolder::unimpersonated`, for the host's file transfer tests only.
-test-folder = []
+test-folder = ["butterpollo-linux-io/test-folder"]
 # `Route::detached`, for the host's audio route lifetime tests only.
-test-route = []
+test-route = ["butterpollo-linux-io/test-route"]
 
 [dev-dependencies]
 # Already in the workspace (butterpollo-session); writes the tray badge dump.
 png = "0.18"
 tempfile = "3.23"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Linux: this crate re-exports the Linux platform crate, so the host names one platform.
+[target.'cfg(target_os = "linux")'.dependencies]
+butterpollo-linux-io = { path = "../../linux/io" }
 
 [lints]
 workspace = true

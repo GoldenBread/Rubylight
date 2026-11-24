@@ -37,5 +37,9 @@ windows = { version = "0.62.2", features = [
 tempfile = "3.23"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
+# Linux: this crate re-exports the Linux platform crate, so the host names one platform.
+[target.'cfg(target_os = "linux")'.dependencies]
+butterpollo-linux-display = { path = "../../linux/display" }
+
 [lints]
 workspace = true

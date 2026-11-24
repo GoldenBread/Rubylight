@@ -69,5 +69,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 [target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.62.2", features = ["Win32_System_RemoteDesktop"] }
 
+# Linux: this crate re-exports the Linux platform crate, so the host names one platform.
+[target.'cfg(target_os = "linux")'.dependencies]
+butterpollo-linux-graphics = { path = "../../linux/graphics" }
+
 [lints]
 workspace = true

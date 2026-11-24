@@ -1,12 +1,12 @@
 [workspace]
-members = ["rust/core/crypto", "rust/core/config", "rust/core/media-policy", "rust/core/input-policy", "rust/core/session", "rust/windows/abi", "rust/windows/graphics", "rust/windows/display", "rust/windows/io", "rust/host", "rust/host/stream", "rust/host/webrtc", "rust/host/web", "rust/vulkan-layer", "rust/setup", "rust/drivers/rubylight-vdisplay-proto", "rust/drivers/rubylight-vgamepad-proto", "rust/probes", "tests/host", "tests/interop"]
+members = ["rust/core/crypto", "rust/core/config", "rust/core/media-policy", "rust/core/input-policy", "rust/core/session", "rust/windows/abi", "rust/windows/graphics", "rust/windows/display", "rust/windows/io", "rust/linux/graphics", "rust/linux/display", "rust/linux/io", "rust/host", "rust/host/stream", "rust/host/webrtc", "rust/host/web", "rust/vulkan-layer", "rust/setup", "rust/drivers/rubylight-vdisplay-proto", "rust/drivers/rubylight-vgamepad-proto", "rust/probes", "tests/host", "tests/interop"]
 # The virtual display and gamepad drivers build alone under the WDK toolchain: see
 # rust/drivers/rubylight-vdisplay and rust/drivers/rubylight-vgamepad.
 # The Windows service is a workspace of its own, so that its executable stays the same across
 # releases: see rust/service.
 # Nightjar keeps its own workspace in client/protocol; the host uses its protocol crate and
 # patched rusty_enet by path.
-exclude = ["rust/truehdr-runtime", "rust/drivers/rubylight-vdisplay", "rust/drivers/rubylight-vgamepad", "rust/service", "client"]
+exclude = ["rust/linux/probes", "rust/truehdr-runtime", "rust/drivers/rubylight-vdisplay", "rust/drivers/rubylight-vgamepad", "rust/service", "client"]
 resolver = "3"
 
 # The host and Nightjar share rusty_enet, changed as its Cargo.toml lists.

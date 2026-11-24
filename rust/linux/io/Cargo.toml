@@ -1,0 +1,31 @@
+[package]
+name = "butterpollo-linux-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+butterpollo-config = { path = "../../core/config" }
+butterpollo-input-policy = { path = "../../core/input-policy" }
+butterpollo-media-policy = { path = "../../core/media-policy" }
+butterpollo-session = { path = "../../core/session" }
+rubylight-protocol = { path = "../../../client/protocol/core" }
+libc = "0.2"
+socket2 = { version = "0.6", features = ["all"] }
+rubylight-vdisplay-proto = { path = "../../drivers/rubylight-vdisplay-proto" }
+rubylight-vgamepad-proto = { path = "../../drivers/rubylight-vgamepad-proto" }
+libloading = "0.8"
+
+[features]
+# `UserFolder::unimpersonated`, for the host's file transfer tests only.
+test-folder = []
+# `Route::detached`, for the host's audio route lifetime tests only.
+test-route = []
+
+[lints]
+workspace = true
