@@ -14,7 +14,7 @@ sdl3-src = { path = "vendor/sdl3-src" }
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
-rust-version = "1.91"
+rust-version = "1.94"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

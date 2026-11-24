@@ -4,7 +4,7 @@ description = "Nightjar desktop Moonlight-protocol game-streaming client for Win
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-# sdl3-sys needs 1.85, sonora 1.91.
+# sdl3-sys needs 1.85, sonora 1.91, aarch64 NEON f16 intrinsics 1.94.
 rust-version.workspace = true
 publish = false
 
