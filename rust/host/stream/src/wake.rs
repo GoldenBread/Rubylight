@@ -3,35 +3,42 @@
 //! Windows answers goes through [`PowerSystem`], which tests replace with a
 //! fake.
 use crate::state::Host;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+#[cfg(test)]
+use butterpollo_session::wake::idle;
 use butterpollo_session::wake::{
     self as readiness, Adapter, ApplyReport, FixPlan, NicReport, SystemFacts,
     grace::WakeGrace,
-    idle::{self, IdleSleep, Input, Settings, Snapshot, Status},
+    idle::{IdleSleep, Input, Settings, Snapshot, Status},
 };
 use butterpollo_win_io::wake::{IDLE_FAILED, IDLE_READ};
 use rubylight_native_api::{session::State as Session, wake as api};
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::{Value, json};
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     net::IpAddr,
-    panic::AssertUnwindSafe,
     sync::{Arc, Mutex, PoisonError, RwLock},
     time::{Duration, Instant, SystemTime},
 };
 
+mod console;
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake;
+mod fix;
+
+pub use console::{console_status, diagnostics};
+pub use fix::{
+    Applied, FIX_DELAY, FixRefusal, apply_plan, apply_settings, apply_settings_exit_code, fix_plan,
+    fix_refusal, request_fix,
+};
+use fix::{FIX_VARIABLE, Fix};
+
 /// How long a reading of the NIC settings stays fresh; a fix or `refresh` reads
 /// again.
 const NIC_CACHE: Duration = Duration::from_secs(60);
-/// The console's POST answers before the fix starts, as the adapter restart
-/// drops the connection it came on.
-pub const FIX_DELAY: Duration = Duration::from_secs(1);
 /// How long the `--idle-seconds` helper may take.
 const IDLE_HELPER_WAIT: Duration = Duration::from_secs(10);
-/// The console's [`FixPlan`] for `--apply-wake-settings`, as JSON: the child
-/// applies exactly that plan instead of planning again.
-const FIX_VARIABLE: &str = "BUTTERPOLLO_WAKE_FIX";
 /// The wake grace's power request, as `powercfg /requests` shows it.
 const GRACE_REASON: &str = "A device is connecting to Rubylight after a wake";
 
@@ -58,19 +65,6 @@ pub trait PowerSystem: Send + Sync {
     fn run_fix(&self, plan: &FixPlan) -> Result<Applied>;
     /// A system-required power request, held until the result is dropped.
     fn hold_awake(&self, reason: &str) -> Result<Box<dyn Send>>;
-}
-
-/// What `--apply-wake-settings` changed; it prints this as JSON.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Applied {
-    /// The plan, in the words the console showed.
-    pub changes: Vec<String>,
-    /// The adapters restarted for a changed advanced property.
-    pub restarted: Vec<String>,
-    /// The adapters whose changed property takes effect when the PC restarts.
-    pub after_reboot: Vec<String>,
-    pub errors: Vec<String>,
 }
 
 struct Windows;
@@ -184,62 +178,6 @@ pub fn idle_seconds_exit_code() -> i32 {
     butterpollo_win_io::wake::idle_exit_code() as i32
 }
 
-/// `--apply-wake-settings`: apply the host's plan in [`FIX_VARIABLE`], or
-/// without one (setup) the plan for this PC now, print what changed as JSON
-/// and exit 1 if anything failed.
-pub fn apply_settings_exit_code(fast_startup_off: bool) -> i32 {
-    let applied = match std::env::var(FIX_VARIABLE) {
-        Ok(plan) => serde_json::from_str(&plan)
-            .context("reading the host's Wake-on-LAN plan")
-            .and_then(|plan| apply_plan(&Windows, &plan)),
-        Err(std::env::VarError::NotPresent) => apply_settings(&Windows, fast_startup_off),
-        Err(error) => Err(error).context(FIX_VARIABLE),
-    };
-    let applied = applied.unwrap_or_else(|error| Applied {
-        errors: vec![format!("{error:#}")],
-        ..Default::default()
-    });
-    println!(
-        "{}",
-        serde_json::to_string(&applied).expect("Applied serializes")
-    );
-    i32::from(!applied.errors.is_empty())
-}
-
-/// Read this PC's adapters and settings, plan the changes and apply them.
-pub fn apply_settings(power: &dyn PowerSystem, fast_startup_off: bool) -> Result<Applied> {
-    let adapters = power.adapters().context("reading the network adapters")?;
-    let report = power.read_nics().context("reading the NIC wake settings")?;
-    let facts = power
-        .system_facts()
-        .context("reading the power capabilities")?;
-    apply_plan(
-        power,
-        &FixPlan::new(&adapters, &report, &facts, fast_startup_off),
-    )
-}
-
-/// Apply `plan` as it is. An adapter it skipped is an error, and a plan that
-/// would set more than wake is refused whole.
-pub fn apply_plan(power: &dyn PowerSystem, plan: &FixPlan) -> Result<Applied> {
-    if let Some(refusal) = plan.refusal() {
-        bail!("the Wake-on-LAN plan was refused: {refusal}");
-    }
-    let mut applied = Applied {
-        changes: plan.changes(),
-        errors: plan.skipped.clone(),
-        ..Default::default()
-    };
-    if plan.is_empty() {
-        return Ok(applied);
-    }
-    let report = power.apply_nics(plan)?;
-    applied.restarted = report.restarted;
-    applied.after_reboot = report.after_reboot;
-    applied.errors.extend(report.errors);
-    Ok(applied)
-}
-
 /// The timers and the last answer of sleep after idle.
 struct Idle {
     machine: IdleSleep,
@@ -255,13 +193,6 @@ struct Grace {
     held: Option<Box<dyn Send>>,
     /// The sleep clock's error was logged.
     clock_failed: bool,
-}
-
-/// The console's fix: one at a time.
-#[derive(Default)]
-struct Fix {
-    running: bool,
-    last: Option<(SystemTime, Result<Applied, String>)>,
 }
 
 /// The host's wake state, in `Host::wake`.
@@ -634,485 +565,6 @@ fn wake_of(h: &Host, reading: &Reading, local: Option<IpAddr>) -> api::Wake {
 /// `GET /wake` for a request that reached the PC at `local`.
 pub fn readiness(h: &Host, refresh: bool, local: Option<IpAddr>) -> Result<api::Wake> {
     Ok(wake_of(h, &read(h, refresh)?, local))
-}
-
-/// Why the console's fix was refused (409).
-#[derive(Debug, PartialEq, Eq)]
-pub enum FixRefusal {
-    Streaming,
-    Running,
-}
-
-impl std::fmt::Display for FixRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Streaming => {
-                "a stream is active or starting; the network drops while adapters restart, so end it first"
-            }
-            Self::Running => "the Wake-on-LAN fix is already running",
-        })
-    }
-}
-
-/// Why the console's fix would be refused now, before reading the adapters;
-/// [`request_fix`] checks again.
-pub fn fix_refusal(h: &Host) -> Option<FixRefusal> {
-    if locked(&h.wake.fix).running {
-        return Some(FixRefusal::Running);
-    }
-    refusal_now(h)
-}
-
-/// The changes the console's fix would make now, from a fresh reading.
-pub fn fix_plan(h: &Host, fast_startup_off: bool) -> Result<FixPlan> {
-    let reading = read(h, true)?;
-    let nics = reading
-        .nics
-        .map_err(anyhow::Error::msg)
-        .context("reading the NIC wake settings")?;
-    let facts = reading
-        .facts
-        .map_err(anyhow::Error::msg)
-        .context("reading the power capabilities")?;
-    Ok(FixPlan::new(
-        &reading.adapters,
-        &nics,
-        &facts,
-        fast_startup_off,
-    ))
-}
-
-/// Start the console's fix: after [`FIX_DELAY`], with no stream starting
-/// meanwhile, `--apply-wake-settings` applies exactly `plan`, unless the
-/// adapters changed since. The result is in [`console_status`].
-pub fn request_fix(h: &Arc<Host>, plan: &FixPlan) -> Result<(), FixRefusal> {
-    {
-        let mut fix = locked(&h.wake.fix);
-        if fix.running {
-            return Err(FixRefusal::Running);
-        }
-        if holding(h).0 {
-            return Err(FixRefusal::Streaming);
-        }
-        fix.running = true;
-    }
-    tracing::warn!(
-        changes = ?plan.changes(),
-        "Wake-on-LAN: applying the fix the console asked for"
-    );
-    let started = std::thread::Builder::new().name("wake-fix".into()).spawn({
-        let mut run = FixRun {
-            h: h.clone(),
-            result: None,
-        };
-        let plan = plan.clone();
-        move || {
-            std::thread::sleep(FIX_DELAY);
-            let result = run_fix(&run.h, &plan);
-            run.done(result);
-        }
-    });
-    if let Err(error) = started {
-        // The closure went with the thread, and its FixRun finished the fix.
-        tracing::error!("Wake-on-LAN: the fix thread did not start: {error}");
-    }
-    Ok(())
-}
-
-/// The fix thread's result, finished when it is dropped: also when the
-/// thread panics, so `running` never stays set.
-struct FixRun {
-    h: Arc<Host>,
-    result: Option<Result<Applied, String>>,
-}
-
-impl FixRun {
-    /// Read by `drop`, which reports it.
-    fn done(&mut self, result: Result<Applied, String>) {
-        self.result = Some(result);
-    }
-}
-
-impl Drop for FixRun {
-    fn drop(&mut self) {
-        let result = self
-            .result
-            .take()
-            .unwrap_or_else(|| Err("the Wake-on-LAN fix stopped unexpectedly".into()));
-        finish_fix(&self.h, result);
-    }
-}
-
-fn run_fix(h: &Host, offered: &FixPlan) -> Result<Applied, String> {
-    // The reading may take a minute; launches go on meanwhile.
-    let now = fix_plan(h, offered.fast_startup_off).map_err(|error| format!("{error:#}"))?;
-    if now != *offered {
-        return Err(
-            "not applied: the adapters' settings changed since the fix was offered; check again"
-                .into(),
-        );
-    }
-    // No launch starts while adapters restart; the session lock is not taken
-    // under this (see `tick_at`).
-    let _transition = locked(&h.launch_transition);
-    if let Some(refusal) = refusal_now(h) {
-        return Err(format!("not applied: {refusal}"));
-    }
-    let power = h.wake.power();
-    // A panic here would poison the lock every launch takes.
-    std::panic::catch_unwind(AssertUnwindSafe(|| power.run_fix(offered)))
-        .unwrap_or_else(|_| Err(anyhow::anyhow!("the Wake-on-LAN fix panicked")))
-        .map_err(|error| format!("{error:#}"))
-}
-
-/// A stream that started between the POST and the fix.
-fn refusal_now(h: &Host) -> Option<FixRefusal> {
-    holding(h).0.then_some(FixRefusal::Streaming)
-}
-
-fn finish_fix(h: &Host, result: Result<Applied, String>) {
-    match &result {
-        Ok(applied) if applied.errors.is_empty() => tracing::info!(
-            changes = ?applied.changes,
-            restarted = ?applied.restarted,
-            after_reboot = ?applied.after_reboot,
-            "Wake-on-LAN: the fix is applied"
-        ),
-        Ok(applied) => tracing::error!(
-            changes = ?applied.changes,
-            errors = ?applied.errors,
-            "Wake-on-LAN: the fix failed in part"
-        ),
-        Err(error) => tracing::error!("Wake-on-LAN: the fix failed: {error}"),
-    }
-    // What the adapters report now is new.
-    *locked(&h.wake.nics) = None;
-    let mut fix = locked(&h.wake.fix);
-    fix.running = false;
-    fix.last = Some((SystemTime::now(), result));
-}
-
-fn unix(at: SystemTime) -> u64 {
-    at.duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
-}
-
-/// Where the console judges readiness from. /serverinfo and `/wake` give
-/// loopback zeros, but a console opened on this PC asks about the adapter a
-/// device on the network would reach: the one under the default route.
-fn console_local(h: &Host, local: Option<IpAddr>) -> Result<Option<IpAddr>, Missing> {
-    let Some(local) = local.map(|local| local.to_canonical()) else {
-        return Ok(None);
-    };
-    if !local.is_loopback() {
-        return Ok(Some(local));
-    }
-    match h.wake.power().default_route() {
-        Ok(Some(route)) => Ok(Some(route)),
-        Ok(None) => Err(Missing::NoRoute),
-        Err(error) => {
-            tracing::warn!("Wake-on-LAN: the default route could not be read: {error:#}");
-            Err(Missing::RouteError(format!("{error:#}")))
-        }
-    }
-}
-
-/// Why the console has no primary adapter.
-#[derive(Debug)]
-enum Missing {
-    /// Opened on this PC, which has no default route.
-    NoRoute,
-    /// Opened on this PC, whose default route could not be read.
-    RouteError(String),
-    /// The address the request reached, or the default route's, leads to no
-    /// connected physical adapter.
-    Unmapped,
-}
-
-impl Missing {
-    fn json(&self) -> Value {
-        match self {
-            Self::NoRoute => json!({"reason": "no_route", "error": null}),
-            Self::RouteError(error) => json!({"reason": "route_error", "error": error}),
-            Self::Unmapped => json!({"reason": "unmapped", "error": null}),
-        }
-    }
-}
-
-/// `GET /api/power`: readiness as `/wake` has it, the changes a fix would
-/// make, sleep after idle with its countdown, and the last sleep and fix.
-pub fn console_status(h: &Host, refresh: bool, local: Option<IpAddr>) -> Result<Value> {
-    let reading = read(h, refresh)?;
-    let local = console_local(h, local);
-    let wake = wake_of(h, &reading, local.as_ref().ok().copied().flatten());
-    let missing = wake
-        .primary
-        .is_none()
-        .then(|| local.err().unwrap_or(Missing::Unmapped));
-    let plan = match (&reading.nics, &reading.facts) {
-        (Ok(nics), Ok(facts)) => Ok(FixPlan::new(&reading.adapters, nics, facts, false)),
-        (Err(error), _) | (_, Err(error)) => Err(error.clone()),
-    };
-    let fast_startup = reading
-        .facts
-        .as_ref()
-        .is_ok_and(SystemFacts::fast_startup_active);
-    let idle = status(h);
-    let (last_sleep, last_fix, running) = {
-        let last_sleep = locked(&h.wake.idle).last_sleep.clone();
-        let fix = locked(&h.wake.fix);
-        (last_sleep, fix.last.clone(), fix.running)
-    };
-    Ok(json!({
-        "status": true,
-        "wake": wake,
-        // Why `wake.primary` is null; null when it isn't.
-        "primary_missing": missing.as_ref().map(Missing::json),
-        "idle_sleep": {
-            "state": idle.state,
-            "minutes": idle.minutes,
-            "reason": idle.reason,
-            "remaining_seconds": idle.remaining.map(|left| left.as_secs()),
-        },
-        "last_sleep": last_sleep.map(|(at, error)| json!({"at": unix(at), "error": error})),
-        "fix": {
-            "running": running,
-            "changes": plan.as_ref().ok().map(FixPlan::changes),
-            "skipped": plan.as_ref().ok().map(|plan| &plan.skipped),
-            "error": plan.as_ref().err(),
-            "fast_startup_off_offered": fast_startup,
-            "last": last_fix.map(|(at, result)| match result {
-                Ok(applied) => json!({
-                    "at": unix(at),
-                    "changes": applied.changes,
-                    "restarted": applied.restarted,
-                    "after_reboot": applied.after_reboot,
-                    "errors": applied.errors,
-                }),
-                Err(error) => json!({"at": unix(at), "errors": [error]}),
-            }),
-        },
-    }))
-}
-
-/// The `wake` field of `--diagnostics`.
-pub fn diagnostics() -> Value {
-    let text = |error: anyhow::Error| format!("{error:#}");
-    let power = Windows;
-    let adapters = power.adapters().map_err(text);
-    let nics = power.read_nics().map_err(text);
-    let facts = power.system_facts().map_err(text);
-    let execution = power.execution_state().map_err(text);
-    let targets = adapters.as_ref().ok().map(|adapters| {
-        readiness::targets(
-            adapters,
-            nics.as_ref().map_err(String::as_str),
-            facts.as_ref().is_ok_and(|facts| facts.modern_standby),
-            None,
-        )
-        .1
-    });
-    let changes = match (&adapters, &nics, &facts) {
-        (Ok(adapters), Ok(nics), Ok(facts)) => {
-            Some(FixPlan::new(adapters, nics, facts, false).changes())
-        }
-        _ => None,
-    };
-    json!({
-        "adapters": adapters,
-        "targets": targets,
-        "nic_script_error": nics.as_ref().err(),
-        "system": readiness::system(facts.as_ref().ok()),
-        "power_facts": facts,
-        "kept_awake": execution.map(idle::kept_awake),
-        "fix": changes,
-    })
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub mod fake {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    /// Called with the method's name before a fake answers.
-    pub type Hook = Arc<dyn Fn(&Fake, &'static str) + Send + Sync>;
-
-    /// A PC as the tests need it; the defaults are the `/wake` fixture's PC.
-    pub struct Fake {
-        pub adapters: Mutex<Result<Vec<Adapter>, String>>,
-        /// The default route's source address: the Ethernet adapter's.
-        pub route: Mutex<Result<Option<IpAddr>, String>>,
-        pub nics: Mutex<Result<NicReport, String>>,
-        pub facts: Mutex<Result<SystemFacts, String>>,
-        pub execution: Mutex<u32>,
-        pub input: Mutex<Input>,
-        pub slept: Mutex<Result<Duration, String>>,
-        /// How much `sleep` adds to `slept`.
-        pub nap: Mutex<Duration>,
-        pub hook: Mutex<Option<Hook>>,
-        pub nic_reads: AtomicUsize,
-        pub inputs: AtomicUsize,
-        pub sleeps: AtomicUsize,
-        /// What `apply_nics` was given.
-        pub plans: Mutex<Vec<FixPlan>>,
-        /// What `run_fix` was given.
-        pub fixes: Mutex<Vec<FixPlan>>,
-        /// Power requests taken, and how many are held now.
-        pub holds: AtomicUsize,
-        pub held: Arc<AtomicUsize>,
-    }
-
-    /// A fake power request.
-    struct Held(Arc<AtomicUsize>);
-
-    impl Drop for Held {
-        fn drop(&mut self) {
-            self.0.fetch_sub(1, Ordering::SeqCst);
-        }
-    }
-
-    pub const WIRED: &str = "{875511C7-0EF5-45F7-876C-3BE50726AC42}";
-    pub const WIFI: &str = "{A5234352-A9A6-4D45-8B0B-2A1CA4957AF2}";
-
-    impl Fake {
-        pub fn new() -> Arc<Self> {
-            let adapters = serde_json::from_value(json!([
-                {
-                    "index": 7, "guid": WIRED, "name": "Ethernet",
-                    "mac": "02:7C:16:B4:13:4F", "permanent": "02:7C:16:B4:13:4F",
-                    "hardware": true, "connector": true, "medium": "wired", "connected": true,
-                    "metric": 20, "ipv4": [["192.168.4.20", 24]], "addresses": ["192.168.4.20"]
-                },
-                {
-                    "index": 36, "guid": "{9EDBCD36-5287-4EAC-9C2D-BE5640B6FF4C}",
-                    "name": "vEthernet (WSL)", "mac": "00:15:5D:55:02:28",
-                    "hardware": false, "connector": false, "medium": "wired", "connected": true,
-                    "metric": 5000, "ipv4": [["172.30.112.1", 20]], "addresses": ["172.30.112.1"]
-                },
-                {
-                    "index": 12, "guid": WIFI, "name": "WLAN", "mac": "02:E0:4C:68:00:01",
-                    "hardware": true, "connector": true, "medium": "wifi", "connected": false,
-                    "metric": 25
-                }
-            ]))
-            .unwrap();
-            let nics = NicReport::parse(
-                &json!({"adapters": [
-                    {
-                        "guid": WIRED, "pnp": "PCI\\VEN_10EC&DEV_8125\\01", "name": "Ethernet",
-                        "wake_enable": true, "magic_packet_only": false,
-                        "keywords": {"*WakeOnMagicPacket": "1"}, "errors": []
-                    },
-                    {
-                        "guid": WIFI, "pnp": "PCI\\VEN_8086&DEV_2725\\01", "name": "WLAN",
-                        "wake_enable": false, "magic_packet_only": null,
-                        "keywords": {"*WakeOnMagicPacket": "0"}, "errors": []
-                    }
-                ]})
-                .to_string(),
-            )
-            .unwrap();
-            Arc::new(Self {
-                adapters: Mutex::new(Ok(adapters)),
-                route: Mutex::new(Ok(Some([192, 168, 4, 20].into()))),
-                nics: Mutex::new(Ok(nics)),
-                facts: Mutex::new(Ok(SystemFacts {
-                    s3: true,
-                    modern_standby: false,
-                    hibernate: false,
-                    hiberboot: Some(true),
-                })),
-                execution: Mutex::new(0),
-                input: Mutex::new(Input::Idle(Duration::from_secs(24 * 3600))),
-                slept: Mutex::new(Ok(Duration::ZERO)),
-                nap: Mutex::new(Duration::ZERO),
-                hook: Mutex::new(None),
-                nic_reads: AtomicUsize::new(0),
-                inputs: AtomicUsize::new(0),
-                sleeps: AtomicUsize::new(0),
-                plans: Mutex::default(),
-                fixes: Mutex::default(),
-                holds: AtomicUsize::new(0),
-                held: Arc::default(),
-            })
-        }
-        /// Install it in `h`.
-        pub fn on(self: &Arc<Self>, h: &Host) -> Arc<Self> {
-            h.wake.set_power(self.clone());
-            self.clone()
-        }
-        pub fn sleeps(&self) -> usize {
-            self.sleeps.load(Ordering::SeqCst)
-        }
-        pub fn hook(&self, hook: impl Fn(&Fake, &'static str) + Send + Sync + 'static) {
-            *locked(&self.hook) = Some(Arc::new(hook));
-        }
-        fn call(&self, method: &'static str) {
-            let hook = locked(&self.hook).clone();
-            if let Some(hook) = hook {
-                hook(self, method);
-            }
-        }
-    }
-
-    impl PowerSystem for Fake {
-        fn adapters(&self) -> Result<Vec<Adapter>> {
-            locked(&self.adapters).clone().map_err(anyhow::Error::msg)
-        }
-        fn default_route(&self) -> Result<Option<IpAddr>> {
-            locked(&self.route).clone().map_err(anyhow::Error::msg)
-        }
-        fn read_nics(&self) -> Result<NicReport> {
-            self.call("read_nics");
-            self.nic_reads.fetch_add(1, Ordering::SeqCst);
-            locked(&self.nics).clone().map_err(anyhow::Error::msg)
-        }
-        fn system_facts(&self) -> Result<SystemFacts> {
-            locked(&self.facts).clone().map_err(anyhow::Error::msg)
-        }
-        fn execution_state(&self) -> Result<u32> {
-            self.call("execution_state");
-            Ok(*locked(&self.execution))
-        }
-        fn slept(&self) -> Result<Duration> {
-            locked(&self.slept).clone().map_err(anyhow::Error::msg)
-        }
-        fn input(&self) -> Input {
-            self.inputs.fetch_add(1, Ordering::SeqCst);
-            locked(&self.input).clone()
-        }
-        fn sleep(&self) -> Result<()> {
-            self.call("sleep");
-            self.sleeps.fetch_add(1, Ordering::SeqCst);
-            let nap = *locked(&self.nap);
-            if let Ok(slept) = locked(&self.slept).as_mut() {
-                *slept += nap;
-            }
-            Ok(())
-        }
-        fn apply_nics(&self, plan: &FixPlan) -> Result<ApplyReport> {
-            locked(&self.plans).push(plan.clone());
-            Ok(ApplyReport {
-                restarted: plan
-                    .adapters
-                    .iter()
-                    .filter(|fix| !fix.keywords.is_empty())
-                    .map(|fix| fix.guid.clone())
-                    .collect(),
-                ..Default::default()
-            })
-        }
-        fn run_fix(&self, plan: &FixPlan) -> Result<Applied> {
-            self.call("run_fix");
-            locked(&self.fixes).push(plan.clone());
-            apply_plan(self, plan)
-        }
-        fn hold_awake(&self, _: &str) -> Result<Box<dyn Send>> {
-            self.holds.fetch_add(1, Ordering::SeqCst);
-            self.held.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(Held(self.held.clone())))
-        }
-    }
 }
 
 #[cfg(test)]
