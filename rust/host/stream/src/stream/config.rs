@@ -395,6 +395,101 @@ pub fn report_stream_resolution_cap(
     );
 }
 
+/// Typed accessors for stream settings read outside `stream/config.rs`.
+pub(super) fn output_name(config: &Config) -> &str {
+    config.get("output_name", "")
+}
+
+pub(super) fn gamepad_setting(config: &Config) -> &str {
+    config.get("gamepad", "auto")
+}
+
+pub(super) fn audio_capture_mode_is_game(config: &Config) -> bool {
+    config.get("audio_capture_mode", "system") == "game"
+}
+
+pub(super) fn stream_reconfigure_enabled(config: &Config) -> bool {
+    config.boolean("stream_reconfigure", true)
+}
+
+pub(super) fn capture_setting(config: &Config) -> &str {
+    config.get("capture", "")
+}
+
+pub(super) fn adapter_name(config: &Config) -> &str {
+    config.get("adapter_name", "")
+}
+
+pub(super) fn adapter_pnp_id(config: &Config) -> &str {
+    config.get("adapter_pnp_id", "")
+}
+
+pub(super) fn wgc_slot_aligned_publish(config: &Config) -> bool {
+    config.boolean("wgc_slot_aligned_publish", false)
+}
+
+pub(super) fn gpu_compute_conversion(config: &Config) -> bool {
+    config.boolean("gpu_compute_conversion", true)
+}
+
+pub(super) fn wgc_compute_copy(config: &Config) -> bool {
+    config.boolean("wgc_compute_copy", true)
+}
+
+pub(super) fn wgc_user_helper(config: &Config) -> bool {
+    config.boolean("wgc_user_helper", false)
+}
+
+pub(super) fn wgc_high_rate_capture(config: &Config) -> bool {
+    config.boolean("wgc_high_rate_capture", false)
+}
+
+pub(super) fn wgc_drain_to_newest(config: &Config) -> bool {
+    config.boolean("wgc_drain_to_newest", false)
+}
+
+pub(super) fn wgc_helper_streaming_scope(config: &Config) -> bool {
+    config.boolean("wgc_helper_streaming_scope", false)
+}
+
+pub(super) fn capture_poll_interval_us(config: &Config) -> u64 {
+    config
+        .integer("capture_poll_interval_us", 500)
+        .clamp(100, 1000) as u64
+}
+
+pub(super) fn capture_predictive_poll(config: &Config) -> bool {
+    config.boolean("capture_predictive_poll", false)
+}
+
+pub(super) fn minimum_fps_target(config: &Config) -> &str {
+    config.get("minimum_fps_target", "20")
+}
+
+pub(super) fn wgc_pacing_smoothing(config: &Config) -> bool {
+    config.boolean("wgc_pacing_smoothing", true)
+}
+
+pub(super) fn frame_pacing_predictive(config: &Config) -> bool {
+    config.boolean("frame_pacing_predictive", true)
+}
+
+pub(super) fn wgc_direct_encoder_input(config: &Config) -> bool {
+    config.boolean("wgc_direct_encoder_input", true)
+}
+
+pub(super) fn video_send_thread(config: &Config) -> bool {
+    config.boolean("video_send_thread", true)
+}
+
+pub(super) fn video_max_batch_size_kb(config: &Config) -> usize {
+    match config.integer("video_max_batch_size_kb", 64) {
+        16 => 16,
+        32 => 32,
+        _ => 64,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
