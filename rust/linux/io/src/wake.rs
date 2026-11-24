@@ -1,5 +1,11 @@
-//! Wake-on-LAN readiness, idle time and keeping the PC awake on Linux. Keeping it awake (a logind inhibitor), sleeping it, the idle time and waking the display work (`display`), as does reading how long the PC slept and running a child with a deadline; adapters, NIC wake settings and power capabilities are not available yet, so the host acts as if the PC had no adapter to arm.
+//! Wake-on-LAN readiness, idle time and keeping the PC awake on Linux. Keeping it awake (a
+//! logind inhibitor), sleeping it, the idle time and waking the display work (`display`), as
+//! do reading how long the PC slept, running a child with a deadline, the network adapters
+//! (`adapters`: the MAC `/serverinfo` names, the wake targets) and the sleep states. The NIC
+//! wake settings are not read: ethtool's Wake-on needs `CAP_NET_ADMIN`, so each target's
+//! readiness is unknown and no fix is offered.
 
+mod adapters;
 mod display;
 
 use anyhow::{Context, Result};
@@ -18,14 +24,14 @@ pub const APPLY_TIMEOUT: Duration = Duration::from_secs(180);
 pub const SETTINGS_TIMEOUT: Duration =
     Duration::from_secs(READ_TIMEOUT.as_secs() + APPLY_TIMEOUT.as_secs() + 20);
 
-/// Every adapter the PC has with the facts the MAC policy needs: none are listed yet.
+/// Every adapter the PC has with the facts the MAC policy needs.
 pub fn adapters() -> Result<Vec<Adapter>> {
-    Ok(Vec::new())
+    adapters::read()
 }
 
-/// The PC's own address on its default route; None, as no route is read yet.
+/// The PC's own address on its preferred default route; None without one.
 pub fn default_route_source() -> Result<Option<IpAddr>> {
-    Ok(None)
+    adapters::default_route_source()
 }
 
 /// The wake settings of every physical adapter: none are read yet.
@@ -96,9 +102,27 @@ pub fn output_within(
     Ok((status, stdout, stderr))
 }
 
-/// The power capabilities: none are read yet.
+/// The sleep states the kernel offers (`/sys/power`): S3 where `mem_sleep` lists `deep`,
+/// suspend-to-idle alone as Modern Standby is, hibernation where `state` lists `disk`. Linux
+/// has no Fast Startup.
 pub fn system_facts() -> Result<SystemFacts> {
-    Ok(SystemFacts::default())
+    let read =
+        |file: &str| std::fs::read_to_string(format!("/sys/power/{file}")).unwrap_or_default();
+    Ok(facts(&read("mem_sleep"), &read("state")))
+}
+
+fn facts(mem_sleep: &str, state: &str) -> SystemFacts {
+    let listed = |text: &str, word: &str| {
+        text.split_whitespace()
+            .any(|entry| entry.trim_matches(['[', ']']) == word)
+    };
+    let s3 = listed(mem_sleep, "deep");
+    SystemFacts {
+        s3,
+        modern_standby: !s3 && listed(mem_sleep, "s2idle"),
+        hibernate: listed(state, "disk"),
+        hiberboot: Some(false),
+    }
 }
 
 /// The flags every program's request to keep the PC awake adds up to: none are read yet.
@@ -200,6 +224,23 @@ pub fn wake_console_if_idle(reason: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sleep_states_come_from_sys_power() {
+        // This PC (an AM5 desktop) and a laptop with suspend-to-idle only.
+        let desktop = facts("s2idle [deep]\n", "freeze mem disk\n");
+        assert!(desktop.s3 && !desktop.modern_standby && desktop.hibernate);
+        assert!(!desktop.fast_startup_active());
+        let laptop = facts("[s2idle]\n", "freeze mem\n");
+        assert!(!laptop.s3 && laptop.modern_standby && !laptop.hibernate);
+        assert_eq!(
+            facts("", ""),
+            SystemFacts {
+                hiberboot: Some(false),
+                ..SystemFacts::default()
+            }
+        );
+    }
 
     /// The inhibitor shows in logind's list while held and is gone after.
     #[test]
