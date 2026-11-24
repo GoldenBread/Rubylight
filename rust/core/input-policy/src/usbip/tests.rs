@@ -530,6 +530,16 @@ fn queued_reports_drain_onto_waiting_transfers_without_waiting_a_period() {
     submit(&mut client, 1, 1, true, 8, [0; 8], &[]);
     submit(&mut client, 2, 1, true, 8, [0; 8], &[]);
     submit(&mut client, 3, 1, true, 8, [0; 8], &[]);
+    // Wait until the accept loop has queued all three transfers before pushing reports;
+    // otherwise the report thread can serve #1 and clear `changed` before #2 arrives.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while export.shared.link.lock().unwrap().pending.len() < 3 {
+        assert!(
+            Instant::now() < deadline,
+            "submitted interrupt transfers were not all queued"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
     export.with_changed(|q| {
         q.0.extend([vec![1], vec![2], vec![3]]);
     });
